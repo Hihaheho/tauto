@@ -1,0 +1,110 @@
+import "Order.taut"
+
+theorem dvd_refl(n: Nat): nat!(`${n} | ${n}`) {
+  dvd_intro(1, mul_one_r(n))
+}
+
+theorem one_dvd(n: Nat): nat!(`1 | ${n}`) {
+  dvd_intro(n, mul_one_l(n))
+}
+
+theorem dvd_zero(n: Nat): nat!(`${n} | 0`) {
+  dvd_intro(0, mul_zero_r(n))
+}
+
+theorem dvd_mul_r(a: Nat, k: Nat): nat!(`${a} | ${a} * ${k}`) {
+  dvd_intro(k, refl())
+}
+
+theorem dvd_trans<a: Nat, b: Nat, c: Nat>(
+  h1: nat!(`${a} | ${b}`),
+  h2: nat!(`${b} | ${c}`)
+): nat!(`${a} | ${c}`) {
+  match h1 -> nat!(`${a} | ${c}`) {
+    dvd_intro(k, e1) => match h2 -> nat!(`${a} | ${c}`) {
+      dvd_intro(
+        j,
+        e2
+      ) => dvd_intro(
+        mul(k, j),
+        Eq_trans(Eq_sym(mul_assoc(a, k, j)), Eq_trans(Eq_congr(x => mul(x, j), e1), e2))
+      )
+    }
+  }
+}
+
+theorem dvd_add<a: Nat, b: Nat, c: Nat>(
+  h1: nat!(`${a} | ${b}`),
+  h2: nat!(`${a} | ${c}`)
+): nat!(`${a} | ${b} + ${c}`) {
+  match h1 -> nat!(`${a} | ${b} + ${c}`) {
+    dvd_intro(k, e1) => match h2 -> nat!(`${a} | ${b} + ${c}`) {
+      dvd_intro(j, e2) => dvd_intro(
+        add(k, j),
+        {
+          let s1: nat!(`${a} * (${k} + ${j}) = ${a} * ${k} + ${a} * ${j}`) = mul_add_distrib_l(a, k, j)
+          let s2: nat!(`${a} * ${k} + ${a} * ${j} = ${b} + ${a} * ${j}`) = Eq_congr(x => add(x, mul(a, j)), e1)
+          let s3: nat!(`${b} + ${a} * ${j} = ${b} + ${c}`) = Eq_congr(x => add(b, x), e2)
+          Eq_trans(s1, Eq_trans(s2, s3))
+        }
+      )
+    }
+  }
+}
+
+theorem dvd_mul_right<a: Nat, b: Nat>(c: Nat, h: nat!(`${a} | ${b}`)): nat!(`${a} | ${b} * ${c}`) {
+  match h -> nat!(`${a} | ${b} * ${c}`) {
+    dvd_intro(
+      k,
+      e
+    ) => dvd_intro(mul(k, c), Eq_trans(Eq_sym(mul_assoc(a, k, c)), Eq_congr(x => mul(x, c), e)))
+  }
+}
+
+theorem dvd_zero_l<n: Nat>(h: nat!(`0 | ${n}`)): nat!(`0 = ${n}`) {
+  match h -> nat!(`0 = ${n}`) {
+    dvd_intro(k, e) => e
+  }
+}
+
+theorem le_of_mul_eq_zero(
+  a: Nat,
+  b: Nat,
+  e: nat!(`${a} * 0 = ${b}`),
+  p: nat!(`1 <= ${b}`)
+): nat!(`${a} <= ${b}`) {
+  let b0: nat!(`${b} = 0`) = Eq_trans(Eq_sym(e), mul_zero_r(a))
+  let p0: nat!(`1 <= 0`) = Eq_subst(x => nat!(`1 <= ${x}`), b0, p)
+  False_elim(not_succ_le_zero(0, p0))
+}
+
+theorem le_of_mul_eq_succ(
+  a: Nat,
+  j: Nat,
+  b: Nat,
+  e: nat!(`${a} * ${succ(j)} = ${b}`)
+): nat!(`${a} <= ${b}`) {
+  let s1: nat!(`${a} <= ${a} + ${a} * ${j}`) = le_add_r(a, mul(a, j))
+  let s2: nat!(`${a} * ${succ(j)} = ${a} + ${a} * ${j}`) = mul_succ_r(a, j)
+  Eq_subst(x => nat!(`${a} <= ${x}`), e, Eq_subst(x => nat!(`${a} <= ${x}`), Eq_sym(s2), s1))
+}
+
+theorem le_of_mul_eq(
+  a: Nat,
+  k: Nat,
+  b: Nat
+): nat!(`${a} * ${k} = ${b} -> 1 <= ${b} -> ${a} <= ${b}`) {
+  match k -> nat!(`${a} * ${k} = ${b} -> 1 <= ${b} -> ${a} <= ${b}`) {
+    zero => e => p => le_of_mul_eq_zero(a, b, e, p)
+    succ(j) => e => p => le_of_mul_eq_succ(a, j, b, e)
+  }
+}
+
+theorem le_of_dvd<a: Nat, b: Nat>(
+  pos: nat!(`1 <= ${b}`),
+  h: nat!(`${a} | ${b}`)
+): nat!(`${a} <= ${b}`) {
+  match h -> nat!(`${a} <= ${b}`) {
+    dvd_intro(k, e) => le_of_mul_eq(a, k, b, e, pos)
+  }
+}

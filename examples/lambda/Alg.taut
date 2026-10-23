@@ -1,0 +1,422 @@
+import "Typing.taut"
+
+// The algebra of renaming and substitution, up to pointwise equality of the maps (there is no
+// function extensionality, so every lemma takes the equality of maps as a hypothesis).
+
+def ExtR(xi: (Nat) -> Nat, zeta: (Nat) -> Nat): Prop := ∀ n: Nat. Eq(Nat, xi(n), zeta(n))
+
+def ExtS(sigma: (Nat) -> Tm, tau: (Nat) -> Tm): Prop := ∀ n: Nat. Eq(Tm, sigma(n), tau(n))
+
+theorem upR_ext_at(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  e: ExtR(xi, zeta),
+  n: Nat
+): Eq(Nat, upR(xi, n), upR(zeta, n)) {
+  match n -> Eq(Nat, upR(xi, n), upR(zeta, n)) {
+    zero => refl()
+    succ(m) => Eq_congr(succ, e(m))
+  }
+}
+
+theorem upR_ext(xi: (Nat) -> Nat, zeta: (Nat) -> Nat, e: ExtR(xi, zeta)): ExtR(upR(xi), upR(zeta)) {
+  n => upR_ext_at(xi, zeta, e, n)
+}
+
+theorem ren_ext(
+  t: Tm,
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  e: ExtR(xi, zeta)
+): Eq(Tm, ren(t, xi), ren(t, zeta)) {
+  match t -> Eq(Tm, ren(t, xi), ren(t, zeta)) {
+    tvar(i) => Eq_congr(tvar, e(i))
+    lam(A, b) => Eq_congr(x => lam(A, x), ren_ext(b, upR(xi), upR(zeta), upR_ext(xi, zeta, e)))
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, ren(a, xi)), ren_ext(f, xi, zeta, e)),
+      Eq_congr(x => app(ren(f, zeta), x), ren_ext(a, xi, zeta, e))
+    )
+    tstar => refl()
+  }
+}
+
+theorem up_ext_at(
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  e: ExtS(sigma, tau),
+  n: Nat
+): Eq(Tm, up(sigma, n), up(tau, n)) {
+  match n -> Eq(Tm, up(sigma, n), up(tau, n)) {
+    zero => refl()
+    succ(m) => Eq_congr(x => ren(x, succ), e(m))
+  }
+}
+
+theorem up_ext(
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  e: ExtS(sigma, tau)
+): ExtS(up(sigma), up(tau)) {
+  n => up_ext_at(sigma, tau, e, n)
+}
+
+theorem subst_ext(
+  t: Tm,
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  e: ExtS(sigma, tau)
+): Eq(Tm, subst(t, sigma), subst(t, tau)) {
+  match t -> Eq(Tm, subst(t, sigma), subst(t, tau)) {
+    tvar(i) => e(i)
+    lam(A, b) => Eq_congr(x => lam(A, x), subst_ext(b, up(sigma), up(tau), up_ext(sigma, tau, e)))
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, subst(a, sigma)), subst_ext(f, sigma, tau, e)),
+      Eq_congr(x => app(subst(f, tau), x), subst_ext(a, sigma, tau, e))
+    )
+    tstar => refl()
+  }
+}
+
+theorem ren_ren_up(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  n: Nat
+): Eq(Nat, upR(zeta, upR(xi, n)), upR(n0 => zeta(xi(n0)), n)) {
+  match n -> Eq(Nat, upR(zeta, upR(xi, n)), upR(n0 => zeta(xi(n0)), n)) {
+    zero => refl()
+    succ(m) => refl()
+  }
+}
+
+// Renaming twice is renaming by the composite.
+theorem ren_ren(
+  t: Tm,
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat
+): Eq(Tm, ren(ren(t, xi), zeta), ren(t, n => zeta(xi(n)))) {
+  match t -> Eq(Tm, ren(ren(t, xi), zeta), ren(t, n => zeta(xi(n)))) {
+    tvar(i) => refl()
+    lam(A, b) => {
+      let s1: Eq(
+        Tm,
+        ren(ren(b, upR(xi)), upR(zeta)),
+        ren(b, n => upR(zeta, upR(xi, n)))
+      ) = ren_ren(b, upR(xi), upR(zeta))
+      let s2: Eq(
+        Tm,
+        ren(b, n => upR(zeta, upR(xi, n))),
+        ren(b, upR(n => zeta(xi(n))))
+      ) = ren_ext(
+        b,
+        n => upR(zeta, upR(xi, n)),
+        upR(n => zeta(xi(n))),
+        n => ren_ren_up(xi, zeta, n)
+      )
+      Eq_congr(x => lam(A, x), Eq_trans(s1, s2))
+    }
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, ren(ren(a, xi), zeta)), ren_ren(f, xi, zeta)),
+      Eq_congr(x => app(ren(f, n => zeta(xi(n))), x), ren_ren(a, xi, zeta))
+    )
+    tstar => refl()
+  }
+}
+
+theorem ren_subst_up(
+  tau: (Nat) -> Tm,
+  xi: (Nat) -> Nat,
+  n: Nat
+): Eq(Tm, ren(up(tau, n), upR(xi)), up(m => ren(tau(m), xi), n)) {
+  match n -> Eq(Tm, ren(up(tau, n), upR(xi)), up(m => ren(tau(m), xi), n)) {
+    zero => refl()
+    succ(m) => {
+      let r1: Eq(
+        Tm,
+        ren(ren(tau(m), succ), upR(xi)),
+        ren(tau(m), k => upR(xi, succ(k)))
+      ) = ren_ren(tau(m), succ, upR(xi))
+      let r2: Eq(
+        Tm,
+        ren(ren(tau(m), xi), succ),
+        ren(tau(m), k => succ(xi(k)))
+      ) = ren_ren(tau(m), xi, succ)
+      Eq_trans(r1, Eq_sym(r2))
+    }
+  }
+}
+
+// Renaming after substituting is substituting with renamed values.
+theorem ren_subst(
+  t: Tm,
+  tau: (Nat) -> Tm,
+  xi: (Nat) -> Nat
+): Eq(Tm, ren(subst(t, tau), xi), subst(t, n => ren(tau(n), xi))) {
+  match t -> Eq(Tm, ren(subst(t, tau), xi), subst(t, n => ren(tau(n), xi))) {
+    tvar(i) => refl()
+    lam(A, b) => {
+      let s1: Eq(
+        Tm,
+        ren(subst(b, up(tau)), upR(xi)),
+        subst(b, n => ren(up(tau, n), upR(xi)))
+      ) = ren_subst(b, up(tau), upR(xi))
+      let s2: Eq(
+        Tm,
+        subst(b, n => ren(up(tau, n), upR(xi))),
+        subst(b, up(m => ren(tau(m), xi)))
+      ) = subst_ext(
+        b,
+        n => ren(up(tau, n), upR(xi)),
+        up(m => ren(tau(m), xi)),
+        n => ren_subst_up(tau, xi, n)
+      )
+      Eq_congr(x => lam(A, x), Eq_trans(s1, s2))
+    }
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, ren(subst(a, tau), xi)), ren_subst(f, tau, xi)),
+      Eq_congr(x => app(subst(f, n => ren(tau(n), xi)), x), ren_subst(a, tau, xi))
+    )
+    tstar => refl()
+  }
+}
+
+theorem subst_ren_up(
+  sigma: (Nat) -> Tm,
+  xi: (Nat) -> Nat,
+  n: Nat
+): Eq(Tm, up(sigma, upR(xi, n)), up(m => sigma(xi(m)), n)) {
+  match n -> Eq(Tm, up(sigma, upR(xi, n)), up(m => sigma(xi(m)), n)) {
+    zero => refl()
+    succ(m) => refl()
+  }
+}
+
+// Substituting into a renamed term is substituting with the composite.
+theorem subst_ren(
+  t: Tm,
+  xi: (Nat) -> Nat,
+  sigma: (Nat) -> Tm
+): Eq(Tm, subst(ren(t, xi), sigma), subst(t, n => sigma(xi(n)))) {
+  match t -> Eq(Tm, subst(ren(t, xi), sigma), subst(t, n => sigma(xi(n)))) {
+    tvar(i) => refl()
+    lam(A, b) => {
+      let s1: Eq(
+        Tm,
+        subst(ren(b, upR(xi)), up(sigma)),
+        subst(b, n => up(sigma, upR(xi, n)))
+      ) = subst_ren(b, upR(xi), up(sigma))
+      let s2: Eq(
+        Tm,
+        subst(b, n => up(sigma, upR(xi, n))),
+        subst(b, up(m => sigma(xi(m))))
+      ) = subst_ext(
+        b,
+        n => up(sigma, upR(xi, n)),
+        up(m => sigma(xi(m))),
+        n => subst_ren_up(sigma, xi, n)
+      )
+      Eq_congr(x => lam(A, x), Eq_trans(s1, s2))
+    }
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, subst(ren(a, xi), sigma)), subst_ren(f, xi, sigma)),
+      Eq_congr(x => app(subst(f, n => sigma(xi(n))), x), subst_ren(a, xi, sigma))
+    )
+    tstar => refl()
+  }
+}
+
+theorem subst_subst_up(
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm,
+  n: Nat
+): Eq(Tm, subst(up(sigma, n), up(tau)), up(m => subst(sigma(m), tau), n)) {
+  match n -> Eq(Tm, subst(up(sigma, n), up(tau)), up(m => subst(sigma(m), tau), n)) {
+    zero => refl()
+    succ(m) => {
+      let r1: Eq(
+        Tm,
+        subst(ren(sigma(m), succ), up(tau)),
+        subst(sigma(m), k => up(tau, succ(k)))
+      ) = subst_ren(sigma(m), succ, up(tau))
+      let r2: Eq(
+        Tm,
+        ren(subst(sigma(m), tau), succ),
+        subst(sigma(m), k => ren(tau(k), succ))
+      ) = ren_subst(sigma(m), tau, succ)
+      Eq_trans(r1, Eq_sym(r2))
+    }
+  }
+}
+
+// Substituting twice is substituting with the composite.
+theorem subst_subst(
+  t: Tm,
+  sigma: (Nat) -> Tm,
+  tau: (Nat) -> Tm
+): Eq(Tm, subst(subst(t, sigma), tau), subst(t, n => subst(sigma(n), tau))) {
+  match t -> Eq(Tm, subst(subst(t, sigma), tau), subst(t, n => subst(sigma(n), tau))) {
+    tvar(i) => refl()
+    lam(A, b) => {
+      let s1: Eq(
+        Tm,
+        subst(subst(b, up(sigma)), up(tau)),
+        subst(b, n => subst(up(sigma, n), up(tau)))
+      ) = subst_subst(b, up(sigma), up(tau))
+      let s2: Eq(
+        Tm,
+        subst(b, n => subst(up(sigma, n), up(tau))),
+        subst(b, up(m => subst(sigma(m), tau)))
+      ) = subst_ext(
+        b,
+        n => subst(up(sigma, n), up(tau)),
+        up(m => subst(sigma(m), tau)),
+        n => subst_subst_up(sigma, tau, n)
+      )
+      Eq_congr(x => lam(A, x), Eq_trans(s1, s2))
+    }
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, subst(subst(a, sigma), tau)), subst_subst(f, sigma, tau)),
+      Eq_congr(x => app(subst(f, n => subst(sigma(n), tau)), x), subst_subst(a, sigma, tau))
+    )
+    tstar => refl()
+  }
+}
+
+theorem up_tvar(n: Nat): Eq(Tm, up(tvar, n), tvar(n)) {
+  match n -> Eq(Tm, up(tvar, n), tvar(n)) {
+    zero => refl()
+    succ(m) => refl()
+  }
+}
+
+theorem subst_id(t: Tm): Eq(Tm, subst(t, tvar), t) {
+  match t -> Eq(Tm, subst(t, tvar), t) {
+    tvar(i) => refl()
+    lam(A, b) => {
+      let s1: Eq(
+        Tm,
+        subst(b, up(tvar)),
+        subst(b, tvar)
+      ) = subst_ext(b, up(tvar), tvar, n => up_tvar(n))
+      Eq_congr(x => lam(A, x), Eq_trans(s1, subst_id(b)))
+    }
+    app(
+      f,
+      a
+    ) => Eq_trans(
+      Eq_congr(x => app(x, subst(a, tvar)), subst_id(f)),
+      Eq_congr(x => app(f, x), subst_id(a))
+    )
+    tstar => refl()
+  }
+}
+
+// Weakening a term and then instantiating the new variable gives the term back.
+theorem subst_single_ren(u: Tm, w: Tm): Eq(Tm, subst(ren(u, succ), single(w)), u) {
+  let s1: Eq(
+    Tm,
+    subst(ren(u, succ), single(w)),
+    subst(u, k => single(w, succ(k)))
+  ) = subst_ren(u, succ, single(w))
+  let s2: Eq(
+    Tm,
+    subst(u, k => single(w, succ(k))),
+    subst(u, tvar)
+  ) = subst_ext(u, k => single(w, succ(k)), tvar, k => refl())
+  Eq_trans(s1, Eq_trans(s2, subst_id(u)))
+}
+
+// The substitution that puts `w` at index 0 and shifts `sigma` down by one.
+fn extend(w: Tm, sigma: (Nat) -> Tm, n: Nat) -> Tm {
+  match n -> Tm {
+    zero => w
+    succ(m) => sigma(m)
+  }
+}
+
+theorem subst_up_single_at(
+  sigma: (Nat) -> Tm,
+  w: Tm,
+  n: Nat
+): Eq(Tm, subst(up(sigma, n), single(w)), extend(w, sigma, n)) {
+  match n -> Eq(Tm, subst(up(sigma, n), single(w)), extend(w, sigma, n)) {
+    zero => refl()
+    succ(m) => subst_single_ren(sigma(m), w)
+  }
+}
+
+// Instantiating the lifted body: `b[up sigma][w] = b[w · sigma]`.
+theorem subst_up_single(
+  b: Tm,
+  sigma: (Nat) -> Tm,
+  w: Tm
+): Eq(Tm, subst(subst(b, up(sigma)), single(w)), subst(b, extend(w, sigma))) {
+  let s1: Eq(
+    Tm,
+    subst(subst(b, up(sigma)), single(w)),
+    subst(b, n => subst(up(sigma, n), single(w)))
+  ) = subst_subst(b, up(sigma), single(w))
+  let s2: Eq(
+    Tm,
+    subst(b, n => subst(up(sigma, n), single(w))),
+    subst(b, extend(w, sigma))
+  ) = subst_ext(
+    b,
+    n => subst(up(sigma, n), single(w)),
+    extend(w, sigma),
+    n => subst_up_single_at(sigma, w, n)
+  )
+  Eq_trans(s1, s2)
+}
+
+theorem subst_single_at(
+  a: Tm,
+  sigma: (Nat) -> Tm,
+  n: Nat
+): Eq(Tm, subst(single(a, n), sigma), extend(subst(a, sigma), sigma, n)) {
+  match n -> Eq(Tm, subst(single(a, n), sigma), extend(subst(a, sigma), sigma, n)) {
+    zero => refl()
+    succ(m) => refl()
+  }
+}
+
+// Substituting after instantiating: `b[a][sigma] = b[up sigma][a[sigma]]`.
+theorem subst_single_subst(
+  b: Tm,
+  a: Tm,
+  sigma: (Nat) -> Tm
+): Eq(Tm, subst(subst(b, single(a)), sigma), subst(subst(b, up(sigma)), single(subst(a, sigma)))) {
+  let s1: Eq(
+    Tm,
+    subst(subst(b, single(a)), sigma),
+    subst(b, n => subst(single(a, n), sigma))
+  ) = subst_subst(b, single(a), sigma)
+  let s2: Eq(
+    Tm,
+    subst(b, n => subst(single(a, n), sigma)),
+    subst(b, extend(subst(a, sigma), sigma))
+  ) = subst_ext(
+    b,
+    n => subst(single(a, n), sigma),
+    extend(subst(a, sigma), sigma),
+    n => subst_single_at(a, sigma, n)
+  )
+  Eq_trans(Eq_trans(s1, s2), Eq_sym(subst_up_single(b, sigma, subst(a, sigma))))
+}

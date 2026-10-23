@@ -1,0 +1,54 @@
+import "Base.taut"
+
+// Arrays as the proofs see them: a list. Extraction maps `Array` onto Nib's
+// `Array` and the functions here onto its builtins, which read by index in
+// O(1); their definitions here say what those builtins do.
+
+inductive Array(A: Type): Type {
+  array(items: List(A)): Array(A)
+}
+
+// Mapped: the array of a list's elements.
+fn array_of_list<A>(l: List(A)) -> Array(A) {
+  array(l)
+}
+
+// Mapped: the elements, in order.
+fn array_to_list<A>(a: Array(A)) -> List(A) {
+  match a -> List(A) {
+    array(l) => l
+  }
+}
+
+// Mapped: the element at `i`.
+fn array_get<A>(a: Array(A), i: Nat) -> Option(A) {
+  list_nth(array_to_list(a), i)
+}
+
+// Mapped: the number of elements.
+fn array_len<A>(a: Array(A)) -> Nat {
+  list_length(array_to_list(a))
+}
+
+// The element at `i`, or `d` when there is none.
+fn array_get_or<A>(a: Array(A), i: Nat, d: A) -> A {
+  match array_get(a, i) -> A {
+    none => d
+    some(x) => x
+  }
+}
+
+theorem array_get_of_list<A>(
+  l: List(A),
+  i: Nat
+): Eq(Option(A), array_get(array_of_list(l), i), list_nth(l, i)) {
+  refl()
+}
+
+theorem array_len_of_list<A>(l: List(A)): Eq(Nat, array_len(array_of_list(l)), list_length(l)) {
+  refl()
+}
+
+theorem array_to_list_of_list<A>(l: List(A)): Eq(List(A), array_to_list(array_of_list(l)), l) {
+  refl()
+}

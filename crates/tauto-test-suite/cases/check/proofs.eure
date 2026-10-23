@@ -1,0 +1,77 @@
+// `checks.<name>`: the kernel's verdict on a declaration.
+
+@ cases.computation-in-conversion
+parses = true
+source = ```tauto
+theorem good(): Eq(Nat, 2 + 2, 4) { refl(Nat, 4) }
+theorem bad(): Eq(Nat, 2 + 2, 5) { refl(Nat, 4) }
+```
+checks.good = "ok"
+checks.bad = "error: type mismatch"
+
+@ cases.axioms-are-tracked
+parses = true
+source = ```tauto
+axiom em(P: Prop): P ∨ ¬P
+theorem a(P: Prop): P ∨ ¬P { em(P) }
+theorem b(): True { trivial }
+```
+checks.a = "axioms: em"
+checks.b = "ok"
+
+@ cases.negative-occurrence-is-rejected
+parses = true
+source = ```tauto
+inductive Bad(): Type {
+  mk(f: (Bad) -> Nat): Bad
+}
+```
+checks.Bad = "error: negative"
+
+@ cases.a-function-needs-an-expected-type
+parses = true
+source = ```tauto
+theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+```
+checks.compose = "ok"
+
+@ cases.generics-are-implicit-arguments
+parses = true
+source = ```tauto
+theorem sym2<A: Type, a: A, b: A>(e: Eq(A, a, b)): Eq(A, b, a) {
+  Eq_sym(e)
+}
+theorem both(a: Nat, b: Nat, e: Eq(Nat, a, b)): Eq(Nat, b, a) {
+  sym2(e)
+}
+theorem full(a: Nat, b: Nat, e: Eq(Nat, a, b)): Eq(Nat, b, a) {
+  sym2(Nat, a, b, e)
+}
+theorem four(): Eq(Nat, 4, 4) { refl() }
+```
+checks.sym2 = "ok"
+checks.both = "ok"
+checks.full = "ok"
+checks.four = "ok"
+
+@ cases.an-implicit-argument-nothing-determines-is-rejected
+parses = true
+source = ```tauto
+theorem pick<A: Type>(): Eq(Nat, 0, 0) { refl() }
+theorem use(): Eq(Nat, 0, 0) { pick() }
+```
+checks.pick = "ok"
+checks.use = "error: cannot infer"
+
+@ cases.constructor-parameters-are-implicit
+parses = true
+source = ```tauto
+inductive List(A: Type): Type {
+  nil(): List(A)
+  cons(h: A, t: List(A)): List(A)
+}
+theorem same(): Eq(List(Nat), cons(1, nil), cons(1, nil())) { refl() }
+```
+checks.same = "ok"

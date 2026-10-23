@@ -1,0 +1,86 @@
+import "SN.taut"
+
+// ---- typing derivations --------------------------------------------------------------------
+
+theorem id_typed(): lc!(`|- fun x: unit. x : unit -> unit`) {
+  t_lam(t_var(has_here()))
+}
+
+theorem const_typed(): lc!(`|- fun x: unit. fun y: unit. x : unit -> unit -> unit`) {
+  t_lam(t_lam(t_var(has_there(has_here()))))
+}
+
+// The Church numeral 2.
+theorem two_typed(): lc!(
+  `|- fun f: unit -> unit. fun x: unit. f (f x) : (unit -> unit) -> unit -> unit`
+) {
+  t_lam(
+    t_lam(
+      t_app(t_var(has_there(has_here())), t_app(t_var(has_there(has_here())), t_var(has_here())))
+    )
+  )
+}
+
+theorem application_typed(): lc!(`f: unit -> unit, x: unit |- f x : unit`) {
+  t_app(t_var(has_there(has_here())), t_var(has_here()))
+}
+
+// ---- reduction ------------------------------------------------------------------------------
+
+// Steps written by hand, chained by the untyped macro `steps!`.
+theorem two_id_star(): lc!(
+  `(fun f: unit -> unit. fun x: unit. f (f x)) (fun y: unit. y) star ~>* star`
+) {
+  steps!(then(s_app_l(s_beta()), s_beta(), s_beta(), s_beta()))
+}
+
+// The same kind of claim, with the path found by `reduce!`; the kernel still checks every step.
+theorem k_star(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {
+  reduce!(`(fun x: unit. fun y: unit. x) star`)
+}
+
+// Church addition, 2 + 2 = 4, reducing under the binders.
+theorem two_plus_two(): lc!(
+  `(fun m: (unit -> unit) -> unit -> unit. fun n: (unit -> unit) -> unit -> unit. fun f: unit -> unit. fun x: unit. m f (n f x)) (fun f: unit -> unit. fun x: unit. f (f x)) (fun f: unit -> unit. fun x: unit. f (f x)) ~>* fun f: unit -> unit. fun x: unit. f (f (f (f x)))`
+) {
+  reduce!(
+    `(fun m: (unit -> unit) -> unit -> unit. fun n: (unit -> unit) -> unit -> unit. fun f: unit -> unit. fun x: unit. m f (n f x)) (fun f: unit -> unit. fun x: unit. f (f x)) (fun f: unit -> unit. fun x: unit. f (f x))`
+  )
+}
+
+// ---- consequences of strong normalization --------------------------------------------------
+
+theorem two_normalizes(): SN(
+  lam(arr(tunit, tunit), lam(tunit, app(tvar(1), app(tvar(1), tvar(0)))))
+) {
+  strong_normalization(two_typed())
+}
+
+// Omega steps to itself, so it is not normalizing, so by strong normalization it has no type.
+fn omega() -> Tm {
+  lc!(`(fun x: unit. x x) (fun x: unit. x x)`)
+}
+
+def NotOmega(x: Tm): Prop := (Eq(Tm, x, omega())) -> False
+
+theorem omega_steps(): lc!(`${omega()} ~> ${omega()}`) {
+  s_beta()
+}
+
+theorem omega_not_sn(h: SN(omega())): False {
+  sn_induction(
+    NotOmega,
+    x => k => ih => e => ih(
+      omega(),
+      Eq_subst(y => Step(y, omega()), Eq_sym(e), omega_steps()),
+      refl()
+    ),
+    omega(),
+    h,
+    refl()
+  )
+}
+
+theorem omega_untypable<G: List(Ty), A: Ty>(h: lc!(`${G} |- ${omega()} : ${A}`)): False {
+  omega_not_sn(strong_normalization(h))
+}

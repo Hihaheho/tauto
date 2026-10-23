@@ -1,0 +1,491 @@
+import "Alg.taut"
+
+inductive SN(): (Tm) -> Prop {
+  sn_intro<t: Tm>(h: ∀ u: Tm. (Step(t, u)) -> SN(u)): SN(t)
+}
+
+// Induction on a normalizing term: the step case may use the claim for every reduct.
+theorem sn_induction(
+  P: (Tm) -> Prop,
+  step: ∀ t: Tm. (∀ u: Tm. (Step(t, u)) -> SN(u)) -> (∀ u: Tm. (Step(t, u)) -> P(u)) -> P(t),
+  t: Tm,
+  h: SN(t)
+): P(t) {
+  SN_ind((t0, h0) => P(t0), (t0, k, ih) => step(t0, k, u => s => ih(u, s)), t, h)
+}
+
+theorem sn_step<t: Tm, u: Tm>(h: SN(t), s: lc!(`${t} ~> ${u}`)): SN(u) {
+  match h -> SN(u) {
+    sn_intro(t0, k) => k(u, s)
+  }
+}
+
+theorem step_subst<t: Tm, u: Tm>(
+  s: lc!(`${t} ~> ${u}`),
+  sigma: (Nat) -> Tm
+): lc!(`${subst(t, sigma)} ~> ${subst(u, sigma)}`) {
+  match s -> Step(subst(t, sigma), subst(u, sigma)) {
+    s_beta(
+      A,
+      b,
+      a
+    ) => Eq_subst(
+      x => Step(app(lam(A, subst(b, up(sigma))), subst(a, sigma)), x),
+      Eq_sym(subst_single_subst(b, a, sigma)),
+      s_beta()
+    )
+    s_lam(A, b, b2, h) => s_lam(step_subst(h, up(sigma)))
+    s_app_l(f, f2, a, h) => s_app_l(step_subst(h, sigma))
+    s_app_r(f, a, a2, h) => s_app_r(step_subst(h, sigma))
+  }
+}
+
+def SnOfSubst(
+  x: Tm
+): Prop := ∀ t0: Tm. ∀ sigma0: (Nat) -> Tm. (Eq(Tm, x, subst(t0, sigma0))) -> SN(t0)
+
+// A term whose instance normalizes normalizes.
+theorem sn_of_subst(t: Tm, sigma: (Nat) -> Tm, h: SN(subst(t, sigma))): SN(t) {
+  sn_induction(
+    SnOfSubst,
+    x => k => ih => t0 => sigma0 => e => sn_intro(
+      u => s => ih(
+        subst(u, sigma0),
+        Eq_subst(y => Step(y, subst(u, sigma0)), Eq_sym(e), step_subst(s, sigma0)),
+        u,
+        sigma0,
+        refl()
+      )
+    ),
+    subst(t, sigma),
+    h,
+    t,
+    sigma,
+    refl()
+  )
+}
+
+theorem no_step_star<u: Tm>(s: Step(tstar, u)): False {
+  match s -> False {
+  }
+}
+
+theorem sn_star(): SN(tstar) {
+  sn_intro(u => s => False_elim(no_step_star(s)))
+}
+
+def SnApp(x: Tm): Prop := ∀ f: Tm. ∀ a: Tm. (Eq(Tm, x, app(f, a))) -> SN(f)
+
+theorem sn_app_aux(t: Tm, h: SN(t)): ∀ f: Tm. ∀ a: Tm. (Eq(Tm, t, app(f, a))) -> SN(f) {
+  sn_induction(
+    SnApp,
+    x => k => ih => f => a => e => sn_intro(
+      f2 => s => ih(
+        app(f2, a),
+        Eq_subst(y => Step(y, app(f2, a)), Eq_sym(e), s_app_l(s)),
+        f2,
+        a,
+        refl()
+      )
+    ),
+    t,
+    h
+  )
+}
+
+theorem sn_app_l<f: Tm, a: Tm>(h: SN(app(f, a))): SN(f) {
+  sn_app_aux(app(f, a), h, f, a, refl())
+}
+
+inductive Neutral(): (Tm) -> Prop {
+  neu_var<i: Nat>(): Neutral(tvar(i))
+  neu_app<f: Tm, a: Tm>(): Neutral(app(f, a))
+  neu_star(): Neutral(tstar)
+}
+
+theorem neutral_lam<A: Ty, b: Tm>(n: Neutral(lam(A, b))): False {
+  match n -> False {
+  }
+}
+
+theorem no_step_var<i: Nat, u: Tm>(s: Step(tvar(i), u)): False {
+  match s -> False {
+  }
+}
+
+// A term is reducible at an arrow when applying it to a reducible argument is reducible.
+def RedArr(P: (Tm) -> Prop, Q: (Tm) -> Prop, t: Tm): Prop := ∀ w: Tm. (P(w)) -> Q(app(t, w))
+
+// Reducibility candidates: strong normalization at the base type, and
+// preservation of reducibility by application at an arrow.
+fn Red(A: Ty, t: Tm) -> Prop {
+  match A -> Prop {
+    tunit => SN(t)
+    arr(A1, B1) => RedArr(w => Red(A1, w), w => Red(B1, w), t)
+  }
+}
+
+def Cr1(A: Ty): Prop := ∀ t: Tm. (Red(A, t)) -> SN(t)
+
+def Cr2(A: Ty): Prop := ∀ t: Tm. ∀ u: Tm. (Red(A, t)) -> (Step(t, u)) -> Red(A, u)
+
+def Cr3(A: Ty): Prop := ∀ t: Tm. (Neutral(t)) -> (∀ u: Tm. (Step(t, u)) -> Red(A, u)) -> Red(A, t)
+
+def CrAll(A: Ty): Prop := And(Cr1(A), And(Cr2(A), Cr3(A)))
+
+// What a step from an application can be.
+inductive InvStepApp(t: Tm, x: Tm, v: Tm): Prop {
+  isa_beta<A0: Ty, b: Tm>(
+    e: Eq(Tm, t, lam(A0, b)),
+    ev: Eq(Tm, v, subst(b, single(x)))
+  ): InvStepApp(t, x, v)
+  isa_l<f2: Tm>(s: Step(t, f2), ev: Eq(Tm, v, app(f2, x))): InvStepApp(t, x, v)
+  isa_r<x2: Tm>(s: Step(x, x2), ev: Eq(Tm, v, app(t, x2))): InvStepApp(t, x, v)
+}
+
+theorem invert_step_app<t: Tm, x: Tm, v: Tm>(s: Step(app(t, x), v)): InvStepApp(t, x, v) {
+  match s -> InvStepApp(t, x, v) {
+    s_beta(A0, b, a) => isa_beta(refl(), refl())
+    s_app_l(f, f2, a, h) => isa_l(h, refl())
+    s_app_r(f, a, a2, h) => isa_r(h, refl())
+  }
+}
+
+def NeuP(A: Ty, B: Ty, t: Tm, x: Tm): Prop := (Red(A, x)) -> Red(B, app(t, x))
+
+// A reduct of an application of a neutral term is reducible, given that the head's reducts and
+// the argument's reducts are.
+theorem neutral_app_reduct(
+  A: Ty,
+  B: Ty,
+  ca: CrAll(A),
+  cb: CrAll(B),
+  t: Tm,
+  n: Neutral(t),
+  k: ∀ u: Tm. (Step(t, u)) -> Red(arr(A, B), u),
+  x: Tm,
+  hx: Red(A, x),
+  ih: ∀ x2: Tm. (Step(x, x2)) -> NeuP(A, B, t, x2),
+  v: Tm,
+  s: Step(app(t, x), v)
+): Red(B, v) {
+  match invert_step_app(s) -> Red(B, v) {
+    isa_beta(A0, b, e, ev) => False_elim(neutral_lam(Eq_subst(Neutral, e, n)))
+    isa_l(f2, s2, ev) => Eq_subst(y => Red(B, y), Eq_sym(ev), k(f2, s2)(x, hx))
+    isa_r(
+      x2,
+      s2,
+      ev
+    ) => Eq_subst(y => Red(B, y), Eq_sym(ev), ih(x2, s2, and_left(and_right(ca))(x, x2, hx, s2)))
+  }
+}
+
+// An application of a neutral term is reducible once all its reducts are.
+theorem red_neutral_app(
+  A: Ty,
+  B: Ty,
+  ca: CrAll(A),
+  cb: CrAll(B),
+  t: Tm,
+  n: Neutral(t),
+  k: ∀ u: Tm. (Step(t, u)) -> Red(arr(A, B), u),
+  x: Tm,
+  hs: SN(x)
+): NeuP(A, B, t, x) {
+  sn_induction(
+    NeuP(A, B, t),
+    x0 => kx => ih => hx => and_right(
+      and_right(cb)
+    )(app(t, x0), neu_app(), v => s => neutral_app_reduct(A, B, ca, cb, t, n, k, x0, hx, ih, v, s)),
+    x,
+    hs
+  )
+}
+
+theorem cr_arr(A1: Ty, B1: Ty, ca: CrAll(A1), cb: CrAll(B1)): CrAll(arr(A1, B1)) {
+  and_intro(
+    t => h => sn_app_l(
+      and_left(
+        cb
+      )(
+        app(t, tvar(zero)),
+        h(
+          tvar(zero),
+          and_right(and_right(ca))(tvar(zero), neu_var(), u => s => False_elim(no_step_var(s)))
+        )
+      )
+    ),
+    and_intro(
+      t => u => h => s => w => hw => and_left(
+        and_right(cb)
+      )(app(t, w), app(u, w), h(w, hw), s_app_l(s)),
+      t => n => k => w => hw => red_neutral_app(A1, B1, ca, cb, t, n, k, w, and_left(ca)(w, hw), hw)
+    )
+  )
+}
+
+theorem cr(A: Ty): CrAll(A) {
+  match A -> CrAll(A) {
+    tunit => and_intro(
+      t => h => h,
+      and_intro(t => u => h => s => sn_step(h, s), t => n => k => sn_intro(k))
+    )
+    arr(A1, B1) => cr_arr(A1, B1, cr(A1), cr(B1))
+  }
+}
+
+theorem red_var(A: Ty, i: Nat): Red(A, tvar(i)) {
+  and_right(and_right(cr(A)))(tvar(i), neu_var(), u => s => False_elim(no_step_var(s)))
+}
+
+// What a step from a lambda can be.
+inductive InvStepLam(A: Ty, b: Tm, f2: Tm): Prop {
+  isl<b2: Tm>(s: Step(b, b2), e: Eq(Tm, f2, lam(A, b2))): InvStepLam(A, b, f2)
+}
+
+theorem invert_step_lam<A: Ty, b: Tm, f2: Tm>(s: Step(lam(A, b), f2)): InvStepLam(A, b, f2) {
+  match s -> InvStepLam(A, b, f2) {
+    s_lam(A0, b0, b2, h) => isl(h, refl())
+  }
+}
+
+fn lam_ty(t: Tm) -> Ty {
+  match t -> Ty {
+    tvar(i) => tunit
+    lam(A, b) => A
+    app(f, a) => tunit
+    tstar => tunit
+  }
+}
+
+fn lam_body(t: Tm) -> Tm {
+  match t -> Tm {
+    tvar(i) => t
+    lam(A, b) => b
+    app(f, a) => t
+    tstar => t
+  }
+}
+
+def BetaHyp(A: Ty, B: Ty, b: Tm): Prop := ∀ w: Tm. (Red(A, w)) -> Red(B, subst(b, single(w)))
+
+def BetaP1(
+  A: Ty,
+  B: Ty,
+  b: Tm
+): Prop := ∀ w: Tm. (SN(w)) -> (Red(A, w)) -> (BetaHyp(A, B, b)) -> Red(B, app(lam(A, b), w))
+
+def BetaP2(
+  A: Ty,
+  B: Ty,
+  b: Tm,
+  w: Tm
+): Prop := (Red(A, w)) -> (BetaHyp(A, B, b)) -> Red(B, app(lam(A, b), w))
+
+theorem beta_step(
+  A: Ty,
+  B: Ty,
+  ca: CrAll(A),
+  cb: CrAll(B),
+  b: Tm,
+  w: Tm,
+  hsw: SN(w),
+  hw: Red(A, w),
+  hyp: BetaHyp(A, B, b),
+  ih1: ∀ b2: Tm. (Step(b, b2)) -> BetaP1(A, B, b2),
+  ih2: ∀ w2: Tm. (Step(w, w2)) -> BetaP2(A, B, b, w2),
+  v: Tm,
+  s: Step(app(lam(A, b), w), v)
+): Red(B, v) {
+  match invert_step_app(s) -> Red(B, v) {
+    isa_beta(
+      A0,
+      b0,
+      e,
+      ev
+    ) => Eq_subst(
+      y => Red(B, y),
+      Eq_sym(ev),
+      Eq_subst(y => Red(B, subst(y, single(w))), Eq_congr(lam_body, e), hyp(w, hw))
+    )
+    isa_l(f2, s2, ev) => match invert_step_lam(s2) -> Red(B, v) {
+      isl(
+        b2,
+        s3,
+        e2
+      ) => Eq_subst(
+        y => Red(B, y),
+        Eq_sym(ev),
+        Eq_subst(
+          y => Red(B, app(y, w)),
+          Eq_sym(e2),
+          ih1(
+            b2,
+            s3,
+            w,
+            hsw,
+            hw,
+            w2 => hw2 => and_left(
+              and_right(cb)
+            )(subst(b, single(w2)), subst(b2, single(w2)), hyp(w2, hw2), step_subst(s3, single(w2)))
+          )
+        )
+      )
+    }
+    isa_r(
+      x2,
+      s2,
+      ev
+    ) => Eq_subst(
+      y => Red(B, y),
+      Eq_sym(ev),
+      ih2(x2, s2, and_left(and_right(ca))(w, x2, hw, s2), hyp)
+    )
+  }
+}
+
+// Beta expansion: a redex whose contractum is reducible for every reducible argument is reducible.
+theorem red_beta(
+  A: Ty,
+  B: Ty,
+  ca: CrAll(A),
+  cb: CrAll(B),
+  b: Tm,
+  hb: SN(b),
+  w: Tm,
+  hw: SN(w),
+  rw: Red(A, w),
+  hyp: BetaHyp(A, B, b)
+): Red(B, app(lam(A, b), w)) {
+  sn_induction(
+    BetaP1(A, B),
+    b0 => kb => ihb => w0 => hw0 => rw0 => hyp0 => sn_induction(
+      BetaP2(A, B, b0),
+      w1 => kw => ihw => rw1 => hyp1 => and_right(
+        and_right(cb)
+      )(
+        app(lam(A, b0), w1),
+        neu_app(),
+        v => s => beta_step(A, B, ca, cb, b0, w1, sn_intro(kw), rw1, hyp1, ihb, ihw, v, s)
+      ),
+      w0,
+      hw0,
+      rw0,
+      hyp0
+    ),
+    b,
+    hb,
+    w,
+    hw,
+    rw,
+    hyp
+  )
+}
+
+// ---- the fundamental lemma ------------------------------------------------------------------
+
+def RedSub(
+  sigma: (Nat) -> Tm,
+  G: List(Ty)
+): Prop := ∀ i: Nat. ∀ C: Ty. (Has(G, i, C)) -> Red(C, sigma(i))
+
+theorem redsub_extend_at(
+  sigma: (Nat) -> Tm,
+  G: List(Ty),
+  A: Ty,
+  w: Tm,
+  rw: Red(A, w),
+  rs: RedSub(sigma, G),
+  i: Nat,
+  C: Ty,
+  h: Has(cons(Ty, A, G), i, C)
+): Red(C, extend(w, sigma, i)) {
+  match i -> Red(C, extend(w, sigma, i)) {
+    zero => match h -> Red(C, w) {
+      has_here(g, a) => rw
+    }
+    succ(m) => rs(m, C, has_pred(h))
+  }
+}
+
+// The binder case: the body is reducible for every reducible value of the bound variable.
+theorem lam_red(
+  A: Ty,
+  B: Ty,
+  b: Tm,
+  sigma: (Nat) -> Tm,
+  G: List(Ty),
+  ihb: ∀ tau: (Nat) -> Tm. (RedSub(tau, cons(Ty, A, G))) -> Red(B, subst(b, tau)),
+  rs: RedSub(sigma, G)
+): Red(arr(A, B), lam(A, subst(b, up(sigma)))) {
+  w => hw => red_beta(
+    A,
+    B,
+    cr(A),
+    cr(B),
+    subst(b, up(sigma)),
+    sn_of_subst(
+      subst(b, up(sigma)),
+      single(tvar(zero)),
+      and_left(
+        cr(B)
+      )(
+        subst(subst(b, up(sigma)), single(tvar(zero))),
+        Eq_subst(
+          y => Red(B, y),
+          Eq_sym(subst_up_single(b, sigma, tvar(zero))),
+          ihb(
+            extend(tvar(zero), sigma),
+            i => C => h => redsub_extend_at(sigma, G, A, tvar(zero), red_var(A, zero), rs, i, C, h)
+          )
+        )
+      )
+    ),
+    w,
+    and_left(cr(A))(w, hw),
+    hw,
+    w2 => hw2 => Eq_subst(
+      y => Red(B, y),
+      Eq_sym(subst_up_single(b, sigma, w2)),
+      ihb(extend(w2, sigma), i => C => h => redsub_extend_at(sigma, G, A, w2, hw2, rs, i, C, h))
+    )
+  )
+}
+
+theorem fundamental<G: List(
+  Ty
+), t: Tm, A: Ty>(
+  h: Typing(G, t, A),
+  sigma: (Nat) -> Tm,
+  rs: RedSub(sigma, G)
+): Red(A, subst(t, sigma)) {
+  match h -> Red(A, subst(t, sigma)) {
+    t_var(G1, i, A1, hv) => rs(i, A1, hv)
+    t_lam(
+      G1,
+      A1,
+      B1,
+      b,
+      hb
+    ) => lam_red(A1, B1, b, sigma, G1, tau => rt => fundamental(hb, tau, rt), rs)
+    t_app(
+      G1,
+      A1,
+      B1,
+      f,
+      a,
+      hf,
+      ha
+    ) => fundamental(hf, sigma, rs)(subst(a, sigma), fundamental(ha, sigma, rs))
+    t_star(G1) => sn_star()
+  }
+}
+
+// Every well-typed term is strongly normalizing.
+theorem strong_normalization<G: List(Ty), t: Tm, A: Ty>(h: lc!(`${G} |- ${t} : ${A}`)): SN(t) {
+  sn_of_subst(
+    t,
+    tvar,
+    and_left(cr(A))(subst(t, tvar), fundamental(h, tvar, i => C => hv => red_var(C, i)))
+  )
+}

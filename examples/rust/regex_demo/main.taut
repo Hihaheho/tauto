@@ -1,0 +1,62 @@
+fn main() {
+  match Regex.new(&"a+b") {
+    Ok(re) => {
+      perform show("match", Regex.is_match(&re, &"xaaab"))
+      perform show("miss", Regex.is_match(&re, &"xyz"))
+      perform show("source", Regex.to_text(&re))
+      match Regex.find(&re, &"xaaab") {
+        Some(m) => {
+          perform show("found", Match.as_str(&m))
+          perform show("start", Match.start(&m))
+        }
+        None => perform show("found", "none")
+      }
+      match Regex.captures(&re, &"xaaab") {
+        Some(c) => perform show("groups", Captures.len(&c))
+        None => perform show("groups", 0)
+      }
+      perform show("shortest", Regex.shortest_match(&re, &"xaaab"))
+      perform show("from", Regex.shortest_match_at(&re, &"xaaab", 3))
+      let words = "ab aab b aaab"
+      var more_found = true
+      var &found = Regex.find_iter(&re, &words)
+      while more_found {
+        match Matches.next(&mut found) {
+          Some(m) => perform show("each", Match.as_str(&m))
+          None => { more_found := false }
+        }
+      }
+      let pair = "ab aab"
+      var more_groups = true
+      var &groups = Regex.captures_iter(&re, &pair)
+      while more_groups {
+        match CaptureMatches.next(&mut groups) {
+          Some(c) => perform show("each group", Captures.len(&c))
+          None => { more_groups := false }
+        }
+      }
+      let digits = "1ab2aab3"
+      var more_parts = true
+      var &parts = Regex.split(&re, &digits)
+      while more_parts {
+        match Split.next(&mut parts) {
+          Some(p) => perform show("part", p)
+          None => { more_parts := false }
+        }
+      }
+      var more_two = true
+      var &two = Regex.splitn(&re, &digits, 2)
+      while more_two {
+        match SplitN.next(&mut two) {
+          Some(p) => perform show("part of two", p)
+          None => { more_two := false }
+        }
+      }
+      perform show("replace", Regex.replace(&re, &"ab aab", &"<>"))
+      perform show("replace_all", Regex.replace_all(&re, &"ab aab", &"<>"))
+      perform show("replacen", Regex.replacen(&re, &"ab aab aaab", 2, &"<>"))
+    }
+    Err(e) => perform show("bad", RegexError.to_text(&e))
+  }
+}
+main()

@@ -1,0 +1,149 @@
+fn add(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(add(k, m))
+  }
+}
+
+fn mul(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => zero
+    succ(k) => add(m, mul(k, m))
+  }
+}
+
+inductive Le(n: Nat): (Nat) -> Prop {
+  le_refl(): Le(n, n)
+  le_step<m: Nat>(h: Le(n, m)): Le(n, succ(m))
+}
+
+def Lt(n: Nat, m: Nat): Prop := Le(succ(n), m)
+
+inductive Dvd(a: Nat, b: Nat): Prop {
+  dvd_intro(k: Nat, h: Eq(Nat, mul(a, k), b)): Dvd(a, b)
+}
+
+syntax nat = ```par
+%start Stmt
+%title "nat"
+%%
+Stmt: Disj [Arrow Stmt];
+Disj: Conj { OrTok Conj };
+Conj: Rel { AndTok Rel };
+Rel: Sum RelTail;
+RelTail: EqTail | LeTail | LtTail | DvdTail;
+EqTail: Equals Sum;
+LeTail: LeTok Sum;
+LtTail: LtTok Sum;
+DvdTail: Bar Sum;
+Sum: Prod { Plus Prod };
+Prod: Atom { Star Atom };
+Atom: Num | Paren | Embed;
+Paren: LParen Sum RParen;
+Embed: TautoExpr;
+Num: /[0-9]+/;
+Equals: '=';
+LeTok: '<=';
+LtTok: '<';
+Bar: '|';
+Arrow: '->';
+AndTok: 'and';
+OrTok: 'or';
+Plus: '+';
+Star: '*';
+LParen: '(';
+RParen: ')';
+```
+
+fn nat_atom(t: nat_Atom) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => nat_sum(p.sum)
+    Embed(e) => e
+  }
+}
+
+fn nat_prod_rest(acc: SynExpr, rest: List(nat_Prod_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = nat_atom(r.atom)
+      nat_prod_rest(quote { mul($acc, $t) }, more)
+    }
+  }
+}
+
+fn nat_prod(p: nat_Prod) -> SynExpr ! {macro_error, Div} {
+  nat_prod_rest(nat_atom(p.atom), p.rep)
+}
+
+fn nat_sum_rest(acc: SynExpr, rest: List(nat_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = nat_prod(r.prod)
+      nat_sum_rest(quote { add($acc, $t) }, more)
+    }
+  }
+}
+
+fn nat_sum(s: nat_Sum) -> SynExpr ! {macro_error, Div} {
+  nat_sum_rest(nat_prod(s.prod), s.rep)
+}
+
+fn nat_rel(r: nat_Rel) -> SynExpr ! {macro_error, Div} {
+  let l = nat_sum(r.sum)
+  match r.rel_tail {
+    EqTail(t) => {
+      let x = nat_sum(t.sum)
+      quote { Eq(Nat, $l, $x) }
+    }
+    LeTail(t) => {
+      let x = nat_sum(t.sum)
+      quote { Le($l, $x) }
+    }
+    LtTail(t) => {
+      let x = nat_sum(t.sum)
+      quote { Lt($l, $x) }
+    }
+    DvdTail(t) => {
+      let x = nat_sum(t.sum)
+      quote { Dvd($l, $x) }
+    }
+  }
+}
+
+fn nat_conj(first: nat_Rel, rest: List(nat_Conj_Rep1)) -> SynExpr ! {macro_error, Div} {
+  let l = nat_rel(first)
+  match rest {
+    Nil => l
+    Cons(r, more) => {
+      let x = nat_conj(r.rel, more)
+      quote { And($l, $x) }
+    }
+  }
+}
+
+fn nat_disj(first: nat_Conj, rest: List(nat_Disj_Rep1)) -> SynExpr ! {macro_error, Div} {
+  let l = nat_conj(first.rel, first.rep)
+  match rest {
+    Nil => l
+    Cons(r, more) => {
+      let x = nat_disj(r.conj, more)
+      quote { Or($l, $x) }
+    }
+  }
+}
+
+fn nat_stmt(s: nat_Stmt) -> SynExpr ! {macro_error, Div} {
+  let l = nat_disj(s.disj.conj, s.disj.rep)
+  match s.opt {
+    None => l
+    Some(o) => {
+      let r = nat_stmt(o.stmt)
+      ExPi(Cons(SynParam { name: None, ty: l }, Nil), r, None, s.span)
+    }
+  }
+}
+
+macro nat = nat_stmt

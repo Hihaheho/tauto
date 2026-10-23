@@ -1,0 +1,482 @@
+import "../../std/Std.taut"
+
+inductive Ty(): Type {
+  tunit(): Ty
+  arr(a: Ty, b: Ty): Ty
+}
+
+inductive Tm(): Type {
+  tvar(i: Nat): Tm
+  lam(A: Ty, b: Tm): Tm
+  app(f: Tm, a: Tm): Tm
+  tstar(): Tm
+}
+
+// Renaming and substitution act on de Bruijn indices; going under a binder lifts the map.
+fn upR(xi: (Nat) -> Nat, n: Nat) -> Nat {
+  match n -> Nat {
+    zero => zero
+    succ(m) => succ(xi(m))
+  }
+}
+
+fn ren(t: Tm, xi: (Nat) -> Nat) -> Tm {
+  match t -> Tm {
+    tvar(i) => tvar(xi(i))
+    lam(A, b) => lam(A, ren(b, upR(xi)))
+    app(f, a) => app(ren(f, xi), ren(a, xi))
+    tstar => tstar
+  }
+}
+
+fn up(sigma: (Nat) -> Tm, n: Nat) -> Tm {
+  match n -> Tm {
+    zero => tvar(zero)
+    succ(m) => ren(sigma(m), succ)
+  }
+}
+
+fn subst(t: Tm, sigma: (Nat) -> Tm) -> Tm {
+  match t -> Tm {
+    tvar(i) => sigma(i)
+    lam(A, b) => lam(A, subst(b, up(sigma)))
+    app(f, a) => app(subst(f, sigma), subst(a, sigma))
+    tstar => tstar
+  }
+}
+
+fn single(a: Tm, n: Nat) -> Tm {
+  match n -> Tm {
+    zero => a
+    succ(m) => tvar(m)
+  }
+}
+
+inductive Has(): (List(Ty)) -> (Nat) -> (Ty) -> Prop {
+  has_here<G: List(Ty), A: Ty>(): Has(cons(A, G), zero, A)
+  has_there<G: List(Ty), A: Ty, B: Ty, i: Nat>(h: Has(G, i, A)): Has(cons(B, G), succ(i), A)
+}
+
+inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop {
+  t_var<G: List(Ty), i: Nat, A: Ty>(h: Has(G, i, A)): Typing(G, tvar(i), A)
+  t_lam<G: List(
+    Ty
+  ), A: Ty, B: Ty, b: Tm>(h: Typing(cons(A, G), b, B)): Typing(G, lam(A, b), arr(A, B))
+  t_app<G: List(
+    Ty
+  ), A: Ty, B: Ty, f: Tm, a: Tm>(
+    hf: Typing(G, f, arr(A, B)),
+    ha: Typing(G, a, A)
+  ): Typing(G, app(f, a), B)
+  t_star<G: List(Ty)>(): Typing(G, tstar, tunit)
+}
+
+inductive Value(): (Tm) -> Prop {
+  v_lam<A: Ty, b: Tm>(): Value(lam(A, b))
+  v_star(): Value(tstar)
+}
+
+// Full beta reduction, also under binders.
+inductive Step(): (Tm) -> (Tm) -> Prop {
+  s_beta<A: Ty, b: Tm, a: Tm>(): Step(app(lam(A, b), a), subst(b, single(a)))
+  s_lam<A: Ty, b: Tm, b2: Tm>(h: Step(b, b2)): Step(lam(A, b), lam(A, b2))
+  s_app_l<f: Tm, f2: Tm, a: Tm>(h: Step(f, f2)): Step(app(f, a), app(f2, a))
+  s_app_r<f: Tm, a: Tm, a2: Tm>(h: Step(a, a2)): Step(app(f, a), app(f, a2))
+}
+
+// Zero or more steps.
+inductive Steps(): (Tm) -> (Tm) -> Prop {
+  steps_refl<t: Tm>(): Steps(t, t)
+  steps_step<t: Tm, u: Tm, w: Tm>(s: Step(t, u), r: Steps(u, w)): Steps(t, w)
+}
+
+// ---- the `lc` notation: named binders, judgements and reductions ---------------------------------
+//
+// ``lc!(`x: unit |- fun y: unit. x : unit -> unit`)`` is `Typing(Cons(tunit, Nil), lam(tunit, tvar(1)), arr(tunit, tunit))`:
+// names become de Bruijn indices (the last binding of a context is index 0), `${e}` embeds a tauto term, a
+// context or a type, `t[u]` is `subst(t, single(u))`, and `t ~> u` and `t ~>* u` are `Step` and `Steps`.
+// A bare term is that term.
+
+syntax lc = ```par
+%start Stmt
+%title "lc"
+%%
+Stmt: Judgement | Reduction;
+Judgement: Ctx Turnstile Tm Colon Ty;
+Reduction: Tm [Arrows Tm];
+Arrows: StepStar | StepOne;
+Ctx: [CtxHead] { Comma Bind };
+CtxHead: Bind | CtxEmbed;
+CtxEmbed: TautoExpr;
+Bind: Name Colon Ty;
+Tm: Lam | Spine;
+Lam: KwFun Name Colon Ty Dot Tm;
+Spine: Postfix { Postfix };
+Postfix: Atom { LBracket Tm RBracket };
+Atom: VarAtom | StarAtom | Paren | Embed;
+VarAtom: Name;
+StarAtom: KwStar;
+Paren: LParen Tm RParen;
+Embed: TautoExpr;
+Ty: TyAtom [Arrow Ty];
+TyAtom: UnitTy | TyParen | TyEmbed;
+UnitTy: KwUnit;
+TyParen: LParen Ty RParen;
+TyEmbed: TautoExpr;
+KwFun: 'fun';
+KwStar: 'star';
+KwUnit: 'unit';
+Name: /[a-z][a-zA-Z0-9_']*/;
+Turnstile: '|-';
+StepStar: '~>*';
+StepOne: '~>';
+Arrow: '->';
+Colon: ':';
+Comma: ',';
+Dot: '.';
+LBracket: '[';
+RBracket: ']';
+LParen: '(';
+RParen: ')';
+```
+
+fn lc_ty_atom(t: lc_TyAtom) -> SynExpr ! {macro_error, Div} {
+  match t {
+    UnitTy(u) => quote { tunit }
+    TyParen(p) => lc_ty(p.ty)
+    TyEmbed(e) => e
+  }
+}
+
+fn lc_ty(t: lc_Ty) -> SynExpr ! {macro_error, Div} {
+  let a = lc_ty_atom(t.ty_atom)
+  match t.opt {
+    None => a
+    Some(o) => {
+      let b = lc_ty(o.ty)
+      quote { arr($a, $b) }
+    }
+  }
+}
+
+// The de Bruijn index of a name in the list of names in scope, innermost first.
+fn lc_index(env: List(Text), name: Text, span: SynSpan) -> SynExpr ! {macro_error, Div} {
+  match env {
+    Nil => syn_error(span, "unbound variable")
+    Cons(x, rest) => if x == name {
+      quote { zero }
+    } else {
+      let r = lc_index(rest, name, span)
+      quote { succ($r) }
+    }
+  }
+}
+
+fn lc_atom(env: List(Text), a: lc_Atom) -> SynExpr ! {macro_error, Div} {
+  match a {
+    VarAtom(v) => {
+      let i = lc_index(env, syn_ident(v.name).name, v.span)
+      quote { tvar($i) }
+    }
+    StarAtom(s) => quote { tstar }
+    Paren(p) => lc_tm(env, p.tm)
+    Embed(e) => e
+  }
+}
+
+fn lc_postfix_rest(
+  env: List(Text),
+  acc: SynExpr,
+  rest: List(lc_Postfix_Rep1)
+) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let u = lc_tm(env, r.tm)
+      lc_postfix_rest(env, quote { subst($acc, single($u)) }, more)
+    }
+  }
+}
+
+fn lc_postfix(env: List(Text), p: lc_Postfix) -> SynExpr ! {macro_error, Div} {
+  lc_postfix_rest(env, lc_atom(env, p.atom), p.rep)
+}
+
+fn lc_spine_rest(
+  env: List(Text),
+  acc: SynExpr,
+  rest: List(lc_Postfix)
+) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(p, more) => {
+      let a = lc_postfix(env, p)
+      lc_spine_rest(env, quote { app($acc, $a) }, more)
+    }
+  }
+}
+
+fn lc_tm(env: List(Text), t: lc_Tm) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Lam(l) => {
+      let ty = lc_ty(l.ty)
+      let body = lc_tm(Cons(syn_ident(l.name).name, env), l.tm)
+      quote { lam($ty, $body) }
+    }
+    Spine(s) => lc_spine_rest(env, lc_postfix(env, s.postfix), s.postfix_2)
+  }
+}
+
+// The context of a judgement: its names (innermost first) and the list of types.
+fn lc_env_rest(env: List(Text), rest: List(lc_Ctx_Rep1)) -> List(Text) ! {macro_error, Div} {
+  match rest {
+    Nil => env
+    Cons(r, more) => lc_env_rest(Cons(syn_ident(r.bind.name).name, env), more)
+  }
+}
+
+fn lc_ctx_env(c: lc_Ctx) -> List(Text) ! {macro_error, Div} {
+  match c.ctx_head {
+    None => lc_env_rest(Nil, c.rep)
+    Some(h) => match h {
+      Bind(b) => lc_env_rest(Cons(syn_ident(b.name).name, Nil), c.rep)
+      CtxEmbed(e) => lc_env_rest(Nil, c.rep)
+    }
+  }
+}
+
+fn lc_ctx_rest(acc: SynExpr, rest: List(lc_Ctx_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let ty = lc_ty(r.bind.ty)
+      lc_ctx_rest(quote { cons($ty, $acc) }, more)
+    }
+  }
+}
+
+fn lc_ctx(c: lc_Ctx) -> SynExpr ! {macro_error, Div} {
+  match c.ctx_head {
+    None => lc_ctx_rest(quote { nil }, c.rep)
+    Some(h) => match h {
+      Bind(b) => {
+        let ty = lc_ty(b.ty)
+        lc_ctx_rest(quote { cons($ty, nil) }, c.rep)
+      }
+      CtxEmbed(e) => lc_ctx_rest(e, c.rep)
+    }
+  }
+}
+
+fn lc_stmt(s: lc_Stmt) -> SynExpr ! {macro_error, Div} {
+  match s {
+    Judgement(j) => {
+      let g = lc_ctx(j.ctx)
+      let t = lc_tm(lc_ctx_env(j.ctx), j.tm)
+      let a = lc_ty(j.ty)
+      quote { Typing($g, $t, $a) }
+    }
+    Reduction(r) => {
+      let t = lc_tm(Nil, r.tm)
+      match r.opt {
+        None => t
+        Some(o) => {
+          let u = lc_tm(Nil, o.tm)
+          match o.arrows {
+            StepOne(k) => quote { Step($t, $u) }
+            StepStar(k) => quote { Steps($t, $u) }
+          }
+        }
+      }
+    }
+  }
+}
+
+macro lc = lc_stmt
+
+// `steps!(then(s1, s2, s3))` chains single steps into a proof of `Steps`. It reads its argument as a tauto
+// expression (an untyped macro); the kernel then checks that the steps follow one another.
+fn steps_chain(args: List(SynExpr)) -> SynExpr ! {macro_error, Div} {
+  match args {
+    Nil => quote { steps_refl() }
+    Cons(a, rest) => {
+      let r = steps_chain(rest)
+      quote { steps_step($a, $r) }
+    }
+  }
+}
+
+fn steps_expand(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+  match e {
+    ExApp(f, args, sp) => steps_chain(args)
+    _ => e
+  }
+}
+
+macro steps = steps_expand
+
+// ---- ``reduce!(`t`)``: a macro that finds the reduction ----------------------------------------------
+//
+// ``reduce!(`t`)`` reads a closed term written like in `lc!`, reduces it in normal order on a copy of the syntax
+// that has no types, and writes the proof of `Steps(t, nf)` that follows the same path. The kernel checks
+// that proof against whatever the theorem claims, so a wrong normal form is rejected.
+
+enum LTm {
+  LVar(u64)
+  LLam(LTm)
+  LApp(LTm, LTm)
+  LStar
+}
+
+struct LStep {
+  proof: SynExpr
+  next: LTm
+}
+
+fn lc_shift(t: LTm, c: u64, d: u64) -> LTm {
+  match t {
+    LVar(k) => if k < c { LVar(k) } else { LVar(k + d) }
+    LLam(b) => LLam(lc_shift(b, c + 1, d))
+    LApp(f, a) => LApp(lc_shift(f, c, d), lc_shift(a, c, d))
+    LStar => LStar
+  }
+}
+
+fn lc_unshift(t: LTm, c: u64) -> LTm {
+  match t {
+    LVar(k) => if k < c { LVar(k) } else { LVar(k - 1) }
+    LLam(b) => LLam(lc_unshift(b, c + 1))
+    LApp(f, a) => LApp(lc_unshift(f, c), lc_unshift(a, c))
+    LStar => LStar
+  }
+}
+
+fn lc_subst(t: LTm, j: u64, s: LTm) -> LTm {
+  match t {
+    LVar(k) => if k == j { s } else { LVar(k) }
+    LLam(b) => LLam(lc_subst(b, j + 1, lc_shift(s, 0, 1)))
+    LApp(f, a) => LApp(lc_subst(f, j, s), lc_subst(a, j, s))
+    LStar => LStar
+  }
+}
+
+fn lc_beta(b: LTm, a: LTm) -> LTm {
+  lc_unshift(lc_subst(b, 0, lc_shift(a, 0, 1)), 0)
+}
+
+fn lc_step(t: LTm) -> Option(LStep) {
+  match t {
+    LApp(f, a) => match f {
+      LLam(b) => Some(LStep { proof: quote { s_beta() }, next: lc_beta(b, a) })
+      _ => match lc_step(f) {
+        Some(s) => {
+          let p = s.proof
+          Some(LStep { proof: quote { s_app_l($p) }, next: LApp(s.next, a) })
+        }
+        None => match lc_step(a) {
+          Some(s) => {
+            let p = s.proof
+            Some(LStep { proof: quote { s_app_r($p) }, next: LApp(f, s.next) })
+          }
+          None => None
+        }
+      }
+    }
+    LLam(b) => match lc_step(b) {
+      Some(s) => {
+        let p = s.proof
+        Some(LStep { proof: quote { s_lam($p) }, next: LLam(s.next) })
+      }
+      None => None
+    }
+    LVar(k) => None
+    LStar => None
+  }
+}
+
+fn lc_chain(t: LTm, fuel: u64) -> SynExpr {
+  if fuel == 0 { quote { steps_refl() } } else {
+    match lc_step(t) {
+      None => quote { steps_refl() }
+      Some(s) => {
+        let p = s.proof
+        let rest = lc_chain(s.next, fuel - 1)
+        quote { steps_step($p, $rest) }
+      }
+    }
+  }
+}
+
+fn lc_name(e: SynExpr) -> Text {
+  match e {
+    ExVar(id) => id.name
+    _ => "?"
+  }
+}
+
+fn lc_bad(sp: SynSpan) -> LTm ! {macro_error} {
+  syn_error(sp, "reduce! reads a term built from tvar, lam, app and tstar")
+}
+
+// An index written `zero`, `succ(n)` or as a literal.
+fn lc_read_index(sp: SynSpan, e: SynExpr) -> u64 ! {macro_error} {
+  match e {
+    ExVar(
+      id
+    ) => if id.name == "zero" { 0 } else { syn_error(
+      id.span,
+      "an index is zero, succ(n) or a literal"
+    ) }
+    ExNat(text, sp2) => lc_digits(text, sp2)
+    ExApp(f, args, sp2) => match args {
+      Cons(
+        n,
+        Nil
+      ) => if lc_name(
+        f
+      ) == "succ" { lc_read_index(
+        sp2,
+        n
+      ) + 1 } else { syn_error(sp2, "an index is zero, succ(n) or a literal") }
+      _ => syn_error(sp2, "an index is zero, succ(n) or a literal")
+    }
+    _ => syn_error(sp, "an index is zero, succ(n) or a literal")
+  }
+}
+
+fn lc_digits(text: Text, sp: SynSpan) -> u64 ! {macro_error} {
+  if text == "0" { 0 } else { if text == "1" { 1 } else { if text == "2" { 2 } else { if text == "3" { 3 } else { syn_error(
+    sp,
+    "this example reads indices up to 3"
+  ) } } } }
+}
+
+fn lc_read(sp: SynSpan, e: SynExpr) -> LTm ! {macro_error} {
+  match e {
+    ExVar(id) => if id.name == "tstar" { LStar } else { lc_bad(id.span) }
+    ExApp(f, args, sp2) => lc_read_app(sp2, lc_name(f), args)
+    _ => lc_bad(sp)
+  }
+}
+
+fn lc_read_app(sp: SynSpan, name: Text, args: List(SynExpr)) -> LTm ! {macro_error} {
+  match args {
+    Cons(x, Nil) => if name == "tvar" { LVar(lc_read_index(sp, x)) } else { lc_bad(sp) }
+    Cons(x, Cons(y, Nil)) => if name == "lam" { LLam(lc_read(sp, y)) } else {
+      if name == "app" { LApp(lc_read(sp, x), lc_read(sp, y)) } else { lc_bad(sp) }
+    }
+    _ => lc_bad(sp)
+  }
+}
+
+fn lc_reduce(s: lc_Stmt) -> SynExpr ! {macro_error, Div} {
+  match s {
+    Judgement(j) => syn_error(j.span, "reduce! takes a term, not a judgement")
+    Reduction(r) => {
+      let t = lc_tm(Nil, r.tm)
+      lc_chain(lc_read(r.span, t), 100)
+    }
+  }
+}
+
+macro reduce = lc_reduce

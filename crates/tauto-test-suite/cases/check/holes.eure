@@ -1,0 +1,48 @@
+// A hole `?h` is a step not written yet. The kernel reports it and accepts
+// nothing that holds one, nor anything that uses what holds one.
+
+@ cases.a-hole-leaves-a-declaration-incomplete
+parses = true
+source = ```tauto
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+theorem plus_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
+  match n -> Eq(Nat, plus(n, zero), n) {
+    zero => refl(Nat, zero)
+    succ(k) => ?step
+  }
+}
+```
+checks.plus = "ok"
+checks.plus_zero = "incomplete: ?step"
+
+@ cases.what-uses-an-incomplete-declaration-is-incomplete
+parses = true
+source = ```tauto
+theorem both<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  and_intro(?l, ?r)
+}
+theorem again<A: Prop, B: Prop>(p: And(A, B)): And(B, A) { both(p) }
+```
+checks.both = "incomplete: ?l, ?r"
+checks.again = "incomplete: uses both"
+
+@ cases.a-hole-is-not-a-type
+parses = true
+source = ```tauto
+theorem t(p: {?P}): True { star }
+```
+checks.t = "error: type of the hole `?P`"
+
+@ cases.a-hole-written-twice-is-rejected
+parses = true
+source = ```tauto
+theorem both<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  and_intro(?x, ?x)
+}
+```
+checks.both = "error: written twice"

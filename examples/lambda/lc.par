@@ -1,0 +1,40 @@
+%start Stmt
+%title "lc"
+%%
+Stmt: Judgement | Reduction;
+Judgement: Ctx Turnstile Tm Colon Ty;
+Reduction: Tm [Arrows Tm];
+Arrows: StepStar | StepOne;
+Ctx: [CtxHead] { Comma Bind };
+CtxHead: Bind | CtxEmbed;
+CtxEmbed: TautoExpr;
+Bind: Name Colon Ty;
+Tm: Lam | Spine;
+Lam: KwFun Name Colon Ty Dot Tm;
+Spine: Postfix { Postfix };
+Postfix: Atom { LBracket Tm RBracket };
+Atom: VarAtom | StarAtom | Paren | Embed;
+VarAtom: Name;
+StarAtom: KwStar;
+Paren: LParen Tm RParen;
+Embed: TautoExpr;
+Ty: TyAtom [Arrow Ty];
+TyAtom: UnitTy | TyParen | TyEmbed;
+UnitTy: KwUnit;
+TyParen: LParen Ty RParen;
+TyEmbed: TautoExpr;
+KwFun: 'fun';
+KwStar: 'star';
+KwUnit: 'unit';
+Name: /[a-z][a-zA-Z0-9_']*/;
+Turnstile: '|-';
+StepStar: '~>*';
+StepOne: '~>';
+Arrow: '->';
+Colon: ':';
+Comma: ',';
+Dot: '.';
+LBracket: '[';
+RBracket: ']';
+LParen: '(';
+RParen: ')';

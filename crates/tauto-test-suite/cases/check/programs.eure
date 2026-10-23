@@ -1,0 +1,199 @@
+// Sugar for programs in the proof language: generics on a function, a `match`
+// inside a term, and a `match` on a term. Each is elaborated into the terms the
+// kernel already takes (implicit arguments, eliminator applications), and the
+// kernel checks the result.
+
+@ cases.a-function-takes-generics-as-implicit-arguments
+parses = true
+source = ```tauto
+inductive List(A: Type): Type {
+  nil(): List(A)
+  cons(h: A, t: List(A)): List(A)
+}
+fn len<A>(l: List(A)) -> Nat {
+  match l -> Nat {
+    nil => zero
+    cons(h, t) => succ(len(t))
+  }
+}
+theorem two(): Eq(Nat, len(cons(1, cons(2, nil))), 2) { refl() }
+```
+checks.len = "ok"
+checks.two = "ok"
+
+@ cases.a-match-on-a-term-is-a-case-analysis
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+fn lt(a: Nat, b: Nat) -> Yn {
+  match a -> Yn {
+    zero => match b -> Yn {
+      zero => no
+      succ(b2) => yes
+    }
+    succ(a2) => match b -> Yn {
+      zero => no
+      succ(b2) => lt(a2, b2)
+    }
+  }
+}
+fn max(a: Nat, b: Nat) -> Nat {
+  match lt(a, b) -> Nat {
+    no => a
+    yes => b
+  }
+}
+fn capped(n: Nat) -> Nat {
+  succ(match lt(n, 3) -> Nat {
+    no => 3
+    yes => n
+  })
+}
+theorem max_3_5(): Eq(Nat, max(3, 5), 5) { refl() }
+theorem capped_7(): Eq(Nat, capped(7), 4) { refl() }
+```
+checks.max = "ok"
+checks.capped = "ok"
+checks.max_3_5 = "ok"
+checks.capped_7 = "ok"
+
+@ cases.recursion-may-pass-through-a-match-on-a-term
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+fn even(n: Nat) -> Yn {
+  match n -> Yn {
+    zero => yes
+    succ(k) => match even(k) -> Yn {
+      no => yes
+      yes => no
+    }
+  }
+}
+fn evens(n: Nat) -> Nat {
+  match n -> Nat {
+    zero => zero
+    succ(k) => match even(k) -> Nat {
+      no => evens(k)
+      yes => succ(evens(k))
+    }
+  }
+}
+theorem evens_10(): Eq(Nat, evens(10), 5) { refl() }
+```
+checks.even = "ok"
+checks.evens = "ok"
+checks.evens_10 = "ok"
+
+@ cases.a-match-on-a-term-does-not-recurse-on-its-fields
+parses = true
+source = ```tauto
+fn pred(n: Nat) -> Nat {
+  match n -> Nat {
+    zero => zero
+    succ(k) => k
+  }
+}
+fn down(n: Nat) -> Nat {
+  match pred(n) -> Nat {
+    zero => zero
+    succ(k) => down(k)
+  }
+}
+```
+checks.pred = "ok"
+checks.down = "error: calls itself"
+
+@ cases.records-and-operators-are-sugar
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+fn nat_add(a: Nat, b: Nat) -> Nat {
+  match b -> Nat {
+    zero => a
+    succ(c) => succ(nat_add(a, c))
+  }
+}
+fn nat_lt_in(b: Nat, a: Nat) -> Yn {
+  match b -> Yn {
+    zero => no
+    succ(c) => match a -> Yn {
+      zero => yes
+      succ(d) => nat_lt_in(c, d)
+    }
+  }
+}
+fn nat_lt(a: Nat, b: Nat) -> Yn {
+  nat_lt_in(b, a)
+}
+inductive Point(): Type {
+  point(x: Nat, y: Nat): Point
+}
+fn sum(p: Point) -> Nat {
+  match p -> Nat {
+    Point { x, y } => x + y
+  }
+}
+theorem three(): Eq(Nat, sum(Point { y: 2, x: 1 }), 3) { refl() }
+theorem bigger(): Eq(Yn, 3 > 2, yes) { refl() }
+```
+checks.Yn = "ok"
+checks.nat_add = "ok"
+checks.nat_lt_in = "ok"
+checks.nat_lt = "ok"
+checks.Point = "ok"
+checks.sum = "ok"
+checks.three = "ok"
+checks.bigger = "ok"
+
+@ cases.fields-equality-and-lets-are-sugar
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+fn nat_eq(a: Nat, b: Nat) -> Yn {
+  match a -> Yn {
+    zero => match b -> Yn {
+      zero => yes
+      succ(b2) => no
+    }
+    succ(a2) => match b -> Yn {
+      zero => no
+      succ(b2) => nat_eq(a2, b2)
+    }
+  }
+}
+inductive Point(): Type {
+  point(x: Nat, y: Nat): Point
+}
+fn diagonal(p: Point) -> Yn {
+  let a = p.x
+  a == p.y
+}
+fn swapped(p: Point) -> Point {
+  let q = p
+  point(q.y, q.x)
+}
+theorem on(): Eq(Yn, diagonal(point(2, 2)), yes) { refl() }
+theorem off(): Eq(Yn, diagonal(point(2, 3)), no) { refl() }
+theorem swap(): Eq(Point, swapped(point(1, 2)), point(2, 1)) { refl() }
+```
+checks.Yn = "ok"
+checks.nat_eq = "ok"
+checks.Point = "ok"
+checks.diagonal = "ok"
+checks.swapped = "ok"
+checks.on = "ok"
+checks.off = "ok"
+checks.swap = "ok"
