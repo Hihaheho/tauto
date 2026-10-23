@@ -1,0 +1,23 @@
+theorem two_plus_two(): Eq(Nat, 2 + 2, 4) {
+  refl(Nat, 4)
+}
+
+theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  and_intro(B, A, and_right(A, B, p), and_left(A, B, p))
+}
+
+theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+axiom em(P: Prop): P ∨ ¬P
+
+theorem not_not(P: Prop, n: ¬¬P): P {
+  or_elim(P, Not(P), P, em(P), p => p, np => False_elim(P, not_elim(Not(P), n, np)))
+}
+
+// Rejected on purpose: `refl(Nat, 4)` proves `2 + 2 = 4`, not `= 5`, so
+// `check` reports this theorem as failing.
+theorem wrong(): Eq(Nat, 2 + 2, 5) {
+  refl(Nat, 4)
+}

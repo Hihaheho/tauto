@@ -1,0 +1,173 @@
+import "Dvd.taut"
+
+theorem add_one_r(n: Nat): nat!(`${n} + 1 = ${succ(n)}`) {
+  Eq_trans(add_succ_r(n, 0), succ_cong(add_zero_r(n)))
+}
+
+theorem add_add_comm(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  d: Nat
+): nat!(`(${a} + ${b}) + (${c} + ${d}) = (${a} + ${c}) + (${b} + ${d})`) {
+  let s1: nat!(
+    `(${a} + ${b}) + (${c} + ${d}) = ${a} + (${b} + (${c} + ${d}))`
+  ) = add_assoc(a, b, add(c, d))
+  let s2: nat!(`${b} + (${c} + ${d}) = ${c} + (${b} + ${d})`) = add_left_comm(b, c, d)
+  let s3: nat!(
+    `${a} + (${c} + (${b} + ${d})) = (${a} + ${c}) + (${b} + ${d})`
+  ) = Eq_sym(add_assoc(a, c, add(b, d)))
+  Eq_trans(s1, Eq_trans(Eq_congr(x => add(a, x), s2), s3))
+}
+
+theorem mul_two_r(n: Nat): nat!(`${n} * 2 = ${n} + ${n}`) {
+  let s1: nat!(`${n} * 2 = ${n} + ${n} * 1`) = mul_succ_r(n, 1)
+  Eq_trans(s1, Eq_congr(x => add(n, x), mul_one_r(n)))
+}
+
+theorem mul_two_l(n: Nat): nat!(`2 * ${n} = ${n} + ${n}`) {
+  Eq_trans(mul_comm(2, n), mul_two_r(n))
+}
+
+theorem two_mul_mul(a: Nat, b: Nat): nat!(`2 * ${a} * ${b} = ${a} * ${b} + ${b} * ${a}`) {
+  let t1: nat!(`2 * ${a} * ${b} = (${a} + ${a}) * ${b}`) = Eq_congr(x => mul(x, b), mul_two_l(a))
+  let t2: nat!(`(${a} + ${a}) * ${b} = ${a} * ${b} + ${a} * ${b}`) = mul_add_distrib_r(a, a, b)
+  let t3: nat!(
+    `${a} * ${b} + ${a} * ${b} = ${a} * ${b} + ${b} * ${a}`
+  ) = Eq_congr(x => add(mul(a, b), x), mul_comm(a, b))
+  Eq_trans(t1, Eq_trans(t2, t3))
+}
+
+theorem square_regroup(
+  a: Nat,
+  b: Nat
+): nat!(
+  `( ${a} * ${a} + ${b} * ${a} ) + (${a} * ${b} + ${b} * ${b}) = ${a} * ${a} + 2 * ${a} * ${b} + ${b} * ${b}`
+) {
+  let u1: nat!(
+    `( ${a} * ${a} + ${b} * ${a} ) + (${a} * ${b} + ${b} * ${b}) = ${a} * ${a} + (${b} * ${a} + (${a} * ${b} + ${b} * ${b}))`
+  ) = add_assoc(mul(a, a), mul(b, a), add(mul(a, b), mul(b, b)))
+  let u2: nat!(
+    `${b} * ${a} + (${a} * ${b} + ${b} * ${b}) = (${b} * ${a} + ${a} * ${b}) + ${b} * ${b}`
+  ) = Eq_sym(add_assoc(mul(b, a), mul(a, b), mul(b, b)))
+  let u3: nat!(
+    `(${b} * ${a} + ${a} * ${b}) + ${b} * ${b} = (${a} * ${b} + ${b} * ${a}) + ${b} * ${b}`
+  ) = Eq_congr(x => add(x, mul(b, b)), add_comm(mul(b, a), mul(a, b)))
+  let u4: nat!(
+    `(${a} * ${b} + ${b} * ${a}) + ${b} * ${b} = 2 * ${a} * ${b} + ${b} * ${b}`
+  ) = Eq_congr(x => add(x, mul(b, b)), Eq_sym(two_mul_mul(a, b)))
+  let u5: nat!(
+    `${b} * ${a} + (${a} * ${b} + ${b} * ${b}) = 2 * ${a} * ${b} + ${b} * ${b}`
+  ) = Eq_trans(u2, Eq_trans(u3, u4))
+  let u6: nat!(
+    `${a} * ${a} + ( ${b} * ${a} + (${a} * ${b} + ${b} * ${b}) ) = ${a} * ${a} + (2 * ${a} * ${b} + ${b} * ${b})`
+  ) = Eq_congr(x => add(mul(a, a), x), u5)
+  let u7: nat!(
+    `${a} * ${a} + (2 * ${a} * ${b} + ${b} * ${b}) = ${a} * ${a} + 2 * ${a} * ${b} + ${b} * ${b}`
+  ) = Eq_sym(add_assoc(mul(a, a), mul(mul(2, a), b), mul(b, b)))
+  Eq_trans(u1, Eq_trans(u6, u7))
+}
+
+theorem square_expand(
+  a: Nat,
+  b: Nat
+): nat!(
+  `( ${a} + ${b} ) * ${a} + (${a} + ${b}) * ${b} = (${a} * ${a} + ${b} * ${a}) + (${a} * ${b} + ${b} * ${b})`
+) {
+  let s2: nat!(`(${a} + ${b}) * ${a} = ${a} * ${a} + ${b} * ${a}`) = mul_add_distrib_r(a, b, a)
+  let s3: nat!(`(${a} + ${b}) * ${b} = ${a} * ${b} + ${b} * ${b}`) = mul_add_distrib_r(a, b, b)
+  let w2: nat!(
+    `( ${a} + ${b} ) * ${a} + (${a} + ${b}) * ${b} = (${a} * ${a} + ${b} * ${a}) + (${a} + ${b}) * ${b}`
+  ) = Eq_congr(x => add(x, mul(add(a, b), b)), s2)
+  let w3: nat!(
+    `( ${a} * ${a} + ${b} * ${a} ) + (${a} + ${b}) * ${b} = (${a} * ${a} + ${b} * ${a}) + (${a} * ${b} + ${b} * ${b})`
+  ) = Eq_congr(x => add(add(mul(a, a), mul(b, a)), x), s3)
+  Eq_trans(w2, w3)
+}
+
+theorem square_add(
+  a: Nat,
+  b: Nat
+): nat!(`(${a} + ${b}) * (${a} + ${b}) = ${a} * ${a} + 2 * ${a} * ${b} + ${b} * ${b}`) {
+  let s1: nat!(
+    `(${a} + ${b}) * (${a} + ${b}) = (${a} + ${b}) * ${a} + (${a} + ${b}) * ${b}`
+  ) = mul_add_distrib_l(add(a, b), a, b)
+  Eq_trans(s1, Eq_trans(square_expand(a, b), square_regroup(a, b)))
+}
+
+theorem lt_trans<a: Nat, b: Nat, c: Nat>(
+  h1: nat!(`${a} < ${b}`),
+  h2: nat!(`${b} < ${c}`)
+): nat!(`${a} < ${c}`) {
+  le_trans(le_succ_r(h1), h2)
+}
+
+theorem lt_asymm<a: Nat, b: Nat>(h1: nat!(`${a} < ${b}`), h2: nat!(`${b} < ${a}`)): False {
+  lt_irrefl_of(le_trans(le_succ_r(h2), h1))
+}
+
+theorem le_zero_eq<n: Nat>(h: nat!(`${n} <= 0`)): nat!(`${n} = 0`) {
+  le_antisymm(h, zero_le(n))
+}
+
+theorem lt_succ_iff_mp<a: Nat, b: Nat>(h: nat!(`${a} < ${succ(b)}`)): nat!(`${a} <= ${b}`) {
+  le_pred(h)
+}
+
+theorem lt_trichotomy(a: Nat, b: Nat): nat!(`${a} < ${b} or ${a} = ${b} or ${b} < ${a}`) {
+  match a -> nat!(`${a} < ${b} or ${a} = ${b} or ${b} < ${a}`) {
+    zero => match b -> nat!(`0 < ${b} or 0 = ${b} or ${b} < 0`) {
+      zero => or_inr(or_inl(refl()))
+      succ(j) => or_inl(succ_le_succ(zero_le(j)))
+    }
+    succ(k) => match b -> nat!(`${succ(k)} < ${b} or ${succ(k)} = ${b} or ${b} < ${succ(k)}`) {
+      zero => or_inr(or_inr(succ_le_succ(zero_le(k))))
+      succ(
+        j
+      ) => or_elim(
+        lt_trichotomy(k, j),
+        h => or_inl(succ_le_succ(h)),
+        h => or_elim(h, e => or_inr(or_inl(succ_cong(e))), g => or_inr(or_inr(succ_le_succ(g))))
+      )
+    }
+  }
+}
+
+theorem add_le_cancel_l(
+  c: Nat,
+  a: Nat,
+  b: Nat
+): nat!(`${c} + ${a} <= ${c} + ${b} -> ${a} <= ${b}`) {
+  match c -> nat!(`${c} + ${a} <= ${c} + ${b} -> ${a} <= ${b}`) {
+    zero => h => h
+    succ(k) => h => add_le_cancel_l(k, a, b)(le_pred(h))
+  }
+}
+
+theorem mul_le_mono_l(c: Nat, a: Nat, b: Nat): nat!(`${a} <= ${b} -> ${c} * ${a} <= ${c} * ${b}`) {
+  match c -> nat!(`${a} <= ${b} -> ${c} * ${a} <= ${c} * ${b}`) {
+    zero => h => le_refl()
+    succ(
+      k
+    ) => h => le_trans(
+      add_le_mono_r(mul(k, a), a, b)(h),
+      add_le_mono_l(b, mul(k, a), mul(k, b))(mul_le_mono_l(k, a, b)(h))
+    )
+  }
+}
+
+theorem pos_of_dvd_succ(a: Nat, b: Nat): nat!(`${a} | ${succ(b)} -> 1 <= ${a}`) {
+  match a -> nat!(`${a} | ${succ(b)} -> 1 <= ${a}`) {
+    zero => h => Nat_noconf(nat!(`1 <= 0`), zero, succ(b), dvd_zero_l(h))
+    succ(k) => h => succ_le_succ(zero_le(k))
+  }
+}
+
+theorem dvd_antisymm_succ(
+  a: Nat,
+  b: Nat,
+  h1: nat!(`${a} | ${succ(b)}`),
+  h2: nat!(`${succ(b)} | ${a}`)
+): nat!(`${a} = ${succ(b)}`) {
+  le_antisymm(le_of_dvd(succ_le_succ(zero_le(b)), h1), le_of_dvd(pos_of_dvd_succ(a, b)(h1), h2))
+}

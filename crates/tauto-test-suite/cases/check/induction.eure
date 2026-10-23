@@ -1,0 +1,274 @@
+// What the kernel accepts and rejects once inductive types, eliminators and
+// structural recursion are in.
+
+@ cases.addition-by-structural-recursion
+parses = true
+source = ```tauto
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+theorem two_plus_three(): Eq(Nat, plus(2, 3), 5) { refl(Nat, 5) }
+```
+checks.plus = "ok"
+checks.two_plus_three = "ok"
+
+@ cases.n-plus-zero-by-induction
+parses = true
+source = ```tauto
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+theorem plus_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
+  match n -> Eq(Nat, plus(n, zero), n) {
+    zero => refl(Nat, zero)
+    succ(k) => Eq_subst(Nat, plus(k, zero), k, y => Eq(Nat, succ(plus(k, zero)), succ(y)), plus_zero(k), refl(Nat, succ(plus(k, zero))))
+  }
+}
+```
+checks.plus_zero = "ok"
+
+@ cases.a-non-structural-recursion-is-rejected
+parses = true
+source = ```tauto
+fn again(n: Nat) -> Nat {
+  match n -> Nat {
+    zero => zero
+    succ(k) => again(n)
+  }
+}
+```
+checks.again = "error: not structural"
+
+@ cases.a-wrong-theorem-is-rejected
+parses = true
+source = ```tauto
+theorem bad(): Eq(Nat, 2 + 2, 5) { refl(Nat, 4) }
+```
+checks.bad = "error: type mismatch"
+
+@ cases.eq-substitution
+parses = true
+source = ```tauto
+theorem sym(A: Type, a: A, b: A, e: Eq(A, a, b)): Eq(A, b, a) {
+  Eq_subst(A, a, b, y => Eq(A, y, a), e, refl(A, a))
+}
+```
+checks.sym = "ok"
+
+@ cases.head-of-a-nonempty-vector
+parses = true
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  vnil(): Vec(A, zero)
+  vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, succ(n))
+}
+fn head(A: Type, n: Nat, v: Vec(A, succ(n))) -> A {
+  Vec_rec(A, m => w => Nat_rec(q => Type, Unit, k => ih => A, m), star, k => h => t => ih => h, succ(n), v)
+}
+theorem first(): Eq(Nat, head(Nat, 0, vcons(Nat, 0, 7, vnil(Nat))), 7) { refl(Nat, 7) }
+```
+checks.head = "ok"
+checks.first = "ok"
+
+@ cases.an-arm-that-ignores-the-dependent-type-is-rejected
+parses = true
+source = ```tauto
+theorem t(n: Nat): Eq(Nat, n, n) {
+  match n -> Eq(Nat, n, n) {
+    zero => refl(Nat, zero)
+    succ(k) => refl(Nat, zero)
+  }
+}
+```
+checks.t = "error: type mismatch"
+
+@ cases.an-effectful-function-is-not-a-proof-term
+parses = true
+source = ```tauto
+effect ask: (q: Int) -> Int
+fn noisy() -> Nat ! {ask} { 0 }
+theorem a(): Eq(Nat, noisy(), 0) { refl(Nat, 0) }
+```
+checks.noisy = "skipped"
+checks.a = "error: not defined"
+
+@ cases.mutual-tree-and-forest-sizes
+parses = true
+source = ```tauto
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+mutual {
+  inductive Tree(): Type {
+    node(x: Nat, f: Forest): Tree
+  }
+  inductive Forest(): Type {
+    nil(): Forest
+    cons(t: Tree, rest: Forest): Forest
+  }
+}
+mutual {
+  fn tree_size(t: Tree) -> Nat {
+    match t -> Nat {
+      node(x, f) => succ(forest_size(f))
+    }
+  }
+  fn forest_size(f: Forest) -> Nat {
+    match f -> Nat {
+      nil => zero
+      cons(t, rest) => plus(tree_size(t), forest_size(rest))
+    }
+  }
+}
+```
+checks.tree_size = "ok"
+checks.forest_size = "ok"
+
+@ cases.mutual-recursion-must-follow-fields
+parses = true
+source = ```tauto
+mutual {
+  inductive Tree(): Type {
+    node(x: Nat, f: Forest): Tree
+  }
+  inductive Forest(): Type {
+    nil(): Forest
+    cons(t: Tree, rest: Forest): Forest
+  }
+}
+mutual {
+  fn tree_size(t: Tree) -> Nat {
+    match t -> Nat {
+      node(x, f) => succ(forest_size(f))
+    }
+  }
+  fn forest_size(f: Forest) -> Nat {
+    match f -> Nat {
+      nil => zero
+      cons(t, rest) => forest_size(f)
+    }
+  }
+}
+```
+checks.tree_size = "error: not structural"
+
+@ cases.match-unifies-the-index-of-a-family
+parses = true
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  vnil(): Vec(A, zero)
+  vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, succ(n))
+}
+fn head(A: Type, n: Nat, v: Vec(A, succ(n))) -> A {
+  match v -> A {
+    vcons(k, h, t) => h
+  }
+}
+fn second(A: Type, n: Nat, v: Vec(A, succ(succ(n)))) -> A {
+  match v -> A {
+    vcons(k, h, t) => match t -> A {
+      vcons(j, h2, t2) => h2
+    }
+  }
+}
+theorem only(A: Type, v: Vec(A, 0)): Eq(Vec(A, 0), v, vnil(A)) {
+  match v -> Eq(Vec(A, 0), v, vnil(A)) {
+    vnil => refl(Vec(A, 0), vnil(A))
+  }
+}
+theorem snd(): Eq(Nat, second(Nat, 0, vcons(Nat, 1, 4, vcons(Nat, 0, 9, vnil(Nat)))), 9) { refl(Nat, 9) }
+```
+checks.head = "ok"
+checks.second = "ok"
+checks.only = "ok"
+checks.snd = "ok"
+
+@ cases.a-possible-constructor-must-be-covered
+parses = true
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  vnil(): Vec(A, zero)
+  vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, succ(n))
+}
+fn head(A: Type, n: Nat, v: Vec(A, succ(n))) -> A {
+  match v -> A {
+    vnil => head(A, n, v)
+  }
+}
+```
+checks.head = "error: missing case"
+
+@ cases.constructors-are-injective-and-disjoint
+parses = true
+source = ```tauto
+inductive Ty(): Type {
+  base(): Ty
+  arr(a: Ty, b: Ty): Ty
+}
+theorem arr_inj(a: Ty, b: Ty, c: Ty, d: Ty, e: Eq(Ty, arr(a, b), arr(c, d))): Eq(Ty, a, c) {
+  Ty_noconf(Eq(Ty, a, c), arr(a, b), arr(c, d), e, p => q => p)
+}
+theorem base_not_arr(a: Ty, b: Ty, e: Eq(Ty, base, arr(a, b))): False {
+  Ty_noconf(False, base, arr(a, b), e)
+}
+```
+checks.arr_inj = "ok"
+checks.base_not_arr = "ok"
+
+@ cases.a-nested-inductive-recurses-through-the-list
+parses = true
+source = ```tauto
+inductive List(A: Type): Type {
+  nil(): List(A)
+  cons(h: A, t: List(A)): List(A)
+}
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+inductive Tree(): Type {
+  node(x: Nat, cs: List(Tree)): Tree
+}
+fn leaf(x: Nat) -> Tree { node(x, nil) }
+mutual {
+  fn size(t: Tree) -> Nat {
+    match t -> Nat {
+      node(x, cs) => succ(sizes(cs))
+    }
+  }
+  fn sizes(l: List(Tree)) -> Nat {
+    match l -> Nat {
+      nil => zero
+      cons(h, rest) => plus(size(h), sizes(rest))
+    }
+  }
+}
+theorem t(): Eq(Nat, size(node(7, cons(leaf(1), cons(leaf(2), nil)))), 3) { refl() }
+```
+checks.Tree = "ok"
+checks.size = "ok"
+checks.sizes = "ok"
+checks.t = "ok"
+
+@ cases.a-nested-occurrence-must-be-positive
+parses = true
+source = ```tauto
+inductive Fn(A: Type): Type {
+  mk(f: (A) -> Nat): Fn(A)
+}
+inductive Bad(): Type {
+  bad(x: Fn(Bad)): Bad
+}
+```
+checks.Bad = "error: negative"

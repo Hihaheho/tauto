@@ -1,0 +1,187 @@
+import "Base.taut"
+
+// Text as the proofs see it: its UTF-8 bytes.
+// Extraction maps `Text` onto Nib's `Text` and the functions marked below
+// onto Nib's builtins; their definitions here say what those builtins do.
+// Positions are byte offsets, as in Nib's `Text`. Once this file is read, a
+// literal "…" is a `Text`.
+
+inductive Text(): Type {
+  text(bytes: List(Nat)): Text
+}
+
+fn text_bytes(t: Text) -> List(Nat) {
+  match t -> List(Nat) {
+    text(bs) => bs
+  }
+}
+
+// Mapped: the length in bytes.
+fn text_len(t: Text) -> Nat {
+  list_length(text_bytes(t))
+}
+
+// Mapped: the byte at `i`.
+fn text_byte(t: Text, i: Nat) -> Option(Nat) {
+  list_nth(text_bytes(t), i)
+}
+
+// The byte at `i`; 0 past the end.
+fn text_byte_value(t: Text, i: Nat) -> Nat {
+  match text_byte(t, i) -> Nat {
+    none => zero
+    some(b) => b
+  }
+}
+
+// Whether a character starts at `i`: the end, or a byte that is not
+// `10xxxxxx`.
+fn text_boundary(t: Text, i: Nat) -> Yn {
+  match text_byte(t, i) -> Yn {
+    none => nat_eq(i, text_len(t))
+    some(b) => yn_or(nat_lt(b, 128), nat_le(192, b))
+  }
+}
+
+// Mapped: the bytes from `start` to `end`, when both are boundaries of
+// characters in order.
+fn text_slice(t: Text, start: Nat, end: Nat) -> Option(Text) {
+  match yn_and(
+    nat_le(start, end),
+    yn_and(text_boundary(t, start), text_boundary(t, end))
+  ) -> Option(Text) {
+    no => none
+    yes => some(text(list_take(nat_sub(end, start), list_drop(start, text_bytes(t)))))
+  }
+}
+
+// The slice, or "" when there is none.
+fn text_slice_or_empty(t: Text, start: Nat, end: Nat) -> Text {
+  match text_slice(t, start, end) -> Text {
+    none => ""
+    some(s) => s
+  }
+}
+
+// Mapped.
+fn text_concat(a: Text, b: Text) -> Text {
+  text(list_append(text_bytes(a), text_bytes(b)))
+}
+
+// Mapped: the parts one after another.
+fn text_concat_all(parts: List(Text)) -> Text {
+  match parts -> Text {
+    nil => text(nil)
+    cons(p, rest) => text_concat(p, text_concat_all(rest))
+  }
+}
+
+fn bytes_compare(a: List(Nat), b: List(Nat)) -> Ordering {
+  match a -> Ordering {
+    nil => match b -> Ordering {
+      nil => equal
+      cons(y, ys) => less
+    }
+    cons(x, xs) => match b -> Ordering {
+      nil => greater
+      cons(y, ys) => match nat_lt(x, y) -> Ordering {
+        yes => less
+        no => match nat_lt(y, x) -> Ordering {
+          yes => greater
+          no => bytes_compare(xs, ys)
+        }
+      }
+    }
+  }
+}
+
+// Mapped: byte by byte, a prefix first.
+fn text_compare(a: Text, b: Text) -> Ordering {
+  bytes_compare(text_bytes(a), text_bytes(b))
+}
+
+// Mapped.
+fn text_eq(a: Text, b: Text) -> Yn {
+  match text_compare(a, b) -> Yn {
+    less => no
+    equal => yes
+    greater => no
+  }
+}
+
+// The decimal digits of `n` before `acc`; `fuel` is more than the number
+// of digits.
+fn nat_digits(fuel: Nat, n: Nat, acc: List(Nat)) -> List(Nat) {
+  match fuel -> List(Nat) {
+    zero => acc
+    succ(f) => match nat_eq(nat_div(n, 10), 0) -> List(Nat) {
+      yes => cons(nat_add(nat_mod(n, 10), 48), acc)
+      no => nat_digits(f, nat_div(n, 10), cons(nat_add(nat_mod(n, 10), 48), acc))
+    }
+  }
+}
+
+// Mapped: `n` in decimal.
+fn text_of_nat(n: Nat) -> Text {
+  text(nat_digits(succ(n), n, nil))
+}
+
+// Mapped: the UTF-8 encoding of the character `c`; "" when `c` is not one
+// (a surrogate, or past 0x10FFFF).
+fn text_of_code_point(c: Nat) -> Text {
+  match nat_lt(c, 128) -> Text {
+    yes => text(cons(c, nil))
+    no => match nat_lt(c, 2048) -> Text {
+      yes => text(cons(nat_add(nat_div(c, 64), 192), cons(nat_add(nat_mod(c, 64), 128), nil)))
+      no => match yn_and(nat_le(55296, c), nat_lt(c, 57344)) -> Text {
+        yes => text(nil)
+        no => match nat_lt(c, 65536) -> Text {
+          yes => text(
+            cons(
+              nat_add(nat_div(c, 4096), 224),
+              cons(
+                nat_add(nat_mod(nat_div(c, 64), 64), 128),
+                cons(nat_add(nat_mod(c, 64), 128), nil)
+              )
+            )
+          )
+          no => match nat_lt(c, 1114112) -> Text {
+            yes => text(
+              cons(
+                nat_add(nat_div(c, 262144), 240),
+                cons(
+                  nat_add(nat_mod(nat_div(c, 4096), 64), 128),
+                  cons(
+                    nat_add(nat_mod(nat_div(c, 64), 64), 128),
+                    cons(nat_add(nat_mod(c, 64), 128), nil)
+                  )
+                )
+              )
+            )
+            no => text(nil)
+          }
+        }
+      }
+    }
+  }
+}
+
+theorem text_of_nat_42(): Eq(Text, text_of_nat(42), "42") {
+  refl()
+}
+
+theorem text_concat_ab(): Eq(Text, text_concat("a", "b"), "ab") {
+  refl()
+}
+
+theorem text_slice_cuts_bytes(): Eq(Option(Text), text_slice("héllo", 1, 3), some("é")) {
+  refl()
+}
+
+theorem text_slice_inside_a_character(): Eq(Option(Text), text_slice("héllo", 2, 3), none) {
+  refl()
+}
+
+theorem text_of_code_point_e(): Eq(Text, text_of_code_point(233), "é") {
+  refl()
+}

@@ -1,0 +1,69 @@
+import "Lib.taut"
+
+fn pred(n: Nat) -> Nat {
+  match n -> Nat {
+    zero => zero
+    succ(k) => k
+  }
+}
+
+theorem succ_inj<a: Nat, b: Nat>(h: Eq(Nat, succ(a), succ(b))): Eq(Nat, a, b) {
+  Eq_congr(pred, h)
+}
+
+theorem succ_cong<a: Nat, b: Nat>(h: Eq(Nat, a, b)): Eq(Nat, succ(a), succ(b)) {
+  Eq_congr(x => succ(x), h)
+}
+
+theorem add_zero_r(n: Nat): nat!(`${n} + 0 = ${n}`) {
+  match n -> nat!(`${n} + 0 = ${n}`) {
+    zero => refl()
+    succ(k) => succ_cong(add_zero_r(k))
+  }
+}
+
+theorem add_succ_r(n: Nat, m: Nat): nat!(`${n} + ${succ(m)} = ${succ(add(n, m))}`) {
+  match n -> nat!(`${n} + ${succ(m)} = ${succ(add(n, m))}`) {
+    zero => refl()
+    succ(k) => succ_cong(add_succ_r(k, m))
+  }
+}
+
+theorem add_comm(n: Nat, m: Nat): nat!(`${n} + ${m} = ${m} + ${n}`) {
+  match n -> nat!(`${n} + ${m} = ${m} + ${n}`) {
+    zero => Eq_sym(add_zero_r(m))
+    succ(k) => Eq_trans(succ_cong(add_comm(k, m)), Eq_sym(add_succ_r(m, k)))
+  }
+}
+
+theorem add_assoc(a: Nat, b: Nat, c: Nat): nat!(`(${a} + ${b}) + ${c} = ${a} + (${b} + ${c})`) {
+  match a -> nat!(`(${a} + ${b}) + ${c} = ${a} + (${b} + ${c})`) {
+    zero => refl()
+    succ(k) => succ_cong(add_assoc(k, b, c))
+  }
+}
+
+theorem add_cancel_l(a: Nat, b: Nat, c: Nat): nat!(`${a} + ${b} = ${a} + ${c} -> ${b} = ${c}`) {
+  match a -> nat!(`${a} + ${b} = ${a} + ${c} -> ${b} = ${c}`) {
+    zero => k => k
+    succ(k) => e => add_cancel_l(k, b, c)(succ_inj(e))
+  }
+}
+
+theorem add_cancel_r(a: Nat, b: Nat, c: Nat): nat!(`${a} + ${c} = ${b} + ${c} -> ${a} = ${b}`) {
+  h => add_cancel_l(c, a, b, Eq_trans(add_comm(c, a), Eq_trans(h, add_comm(b, c))))
+}
+
+theorem add_left_comm(a: Nat, b: Nat, c: Nat): nat!(`${a} + (${b} + ${c}) = ${b} + (${a} + ${c})`) {
+  Eq_trans(
+    Eq_sym(add_assoc(a, b, c)),
+    Eq_trans(Eq_congr(x => add(x, c), add_comm(a, b)), add_assoc(b, a, c))
+  )
+}
+
+theorem add_eq_zero_l(a: Nat, b: Nat): nat!(`${a} + ${b} = 0 -> ${a} = 0`) {
+  match a -> nat!(`${a} + ${b} = 0 -> ${a} = 0`) {
+    zero => e => refl()
+    succ(k) => e => Nat_noconf(Eq(Nat, succ(k), 0), succ(add(k, b)), zero, e)
+  }
+}

@@ -1,0 +1,183 @@
+import "Std.taut"
+
+// A port of lean/Proto/Nib/Row.lean (rows) and lean/Proto/Tags.lean (tags):
+// a row, or a collection of tags, is read as a set. `Mem` is membership in a
+// list; `Sub` and `Equiv` ignore order and repeats. Generic over the element
+// type, so a row of effects and a collection of tag names are the same thing.
+
+inductive Mem(A: Type, a: A): (List(A)) -> Prop {
+  mem_here(t: List(A)): Mem(A, a, cons(a, t))
+  mem_there(b: A, t: List(A), m: Mem(A, a, t)): Mem(A, a, cons(b, t))
+}
+
+fn append(A: Type, xs: List(A), ys: List(A)) -> List(A) {
+  match xs -> List(A) {
+    nil => ys
+    cons(h, t) => cons(h, append(A, t, ys))
+  }
+}
+
+def Sub(A: Type, r: List(A), s: List(A)): Prop := ∀ e: A. (Mem(A, e, r)) -> Mem(A, e, s)
+
+def Equiv(A: Type, r: List(A), s: List(A)): Prop := And(Sub(A, r, s), Sub(A, s, r))
+
+theorem Sub_refl<A: Type>(r: List(A)): Sub(A, r, r) {
+  e => m => m
+}
+
+theorem Sub_trans<A: Type, a: List(
+  A
+), b: List(A), c: List(A)>(h1: Sub(A, a, b), h2: Sub(A, b, c)): Sub(A, a, c) {
+  e => m => h2(e, h1(e, m))
+}
+
+theorem Equiv_refl<A: Type>(r: List(A)): Equiv(A, r, r) {
+  and_intro(Sub_refl(r), Sub_refl(r))
+}
+
+theorem Equiv_symm(A: Type, a: List(A), b: List(A), h: Equiv(A, a, b)): Equiv(A, b, a) {
+  and_intro(and_right(h), and_left(h))
+}
+
+theorem Equiv_trans(
+  A: Type,
+  a: List(A),
+  b: List(A),
+  c: List(A),
+  h1: Equiv(A, a, b),
+  h2: Equiv(A, b, c)
+): Equiv(A, a, c) {
+  and_intro(Sub_trans(and_left(h1), and_left(h2)), Sub_trans(and_right(h2), and_right(h1)))
+}
+
+// The pure row is a subrow of everything: there is no member of nil.
+theorem Mem_nil<A: Type, e: A>(C: Prop, m: Mem(A, e, nil(A))): C {
+  match m -> C {
+  }
+}
+
+theorem nil_sub<A: Type>(r: List(A)): Sub(A, nil(A), r) {
+  e => m => Mem_nil(Mem(A, e, r), m)
+}
+
+theorem mem_append_left<A: Type, e: A, xs: List(
+  A
+)>(ys: List(A), m: Mem(A, e, xs)): Mem(A, e, append(A, xs, ys)) {
+  match m -> Mem(A, e, append(A, xs, ys)) {
+    mem_here(t) => mem_here(A, e, append(A, t, ys))
+    mem_there(b, t, m2) => mem_there(A, e, b, append(A, t, ys), mem_append_left(ys, m2))
+  }
+}
+
+theorem mem_append_right<A: Type, e: A>(
+  xs: List(A),
+  ys: List(A),
+  m: Mem(A, e, ys)
+): Mem(A, e, append(A, xs, ys)) {
+  match xs -> Mem(A, e, append(A, xs, ys)) {
+    nil => m
+    cons(h, t) => mem_there(A, e, h, append(A, t, ys), mem_append_right(t, ys, m))
+  }
+}
+
+// Inversion of membership in an append; the inner match unifies the index
+// `cons(h, append(t, ys))` with the constructors of `Mem`.
+theorem mem_append_inv(
+  A: Type,
+  e: A,
+  xs: List(A),
+  ys: List(A),
+  m: Mem(A, e, append(A, xs, ys))
+): Or(Mem(A, e, xs), Mem(A, e, ys)) {
+  match xs -> Or(Mem(A, e, xs), Mem(A, e, ys)) {
+    nil => or_inr(m)
+    cons(h, t) => match m -> Or(Mem(A, e, cons(A, h, t)), Mem(A, e, ys)) {
+      mem_here(t2) => or_inl(mem_here(A, e, t))
+      mem_there(
+        b,
+        t2,
+        m2
+      ) => or_elim(
+        mem_append_inv(A, e, t, ys, m2),
+        r => or_inl(mem_there(A, e, h, t, r)),
+        r => or_inr(r)
+      )
+    }
+  }
+}
+
+// Order does not matter.
+theorem Sub_append_swap<A: Type>(a: List(A), b: List(A)): Sub(A, append(A, a, b), append(A, b, a)) {
+  e => m => or_elim(
+    mem_append_inv(A, e, a, b, m),
+    r => mem_append_right(b, a, r),
+    r => mem_append_left(a, r)
+  )
+}
+
+theorem append_comm<A: Type>(a: List(A), b: List(A)): Equiv(A, append(A, a, b), append(A, b, a)) {
+  and_intro(Sub_append_swap(a, b), Sub_append_swap(b, a))
+}
+
+// Repeats do not matter.
+theorem append_idem<A: Type>(a: List(A)): Equiv(A, append(A, a, a), a) {
+  and_intro(
+    e => m => or_elim(mem_append_inv(A, e, a, a, m), r => r, r => r),
+    e => m => mem_append_left(a, m)
+  )
+}
+
+// A row below both sides of an append is below the append.
+theorem append_sub<A: Type, a: List(
+  A
+), b: List(A), c: List(A)>(h1: Sub(A, a, c), h2: Sub(A, b, c)): Sub(A, append(A, a, b), c) {
+  e => m => or_elim(mem_append_inv(A, e, a, b, m), r => h1(e, r), r => h2(e, r))
+}
+
+theorem sub_append_left<A: Type>(a: List(A), b: List(A)): Sub(A, a, append(A, a, b)) {
+  e => m => mem_append_left(b, m)
+}
+
+theorem sub_append_right<A: Type>(a: List(A), b: List(A)): Sub(A, b, append(A, a, b)) {
+  e => m => mem_append_right(a, b, m)
+}
+
+theorem append_assoc_l<A: Type>(
+  a: List(A),
+  b: List(A),
+  c: List(A)
+): Sub(A, append(A, append(A, a, b), c), append(A, a, append(A, b, c))) {
+  e => m => or_elim(
+    mem_append_inv(A, e, append(A, a, b), c, m),
+    r => or_elim(
+      mem_append_inv(A, e, a, b, r),
+      q => mem_append_left(append(A, b, c), q),
+      q => mem_append_right(a, append(A, b, c), mem_append_left(c, q))
+    ),
+    r => mem_append_right(a, append(A, b, c), mem_append_right(b, c, r))
+  )
+}
+
+theorem append_assoc_r<A: Type>(
+  a: List(A),
+  b: List(A),
+  c: List(A)
+): Sub(A, append(A, a, append(A, b, c)), append(A, append(A, a, b), c)) {
+  e => m => or_elim(
+    mem_append_inv(A, e, a, append(A, b, c), m),
+    r => mem_append_left(c, mem_append_left(b, r)),
+    r => or_elim(
+      mem_append_inv(A, e, b, c, r),
+      q => mem_append_left(c, mem_append_right(a, b, q)),
+      q => mem_append_right(append(A, a, b), c, q)
+    )
+  )
+}
+
+theorem append_assoc<A: Type>(
+  a: List(A),
+  b: List(A),
+  c: List(A)
+): Equiv(A, append(A, append(A, a, b), c), append(A, a, append(A, b, c))) {
+  and_intro(append_assoc_l(a, b, c), append_assoc_r(a, b, c))
+}

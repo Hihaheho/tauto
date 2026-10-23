@@ -1,0 +1,29 @@
+%start Stmt
+%title "nat"
+%%
+Stmt: Disj [Arrow Stmt];
+Disj: Conj { OrTok Conj };
+Conj: Rel { AndTok Rel };
+Rel: Sum RelTail;
+RelTail: EqTail | LeTail | LtTail | DvdTail;
+EqTail: Equals Sum;
+LeTail: LeTok Sum;
+LtTail: LtTok Sum;
+DvdTail: Bar Sum;
+Sum: Prod { Plus Prod };
+Prod: Atom { Star Atom };
+Atom: Num | Paren | Embed;
+Paren: LParen Sum RParen;
+Embed: TautoExpr;
+Num: /[0-9]+/;
+Equals: '=';
+LeTok: '<=';
+LtTok: '<';
+Bar: '|';
+Arrow: '->';
+AndTok: 'and';
+OrTok: 'or';
+Plus: '+';
+Star: '*';
+LParen: '(';
+RParen: ')';
