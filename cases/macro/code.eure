@@ -1,0 +1,262 @@
+// Typed macros.
+
+@ cases.unroll-a-power
+files."unroll.nib" = ````nib
+fn pow(x: i64, n: u64) -> i64 ! {Div} {
+  if n == 0 { 1 } else { x * pow(x, n - 1) }
+}
+
+fn is_pow_call(f: Code) -> Bool {
+  match code_view(f) {
+    VConst(name) => name == "pow"
+    _ => false
+  }
+}
+
+fn unroll_pow(c: Code) -> SynExpr ! {macro_error, elab} {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(x, Cons(n, Nil)) => if is_pow_call(f) {
+        match code_view(n) {
+          VInt(text) => unroll_times(x, text)
+          _ => code_term(c)
+        }
+      } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+
+fn unroll_times(x: Code, text: Text) -> SynExpr ! {macro_error} {
+  if text == "3" {
+    quote {
+      let t = $x
+      t * t * t
+    }
+  } else { syn_error(code_span(x), "unroll handles only the exponent 3 in this example") }
+}
+
+macro unroll = unroll_pow
+````
+files."main.nib" = ````nib
+import "unroll.nib"
+fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
+perform show("c", cube(3))
+````
+shows = ["c = 27"]
+trace = ["unroll"]
+expands = ```nib
+fn cube(x: i64) -> i64 ! {Div} {
+  let t#1 = x
+  t#1 * t#1 * t#1
+}
+perform show("c", cube(3))
+```
+
+@ cases.a-macro-may-not-add-an-effect
+files."lib.nib" = ````nib
+fn trace_calls(c: Code) -> SynExpr {
+  quote {
+    let r = $c
+    perform show("value", r)
+    r
+  }
+}
+macro traced = trace_calls
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn area(w: i64, h: i64) -> i64 { traced!(w * h) }
+````
+macro_error = "macro.row_grew"
+
+@ cases.a-macro-may-not-change-the-type
+files."lib.nib" = ````nib
+fn to_text(c: Code) -> SynExpr { quote { "no" } }
+macro to_text = to_text
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(w: i64) -> i64 { to_text!(w + 1) }
+````
+macro_error = "macro.output_ill_typed"
+
+@ cases.an-atom-cannot-be-forged
+files."lib.nib" = ````nib
+fn forge(c: Code) -> SynExpr { ExAtom(999, code_span(c)) }
+macro forge = forge
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(w: i64) -> i64 { forge!(w + 1) }
+````
+macro_error = "macro.unknown_atom"
+
+@ cases.an-input-that-does-not-check-runs-no-macro
+files."lib.nib" = ````nib
+fn same(c: Code) -> SynExpr { code_term(c) }
+macro same = same
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(w: i64) -> i64 { same!(w + true) }
+````
+trace = []
+
+
+@ cases.unroll-leaves-a-variable-exponent
+files."lib.nib" = ````nib
+fn pow(x: i64, n: u64) -> i64 ! {Div} {
+  if n == 0 { 1 } else { x * pow(x, n - 1) }
+}
+
+fn is_pow_call(f: Code) -> Bool {
+  match code_view(f) {
+    VConst(name) => name == "pow"
+    _ => false
+  }
+}
+
+fn unroll_pow(c: Code) -> SynExpr ! {macro_error} {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(x, Cons(n, Nil)) => if is_pow_call(f) {
+        match code_view(n) {
+          VInt(text) => syn_error(code_span(c), "a literal exponent")
+          _ => code_term(c)
+        }
+      } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+
+macro unroll = unroll_pow
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn power(x: i64, n: u64) -> i64 ! {Div} { unroll!(pow(x, n)) }
+````
+expands = ```nib
+fn power(x: i64, n: u64) -> i64 ! {Div} { pow(x, n) }
+```
+
+@ cases.eta-reduces-a-lambda-it-can-open
+files."lib.nib" = ````nib
+fn eta(c: Code) -> SynExpr {
+  match code_view(c) {
+    VLam(n, ty, body) => match code_view(body) {
+      VApp(f, args) => match args {
+        Cons(a, Nil) => if code_same_atom(a, n) && !code_mentions(f, n) { code_term(f) } else { code_term(c) }
+        _ => code_term(c)
+      }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro eta_reduce = eta
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn mk(g: (i64) -> i64) -> (i64) -> i64 { eta_reduce!((y: i64) => g(y)) }
+fn keep(g: (i64) -> i64) -> (i64) -> i64 { eta_reduce!((y: i64) => g(y) + 1) }
+````
+expands = ```nib
+fn mk(g: (i64) -> i64) -> (i64) -> i64 { g }
+fn keep(g: (i64) -> i64) -> (i64) -> i64 { y => g(y) + 1 }
+```
+
+@ cases.an-atom-cannot-leave-the-binder-that-opened-it
+files."lib.nib" = ````nib
+fn bad(c: Code) -> SynExpr {
+  match code_view(c) {
+    VLam(n, ty, body) => code_term(body)
+    _ => code_term(c)
+  }
+}
+macro bad_eta = bad
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(g: (i64) -> i64) -> i64 {
+  let h = bad_eta!((y: i64) => g(y))
+  h(1)
+}
+````
+macro_error = "macro.scope_extrusion"
+
+@ cases.a-macro-may-not-change-the-signature-it-inferred
+files."lib.nib" = ````nib
+fn pow(x: i64, n: u64) -> i64 ! {Div} {
+  if n == 0 { 1 } else { x * pow(x, n - 1) }
+}
+fn cube(c: Code) -> SynExpr { quote { 0 } }
+macro cube = cube
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(x: i64) -> i64 { cube!(pow(x, 3)) }
+````
+macro_error = "macro.signature_changed"
+
+@ cases.a-macro-may-not-use-an-affine-value-twice
+files."lib.nib" = ````nib
+affine struct Ticket {}
+fn redeem(t: Ticket) -> u64 { 1 }
+fn twice(c: Code) -> SynExpr { quote { $c + $c } }
+macro dup = twice
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn bad(t: Ticket) -> u64 { dup!(redeem(t)) }
+````
+macro_error = "macro.ownership_rejected"
+
+@ cases.a-macro-may-not-drop-a-linear-value
+files."lib.nib" = ````nib
+linear struct Handshake {}
+fn finish(h: Handshake) -> u64 { match h { Handshake {} => 2 } }
+fn drop_it(c: Code) -> SynExpr { quote { 0 } }
+macro drop_it = drop_it
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn bad(h: Handshake) -> u64 { drop_it!(finish(h)) }
+````
+macro_error = "macro.ownership_rejected"
+
+@ cases.a-macro-may-not-nest-typed-calls
+files."lib.nib" = ````nib
+fn same(c: Code) -> SynExpr { code_term(c) }
+macro same = same
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(w: i64) -> i64 { same!(same!(w)) }
+````
+macro_error = "macro.nested_typed"
+
+@ cases.a-macro-reads-how-a-value-is-used
+files."lib.nib" = ````nib
+affine struct Ticket {}
+fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
+fn uses_of(c: Code) -> SynExpr {
+  match code_usage(c) {
+    Cons(u, _) => if u.how == "moved" { quote { 1 } } else { quote { 0 } }
+    Nil => quote { 0 }
+  }
+}
+macro how = uses_of
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn moved(t: Ticket) -> u64 { how!(redeem(t)) }
+fn not_used(x: u64) -> u64 { how!(x + 1) }
+````
+expands = ```nib
+fn moved(t: Ticket) -> u64 { 1 }
+fn not_used(x: u64) -> u64 { 0 }
+```

@@ -1,0 +1,38 @@
+// Hygiene: a name a macro makes does not capture, and is not captured by, a
+// name the user wrote.
+
+@ cases.a-temporary-of-a-macro-does-not-take-the-users-name
+files."swap.nib" = ````nib
+syntax swp = ```par
+{{par:swap}}```
+fn swap_expand(p: swp_Pair) -> List(SynStmt) {
+  let a = syn_ident(p.name)
+  let b = syn_ident(p.name_2)
+  quote stmts {
+    let tmp = $a
+    $a := $b
+    $b := tmp
+  }
+}
+
+macro swap = swap_expand
+````
+files."main.nib" = ````nib
+import "swap.nib"
+var tmp = 1
+var other = 2
+swap!(`tmp other`)
+perform show("tmp", tmp)
+perform show("other", other)
+````
+shows = ["tmp = 2", "other = 1"]
+expands = ```nib
+var tmp = 1
+var other = 2
+let tmp#1 = tmp
+tmp := other
+other := tmp#1
+perform show("tmp", tmp)
+perform show("other", other)
+```
+trace = ["swap"]

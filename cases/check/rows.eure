@@ -1,0 +1,67 @@
+// `rows`: "ok" or "error: <part of the message>" from the effect-row check.
+
+@ cases.a-written-row-must-hold-the-body
+parses = true
+source = ```nib
+effect ask: (q: i64) -> i64
+fn f() -> i64 ! {} { perform ask(1) }
+```
+rows = "error: may perform ask"
+
+@ cases.a-handler-answers-the-effect
+parses = true
+source = ```nib
+effect ask: (q: i64) -> i64
+fn f() -> i64 ! {ask} { perform ask(1) }
+let r = handle { f() } with {
+  ask(q), k => k(q)
+  return v => v
+}
+```
+rows = "ok"
+
+@ cases.budget-leaves-exceeded
+parses = true
+source = ```nib
+fn spin() -> i64 {
+  while true { }
+  0
+}
+let d = budget(steps: 10) { spin() }
+```
+rows = "error: unhandled effect Exceeded"
+
+@ cases.an-extern-has-no-row
+source = ```nib
+affine struct File {}
+effect io_error: () -> Never resume 0
+extern {
+  fn file_open(&path: Text) -> File ! {io_error}
+}
+```
+rows = "error: an extern cannot perform effects; wrap it in a tauto function"
+
+@ cases.a-closure-for-an-extern-cannot-suspend
+source = ```nib
+effect ask: () -> i64
+extern {
+  fn each_byte(&f: (n: i64) -> ()) -> ()
+}
+fn go() -> () ! {ask} {
+  each_byte(&(n) => { perform ask() })
+}
+```
+rows = "error: a closure passed to an extern cannot perform ask, which may suspend"
+
+@ cases.a-direct-closure-for-an-extern-is-fine
+source = ```nib
+effect log: (t: Text) -> () direct
+extern {
+  fn each_byte(&f: (n: i64) -> ()) -> ()
+}
+fn go() -> () ! {log} {
+  each_byte(&(n) => { perform log("x") })
+}
+```
+rows = "ok"
+build = "error: has no rust binding"

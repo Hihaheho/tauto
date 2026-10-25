@@ -1,0 +1,45 @@
+// Drop and clone.
+
+@ cases.clone-structural
+source = ```nib
+affine enum Expr { Lit(Buf), Add(Expr, Expr) }
+let e = Add(Lit(buf_of("a")), Lit(buf_of("b")))
+let e2 = clone(&e)
+```
+lin = "ok"
+
+@ cases.clone-of-opaque-rejected
+source = ```nib
+affine struct File {}
+let f = File {}
+let g = clone(&f)
+```
+types = "error: File has no clone"
+
+@ cases.clone-of-linear-rejected
+source = ```nib
+linear struct H {}
+let h = H {}
+let g = clone(&h)
+```
+types = "error: H is linear"
+
+@ cases.drop-order-observed
+source = ```nib
+affine struct A {}
+affine struct B {}
+let a = A {}
+let b = B {}
+```
+drops = ["B", "A"]
+
+@ cases.a-moved-value-is-dropped-by-its-new-owner
+source = ```nib
+affine struct A {}
+affine struct B {}
+fn keep(a: A) -> () { }
+let a = A {}
+let b = B {}
+keep(a)
+```
+drops = ["A", "B"]

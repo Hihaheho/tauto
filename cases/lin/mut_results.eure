@@ -1,0 +1,85 @@
+// `-> &mut A` and `let &mut x`.
+
+@ cases.get-mut-writes-through
+source = ```nib
+var v = vec_new()
+vec_push(&mut v, 1)
+match vec_get_mut(&mut v, 0) {
+  Some(x) => { x := 5 }
+  None => ()
+}
+match vec_get(&v, 0) {
+  Some(x) => perform show("v0", x)
+  None => ()
+}
+```
+shows = ["v0 = 5"]
+
+@ cases.hashmap-get-mut-writes-through
+source = ```nib
+var m = hashmap_new()
+hashmap_insert(&mut m, "a", 1)
+match hashmap_get_mut(&mut m, "a") {
+  Some(x) => { x := x + 41 }
+  None => ()
+}
+match hashmap_get(&m, "a") {
+  Some(x) => perform show("a", x)
+  None => ()
+}
+```
+shows = ["a = 42"]
+
+@ cases.let-mut-freezes-all
+source = ```nib
+affine struct F {}
+var v = vec_new()
+vec_push(&mut v, F {})
+let &mut x = vec_last_mut(&mut v)
+vec_len(&v)
+```
+lin = "error: v is frozen by x"
+
+@ cases.let-mut-ends-with-block
+source = ```nib
+affine struct F {}
+var v = vec_new()
+vec_push(&mut v, F {})
+{
+  let &mut x = vec_last_mut(&mut v)
+}
+vec_len(&v)
+```
+lin = "ok"
+
+@ cases.mut-result-needs-mut-param
+source = "fn f(&x: i64) -> &mut i64 { x }"
+types = "error: -> &mut i64 needs a &mut parameter"
+
+@ cases.mut-result-of-dup-not-value
+source = ```nib
+fn last(&mut x: i64) -> &mut i64 { x }
+var n = 1
+let m = last(&mut n)
+```
+types = "error: a borrow cannot be stored"
+
+@ cases.mut-result-writes-through
+source = ```nib
+fn same(&mut x: i64) -> &mut i64 { x }
+var n = 1
+{
+  let &mut m = same(&mut n)
+  m := 9
+}
+perform show("n", n)
+```
+shows = ["n = 9"]
+
+@ cases.closure-cannot-return-mut
+source = ```nib
+var v = vec_new()
+vec_push(&mut v, 1)
+let g = (&mut v: Vec(i64)) => vec_last_mut(&mut v)
+```
+types = "error: a closure cannot return a borrow"

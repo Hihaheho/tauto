@@ -1,0 +1,79 @@
+// Untyped macros and typed macros where a type is written.
+
+@ cases.an-untyped-macro-reads-an-expression-and-nests
+files."nat.nib" = ````nib
+fn add(n: Nat, m: Nat) -> Nat {
+  match n {
+    zero => m
+    succ(k) => succ(add(k, m))
+  }
+}
+
+fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr) -> SynExpr ! {macro_error, Div} {
+  let a = nat_expand(l)
+  let b = nat_expand(r)
+  if op == "==" { quote { Eq(Nat, $a, $b) } } else {
+    if op == "+" { quote { add($a, $b) } } else { e }
+  }
+}
+
+fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_error, Div} {
+  match f {
+    ExVar(op) => match args {
+      Cons(l, rest) => match rest {
+        Cons(r, more) => match more {
+          Nil => nat_bin(op.name, l, r, e)
+          _ => e
+        }
+        Nil => e
+      }
+      Nil => e
+    }
+    _ => e
+  }
+}
+
+fn nat_expand(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+  match e {
+    ExApp(f, args, _) => nat_app(f, args, e)
+    _ => e
+  }
+}
+
+macro nat = nat_expand
+fn ident(c: Code) -> SynExpr { code_term(c) }
+macro keep = ident
+````
+files."main.nib" = ````nib
+import "nat.nib"
+theorem plain(b: Nat): nat!(zero + b == b) { refl(Nat, b) }
+theorem nested(b: Nat): nat!(nat!(zero + b) == b) { refl(Nat, b) }
+theorem inner_typed(b: Nat): nat!(keep!(zero) + b == b) { refl(Nat, b) }
+````
+expands = ```nib
+theorem plain(b: Nat): Eq(Nat, add(zero, b), b) { refl(Nat, b) }
+theorem nested(b: Nat): Eq(Nat, add(zero, b), b) { refl(Nat, b) }
+theorem inner_typed(b: Nat): Eq(Nat, add(zero, b), b) { refl(Nat, b) }
+```
+trace = ["nat", "nat", "nat", "nat", "keep"]
+
+@ cases.a-typed-macro-in-a-return-type-and-a-field
+files."lib.nib" = ````nib
+fn ident(c: Code) -> SynExpr { code_term(c) }
+macro keep = ident
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(x: u64) -> keep!(u64) { x }
+fn g(h: (u64) -> keep!(u64)) -> keep!(u64) ! {Div} { h(1) }
+struct P {
+  a: keep!(u64)
+}
+````
+expands = ```nib
+fn f(x: u64) -> u64 { x }
+fn g(h: (u64) -> u64) -> u64 ! {Div} { h(1) }
+struct P {
+  a: u64
+}
+```

@@ -1,0 +1,194 @@
+// Macros over several files. A
+// `{{par:NAME}}` is the grammar in `grammars/NAME.par`; its tables, made
+// from it, are in `.tauto-syntax`.
+
+@ cases.a-syntax-macro-makes-the-theorem-statement
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem one_plus_two(): math!(`1 + 2 = 3`) { refl(Nat, 3) }
+````
+checks.one_plus_two = "ok"
+expands = ```nib
+theorem one_plus_two(): Eq(Nat, 1 + 2, 3) { refl(Nat, 3) }
+```
+trace = ["math"]
+
+@ cases.a-false-equation-is-rejected
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem wrong(): math!(`1 + 2 = 4`) { refl(Nat, 3) }
+````
+checks.wrong = "error: type mismatch"
+
+@ cases.a-syntax-error-in-the-literal
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(`1 + = 3`) { refl(Nat, 3) }
+````
+macro_error = "macro.syntax_error"
+
+@ cases.a-macro-is-not-used-in-its-own-file
+files."main.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+theorem t(): math!(`1 = 1`) { refl(Nat, 1) }
+````
+macro_error = "macro.same_file"
+
+@ cases.a-macro-that-reaches-the-os-is-refused
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_os(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let _ = os_read_file("/etc/passwd")
+  quote { Eq(Nat, 1, 1) }
+}
+macro math = math_os
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(`1 = 1`) { refl(Nat, 1) }
+````
+macro_error = "macro.not_allowed_builtin"
+
+@ cases.a-macro-that-never-stops-runs-out-of-its-budget
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn spin(n: i64) -> i64 ! {Div} { spin(n) }
+fn math_bad(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let _ = spin(0)
+  quote { Eq(Nat, 1, 1) }
+}
+macro math = math_bad
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(`1 = 1`) { refl(Nat, 1) }
+````
+macro_error = "macro.budget_exceeded"
+
