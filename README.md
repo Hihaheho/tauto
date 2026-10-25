@@ -86,17 +86,63 @@ The standard library has two tactics (`std/Tactic.taut`). `rewrite!(e)`
 rewrites with an equation. `nat_norm!(())` proves an equation of the semiring
 of natural numbers with a normaliser that is proved sound in Tauto.
 
-Design principles, in short:
+## Design principles
 
+Tauto is meant to be written by an AI and checked by a person. Every rule
+below serves that: what is accepted must be checked by a machine, and what is
+written must be readable where it stands.
+
+**The language**
+
+- **Few concepts, each orthogonal to the others.** Full dependent types for
+  proofs and algebraic effects for practical computation, with ownership for
+  resources, are meant to say much with little. The language and its proofs
+  are written in the language itself, towards self-hosting and its
+  verification.
 - **Soundness over convenience.** Every declaration the kernel accepts is
-  checked again by an independent kernel. New syntax elaborates to terms the
-  kernel already takes, and adds no kernel rule.
-- **Explicit over short.** Implicit arguments are only those first-order
-  matching determines. There is no motive inference and no `_` hole for
-  inference, and no tactic leaves its goals unwritten. A named hole `?h` marks
-  an unfinished proof: a declaration that holds one is reported as incomplete,
-  never accepted. There is no `sorry`.
-- **One way to write one thing.**
+  checked again by an independent kernel that uses no names. A mistake of the
+  elaborator must be one the kernel rejects, and a mistake of the kernel is
+  fixed before anything else.
+- **Sugar adds no kernel rule.** New syntax elaborates to terms the kernel
+  already takes: eliminator applications, λ and Π.
+- **Explicit over short.** Nothing is left to inference that the reader cannot
+  check on the spot. Nested patterns, typed `let`, unification of indices in a
+  `match` and the formatter are in; a rewrite that infers its motive, and a
+  `_` hole to be inferred, are not. Implicit arguments are only those that
+  first-order matching fixes, and an instance of a class is found from the
+  head constructor of its type, one instance per type, with no search.
+- **A named hole `?h` marks an unfinished proof.** A declaration that holds
+  one is reported as incomplete and never accepted. There is no `sorry`.
+- **One way to write one thing.** No two syntaxes mean the same.
+- **Safe by default.** Dependencies and execution are distrusted by default.
+  Crates published less than 14 days ago are refused, and a side effect is
+  allowed only where an effect says so.
+
+**Proofs**
+
+- A proof is a term, or a step that states the goal before and the goals
+  after it: `by t!(arg) -> G0 { Δ ⊢ G => p }`. A tactic is an untrusted macro;
+  the goals written and the term it makes are checked by the kernel. No tactic
+  leaves its goals unwritten.
+- `std/` and `meta/` use no axioms, call only the standard tactics
+  (`rewrite!`, `nat_norm!`), have no default arm `_ =>` (the language allows
+  one, but it hides which constructors a match covers), and are kept
+  formatted. A tactic belongs in the standard library only when a term cannot
+  say the same thing briefly.
+- An intermediate proposition gets a name and a type with a typed `let`; a
+  lemma of its own is for a statement that is reused or means something by
+  itself.
+- A hypothesis is a later parameter `h: P`, not an implication `P -> Q`.
+  `match a` generalizes every parameter after `a`, and each arm sees them,
+  refined, under the same names.
+- A case split on a term that is not a variable is
+  `match e as h -> G { C ⊢ G' => p … }`: each arm's goal is `G` with `e`
+  replaced, written out, and `h` is the equation `e = C`.
+- Inversion is a `match` that unifies the indices; equations and projections
+  are for where unification does not reach.
+- An argument that the type of a proof fixes by first-order matching is a
+  generic, and a call passes only the proof (`eq_Kpi(e1, e2)`).
+- A fact that computation establishes is kept as a `refl` theorem.
 
 ## Examples
 
