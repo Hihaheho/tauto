@@ -1,17 +1,3 @@
-fn add(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(add(k, m))
-  }
-}
-
-fn mul(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => zero
-    succ(k) => add(m, mul(k, m))
-  }
-}
-
 inductive Le(n: Nat): (Nat) -> Prop {
   le_refl(): Le(n, n)
   le_step<m: Nat>(h: Le(n, m)): Le(n, succ(m))
@@ -20,7 +6,7 @@ inductive Le(n: Nat): (Nat) -> Prop {
 def Lt(n: Nat, m: Nat): Prop := Le(succ(n), m)
 
 inductive Dvd(a: Nat, b: Nat): Prop {
-  dvd_intro(k: Nat, h: Eq(Nat, mul(a, k), b)): Dvd(a, b)
+  dvd_intro(k: Nat, h: Eq(Nat, a * k, b)): Dvd(a, b)
 }
 
 syntax nat = ```par
@@ -68,7 +54,7 @@ fn nat_prod_rest(acc: SynExpr, rest: List(nat_Prod_Rep1)) -> SynExpr ! {macro_er
     Nil => acc
     Cons(r, more) => {
       let t = nat_atom(r.atom)
-      nat_prod_rest(quote { mul($acc, $t) }, more)
+      nat_prod_rest(quote { $acc * $t }, more)
     }
   }
 }
@@ -82,7 +68,7 @@ fn nat_sum_rest(acc: SynExpr, rest: List(nat_Sum_Rep1)) -> SynExpr ! {macro_erro
     Nil => acc
     Cons(r, more) => {
       let t = nat_prod(r.prod)
-      nat_sum_rest(quote { add($acc, $t) }, more)
+      nat_sum_rest(quote { $acc + $t }, more)
     }
   }
 }

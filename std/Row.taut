@@ -6,14 +6,14 @@ import "Std.taut"
 // type, so a row of effects and a collection of tag names are the same thing.
 
 inductive Mem(A: Type, a: A): (List(A)) -> Prop {
-  mem_here(t: List(A)): Mem(A, a, cons(a, t))
-  mem_there(b: A, t: List(A), m: Mem(A, a, t)): Mem(A, a, cons(b, t))
+  mem_here(t: List(A)): Mem(A, a, Cons(a, t))
+  mem_there(b: A, t: List(A), m: Mem(A, a, t)): Mem(A, a, Cons(b, t))
 }
 
 fn append(A: Type, xs: List(A), ys: List(A)) -> List(A) {
   match xs -> List(A) {
-    nil => ys
-    cons(h, t) => cons(h, append(A, t, ys))
+    Nil => ys
+    Cons(h, t) => Cons(h, append(A, t, ys))
   }
 }
 
@@ -51,12 +51,12 @@ theorem Equiv_trans(
 }
 
 // The pure row is a subrow of everything: there is no member of nil.
-theorem Mem_nil<A: Type, e: A>(C: Prop, m: Mem(A, e, nil(A))): C {
+theorem Mem_nil<A: Type, e: A>(C: Prop, m: Mem(A, e, Nil(A))): C {
   match m -> C {
   }
 }
 
-theorem nil_sub<A: Type>(r: List(A)): Sub(A, nil(A), r) {
+theorem nil_sub<A: Type>(r: List(A)): Sub(A, Nil(A), r) {
   e => m => Mem_nil(Mem(A, e, r), m)
 }
 
@@ -75,8 +75,8 @@ theorem mem_append_right<A: Type, e: A>(
   m: Mem(A, e, ys)
 ): Mem(A, e, append(A, xs, ys)) {
   match xs -> Mem(A, e, append(A, xs, ys)) {
-    nil => m
-    cons(h, t) => mem_there(A, e, h, append(A, t, ys), mem_append_right(t, ys, m))
+    Nil => m
+    Cons(h, t) => mem_there(A, e, h, append(A, t, ys), mem_append_right(t, ys, m))
   }
 }
 
@@ -90,8 +90,8 @@ theorem mem_append_inv(
   m: Mem(A, e, append(A, xs, ys))
 ): Or(Mem(A, e, xs), Mem(A, e, ys)) {
   match xs -> Or(Mem(A, e, xs), Mem(A, e, ys)) {
-    nil => or_inr(m)
-    cons(h, t) => match m -> Or(Mem(A, e, cons(A, h, t)), Mem(A, e, ys)) {
+    Nil => or_inr(m)
+    Cons(h, t) => match m -> Or(Mem(A, e, Cons(A, h, t)), Mem(A, e, ys)) {
       mem_here(t2) => or_inl(mem_here(A, e, t))
       mem_there(
         b,

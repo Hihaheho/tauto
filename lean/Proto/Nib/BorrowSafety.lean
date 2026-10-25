@@ -308,7 +308,7 @@ theorem CHole.frame {os sg Fr S Γ P} (F : Frame) (hFc : F.Counts) {t w : Tm} (h
         · exact .inl (by omega)
       · exact .inr (.inr h)
   · obtain ⟨H, ρh, ht, k⟩ := F.replace htv h
-    exact k S (Ext.refl S) w ρh (ho.ty H ρh ht) (Row.Sub.refl _)
+    exact k S (Ext.refl S) w ρh (ho.ty H ρh ht) (ListSet.Sub.refl _)
 
 theorem var0_mem {c : Tm} {cs : List Tm} (hc : c ∈ cs) (h1 : Tms.occ (.var 0) cs = 0)
     (h2 : Tms.bor (.var 0) cs = 0) : c.occ (.var 0) = 0 ∧ c.bor (.var 0) = 0 := by
@@ -324,7 +324,7 @@ theorem Frame.blin_cap {os sg Fr S Γ C P} {t w : Tm} (F : Frame) (htv : ¬ Valu
   have hcnt := Frame.counts_of_blin F htv htx h
   have hplug : ∀ X ρ, HasType sg S Γ (F.plug t) X ρ → HasType sg S Γ (F.plug w) X ρ := fun X ρ h => by
     obtain ⟨H, ρh, ht, k⟩ := F.replace htv h
-    exact k S (Ext.refl S) w ρh (ho.ty H ρh ht) (Row.Sub.refl _)
+    exact k S (Ext.refl S) w ρh (ho.ty H ρh ht) (ListSet.Sub.refl _)
   obtain ⟨hK1, hK2⟩ := hK0
   cases F <;> simp only [Frame.plug] at h hK1 hK2 ⊢
   case appF args =>
@@ -502,7 +502,7 @@ theorem plug_blin_cap {os sg Fr S e vs ps R} (hR : ¬ R.Bv) (he : sg.op e = some
         obtain ⟨A, ρ0, ⟨ps', ρa, he', _, rfl⟩, -, hc'⟩ := h.head
         rw [he] at he'; cases he'
         exact ((HasType.var (sg := sg) (S := S) (Γ := [R]) (i := 0) rfl).chainOf hc'
-          (by intro h; cases h)).weaken (Row.nil_sub _)
+          (by intro h; cases h)).weaken (ListSet.nil_sub _)
   | F :: E, hE, h => by
       have htv : ¬ Value (plug E (.perform e vs)) := plug_not_value E (by intro h; cases h)
       have htx := plug_not_var E (t := .perform e vs) (by intro i h; cases h)
@@ -863,9 +863,10 @@ theorem bstep {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig : SigOk sg)
             · simp only [Prim.ty] at hfs; obtain ⟨f1, -, -⟩ := hfs.fn; cases f1
             · simp only [Prim.ty] at hfs
               obtain ⟨f1, -, -⟩ := hfs.fn
-              obtain ⟨-, -, i, -, hpi, -⟩ := hok
+              obtain ⟨-, -, -, -, b, -, hbody⟩ := hok
+              have hne := hbody.ne_nil
               cases f1 with
-              | nil => simp at hpi
+              | nil => exact absurd rfl hne
       cases hB with
       | viewApp hp _ _ _ _ => exact absurd hp (by simp [Prim.IsView])
       | app _ ha' _ _ _ =>
@@ -883,10 +884,10 @@ theorem bstep {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig : SigOk sg)
         (fun m _ h1 => by simp only [Tm.occ, Tms.occ] at h1 ⊢; omega)
         (fun m h1 => .inl (by simp only [Tm.bor, Tms.bor] at h1 ⊢; omega))
         (fun l _ hm => (hm.none (by simp) fun F u e => Frame.plug_app e .prim (vals2 .int hv)).elim)⟩
-  | @vcall d ps T ρ0 i vs w hdef hpi hbv hw =>
+  | @vcall d ps T ρ0 b i vs w hdef hrun hbv hw =>
       intro S S' X ρ D c Fr bb h hμ hμ' x hl hsl hu hB hsB hFr hctx hL
       obtain rfl := hμ'.ctx_eq hμ
-      obtain ⟨D', hD, hu', -⟩ := uniq_step ho hb hsig hd hdl (.vcall hdef hpi hbv hw) h hμ hμ x hl hsl hu
+      obtain ⟨D', hD, hu', -⟩ := uniq_step ho hb hsig hd hdl (.vcall hdef hrun hbv hw) h hμ hμ x hl hsl hu
       have hB0 := hB
       cases hB with
       | app hp => cases hp with | prim hn => exact absurd (Or.inr (Or.inr ⟨d, ps, rfl⟩)) hn

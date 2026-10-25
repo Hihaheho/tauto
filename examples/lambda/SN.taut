@@ -11,17 +11,19 @@ theorem sn_induction(
   t: Tm,
   h: SN(t)
 ): P(t) {
-  SN_ind((t0, h0) => P(t0), (t0, k, ih) => step(t0, k, u => s => ih(u, s)), t, h)
+  match h -> P(t) {
+    sn_intro(t0, k) => step(t0, k, u => s => sn_induction(P, step, u, k(u, s)))
+  }
 }
 
-theorem sn_step<t: Tm, u: Tm>(h: SN(t), s: lc!(`${t} ~> ${u}`)): SN(u) {
+theorem sn_step<t: Tm, u: Tm>(h: SN(t), s: lc!(`$t ~> $u`)): SN(u) {
   match h -> SN(u) {
     sn_intro(t0, k) => k(u, s)
   }
 }
 
 theorem step_subst<t: Tm, u: Tm>(
-  s: lc!(`${t} ~> ${u}`),
+  s: lc!(`$t ~> $u`),
   sigma: (Nat) -> Tm
 ): lc!(`${subst(t, sigma)} ~> ${subst(u, sigma)}`) {
   match s -> Step(subst(t, sigma), subst(u, sigma)) {
@@ -398,7 +400,7 @@ theorem redsub_extend_at(
   rs: RedSub(sigma, G),
   i: Nat,
   C: Ty,
-  h: Has(cons(Ty, A, G), i, C)
+  h: Has(Cons(Ty, A, G), i, C)
 ): Red(C, extend(w, sigma, i)) {
   match i -> Red(C, extend(w, sigma, i)) {
     zero => match h -> Red(C, w) {
@@ -415,7 +417,7 @@ theorem lam_red(
   b: Tm,
   sigma: (Nat) -> Tm,
   G: List(Ty),
-  ihb: ∀ tau: (Nat) -> Tm. (RedSub(tau, cons(Ty, A, G))) -> Red(B, subst(b, tau)),
+  ihb: ∀ tau: (Nat) -> Tm. (RedSub(tau, Cons(Ty, A, G))) -> Red(B, subst(b, tau)),
   rs: RedSub(sigma, G)
 ): Red(arr(A, B), lam(A, subst(b, up(sigma)))) {
   w => hw => red_beta(
@@ -482,7 +484,7 @@ theorem fundamental<G: List(
 }
 
 // Every well-typed term is strongly normalizing.
-theorem strong_normalization<G: List(Ty), t: Tm, A: Ty>(h: lc!(`${G} |- ${t} : ${A}`)): SN(t) {
+theorem strong_normalization<G: List(Ty), t: Tm, A: Ty>(h: lc!(`$G |- $t : $A`)): SN(t) {
   sn_of_subst(
     t,
     tvar,

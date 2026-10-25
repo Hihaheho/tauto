@@ -1,7 +1,7 @@
-// Sugar for programs in the proof language: generics on a function, a `match`
-// inside a term, and a `match` on a term. Each is elaborated into the terms the
-// kernel already takes (implicit arguments, eliminator applications), and the
-// kernel checks the result.
+// Sugar for programs in the proof language: generics on
+// a function, a `match` inside a term, and a `match` on a term. Each is
+// elaborated into the terms the kernel already takes (implicit arguments,
+// eliminator applications), and the kernel checks the result.
 
 @ cases.a-function-takes-generics-as-implicit-arguments
 parses = true
@@ -197,3 +197,81 @@ checks.swapped = "ok"
 checks.on = "ok"
 checks.off = "ok"
 checks.swap = "ok"
+
+@ cases.a-mut-parameter-comes-back-with-the-value
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+inductive Counter(): Type {
+  counter(n: Nat, hits: Nat): Counter
+}
+fn set_to<A>(&mut slot: A, v: A) -> () {
+  slot := v
+}
+fn bump(&mut c: Counter) -> Nat {
+  set_to(&mut c.n, succ(c.n))
+  set_to(&mut c.hits, succ(c.hits))
+  c.n
+}
+fn maybe(&mut c: Counter, go: Yn) -> Nat {
+  var seen: Nat = zero
+  if go {
+    seen := bump(&mut c)
+  }
+  seen
+}
+theorem once(): Eq(Mut1(Nat, Counter), maybe(counter(zero, zero), yes), mut1(succ(zero), counter(succ(zero), succ(zero)))) {
+  refl(Mut1(Nat, Counter), mut1(succ(zero), counter(succ(zero), succ(zero))))
+}
+theorem never(): Eq(Mut1(Nat, Counter), maybe(counter(zero, zero), no), mut1(zero, counter(zero, zero))) {
+  refl(Mut1(Nat, Counter), mut1(zero, counter(zero, zero)))
+}
+```
+checks.set_to = "ok"
+checks.bump = "ok"
+checks.maybe = "ok"
+checks.once = "ok"
+checks.never = "ok"
+
+@ cases.mut-functions-can-share-a-step-count
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+fn set_to<A>(&mut slot: A, v: A) -> () {
+  slot := v
+}
+mutual {
+  // Counts down `n` into `seen`, a step at a time; out of steps, `seen` is
+  // what it was.
+  fn down(k: Nat, &mut seen: Nat, n: Nat) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match n -> Yn {
+        zero => yes
+        succ(m) => {
+          set_to(&mut seen, succ(seen))
+          again(j, &mut seen, m)
+        }
+      }
+    }
+  }
+  fn again(k: Nat, &mut seen: Nat, n: Nat) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => down(j, &mut seen, n)
+    }
+  }
+}
+theorem done(): Eq(Mut1(Yn, Nat), down(10, zero, 2), mut1(yes, 2)) { refl(Mut1(Yn, Nat), mut1(yes, 2)) }
+theorem short(): Eq(Mut1(Yn, Nat), down(2, zero, 5), mut1(no, 1)) { refl(Mut1(Yn, Nat), mut1(no, 1)) }
+```
+checks.down = "ok"
+checks.again = "ok"
+checks.done = "ok"
+checks.short = "ok"

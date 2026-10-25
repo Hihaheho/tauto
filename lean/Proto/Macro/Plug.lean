@@ -13,8 +13,7 @@ hole), the type is `B₀`, unchanged.
 This is the substitution lemma of the kernel, read as a statement about holes.
 The half of T5 for executable code (`Proto/Nib/Typing.lean` and `Lin.lean`) is
 not formalised here: the acceptance of a typed macro does not use it (the whole
-declaration is checked again), and the implementation leaves the local
-re-check out in that case.
+declaration is checked again), and the local re-check is left out in that case.
 -/
 
 namespace Proto.Macro

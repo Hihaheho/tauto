@@ -272,3 +272,50 @@ inductive Bad(): Type {
 }
 ```
 checks.Bad = "error: negative"
+
+@ cases.mutual-functions-can-share-a-step-count
+parses = true
+source = ```tauto
+inductive Yn(): Type {
+  no(): Yn
+  yes(): Yn
+}
+mutual {
+  fn even(k: Nat, n: Nat) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match n -> Yn {
+        zero => yes
+        succ(m) => odd(j, m)
+      }
+    }
+  }
+  fn odd(k: Nat, n: Nat) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match n -> Yn {
+        zero => no
+        succ(m) => even(j, m)
+      }
+    }
+  }
+  fn halves(k: Nat, n: Nat) -> Nat {
+    match k -> Nat {
+      zero => zero
+      succ(j) => match even(j, n) -> Nat {
+        yes => n
+        no => halves(j, succ(n))
+      }
+    }
+  }
+}
+theorem four(): Eq(Yn, even(10, 4), yes) { refl() }
+theorem five(): Eq(Yn, odd(10, 5), yes) { refl() }
+theorem up(): Eq(Nat, halves(10, 3), 4) { refl() }
+```
+checks.even = "ok"
+checks.odd = "ok"
+checks.halves = "ok"
+checks.four = "ok"
+checks.five = "ok"
+checks.up = "ok"

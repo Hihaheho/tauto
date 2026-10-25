@@ -1,0 +1,1401 @@
+import "Map.taut"
+
+// What the ordered map does, proved: a map's tree is
+// read through its entries in order (`ordmap_tree_entries`), and for a
+// comparator that is a total order:
+//
+// * `ordmap_get` is the first entry with the key, in a sorted list;
+// * `ordmap_insert` is the insertion into that sorted list;
+// * so the entries stay sorted, `ordmap_get` finds what was inserted, and
+//   the other keys keep their values.
+//
+// No program imports this file; `tauto check` checks it.
+
+// A comparator that is a total order. `equal` is equality.
+inductive OrdmapLaw(K: Type, cmp: (K, K) -> Ordering): Prop {
+  ordmap_law(
+    same: ∀ a: K. Eq(Ordering, cmp(a, a), Equal),
+    equal_is_eq: ∀ a: K. ∀ b: K. (Eq(Ordering, cmp(a, b), Equal)) -> Eq(K, a, b),
+    flip_less: ∀ a: K. ∀ b: K. (Eq(Ordering, cmp(a, b), Less)) -> Eq(Ordering, cmp(b, a), Greater),
+    flip_greater: ∀ a: K. ∀ b: K. (
+      Eq(Ordering, cmp(a, b), Greater)
+    ) -> Eq(Ordering, cmp(b, a), Less),
+    less_trans: ∀ a: K. ∀ b: K. ∀ c: K. (
+      Eq(Ordering, cmp(a, b), Less)
+    ) -> (Eq(Ordering, cmp(b, c), Less)) -> Eq(Ordering, cmp(a, c), Less)
+  ): OrdmapLaw(K, cmp)
+}
+
+theorem ordmap_law_same<K: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  a: K
+): Eq(Ordering, cmp(a, a), Equal) {
+  match w -> Eq(Ordering, cmp(a, a), Equal) {
+    ordmap_law(s, q, fl, fg, t) => s(a)
+  }
+}
+
+theorem ordmap_law_eq<K: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  a: K,
+  b: K,
+  e: Eq(Ordering, cmp(a, b), Equal)
+): Eq(K, a, b) {
+  match w -> Eq(K, a, b) {
+    ordmap_law(s, q, fl, fg, t) => q(a, b, e)
+  }
+}
+
+theorem ordmap_law_flip_less<K: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  a: K,
+  b: K,
+  e: Eq(Ordering, cmp(a, b), Less)
+): Eq(Ordering, cmp(b, a), Greater) {
+  match w -> Eq(Ordering, cmp(b, a), Greater) {
+    ordmap_law(s, q, fl, fg, t) => fl(a, b, e)
+  }
+}
+
+theorem ordmap_law_flip_greater<K: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  a: K,
+  b: K,
+  e: Eq(Ordering, cmp(a, b), Greater)
+): Eq(Ordering, cmp(b, a), Less) {
+  match w -> Eq(Ordering, cmp(b, a), Less) {
+    ordmap_law(s, q, fl, fg, t) => fg(a, b, e)
+  }
+}
+
+theorem ordmap_law_less_trans<K: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  a: K,
+  b: K,
+  c: K,
+  e1: Eq(Ordering, cmp(a, b), Less),
+  e2: Eq(Ordering, cmp(b, c), Less)
+): Eq(Ordering, cmp(a, c), Less) {
+  match w -> Eq(Ordering, cmp(a, c), Less) {
+    ordmap_law(s, q, fl, fg, t) => t(a, b, c, e1, e2)
+  }
+}
+
+theorem ordmap_law_greater_trans<K: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  a: K,
+  b: K,
+  c: K,
+  e1: Eq(Ordering, cmp(a, b), Greater),
+  e2: Eq(Ordering, cmp(b, c), Greater)
+): Eq(Ordering, cmp(a, c), Greater) {
+  ordmap_law_flip_less(
+    cmp,
+    w,
+    c,
+    a,
+    ordmap_law_less_trans(
+      cmp,
+      w,
+      c,
+      b,
+      a,
+      ordmap_law_flip_greater(cmp, w, b, c, e2),
+      ordmap_law_flip_greater(cmp, w, a, b, e1)
+    )
+  )
+}
+
+// The entries in a list: the value of the first entry with the key.
+fn ordmap_list_get<K, V>(es: List(Pair(K, V)), k: K, cmp: (K, K) -> Ordering) -> Option(V) {
+  match es -> Option(V) {
+    Nil => None
+    Cons(e, rest) => match e -> Option(V) {
+      pair(ek, ev) => match cmp(k, ek) -> Option(V) {
+        Less => ordmap_list_get(rest, k, cmp)
+        Equal => Some(ev)
+        Greater => ordmap_list_get(rest, k, cmp)
+      }
+    }
+  }
+}
+
+// `es` with `v` at `k`: before the first key after `k`, or in place of `k`.
+fn ordmap_list_insert<K, V>(
+  es: List(Pair(K, V)),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering
+) -> List(Pair(K, V)) {
+  match es -> List(Pair(K, V)) {
+    Nil => Cons(pair(k, v), Nil)
+    Cons(e, rest) => match e -> List(Pair(K, V)) {
+      pair(ek, ev) => match cmp(k, ek) -> List(Pair(K, V)) {
+        Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
+        Equal => Cons(pair(k, v), rest)
+        Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+      }
+    }
+  }
+}
+
+// `cmp(k, ek)` is `o` for every key `ek` of `es`.
+fn ordmap_keys<K, V>(es: List(Pair(K, V)), k: K, o: Ordering, cmp: (K, K) -> Ordering) -> Prop {
+  match es -> Prop {
+    Nil => True
+    Cons(e, rest) => match e -> Prop {
+      pair(ek, ev) => And(Eq(Ordering, cmp(k, ek), o), ordmap_keys(rest, k, o, cmp))
+    }
+  }
+}
+
+// Every key is before the keys after it.
+fn ordmap_sorted<K, V>(es: List(Pair(K, V)), cmp: (K, K) -> Ordering) -> Prop {
+  match es -> Prop {
+    Nil => True
+    Cons(e, rest) => match e -> Prop {
+      pair(ek, ev) => And(ordmap_keys(rest, ek, Less, cmp), ordmap_sorted(rest, cmp))
+    }
+  }
+}
+
+// The steps of `ordmap_list_get` and `ordmap_list_insert`, one comparison
+// each.
+
+theorem ordmap_list_get_equal<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(Pair(K, V)),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Ordering, cmp(k, ek), Equal)
+): Eq(Option(V), ordmap_list_get(Cons(pair(ek, ev), rest), k, cmp), Some(ev)) {
+  ordering_cases(
+    (x: Ordering) => Eq(Option(V), match x -> Option(V) {
+      Less => ordmap_list_get(rest, k, cmp)
+      Equal => Some(ev)
+      Greater => ordmap_list_get(rest, k, cmp)
+    }, Some(ev)),
+    cmp(k, ek),
+    (h: Eq(Ordering, cmp(k, ek), Less)) => False_elim(less_ne_equal(Eq_trans(Eq_sym(h), e))),
+    (h: Eq(Ordering, cmp(k, ek), Equal)) => refl(),
+    (h: Eq(Ordering, cmp(k, ek), Greater)) => False_elim(greater_ne_equal(Eq_trans(Eq_sym(h), e)))
+  )
+}
+
+theorem ordmap_list_get_skip<K: Type, V: Type>(
+  o: Ordering,
+  ne: (Eq(Ordering, o, Equal)) -> False,
+  ek: K,
+  ev: V,
+  rest: List(Pair(K, V)),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Ordering, cmp(k, ek), o)
+): Eq(Option(V), ordmap_list_get(Cons(pair(ek, ev), rest), k, cmp), ordmap_list_get(rest, k, cmp)) {
+  ordering_cases(
+    (x: Ordering) => Eq(Option(V), match x -> Option(V) {
+      Less => ordmap_list_get(rest, k, cmp)
+      Equal => Some(ev)
+      Greater => ordmap_list_get(rest, k, cmp)
+    }, ordmap_list_get(rest, k, cmp)),
+    cmp(k, ek),
+    (h: Eq(Ordering, cmp(k, ek), Less)) => refl(),
+    (h: Eq(Ordering, cmp(k, ek), Equal)) => False_elim(ne(Eq_trans(Eq_sym(e), h))),
+    (h: Eq(Ordering, cmp(k, ek), Greater)) => refl()
+  )
+}
+
+theorem ordmap_list_insert_less<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(Pair(K, V)),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Ordering, cmp(k, ek), Less)
+): Eq(
+  List(Pair(K, V)),
+  ordmap_list_insert(Cons(pair(ek, ev), rest), k, v, cmp),
+  Cons(pair(k, v), Cons(pair(ek, ev), rest))
+) {
+  ordering_cases(
+    (x: Ordering) => Eq(List(Pair(K, V)), match x -> List(Pair(K, V)) {
+      Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
+      Equal => Cons(pair(k, v), rest)
+      Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+    }, Cons(pair(k, v), Cons(pair(ek, ev), rest))),
+    cmp(k, ek),
+    (h: Eq(Ordering, cmp(k, ek), Less)) => refl(),
+    (h: Eq(Ordering, cmp(k, ek), Equal)) => False_elim(equal_ne_less(Eq_trans(Eq_sym(h), e))),
+    (h: Eq(Ordering, cmp(k, ek), Greater)) => False_elim(greater_ne_less(Eq_trans(Eq_sym(h), e)))
+  )
+}
+
+theorem ordmap_list_insert_equal<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(Pair(K, V)),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Ordering, cmp(k, ek), Equal)
+): Eq(
+  List(Pair(K, V)),
+  ordmap_list_insert(Cons(pair(ek, ev), rest), k, v, cmp),
+  Cons(pair(k, v), rest)
+) {
+  ordering_cases(
+    (x: Ordering) => Eq(List(Pair(K, V)), match x -> List(Pair(K, V)) {
+      Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
+      Equal => Cons(pair(k, v), rest)
+      Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+    }, Cons(pair(k, v), rest)),
+    cmp(k, ek),
+    (h: Eq(Ordering, cmp(k, ek), Less)) => False_elim(less_ne_equal(Eq_trans(Eq_sym(h), e))),
+    (h: Eq(Ordering, cmp(k, ek), Equal)) => refl(),
+    (h: Eq(Ordering, cmp(k, ek), Greater)) => False_elim(greater_ne_equal(Eq_trans(Eq_sym(h), e)))
+  )
+}
+
+theorem ordmap_list_insert_greater<K: Type, V: Type>(
+  ek: K,
+  ev: V,
+  rest: List(Pair(K, V)),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Ordering, cmp(k, ek), Greater)
+): Eq(
+  List(Pair(K, V)),
+  ordmap_list_insert(Cons(pair(ek, ev), rest), k, v, cmp),
+  Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+) {
+  ordering_cases(
+    (x: Ordering) => Eq(List(Pair(K, V)), match x -> List(Pair(K, V)) {
+      Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
+      Equal => Cons(pair(k, v), rest)
+      Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+    }, Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))),
+    cmp(k, ek),
+    (h: Eq(Ordering, cmp(k, ek), Less)) => False_elim(less_ne_greater(Eq_trans(Eq_sym(h), e))),
+    (h: Eq(Ordering, cmp(k, ek), Equal)) => False_elim(equal_ne_greater(Eq_trans(Eq_sym(h), e))),
+    (h: Eq(Ordering, cmp(k, ek), Greater)) => refl()
+  )
+}
+
+// The entries of a tree onto `d` are its entries, then `d`.
+theorem ordmap_entries_append<K: Type, V: Type>(
+  t: OrdmapTree(K, V),
+  d: List(Pair(K, V))
+): Eq(List(Pair(K, V)), ordmap_tree_entries(t, d), list_append(ordmap_tree_entries(t, Nil), d)) {
+  match t -> Eq(
+    List(Pair(K, V)),
+    ordmap_tree_entries(t, d),
+    list_append(ordmap_tree_entries(t, Nil), d)
+  ) {
+    OrdmapLeaf => refl()
+    OrdmapNode(
+      l,
+      k,
+      v,
+      r,
+      h
+    ) => Eq_trans(
+      Eq_trans(
+        ordmap_entries_append(l, Cons(pair(k, v), ordmap_tree_entries(r, d))),
+        Eq_congr(
+          (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), Cons(pair(k, v), z)),
+          ordmap_entries_append(r, d)
+        )
+      ),
+      Eq_sym(
+        Eq_trans(
+          Eq_congr(
+            (z: List(Pair(K, V))) => list_append(z, d),
+            ordmap_entries_append(l, Cons(pair(k, v), ordmap_tree_entries(r, Nil)))
+          ),
+          list_append_assoc(
+            ordmap_tree_entries(l, Nil),
+            Cons(pair(k, v), ordmap_tree_entries(r, Nil)),
+            d
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem ordmap_keys_append_left<K: Type, V: Type>(
+  a: List(Pair(K, V)),
+  b: List(Pair(K, V)),
+  x: K,
+  o: Ordering,
+  cmp: (K, K) -> Ordering,
+  h: ordmap_keys(list_append(a, b), x, o, cmp)
+): ordmap_keys(a, x, o, cmp) {
+  match a -> ordmap_keys(a, x, o, cmp) {
+    Nil => trivial()
+    Cons(e, rest) => match e {
+      pair(
+        ek,
+        ev
+      ) => and_intro(and_left(h), ordmap_keys_append_left(rest, b, x, o, cmp, and_right(h)))
+    }
+  }
+}
+
+theorem ordmap_keys_append_right<K: Type, V: Type>(
+  a: List(Pair(K, V)),
+  b: List(Pair(K, V)),
+  x: K,
+  o: Ordering,
+  cmp: (K, K) -> Ordering,
+  h: ordmap_keys(list_append(a, b), x, o, cmp)
+): ordmap_keys(b, x, o, cmp) {
+  match a -> ordmap_keys(b, x, o, cmp) {
+    Nil => h
+    Cons(e, rest) => match e {
+      pair(ek, ev) => ordmap_keys_append_right(rest, b, x, o, cmp, and_right(h))
+    }
+  }
+}
+
+theorem ordmap_keys_less_trans<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  ys: List(Pair(K, V)),
+  a: K,
+  b: K,
+  e: Eq(Ordering, cmp(b, a), Less),
+  h: ordmap_keys(ys, a, Less, cmp)
+): ordmap_keys(ys, b, Less, cmp) {
+  match ys -> ordmap_keys(ys, b, Less, cmp) {
+    Nil => trivial()
+    Cons(y, rest) => match y {
+      pair(
+        yk,
+        yv
+      ) => and_intro(
+        ordmap_law_less_trans(cmp, w, b, a, yk, e, and_left(h)),
+        ordmap_keys_less_trans(cmp, w, rest, a, b, e, and_right(h))
+      )
+    }
+  }
+}
+
+theorem ordmap_keys_greater_trans<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  ys: List(Pair(K, V)),
+  a: K,
+  b: K,
+  e: Eq(Ordering, cmp(b, a), Greater),
+  h: ordmap_keys(ys, a, Greater, cmp)
+): ordmap_keys(ys, b, Greater, cmp) {
+  match ys -> ordmap_keys(ys, b, Greater, cmp) {
+    Nil => trivial()
+    Cons(y, rest) => match y {
+      pair(
+        yk,
+        yv
+      ) => and_intro(
+        ordmap_law_greater_trans(cmp, w, b, a, yk, e, and_left(h)),
+        ordmap_keys_greater_trans(cmp, w, rest, a, b, e, and_right(h))
+      )
+    }
+  }
+}
+
+theorem ordmap_keys_eq<K: Type, V: Type>(
+  ys: List(Pair(K, V)),
+  a: K,
+  b: K,
+  e: Eq(K, a, b),
+  o: Ordering,
+  cmp: (K, K) -> Ordering,
+  h: ordmap_keys(ys, a, o, cmp)
+): ordmap_keys(ys, b, o, cmp) {
+  Eq_subst((z: K) => ordmap_keys(ys, z, o, cmp), e, h)
+}
+
+// A sorted list with `nk` in it: the keys before are before `nk`, the keys
+// after are after it, and both sides are sorted.
+theorem ordmap_sorted_split<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  xs: List(Pair(K, V)),
+  nk: K,
+  nv: V,
+  ys: List(Pair(K, V)),
+  h: ordmap_sorted(list_append(xs, Cons(pair(nk, nv), ys)), cmp)
+): And(
+  ordmap_keys(xs, nk, Greater, cmp),
+  And(ordmap_sorted(xs, cmp), And(ordmap_keys(ys, nk, Less, cmp), ordmap_sorted(ys, cmp)))
+) {
+  match xs -> And(
+    ordmap_keys(xs, nk, Greater, cmp),
+    And(ordmap_sorted(xs, cmp), And(ordmap_keys(ys, nk, Less, cmp), ordmap_sorted(ys, cmp)))
+  ) {
+    Nil => and_intro(trivial(), and_intro(trivial(), h))
+    Cons(x, rest) => match x {
+      pair(
+        xk,
+        xv
+      ) => and_intro(
+        and_intro(
+          ordmap_law_flip_less(
+            cmp,
+            w,
+            xk,
+            nk,
+            and_left(
+              ordmap_keys_append_right(rest, Cons(pair(nk, nv), ys), xk, Less, cmp, and_left(h))
+            )
+          ),
+          and_left(ordmap_sorted_split(cmp, w, rest, nk, nv, ys, and_right(h)))
+        ),
+        and_intro(
+          and_intro(
+            ordmap_keys_append_left(rest, Cons(pair(nk, nv), ys), xk, Less, cmp, and_left(h)),
+            and_left(and_right(ordmap_sorted_split(cmp, w, rest, nk, nv, ys, and_right(h))))
+          ),
+          and_right(and_right(ordmap_sorted_split(cmp, w, rest, nk, nv, ys, and_right(h))))
+        )
+      )
+    }
+  }
+}
+
+// A key that compares other than `equal` with every key is not found.
+theorem ordmap_list_get_keys_none<K: Type, V: Type>(
+  k: K,
+  o: Ordering,
+  ne: (Eq(Ordering, o, Equal)) -> False,
+  ys: List(Pair(K, V)),
+  cmp: (K, K) -> Ordering,
+  h: ordmap_keys(ys, k, o, cmp)
+): Eq(Option(V), ordmap_list_get(ys, k, cmp), None) {
+  match ys -> Eq(Option(V), ordmap_list_get(ys, k, cmp), None) {
+    Nil => refl()
+    Cons(y, rest) => match y {
+      pair(
+        yk,
+        yv
+      ) => Eq_trans(
+        ordmap_list_get_skip(o, ne, yk, yv, rest, k, cmp, and_left(h)),
+        ordmap_list_get_keys_none(k, o, ne, rest, cmp, and_right(h))
+      )
+    }
+  }
+}
+
+theorem ordmap_list_get_append_none<K: Type, V: Type>(
+  xs: List(Pair(K, V)),
+  ys: List(Pair(K, V)),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  n: Eq(Option(V), ordmap_list_get(ys, k, cmp), None)
+): Eq(Option(V), ordmap_list_get(list_append(xs, ys), k, cmp), ordmap_list_get(xs, k, cmp)) {
+  match xs -> Eq(
+    Option(V),
+    ordmap_list_get(list_append(xs, ys), k, cmp),
+    ordmap_list_get(xs, k, cmp)
+  ) {
+    Nil => n
+    Cons(x, rest) => match x {
+      pair(xk, xv) => ordering_cases(
+        (c: Ordering) => Eq(Option(V), match c -> Option(V) {
+          Less => ordmap_list_get(list_append(rest, ys), k, cmp)
+          Equal => Some(xv)
+          Greater => ordmap_list_get(list_append(rest, ys), k, cmp)
+        }, match c -> Option(V) {
+          Less => ordmap_list_get(rest, k, cmp)
+          Equal => Some(xv)
+          Greater => ordmap_list_get(rest, k, cmp)
+        }),
+        cmp(k, xk),
+        (e: Eq(Ordering, cmp(k, xk), Less)) => ordmap_list_get_append_none(rest, ys, k, cmp, n),
+        (e: Eq(Ordering, cmp(k, xk), Equal)) => refl(),
+        (e: Eq(Ordering, cmp(k, xk), Greater)) => ordmap_list_get_append_none(rest, ys, k, cmp, n)
+      )
+    }
+  }
+}
+
+theorem ordmap_list_get_append_skip<K: Type, V: Type>(
+  o: Ordering,
+  ne: (Eq(Ordering, o, Equal)) -> False,
+  xs: List(Pair(K, V)),
+  ys: List(Pair(K, V)),
+  k: K,
+  cmp: (K, K) -> Ordering,
+  h: ordmap_keys(xs, k, o, cmp)
+): Eq(Option(V), ordmap_list_get(list_append(xs, ys), k, cmp), ordmap_list_get(ys, k, cmp)) {
+  match xs -> Eq(
+    Option(V),
+    ordmap_list_get(list_append(xs, ys), k, cmp),
+    ordmap_list_get(ys, k, cmp)
+  ) {
+    Nil => refl()
+    Cons(x, rest) => match x {
+      pair(
+        xk,
+        xv
+      ) => Eq_trans(
+        ordmap_list_get_skip(o, ne, xk, xv, list_append(rest, ys), k, cmp, and_left(h)),
+        ordmap_list_get_append_skip(o, ne, rest, ys, k, cmp, and_right(h))
+      )
+    }
+  }
+}
+
+theorem ordmap_list_get_cons_congr<K: Type, V: Type>(
+  xk: K,
+  xv: V,
+  a: List(Pair(K, V)),
+  b: List(Pair(K, V)),
+  j: K,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Option(V), ordmap_list_get(a, j, cmp), ordmap_list_get(b, j, cmp))
+): Eq(
+  Option(V),
+  ordmap_list_get(Cons(pair(xk, xv), a), j, cmp),
+  ordmap_list_get(Cons(pair(xk, xv), b), j, cmp)
+) {
+  ordering_cases(
+    (c: Ordering) => Eq(Option(V), match c -> Option(V) {
+      Less => ordmap_list_get(a, j, cmp)
+      Equal => Some(xv)
+      Greater => ordmap_list_get(a, j, cmp)
+    }, match c -> Option(V) {
+      Less => ordmap_list_get(b, j, cmp)
+      Equal => Some(xv)
+      Greater => ordmap_list_get(b, j, cmp)
+    }),
+    cmp(j, xk),
+    (q: Eq(Ordering, cmp(j, xk), Less)) => e,
+    (q: Eq(Ordering, cmp(j, xk), Equal)) => refl(),
+    (q: Eq(Ordering, cmp(j, xk), Greater)) => e
+  )
+}
+
+// Inserting a key before `nk` into a list with `nk` in it inserts into the
+// part before `nk`.
+theorem ordmap_list_insert_append_less<K: Type, V: Type>(
+  xs: List(Pair(K, V)),
+  nk: K,
+  nv: V,
+  ys: List(Pair(K, V)),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering,
+  e: Eq(Ordering, cmp(k, nk), Less)
+): Eq(
+  List(Pair(K, V)),
+  ordmap_list_insert(list_append(xs, Cons(pair(nk, nv), ys)), k, v, cmp),
+  list_append(ordmap_list_insert(xs, k, v, cmp), Cons(pair(nk, nv), ys))
+) {
+  match xs -> Eq(
+    List(Pair(K, V)),
+    ordmap_list_insert(list_append(xs, Cons(pair(nk, nv), ys)), k, v, cmp),
+    list_append(ordmap_list_insert(xs, k, v, cmp), Cons(pair(nk, nv), ys))
+  ) {
+    Nil => ordmap_list_insert_less(nk, nv, ys, k, v, cmp, e)
+    Cons(x, rest) => match x {
+      pair(xk, xv) => ordering_cases(
+        (c: Ordering) => Eq(List(Pair(K, V)), match c -> List(Pair(K, V)) {
+          Less => Cons(pair(k, v), Cons(pair(xk, xv), list_append(rest, Cons(pair(nk, nv), ys))))
+          Equal => Cons(pair(k, v), list_append(rest, Cons(pair(nk, nv), ys)))
+          Greater => Cons(
+            pair(xk, xv),
+            ordmap_list_insert(list_append(rest, Cons(pair(nk, nv), ys)), k, v, cmp)
+          )
+        }, list_append(match c -> List(Pair(K, V)) {
+          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
+          Equal => Cons(pair(k, v), rest)
+          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+        }, Cons(pair(nk, nv), ys))),
+        cmp(k, xk),
+        (q: Eq(Ordering, cmp(k, xk), Less)) => refl(),
+        (q: Eq(Ordering, cmp(k, xk), Equal)) => refl(),
+        (q: Eq(Ordering, cmp(k, xk), Greater)) => Eq_congr(
+          (z: List(Pair(K, V))) => Cons(pair(xk, xv), z),
+          ordmap_list_insert_append_less(rest, nk, nv, ys, k, v, cmp, e)
+        )
+      )
+    }
+  }
+}
+
+// Inserting a key after every key of `xs` inserts after `xs`.
+theorem ordmap_list_insert_append_skip<K: Type, V: Type>(
+  xs: List(Pair(K, V)),
+  ys: List(Pair(K, V)),
+  k: K,
+  v: V,
+  cmp: (K, K) -> Ordering,
+  h: ordmap_keys(xs, k, Greater, cmp)
+): Eq(
+  List(Pair(K, V)),
+  ordmap_list_insert(list_append(xs, ys), k, v, cmp),
+  list_append(xs, ordmap_list_insert(ys, k, v, cmp))
+) {
+  match xs -> Eq(
+    List(Pair(K, V)),
+    ordmap_list_insert(list_append(xs, ys), k, v, cmp),
+    list_append(xs, ordmap_list_insert(ys, k, v, cmp))
+  ) {
+    Nil => refl()
+    Cons(x, rest) => match x {
+      pair(
+        xk,
+        xv
+      ) => Eq_trans(
+        ordmap_list_insert_greater(xk, xv, list_append(rest, ys), k, v, cmp, and_left(h)),
+        Eq_congr(
+          (z: List(Pair(K, V))) => Cons(pair(xk, xv), z),
+          ordmap_list_insert_append_skip(rest, ys, k, v, cmp, and_right(h))
+        )
+      )
+    }
+  }
+}
+
+theorem ordmap_keys_insert<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  es: List(Pair(K, V)),
+  a: K,
+  k: K,
+  v: V,
+  ea: Eq(Ordering, cmp(a, k), Less),
+  h: ordmap_keys(es, a, Less, cmp)
+): ordmap_keys(ordmap_list_insert(es, k, v, cmp), a, Less, cmp) {
+  match es -> ordmap_keys(ordmap_list_insert(es, k, v, cmp), a, Less, cmp) {
+    Nil => and_intro(ea, trivial())
+    Cons(x, rest) => match x {
+      pair(xk, xv) => ordering_cases(
+        (c: Ordering) => ordmap_keys(match c -> List(Pair(K, V)) {
+          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
+          Equal => Cons(pair(k, v), rest)
+          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+        }, a, Less, cmp),
+        cmp(k, xk),
+        (q: Eq(Ordering, cmp(k, xk), Less)) => and_intro(ea, h),
+        (q: Eq(Ordering, cmp(k, xk), Equal)) => and_intro(ea, and_right(h)),
+        (q: Eq(Ordering, cmp(k, xk), Greater)) => and_intro(
+          and_left(h),
+          ordmap_keys_insert(cmp, w, rest, a, k, v, ea, and_right(h))
+        )
+      )
+    }
+  }
+}
+
+// Inserting into a sorted list keeps it sorted.
+theorem ordmap_list_insert_sorted<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  es: List(Pair(K, V)),
+  k: K,
+  v: V,
+  h: ordmap_sorted(es, cmp)
+): ordmap_sorted(ordmap_list_insert(es, k, v, cmp), cmp) {
+  match es -> ordmap_sorted(ordmap_list_insert(es, k, v, cmp), cmp) {
+    Nil => and_intro(trivial(), trivial())
+    Cons(x, rest) => match x {
+      pair(xk, xv) => ordering_cases(
+        (c: Ordering) => ordmap_sorted(match c -> List(Pair(K, V)) {
+          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
+          Equal => Cons(pair(k, v), rest)
+          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+        }, cmp),
+        cmp(k, xk),
+        (q: Eq(Ordering, cmp(k, xk), Less)) => and_intro(
+          and_intro(q, ordmap_keys_less_trans(cmp, w, rest, xk, k, q, and_left(h))),
+          h
+        ),
+        (q: Eq(Ordering, cmp(k, xk), Equal)) => and_intro(
+          ordmap_keys_eq(rest, xk, k, Eq_sym(ordmap_law_eq(cmp, w, k, xk, q)), Less, cmp, and_left(h)),
+          and_right(h)
+        ),
+        (q: Eq(Ordering, cmp(k, xk), Greater)) => and_intro(
+          ordmap_keys_insert(
+            cmp,
+            w,
+            rest,
+            xk,
+            k,
+            v,
+            ordmap_law_flip_greater(cmp, w, k, xk, q),
+            and_left(h)
+          ),
+          ordmap_list_insert_sorted(cmp, w, rest, k, v, and_right(h))
+        )
+      )
+    }
+  }
+}
+
+// After inserting `v` at `k`, `k` has `v`.
+theorem ordmap_list_get_insert_same<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  es: List(Pair(K, V)),
+  k: K,
+  v: V
+): Eq(Option(V), ordmap_list_get(ordmap_list_insert(es, k, v, cmp), k, cmp), Some(v)) {
+  match es -> Eq(Option(V), ordmap_list_get(ordmap_list_insert(es, k, v, cmp), k, cmp), Some(v)) {
+    Nil => ordmap_list_get_equal(k, v, Nil, k, cmp, ordmap_law_same(cmp, w, k))
+    Cons(x, rest) => match x {
+      pair(xk, xv) => ordering_cases(
+        (c: Ordering) => Eq(Option(V), ordmap_list_get(match c -> List(Pair(K, V)) {
+          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
+          Equal => Cons(pair(k, v), rest)
+          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+        }, k, cmp), Some(v)),
+        cmp(k, xk),
+        (q: Eq(Ordering, cmp(k, xk), Less)) => ordmap_list_get_equal(
+          k,
+          v,
+          Cons(pair(xk, xv), rest),
+          k,
+          cmp,
+          ordmap_law_same(cmp, w, k)
+        ),
+        (q: Eq(Ordering, cmp(k, xk), Equal)) => ordmap_list_get_equal(k, v, rest, k, cmp, ordmap_law_same(cmp, w, k)),
+        (q: Eq(Ordering, cmp(k, xk), Greater)) => Eq_trans(
+          ordmap_list_get_skip(
+            Greater,
+            greater_ne_equal,
+            xk,
+            xv,
+            ordmap_list_insert(rest, k, v, cmp),
+            k,
+            cmp,
+            q
+          ),
+          ordmap_list_get_insert_same(cmp, w, rest, k, v)
+        )
+      )
+    }
+  }
+}
+
+// After inserting at `k`, a key `j` that is not `k` has what it had.
+theorem ordmap_list_get_insert_other<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  es: List(Pair(K, V)),
+  k: K,
+  v: V,
+  j: K,
+  o: Ordering,
+  ne: (Eq(Ordering, o, Equal)) -> False,
+  ej: Eq(Ordering, cmp(j, k), o)
+): Eq(
+  Option(V),
+  ordmap_list_get(ordmap_list_insert(es, k, v, cmp), j, cmp),
+  ordmap_list_get(es, j, cmp)
+) {
+  match es -> Eq(
+    Option(V),
+    ordmap_list_get(ordmap_list_insert(es, k, v, cmp), j, cmp),
+    ordmap_list_get(es, j, cmp)
+  ) {
+    Nil => ordmap_list_get_skip(o, ne, k, v, Nil, j, cmp, ej)
+    Cons(x, rest) => match x {
+      pair(xk, xv) => ordering_cases(
+        (c: Ordering) => Eq(Option(V), ordmap_list_get(match c -> List(Pair(K, V)) {
+          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
+          Equal => Cons(pair(k, v), rest)
+          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+        }, j, cmp), ordmap_list_get(Cons(pair(xk, xv), rest), j, cmp)),
+        cmp(k, xk),
+        (q: Eq(Ordering, cmp(k, xk), Less)) => ordmap_list_get_skip(o, ne, k, v, Cons(pair(xk, xv), rest), j, cmp, ej),
+        (q: Eq(Ordering, cmp(k, xk), Equal)) => Eq_trans(
+          ordmap_list_get_skip(o, ne, k, v, rest, j, cmp, ej),
+          Eq_sym(
+            ordmap_list_get_skip(
+              o,
+              ne,
+              xk,
+              xv,
+              rest,
+              j,
+              cmp,
+              Eq_subst((z: K) => Eq(Ordering, cmp(j, z), o), ordmap_law_eq(cmp, w, k, xk, q), ej)
+            )
+          )
+        ),
+        (q: Eq(Ordering, cmp(k, xk), Greater)) => ordmap_list_get_cons_congr(
+          xk,
+          xv,
+          ordmap_list_insert(rest, k, v, cmp),
+          rest,
+          j,
+          cmp,
+          ordmap_list_get_insert_other(cmp, w, rest, k, v, j, o, ne, ej)
+        )
+      )
+    }
+  }
+}
+
+// The entries of a node: those of its left tree, its own, those of its
+// right tree.
+theorem ordmap_node_entries<K: Type, V: Type>(
+  l: OrdmapTree(K, V),
+  nk: K,
+  nv: V,
+  r: OrdmapTree(K, V),
+  h: Nat
+): Eq(
+  List(Pair(K, V)),
+  ordmap_tree_entries(OrdmapNode(l, nk, nv, r, h), Nil),
+  list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)))
+) {
+  ordmap_entries_append(l, Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)))
+}
+
+theorem ordmap_node_split<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  l: OrdmapTree(K, V),
+  nk: K,
+  nv: V,
+  r: OrdmapTree(K, V),
+  h: Nat,
+  s: ordmap_sorted(ordmap_tree_entries(OrdmapNode(l, nk, nv, r, h), Nil), cmp)
+): And(
+  ordmap_keys(ordmap_tree_entries(l, Nil), nk, Greater, cmp),
+  And(
+    ordmap_sorted(ordmap_tree_entries(l, Nil), cmp),
+    And(
+      ordmap_keys(ordmap_tree_entries(r, Nil), nk, Less, cmp),
+      ordmap_sorted(ordmap_tree_entries(r, Nil), cmp)
+    )
+  )
+) {
+  ordmap_sorted_split(
+    cmp,
+    w,
+    ordmap_tree_entries(l, Nil),
+    nk,
+    nv,
+    ordmap_tree_entries(r, Nil),
+    Eq_subst(
+      (z: List(Pair(K, V))) => ordmap_sorted(z, cmp),
+      ordmap_node_entries(l, nk, nv, r, h),
+      s
+    )
+  )
+}
+
+// In a tree whose entries are sorted, `ordmap_tree_get` is the lookup in
+// its entries.
+theorem ordmap_tree_get_entries<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  t: OrdmapTree(K, V),
+  k: K,
+  s: ordmap_sorted(ordmap_tree_entries(t, Nil), cmp)
+): Eq(Option(V), ordmap_tree_get(t, k, cmp), ordmap_list_get(ordmap_tree_entries(t, Nil), k, cmp)) {
+  match t -> Eq(
+    Option(V),
+    ordmap_tree_get(t, k, cmp),
+    ordmap_list_get(ordmap_tree_entries(t, Nil), k, cmp)
+  ) {
+    OrdmapLeaf => refl()
+    OrdmapNode(l, nk, nv, r, h) => Eq_trans(
+      ordering_cases(
+        (c: Ordering) => Eq(Option(V), match c -> Option(V) {
+          Less => ordmap_tree_get(l, k, cmp)
+          Equal => Some(nv)
+          Greater => ordmap_tree_get(r, k, cmp)
+        }, ordmap_list_get(list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))), k, cmp)),
+        cmp(k, nk),
+        (q: Eq(Ordering, cmp(k, nk), Less)) => Eq_trans(
+          ordmap_tree_get_entries(cmp, w, l, k, and_left(and_right(ordmap_node_split(cmp, w, l, nk, nv, r, h, s)))),
+          Eq_sym(
+            ordmap_list_get_append_none(
+              ordmap_tree_entries(l, Nil),
+              Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+              k,
+              cmp,
+              ordmap_list_get_keys_none(
+                k,
+                Less,
+                less_ne_equal,
+                Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                cmp,
+                and_intro(
+                  q,
+                  ordmap_keys_less_trans(
+                    cmp,
+                    w,
+                    ordmap_tree_entries(r, Nil),
+                    nk,
+                    k,
+                    q,
+                    and_left(and_right(and_right(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))))
+                  )
+                )
+              )
+            )
+          )
+        ),
+        (q: Eq(Ordering, cmp(k, nk), Equal)) => Eq_sym(
+          Eq_trans(
+            ordmap_list_get_append_skip(
+              Greater,
+              greater_ne_equal,
+              ordmap_tree_entries(l, Nil),
+              Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+              k,
+              cmp,
+              ordmap_keys_eq(
+                ordmap_tree_entries(l, Nil),
+                nk,
+                k,
+                Eq_sym(ordmap_law_eq(cmp, w, k, nk, q)),
+                Greater,
+                cmp,
+                and_left(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))
+              )
+            ),
+            ordmap_list_get_equal(nk, nv, ordmap_tree_entries(r, Nil), k, cmp, q)
+          )
+        ),
+        (q: Eq(Ordering, cmp(k, nk), Greater)) => Eq_trans(
+          ordmap_tree_get_entries(
+            cmp,
+            w,
+            r,
+            k,
+            and_right(and_right(and_right(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))))
+          ),
+          Eq_sym(
+            Eq_trans(
+              ordmap_list_get_append_skip(
+                Greater,
+                greater_ne_equal,
+                ordmap_tree_entries(l, Nil),
+                Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                k,
+                cmp,
+                ordmap_keys_greater_trans(
+                  cmp,
+                  w,
+                  ordmap_tree_entries(l, Nil),
+                  nk,
+                  k,
+                  q,
+                  and_left(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))
+                )
+              ),
+              ordmap_list_get_skip(Greater, greater_ne_equal, nk, nv, ordmap_tree_entries(r, Nil), k, cmp, q)
+            )
+          )
+        )
+      ),
+      Eq_sym(
+        Eq_congr((z: List(Pair(K, V))) => ordmap_list_get(z, k, cmp), ordmap_node_entries(l, nk, nv, r, h))
+      )
+    )
+  }
+}
+
+// In a tree whose entries are sorted, `ordmap_tree_insert` is the insertion
+// into its entries.
+theorem ordmap_tree_insert_entries<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  t: OrdmapTree(K, V),
+  k: K,
+  v: V,
+  s: ordmap_sorted(ordmap_tree_entries(t, Nil), cmp)
+): Eq(
+  List(Pair(K, V)),
+  ordmap_tree_entries(ordmap_tree_insert(t, k, v, cmp), Nil),
+  ordmap_list_insert(ordmap_tree_entries(t, Nil), k, v, cmp)
+) {
+  match t -> Eq(
+    List(Pair(K, V)),
+    ordmap_tree_entries(ordmap_tree_insert(t, k, v, cmp), Nil),
+    ordmap_list_insert(ordmap_tree_entries(t, Nil), k, v, cmp)
+  ) {
+    OrdmapLeaf => refl()
+    OrdmapNode(l, nk, nv, r, h) => Eq_trans(
+      ordering_cases(
+        (c: Ordering) => Eq(List(Pair(K, V)), ordmap_tree_entries(match c -> OrdmapTree(K, V) {
+          Less => ordmap_balance(ordmap_tree_insert(l, k, v, cmp), nk, nv, r)
+          Equal => OrdmapNode(l, k, v, r, h)
+          Greater => ordmap_balance(l, nk, nv, ordmap_tree_insert(r, k, v, cmp))
+        }, Nil), ordmap_list_insert(list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))), k, v, cmp)),
+        cmp(k, nk),
+        (q: Eq(Ordering, cmp(k, nk), Less)) => Eq_trans(
+          ordmap_balance_entries(ordmap_tree_insert(l, k, v, cmp), nk, nv, r, Nil),
+          Eq_trans(
+            ordmap_entries_append(ordmap_tree_insert(l, k, v, cmp), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))),
+            Eq_trans(
+              Eq_congr(
+                (z: List(Pair(K, V))) => list_append(z, Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))),
+                ordmap_tree_insert_entries(
+                  cmp,
+                  w,
+                  l,
+                  k,
+                  v,
+                  and_left(and_right(ordmap_node_split(cmp, w, l, nk, nv, r, h, s)))
+                )
+              ),
+              Eq_sym(ordmap_list_insert_append_less(ordmap_tree_entries(l, Nil), nk, nv, ordmap_tree_entries(r, Nil), k, v, cmp, q))
+            )
+          )
+        ),
+        (q: Eq(Ordering, cmp(k, nk), Equal)) => Eq_trans(
+          ordmap_entries_append(l, Cons(pair(k, v), ordmap_tree_entries(r, Nil))),
+          Eq_sym(
+            Eq_trans(
+              ordmap_list_insert_append_skip(
+                ordmap_tree_entries(l, Nil),
+                Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                k,
+                v,
+                cmp,
+                ordmap_keys_eq(
+                  ordmap_tree_entries(l, Nil),
+                  nk,
+                  k,
+                  Eq_sym(ordmap_law_eq(cmp, w, k, nk, q)),
+                  Greater,
+                  cmp,
+                  and_left(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))
+                )
+              ),
+              Eq_congr(
+                (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), z),
+                ordmap_list_insert_equal(nk, nv, ordmap_tree_entries(r, Nil), k, v, cmp, q)
+              )
+            )
+          )
+        ),
+        (q: Eq(Ordering, cmp(k, nk), Greater)) => Eq_trans(
+          ordmap_balance_entries(l, nk, nv, ordmap_tree_insert(r, k, v, cmp), Nil),
+          Eq_trans(
+            ordmap_entries_append(
+              l,
+              Cons(pair(nk, nv), ordmap_tree_entries(ordmap_tree_insert(r, k, v, cmp), Nil))
+            ),
+            Eq_trans(
+              Eq_congr(
+                (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), z)),
+                ordmap_tree_insert_entries(
+                  cmp,
+                  w,
+                  r,
+                  k,
+                  v,
+                  and_right(and_right(and_right(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))))
+                )
+              ),
+              Eq_sym(
+                Eq_trans(
+                  ordmap_list_insert_append_skip(
+                    ordmap_tree_entries(l, Nil),
+                    Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                    k,
+                    v,
+                    cmp,
+                    ordmap_keys_greater_trans(
+                      cmp,
+                      w,
+                      ordmap_tree_entries(l, Nil),
+                      nk,
+                      k,
+                      q,
+                      and_left(ordmap_node_split(cmp, w, l, nk, nv, r, h, s))
+                    )
+                  ),
+                  Eq_congr(
+                    (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), z),
+                    ordmap_list_insert_greater(nk, nv, ordmap_tree_entries(r, Nil), k, v, cmp, q)
+                  )
+                )
+              )
+            )
+          )
+        )
+      ),
+      Eq_sym(
+        Eq_congr(
+          (z: List(Pair(K, V))) => ordmap_list_insert(z, k, v, cmp),
+          ordmap_node_entries(l, nk, nv, r, h)
+        )
+      )
+    )
+  }
+}
+
+// The entries of a map's tree are sorted.
+fn ordmap_ordered<K, V>(m: Ordmap(K, V), cmp: (K, K) -> Ordering) -> Prop {
+  ordmap_sorted(ordmap_tree_entries(ordmap_tree(m), Nil), cmp)
+}
+
+theorem ordmap_empty_ordered<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering
+): ordmap_ordered(the(Ordmap(K, V), ordmap_empty()), cmp) {
+  trivial()
+}
+
+// `ordmap_insert` keeps a map ordered.
+theorem ordmap_insert_ordered<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  v: V,
+  s: ordmap_ordered(m, cmp)
+): ordmap_ordered(ordmap_insert(m, k, v, cmp), cmp) {
+  Eq_subst(
+    (z: List(Pair(K, V))) => ordmap_sorted(z, cmp),
+    Eq_sym(ordmap_tree_insert_entries(cmp, w, ordmap_tree(m), k, v, s)),
+    ordmap_list_insert_sorted(cmp, w, ordmap_tree_entries(ordmap_tree(m), Nil), k, v, s)
+  )
+}
+
+// After `ordmap_insert(m, k, v, cmp)`, `k` has `v`.
+theorem ordmap_get_insert_same<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  v: V,
+  s: ordmap_ordered(m, cmp)
+): Eq(Option(V), ordmap_get(ordmap_insert(m, k, v, cmp), k, cmp), Some(v)) {
+  Eq_trans(
+    ordmap_tree_get_entries(
+      cmp,
+      w,
+      ordmap_tree_insert(ordmap_tree(m), k, v, cmp),
+      k,
+      ordmap_insert_ordered(cmp, w, m, k, v, s)
+    ),
+    Eq_trans(
+      Eq_congr(
+        (z: List(Pair(K, V))) => ordmap_list_get(z, k, cmp),
+        ordmap_tree_insert_entries(cmp, w, ordmap_tree(m), k, v, s)
+      ),
+      ordmap_list_get_insert_same(cmp, w, ordmap_tree_entries(ordmap_tree(m), Nil), k, v)
+    )
+  )
+}
+
+// After `ordmap_insert(m, k, v, cmp)`, a key `j` that is not `k` has what
+// it had.
+theorem ordmap_get_insert_other<K: Type, V: Type>(
+  cmp: (K, K) -> Ordering,
+  w: OrdmapLaw(K, cmp),
+  m: Ordmap(K, V),
+  k: K,
+  v: V,
+  j: K,
+  o: Ordering,
+  ne: (Eq(Ordering, o, Equal)) -> False,
+  ej: Eq(Ordering, cmp(j, k), o),
+  s: ordmap_ordered(m, cmp)
+): Eq(Option(V), ordmap_get(ordmap_insert(m, k, v, cmp), j, cmp), ordmap_get(m, j, cmp)) {
+  Eq_trans(
+    ordmap_tree_get_entries(
+      cmp,
+      w,
+      ordmap_tree_insert(ordmap_tree(m), k, v, cmp),
+      j,
+      ordmap_insert_ordered(cmp, w, m, k, v, s)
+    ),
+    Eq_trans(
+      Eq_congr(
+        (z: List(Pair(K, V))) => ordmap_list_get(z, j, cmp),
+        ordmap_tree_insert_entries(cmp, w, ordmap_tree(m), k, v, s)
+      ),
+      Eq_trans(
+        ordmap_list_get_insert_other(
+          cmp,
+          w,
+          ordmap_tree_entries(ordmap_tree(m), Nil),
+          k,
+          v,
+          j,
+          o,
+          ne,
+          ej
+        ),
+        Eq_sym(ordmap_tree_get_entries(cmp, w, ordmap_tree(m), j, s))
+      )
+    )
+  )
+}
+
+// The steps of `ordmap_compare_nat_law`: `ordmap_compare_nat` is a total order.
+
+theorem ordmap_select_equal(
+  x: Yn,
+  y: Yn,
+  e: Eq(Ordering, ordmap_select(x, y), Equal)
+): And(Eq(Yn, x, no), Eq(Yn, y, no)) {
+  match x -> And(Eq(Yn, x, no), Eq(Yn, y, no)) {
+    no => match y {
+      no => and_intro(refl(), refl())
+      yes => False_elim(greater_ne_equal(e))
+    }
+    yes => False_elim(less_ne_equal(e))
+  }
+}
+
+theorem ordmap_select_less(
+  x: Yn,
+  y: Yn,
+  e: Eq(Ordering, ordmap_select(x, y), Less)
+): Eq(Yn, x, yes) {
+  match x -> Eq(Yn, x, yes) {
+    no => match y {
+      no => False_elim(equal_ne_less(e))
+      yes => False_elim(greater_ne_less(e))
+    }
+    yes => refl()
+  }
+}
+
+theorem ordmap_select_greater(
+  x: Yn,
+  y: Yn,
+  e: Eq(Ordering, ordmap_select(x, y), Greater)
+): And(Eq(Yn, x, no), Eq(Yn, y, yes)) {
+  match x -> And(Eq(Yn, x, no), Eq(Yn, y, yes)) {
+    no => match y {
+      no => False_elim(equal_ne_greater(e))
+      yes => and_intro(refl(), refl())
+    }
+    yes => False_elim(less_ne_greater(e))
+  }
+}
+
+theorem ordmap_select_of_yes(
+  x: Yn,
+  y: Yn,
+  h: Eq(Yn, x, yes)
+): Eq(Ordering, ordmap_select(x, y), Less) {
+  match x -> Eq(Ordering, ordmap_select(x, y), Less) {
+    no => False_elim(no_ne_yes(h))
+    yes => refl()
+  }
+}
+
+theorem ordmap_select_of_no_yes(
+  x: Yn,
+  y: Yn,
+  hx: Eq(Yn, x, no),
+  hy: Eq(Yn, y, yes)
+): Eq(Ordering, ordmap_select(x, y), Greater) {
+  match x -> Eq(Ordering, ordmap_select(x, y), Greater) {
+    no => match y {
+      no => False_elim(no_ne_yes(hy))
+      yes => refl()
+    }
+    yes => False_elim(yes_ne_no(hx))
+  }
+}
+
+theorem ordmap_compare_nat_same(a: Nat): Eq(Ordering, ordmap_compare_nat(a, a), Equal) {
+  Eq_subst((z: Yn) => Eq(Ordering, ordmap_select(z, z), Equal), Eq_sym(nat_lt_irrefl(a)), refl())
+}
+
+theorem ordmap_compare_nat_eq(
+  a: Nat,
+  b: Nat,
+  e: Eq(Ordering, ordmap_compare_nat(a, b), Equal)
+): Eq(Nat, a, b) {
+  nat_lt_total(
+    a,
+    b,
+    and_left(ordmap_select_equal(nat_lt(a, b), nat_lt(b, a), e)),
+    and_right(ordmap_select_equal(nat_lt(a, b), nat_lt(b, a), e))
+  )
+}
+
+theorem ordmap_compare_nat_flip_less(
+  a: Nat,
+  b: Nat,
+  e: Eq(Ordering, ordmap_compare_nat(a, b), Less)
+): Eq(Ordering, ordmap_compare_nat(b, a), Greater) {
+  ordmap_select_of_no_yes(
+    nat_lt(b, a),
+    nat_lt(a, b),
+    nat_lt_asym(a, b, ordmap_select_less(nat_lt(a, b), nat_lt(b, a), e)),
+    ordmap_select_less(nat_lt(a, b), nat_lt(b, a), e)
+  )
+}
+
+theorem ordmap_compare_nat_flip_greater(
+  a: Nat,
+  b: Nat,
+  e: Eq(Ordering, ordmap_compare_nat(a, b), Greater)
+): Eq(Ordering, ordmap_compare_nat(b, a), Less) {
+  ordmap_select_of_yes(
+    nat_lt(b, a),
+    nat_lt(a, b),
+    and_right(ordmap_select_greater(nat_lt(a, b), nat_lt(b, a), e))
+  )
+}
+
+theorem ordmap_compare_nat_less_trans(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  e1: Eq(Ordering, ordmap_compare_nat(a, b), Less),
+  e2: Eq(Ordering, ordmap_compare_nat(b, c), Less)
+): Eq(Ordering, ordmap_compare_nat(a, c), Less) {
+  ordmap_select_of_yes(
+    nat_lt(a, c),
+    nat_lt(c, a),
+    nat_lt_trans(
+      a,
+      b,
+      c,
+      ordmap_select_less(nat_lt(a, b), nat_lt(b, a), e1),
+      ordmap_select_less(nat_lt(b, c), nat_lt(c, b), e2)
+    )
+  )
+}
+
+theorem ordmap_compare_nat_law(): OrdmapLaw(Nat, ordmap_compare_nat) {
+  ordmap_law(
+    ordmap_compare_nat_same,
+    ordmap_compare_nat_eq,
+    ordmap_compare_nat_flip_less,
+    ordmap_compare_nat_flip_greater,
+    ordmap_compare_nat_less_trans
+  )
+}
+
+// For maps keyed by numbers, the order needs no assumption; the map must be ordered:
+theorem ordmap_nat_get_insert_same<V: Type>(
+  m: Ordmap(Nat, V),
+  k: Nat,
+  v: V,
+  s: ordmap_ordered(m, ordmap_compare_nat)
+): Eq(
+  Option(V),
+  ordmap_get(ordmap_insert(m, k, v, ordmap_compare_nat), k, ordmap_compare_nat),
+  Some(v)
+) {
+  ordmap_get_insert_same(ordmap_compare_nat, ordmap_compare_nat_law(), m, k, v, s)
+}

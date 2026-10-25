@@ -1,0 +1,580 @@
+import "Row.taut"
+import "List.taut"
+import "MapLaws.taut"
+
+// Insertion sort by a comparator `cmp`, and its proofs. The comparator is an
+// argument, as in `Map.taut`; the theorems about the order assume
+// `OrdmapLaw(A, cmp)` (`cmp` is a total order, `MapLaws.taut`), the ones about
+// the elements and the length assume nothing. The sort is stable: an element goes
+// after the equal ones already placed.
+
+// `a` is not after `b`.
+def SortLe(
+  A: Type,
+  cmp: (A, A) -> Ordering,
+  a: A,
+  b: A
+): Prop := (Eq(Ordering, cmp(a, b), Greater)) -> False
+
+// `a` is not after any element of `l`.
+fn sort_all_le<A>(cmp: (A, A) -> Ordering, a: A, l: List(A)) -> Prop {
+  match l -> Prop {
+    Nil => True
+    Cons(h, t) => And(SortLe(A, cmp, a, h), sort_all_le(cmp, a, t))
+  }
+}
+
+// Each element is not after those that follow it.
+fn sort_sorted<A>(cmp: (A, A) -> Ordering, l: List(A)) -> Prop {
+  match l -> Prop {
+    Nil => True
+    Cons(h, t) => And(sort_all_le(cmp, h, t), sort_sorted(cmp, t))
+  }
+}
+
+// `x` before the first element that is after it.
+fn list_insert_sorted<A>(cmp: (A, A) -> Ordering, x: A, l: List(A)) -> List(A) {
+  match l -> List(A) {
+    Nil => Cons(x, Nil)
+    Cons(h, t) => match cmp(x, h) -> List(A) {
+      Less => Cons(x, Cons(h, t))
+      Equal => Cons(h, list_insert_sorted(cmp, x, t))
+      Greater => Cons(h, list_insert_sorted(cmp, x, t))
+    }
+  }
+}
+
+fn list_sort<A>(cmp: (A, A) -> Ordering, l: List(A)) -> List(A) {
+  match l -> List(A) {
+    Nil => Nil
+    Cons(h, t) => list_insert_sorted(cmp, h, list_sort(cmp, t))
+  }
+}
+
+// ---- the order ----------------------------------------------------------------
+
+theorem sort_le_trans<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  a: A,
+  b: A,
+  c: A,
+  h1: SortLe(A, cmp, a, b),
+  h2: SortLe(A, cmp, b, c)
+): SortLe(A, cmp, a, c) {
+  (
+    e: Eq(Ordering, cmp(a, c), Greater)
+  ) => ordering_cases(
+    (o: Ordering) => False,
+    cmp(a, b),
+    (
+      e1: Eq(Ordering, cmp(a, b), Less)
+    ) => ordering_cases(
+      (o: Ordering) => False,
+      cmp(b, c),
+      (
+        e2: Eq(Ordering, cmp(b, c), Less)
+      ) => less_ne_greater(Eq_trans(Eq_sym(ordmap_law_less_trans(cmp, w, a, b, c, e1, e2)), e)),
+      (
+        e2: Eq(Ordering, cmp(b, c), Equal)
+      ) => h1(
+        Eq_subst(
+          (z: A) => Eq(Ordering, cmp(a, z), Greater),
+          Eq_sym(ordmap_law_eq(cmp, w, b, c, e2)),
+          e
+        )
+      ),
+      (e2: Eq(Ordering, cmp(b, c), Greater)) => h2(e2)
+    ),
+    (
+      e1: Eq(Ordering, cmp(a, b), Equal)
+    ) => h2(
+      Eq_subst((z: A) => Eq(Ordering, cmp(z, c), Greater), ordmap_law_eq(cmp, w, a, b, e1), e)
+    ),
+    (e1: Eq(Ordering, cmp(a, b), Greater)) => h1(e1)
+  )
+}
+
+// Of two elements one is not after the other.
+theorem sort_le_total<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  a: A,
+  b: A,
+  e: Eq(Ordering, cmp(a, b), Greater)
+): SortLe(A, cmp, b, a) {
+  (
+    f: Eq(Ordering, cmp(b, a), Greater)
+  ) => greater_ne_less(Eq_trans(Eq_sym(f), ordmap_law_flip_greater(cmp, w, a, b, e)))
+}
+
+theorem sort_all_le_trans<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  a: A,
+  b: A,
+  l: List(A),
+  h: SortLe(A, cmp, a, b),
+  all: sort_all_le(cmp, b, l)
+): sort_all_le(cmp, a, l) {
+  match l -> sort_all_le(cmp, a, l) {
+    Nil => trivial
+    Cons(
+      x,
+      t
+    ) => and_intro(
+      sort_le_trans(cmp, w, a, b, x, h, and_left(all)),
+      sort_all_le_trans(cmp, w, a, b, t, h, and_right(all))
+    )
+  }
+}
+
+theorem sort_le_of_equal<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  a: A,
+  b: A,
+  e: Eq(Ordering, cmp(a, b), Equal)
+): SortLe(A, cmp, b, a) {
+  (
+    f: Eq(Ordering, cmp(b, a), Greater)
+  ) => equal_ne_greater(
+    Eq_trans(
+      Eq_sym(ordmap_law_same(cmp, w, a)),
+      Eq_subst(
+        (z: A) => Eq(Ordering, cmp(z, a), Greater),
+        Eq_sym(ordmap_law_eq(cmp, w, a, b, e)),
+        f
+      )
+    )
+  )
+}
+
+theorem sort_le_of_less<A: Type>(
+  cmp: (A, A) -> Ordering,
+  a: A,
+  b: A,
+  e: Eq(Ordering, cmp(a, b), Less)
+): SortLe(A, cmp, a, b) {
+  (f: Eq(Ordering, cmp(a, b), Greater)) => less_ne_greater(Eq_trans(Eq_sym(e), f))
+}
+
+// ---- insertion ----------------------------------------------------------------
+
+theorem sort_insert_all_le<A: Type>(
+  cmp: (A, A) -> Ordering,
+  y: A,
+  x: A,
+  l: List(A),
+  all: sort_all_le(cmp, y, l),
+  hx: SortLe(A, cmp, y, x)
+): sort_all_le(cmp, y, list_insert_sorted(cmp, x, l)) {
+  match l -> sort_all_le(cmp, y, list_insert_sorted(cmp, x, l)) {
+    Nil => and_intro(hx, trivial)
+    Cons(h, t) => ordering_cases(
+      (o: Ordering) => sort_all_le(
+        cmp,
+        y,
+        match o -> List(A) {
+          Less => Cons(x, Cons(h, t))
+          Equal => Cons(h, list_insert_sorted(cmp, x, t))
+          Greater => Cons(h, list_insert_sorted(cmp, x, t))
+        }
+      ),
+      cmp(x, h),
+      (e: Eq(Ordering, cmp(x, h), Less)) => and_intro(hx, all),
+      (e: Eq(Ordering, cmp(x, h), Equal)) => and_intro(
+        and_left(all),
+        sort_insert_all_le(cmp, y, x, t, and_right(all), hx)
+      ),
+      (e: Eq(Ordering, cmp(x, h), Greater)) => and_intro(
+        and_left(all),
+        sort_insert_all_le(cmp, y, x, t, and_right(all), hx)
+      )
+    )
+  }
+}
+
+theorem sort_insert_sorted<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  x: A,
+  l: List(A),
+  s: sort_sorted(cmp, l)
+): sort_sorted(cmp, list_insert_sorted(cmp, x, l)) {
+  match l -> sort_sorted(cmp, list_insert_sorted(cmp, x, l)) {
+    Nil => and_intro(trivial, trivial)
+    Cons(h, t) => ordering_cases(
+      (o: Ordering) => sort_sorted(
+        cmp,
+        match o -> List(A) {
+          Less => Cons(x, Cons(h, t))
+          Equal => Cons(h, list_insert_sorted(cmp, x, t))
+          Greater => Cons(h, list_insert_sorted(cmp, x, t))
+        }
+      ),
+      cmp(x, h),
+      (e: Eq(Ordering, cmp(x, h), Less)) => and_intro(
+        and_intro(
+          sort_le_of_less(cmp, x, h, e),
+          sort_all_le_trans(cmp, w, x, h, t, sort_le_of_less(cmp, x, h, e), and_left(s))
+        ),
+        s
+      ),
+      (e: Eq(Ordering, cmp(x, h), Equal)) => and_intro(
+        sort_insert_all_le(cmp, h, x, t, and_left(s), sort_le_of_equal(cmp, w, x, h, e)),
+        sort_insert_sorted(cmp, w, x, t, and_right(s))
+      ),
+      (e: Eq(Ordering, cmp(x, h), Greater)) => and_intro(
+        sort_insert_all_le(cmp, h, x, t, and_left(s), sort_le_total(cmp, w, x, h, e)),
+        sort_insert_sorted(cmp, w, x, t, and_right(s))
+      )
+    )
+  }
+}
+
+theorem sort_sorts<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  l: List(A)
+): sort_sorted(cmp, list_sort(cmp, l)) {
+  match l -> sort_sorted(cmp, list_sort(cmp, l)) {
+    Nil => trivial
+    Cons(h, t) => sort_insert_sorted(cmp, w, h, list_sort(cmp, t), sort_sorts(cmp, w, t))
+  }
+}
+
+// ---- what the sort keeps ------------------------------------------------------
+
+theorem sort_mem_cons<A: Type>(
+  x: A,
+  a: List(A),
+  b: List(A),
+  h: Sub(A, a, b),
+  e: A,
+  m: Mem(A, e, Cons(x, a))
+): Mem(A, e, Cons(x, b)) {
+  match m -> Mem(A, e, Cons(x, b)) {
+    mem_here(t) => mem_here(A, e, b)
+    mem_there(c, t, m2) => mem_there(A, e, x, b, h(e, m2))
+  }
+}
+
+theorem sort_equiv_cons<A: Type>(
+  x: A,
+  a: List(A),
+  b: List(A),
+  h: Equiv(A, a, b)
+): Equiv(A, Cons(x, a), Cons(x, b)) {
+  and_intro(
+    (e: A) => (m: Mem(A, e, Cons(x, a))) => sort_mem_cons(x, a, b, and_left(h), e, m),
+    (e: A) => (m: Mem(A, e, Cons(x, b))) => sort_mem_cons(x, b, a, and_right(h), e, m)
+  )
+}
+
+theorem sort_mem_insert_self<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: List(A)
+): Mem(A, x, list_insert_sorted(cmp, x, l)) {
+  match l -> Mem(A, x, list_insert_sorted(cmp, x, l)) {
+    Nil => mem_here(A, x, Nil)
+    Cons(h, t) => ordering_cases(
+      (o: Ordering) => Mem(
+        A,
+        x,
+        match o -> List(A) {
+          Less => Cons(x, Cons(h, t))
+          Equal => Cons(h, list_insert_sorted(cmp, x, t))
+          Greater => Cons(h, list_insert_sorted(cmp, x, t))
+        }
+      ),
+      cmp(x, h),
+      (e: Eq(Ordering, cmp(x, h), Less)) => mem_here(A, x, Cons(h, t)),
+      (e: Eq(Ordering, cmp(x, h), Equal)) => mem_there(A, x, h, list_insert_sorted(cmp, x, t), sort_mem_insert_self(cmp, x, t)),
+      (e: Eq(Ordering, cmp(x, h), Greater)) => mem_there(A, x, h, list_insert_sorted(cmp, x, t), sort_mem_insert_self(cmp, x, t))
+    )
+  }
+}
+
+theorem sort_mem_insert<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  e: A,
+  l: List(A),
+  m: Mem(A, e, l)
+): Mem(A, e, list_insert_sorted(cmp, x, l)) {
+  match l -> Mem(A, e, list_insert_sorted(cmp, x, l)) {
+    Nil => Mem_nil(Mem(A, e, list_insert_sorted(cmp, x, Nil)), m)
+    Cons(h, t) => ordering_cases(
+      (o: Ordering) => Mem(
+        A,
+        e,
+        match o -> List(A) {
+          Less => Cons(x, Cons(h, t))
+          Equal => Cons(h, list_insert_sorted(cmp, x, t))
+          Greater => Cons(h, list_insert_sorted(cmp, x, t))
+        }
+      ),
+      cmp(x, h),
+      (c: Eq(Ordering, cmp(x, h), Less)) => mem_there(A, e, x, Cons(h, t), m),
+      (c: Eq(Ordering, cmp(x, h), Equal)) => match m -> Mem(A, e, Cons(A, h, list_insert_sorted(cmp, x, t))) {
+        mem_here(t2) => mem_here(A, e, list_insert_sorted(cmp, x, t))
+        mem_there(b, t2, m2) => mem_there(A, e, h, list_insert_sorted(cmp, x, t), sort_mem_insert(cmp, x, e, t, m2))
+      },
+      (c: Eq(Ordering, cmp(x, h), Greater)) => match m -> Mem(A, e, Cons(A, h, list_insert_sorted(cmp, x, t))) {
+        mem_here(t2) => mem_here(A, e, list_insert_sorted(cmp, x, t))
+        mem_there(b, t2, m2) => mem_there(A, e, h, list_insert_sorted(cmp, x, t), sort_mem_insert(cmp, x, e, t, m2))
+      }
+    )
+  }
+}
+
+theorem sort_mem_skip<A: Type>(
+  x: A,
+  h: A,
+  t: List(A),
+  e: A,
+  m: Mem(A, e, Cons(x, t))
+): Mem(A, e, Cons(x, Cons(h, t))) {
+  match m -> Mem(A, e, Cons(x, Cons(h, t))) {
+    mem_here(t2) => mem_here(A, e, Cons(h, t))
+    mem_there(b, t2, m2) => mem_there(A, e, x, Cons(h, t), mem_there(A, e, h, t, m2))
+  }
+}
+
+theorem sort_mem_step<A: Type>(
+  x: A,
+  h: A,
+  t: List(A),
+  i: List(A),
+  ih: Sub(A, i, Cons(x, t)),
+  e: A,
+  m: Mem(A, e, Cons(h, i))
+): Mem(A, e, Cons(x, Cons(h, t))) {
+  match m -> Mem(A, e, Cons(x, Cons(h, t))) {
+    mem_here(t2) => mem_there(A, e, x, Cons(e, t), mem_here(A, e, t))
+    mem_there(b, t2, m2) => sort_mem_skip(x, h, t, e, ih(e, m2))
+  }
+}
+
+// What `list_insert_sorted` does with `Cons(h, t)` once `cmp(x, h)` is `o`.
+fn sort_insert_case<A>(cmp: (A, A) -> Ordering, x: A, h: A, t: List(A), o: Ordering) -> List(A) {
+  match o -> List(A) {
+    Less => Cons(x, Cons(h, t))
+    Equal => Cons(h, list_insert_sorted(cmp, x, t))
+    Greater => Cons(h, list_insert_sorted(cmp, x, t))
+  }
+}
+
+theorem sort_mem_case_inv<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  h: A,
+  t: List(A),
+  o: Ordering,
+  e: A,
+  ih: Sub(A, list_insert_sorted(cmp, x, t), Cons(x, t)),
+  m: Mem(A, e, sort_insert_case(cmp, x, h, t, o))
+): Mem(A, e, Cons(x, Cons(h, t))) {
+  match o -> Mem(A, e, Cons(x, Cons(h, t))) {
+    Less => m
+    Equal => sort_mem_step(x, h, t, list_insert_sorted(cmp, x, t), ih, e, m)
+    Greater => sort_mem_step(x, h, t, list_insert_sorted(cmp, x, t), ih, e, m)
+  }
+}
+
+theorem sort_insert_sub<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: List(A)
+): Sub(A, list_insert_sorted(cmp, x, l), Cons(x, l)) {
+  match l -> Sub(A, list_insert_sorted(cmp, x, l), Cons(x, l)) {
+    Nil => (e: A) => (m: Mem(A, e, list_insert_sorted(cmp, x, Nil))) => m
+    Cons(
+      h,
+      t
+    ) => (
+      e: A
+    ) => (
+      m: Mem(A, e, list_insert_sorted(cmp, x, Cons(h, t)))
+    ) => sort_mem_case_inv(cmp, x, h, t, cmp(x, h), e, sort_insert_sub(cmp, x, t), m)
+  }
+}
+
+theorem sort_insert_sup<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: List(A),
+  e: A,
+  m: Mem(A, e, Cons(x, l))
+): Mem(A, e, list_insert_sorted(cmp, x, l)) {
+  match m -> Mem(A, e, list_insert_sorted(cmp, x, l)) {
+    mem_here(t) => sort_mem_insert_self(cmp, e, t)
+    mem_there(b, t, m2) => sort_mem_insert(cmp, x, e, t, m2)
+  }
+}
+
+// Inserting keeps the elements, and adds `x`.
+theorem sort_insert_equiv<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: List(A)
+): Equiv(A, list_insert_sorted(cmp, x, l), Cons(x, l)) {
+  and_intro(
+    sort_insert_sub(cmp, x, l),
+    (e: A) => (m: Mem(A, e, Cons(x, l))) => sort_insert_sup(cmp, x, l, e, m)
+  )
+}
+
+// The sort keeps exactly the elements.
+theorem sort_equiv<A: Type>(cmp: (A, A) -> Ordering, l: List(A)): Equiv(A, list_sort(cmp, l), l) {
+  match l -> Equiv(A, list_sort(cmp, l), l) {
+    Nil => Equiv_refl(A, Nil(A))
+    Cons(
+      h,
+      t
+    ) => Equiv_trans(
+      A,
+      list_insert_sorted(cmp, h, list_sort(cmp, t)),
+      Cons(h, list_sort(cmp, t)),
+      Cons(h, t),
+      sort_insert_equiv(cmp, h, list_sort(cmp, t)),
+      sort_equiv_cons(h, list_sort(cmp, t), t, sort_equiv(cmp, t))
+    )
+  }
+}
+
+theorem sort_insert_case_length<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  h: A,
+  t: List(A),
+  o: Ordering,
+  ih: Eq(Nat, list_length(list_insert_sorted(cmp, x, t)), succ(list_length(t)))
+): Eq(Nat, list_length(sort_insert_case(cmp, x, h, t, o)), succ(succ(list_length(t)))) {
+  match o -> Eq(Nat, list_length(sort_insert_case(cmp, x, h, t, o)), succ(succ(list_length(t)))) {
+    Less => refl()
+    Equal => Eq_congr(succ, ih)
+    Greater => Eq_congr(succ, ih)
+  }
+}
+
+theorem sort_insert_length<A: Type>(
+  cmp: (A, A) -> Ordering,
+  x: A,
+  l: List(A)
+): Eq(Nat, list_length(list_insert_sorted(cmp, x, l)), succ(list_length(l))) {
+  match l -> Eq(Nat, list_length(list_insert_sorted(cmp, x, l)), succ(list_length(l))) {
+    Nil => refl()
+    Cons(h, t) => sort_insert_case_length(cmp, x, h, t, cmp(x, h), sort_insert_length(cmp, x, t))
+  }
+}
+
+theorem sort_length<A: Type>(
+  cmp: (A, A) -> Ordering,
+  l: List(A)
+): Eq(Nat, list_length(list_sort(cmp, l)), list_length(l)) {
+  match l -> Eq(Nat, list_length(list_sort(cmp, l)), list_length(l)) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      sort_insert_length(cmp, h, list_sort(cmp, t)),
+      Eq_congr(succ, sort_length(cmp, t))
+    )
+  }
+}
+
+// ---- sorted lists stay as they are --------------------------------------------
+
+theorem sort_insert_head_case<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  x: A,
+  h: A,
+  t: List(A),
+  o: Ordering,
+  c: Eq(Ordering, cmp(x, h), o),
+  le: SortLe(A, cmp, x, h),
+  ih: Eq(List(A), list_insert_sorted(cmp, x, t), Cons(x, t))
+): Eq(List(A), sort_insert_case(cmp, x, h, t, o), Cons(x, Cons(h, t))) {
+  match o -> Eq(List(A), sort_insert_case(cmp, x, h, t, o), Cons(x, Cons(h, t))) {
+    Less => refl()
+    Equal => Eq_trans(
+      Eq_congr((z: List(A)) => Cons(h, z), ih),
+      Eq_subst(
+        (z: A) => Eq(List(A), Cons(A, h, Cons(A, z, t)), Cons(A, z, Cons(A, h, t))),
+        Eq_sym(ordmap_law_eq(cmp, w, x, h, c)),
+        refl()
+      )
+    )
+    Greater => False_elim(le(c))
+  }
+}
+
+// Inserting an element that is not after any of them puts it in front.
+theorem sort_insert_head<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  x: A,
+  l: List(A),
+  all: sort_all_le(cmp, x, l)
+): Eq(List(A), list_insert_sorted(cmp, x, l), Cons(x, l)) {
+  match l -> Eq(List(A), list_insert_sorted(cmp, x, l), Cons(x, l)) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => sort_insert_head_case(
+      cmp,
+      w,
+      x,
+      h,
+      t,
+      cmp(x, h),
+      refl(),
+      and_left(all),
+      sort_insert_head(cmp, w, x, t, and_right(all))
+    )
+  }
+}
+
+theorem sort_of_sorted<A: Type>(
+  cmp: (A, A) -> Ordering,
+  w: OrdmapLaw(A, cmp),
+  l: List(A),
+  s: sort_sorted(cmp, l)
+): Eq(List(A), list_sort(cmp, l), l) {
+  match l -> Eq(List(A), list_sort(cmp, l), l) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      Eq_congr(
+        (z: List(A)) => list_insert_sorted(cmp, h, z),
+        sort_of_sorted(cmp, w, t, and_right(s))
+      ),
+      sort_insert_head(cmp, w, h, t, and_left(s))
+    )
+  }
+}
+
+// ---- an example ---------------------------------------------------------------
+
+theorem sort_example(): Eq(
+  List(Nat),
+  list_sort(ordmap_compare_nat, Cons(3, Cons(1, Cons(2, Cons(1, Nil))))),
+  Cons(1, Cons(1, Cons(2, Cons(3, Nil))))
+) {
+  refl()
+}
+
+// Numbers sorted by `ordmap_compare_nat` come out in order, with nothing assumed.
+theorem sort_nat_sorts(
+  l: List(Nat)
+): sort_sorted(ordmap_compare_nat, list_sort(ordmap_compare_nat, l)) {
+  sort_sorts(ordmap_compare_nat, ordmap_compare_nat_law(), l)
+}

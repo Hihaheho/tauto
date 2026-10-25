@@ -1,0 +1,41 @@
+import "../../../std/WellFounded.taut"
+import "../../../std/List.taut"
+
+// Functions whose recursion is not on a field of the argument, so `match` and structural
+// recursion cannot define them. Each recurs on its first parameter and says why the call is
+// smaller: `decreasing_by measure(f)` compares the numbers `f` gives, and a recursive call
+// ends with the proof that its first argument is below the one the function was called with.
+
+fn id_nat(n: Nat) -> Nat {
+  n
+}
+
+// `n / 2`: the recursion skips two.
+fn half(n: Nat) -> Nat decreasing_by measure(id_nat) {
+  match n -> Nat {
+    zero => zero
+    succ(m) => match m -> Nat {
+      zero => zero
+      succ(k) => succ(half(k, nat_le_succ(k)))
+    }
+  }
+}
+
+// The sums of the neighbours, two by two: `[a, b, c, d, e]` is `[a + b, c + d, e]`.
+fn pair_up(l: List(Nat)) -> List(Nat) decreasing_by measure(l => list_length(l)) {
+  match l -> List(Nat) {
+    Nil => Nil
+    Cons(x, rest) => match rest -> List(Nat) {
+      Nil => Cons(x, Nil)
+      Cons(y, t) => Cons(nat_add(x, y), pair_up(t, nat_le_succ(list_length(t))))
+    }
+  }
+}
+
+// The first parameter decreases in the call and `acc`, the one after it, grows.
+fn count_up(n: Nat, acc: Nat) -> Nat decreasing_by measure(id_nat) {
+  match n -> Nat {
+    zero => acc
+    succ(m) => count_up(m, succ(acc), nat_le_refl(m))
+  }
+}

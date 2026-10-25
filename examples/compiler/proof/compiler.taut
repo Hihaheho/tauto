@@ -1,0 +1,121 @@
+import "../src/compiler.taut"
+
+// What the compiler does, proved. No program imports this file; `tauto check`
+// checks it.
+
+// Running the code of `e` followed by `k` is running `k` with the value of `e` pushed.
+theorem comp_correct(
+  e: Expr,
+  k: List(Instr),
+  st: List(Nat)
+): Eq(Option(List(Nat)), run_code(comp_expr(e, k), st), run_code(k, Cons(eval_expr(e), st))) {
+  match e -> Eq(
+    Option(List(Nat)),
+    run_code(comp_expr(e, k), st),
+    run_code(k, Cons(eval_expr(e), st))
+  ) {
+    e_lit(n) => refl()
+    e_add(
+      a,
+      b
+    ) => Eq_trans(
+      comp_correct(a, comp_expr(b, Cons(i_add, k)), st),
+      comp_correct(b, Cons(i_add, k), Cons(eval_expr(a), st))
+    )
+    e_mul(
+      a,
+      b
+    ) => Eq_trans(
+      comp_correct(a, comp_expr(b, Cons(i_mul, k)), st),
+      comp_correct(b, Cons(i_mul, k), Cons(eval_expr(a), st))
+    )
+  }
+}
+
+// The compiled code never underflows the stack and leaves exactly the value of `e`.
+theorem compile_correct(
+  e: Expr
+): Eq(Option(List(Nat)), run_code(compile_expr(e), Nil), Some(Cons(eval_expr(e), Nil))) {
+  comp_correct(e, Nil, Nil)
+}
+
+theorem fold_add_correct(
+  a: Expr,
+  b: Expr
+): Eq(Nat, eval_expr(fold_add(a, b)), nat_add(eval_expr(a), eval_expr(b))) {
+  match a -> Eq(Nat, eval_expr(fold_add(a, b)), nat_add(eval_expr(a), eval_expr(b))) {
+    e_lit(n) => match b -> Eq(Nat, eval_expr(fold_add(e_lit(n), b)), nat_add(n, eval_expr(b))) {
+      e_lit(m) => refl()
+      e_add(b1, b2) => refl()
+      e_mul(b1, b2) => refl()
+    }
+    e_add(a1, a2) => refl()
+    e_mul(a1, a2) => refl()
+  }
+}
+
+theorem fold_mul_correct(
+  a: Expr,
+  b: Expr
+): Eq(Nat, eval_expr(fold_mul(a, b)), nat_mul(eval_expr(a), eval_expr(b))) {
+  match a -> Eq(Nat, eval_expr(fold_mul(a, b)), nat_mul(eval_expr(a), eval_expr(b))) {
+    e_lit(n) => match b -> Eq(Nat, eval_expr(fold_mul(e_lit(n), b)), nat_mul(n, eval_expr(b))) {
+      e_lit(m) => refl()
+      e_add(b1, b2) => refl()
+      e_mul(b1, b2) => refl()
+    }
+    e_add(a1, a2) => refl()
+    e_mul(a1, a2) => refl()
+  }
+}
+
+// Constant folding keeps the value.
+theorem fold_correct(e: Expr): Eq(Nat, eval_expr(fold_expr(e)), eval_expr(e)) {
+  match e -> Eq(Nat, eval_expr(fold_expr(e)), eval_expr(e)) {
+    e_lit(n) => refl()
+    e_add(
+      a,
+      b
+    ) => Eq_trans(
+      fold_add_correct(fold_expr(a), fold_expr(b)),
+      Eq_trans(
+        Eq_congr((x: Nat) => nat_add(x, eval_expr(fold_expr(b))), fold_correct(a)),
+        Eq_congr((x: Nat) => nat_add(eval_expr(a), x), fold_correct(b))
+      )
+    )
+    e_mul(
+      a,
+      b
+    ) => Eq_trans(
+      fold_mul_correct(fold_expr(a), fold_expr(b)),
+      Eq_trans(
+        Eq_congr((x: Nat) => nat_mul(x, eval_expr(fold_expr(b))), fold_correct(a)),
+        Eq_congr((x: Nat) => nat_mul(eval_expr(a), x), fold_correct(b))
+      )
+    )
+  }
+}
+
+// Folding first and then compiling gives the same answer.
+theorem optimized_compile_correct(
+  e: Expr
+): Eq(Option(List(Nat)), run_code(compile_expr(fold_expr(e)), Nil), Some(Cons(eval_expr(e), Nil))) {
+  Eq_trans(compile_correct(fold_expr(e)), Eq_congr((n: Nat) => Some(Cons(n, Nil)), fold_correct(e)))
+}
+
+// Computed: `(2 + 3) * (4 + 5)` is 45 on the machine, and folding leaves the number 45.
+theorem example_runs(): Eq(
+  Option(List(Nat)),
+  run_code(compile_expr(e_mul(e_add(e_lit(2), e_lit(3)), e_add(e_lit(4), e_lit(5)))), Nil),
+  Some(Cons(45, Nil))
+) {
+  refl()
+}
+
+theorem example_folds(): Eq(
+  Expr,
+  fold_expr(e_mul(e_add(e_lit(2), e_lit(3)), e_add(e_lit(4), e_lit(5)))),
+  e_lit(45)
+) {
+  refl()
+}

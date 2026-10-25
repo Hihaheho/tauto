@@ -1,0 +1,93 @@
+import "Std.taut"
+
+// `rewrite!` is here, apart from `Tactic.taut` (which also has `nat_norm!` and so imports
+// `Base`), so that a file can use it without the arithmetic of `Base`.
+
+// Tactics of the proof language: macros whose
+// function takes a `ProofStep`, called as `by t!(…) -> G0 { Δ ⊢ G => p … }`. A tactic
+// is not trusted: the term it makes is checked by the kernel, with the goals
+// written.
+
+// `rewrite!(e)`, for `e: Eq(A, l, r)`: the goal before is `M(l)` and the goal of
+// the one arm `M(r)`; the term is `Eq_subst(z => M(z), Eq_sym(e), ?arm1)`. Which
+// `l` change is what the arm's goal shows. `l` and `r` are read from the type of
+// `e`, or, where it cannot be found (a call that is an induction hypothesis) or is
+// written otherwise, from where the two goals differ. Where the goals do not say, every `l` is changed.
+fn tac_rewrite(s: ProofStep) -> SynExpr ! {macro_error, elab, Div} {
+  let g0 = code_term(s.before)
+  let sides = tac_eq_sides(s)
+  let g1 = match s.after {
+    Nil => match sides {
+      Some(lr) => syn_replace(g0, lr.fst, lr.snd)
+      None => syn_error(s.span, "rewrite!: the equation does not check here; write the arm's goal")
+    }
+    Cons(g, rest) => match rest {
+      Nil => code_term(g.ty)
+      Cons(_, _) => syn_error(s.span, "rewrite! leaves one goal: write one arm")
+    }
+  }
+  let z = ExVar(SynIdent { name: "z", ctx: SynCtx { scopes: Nil }, span: s.span })
+  let by_type = match sides {
+    Some(lr) => syn_abstract(g0, g1, lr.fst, lr.snd, z)
+    None => None
+  }
+  let body = match by_type {
+    Some(m) => m
+    None => match syn_diff(g0, g1) {
+      None => syn_error(s.span, "rewrite!: the two goals are written the same")
+      Some(d) => if syn_same(d.fst, g0) {
+        tac_motive(s.span, None)
+      } else {
+        tac_motive(s.span, syn_abstract(g0, g1, d.fst, d.snd, z))
+      }
+    }
+  }
+  let motive = ExLam(
+    Cons(BName(SynIdent { name: "z", ctx: SynCtx { scopes: Nil }, span: s.span }, None), Nil),
+    body,
+    s.span
+  )
+  let e = s.arg
+  quote { Eq_subst($motive, Eq_sym($e), ?arm1) }
+}
+
+// The body of the motive, once found.
+fn tac_motive(at: SynSpan, found: Option(SynExpr)) -> SynExpr ! {macro_error} {
+  match found {
+    Some(m) => m
+    None => syn_error(
+      at,
+      "rewrite!: the two goals differ other than by the equation; write one step for each equation"
+    )
+  }
+}
+
+// `l` and `r` of `e: Eq(A, l, r)`, when `e` checks where the step is.
+fn tac_eq_sides(s: ProofStep) -> Option(Pair(SynExpr, SynExpr)) ! {elab} {
+  match elab_check(s.arg, s.before, None) {
+    Err(_) => None
+    Ok(c) => match syn_app_parts(code_term(elab_whnf(code_type(c)))) {
+      None => None
+      Some(p) => tac_sides(p.snd)
+    }
+  }
+}
+
+// The last two of three arguments.
+fn tac_sides(xs: List(SynExpr)) -> Option(Pair(SynExpr, SynExpr)) {
+  match xs {
+    Nil => None
+    Cons(_, ys) => match ys {
+      Nil => None
+      Cons(l, zs) => match zs {
+        Nil => None
+        Cons(r, rest) => match rest {
+          Nil => Some(Pair { fst: l, snd: r })
+          Cons(_, _) => None
+        }
+      }
+    }
+  }
+}
+
+macro rewrite = tac_rewrite

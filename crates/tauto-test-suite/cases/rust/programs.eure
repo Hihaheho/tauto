@@ -324,28 +324,6 @@ shows = [
   "w2 = 5",
 ]
 
-@ cases.closures-share-a-var
-source = ```nib
-fn counter() -> () -> i64 {
-  var n = 0
-  () => { n := n + 1
-    n }
-}
-let c = counter()
-perform show("a", c())
-perform show("b", c())
-var total = 0
-let add = (x) => { total := total + x }
-add(5)
-add(6)
-perform show("total", total)
-```
-rust_shows = [
-  "a = 1",
-  "b = 2",
-  "total = 11",
-]
-
 @ cases.a-union-from-a-handler
 source = ```nib
 effect stop: () -> Never resume 0
@@ -1429,3 +1407,221 @@ fn go(base: i64) -> i64 {
 perform show("r", go(100))
 ```
 shows = ["r = 232"]
+
+@ cases.a-local-fn-that-captures-is-passed-as-a-value
+source = ```nib
+fn apply(f: (i64) -> i64, x: i64) -> i64 { f(x) }
+fn go(base: i64) -> i64 {
+  fn add(x: i64) -> i64 { x + base }
+  apply(add, 1) + apply(add, 2)
+}
+perform show("r", go(10))
+```
+shows = ["r = 23"]
+
+@ cases.a-local-fn-that-captures-is-returned
+source = ```nib
+fn make(base: i64) -> (i64) -> i64 {
+  fn add(x: i64) -> i64 { x + base }
+  add
+}
+let f = make(10)
+perform show("r", f(1) + f(2))
+```
+shows = ["r = 23"]
+
+@ cases.an-escaping-closure-calls-a-local-fn-that-captures
+source = ```nib
+fn make(base: i64) -> (i64) -> i64 {
+  fn add(x: i64) -> i64 { x + base }
+  (y) => add(y) * 2
+}
+let f = make(10)
+perform show("r", f(1) + f(2))
+```
+shows = ["r = 46"]
+
+@ cases.a-local-fn-that-captures-a-text-is-passed-as-a-value
+source = ```nib
+fn apply(f: (i64) -> Text, x: i64) -> Text { f(x) }
+fn go(label: Text) -> Text {
+  fn show_it(x: i64) -> Text { label }
+  apply(show_it, 1)
+}
+perform show("r", go("hi"))
+```
+shows = ["r = \"hi\""]
+
+@ cases.a-local-fn-that-performs-an-effect-is-passed-as-a-value
+source = ```nib
+effect ask: (n: i64) -> i64 resume 1
+fn apply(f: (i64) -> i64 ! {ask}, x: i64) -> i64 ! {ask} { f(x) }
+fn go(base: i64) -> i64 ! {ask} {
+  fn query(x: i64) -> i64 ! {ask} { perform ask(x + base) }
+  apply(query, 1) + apply(query, 2)
+}
+let r = handle { go(100) } with { ask(n), k => k(n * 2) }
+perform show("r", r)
+```
+shows = ["r = 406"]
+
+@ cases.a-local-fn-that-captures-another-is-passed-as-a-value
+source = ```nib
+fn apply(f: (i64) -> i64, x: i64) -> i64 { f(x) }
+fn go(base: i64, scale: i64) -> i64 {
+  fn add(x: i64) -> i64 { x + base }
+  fn both(x: i64) -> i64 { add(x) * scale }
+  apply(both, 1) + apply(both, 2)
+}
+perform show("r", go(10, 3))
+```
+shows = ["r = 69"]
+
+@ cases.a-local-fn-that-captures-a-vec-is-passed-as-a-borrowed-function
+source = ```nib
+fn apply(&f: (i64) -> i64, x: i64) -> i64 { let y = f(x)
+  f(y) }
+fn go(k: i64, xs: Vec(i64)) -> i64 {
+  fn pick(i: i64) -> i64 { i + i64_of_u64(vec_len(&xs)) + k }
+  apply(pick, 1) + apply(pick, 2)
+}
+var xs = vec_new()
+vec_push(&mut xs, 4)
+vec_push(&mut xs, 5)
+perform show("r", go(10, xs))
+```
+shows = ["r = 51"]
+
+@ cases.a-local-fn-that-assigns-a-var-is-passed-as-a-borrowed-function
+source = ```nib
+fn apply(&f: (i64) -> i64, x: i64) -> i64 { let y = f(x)
+  f(y) }
+fn go() -> i64 {
+  var total = 0
+  fn bump(by: i64) -> i64 {
+    total := total + by
+    total
+  }
+  let a = apply(bump, 1)
+  a * 100 + total
+}
+perform show("r", go())
+```
+shows = ["r = 202"]
+
+@ cases.a-local-fn-that-borrows-a-parameter-is-passed-as-a-value
+source = ```nib
+fn apply(f: (&Vec(i64)) -> i64, v: Vec(i64)) -> i64 { f(&v) }
+fn go(k: i64) -> i64 {
+  fn total(&xs: Vec(i64)) -> i64 { i64_of_u64(vec_len(&xs)) + k }
+  var v = vec_new()
+  vec_push(&mut v, 1)
+  apply(total, v)
+}
+perform show("r", go(10))
+```
+shows = ["r = 11"]
+
+@ cases.a-local-fn-that-loops-is-passed-as-a-value
+source = ```nib
+fn apply(f: (i64) -> i64 ! {Div}, x: i64) -> i64 ! {Div} { f(x) }
+fn go(step: i64) -> i64 ! {Div} {
+  fn count(n: i64) -> i64 ! {Div} {
+    var i = 0
+    var s = 0
+    while i < n {
+      s := s + step
+      i := i + 1
+    }
+    s
+  }
+  apply(count, 4)
+}
+perform show("r", go(3))
+```
+shows = ["r = 12"]
+
+@ cases.a-var-closure-called-in-place
+source = ```nib
+var total = 0
+let add = (x) => { total := total + x }
+add(5)
+add(6)
+perform show("total", total)
+```
+rust_shows = ["total = 11"]
+
+@ cases.tasks-share-an-atomic-and-a-mutex
+source = ```nib
+fn bump(a: Atomic, n: u64) -> u64 {
+  var i: u64 = 0
+  while i < n {
+    let before = atomic_fetch_add(a, 1)
+    i := i + 1
+  }
+  n
+}
+let total = atomic_new(0)
+let m = mutex_new(vec_new())
+let r = run_eager(() => {
+  let a = perform spawn(() => bump(total, 1000))
+  let b = perform spawn(() => bump(total, 2000))
+  let c = perform spawn(() => {
+    mutex_with(m, (&mut v) => vec_push(&mut v, 1))
+    3
+  })
+  task_join(a) + task_join(b) + task_join(c)
+})
+let n = mutex_with(m, (&mut v) => vec_len(&v))
+perform show("r", r)
+perform show("total", atomic_load(total))
+perform show("n", n)
+```
+shows = ["r = 3003", "total = 3000", "n = 1"]
+
+@ cases.a-function-that-only-reads-a-tree-takes-it-by-reference
+source = ```nib
+enum Tree { Leaf, Node(Tree, i64, Tree) }
+fn insert(t: Tree, x: i64) -> Tree {
+  match t {
+    Leaf => Node(Leaf, x, Leaf)
+    Node(l, v, r) => if x < v { Node(insert(l, x), v, r) } else { Node(l, v, insert(r, x)) }
+  }
+}
+fn has(t: Tree, x: i64) -> i64 {
+  match t {
+    Leaf => 0
+    Node(l, v, r) => if x == v { 1 } else if x < v { has(l, x) } else { has(r, x) }
+  }
+}
+fn size(t: Tree) -> i64 {
+  match t {
+    Leaf => 0
+    Node(l, v, r) => size(l) + 1 + size(r)
+  }
+}
+fn left(t: Tree) -> Tree {
+  match t {
+    Leaf => Leaf
+    Node(l, v, r) => l
+  }
+}
+fn pair(a: Tree, b: Tree) -> i64 { size(a) * 10 + size(b) }
+fn root(t: Tree) -> i64 {
+  match t {
+    Leaf => 0
+    Node(l, v, r) => v
+  }
+}
+let t = insert(insert(insert(insert(Leaf, 5), 2), 8), 3)
+let u = t
+perform show("has3", has(t, 3))
+perform show("has4", has(t, 4))
+perform show("size", size(t))
+perform show("same twice", pair(t, t))
+perform show("size of left", size(left(t)))
+perform show("shared", size(u) + size(t))
+perform show("temp", size(insert(t, 9)))
+perform show("root", root(t) + root(left(t)))
+```
+shows = ["has3 = 1", "has4 = 0", "size = 4", "same twice = 44", "size of left = 2", "shared = 8", "temp = 5", "root = 7"]

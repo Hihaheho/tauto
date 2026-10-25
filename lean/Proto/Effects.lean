@@ -53,18 +53,18 @@ def EffectEq (x y : EffectId) : Prop :=
   TagEq x.tags y.tags
 
 theorem effectEq_refl (x : EffectId) : EffectEq x x := by
-  exact ⟨rfl, rfl, rfl, tagEq_refl x.tags⟩
+  exact ⟨rfl, rfl, rfl, ListSet.Equiv.refl x.tags⟩
 
 theorem effectEq_symm {x y : EffectId}
     (h : EffectEq x y) : EffectEq y x := by
   exact ⟨h.1.symm, h.2.1.symm, h.2.2.1.symm,
-    tagEq_symm h.2.2.2⟩
+    ListSet.Equiv.symm h.2.2.2⟩
 
 theorem effectEq_trans {x y z : EffectId}
     (h₁ : EffectEq x y) (h₂ : EffectEq y z) : EffectEq x z := by
   exact ⟨h₁.1.trans h₂.1, h₁.2.1.trans h₂.2.1,
     h₁.2.2.1.trans h₂.2.2.1,
-    tagEq_trans h₁.2.2.2 h₂.2.2.2⟩
+    ListSet.Equiv.trans h₁.2.2.2 h₂.2.2.2⟩
 
 abbrev EffectRow := List EffectId
 
@@ -76,25 +76,15 @@ def RowContains (row : EffectRow) (target : EffectId) : Prop :=
 def RowEq (a b : EffectRow) : Prop :=
   ∀ e, RowContains a e ↔ RowContains b e
 
-theorem rowContains_append (a b : EffectRow) (e : EffectId) :
-    RowContains (a ++ b) e ↔ RowContains a e ∨ RowContains b e := by
-  constructor
-  · intro h
-    cases h with
-    | intro member hw =>
-        cases (List.mem_append.mp hw.1) with
-        | inl hl => exact Or.inl ⟨member, hl, hw.2⟩
-        | inr hr => exact Or.inr ⟨member, hr, hw.2⟩
-  · intro h
-    cases h with
-    | inl hl =>
-        cases hl with
-        | intro member hw =>
-            exact ⟨member, List.mem_append.mpr (Or.inl hw.1), hw.2⟩
-    | inr hr =>
-        cases hr with
-        | intro member hw =>
-            exact ⟨member, List.mem_append.mpr (Or.inr hw.1), hw.2⟩
+/-- Membership modulo equivalence follows membership: rows with the same
+members (`ListSet.Equiv`) are equal rows. -/
+theorem rowContains_sub {a b : EffectRow} (s : ListSet.Sub a b) {e : EffectId}
+    (h : RowContains a e) : RowContains b e :=
+  let ⟨member, hm, he⟩ := h
+  ⟨member, s member hm, he⟩
+
+theorem rowEq_of_equiv {a b : EffectRow} (h : ListSet.Equiv a b) : RowEq a b :=
+  fun _ => ⟨rowContains_sub h.1, rowContains_sub h.2⟩
 
 theorem rowEq_refl (a : EffectRow) : RowEq a a := by
   intro e
@@ -110,28 +100,18 @@ theorem rowEq_trans {a b c : EffectRow}
   exact (h₁ e).trans (h₂ e)
 
 /-- An unordered row union needs no syntactic normalization in the logic. -/
-theorem row_union_comm (a b : EffectRow) : RowEq (a ++ b) (b ++ a) := by
-  intro e
-  rw [rowContains_append, rowContains_append]
-  exact or_comm
+theorem row_union_comm (a b : EffectRow) : RowEq (a ++ b) (b ++ a) :=
+  rowEq_of_equiv (ListSet.append_comm a b)
 
 /-- Adding the same effects twice does not change its meaning. -/
-theorem row_union_idempotent (a : EffectRow) : RowEq (a ++ a) a := by
-  intro e
-  rw [rowContains_append]
-  constructor
-  · intro h
-    cases h with
-    | inl hl => exact hl
-    | inr hr => exact hr
-  · intro h
-    exact Or.inl h
+theorem row_union_idempotent (a : EffectRow) : RowEq (a ++ a) a :=
+  rowEq_of_equiv (ListSet.append_idem a)
 
 /-- Changing only the order of tag names cannot create a new effect. -/
 theorem tag_order_does_not_change_effect (x : EffectId)
     (extra : List String) :
     EffectEq { x with tags := x.tags ++ extra }
              { x with tags := extra ++ x.tags } := by
-  exact ⟨rfl, rfl, rfl, tagEq_append_comm x.tags extra⟩
+  exact ⟨rfl, rfl, rfl, ListSet.append_comm x.tags extra⟩
 
 end Proto

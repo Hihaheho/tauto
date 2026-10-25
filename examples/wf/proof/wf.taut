@@ -1,0 +1,43 @@
+import "../src/wf.taut"
+
+// What the functions do, from their unfolding equations (`half_eq`, `pair_up_eq`, `count_up_eq`).
+// `half(n)` does not compute on its own: the proof that `<` on the measure is well-founded is a
+// theorem, so the kernel cannot run the recursion. The equation unfolds it once, and `match` on a
+// constructor computes the rest. No program imports this file; `tauto check`
+// checks it.
+
+theorem half_zero(): Eq(Nat, half(zero), zero) {
+  half_eq(zero)
+}
+
+theorem half_one(): Eq(Nat, half(succ(zero)), zero) {
+  half_eq(succ(zero))
+}
+
+theorem half_step(k: Nat): Eq(Nat, half(succ(succ(k))), succ(half(k))) {
+  half_eq(succ(succ(k)))
+}
+
+theorem pair_up_nil(): Eq(List(Nat), pair_up(Nil), Nil) {
+  pair_up_eq(Nil)
+}
+
+theorem pair_up_single(x: Nat): Eq(List(Nat), pair_up(Cons(x, Nil)), Cons(x, Nil)) {
+  pair_up_eq(Cons(x, Nil))
+}
+
+theorem pair_up_pair(
+  x: Nat,
+  y: Nat,
+  t: List(Nat)
+): Eq(List(Nat), pair_up(Cons(x, Cons(y, t))), Cons(nat_add(x, y), pair_up(t))) {
+  pair_up_eq(Cons(x, Cons(y, t)))
+}
+
+theorem count_up_zero(acc: Nat): Eq(Nat, count_up(zero, acc), acc) {
+  count_up_eq(zero, acc)
+}
+
+theorem count_up_succ(m: Nat, acc: Nat): Eq(Nat, count_up(succ(m), acc), count_up(m, succ(acc))) {
+  count_up_eq(succ(m), acc)
+}

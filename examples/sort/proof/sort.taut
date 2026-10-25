@@ -1,0 +1,123 @@
+import "../src/sort.taut"
+
+// What the sort does, proved for any type with an order: `sort(l)` is in order (`sort_sorted`) and
+// is a rearrangement of `l` (`sort_perm`). The proofs use the laws of `Ord` and nothing about the
+// elements. No program imports this file; `tauto check` checks it.
+
+// `a` is not after `b`.
+fn le<A>(a: A, b: A) -> Prop where Ord(A) { (∀ h: Eq(Ordering, Ord.compare(a, b), Greater). False) }
+
+// `l` is in non-decreasing order: each element is not after the next one.
+fn sorted<A>(l: List(A)) -> Prop where Ord(A) {
+  match l -> Prop {
+    Nil => True
+    Cons(x, t) => match t -> Prop {
+      Nil => True
+      Cons(y, u) => And(le(x, y), sorted(t))
+    }
+  }
+}
+
+// `l` and `m` hold the same elements the same number of times: `m` is `l` rearranged.
+inductive Perm(A: Type): (List(A)) -> (List(A)) -> Prop {
+  perm_nil(): Perm(A, Nil, Nil)
+  perm_skip<x: A, l: List(A), m: List(A)>(h: Perm(A, l, m)): Perm(A, Cons(x, l), Cons(x, m))
+  perm_swap<x: A, y: A, l: List(A)>(): Perm(A, Cons(x, Cons(y, l)), Cons(y, Cons(x, l)))
+  perm_trans<l: List(A), m: List(A), n: List(A)>(a: Perm(A, l, m), b: Perm(A, m, n)): Perm(A, l, n)
+}
+
+theorem perm_refl<A>(l: List(A)): Perm(A, l, l) {
+  match l -> Perm(A, l, l) {
+    Nil => perm_nil()
+    Cons(x, t) => perm_skip(perm_refl(t))
+  }
+}
+
+// The answer of `Ord.compare` as `le`: in each case the order is one of the laws.
+theorem le_of_less<A>(a: A, b: A, e: Eq(Ordering, Ord.compare(a, b), Less)): le(a, b) where Ord(A) {
+  (h: Eq(Ordering, Ord.compare(a, b), Greater)) => less_ne_greater(Eq_trans(Eq_sym(e), h))
+}
+
+theorem le_of_equal<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Equal)
+): le(a, b) where Ord(A) {
+  (h: Eq(Ordering, Ord.compare(a, b), Greater)) => equal_ne_greater(Eq_trans(Eq_sym(e), h))
+}
+
+// If `a` is after `b`, then `b` is not after `a`.
+theorem le_of_greater<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Greater)
+): le(b, a) where Ord(A) {
+  (
+    h: Eq(Ordering, Ord.compare(b, a), Greater)
+  ) => greater_ne_less(Eq_trans(Eq_sym(h), ord_swap_greater(a, b, e)))
+}
+
+theorem insert_perm<A>(x: A, l: List(A)): Perm(A, Cons(x, l), insert(x, l)) where Ord(A) {
+  match l -> Perm(A, Cons(x, l), insert(x, l)) {
+    Nil => perm_refl(Cons(x, Nil))
+    Cons(y, t) => match Ord.compare(x, y) -> Perm(A, Cons(x, Cons(y, t)), insert(x, Cons(y, t))) {
+      Less ⊢ Perm(A, Cons(x, Cons(y, t)), Cons(x, Cons(y, t))) => perm_refl(Cons(x, Cons(y, t)))
+      Equal ⊢ Perm(A, Cons(x, Cons(y, t)), Cons(x, Cons(y, t))) => perm_refl(Cons(x, Cons(y, t)))
+      Greater ⊢ Perm(A, Cons(x, Cons(y, t)), Cons(y, insert(x, t))) => perm_trans(
+        perm_swap(),
+        perm_skip(insert_perm(x, t))
+      )
+    }
+  }
+}
+
+theorem sort_perm<A>(l: List(A)): Perm(A, l, sort(l)) where Ord(A) {
+  match l -> Perm(A, l, sort(l)) {
+    Nil => perm_nil()
+    Cons(x, t) => perm_trans(perm_skip(sort_perm(t)), insert_perm(x, sort(t)))
+  }
+}
+
+// Inserting `x`, which is not before the head `y` of a sorted list, after `y` keeps it sorted.
+theorem insert_after<A>(
+  l: List(A),
+  y: A,
+  x: A,
+  hyx: le(y, x),
+  h: sorted(Cons(y, l))
+): sorted(Cons(y, insert(x, l))) where Ord(A) {
+  match l -> sorted(Cons(y, insert(x, l))) {
+    Nil => and_intro(hyx, trivial)
+    Cons(z, t) => match Ord.compare(x, z) as e -> sorted(Cons(y, insert(x, Cons(z, t)))) {
+      Less => and_intro(hyx, and_intro(le_of_less(x, z, e), and_right(h)))
+      Equal => and_intro(hyx, and_intro(le_of_equal(x, z, e), and_right(h)))
+      Greater => and_intro(
+        and_left(h),
+        insert_after(t, z, x, le_of_greater(x, z, e), and_right(h))
+      )
+    }
+  }
+}
+
+theorem insert_sorted<A>(x: A, l: List(A), h: sorted(l)): sorted(insert(x, l)) where Ord(A) {
+  match l -> sorted(insert(x, l)) {
+    Nil => trivial
+    Cons(y, t) => match Ord.compare(x, y) as e -> sorted(insert(x, Cons(y, t))) {
+      Less => and_intro(le_of_less(x, y, e), h)
+      Equal => and_intro(le_of_equal(x, y, e), h)
+      Greater => insert_after(t, y, x, le_of_greater(x, y, e), h)
+    }
+  }
+}
+
+theorem sort_sorted<A>(l: List(A)): sorted(sort(l)) where Ord(A) {
+  match l -> sorted(sort(l)) {
+    Nil => trivial
+    Cons(x, t) => insert_sorted(x, sort(t), the(sorted(sort(t)), sort_sorted(t)))
+  }
+}
+
+// The two halves of correctness: the output is ordered and is a rearrangement of the input.
+theorem sort_correct<A>(l: List(A)): sorted(sort(l)) ∧ Perm(A, l, sort(l)) where Ord(A) {
+  and_intro(sort_sorted(l), sort_perm(l))
+}

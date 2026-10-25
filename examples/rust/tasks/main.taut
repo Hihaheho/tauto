@@ -1,0 +1,37 @@
+// Tasks on threads share a host counter, an `Atomic` and a `Mutex`. The
+// program starts tasks, so the Rust backend builds it for threads: every
+// extern type must be `Send + Sync` (here `Counter` is).
+shared struct Counter {}
+
+extern {
+  fn counter_new() -> Counter
+  fn counter_add(c: Counter, n: u64) -> ()
+  fn counter_get(c: Counter) -> u64
+}
+
+fn work(c: Counter, hits: Atomic, n: u64) -> u64 {
+  var i: u64 = 0
+  while i < n {
+    counter_add(c, 2)
+    let before = atomic_fetch_add(hits, 1)
+    i := i + 1
+  }
+  n
+}
+
+let c = counter_new()
+let hits = atomic_new(0)
+let log = mutex_new(vec_new())
+let done = run_eager(() => {
+  let a = perform spawn(() => work(c, hits, 500))
+  let b = perform spawn(() => work(c, hits, 1500))
+  let d = perform spawn(() => {
+    mutex_with(log, (&mut v) => vec_push(&mut v, 7))
+    1
+  })
+  task_join(a) + task_join(b) + task_join(d)
+})
+perform show("done", done)
+perform show("counter", counter_get(c))
+perform show("hits", atomic_load(hits))
+perform show("logged", mutex_with(log, (&mut v) => vec_len(&v)))

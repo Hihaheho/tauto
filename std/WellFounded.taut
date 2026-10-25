@@ -1,0 +1,161 @@
+import "Nat.taut"
+
+// Accessibility and well-founded recursion, written out with the eliminator:
+// no rule of the kernel is added. `Acc(A, R, x)` says every `R`-predecessor of
+// `x` is accessible; a relation is well-founded when every element is.
+
+inductive Acc(A: Type, R: (A, A) -> Prop): (A) -> Prop {
+  acc_intro(x: A, h: ∀ y: A. (R(y, x)) -> Acc(A, R, y)): Acc(A, R, x)
+}
+
+def WellFounded(A: Type, R: (A, A) -> Prop): Prop := ∀ x: A. Acc(A, R, x)
+
+// The recursor on an accessibility proof: `F` computes `B(x)` from the values
+// at the predecessors.
+def Acc_fix<A: Type>(
+  R: (A, A) -> Prop,
+  B: (A) -> Type,
+  F: ∀ x: A. (∀ y: A. (R(y, x)) -> B(y)) -> B(x),
+  x: A,
+  a: Acc(A, R, x)
+): B(x) := Acc_rec(A, R, x2 => a2 => B(x2), x2 => h => ih => F(x2, ih), x, a)
+
+// The fixed point of `F` over a well-founded relation.
+def wf_fix<A: Type>(
+  R: (A, A) -> Prop,
+  B: (A) -> Type,
+  wf: ∀ x: A. Acc(A, R, x),
+  F: ∀ x: A. (∀ y: A. (R(y, x)) -> B(y)) -> B(x),
+  x: A
+): B(x) := Acc_fix(R, B, F, x, wf(x))
+
+// Whichever proof of accessibility the recursion is run on, `F` sees the same
+// values at the predecessors: the proofs are not told apart.
+theorem Acc_fix_eq<A: Type>(
+  R: (A, A) -> Prop,
+  B: (A) -> Type,
+  wf: WellFounded(A, R),
+  F: ∀ x: A. (∀ y: A. (R(y, x)) -> B(y)) -> B(x),
+  x: A,
+  a: Acc(A, R, x)
+): Eq(B(x), Acc_fix(R, B, F, x, a), F(x, y => r => Acc_fix(R, B, F, y, wf(y)))) {
+  Acc_ind(
+    A,
+    R,
+    x2 => a2 => Eq(B(x2), Acc_fix(R, B, F, x2, a2), F(x2, y => r => Acc_fix(R, B, F, y, wf(y)))),
+    x2 => h => ih => refl(B(x2), F(x2, y => r => Acc_fix(R, B, F, y, wf(y)))),
+    x,
+    a
+  )
+}
+
+// The unfolding equation of `wf_fix`: the value at `x` is `F` applied to the
+// values at the predecessors.
+theorem wf_fix_eq<A: Type>(
+  R: (A, A) -> Prop,
+  B: (A) -> Type,
+  wf: WellFounded(A, R),
+  F: ∀ x: A. (∀ y: A. (R(y, x)) -> B(y)) -> B(x),
+  x: A
+): Eq(B(x), wf_fix(R, B, wf, F, x), F(x, y => r => wf_fix(R, B, wf, F, y))) {
+  Acc_fix_eq(R, B, wf, F, x, wf(x))
+}
+
+// ---- relations that are well-founded ---------------------------------------
+
+// The order of the numbers as a proposition.
+def NatLt(a: Nat, b: Nat): Prop := Eq(Yn, nat_lt(a, b), yes)
+
+theorem nat_lt_succ_cases(m: Nat, k: Nat, h: NatLt(m, succ(k))): Or(NatLt(m, k), Eq(Nat, m, k)) {
+  match m -> Or(NatLt(m, k), Eq(Nat, m, k)) {
+    zero => match k {
+      zero => or_inr(refl())
+      succ(k2) => or_inl(refl())
+    }
+    succ(m2) => match k {
+      zero => False_elim(no_ne_yes(Eq_trans(Eq_sym(nat_lt_zero_no(m2)), h)))
+      succ(
+        k2
+      ) => or_elim(nat_lt_succ_cases(m2, k2, h), a => or_inl(a), e => or_inr(Eq_congr(succ, e)))
+    }
+  }
+}
+
+// Every number below `n` is accessible.
+theorem nat_lt_acc(n: Nat, m: Nat, h: NatLt(m, n)): Acc(Nat, NatLt, m) {
+  match n -> Acc(Nat, NatLt, m) {
+    zero => False_elim(no_ne_yes(Eq_trans(Eq_sym(nat_lt_zero_no(m)), h)))
+    succ(
+      k
+    ) => or_elim(
+      nat_lt_succ_cases(m, k, h),
+      a => nat_lt_acc(k, m, a),
+      e => Eq_subst(
+        z => Acc(Nat, NatLt, z),
+        Eq_sym(e),
+        acc_intro(Nat, NatLt, k, y => r => nat_lt_acc(k, y, r))
+      )
+    )
+  }
+}
+
+theorem nat_lt_wf(): WellFounded(Nat, NatLt) {
+  n => nat_lt_acc(succ(n), n, nat_le_refl(n))
+}
+
+// The relation on `A` that compares the images under `f`.
+def InvImage(A: Type, B: Type, R: (B, B) -> Prop, f: (A) -> B, a: A, b: A): Prop := R(f(a), f(b))
+
+// Every `x` whose image is `z` is accessible, when `z` is.
+def InvImageAcc(A: Type, B: Type, R: (B, B) -> Prop, f: (A) -> B, z: B): Prop :=
+∀ x: A. (Eq(B, f(x), z)) -> Acc(A, InvImage(A, B, R, f), x)
+
+theorem inv_image_acc_gen<A: Type>(
+  B: Type,
+  R: (B, B) -> Prop,
+  f: (A) -> B,
+  z: B,
+  a: Acc(B, R, z)
+): InvImageAcc(A, B, R, f, z) {
+  Acc_ind(
+    B,
+    R,
+    z2 => a2 => InvImageAcc(A, B, R, f, z2),
+    z2 => h => ih => x => e => acc_intro(
+      A,
+      InvImage(A, B, R, f),
+      x,
+      y => r => ih(f(y), Eq_subst(w => R(f(y), w), e, r), y, refl(B, f(y)))
+    ),
+    z,
+    a
+  )
+}
+
+// A measure into the numbers: `y` is below `x` when its measure is.
+theorem measure_wf<A: Type>(f: (A) -> Nat): WellFounded(A, InvImage(A, Nat, NatLt, f)) {
+  x => inv_image_acc_gen(Nat, NatLt, f, f(x), nat_lt_wf()(f(x)))(x, refl(Nat, f(x)))
+}
+
+// ---- a relation with its proof ----------------------------------------------
+
+// A binary relation on `A`.
+def Relation(A: Type): Type := (A, A) -> Prop
+
+// What `decreasing_by` takes: a relation on `A` together with the proof that it
+// is well-founded.
+inductive WfRel(A: Type): Type {
+  wf_rel(R: (A, A) -> Prop, wf: WellFounded(A, R)): WfRel(A)
+}
+
+def wf_rel_lt<A: Type>(w: WfRel(A)): Relation(A) :=
+WfRel_rec(A, w2 => Relation(A), R => wf => R, w)
+
+theorem wf_rel_wf<A: Type>(w: WfRel(A)): WellFounded(A, wf_rel_lt(A, w)) {
+  match w -> WellFounded(A, wf_rel_lt(A, w)) {
+    wf_rel(R, wf) => wf
+  }
+}
+
+// `y` is below `x` when `f(y)` is below `f(x)` as numbers.
+def measure<A: Type>(f: (A) -> Nat): WfRel(A) := wf_rel(InvImage(A, Nat, NatLt, f), measure_wf(f))

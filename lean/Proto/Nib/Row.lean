@@ -1,3 +1,5 @@
+import Proto.ListSet
+
 /-!
 # Types, effects and rows of Nib
 
@@ -230,48 +232,11 @@ theorem fieldsOf_inst (θ : Inst) (F args : List Ty) :
 
 namespace Row
 
-/-- Every effect of `ρ` is in `ρ'`. -/
-def Sub (ρ ρ' : Row) : Prop := ∀ e, e ∈ ρ → e ∈ ρ'
+/-- Every effect of `ρ` is in `ρ'`: a row is a set (`ListSet.lean`). -/
+abbrev Sub (ρ ρ' : Row) : Prop := ListSet.Sub ρ ρ'
 
 /-- Same effects, in any order and with any repeats. -/
-def Equiv (ρ ρ' : Row) : Prop := Sub ρ ρ' ∧ Sub ρ' ρ
-
-theorem Sub.refl (ρ : Row) : Sub ρ ρ := fun _ h => h
-
-theorem Sub.trans {a b c : Row} (h₁ : Sub a b) (h₂ : Sub b c) : Sub a c :=
-  fun e h => h₂ e (h₁ e h)
-
-theorem Equiv.refl (ρ : Row) : Equiv ρ ρ := ⟨Sub.refl ρ, Sub.refl ρ⟩
-
-theorem Equiv.symm {a b : Row} (h : Equiv a b) : Equiv b a := ⟨h.2, h.1⟩
-
-theorem Equiv.trans {a b c : Row} (h₁ : Equiv a b) (h₂ : Equiv b c) : Equiv a c :=
-  ⟨Sub.trans h₁.1 h₂.1, Sub.trans h₂.2 h₁.2⟩
-
-/-- The pure row. -/
-theorem nil_sub (ρ : Row) : Sub [] ρ := fun _ h => by cases h
-
-/-- Order does not matter. -/
-theorem append_comm (a b : Row) : Equiv (a ++ b) (b ++ a) := by
-  constructor <;> intro e h <;> simp_all [or_comm]
-
-/-- Repeats do not matter. -/
-theorem append_idem (a : Row) : Equiv (a ++ a) a := by
-  constructor <;> intro e h <;> simp_all
-
-theorem append_assoc (a b c : Row) : Equiv ((a ++ b) ++ c) (a ++ (b ++ c)) := by
-  constructor <;> intro e h <;> simp_all
-
-/-- A row that is a subrow of both sides of an append is that append's. -/
-theorem append_sub {a b c : Row} (h₁ : Sub a c) (h₂ : Sub b c) : Sub (a ++ b) c := by
-  intro e h
-  rcases List.mem_append.mp h with h | h
-  · exact h₁ e h
-  · exact h₂ e h
-
-theorem sub_append_left (a b : Row) : Sub a (a ++ b) := fun _ h => List.mem_append_left _ h
-
-theorem sub_append_right (a b : Row) : Sub b (a ++ b) := fun _ h => List.mem_append_right _ h
+abbrev Equiv (ρ ρ' : Row) : Prop := ListSet.Equiv ρ ρ'
 
 /-- Putting types and rows for the variables keeps inclusion. -/
 theorem Sub.inst (θ : Inst) {a b : Row} (h : Sub a b) : Sub (Row.inst θ a) (Row.inst θ b) := by

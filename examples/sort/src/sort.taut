@@ -1,0 +1,23 @@
+import "../../../std/Ord.taut"
+
+// Insertion sort on any type with an order (`Ord(A)`, `std/Ord.taut`). `proof/sort.taut` proves
+// that `sort(l)` is in order and is a rearrangement of `l`, from the laws of `Ord` alone.
+
+// `x` goes before the first element it is not after (`Less` or `Equal`), so equal elements keep their order.
+fn insert<A>(x: A, l: List(A)) -> List(A) where Ord(A) {
+  match l -> List(A) {
+    Nil => Cons(x, Nil)
+    Cons(y, t) => match Ord.compare(x, y) -> List(A) {
+      Less => Cons(x, Cons(y, t))
+      Equal => Cons(x, Cons(y, t))
+      Greater => Cons(y, insert(x, t))
+    }
+  }
+}
+
+fn sort<A>(l: List(A)) -> List(A) where Ord(A) {
+  match l -> List(A) {
+    Nil => Nil
+    Cons(x, t) => insert(x, sort(t))
+  }
+}

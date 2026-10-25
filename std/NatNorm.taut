@@ -1,0 +1,382 @@
+import "Nat.taut"
+
+// Reflection for the equations of the natural numbers' commutative semiring:
+// an expression of `+`, `*`, numerals and variables is read as a `NatExpr`, both
+// sides are normalised to a sum of products of variables in a fixed order
+// (`ne_norm`), and when the two normal forms are the same term, the sides are equal
+// (`nat_norm_eq`). The theorem is the whole trust: `nat_norm!` in `Tactic.taut`
+// only finds the `NatExpr`s and the list of values of the variables, and the kernel
+// checks what it made. A numeral `n` is `n` monomials of the empty product, so the
+// method is for small numerals.
+
+inductive NatExpr(): Type {
+  NeConst(n: Nat): NatExpr
+  NeVar(i: Nat): NatExpr
+  NeAdd(a: NatExpr, b: NatExpr): NatExpr
+  NeMul(a: NatExpr, b: NatExpr): NatExpr
+}
+
+// The value of variable `i`; the variables not in the list are 0.
+fn ne_env_get(env: List(Nat), i: Nat) -> Nat {
+  match env -> Nat {
+    Nil => zero
+    Cons(h, t) => match i -> Nat {
+      zero => h
+      succ(k) => ne_env_get(t, k)
+    }
+  }
+}
+
+fn ne_eval(env: List(Nat), e: NatExpr) -> Nat {
+  match e -> Nat {
+    NeConst(n) => n
+    NeVar(i) => ne_env_get(env, i)
+    NeAdd(a, b) => nat_add(ne_eval(env, a), ne_eval(env, b))
+    NeMul(a, b) => nat_mul(ne_eval(env, a), ne_eval(env, b))
+  }
+}
+
+// ---- monomials: the variables of a product, in order ------------------------------
+
+fn nm_eval(env: List(Nat), m: List(Nat)) -> Nat {
+  match m -> Nat {
+    Nil => succ(zero)
+    Cons(v, r) => nat_mul(ne_env_get(env, v), nm_eval(env, r))
+  }
+}
+
+fn nm_ins_at(y: Yn, v: Nat, w: Nat, m2: List(Nat), rest: List(Nat)) -> List(Nat) {
+  match y -> List(Nat) {
+    no => Cons(w, rest)
+    yes => Cons(v, Cons(w, m2))
+  }
+}
+
+// `v` before the first variable it is not after.
+fn nm_ins(v: Nat, m: List(Nat)) -> List(Nat) {
+  match m -> List(Nat) {
+    Nil => Cons(v, Nil)
+    Cons(w, m2) => nm_ins_at(nat_le(v, w), v, w, m2, nm_ins(v, m2))
+  }
+}
+
+fn nm_mul(a: List(Nat), b: List(Nat)) -> List(Nat) {
+  match a -> List(Nat) {
+    Nil => b
+    Cons(v, r) => nm_ins(v, nm_mul(r, b))
+  }
+}
+
+// ---- polynomials: a sum of monomials, in order --------------------------------------
+
+fn nm_lex(same: Yn, less: Yn, rest: Yn) -> Yn {
+  match same -> Yn {
+    no => less
+    yes => rest
+  }
+}
+
+// The lexicographic order of monomials.
+fn nm_le(a: List(Nat), b: List(Nat)) -> Yn {
+  match a -> Yn {
+    Nil => yes
+    Cons(x, xs) => match b -> Yn {
+      Nil => no
+      Cons(y, ys) => nm_lex(nat_eq(x, y), nat_lt(x, y), nm_le(xs, ys))
+    }
+  }
+}
+
+fn np_eval(env: List(Nat), p: List(List(Nat))) -> Nat {
+  match p -> Nat {
+    Nil => zero
+    Cons(m, r) => nat_add(nm_eval(env, m), np_eval(env, r))
+  }
+}
+
+fn np_ins_at(
+  y: Yn,
+  m: List(Nat),
+  n: List(Nat),
+  p2: List(List(Nat)),
+  rest: List(List(Nat))
+) -> List(List(Nat)) {
+  match y -> List(List(Nat)) {
+    no => Cons(n, rest)
+    yes => Cons(m, Cons(n, p2))
+  }
+}
+
+fn np_ins(m: List(Nat), p: List(List(Nat))) -> List(List(Nat)) {
+  match p -> List(List(Nat)) {
+    Nil => Cons(m, Nil)
+    Cons(n, p2) => np_ins_at(nm_le(m, n), m, n, p2, np_ins(m, p2))
+  }
+}
+
+fn np_add(p: List(List(Nat)), q: List(List(Nat))) -> List(List(Nat)) {
+  match p -> List(List(Nat)) {
+    Nil => q
+    Cons(m, r) => np_ins(m, np_add(r, q))
+  }
+}
+
+fn np_mul_mono(m: List(Nat), q: List(List(Nat))) -> List(List(Nat)) {
+  match q -> List(List(Nat)) {
+    Nil => Nil
+    Cons(n, r) => np_ins(nm_mul(m, n), np_mul_mono(m, r))
+  }
+}
+
+fn np_mul(p: List(List(Nat)), q: List(List(Nat))) -> List(List(Nat)) {
+  match p -> List(List(Nat)) {
+    Nil => Nil
+    Cons(m, r) => np_add(np_mul_mono(m, q), np_mul(r, q))
+  }
+}
+
+// `n` is `n` times the empty product.
+fn np_const(n: Nat) -> List(List(Nat)) {
+  match n -> List(List(Nat)) {
+    zero => Nil
+    succ(k) => Cons(Nil, np_const(k))
+  }
+}
+
+fn ne_norm(e: NatExpr) -> List(List(Nat)) {
+  match e -> List(List(Nat)) {
+    NeConst(n) => np_const(n)
+    NeVar(i) => Cons(Cons(i, Nil), Nil)
+    NeAdd(a, b) => np_add(ne_norm(a), ne_norm(b))
+    NeMul(a, b) => np_mul(ne_norm(a), ne_norm(b))
+  }
+}
+
+// ---- the normal form has the value of the expression ----------------------------------
+
+theorem nm_ins_at_sound(
+  env: List(Nat),
+  y: Yn,
+  v: Nat,
+  w: Nat,
+  m2: List(Nat),
+  rest: List(Nat),
+  ih: Eq(Nat, nm_eval(env, rest), nat_mul(ne_env_get(env, v), nm_eval(env, m2)))
+): Eq(
+  Nat,
+  nm_eval(env, nm_ins_at(y, v, w, m2, rest)),
+  nat_mul(ne_env_get(env, v), nm_eval(env, Cons(w, m2)))
+) {
+  match y -> Eq(
+    Nat,
+    nm_eval(env, nm_ins_at(y, v, w, m2, rest)),
+    nat_mul(ne_env_get(env, v), nm_eval(env, Cons(w, m2)))
+  ) {
+    no => Eq_trans(
+      Eq_congr((z: Nat) => nat_mul(ne_env_get(env, w), z), ih),
+      nat_mul_swap(ne_env_get(env, w), ne_env_get(env, v), nm_eval(env, m2))
+    )
+    yes => refl()
+  }
+}
+
+theorem nm_ins_sound(
+  env: List(Nat),
+  v: Nat,
+  m: List(Nat)
+): Eq(Nat, nm_eval(env, nm_ins(v, m)), nat_mul(ne_env_get(env, v), nm_eval(env, m))) {
+  match m -> Eq(Nat, nm_eval(env, nm_ins(v, m)), nat_mul(ne_env_get(env, v), nm_eval(env, m))) {
+    Nil => refl()
+    Cons(
+      w,
+      m2
+    ) => nm_ins_at_sound(env, nat_le(v, w), v, w, m2, nm_ins(v, m2), nm_ins_sound(env, v, m2))
+  }
+}
+
+theorem nm_mul_sound(
+  env: List(Nat),
+  a: List(Nat),
+  b: List(Nat)
+): Eq(Nat, nm_eval(env, nm_mul(a, b)), nat_mul(nm_eval(env, a), nm_eval(env, b))) {
+  match a -> Eq(Nat, nm_eval(env, nm_mul(a, b)), nat_mul(nm_eval(env, a), nm_eval(env, b))) {
+    Nil => Eq_sym(nat_mul_one_left(nm_eval(env, b)))
+    Cons(
+      v,
+      r
+    ) => Eq_trans(
+      nm_ins_sound(env, v, nm_mul(r, b)),
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_mul(ne_env_get(env, v), z), nm_mul_sound(env, r, b)),
+        Eq_sym(nat_mul_assoc(ne_env_get(env, v), nm_eval(env, r), nm_eval(env, b)))
+      )
+    )
+  }
+}
+
+theorem np_ins_at_sound(
+  env: List(Nat),
+  y: Yn,
+  m: List(Nat),
+  n: List(Nat),
+  p2: List(List(Nat)),
+  rest: List(List(Nat)),
+  ih: Eq(Nat, np_eval(env, rest), nat_add(nm_eval(env, m), np_eval(env, p2)))
+): Eq(
+  Nat,
+  np_eval(env, np_ins_at(y, m, n, p2, rest)),
+  nat_add(nm_eval(env, m), np_eval(env, Cons(n, p2)))
+) {
+  match y -> Eq(
+    Nat,
+    np_eval(env, np_ins_at(y, m, n, p2, rest)),
+    nat_add(nm_eval(env, m), np_eval(env, Cons(n, p2)))
+  ) {
+    no => Eq_trans(
+      Eq_congr((z: Nat) => nat_add(nm_eval(env, n), z), ih),
+      nat_add_swap_left(nm_eval(env, n), nm_eval(env, m), np_eval(env, p2))
+    )
+    yes => refl()
+  }
+}
+
+theorem np_ins_sound(
+  env: List(Nat),
+  m: List(Nat),
+  p: List(List(Nat))
+): Eq(Nat, np_eval(env, np_ins(m, p)), nat_add(nm_eval(env, m), np_eval(env, p))) {
+  match p -> Eq(Nat, np_eval(env, np_ins(m, p)), nat_add(nm_eval(env, m), np_eval(env, p))) {
+    Nil => refl()
+    Cons(
+      n,
+      p2
+    ) => np_ins_at_sound(env, nm_le(m, n), m, n, p2, np_ins(m, p2), np_ins_sound(env, m, p2))
+  }
+}
+
+theorem np_add_sound(
+  env: List(Nat),
+  p: List(List(Nat)),
+  q: List(List(Nat))
+): Eq(Nat, np_eval(env, np_add(p, q)), nat_add(np_eval(env, p), np_eval(env, q))) {
+  match p -> Eq(Nat, np_eval(env, np_add(p, q)), nat_add(np_eval(env, p), np_eval(env, q))) {
+    Nil => Eq_sym(nat_add_zero_left(np_eval(env, q)))
+    Cons(
+      m,
+      r
+    ) => Eq_trans(
+      np_ins_sound(env, m, np_add(r, q)),
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_add(nm_eval(env, m), z), np_add_sound(env, r, q)),
+        Eq_sym(nat_add_assoc(nm_eval(env, m), np_eval(env, r), np_eval(env, q)))
+      )
+    )
+  }
+}
+
+theorem np_mul_mono_sound(
+  env: List(Nat),
+  m: List(Nat),
+  q: List(List(Nat))
+): Eq(Nat, np_eval(env, np_mul_mono(m, q)), nat_mul(nm_eval(env, m), np_eval(env, q))) {
+  match q -> Eq(Nat, np_eval(env, np_mul_mono(m, q)), nat_mul(nm_eval(env, m), np_eval(env, q))) {
+    Nil => Eq_sym(nat_mul_zero_right(nm_eval(env, m)))
+    Cons(
+      n,
+      r
+    ) => Eq_trans(
+      np_ins_sound(env, nm_mul(m, n), np_mul_mono(m, r)),
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_add(z, np_eval(env, np_mul_mono(m, r))), nm_mul_sound(env, m, n)),
+        Eq_trans(
+          Eq_congr(
+            (z: Nat) => nat_add(nat_mul(nm_eval(env, m), nm_eval(env, n)), z),
+            np_mul_mono_sound(env, m, r)
+          ),
+          Eq_sym(nat_mul_add_distrib(nm_eval(env, m), nm_eval(env, n), np_eval(env, r)))
+        )
+      )
+    )
+  }
+}
+
+theorem np_mul_sound(
+  env: List(Nat),
+  p: List(List(Nat)),
+  q: List(List(Nat))
+): Eq(Nat, np_eval(env, np_mul(p, q)), nat_mul(np_eval(env, p), np_eval(env, q))) {
+  match p -> Eq(Nat, np_eval(env, np_mul(p, q)), nat_mul(np_eval(env, p), np_eval(env, q))) {
+    Nil => Eq_sym(nat_mul_zero_left(np_eval(env, q)))
+    Cons(
+      m,
+      r
+    ) => Eq_trans(
+      np_add_sound(env, np_mul_mono(m, q), np_mul(r, q)),
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_add(z, np_eval(env, np_mul(r, q))), np_mul_mono_sound(env, m, q)),
+        Eq_trans(
+          Eq_congr(
+            (z: Nat) => nat_add(nat_mul(nm_eval(env, m), np_eval(env, q)), z),
+            np_mul_sound(env, r, q)
+          ),
+          Eq_sym(nat_mul_add_distrib_right(nm_eval(env, m), np_eval(env, r), np_eval(env, q)))
+        )
+      )
+    )
+  }
+}
+
+theorem np_const_sound(env: List(Nat), n: Nat): Eq(Nat, np_eval(env, np_const(n)), n) {
+  match n -> Eq(Nat, np_eval(env, np_const(n)), n) {
+    zero => refl()
+    succ(
+      k
+    ) => Eq_trans(
+      Eq_congr((z: Nat) => nat_add(succ(zero), z), np_const_sound(env, k)),
+      nat_add_comm(succ(zero), k)
+    )
+  }
+}
+
+theorem ne_norm_sound(
+  env: List(Nat),
+  e: NatExpr
+): Eq(Nat, ne_eval(env, e), np_eval(env, ne_norm(e))) {
+  match e -> Eq(Nat, ne_eval(env, e), np_eval(env, ne_norm(e))) {
+    NeConst(n) => Eq_sym(np_const_sound(env, n))
+    NeVar(i) => Eq_sym(nat_mul_one_right(ne_env_get(env, i)))
+    NeAdd(
+      a,
+      b
+    ) => Eq_trans(
+      Eq_congr((z: Nat) => nat_add(z, ne_eval(env, b)), ne_norm_sound(env, a)),
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_add(np_eval(env, ne_norm(a)), z), ne_norm_sound(env, b)),
+        Eq_sym(np_add_sound(env, ne_norm(a), ne_norm(b)))
+      )
+    )
+    NeMul(
+      a,
+      b
+    ) => Eq_trans(
+      Eq_congr((z: Nat) => nat_mul(z, ne_eval(env, b)), ne_norm_sound(env, a)),
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_mul(np_eval(env, ne_norm(a)), z), ne_norm_sound(env, b)),
+        Eq_sym(np_mul_sound(env, ne_norm(a), ne_norm(b)))
+      )
+    )
+  }
+}
+
+// The sides are equal when their normal forms are the same term.
+theorem nat_norm_eq(
+  env: List(Nat),
+  a: NatExpr,
+  b: NatExpr,
+  same: Eq(List(List(Nat)), ne_norm(a), ne_norm(b))
+): Eq(Nat, ne_eval(env, a), ne_eval(env, b)) {
+  Eq_trans(
+    ne_norm_sound(env, a),
+    Eq_trans(Eq_congr((p: List(List(Nat))) => np_eval(env, p), same), Eq_sym(ne_norm_sound(env, b)))
+  )
+}

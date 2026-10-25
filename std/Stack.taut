@@ -1,0 +1,48 @@
+import "Base.taut"
+
+// Stacks as the proofs see them: a list with the top
+// at its head. Extraction maps `Stack` onto Nib's `Vec` and the functions
+// here onto `vec_new`, `vec_push`, `vec_pop` and `vec_len`, which work at the
+// end of a growable buffer in O(1) and need no cell for an element; the
+// definitions here say what those builtins do.
+//
+// A stack is lent (`&s`, `&mut s`) or a local `var`: Nib's `Vec` cannot be a
+// field of a struct, which is `shared`.
+
+inductive Stack(A: Type): Type {
+  stack_of(items: List(A)): Stack(A)
+}
+
+// Mapped: the empty stack.
+fn stack_new<A>() -> Stack(A) {
+  stack_of(Nil)
+}
+
+// Mapped: `x` on top.
+fn stack_push<A>(&mut s: Stack(A), x: A) -> Unit {
+  s := stack_of(Cons(x, s.items))
+}
+
+// Mapped: the top, taken off, or none when the stack is empty.
+fn stack_pop<A>(&mut s: Stack(A)) -> Option(A) {
+  match s.items -> Option(A) {
+    Nil => None
+    Cons(top, below) => {
+      s := stack_of(below)
+      Some(top)
+    }
+  }
+}
+
+// Mapped: the number of elements.
+fn stack_len<A>(&s: Stack(A)) -> Nat {
+  list_length(s.items)
+}
+
+// Mapped: whether there is no element.
+fn stack_is_empty<A>(&s: Stack(A)) -> Yn {
+  match s.items -> Yn {
+    Nil => yes
+    Cons(top, below) => no
+  }
+}

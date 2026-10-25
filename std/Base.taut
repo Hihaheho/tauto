@@ -1,9 +1,10 @@
 import "Std.taut"
 
-// What programs of the proof language compute with: decisions, comparisons
-// of numbers, and the lemmas that connect them to propositions. Extraction
-// maps `Yn` onto Nib's `Bool`, `Nat` onto `u64` and the comparisons onto
-// Nib's operators; the definitions here are what the proofs see.
+// What programs of the proof language compute with:
+// decisions, comparisons of numbers, and the lemmas that connect them to
+// propositions. Extraction maps `Yn` onto Nib's `Bool`, `Nat` onto `u64`
+// and the comparisons onto Nib's operators; the definitions here are what
+// the proofs see.
 
 // A decision: what a program branches on. (`Bool` is the kernel's own
 // constant and has no eliminator.)
@@ -14,9 +15,9 @@ inductive Yn(): Type {
 
 // The answer of a comparison.
 inductive Ordering(): Type {
-  less(): Ordering
-  equal(): Ordering
-  greater(): Ordering
+  Less(): Ordering
+  Equal(): Ordering
+  Greater(): Ordering
 }
 
 fn yn_and(a: Yn, b: Yn) -> Yn {
@@ -77,9 +78,11 @@ fn nat_le(a: Nat, b: Nat) -> Yn {
   nat_lt(a, succ(b))
 }
 
-// Arithmetic by recursion on the second argument, so that the kernel
-// computes it on any numbers (its own `+`, `-` and `*` compute on literals
-// only). Extraction maps these onto Nib's operators.
+// `nat_add` and `nat_mul` are the kernel's `+` and `*` under another name (and `+` and `*`
+// are never read as anything else), so the kernel's reductions are theirs: `+` reduces by
+// either operand, `*` by its first. Extraction maps them onto Nib's operators. `nat_sub` is
+// by recursion on the second argument, so that the kernel computes it on any numbers (its
+// own `-` computes on literals only).
 
 fn nat_pred(n: Nat) -> Nat {
   match n -> Nat {
@@ -89,10 +92,7 @@ fn nat_pred(n: Nat) -> Nat {
 }
 
 fn nat_add(a: Nat, b: Nat) -> Nat {
-  match b -> Nat {
-    zero => a
-    succ(k) => succ(nat_add(a, k))
-  }
+  a + b
 }
 
 // `a - b`, or 0 when `b` is larger.
@@ -104,10 +104,7 @@ fn nat_sub(a: Nat, b: Nat) -> Nat {
 }
 
 fn nat_mul(a: Nat, b: Nat) -> Nat {
-  match b -> Nat {
-    zero => zero
-    succ(k) => nat_add(nat_mul(a, k), a)
-  }
+  a * b
 }
 
 fn nat_max(a: Nat, b: Nat) -> Nat {
@@ -156,43 +153,43 @@ fn nat_mod(a: Nat, b: Nat) -> Nat {
 
 fn list_length<A>(l: List(A)) -> Nat {
   match l -> Nat {
-    nil => zero
-    cons(h, t) => succ(list_length(t))
+    Nil => zero
+    Cons(h, t) => succ(list_length(t))
   }
 }
 
 fn list_append<A>(l: List(A), m: List(A)) -> List(A) {
   match l -> List(A) {
-    nil => m
-    cons(h, t) => cons(h, list_append(t, m))
+    Nil => m
+    Cons(h, t) => Cons(h, list_append(t, m))
   }
 }
 
 fn list_reverse_onto<A>(l: List(A), acc: List(A)) -> List(A) {
   match l -> List(A) {
-    nil => acc
-    cons(h, t) => list_reverse_onto(t, cons(h, acc))
+    Nil => acc
+    Cons(h, t) => list_reverse_onto(t, Cons(h, acc))
   }
 }
 
 fn list_reverse<A>(l: List(A)) -> List(A) {
-  list_reverse_onto(l, nil)
+  list_reverse_onto(l, Nil)
 }
 
 fn list_map<A, B>(f: (A) -> B, l: List(A)) -> List(B) {
   match l -> List(B) {
-    nil => nil
-    cons(h, t) => cons(f(h), list_map(f, t))
+    Nil => Nil
+    Cons(h, t) => Cons(f(h), list_map(f, t))
   }
 }
 
 // The first `n` elements (all of them when there are fewer).
 fn list_take<A>(n: Nat, l: List(A)) -> List(A) {
   match n -> List(A) {
-    zero => nil
+    zero => Nil
     succ(k) => match l -> List(A) {
-      nil => nil
-      cons(h, t) => cons(h, list_take(k, t))
+      Nil => Nil
+      Cons(h, t) => Cons(h, list_take(k, t))
     }
   }
 }
@@ -202,8 +199,8 @@ fn list_drop<A>(n: Nat, l: List(A)) -> List(A) {
   match n -> List(A) {
     zero => l
     succ(k) => match l -> List(A) {
-      nil => nil
-      cons(h, t) => list_drop(k, t)
+      Nil => Nil
+      Cons(h, t) => list_drop(k, t)
     }
   }
 }
@@ -211,9 +208,9 @@ fn list_drop<A>(n: Nat, l: List(A)) -> List(A) {
 // The `i`th element, counted from 0.
 fn list_nth<A>(l: List(A), i: Nat) -> Option(A) {
   match l -> Option(A) {
-    nil => none
-    cons(h, t) => match i -> Option(A) {
-      zero => some(h)
+    Nil => None
+    Cons(h, t) => match i -> Option(A) {
+      zero => Some(h)
       succ(j) => list_nth(t, j)
     }
   }
@@ -252,14 +249,14 @@ theorem nat_eq_sound(a: Nat, b: Nat, e: Eq(Yn, nat_eq(a, b), yes)): Eq(Nat, a, b
 theorem ordering_cases(
   P: (Ordering) -> Prop,
   o: Ordering,
-  a: (Eq(Ordering, o, less)) -> P(less),
-  b: (Eq(Ordering, o, equal)) -> P(equal),
-  c: (Eq(Ordering, o, greater)) -> P(greater)
+  a: (Eq(Ordering, o, Less)) -> P(Less),
+  b: (Eq(Ordering, o, Equal)) -> P(Equal),
+  c: (Eq(Ordering, o, Greater)) -> P(Greater)
 ): P(o) {
   match o -> P(o) {
-    less => a(refl())
-    equal => b(refl())
-    greater => c(refl())
+    Less => a(refl())
+    Equal => b(refl())
+    Greater => c(refl())
   }
 }
 
@@ -275,32 +272,32 @@ theorem yn_cases(
   }
 }
 
-theorem less_ne_equal(e: Eq(Ordering, less, equal)): False {
+theorem less_ne_equal(e: Eq(Ordering, Less, Equal)): False {
   match e -> False {
   }
 }
 
-theorem less_ne_greater(e: Eq(Ordering, less, greater)): False {
+theorem less_ne_greater(e: Eq(Ordering, Less, Greater)): False {
   match e -> False {
   }
 }
 
-theorem equal_ne_less(e: Eq(Ordering, equal, less)): False {
+theorem equal_ne_less(e: Eq(Ordering, Equal, Less)): False {
   match e -> False {
   }
 }
 
-theorem equal_ne_greater(e: Eq(Ordering, equal, greater)): False {
+theorem equal_ne_greater(e: Eq(Ordering, Equal, Greater)): False {
   match e -> False {
   }
 }
 
-theorem greater_ne_less(e: Eq(Ordering, greater, less)): False {
+theorem greater_ne_less(e: Eq(Ordering, Greater, Less)): False {
   match e -> False {
   }
 }
 
-theorem greater_ne_equal(e: Eq(Ordering, greater, equal)): False {
+theorem greater_ne_equal(e: Eq(Ordering, Greater, Equal)): False {
   match e -> False {
   }
 }
@@ -311,13 +308,56 @@ theorem list_append_assoc<A: Type>(
   c: List(A)
 ): Eq(List(A), list_append(list_append(a, b), c), list_append(a, list_append(b, c))) {
   match a -> Eq(List(A), list_append(list_append(a, b), c), list_append(a, list_append(b, c))) {
-    nil => refl()
-    cons(h, t) => Eq_congr((z: List(A)) => cons(h, z), list_append_assoc(t, b, c))
+    Nil => refl()
+    Cons(h, t) => Eq_congr((z: List(A)) => Cons(h, z), list_append_assoc(t, b, c))
   }
 }
 
 theorem no_ne_yes(e: Eq(Yn, no, yes)): False {
   yes_ne_no(Eq_sym(e))
+}
+
+theorem yn_eq_refl(a: Yn): Eq(Yn, yn_eq(a, a), yes) {
+  match a -> Eq(Yn, yn_eq(a, a), yes) {
+    no => refl()
+    yes => refl()
+  }
+}
+
+theorem yn_eq_sound(a: Yn, b: Yn, e: Eq(Yn, yn_eq(a, b), yes)): Eq(Yn, a, b) {
+  match a -> Eq(Yn, a, b) {
+    no => match b -> Eq(Yn, no, b) {
+      no => refl()
+      yes => False_elim(no_ne_yes(e))
+    }
+    yes => match b -> Eq(Yn, yes, b) {
+      no => False_elim(no_ne_yes(e))
+      yes => refl()
+    }
+  }
+}
+
+theorem yn_and_intro(
+  p: Yn,
+  q: Yn,
+  hp: Eq(Yn, p, yes),
+  hq: Eq(Yn, q, yes)
+): Eq(Yn, yn_and(p, q), yes) {
+  match p -> Eq(Yn, yn_and(p, q), yes) {
+    no => False_elim(no_ne_yes(hp))
+    yes => hq
+  }
+}
+
+theorem yn_and_split(
+  p: Yn,
+  q: Yn,
+  e: Eq(Yn, yn_and(p, q), yes)
+): And(Eq(Yn, p, yes), Eq(Yn, q, yes)) {
+  match p -> And(Eq(Yn, p, yes), Eq(Yn, q, yes)) {
+    no => False_elim(no_ne_yes(e))
+    yes => and_intro(refl(), e)
+  }
 }
 
 theorem nat_lt_irrefl(a: Nat): Eq(Yn, nat_lt(a, a), no) {

@@ -1,0 +1,71 @@
+import "../../../std/Ord.taut"
+
+// A binary search tree of any ordered keys (a set): `where Ord(A)` asks for the order of
+// `std/Ord.taut`, and `Ord.compare` is the one three-way comparison, so each operation has one
+// `match` on an `Ordering`. `proof/bst.taut` proves that the operations keep the tree ordered and
+// that they do what a set does, from the laws of `Ord` alone.
+
+inductive Tree(A: Type): Type {
+  leaf(): Tree(A)
+  node(l: Tree(A), k: A, r: Tree(A)): Tree(A)
+}
+
+fn tree_insert<A>(x: A, t: Tree(A)) -> Tree(A) where Ord(A) {
+  match t -> Tree(A) {
+    leaf => node(leaf, x, leaf)
+    node(l, k, r) => match Ord.compare(x, k) -> Tree(A) {
+      Less => node(tree_insert(x, l), k, r)
+      Equal => node(l, k, r)
+      Greater => node(l, k, tree_insert(x, r))
+    }
+  }
+}
+
+fn tree_member<A>(x: A, t: Tree(A)) -> Yn where Ord(A) {
+  match t -> Yn {
+    leaf => no
+    node(l, k, r) => match Ord.compare(x, k) -> Yn {
+      Less => tree_member(x, l)
+      Equal => yes
+      Greater => tree_member(x, r)
+    }
+  }
+}
+
+// The smallest key of the tree `node(l, k, _)`.
+fn tree_min<A>(l: Tree(A), k: A) -> A {
+  match l -> A {
+    leaf => k
+    node(ll, lk, lr) => tree_min(ll, lk)
+  }
+}
+
+// The tree without its smallest key.
+fn tree_remove_min<A>(t: Tree(A)) -> Tree(A) {
+  match t -> Tree(A) {
+    leaf => leaf
+    node(l, k, r) => match l -> Tree(A) {
+      leaf => r
+      node(ll, lk, lr) => node(tree_remove_min(l), k, r)
+    }
+  }
+}
+
+// The two subtrees of a deleted node as one tree: the smallest key of the right one goes to the root.
+fn tree_join<A>(l: Tree(A), r: Tree(A)) -> Tree(A) {
+  match r -> Tree(A) {
+    leaf => l
+    node(rl, rk, rr) => node(l, tree_min(rl, rk), tree_remove_min(node(rl, rk, rr)))
+  }
+}
+
+fn tree_delete<A>(x: A, t: Tree(A)) -> Tree(A) where Ord(A) {
+  match t -> Tree(A) {
+    leaf => leaf
+    node(l, k, r) => match Ord.compare(x, k) -> Tree(A) {
+      Less => node(tree_delete(x, l), k, r)
+      Equal => tree_join(l, r)
+      Greater => node(l, k, tree_delete(x, r))
+    }
+  }
+}

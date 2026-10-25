@@ -1,0 +1,121 @@
+import "Base.taut"
+
+// `Option` and `Pair` (`Std.taut`): the usual functions and their laws.
+
+fn option_map<A, B>(f: (A) -> B, o: Option(A)) -> Option(B) {
+  match o -> Option(B) {
+    None => None
+    Some(a) => Some(f(a))
+  }
+}
+
+fn option_bind<A, B>(o: Option(A), f: (A) -> Option(B)) -> Option(B) {
+  match o -> Option(B) {
+    None => None
+    Some(a) => f(a)
+  }
+}
+
+fn option_unwrap_or<A>(o: Option(A), d: A) -> A {
+  match o -> A {
+    None => d
+    Some(a) => a
+  }
+}
+
+fn option_is_some<A>(o: Option(A)) -> Yn {
+  match o -> Yn {
+    None => no
+    Some(a) => yes
+  }
+}
+
+// `o` if it is a value, otherwise `p`.
+fn option_or<A>(o: Option(A), p: Option(A)) -> Option(A) {
+  match o -> Option(A) {
+    None => p
+    Some(a) => o
+  }
+}
+
+fn pair_fst<A, B>(p: Pair(A, B)) -> A {
+  match p -> A {
+    pair(a, b) => a
+  }
+}
+
+fn pair_snd<A, B>(p: Pair(A, B)) -> B {
+  match p -> B {
+    pair(a, b) => b
+  }
+}
+
+fn pair_swap<A, B>(p: Pair(A, B)) -> Pair(B, A) {
+  match p -> Pair(B, A) {
+    pair(a, b) => pair(b, a)
+  }
+}
+
+fn pair_map<A, B, C, D>(f: (A) -> C, g: (B) -> D, p: Pair(A, B)) -> Pair(C, D) {
+  match p -> Pair(C, D) {
+    pair(a, b) => pair(f(a), g(b))
+  }
+}
+
+theorem option_map_id<A: Type>(o: Option(A)): Eq(Option(A), option_map((x: A) => x, o), o) {
+  match o -> Eq(Option(A), option_map((x: A) => x, o), o) {
+    None => refl()
+    Some(a) => refl()
+  }
+}
+
+theorem option_map_map<A: Type, B: Type, C: Type>(
+  f: (A) -> B,
+  g: (B) -> C,
+  o: Option(A)
+): Eq(Option(C), option_map(g, option_map(f, o)), option_map((x: A) => g(f(x)), o)) {
+  match o -> Eq(Option(C), option_map(g, option_map(f, o)), option_map((x: A) => g(f(x)), o)) {
+    None => refl()
+    Some(a) => refl()
+  }
+}
+
+theorem option_bind_some<A: Type>(
+  o: Option(A)
+): Eq(Option(A), option_bind(o, (x: A) => Some(x)), o) {
+  match o -> Eq(Option(A), option_bind(o, (x: A) => Some(x)), o) {
+    None => refl()
+    Some(a) => refl()
+  }
+}
+
+theorem option_unwrap_or_some<A: Type>(a: A, d: A): Eq(A, option_unwrap_or(Some(a), d), a) {
+  refl()
+}
+
+theorem option_unwrap_or_none<A: Type>(d: A): Eq(A, option_unwrap_or(None, d), d) {
+  refl()
+}
+
+theorem option_or_none_right<A: Type>(o: Option(A)): Eq(Option(A), option_or(o, None), o) {
+  match o -> Eq(Option(A), option_or(o, None), o) {
+    None => refl()
+    Some(a) => refl()
+  }
+}
+
+theorem pair_swap_swap<A: Type, B: Type>(
+  p: Pair(A, B)
+): Eq(Pair(A, B), pair_swap(pair_swap(p)), p) {
+  match p -> Eq(Pair(A, B), pair_swap(pair_swap(p)), p) {
+    pair(a, b) => refl()
+  }
+}
+
+theorem pair_eta<A: Type, B: Type>(
+  p: Pair(A, B)
+): Eq(Pair(A, B), pair(pair_fst(p), pair_snd(p)), p) {
+  match p -> Eq(Pair(A, B), pair(pair_fst(p), pair_snd(p)), p) {
+    pair(a, b) => refl()
+  }
+}
