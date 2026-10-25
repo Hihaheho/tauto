@@ -143,10 +143,14 @@ and check its SHA-256 before using it:
 | `darwin` | `60b45c76003a4561fb66d7ec2003569006d255d2860179445e56d3e2a029090e` |
 | `darwin_aarch64` | `9019fcd34e93fddf0ecf9d40d28f05a86ba563ac3b701a9c5116ce1c96379360` |
 
-If the hash does not match, stop. Then, with `LEAN_DIR` the unpacked
-directory:
+If the hash does not match, stop. `scripts/setup-lean-4.34.1.sh` does these
+steps: it downloads the archive for your platform, checks the hash above, and
+unpacks it into `.tools/lean-4.34.1` (or the absolute directory given). Then,
+with `LEAN_DIR` the unpacked directory:
 
 ```bash
+bash scripts/setup-lean-4.34.1.sh "$PWD/.tools/lean-4.34.1"
+LEAN_DIR=$PWD/.tools/lean-4.34.1
 cd lean
 ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cache build
 ```
