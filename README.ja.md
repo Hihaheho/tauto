@@ -134,9 +134,13 @@ Lean は **4.34.1** に固定しています（`lean/lean-toolchain`）。公式
 | `darwin` | `60b45c76003a4561fb66d7ec2003569006d255d2860179445e56d3e2a029090e` |
 | `darwin_aarch64` | `9019fcd34e93fddf0ecf9d40d28f05a86ba563ac3b701a9c5116ce1c96379360` |
 
-ハッシュが一致しないときは、そこで止めてください。展開したディレクトリを `LEAN_DIR` として：
+ハッシュが一致しないときは、そこで止めてください。`scripts/setup-lean-4.34.1.sh` がこの手順を
+行います：使っている環境のアーカイブを取得し、上のハッシュを確かめ、`.tools/lean-4.34.1`（または引数の
+絶対パス）に展開します。展開したディレクトリを `LEAN_DIR` として：
 
 ```bash
+bash scripts/setup-lean-4.34.1.sh "$PWD/.tools/lean-4.34.1"
+LEAN_DIR=$PWD/.tools/lean-4.34.1
 cd lean
 ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cache build
 ```
