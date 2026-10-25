@@ -21,6 +21,7 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 | `meta/` | Lean による形式化の一部を Tauto で書き直したもの：小さな核と、カーネルのモデル（合流性、subject reduction、型付けの導出を返す検査器） |
 | `crates/tauto/src/prelude.taut` | プレリュード：証明が宣言なしで使える型と定理（`Nat`、`Eq`、`And`、`Or`、`Not`、`Iff` など）。公理はない。実装のうち、ここで公開するのはこのファイルと `crates/tauto-parol/tauto.par` だけ |
 | `crates/tauto-parol/tauto.par` | Tauto の文法：読み込みが受け付けるすべての形。基本の規則のあとに、tauto 自身の規則（依存型と証明）が続く |
+| `docs/design/` | 設計文書：意味論、所有権、クラス、マクロとステップ、Lean による形式化、そして（まだ公開していない）実装のバックエンドと自己ホスティング |
 | `examples/` | Tauto のプログラムと証明 |
 | `cases/` | 入力に対して実装が何を答えるべきかを定めるケースファイル（tauto とその Nib の部分） |
 | `Tauto.eure` | プロジェクトのマニフェスト（まだどのツールも読みません） |
@@ -159,6 +160,8 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
 | `Proto/Core.lean`、`Renaming.lean`、`ListSet.lean`、`Tags.lean`、`Effects.lean`、`Choice.lean`、`Budget.lean`、`Syntax.lean` | preservation と progress を持つ小さな非依存の核、名前の付け替え、リストによる有限集合、集合としてのタグと効果の行、共有ステップ予算のモデル |
 
 ### ビルド
+
+形式化の構成は [`lean/README.md`](lean/README.md)、何を証明しているかは [`docs/design/lean.md`](docs/design/lean.md) を参照してください。
 
 Lean は **4.34.1** に固定しています（`lean/lean-toolchain`）。公式のリリースアーカイブ
 `https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-<platform>.zip`
