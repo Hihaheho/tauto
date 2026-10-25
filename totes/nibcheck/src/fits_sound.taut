@@ -1,0 +1,3224 @@
+import "unify_sound.taut"
+
+// `ck_fits` is sound (`docs/design/self-host.md`
+// 「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」):
+// when it says a value of type `a` may stand where `b` is expected, `TySub`
+// says so, under the substitution it leaves, with the rigid types and the
+// instances it recorded.
+
+def InstExt(
+  inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+  inst2: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop
+): Prop := ∀ gs: List(Pair(Text, Kind)). ∀ map: Ordmap(Text, Ty). (inst(gs, map)) -> inst2(gs, map)
+
+def DupExt(dup: (Ty) -> Prop, dup2: (Ty) -> Prop): Prop := ∀ t: Ty. (dup(t)) -> dup2(t)
+
+mutual {
+  theorem tysub_list_move(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop,
+    s2: Ordmap(Nat, Ty),
+    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst2: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup2: (Ty) -> Prop,
+    hs: SubstExt(s, s2),
+    hk: OkExt(ok, ok2),
+    hi: InstExt(inst, inst2),
+    hd: DupExt(dup, dup2),
+    xs: List(Ty),
+    ys: List(Ty),
+    h: TySubList(s, ok, inst, dup, xs, ys)
+  ): TySubList(s2, ok2, inst2, dup2, xs, ys) {
+    match h -> TySubList(s2, ok2, inst2, dup2, xs, ys) {
+      tysub_nil() => tysub_nil()
+      tysub_cons(
+        x,
+        y,
+        xs1,
+        ys1,
+        h1,
+        h2
+      ) => tysub_cons(
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, x, y, h1),
+        tysub_list_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, xs1, ys1, h2)
+      )
+    }
+  }
+
+  theorem tysub_each_move(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop,
+    s2: Ordmap(Nat, Ty),
+    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst2: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup2: (Ty) -> Prop,
+    hs: SubstExt(s, s2),
+    hk: OkExt(ok, ok2),
+    hi: InstExt(inst, inst2),
+    hd: DupExt(dup, dup2),
+    b: Ty,
+    xs: List(Ty),
+    h: TySubEach(s, ok, inst, dup, b, xs)
+  ): TySubEach(s2, ok2, inst2, dup2, b, xs) {
+    match h -> TySubEach(s2, ok2, inst2, dup2, b, xs) {
+      tysub_each_nil(b1) => tysub_each_nil(b1)
+      tysub_each_cons(
+        b1,
+        x,
+        xs1,
+        h1,
+        h2
+      ) => tysub_each_cons(
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, x, b1, h1),
+        tysub_each_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, b1, xs1, h2)
+      )
+    }
+  }
+
+  theorem tysub_any_move(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop,
+    s2: Ordmap(Nat, Ty),
+    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst2: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup2: (Ty) -> Prop,
+    hs: SubstExt(s, s2),
+    hk: OkExt(ok, ok2),
+    hi: InstExt(inst, inst2),
+    hd: DupExt(dup, dup2),
+    a: Ty,
+    ys: List(Ty),
+    h: TySubAny(s, ok, inst, dup, a, ys)
+  ): TySubAny(s2, ok2, inst2, dup2, a, ys) {
+    match h -> TySubAny(s2, ok2, inst2, dup2, a, ys) {
+      tysub_any_here(
+        a1,
+        y,
+        ys1,
+        h1
+      ) => tysub_any_here(
+        ys1,
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, a1, y, h1)
+      )
+      tysub_any_there(
+        a1,
+        ys1,
+        y,
+        h1
+      ) => tysub_any_there(
+        y,
+        tysub_any_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, a1, ys1, h1)
+      )
+    }
+  }
+
+  theorem tysub_move(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop,
+    s2: Ordmap(Nat, Ty),
+    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst2: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup2: (Ty) -> Prop,
+    hs: SubstExt(s, s2),
+    hk: OkExt(ok, ok2),
+    hi: InstExt(inst, inst2),
+    hd: DupExt(dup, dup2),
+    a: Ty,
+    b: Ty,
+    h: TySub(s, ok, inst, dup, a, b)
+  ): TySub(s2, ok2, inst2, dup2, a, b) {
+    match h -> TySub(s2, ok2, inst2, dup2, a, b) {
+      tysub_eq(a1, b1, h1) => tysub_eq(tyeq_move(s, ok, s2, ok2, hs, hk, a1, b1, h1))
+      tysub_trans(
+        a1,
+        b1,
+        c1,
+        h1,
+        h2
+      ) => tysub_trans(
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, a1, b1, h1),
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, b1, c1, h2)
+      )
+      tysub_never(b1) => tysub_never(b1)
+      tysub_poly_r(
+        a1,
+        gs,
+        t,
+        rigid,
+        h1,
+        hr
+      ) => tysub_poly_r(
+        gs,
+        t,
+        rigid,
+        tysub_move(
+          s,
+          ok,
+          inst,
+          dup,
+          s2,
+          ok2,
+          inst2,
+          dup2,
+          hs,
+          hk,
+          hi,
+          hd,
+          a1,
+          ty_substitute(t, rigid),
+          h1
+        ),
+        hk(gs, rigid, a1, TyPoly(gs, t), hr)
+      )
+      tysub_poly_l(
+        b1,
+        gs,
+        t,
+        map,
+        h1,
+        hm
+      ) => tysub_poly_l(
+        gs,
+        t,
+        map,
+        tysub_move(
+          s,
+          ok,
+          inst,
+          dup,
+          s2,
+          ok2,
+          inst2,
+          dup2,
+          hs,
+          hk,
+          hi,
+          hd,
+          ty_substitute(t, map),
+          b1,
+          h1
+        ),
+        hi(gs, map, hm)
+      )
+      tysub_borrow(
+        x,
+        y,
+        ma,
+        mb,
+        hm,
+        h1
+      ) => tysub_borrow(
+        ma,
+        mb,
+        hm,
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, x, y, h1)
+      )
+      tysub_unborrow(
+        x,
+        b1,
+        m,
+        h1
+      ) => tysub_unborrow(
+        m,
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, x, b1, h1)
+      )
+      tysub_dup(
+        a1,
+        y,
+        m,
+        h1,
+        hu
+      ) => tysub_dup(
+        m,
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, a1, y, h1),
+        hd(a1, hu)
+      )
+      tysub_union_l(
+        b1,
+        xs,
+        h1
+      ) => tysub_union_l(
+        xs,
+        tysub_each_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, b1, xs, h1)
+      )
+      tysub_union_r(
+        a1,
+        ys,
+        h1
+      ) => tysub_union_r(
+        ys,
+        tysub_any_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, a1, ys, h1)
+      )
+      tysub_tagged(
+        x,
+        y,
+        ta,
+        tb,
+        ht,
+        h1
+      ) => tysub_tagged(
+        ta,
+        tb,
+        ht,
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, x, y, h1)
+      )
+      tysub_untag(
+        x,
+        b1,
+        ta,
+        h1
+      ) => tysub_untag(
+        ta,
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, x, b1, h1)
+      )
+      tysub_fn(
+        pa,
+        pb,
+        ra,
+        rb,
+        ka,
+        kb,
+        hq,
+        hp,
+        hr
+      ) => tysub_fn(
+        ka,
+        kb,
+        hq,
+        tysub_list_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, pb, pa, hp),
+        tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, ra, rb, hr)
+      )
+    }
+  }
+}
+
+// ----- at a state of the checker -----
+
+// `map` is an instance of the generics `gs` the checker made: each generic is
+// read as a type with a kind bound recorded for it.
+inductive InstBy(bs: List(TyBound)): (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop {
+  inst_nil(): InstBy(bs, Nil, ordmap_empty())
+  inst_cons<rest: List(
+    Pair(Text, Kind)
+  ), map: Ordmap(
+    Text,
+    Ty
+  )>(
+    g: Pair(Text, Kind),
+    v: Ty,
+    hb: BoundIn(bs, ty_bound_mk(v, tk_second(g), 0, 0)),
+    h: InstBy(bs, rest, map)
+  ): InstBy(bs, Cons(g, rest), ordmap_insert(map, tk_first(g), v, ordmap_compare_text))
+}
+
+theorem inst_by_move(
+  bs: List(TyBound),
+  bs2: List(TyBound),
+  he: BoundsExt(bs, bs2),
+  gs: List(Pair(Text, Kind)),
+  map: Ordmap(Text, Ty),
+  h: InstBy(bs, gs, map)
+): InstBy(bs2, gs, map) {
+  match h -> InstBy(bs2, gs, map) {
+    inst_nil() => inst_nil()
+    inst_cons(
+      rest,
+      m,
+      g,
+      v,
+      hb,
+      h1
+    ) => inst_cons(
+      g,
+      v,
+      he(ty_bound_mk(v, tk_second(g), 0, 0), hb),
+      inst_by_move(bs, bs2, he, rest, m, h1)
+    )
+  }
+}
+
+// `t` is duplicable: it is the same type as one whose kind is.
+inductive DupBy(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  d: Datas
+): (Ty) -> Prop {
+  dup_by<t: Ty>(
+    t2: Ty,
+    he: TyEq(s, ok, t, t2),
+    hk: Eq(Yn, kind_dup(datas_kind(d, t2)), yes)
+  ): DupBy(s, ok, d, t)
+}
+
+fn InstAt(c: Checker) -> (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop {
+  (gs: List(Pair(Text, Kind)), map: Ordmap(Text, Ty)) => InstBy(ck_bounds_of(c), gs, map)
+}
+
+fn DupAt(c: Checker) -> (Ty) -> Prop {
+  (t: Ty) => DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), t)
+}
+
+def SubAt(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Prop := TySub(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), a, b)
+
+theorem dup_at_move(
+  c: Checker,
+  c2: Checker,
+  g: Grows(c, c2),
+  t: Ty,
+  h: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), t)
+): DupBy(ck_subst_of(c2), KeptOk(ck_kept_of(c2)), ck_datas_of(c2), t) {
+  match h -> DupBy(ck_subst_of(c2), KeptOk(ck_kept_of(c2)), ck_datas_of(c2), t) {
+    dup_by(
+      t1,
+      t2,
+      he,
+      hk
+    ) => dup_by(
+      t2,
+      tyeq_at_move(c, c2, g, t1, t2, he),
+      Eq_subst(
+        (z: Datas) => Eq(Yn, kind_dup(datas_kind(z, t2)), yes),
+        and_left(and_right(and_right(and_right(g)))),
+        hk
+      )
+    )
+  }
+}
+
+theorem sub_at_move(
+  c: Checker,
+  c2: Checker,
+  g: Grows(c, c2),
+  a: Ty,
+  b: Ty,
+  h: SubAt(c, a, b)
+): SubAt(c2, a, b) {
+  tysub_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    InstAt(c),
+    DupAt(c),
+    ck_subst_of(c2),
+    KeptOk(ck_kept_of(c2)),
+    InstAt(c2),
+    DupAt(c2),
+    and_left(and_right(g)),
+    and_left(and_right(and_right(g))),
+    (
+      gs: List(Pair(Text, Kind)),
+      map: Ordmap(Text, Ty),
+      hi: InstBy(ck_bounds_of(c), gs, map)
+    ) => inst_by_move(
+      ck_bounds_of(c),
+      ck_bounds_of(c2),
+      and_right(and_right(and_right(and_right(g)))),
+      gs,
+      map,
+      hi
+    ),
+    (
+      t: Ty,
+      hd: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), t)
+    ) => dup_at_move(c, c2, g, t, hd),
+    a,
+    b,
+    h
+  )
+}
+
+// ----- the steps of fitting, unfolded -----
+
+fn ck_fits_c2(j: Nat, c: Checker, a: Ty, b: Ty, y: Yn) -> Mut1(Yn, Checker) {
+  match y -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_unify(c, a, b))
+    no => ck_rewrap1(ck_fits_poly_in(j, c, a, b))
+  }
+}
+
+fn ck_fits_c1(j: Nat, c: Checker, a: Ty, b: Ty, x: Yn) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => mut1(yes, c)
+    no => ck_fits_c2(j, c, a, b, yn_or(ty_is_var(a), ty_is_var(b)))
+  }
+}
+
+fn ck_poly_r_k(
+  j: Nat,
+  a: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(
+      rigid,
+      c2
+    ) => ck_and(
+      (c3: Checker) => ck_keep(c3, gs, rigid, a, TyPoly(gs, t)),
+      ck_fits_in(j, c2, a, ty_substitute(t, rigid))
+    )
+  }
+}
+
+fn ck_poly_l_k(
+  j: Nat,
+  b: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(fresh, c2) => ck_rewrap1(ck_fits_in(j, c2, ty_substitute(t, fresh), b))
+  }
+}
+
+fn ck_borrow2_c(j: Nat, c: Checker, x: Ty, y: Ty, mb: Yn, e: Yn) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_fits_in(j, c, x, y))
+    no => ck_rewrap1(ck_fits_in(j, c, x, TyBorrow(y, mb)))
+  }
+}
+
+fn ck_value_c(j: Nat, c: Checker, a: Ty, y: Ty, m: Yn, e: Yn) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_fits_in(j, c, a, y))
+    no => ck_rewrap1(ck_fits_shape_in(j, c, a, TyBorrow(y, m)))
+  }
+}
+
+fn ck_or_k(k: (Checker) -> Mut1(Yn, Checker), c2: Checker, v: Yn) -> Mut1(Yn, Checker) {
+  match v -> Mut1(Yn, Checker) {
+    yes => mut1(yes, c2)
+    no => ck_rewrap1(k(c2))
+  }
+}
+
+fn ck_or(k: (Checker) -> Mut1(Yn, Checker), m: Mut1(Yn, Checker)) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(v, c2) => ck_or_k(k, c2, v)
+  }
+}
+
+fn ck_tag2_c(
+  j: Nat,
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  tb: List(Text),
+  y: Ty,
+  e: Yn
+) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_fits_in(j, c, x, y))
+    no => ck_rewrap1(ck_unify(c, TyTagged(ta, x), TyTagged(tb, y)))
+  }
+}
+
+fn ck_fn2_c(
+  j: Nat,
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  e: Yn
+) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_and((c2: Checker) => ck_fits_in(j, c2, ra, rb), ck_fits_params_in(j, c, pa, pb))
+    no => ck_rewrap1(ck_unify(c, TyFn(pa, ra, ka), TyFn(pb, rb, kb)))
+  }
+}
+
+fn ck_restore(
+  &mut c: Checker,
+  subst: Ordmap(Nat, Ty),
+  ints: Ordmap(Nat, Yn),
+  next: Nat,
+  kept: List(TyKept)
+) -> () {
+  set_to(&mut c.subst, subst)
+  set_to(&mut c.ints, ints)
+  set_to(&mut c.next, next)
+  set_to(&mut c.kept, kept)
+}
+
+fn ck_attempt_k(c: Checker, m: Mut1(Yn, Checker)) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(v, c2) => match v -> Mut1(Yn, Checker) {
+      yes => mut1(yes, c2)
+      no => mut1(no, ck_st(ck_restore(c2, c.subst, c.ints, c.next, c.kept)))
+    }
+  }
+}
+
+fn ck_inst_bound(&mut c: Checker, v: Ty, k: Kind) -> () {
+  set_to(&mut c.bounds, Cons(TyBound { ty: v, kind: k, start: 0, end: 0 }, c.bounds))
+}
+
+fn ck_next_of(c: Checker) -> Nat {
+  c.next
+}
+
+fn ck_inst_k(
+  g: Pair(Text, Kind),
+  v: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+) -> Mut1(Ordmap(Text, Ty), Checker) {
+  match m -> Mut1(Ordmap(Text, Ty), Checker) {
+    mut1(map, c2) => mut1(ordmap_insert(map, tk_first(g), v, ordmap_compare_text), c2)
+  }
+}
+
+// ----- combining steps -----
+
+theorem post_no(c: Checker, q: (Checker) -> Prop): Post(c, mut1(no, c), q) {
+  (o: CkOrdered(c)) => and_intro(grows_refl(c, o), (y: Eq(Yn, no, yes)) => False_elim(no_ne_yes(y)))
+}
+
+// What `Post` gives once the state before it is ordered.
+def PostR(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q: (Checker) -> Prop
+): Prop := And(Grows(c, ck_st(m)), (Eq(Yn, ck_val(m), yes)) -> q(ck_st(m)))
+
+theorem post_or_k(
+  c: Checker,
+  c2: Checker,
+  v: Yn,
+  q1: (Checker) -> Prop,
+  k: (Checker) -> Mut1(Yn, Checker),
+  q2: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  g: Grows(c, c2),
+  h1: (Eq(Yn, v, yes)) -> q1(c2),
+  h2: Post(c2, k(c2), q2),
+  f1: ∀ c3: Checker. (q1(c3)) -> q(c3),
+  f2: ∀ c3: Checker. (q2(c3)) -> q(c3)
+): PostR(c, ck_or_k(k, c2, v), q) {
+  match v -> PostR(c, ck_or_k(k, c2, v), q) {
+    yes => and_intro(g, (y: Eq(Yn, yes, yes)) => f1(c2, h1(refl())))
+    no => Eq_subst(
+      (z: Mut1(Yn, Checker)) => PostR(c, z, q),
+      Eq_sym(ck_rewrap1_id(k(c2))),
+      and_intro(
+        grows_trans(c, c2, ck_st(k(c2)), g, and_left(h2(and_left(g)))),
+        (y: Eq(Yn, ck_val(k(c2)), yes)) => f2(ck_st(k(c2)), and_right(h2(and_left(g)))(y))
+      )
+    )
+  }
+}
+
+// `if m { yes } else { k }`.
+theorem post_or(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  k: (Checker) -> Mut1(Yn, Checker),
+  q2: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  h1: Post(c, m, q1),
+  h2: ∀ c2: Checker. Post(c2, k(c2), q2),
+  f1: ∀ c3: Checker. (q1(c3)) -> q(c3),
+  f2: ∀ c3: Checker. (q2(c3)) -> q(c3)
+): Post(c, ck_or(k, m), q) {
+  match m -> Post(c, ck_or(k, m), q) {
+    mut1(
+      v,
+      c2
+    ) => (
+      o: CkOrdered(c)
+    ) => post_or_k(c, c2, v, q1, k, q2, q, and_left(h1(o)), and_right(h1(o)), h2(c2), f1, f2)
+  }
+}
+
+// Trying a step: when it says no, the substitution and the records are put
+// back.
+theorem post_attempt(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q: (Checker) -> Prop,
+  h: Post(c, m, q)
+): Post(c, ck_attempt_k(c, m), q) {
+  match m -> Post(c, ck_attempt_k(c, m), q) {
+    mut1(v, c2) => match v -> (Post(c, mut1(v, c2), q)) -> Post(c, ck_attempt_k(c, mut1(v, c2)), q) {
+      yes => (h1: Post(c, mut1(yes, c2), q)) => h1
+      no => (
+        h1: Post(c, mut1(no, c2), q)
+      ) => (
+        o: CkOrdered(c)
+      ) => and_intro(
+        and_intro(
+          o,
+          and_intro(
+            (
+              i: Nat,
+              t: Ty,
+              e: Eq(Option(Ty), ordmap_get(ck_subst_of(c), i, ordmap_compare_nat), Some(t))
+            ) => e,
+            and_intro(
+              (
+                gs: List(Pair(Text, Kind)),
+                r: Ordmap(Text, Ty),
+                a: Ty,
+                b: Ty,
+                hk: KeptIn(ck_kept_of(c), gs, r, a, b)
+              ) => hk,
+              and_right(and_right(and_right(and_left(h1(o)))))
+            )
+          )
+        ),
+        (y: Eq(Yn, no, yes)) => False_elim(no_ne_yes(y))
+      )
+    }(h)
+  }
+}
+
+// A fact about the state before a step, carried to the state after it.
+theorem post_with(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  p: (Checker) -> Prop,
+  q1: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  monop: Mono(p),
+  hp: p(c),
+  h: Post(c, m, q1),
+  f: ∀ c2: Checker. (p(c2)) -> (q1(c2)) -> q(c2)
+): Post(c, m, q) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    and_left(h(o)),
+    (
+      y: Eq(Yn, ck_val(m), yes)
+    ) => f(ck_st(m), monop(c, ck_st(m), and_left(h(o)), hp), and_right(h(o))(y))
+  )
+}
+
+// A step from a state after `c`.
+theorem post_after(
+  c: Checker,
+  c2: Checker,
+  m: Mut1(Yn, Checker),
+  q: (Checker) -> Prop,
+  g: (CkOrdered(c)) -> Grows(c, c2),
+  h: Post(c2, m, q)
+): Post(c, m, q) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    grows_trans(c, c2, ck_st(m), g(o), and_left(h(and_left(g(o))))),
+    and_right(h(and_left(g(o))))
+  )
+}
+
+theorem post_arg2<x: Ty, y: Ty>(
+  c: Checker,
+  f: (Ty, Ty) -> Mut1(Yn, Checker),
+  q: (Checker) -> Prop,
+  x1: Ty,
+  y1: Ty,
+  ex: Eq(Ty, x1, x),
+  ey: Eq(Ty, y1, y),
+  h: Post(c, f(x1, y1), q)
+): Post(c, f(x, y), q) {
+  Eq_subst((w: Ty) => Post(c, f(x, w), q), ey, Eq_subst((z: Ty) => Post(c, f(z, y1), q), ex, h))
+}
+
+theorem post_sub_eqs<a: Ty, b: Ty>(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a1: Ty,
+  b1: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b),
+  h: Post(c, m, (c2: Checker) => SubAt(c2, a, b))
+): Post(c, m, (c2: Checker) => SubAt(c2, a1, b1)) {
+  Eq_subst(
+    (z: Ty) => Post(c, m, (c2: Checker) => SubAt(c2, a1, z)),
+    Eq_sym(eb),
+    Eq_subst((z: Ty) => Post(c, m, (c2: Checker) => SubAt(c2, z, b)), Eq_sym(ea), h)
+  )
+}
+
+// ----- at a state, monotone -----
+
+def SubEachAt(
+  c: Checker,
+  b: Ty,
+  xs: List(Ty)
+): Prop := TySubEach(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), b, xs)
+
+def SubAnyAt(
+  c: Checker,
+  a: Ty,
+  ys: List(Ty)
+): Prop := TySubAny(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), a, ys)
+
+def SubLenAt(
+  c: Checker,
+  pa: List(Ty),
+  pb: List(Ty)
+): Prop := (
+  Eq(Yn, nat_eq(list_len(pa), list_len(pb)), yes)
+) -> TySubList(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), pb, pa)
+
+theorem inst_ext_at(c: Checker, c2: Checker, g: Grows(c, c2)): InstExt(InstAt(c), InstAt(c2)) {
+  (
+    gs: List(Pair(Text, Kind)),
+    map: Ordmap(Text, Ty),
+    hi: InstBy(ck_bounds_of(c), gs, map)
+  ) => inst_by_move(
+    ck_bounds_of(c),
+    ck_bounds_of(c2),
+    and_right(and_right(and_right(and_right(g)))),
+    gs,
+    map,
+    hi
+  )
+}
+
+theorem dup_ext_at(c: Checker, c2: Checker, g: Grows(c, c2)): DupExt(DupAt(c), DupAt(c2)) {
+  (
+    t: Ty,
+    hd: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), t)
+  ) => dup_at_move(c, c2, g, t, hd)
+}
+
+theorem mono_sub(a: Ty, b: Ty): Mono((c: Checker) => SubAt(c, a, b)) {
+  (c1: Checker, c2: Checker, g: Grows(c1, c2), h: SubAt(c1, a, b)) => sub_at_move(
+    c1,
+    c2,
+    g,
+    a,
+    b,
+    h
+  )
+}
+
+theorem mono_each(b: Ty, xs: List(Ty)): Mono((c: Checker) => SubEachAt(c, b, xs)) {
+  (
+    c1: Checker,
+    c2: Checker,
+    g: Grows(c1, c2),
+    h: SubEachAt(c1, b, xs)
+  ) => tysub_each_move(
+    ck_subst_of(c1),
+    KeptOk(ck_kept_of(c1)),
+    InstAt(c1),
+    DupAt(c1),
+    ck_subst_of(c2),
+    KeptOk(ck_kept_of(c2)),
+    InstAt(c2),
+    DupAt(c2),
+    and_left(and_right(g)),
+    and_left(and_right(and_right(g))),
+    inst_ext_at(c1, c2, g),
+    dup_ext_at(c1, c2, g),
+    b,
+    xs,
+    h
+  )
+}
+
+theorem mono_len_sub(pa: List(Ty), pb: List(Ty)): Mono((c: Checker) => SubLenAt(c, pa, pb)) {
+  (
+    c1: Checker,
+    c2: Checker,
+    g: Grows(c1, c2),
+    h: SubLenAt(c1, pa, pb)
+  ) => (
+    e: Eq(Yn, nat_eq(list_len(pa), list_len(pb)), yes)
+  ) => tysub_list_move(
+    ck_subst_of(c1),
+    KeptOk(ck_kept_of(c1)),
+    InstAt(c1),
+    DupAt(c1),
+    ck_subst_of(c2),
+    KeptOk(ck_kept_of(c2)),
+    InstAt(c2),
+    DupAt(c2),
+    and_left(and_right(g)),
+    and_left(and_right(and_right(g))),
+    inst_ext_at(c1, c2, g),
+    dup_ext_at(c1, c2, g),
+    pb,
+    pa,
+    h(e)
+  )
+}
+
+theorem mono_dup(
+  t: Ty
+): Mono((c: Checker) => DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), t)) {
+  (
+    c1: Checker,
+    c2: Checker,
+    g: Grows(c1, c2),
+    h: DupBy(ck_subst_of(c1), KeptOk(ck_kept_of(c1)), ck_datas_of(c1), t)
+  ) => dup_at_move(c1, c2, g, t, h)
+}
+
+theorem mono_inst(
+  gs: List(Pair(Text, Kind)),
+  map: Ordmap(Text, Ty)
+): Mono((c: Checker) => InstBy(ck_bounds_of(c), gs, map)) {
+  (
+    c1: Checker,
+    c2: Checker,
+    g: Grows(c1, c2),
+    h: InstBy(ck_bounds_of(c1), gs, map)
+  ) => inst_by_move(
+    ck_bounds_of(c1),
+    ck_bounds_of(c2),
+    and_right(and_right(and_right(and_right(g)))),
+    gs,
+    map,
+    h
+  )
+}
+
+// ----- the rules at a state -----
+
+theorem sub_of_eq(c: Checker, a: Ty, b: Ty, h: TyEqAt(c, a, b)): SubAt(c, a, b) {
+  tysub_eq(h)
+}
+
+theorem sub_trans_at(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  d: Ty,
+  h1: SubAt(c, a, b),
+  h2: SubAt(c, b, d)
+): SubAt(c, a, d) {
+  tysub_trans(h1, h2)
+}
+
+theorem sub_never_at(c: Checker, b: Ty): SubAt(c, TyNever, b) {
+  tysub_never(b)
+}
+
+theorem sub_poly_r_at(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  h: SubAt(c, a, ty_substitute(t, rigid)),
+  hr: KeptIn(ck_kept_of(c), gs, rigid, a, TyPoly(gs, t))
+): SubAt(c, a, TyPoly(gs, t)) {
+  tysub_poly_r(gs, t, rigid, h, hr)
+}
+
+theorem sub_poly_l_at(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  map: Ordmap(Text, Ty),
+  b: Ty,
+  h: SubAt(c, ty_substitute(t, map), b),
+  hi: InstBy(ck_bounds_of(c), gs, map)
+): SubAt(c, TyPoly(gs, t), b) {
+  tysub_poly_l(gs, t, map, h, hi)
+}
+
+theorem sub_borrow_at(
+  c: Checker,
+  x: Ty,
+  y: Ty,
+  ma: Yn,
+  mb: Yn,
+  hm: Eq(Yn, yn_or(yn_eq(ma, mb), yn_not(mb)), yes),
+  h: SubAt(c, x, y)
+): SubAt(c, TyBorrow(x, ma), TyBorrow(y, mb)) {
+  tysub_borrow(ma, mb, hm, h)
+}
+
+theorem sub_unborrow_at(
+  c: Checker,
+  x: Ty,
+  b: Ty,
+  m: Yn,
+  h: SubAt(c, x, b)
+): SubAt(c, TyBorrow(x, m), b) {
+  tysub_unborrow(m, h)
+}
+
+theorem sub_dup_at(
+  c: Checker,
+  a: Ty,
+  y: Ty,
+  m: Yn,
+  h: SubAt(c, a, y),
+  hd: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), a)
+): SubAt(c, a, TyBorrow(y, m)) {
+  tysub_dup(m, h, hd)
+}
+
+theorem sub_union_l_at(
+  c: Checker,
+  xs: List(Ty),
+  b: Ty,
+  h: SubEachAt(c, b, xs)
+): SubAt(c, TyUnion(xs), b) {
+  tysub_union_l(xs, h)
+}
+
+theorem sub_union_r_at(
+  c: Checker,
+  a: Ty,
+  ys: List(Ty),
+  h: SubAnyAt(c, a, ys)
+): SubAt(c, a, TyUnion(ys)) {
+  tysub_union_r(ys, h)
+}
+
+theorem sub_tagged_at(
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  tb: List(Text),
+  y: Ty,
+  ht: Eq(Yn, tags_subset(tb, ta), yes),
+  h: SubAt(c, x, y)
+): SubAt(c, TyTagged(ta, x), TyTagged(tb, y)) {
+  tysub_tagged(ta, tb, ht, h)
+}
+
+theorem sub_untag_at(
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  b: Ty,
+  h: SubAt(c, x, b)
+): SubAt(c, TyTagged(ta, x), b) {
+  tysub_untag(ta, h)
+}
+
+theorem sub_fn_at(
+  c: Checker,
+  pa: List(Ty),
+  pb: List(Ty),
+  ra: Ty,
+  rb: Ty,
+  ka: Kind,
+  kb: Kind,
+  hk: Eq(Yn, kind_fits(ka, kb), yes),
+  hp: TySubList(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), pb, pa),
+  hr: SubAt(c, ra, rb)
+): SubAt(c, TyFn(pa, ra, ka), TyFn(pb, rb, kb)) {
+  tysub_fn(ka, kb, hk, hp, hr)
+}
+
+theorem unify_sub(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(c, ck_rewrap1(ck_unify(c, a, b)), (c2: Checker) => SubAt(c2, a, b)) {
+  post_map(
+    c,
+    ck_unify(c, a, b),
+    (c2: Checker) => TyEqAt(c2, a, b),
+    (c2: Checker) => SubAt(c2, a, b),
+    (c2: Checker, h: TyEqAt(c2, a, b)) => sub_of_eq(c2, a, b, h),
+    ck_unify_ok(c, a, b)
+  )
+}
+
+theorem post_sub_resolve(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a0: Ty,
+  b0: Ty,
+  a: Ty,
+  b: Ty,
+  ha: TyEqAt(c, a0, a),
+  hb: TyEqAt(c, b0, b),
+  h: Post(c, m, (c2: Checker) => SubAt(c2, a, b))
+): Post(c, m, (c2: Checker) => SubAt(c2, a0, b0)) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    and_left(h(o)),
+    (
+      y: Eq(Yn, ck_val(m), yes)
+    ) => sub_trans_at(
+      ck_st(m),
+      a0,
+      a,
+      b0,
+      sub_of_eq(ck_st(m), a0, a, tyeq_at_move(c, ck_st(m), and_left(h(o)), a0, a, ha)),
+      sub_trans_at(
+        ck_st(m),
+        a,
+        b,
+        b0,
+        and_right(h(o))(y),
+        sub_of_eq(ck_st(m), b, b0, tyeq_sym(tyeq_at_move(c, ck_st(m), and_left(h(o)), b0, b, hb)))
+      )
+    )
+  )
+}
+
+// ----- what each step gives -----
+
+def FitsU(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsA(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_attempt_fits_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsPo(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_poly_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsB(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_borrow_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsV(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_value_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsS(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_shape_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsI(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_into_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsT(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_tagged_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+def FitsE(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ xs: List(
+  Ty
+). ∀ b: Ty. Post(c, ck_fits_each_in(k, c, xs, b), (c2: Checker) => SubEachAt(c2, b, xs))
+
+def FitsY(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ ys: List(
+  Ty
+). Post(c, ck_fits_any_in(k, c, a, ys), (c2: Checker) => SubAnyAt(c2, a, ys))
+
+def FitsP(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ pa: List(
+  Ty
+). ∀ pb: List(Ty). Post(c, ck_fits_params_in(k, c, pa, pb), (c2: Checker) => SubLenAt(c2, pa, pb))
+
+// A step unfolded by an equation proved once, so that the step is not
+// unfolded again inside the type of what it gives.
+theorem post_unf(
+  c: Checker,
+  m1: Mut1(Yn, Checker),
+  m2: Mut1(Yn, Checker),
+  q: (Checker) -> Prop,
+  e: Eq(Mut1(Yn, Checker), m1, m2),
+  h: Post(c, m2, q)
+): Post(c, m1, q) {
+  Eq_subst((z: Mut1(Yn, Checker)) => Post(c, z, q), Eq_sym(e), h)
+}
+
+theorem post_yes(c: Checker, q: (Checker) -> Prop, h: q(c)): Post(c, mut1(yes, c), q) {
+  (o: CkOrdered(c)) => and_intro(grows_refl(c, o), (y: Eq(Yn, yes, yes)) => h)
+}
+
+theorem attempt_step(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(c, ck_attempt_fits_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a, b)) {
+  post_unf(
+    c,
+    ck_attempt_fits_in(succ(j), c, a, b),
+    ck_attempt_k(c, ck_fits_in(j, c, a, b)),
+    (c2: Checker) => SubAt(c2, a, b),
+    refl(),
+    post_attempt(c, ck_fits_in(j, c, a, b), (c2: Checker) => SubAt(c2, a, b), hu(c, a, b))
+  )
+}
+
+theorem each_step(
+  j: Nat,
+  hu: FitsU(j),
+  he: FitsE(j),
+  c: Checker,
+  xs: List(Ty),
+  b: Ty
+): Post(c, ck_fits_each_in(succ(j), c, xs, b), (c2: Checker) => SubEachAt(c2, b, xs)) {
+  match xs -> Post(c, ck_fits_each_in(succ(j), c, xs, b), (c2: Checker) => SubEachAt(c2, b, xs)) {
+    Nil => post_unf(
+      c,
+      ck_fits_each_in(succ(j), c, Nil, b),
+      mut1(yes, c),
+      (c2: Checker) => SubEachAt(c2, b, Nil),
+      refl(),
+      post_yes(c, (c2: Checker) => SubEachAt(c2, b, Nil), tysub_each_nil(b))
+    )
+    Cons(
+      x,
+      rest
+    ) => post_unf(
+      c,
+      ck_fits_each_in(succ(j), c, Cons(x, rest), b),
+      ck_and((c2: Checker) => ck_fits_each_in(j, c2, rest, b), ck_fits_in(j, c, x, b)),
+      (c2: Checker) => SubEachAt(c2, b, Cons(x, rest)),
+      refl(),
+      post_seq(
+        c,
+        ck_fits_in(j, c, x, b),
+        (c2: Checker) => SubAt(c2, x, b),
+        (c2: Checker) => ck_fits_each_in(j, c2, rest, b),
+        (c2: Checker) => SubEachAt(c2, b, rest),
+        (c2: Checker) => SubEachAt(c2, b, Cons(x, rest)),
+        mono_sub(x, b),
+        hu(c, x, b),
+        (c2: Checker) => he(c2, rest, b),
+        (c2: Checker, h1: SubAt(c2, x, b), h2: SubEachAt(c2, b, rest)) => tysub_each_cons(h1, h2)
+      )
+    )
+  }
+}
+
+theorem any_step(
+  j: Nat,
+  ha: FitsA(j),
+  hy: FitsY(j),
+  c: Checker,
+  a: Ty,
+  ys: List(Ty)
+): Post(c, ck_fits_any_in(succ(j), c, a, ys), (c2: Checker) => SubAnyAt(c2, a, ys)) {
+  match ys -> Post(c, ck_fits_any_in(succ(j), c, a, ys), (c2: Checker) => SubAnyAt(c2, a, ys)) {
+    Nil => post_unf(
+      c,
+      ck_fits_any_in(succ(j), c, a, Nil),
+      mut1(no, c),
+      (c2: Checker) => SubAnyAt(c2, a, Nil),
+      refl(),
+      post_no(c, (c2: Checker) => SubAnyAt(c2, a, Nil))
+    )
+    Cons(
+      y,
+      rest
+    ) => post_unf(
+      c,
+      ck_fits_any_in(succ(j), c, a, Cons(y, rest)),
+      ck_or((c2: Checker) => ck_fits_any_in(j, c2, a, rest), ck_attempt_fits_in(j, c, a, y)),
+      (c2: Checker) => SubAnyAt(c2, a, Cons(y, rest)),
+      refl(),
+      post_or(
+        c,
+        ck_attempt_fits_in(j, c, a, y),
+        (c2: Checker) => SubAt(c2, a, y),
+        (c2: Checker) => ck_fits_any_in(j, c2, a, rest),
+        (c2: Checker) => SubAnyAt(c2, a, rest),
+        (c2: Checker) => SubAnyAt(c2, a, Cons(y, rest)),
+        ha(c, a, y),
+        (c2: Checker) => hy(c2, a, rest),
+        (c3: Checker, h: SubAt(c3, a, y)) => tysub_any_here(rest, h),
+        (c3: Checker, h: SubAnyAt(c3, a, rest)) => tysub_any_there(y, h)
+      )
+    )
+  }
+}
+
+theorem post_yes_sublen(
+  c: Checker,
+  pa: List(Ty),
+  pb: List(Ty),
+  e: Eq(Yn, nat_eq(list_len(pa), list_len(pb)), no)
+): Post(c, mut1(yes, c), (c2: Checker) => SubLenAt(c2, pa, pb)) {
+  post_yes(
+    c,
+    (c2: Checker) => SubLenAt(c2, pa, pb),
+    (
+      e2: Eq(Yn, nat_eq(list_len(pa), list_len(pb)), yes)
+    ) => False_elim(yes_ne_no(Eq_trans(Eq_sym(e2), e)))
+  )
+}
+
+theorem params_step(
+  j: Nat,
+  hu: FitsU(j),
+  hp: FitsP(j),
+  c: Checker,
+  pa: List(Ty),
+  pb: List(Ty)
+): Post(c, ck_fits_params_in(succ(j), c, pa, pb), (c2: Checker) => SubLenAt(c2, pa, pb)) {
+  match pa -> Post(c, ck_fits_params_in(succ(j), c, pa, pb), (c2: Checker) => SubLenAt(c2, pa, pb)) {
+    Nil => match pb -> Post(
+      c,
+      ck_fits_params_in(succ(j), c, Nil, pb),
+      (c2: Checker) => SubLenAt(c2, Nil, pb)
+    ) {
+      Nil => post_unf(
+        c,
+        ck_fits_params_in(succ(j), c, Nil, Nil),
+        mut1(yes, c),
+        (c2: Checker) => SubLenAt(c2, Nil, Nil),
+        refl(),
+        post_yes(c, (c2: Checker) => SubLenAt(c2, Nil, Nil), (e: Eq(Yn, yes, yes)) => tysub_nil())
+      )
+      Cons(
+        y,
+        yr
+      ) => post_unf(
+        c,
+        ck_fits_params_in(succ(j), c, Nil, Cons(y, yr)),
+        mut1(yes, c),
+        (c2: Checker) => SubLenAt(c2, Nil, Cons(y, yr)),
+        refl(),
+        post_yes_sublen(c, Nil, Cons(y, yr), refl())
+      )
+    }
+    Cons(
+      x,
+      xr
+    ) => match pb -> Post(
+      c,
+      ck_fits_params_in(succ(j), c, Cons(x, xr), pb),
+      (c2: Checker) => SubLenAt(c2, Cons(x, xr), pb)
+    ) {
+      Nil => post_unf(
+        c,
+        ck_fits_params_in(succ(j), c, Cons(x, xr), Nil),
+        mut1(yes, c),
+        (c2: Checker) => SubLenAt(c2, Cons(x, xr), Nil),
+        refl(),
+        post_yes_sublen(c, Cons(x, xr), Nil, refl())
+      )
+      Cons(
+        y,
+        yr
+      ) => post_unf(
+        c,
+        ck_fits_params_in(succ(j), c, Cons(x, xr), Cons(y, yr)),
+        ck_and((c2: Checker) => ck_fits_params_in(j, c2, xr, yr), ck_fits_in(j, c, y, x)),
+        (c2: Checker) => SubLenAt(c2, Cons(x, xr), Cons(y, yr)),
+        refl(),
+        post_seq(
+          c,
+          ck_fits_in(j, c, y, x),
+          (c2: Checker) => SubAt(c2, y, x),
+          (c2: Checker) => ck_fits_params_in(j, c2, xr, yr),
+          (c2: Checker) => SubLenAt(c2, xr, yr),
+          (c2: Checker) => SubLenAt(c2, Cons(x, xr), Cons(y, yr)),
+          mono_sub(y, x),
+          hu(c, y, x),
+          (c2: Checker) => hp(c2, xr, yr),
+          (
+            c2: Checker,
+            h1: SubAt(c2, y, x),
+            h2: SubLenAt(c2, xr, yr)
+          ) => (e: Eq(Yn, nat_eq(list_len(xr), list_len(yr)), yes)) => tysub_cons(h1, h2(e))
+        )
+      )
+    }
+  }
+}
+
+theorem ck_never_of(a: Ty, e: Eq(Yn, ty_is_never(a), yes)): Eq(Ty, a, TyNever) {
+  match a -> (Eq(Yn, ty_is_never(a), yes)) -> Eq(Ty, a, TyNever) {
+    TyNever => (e2: Eq(Yn, yes, yes)) => refl()
+    _ => (e2) => False_elim(no_ne_yes(e2))
+  }(e)
+}
+
+def FitsC1Ok(
+  j: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  x: Yn
+): Prop := (
+  Eq(Yn, ty_is_never(a), x)
+) -> Post(c, ck_fits_c1(j, c, a, b, x), (c2: Checker) => SubAt(c2, a, b))
+
+theorem fits_c1_ok(
+  j: Nat,
+  hpo: FitsPo(j),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  x: Yn
+): FitsC1Ok(j, c, a, b, x) {
+  match x -> FitsC1Ok(j, c, a, b, x) {
+    yes => (
+      e: Eq(Yn, ty_is_never(a), yes)
+    ) => post_yes(
+      c,
+      (c2: Checker) => SubAt(c2, a, b),
+      Eq_subst((z: Ty) => SubAt(c, z, b), Eq_sym(ck_never_of(a, e)), sub_never_at(c, b))
+    )
+    no => (
+      e: Eq(Yn, ty_is_never(a), no)
+    ) => yn_cases(
+      (y: Yn) => Post(c, ck_fits_c2(j, c, a, b, y), (c2: Checker) => SubAt(c2, a, b)),
+      yn_or(ty_is_var(a), ty_is_var(b)),
+      (
+        q: Eq(Yn, yn_or(ty_is_var(a), ty_is_var(b)), no)
+      ) => post_map(
+        c,
+        ck_fits_poly_in(j, c, a, b),
+        (c2: Checker) => SubAt(c2, a, b),
+        (c2: Checker) => SubAt(c2, a, b),
+        (c2: Checker, h: SubAt(c2, a, b)) => h,
+        hpo(c, a, b)
+      ),
+      (q: Eq(Yn, yn_or(ty_is_var(a), ty_is_var(b)), yes)) => unify_sub(c, a, b)
+    )
+  }
+}
+
+theorem fits_step(
+  j: Nat,
+  hpo: FitsPo(j),
+  c: Checker,
+  a0: Ty,
+  b0: Ty
+): Post(c, ck_fits_in(succ(j), c, a0, b0), (c2: Checker) => SubAt(c2, a0, b0)) {
+  post_unf(
+    c,
+    ck_fits_in(succ(j), c, a0, b0),
+    ck_fits_c1(
+      j,
+      c,
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
+      ty_is_never(ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0))
+    ),
+    (c2: Checker) => SubAt(c2, a0, b0),
+    refl(),
+    post_sub_resolve(
+      c,
+      ck_fits_c1(
+        j,
+        c,
+        ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
+        ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
+        ty_is_never(ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0))
+      ),
+      a0,
+      b0,
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
+      ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), a0),
+      ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), b0),
+      fits_c1_ok(
+        j,
+        hpo,
+        c,
+        ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
+        ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
+        ty_is_never(ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0))
+      )(refl())
+    )
+  )
+}
+
+// ----- the steps that look at the types -----
+
+// A step at types a wildcard arm cannot name: `x` and `y` are found from
+// `ex` and `ey`, and the step is unfolded at them by `e`.
+theorem post_cases<x: Ty, y: Ty>(
+  c: Checker,
+  f: (Ty, Ty) -> Mut1(Yn, Checker),
+  g: (Ty, Ty) -> Mut1(Yn, Checker),
+  q: (Checker) -> Prop,
+  x1: Ty,
+  y1: Ty,
+  ex: Eq(Ty, x1, x),
+  ey: Eq(Ty, y1, y),
+  e: Eq(Mut1(Yn, Checker), f(x, y), g(x, y)),
+  h: Post(c, g(x1, y1), q)
+): Post(c, f(x, y), q) {
+  Eq_subst(
+    (z: Mut1(Yn, Checker)) => Post(c, z, q),
+    Eq_sym(e),
+    post_arg2(c, g, q, x1, y1, ex, ey, h)
+  )
+}
+
+def InstOk(
+  c: Checker,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  gs: List(Pair(Text, Kind))
+): Prop := And(
+  (CkOrdered(c)) -> Grows(c, ck_st(m)),
+  And(
+    BoundsExt(ck_bounds_of(c), ck_bounds_of(ck_st(m))),
+    InstBy(ck_bounds_of(ck_st(m)), gs, ck_val(m))
+  )
+)
+
+theorem inst_k_ok(
+  c: Checker,
+  c1: Checker,
+  g: Pair(Text, Kind),
+  v: Ty,
+  rest: List(Pair(Text, Kind)),
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  g1: (CkOrdered(c)) -> Grows(c, c1),
+  ext1: BoundsExt(ck_bounds_of(c), ck_bounds_of(c1)),
+  b1: BoundIn(ck_bounds_of(c1), ty_bound_mk(v, tk_second(g), 0, 0)),
+  ih: InstOk(c1, m, rest)
+): InstOk(c, ck_inst_k(g, v, m), Cons(g, rest)) {
+  match m -> InstOk(c, ck_inst_k(g, v, m), Cons(g, rest)) {
+    mut1(
+      map,
+      c2
+    ) => and_intro(
+      (o: CkOrdered(c)) => grows_trans(c, c1, c2, g1(o), and_left(ih)(and_left(g1(o)))),
+      and_intro(
+        (x: TyBound, h: BoundIn(ck_bounds_of(c), x)) => and_left(and_right(ih))(x, ext1(x, h)),
+        inst_cons(
+          g,
+          v,
+          and_left(and_right(ih))(ty_bound_mk(v, tk_second(g), 0, 0), b1),
+          and_right(and_right(ih))
+        )
+      )
+    )
+  }
+}
+
+theorem inst_unf_nil(
+  c: Checker
+): Eq(Mut1(Ordmap(Text, Ty), Checker), ck_instance_of(Nil, c), mut1(ordmap_empty(), c)) {
+  refl()
+}
+
+theorem inst_unf_cons(
+  c: Checker,
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind))
+): Eq(
+  Mut1(Ordmap(Text, Ty), Checker),
+  ck_instance_of(Cons(g, rest), c),
+  ck_inst_k(
+    g,
+    TyVar(ck_next_of(c)),
+    ck_instance_of(
+      rest,
+      ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(g)))
+    )
+  )
+) {
+  refl()
+}
+
+// Making an instance of generics: fresh variables, each with its kind bound
+// recorded.
+theorem inst_ok(gs: List(Pair(Text, Kind)), c: Checker): InstOk(c, ck_instance_of(gs, c), gs) {
+  match gs -> InstOk(c, ck_instance_of(gs, c), gs) {
+    Nil => Eq_subst(
+      (z: Mut1(Ordmap(Text, Ty), Checker)) => InstOk(c, z, Nil(Pair(Text, Kind))),
+      Eq_sym(inst_unf_nil(c)),
+      and_intro(
+        (o: CkOrdered(c)) => grows_refl(c, o),
+        and_intro((x: TyBound, h: BoundIn(ck_bounds_of(c), x)) => h, inst_nil())
+      )
+    )
+    Cons(
+      g,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Ordmap(Text, Ty), Checker)) => InstOk(c, z, Cons(Pair(Text, Kind), g, rest)),
+      Eq_sym(inst_unf_cons(c, g, rest)),
+      inst_k_ok(
+        c,
+        ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(g))),
+        g,
+        TyVar(ck_next_of(c)),
+        rest,
+        ck_instance_of(
+          rest,
+          ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(g)))
+        ),
+        (
+          o: CkOrdered(c)
+        ) => and_intro(
+          o,
+          and_intro(
+            (
+              i: Nat,
+              t: Ty,
+              e: Eq(Option(Ty), ordmap_get(ck_subst_of(c), i, ordmap_compare_nat), Some(t))
+            ) => e,
+            and_intro(
+              (
+                gs2: List(Pair(Text, Kind)),
+                r: Ordmap(Text, Ty),
+                a: Ty,
+                b: Ty,
+                h: KeptIn(ck_kept_of(c), gs2, r, a, b)
+              ) => h,
+              and_intro(
+                refl(),
+                (
+                  x: TyBound,
+                  h: BoundIn(ck_bounds_of(c), x)
+                ) => bound_there(ty_bound_mk(TyVar(ck_next_of(c)), tk_second(g), 0, 0), h)
+              )
+            )
+          )
+        ),
+        (
+          x: TyBound,
+          h: BoundIn(ck_bounds_of(c), x)
+        ) => bound_there(ty_bound_mk(TyVar(ck_next_of(c)), tk_second(g), 0, 0), h),
+        bound_here(ty_bound_mk(TyVar(ck_next_of(c)), tk_second(g), 0, 0), ck_bounds_of(c)),
+        inst_ok(rest, ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(g))))
+      )
+    )
+  }
+}
+
+def PolyROk(
+  j: Nat,
+  c: Checker,
+  a: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): Prop := (
+  CkSame(c, ck_st(m))
+) -> Post(c, ck_poly_r_k(j, a, gs, t, m), (c2: Checker) => SubAt(c2, a, TyPoly(gs, t)))
+
+theorem poly_r_ok(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  a: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): PolyROk(j, c, a, gs, t, m) {
+  match m -> PolyROk(j, c, a, gs, t, m) {
+    mut1(
+      rigid,
+      c2
+    ) => (
+      hs: CkSame(c, c2)
+    ) => post_pre(
+      c,
+      c2,
+      ck_poly_r_k(j, a, gs, t, mut1(rigid, c2)),
+      (c4: Checker) => SubAt(c4, a, TyPoly(gs, t)),
+      hs,
+      post_unf(
+        c2,
+        ck_poly_r_k(j, a, gs, t, mut1(rigid, c2)),
+        ck_and(
+          (c3: Checker) => ck_keep(c3, gs, rigid, a, TyPoly(gs, t)),
+          ck_fits_in(j, c2, a, ty_substitute(t, rigid))
+        ),
+        (c4: Checker) => SubAt(c4, a, TyPoly(gs, t)),
+        refl(),
+        post_seq(
+          c2,
+          ck_fits_in(j, c2, a, ty_substitute(t, rigid)),
+          (c4: Checker) => SubAt(c4, a, ty_substitute(t, rigid)),
+          (c3: Checker) => ck_keep(c3, gs, rigid, a, TyPoly(gs, t)),
+          (c4: Checker) => KeptIn(ck_kept_of(c4), gs, rigid, a, TyPoly(gs, t)),
+          (c4: Checker) => SubAt(c4, a, TyPoly(gs, t)),
+          mono_sub(a, ty_substitute(t, rigid)),
+          hu(c2, a, ty_substitute(t, rigid)),
+          (c3: Checker) => (o3: CkOrdered(c3)) => ck_keep_ok(c3, gs, rigid, a, TyPoly(gs, t), o3),
+          (
+            c4: Checker,
+            h1: SubAt(c4, a, ty_substitute(t, rigid)),
+            h2: KeptIn(ck_kept_of(c4), gs, rigid, a, TyPoly(gs, t))
+          ) => sub_poly_r_at(c4, gs, t, rigid, a, h1, h2)
+        )
+      )
+    )
+  }
+}
+
+def PolyLOk(
+  j: Nat,
+  c: Checker,
+  b: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): Prop := (
+  InstOk(c, m, gs)
+) -> Post(c, ck_poly_l_k(j, b, gs, t, m), (c2: Checker) => SubAt(c2, TyPoly(gs, t), b))
+
+theorem poly_l_ok(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  b: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): PolyLOk(j, c, b, gs, t, m) {
+  match m -> PolyLOk(j, c, b, gs, t, m) {
+    mut1(
+      fresh,
+      c2
+    ) => (
+      hi: InstOk(c, mut1(fresh, c2), gs)
+    ) => post_after(
+      c,
+      c2,
+      ck_poly_l_k(j, b, gs, t, mut1(fresh, c2)),
+      (c4: Checker) => SubAt(c4, TyPoly(gs, t), b),
+      and_left(hi),
+      post_unf(
+        c2,
+        ck_poly_l_k(j, b, gs, t, mut1(fresh, c2)),
+        ck_rewrap1(ck_fits_in(j, c2, ty_substitute(t, fresh), b)),
+        (c4: Checker) => SubAt(c4, TyPoly(gs, t), b),
+        refl(),
+        post_map(
+          c2,
+          ck_fits_in(j, c2, ty_substitute(t, fresh), b),
+          (c4: Checker) => SubAt(c4, TyPoly(gs, t), b),
+          (c4: Checker) => SubAt(c4, TyPoly(gs, t), b),
+          (c4: Checker, h: SubAt(c4, TyPoly(gs, t), b)) => h,
+          post_with(
+            c2,
+            ck_fits_in(j, c2, ty_substitute(t, fresh), b),
+            (c3: Checker) => InstBy(ck_bounds_of(c3), gs, fresh),
+            (c3: Checker) => SubAt(c3, ty_substitute(t, fresh), b),
+            (c3: Checker) => SubAt(c3, TyPoly(gs, t), b),
+            mono_inst(gs, fresh),
+            and_right(and_right(hi)),
+            hu(c2, ty_substitute(t, fresh), b),
+            (
+              c3: Checker,
+              hi2: InstBy(ck_bounds_of(c3), gs, fresh),
+              h: SubAt(c3, ty_substitute(t, fresh), b)
+            ) => sub_poly_l_at(c3, gs, t, fresh, b, h, hi2)
+          )
+        )
+      )
+    )
+  }
+}
+
+def FitsL(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_inst_in(k, c, a, b),
+  (c2: Checker) => SubAt(c2, a, b)
+)
+
+theorem post_weak(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  f: ∀ c2: Checker. (q1(c2)) -> q(c2),
+  h: Post(c, m, q1)
+): Post(c, m, q) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(and_left(h(o)), (y: Eq(Yn, ck_val(m), yes)) => f(ck_st(m), and_right(h(o))(y)))
+}
+
+theorem poly_cases(
+  j: Nat,
+  hu: FitsU(j),
+  hl: FitsL(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_poly_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match b -> Post(c, ck_fits_poly_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyPoly(
+      gs,
+      t
+    ) => post_sub_eqs(
+      c,
+      ck_fits_poly_in(succ(j), c, a, TyPoly(gs, t)),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_poly_in(succ(j), c, a, TyPoly(gs, t)),
+        ck_poly_r_k(j, a, gs, t, ck_rigid(gs, c)),
+        (c2: Checker) => SubAt(c2, a, TyPoly(gs, t)),
+        refl(),
+        poly_r_ok(j, hu, c, a, gs, t, ck_rigid(gs, c))(ck_rigid_same(gs, c))
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_poly_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_inst_in(j, c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_inst_in(j, c, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker, h: SubAt(c2, a1, b1)) => h,
+        hl(c, a1, b1)
+      )
+    )
+  }
+}
+
+theorem inst_cases(
+  j: Nat,
+  hu: FitsU(j),
+  hb: FitsB(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_inst_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match a -> Post(c, ck_fits_inst_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyPoly(
+      gs,
+      t
+    ) => post_sub_eqs(
+      c,
+      ck_fits_inst_in(succ(j), c, TyPoly(gs, t), b),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_inst_in(succ(j), c, TyPoly(gs, t), b),
+        ck_poly_l_k(j, b, gs, t, ck_instance_of(gs, c)),
+        (c2: Checker) => SubAt(c2, TyPoly(gs, t), b),
+        refl(),
+        poly_l_ok(j, hu, c, b, gs, t, ck_instance_of(gs, c))(inst_ok(gs, c))
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_inst_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_borrow_in(j, c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_borrow_in(j, c, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker, h: SubAt(c2, a1, b1)) => h,
+        hb(c, a1, b1)
+      )
+    )
+  }
+}
+
+def FitsLe(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ x: Ty. ∀ ma: Yn. ∀ b: Ty. Post(
+  c,
+  ck_fits_lend_in(k, c, x, ma, b),
+  (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b)
+)
+
+def FitsUt(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ ta: List(
+  Text
+). ∀ x: Ty. ∀ b: Ty. Post(
+  c,
+  ck_fits_untag_in(k, c, ta, x, b),
+  (c2: Checker) => SubAt(c2, TyTagged(ta, x), b)
+)
+
+def FitsF(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ pa: List(
+  Ty
+). ∀ ra: Ty. ∀ ka: Kind. ∀ b: Ty. Post(
+  c,
+  ck_fits_fn_in(k, c, pa, ra, ka, b),
+  (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b)
+)
+
+def Borrow2Ok(
+  j: Nat,
+  c: Checker,
+  x: Ty,
+  ma: Yn,
+  y: Ty,
+  mb: Yn,
+  e: Yn
+): Prop := (
+  Eq(Yn, yn_or(yn_eq(ma, mb), yn_not(mb)), e)
+) -> Post(
+  c,
+  ck_borrow2_c(j, c, x, y, mb, e),
+  (c2: Checker) => SubAt(c2, TyBorrow(x, ma), TyBorrow(y, mb))
+)
+
+theorem borrow2_ok(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  x: Ty,
+  ma: Yn,
+  y: Ty,
+  mb: Yn,
+  e: Yn
+): Borrow2Ok(j, c, x, ma, y, mb, e) {
+  match e -> Borrow2Ok(j, c, x, ma, y, mb, e) {
+    yes => (
+      he: Eq(Yn, yn_or(yn_eq(ma, mb), yn_not(mb)), yes)
+    ) => post_map(
+      c,
+      ck_fits_in(j, c, x, y),
+      (c2: Checker) => SubAt(c2, x, y),
+      (c2: Checker) => SubAt(c2, TyBorrow(x, ma), TyBorrow(y, mb)),
+      (c2: Checker, h: SubAt(c2, x, y)) => sub_borrow_at(c2, x, y, ma, mb, he, h),
+      hu(c, x, y)
+    )
+    no => (
+      he: Eq(Yn, yn_or(yn_eq(ma, mb), yn_not(mb)), no)
+    ) => post_map(
+      c,
+      ck_fits_in(j, c, x, TyBorrow(y, mb)),
+      (c2: Checker) => SubAt(c2, x, TyBorrow(y, mb)),
+      (c2: Checker) => SubAt(c2, TyBorrow(x, ma), TyBorrow(y, mb)),
+      (
+        c2: Checker,
+        h: SubAt(c2, x, TyBorrow(y, mb))
+      ) => sub_unborrow_at(c2, x, TyBorrow(y, mb), ma, h),
+      hu(c, x, TyBorrow(y, mb))
+    )
+  }
+}
+
+def ValueCOk(
+  j: Nat,
+  c: Checker,
+  a: Ty,
+  y: Ty,
+  m: Yn,
+  e: Yn
+): Prop := (
+  Eq(Yn, kind_dup(ck_kind(c, a)), e)
+) -> Post(c, ck_value_c(j, c, a, y, m, e), (c2: Checker) => SubAt(c2, a, TyBorrow(y, m)))
+
+theorem value_c_ok(
+  j: Nat,
+  hu: FitsU(j),
+  hs: FitsS(j),
+  c: Checker,
+  a: Ty,
+  y: Ty,
+  m: Yn,
+  e: Yn
+): ValueCOk(j, c, a, y, m, e) {
+  match e -> ValueCOk(j, c, a, y, m, e) {
+    yes => (
+      he: Eq(Yn, kind_dup(ck_kind(c, a)), yes)
+    ) => post_map(
+      c,
+      ck_fits_in(j, c, a, y),
+      (c2: Checker) => SubAt(c2, a, TyBorrow(y, m)),
+      (c2: Checker) => SubAt(c2, a, TyBorrow(y, m)),
+      (c2: Checker, h: SubAt(c2, a, TyBorrow(y, m))) => h,
+      post_with(
+        c,
+        ck_fits_in(j, c, a, y),
+        (c3: Checker) => DupBy(ck_subst_of(c3), KeptOk(ck_kept_of(c3)), ck_datas_of(c3), a),
+        (c3: Checker) => SubAt(c3, a, y),
+        (c3: Checker) => SubAt(c3, a, TyBorrow(y, m)),
+        mono_dup(a),
+        dup_by(
+          ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a),
+          ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), a),
+          he
+        ),
+        hu(c, a, y),
+        (
+          c3: Checker,
+          hd: DupBy(ck_subst_of(c3), KeptOk(ck_kept_of(c3)), ck_datas_of(c3), a),
+          h: SubAt(c3, a, y)
+        ) => sub_dup_at(c3, a, y, m, h, hd)
+      )
+    )
+    no => (
+      he: Eq(Yn, kind_dup(ck_kind(c, a)), no)
+    ) => post_map(
+      c,
+      ck_fits_shape_in(j, c, a, TyBorrow(y, m)),
+      (c2: Checker) => SubAt(c2, a, TyBorrow(y, m)),
+      (c2: Checker) => SubAt(c2, a, TyBorrow(y, m)),
+      (c2: Checker, h: SubAt(c2, a, TyBorrow(y, m))) => h,
+      hs(c, a, TyBorrow(y, m))
+    )
+  }
+}
+
+theorem value_cases(
+  j: Nat,
+  hu: FitsU(j),
+  hs: FitsS(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_value_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match b -> Post(c, ck_fits_value_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyBorrow(
+      y,
+      m
+    ) => post_sub_eqs(
+      c,
+      ck_fits_value_in(succ(j), c, a, TyBorrow(y, m)),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_value_in(succ(j), c, a, TyBorrow(y, m)),
+        ck_value_c(j, c, a, y, m, kind_dup(ck_kind(c, a))),
+        (c2: Checker) => SubAt(c2, a, TyBorrow(y, m)),
+        refl(),
+        value_c_ok(j, hu, hs, c, a, y, m, kind_dup(ck_kind(c, a)))(refl())
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_value_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_shape_in(j, c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_shape_in(j, c, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker, h: SubAt(c2, a1, b1)) => h,
+        hs(c, a1, b1)
+      )
+    )
+  }
+}
+
+theorem shape_cases(
+  j: Nat,
+  he: FitsE(j),
+  hi: FitsI(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_shape_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match a -> Post(c, ck_fits_shape_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyUnion(
+      xs
+    ) => post_sub_eqs(
+      c,
+      ck_fits_shape_in(succ(j), c, TyUnion(xs), b),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_shape_in(succ(j), c, TyUnion(xs), b),
+        ck_rewrap1(ck_fits_each_in(j, c, xs, b)),
+        (c2: Checker) => SubAt(c2, TyUnion(xs), b),
+        refl(),
+        post_map(
+          c,
+          ck_fits_each_in(j, c, xs, b),
+          (c2: Checker) => SubEachAt(c2, b, xs),
+          (c2: Checker) => SubAt(c2, TyUnion(xs), b),
+          (c2: Checker, h: SubEachAt(c2, b, xs)) => sub_union_l_at(c2, xs, b, h),
+          he(c, xs, b)
+        )
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_shape_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_into_in(j, c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_into_in(j, c, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker, h: SubAt(c2, a1, b1)) => h,
+        hi(c, a1, b1)
+      )
+    )
+  }
+}
+
+theorem attempt_unify_sub(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(c, ck_attempt_unify(c, a, b), (c2: Checker) => SubAt(c2, a, b)) {
+  post_unf(
+    c,
+    ck_attempt_unify(c, a, b),
+    ck_attempt_k(c, ck_unify(c, a, b)),
+    (c2: Checker) => SubAt(c2, a, b),
+    refl(),
+    post_attempt(
+      c,
+      ck_unify(c, a, b),
+      (c2: Checker) => SubAt(c2, a, b),
+      post_weak(
+        c,
+        ck_unify(c, a, b),
+        (c2: Checker) => TyEqAt(c2, a, b),
+        (c2: Checker) => SubAt(c2, a, b),
+        (c2: Checker, h: TyEqAt(c2, a, b)) => sub_of_eq(c2, a, b, h),
+        ck_unify_ok(c, a, b)
+      )
+    )
+  )
+}
+
+theorem into_cases(
+  j: Nat,
+  hy: FitsY(j),
+  ht: FitsT(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_into_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match b -> Post(c, ck_fits_into_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyUnion(
+      ys
+    ) => post_sub_eqs(
+      c,
+      ck_fits_into_in(succ(j), c, a, TyUnion(ys)),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_into_in(succ(j), c, a, TyUnion(ys)),
+        ck_or((c2: Checker) => ck_fits_any_in(j, c2, a, ys), ck_attempt_unify(c, a, TyUnion(ys))),
+        (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
+        refl(),
+        post_or(
+          c,
+          ck_attempt_unify(c, a, TyUnion(ys)),
+          (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
+          (c2: Checker) => ck_fits_any_in(j, c2, a, ys),
+          (c2: Checker) => SubAnyAt(c2, a, ys),
+          (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
+          attempt_unify_sub(c, a, TyUnion(ys)),
+          (c2: Checker) => hy(c2, a, ys),
+          (c3: Checker, h: SubAt(c3, a, TyUnion(ys))) => h,
+          (c3: Checker, h: SubAnyAt(c3, a, ys)) => sub_union_r_at(c3, a, ys, h)
+        )
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_into_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_tagged_in(j, c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_tagged_in(j, c, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker, h: SubAt(c2, a1, b1)) => h,
+        ht(c, a1, b1)
+      )
+    )
+  }
+}
+
+def Tag2Ok(
+  j: Nat,
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  tb: List(Text),
+  y: Ty,
+  e: Yn
+): Prop := (
+  Eq(Yn, tags_subset(tb, ta), e)
+) -> Post(
+  c,
+  ck_tag2_c(j, c, ta, x, tb, y, e),
+  (c2: Checker) => SubAt(c2, TyTagged(ta, x), TyTagged(tb, y))
+)
+
+theorem tag2_ok(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  tb: List(Text),
+  y: Ty,
+  e: Yn
+): Tag2Ok(j, c, ta, x, tb, y, e) {
+  match e -> Tag2Ok(j, c, ta, x, tb, y, e) {
+    yes => (
+      ht: Eq(Yn, tags_subset(tb, ta), yes)
+    ) => post_map(
+      c,
+      ck_fits_in(j, c, x, y),
+      (c2: Checker) => SubAt(c2, x, y),
+      (c2: Checker) => SubAt(c2, TyTagged(ta, x), TyTagged(tb, y)),
+      (c2: Checker, h: SubAt(c2, x, y)) => sub_tagged_at(c2, ta, x, tb, y, ht, h),
+      hu(c, x, y)
+    )
+    no => (ht: Eq(Yn, tags_subset(tb, ta), no)) => unify_sub(c, TyTagged(ta, x), TyTagged(tb, y))
+  }
+}
+
+def Fn2Ok(
+  j: Nat,
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  e: Yn
+): Prop := (
+  Eq(Yn, yn_and(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb)), e)
+) -> Post(
+  c,
+  ck_fn2_c(j, c, pa, ra, ka, pb, rb, kb, e),
+  (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), TyFn(pb, rb, kb))
+)
+
+theorem fn2_ok(
+  j: Nat,
+  hu: FitsU(j),
+  hp: FitsP(j),
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  e: Yn
+): Fn2Ok(j, c, pa, ra, ka, pb, rb, kb, e) {
+  match e -> Fn2Ok(j, c, pa, ra, ka, pb, rb, kb, e) {
+    yes => (
+      hk: Eq(Yn, yn_and(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb)), yes)
+    ) => post_seq(
+      c,
+      ck_fits_params_in(j, c, pa, pb),
+      (c2: Checker) => SubLenAt(c2, pa, pb),
+      (c2: Checker) => ck_fits_in(j, c2, ra, rb),
+      (c2: Checker) => SubAt(c2, ra, rb),
+      (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+      mono_len_sub(pa, pb),
+      hp(c, pa, pb),
+      (c2: Checker) => hu(c2, ra, rb),
+      (
+        c2: Checker,
+        h1: SubLenAt(c2, pa, pb),
+        h2: SubAt(c2, ra, rb)
+      ) => sub_fn_at(
+        c2,
+        pa,
+        pb,
+        ra,
+        rb,
+        ka,
+        kb,
+        ck_yn_and_right(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb), hk),
+        h1(ck_yn_and_left(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb), hk)),
+        h2
+      )
+    )
+    no => (
+      hk: Eq(Yn, yn_and(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb)), no)
+    ) => unify_sub(c, TyFn(pa, ra, ka), TyFn(pb, rb, kb))
+  }
+}
+
+theorem lend_cases(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  x: Ty,
+  ma: Yn,
+  b1: Ty,
+  b: Ty,
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_lend_in(succ(j), c, x, ma, b), (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b1)) {
+  match b -> Post(
+    c,
+    ck_fits_lend_in(succ(j), c, x, ma, b),
+    (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b1)
+  ) {
+    TyBorrow(
+      y,
+      mb
+    ) => post_sub_eqs(
+      c,
+      ck_fits_lend_in(succ(j), c, x, ma, TyBorrow(y, mb)),
+      TyBorrow(x, ma),
+      b1,
+      refl(),
+      eb,
+      post_unf(
+        c,
+        ck_fits_lend_in(succ(j), c, x, ma, TyBorrow(y, mb)),
+        ck_borrow2_c(j, c, x, y, mb, yn_or(yn_eq(ma, mb), yn_not(mb))),
+        (c2: Checker) => SubAt(c2, TyBorrow(x, ma), TyBorrow(y, mb)),
+        refl(),
+        borrow2_ok(j, hu, c, x, ma, y, mb, yn_or(yn_eq(ma, mb), yn_not(mb)))(refl())
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_lend_in(succ(j), c, x, ma, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_in(j, c, x, w)),
+      (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b1),
+      b1,
+      b1,
+      eb,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_in(j, c, x, b1),
+        (c2: Checker) => SubAt(c2, x, b1),
+        (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b1),
+        (c2: Checker, h: SubAt(c2, x, b1)) => sub_unborrow_at(c2, x, b1, ma, h),
+        hu(c, x, b1)
+      )
+    )
+  }
+}
+
+theorem borrow_cases(
+  j: Nat,
+  hle: FitsLe(j),
+  hv: FitsV(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_borrow_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match a -> Post(c, ck_fits_borrow_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyBorrow(
+      x,
+      ma
+    ) => post_sub_eqs(
+      c,
+      ck_fits_borrow_in(succ(j), c, TyBorrow(x, ma), b),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_borrow_in(succ(j), c, TyBorrow(x, ma), b),
+        ck_rewrap1(ck_fits_lend_in(j, c, x, ma, b)),
+        (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b),
+        refl(),
+        post_map(
+          c,
+          ck_fits_lend_in(j, c, x, ma, b),
+          (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b),
+          (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b),
+          (c2: Checker, h: SubAt(c2, TyBorrow(x, ma), b)) => h,
+          hle(c, x, ma, b)
+        )
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_borrow_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_value_in(j, c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_value_in(j, c, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker) => SubAt(c2, a1, b1),
+        (c2: Checker, h: SubAt(c2, a1, b1)) => h,
+        hv(c, a1, b1)
+      )
+    )
+  }
+}
+
+theorem untag_cases(
+  j: Nat,
+  hu: FitsU(j),
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  b1: Ty,
+  b: Ty,
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_untag_in(succ(j), c, ta, x, b), (c2: Checker) => SubAt(c2, TyTagged(ta, x), b1)) {
+  match b -> Post(
+    c,
+    ck_fits_untag_in(succ(j), c, ta, x, b),
+    (c2: Checker) => SubAt(c2, TyTagged(ta, x), b1)
+  ) {
+    TyTagged(
+      tb,
+      y
+    ) => post_sub_eqs(
+      c,
+      ck_fits_untag_in(succ(j), c, ta, x, TyTagged(tb, y)),
+      TyTagged(ta, x),
+      b1,
+      refl(),
+      eb,
+      post_unf(
+        c,
+        ck_fits_untag_in(succ(j), c, ta, x, TyTagged(tb, y)),
+        ck_tag2_c(j, c, ta, x, tb, y, tags_subset(tb, ta)),
+        (c2: Checker) => SubAt(c2, TyTagged(ta, x), TyTagged(tb, y)),
+        refl(),
+        tag2_ok(j, hu, c, ta, x, tb, y, tags_subset(tb, ta))(refl())
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_untag_in(succ(j), c, ta, x, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_fits_in(j, c, x, w)),
+      (c2: Checker) => SubAt(c2, TyTagged(ta, x), b1),
+      b1,
+      b1,
+      eb,
+      eb,
+      refl(),
+      post_map(
+        c,
+        ck_fits_in(j, c, x, b1),
+        (c2: Checker) => SubAt(c2, x, b1),
+        (c2: Checker) => SubAt(c2, TyTagged(ta, x), b1),
+        (c2: Checker, h: SubAt(c2, x, b1)) => sub_untag_at(c2, ta, x, b1, h),
+        hu(c, x, b1)
+      )
+    )
+  }
+}
+
+theorem fn_cases(
+  j: Nat,
+  hu: FitsU(j),
+  hp: FitsP(j),
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  b1: Ty,
+  b: Ty,
+  eb: Eq(Ty, b1, b)
+): Post(
+  c,
+  ck_fits_fn_in(succ(j), c, pa, ra, ka, b),
+  (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b1)
+) {
+  match b -> Post(
+    c,
+    ck_fits_fn_in(succ(j), c, pa, ra, ka, b),
+    (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b1)
+  ) {
+    TyFn(
+      pb,
+      rb,
+      kb
+    ) => post_sub_eqs(
+      c,
+      ck_fits_fn_in(succ(j), c, pa, ra, ka, TyFn(pb, rb, kb)),
+      TyFn(pa, ra, ka),
+      b1,
+      refl(),
+      eb,
+      post_unf(
+        c,
+        ck_fits_fn_in(succ(j), c, pa, ra, ka, TyFn(pb, rb, kb)),
+        ck_fn2_c(
+          j,
+          c,
+          pa,
+          ra,
+          ka,
+          pb,
+          rb,
+          kb,
+          yn_and(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb))
+        ),
+        (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+        refl(),
+        fn2_ok(
+          j,
+          hu,
+          hp,
+          c,
+          pa,
+          ra,
+          ka,
+          pb,
+          rb,
+          kb,
+          yn_and(nat_eq(list_len(pa), list_len(pb)), kind_fits(ka, kb))
+        )(refl())
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_fn_in(succ(j), c, pa, ra, ka, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_unify(c, TyFn(pa, ra, ka), w)),
+      (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b1),
+      b1,
+      b1,
+      eb,
+      eb,
+      refl(),
+      unify_sub(c, TyFn(pa, ra, ka), b1)
+    )
+  }
+}
+
+theorem tagged_cases(
+  j: Nat,
+  hut: FitsUt(j),
+  hf: FitsF(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): Post(c, ck_fits_tagged_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+  match a -> Post(c, ck_fits_tagged_in(succ(j), c, a, b), (c2: Checker) => SubAt(c2, a1, b1)) {
+    TyTagged(
+      ta,
+      x
+    ) => post_sub_eqs(
+      c,
+      ck_fits_tagged_in(succ(j), c, TyTagged(ta, x), b),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_tagged_in(succ(j), c, TyTagged(ta, x), b),
+        ck_rewrap1(ck_fits_untag_in(j, c, ta, x, b)),
+        (c2: Checker) => SubAt(c2, TyTagged(ta, x), b),
+        refl(),
+        post_map(
+          c,
+          ck_fits_untag_in(j, c, ta, x, b),
+          (c2: Checker) => SubAt(c2, TyTagged(ta, x), b),
+          (c2: Checker) => SubAt(c2, TyTagged(ta, x), b),
+          (c2: Checker, h: SubAt(c2, TyTagged(ta, x), b)) => h,
+          hut(c, ta, x, b)
+        )
+      )
+    )
+    TyFn(
+      pa,
+      ra,
+      ka
+    ) => post_sub_eqs(
+      c,
+      ck_fits_tagged_in(succ(j), c, TyFn(pa, ra, ka), b),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_tagged_in(succ(j), c, TyFn(pa, ra, ka), b),
+        ck_rewrap1(ck_fits_fn_in(j, c, pa, ra, ka, b)),
+        (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b),
+        refl(),
+        post_map(
+          c,
+          ck_fits_fn_in(j, c, pa, ra, ka, b),
+          (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b),
+          (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b),
+          (c2: Checker, h: SubAt(c2, TyFn(pa, ra, ka), b)) => h,
+          hf(c, pa, ra, ka, b)
+        )
+      )
+    )
+    _ => post_cases(
+      c,
+      (z: Ty, w: Ty) => ck_fits_tagged_in(succ(j), c, z, w),
+      (z: Ty, w: Ty) => ck_rewrap1(ck_unify(c, z, w)),
+      (c2: Checker) => SubAt(c2, a1, b1),
+      a1,
+      b1,
+      ea,
+      eb,
+      refl(),
+      unify_sub(c, a1, b1)
+    )
+  }
+}
+
+def FitsAll(
+  k: Nat
+): Prop := And(
+  FitsU(k),
+  And(
+    FitsA(k),
+    And(
+      FitsPo(k),
+      And(
+        FitsL(k),
+        And(
+          FitsB(k),
+          And(
+            FitsLe(k),
+            And(
+              FitsV(k),
+              And(
+                FitsS(k),
+                And(
+                  FitsI(k),
+                  And(
+                    FitsT(k),
+                    And(FitsUt(k), And(FitsF(k), And(FitsE(k), And(FitsY(k), FitsP(k)))))
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)
+
+theorem fits_all(k: Nat): FitsAll(k) {
+  match k -> FitsAll(k) {
+    zero => and_intro(
+      (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+      and_intro(
+        (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+        and_intro(
+          (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+          and_intro(
+            (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+            and_intro(
+              (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+              and_intro(
+                (
+                  c: Checker,
+                  x: Ty,
+                  ma: Yn,
+                  b: Ty
+                ) => post_no(c, (c2: Checker) => SubAt(c2, TyBorrow(x, ma), b)),
+                and_intro(
+                  (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+                  and_intro(
+                    (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+                    and_intro(
+                      (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+                      and_intro(
+                        (c: Checker, a: Ty, b: Ty) => post_no(c, (c2: Checker) => SubAt(c2, a, b)),
+                        and_intro(
+                          (
+                            c: Checker,
+                            ta: List(Text),
+                            x: Ty,
+                            b: Ty
+                          ) => post_no(c, (c2: Checker) => SubAt(c2, TyTagged(ta, x), b)),
+                          and_intro(
+                            (
+                              c: Checker,
+                              pa: List(Ty),
+                              ra: Ty,
+                              ka: Kind,
+                              b: Ty
+                            ) => post_no(c, (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), b)),
+                            and_intro(
+                              (
+                                c: Checker,
+                                xs: List(Ty),
+                                b: Ty
+                              ) => post_no(c, (c2: Checker) => SubEachAt(c2, b, xs)),
+                              and_intro(
+                                (
+                                  c: Checker,
+                                  a: Ty,
+                                  ys: List(Ty)
+                                ) => post_no(c, (c2: Checker) => SubAnyAt(c2, a, ys)),
+                                (
+                                  c: Checker,
+                                  pa: List(Ty),
+                                  pb: List(Ty)
+                                ) => post_no(c, (c2: Checker) => SubLenAt(c2, pa, pb))
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+    succ(
+      j
+    ) => and_intro(
+      (
+        c: Checker,
+        a: Ty,
+        b: Ty
+      ) => fits_step(j, and_left(and_right(and_right(fits_all(j)))), c, a, b),
+      and_intro(
+        (c: Checker, a: Ty, b: Ty) => attempt_step(j, and_left(fits_all(j)), c, a, b),
+        and_intro(
+          (
+            c: Checker,
+            a: Ty,
+            b: Ty
+          ) => poly_cases(
+            j,
+            and_left(fits_all(j)),
+            and_left(and_right(and_right(and_right(fits_all(j))))),
+            c,
+            a,
+            b,
+            a,
+            b,
+            refl(),
+            refl()
+          ),
+          and_intro(
+            (
+              c: Checker,
+              a: Ty,
+              b: Ty
+            ) => inst_cases(
+              j,
+              and_left(fits_all(j)),
+              and_left(and_right(and_right(and_right(and_right(fits_all(j)))))),
+              c,
+              a,
+              b,
+              a,
+              b,
+              refl(),
+              refl()
+            ),
+            and_intro(
+              (
+                c: Checker,
+                a: Ty,
+                b: Ty
+              ) => borrow_cases(
+                j,
+                and_left(and_right(and_right(and_right(and_right(and_right(fits_all(j))))))),
+                and_left(
+                  and_right(and_right(and_right(and_right(and_right(and_right(fits_all(j)))))))
+                ),
+                c,
+                a,
+                b,
+                a,
+                b,
+                refl(),
+                refl()
+              ),
+              and_intro(
+                (
+                  c: Checker,
+                  x: Ty,
+                  ma: Yn,
+                  b: Ty
+                ) => lend_cases(j, and_left(fits_all(j)), c, x, ma, b, b, refl()),
+                and_intro(
+                  (
+                    c: Checker,
+                    a: Ty,
+                    b: Ty
+                  ) => value_cases(
+                    j,
+                    and_left(fits_all(j)),
+                    and_left(
+                      and_right(
+                        and_right(
+                          and_right(and_right(and_right(and_right(and_right(fits_all(j))))))
+                        )
+                      )
+                    ),
+                    c,
+                    a,
+                    b,
+                    a,
+                    b,
+                    refl(),
+                    refl()
+                  ),
+                  and_intro(
+                    (
+                      c: Checker,
+                      a: Ty,
+                      b: Ty
+                    ) => shape_cases(
+                      j,
+                      and_left(
+                        and_right(
+                          and_right(
+                            and_right(
+                              and_right(
+                                and_right(
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(and_right(and_right(and_right(fits_all(j)))))
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      ),
+                      and_left(
+                        and_right(
+                          and_right(
+                            and_right(
+                              and_right(and_right(and_right(and_right(and_right(fits_all(j))))))
+                            )
+                          )
+                        )
+                      ),
+                      c,
+                      a,
+                      b,
+                      a,
+                      b,
+                      refl(),
+                      refl()
+                    ),
+                    and_intro(
+                      (
+                        c: Checker,
+                        a: Ty,
+                        b: Ty
+                      ) => into_cases(
+                        j,
+                        and_left(
+                          and_right(
+                            and_right(
+                              and_right(
+                                and_right(
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(
+                                          and_right(
+                                            and_right(and_right(and_right(and_right(fits_all(j)))))
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        ),
+                        and_left(
+                          and_right(
+                            and_right(
+                              and_right(
+                                and_right(
+                                  and_right(and_right(and_right(and_right(and_right(fits_all(j))))))
+                                )
+                              )
+                            )
+                          )
+                        ),
+                        c,
+                        a,
+                        b,
+                        a,
+                        b,
+                        refl(),
+                        refl()
+                      ),
+                      and_intro(
+                        (
+                          c: Checker,
+                          a: Ty,
+                          b: Ty
+                        ) => tagged_cases(
+                          j,
+                          and_left(
+                            and_right(
+                              and_right(
+                                and_right(
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(and_right(and_right(and_right(fits_all(j)))))
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          ),
+                          and_left(
+                            and_right(
+                              and_right(
+                                and_right(
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(
+                                          and_right(and_right(and_right(and_right(fits_all(j)))))
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          ),
+                          c,
+                          a,
+                          b,
+                          a,
+                          b,
+                          refl(),
+                          refl()
+                        ),
+                        and_intro(
+                          (
+                            c: Checker,
+                            ta: List(Text),
+                            x: Ty,
+                            b: Ty
+                          ) => untag_cases(j, and_left(fits_all(j)), c, ta, x, b, b, refl()),
+                          and_intro(
+                            (
+                              c: Checker,
+                              pa: List(Ty),
+                              ra: Ty,
+                              ka: Kind,
+                              b: Ty
+                            ) => fn_cases(
+                              j,
+                              and_left(fits_all(j)),
+                              and_right(
+                                and_right(
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(
+                                          and_right(
+                                            and_right(
+                                              and_right(
+                                                and_right(
+                                                  and_right(
+                                                    and_right(and_right(and_right(fits_all(j))))
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              ),
+                              c,
+                              pa,
+                              ra,
+                              ka,
+                              b,
+                              b,
+                              refl()
+                            ),
+                            and_intro(
+                              (
+                                c: Checker,
+                                xs: List(Ty),
+                                b: Ty
+                              ) => each_step(
+                                j,
+                                and_left(fits_all(j)),
+                                and_left(
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(
+                                          and_right(
+                                            and_right(
+                                              and_right(
+                                                and_right(
+                                                  and_right(
+                                                    and_right(and_right(and_right(fits_all(j))))
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                ),
+                                c,
+                                xs,
+                                b
+                              ),
+                              and_intro(
+                                (
+                                  c: Checker,
+                                  a: Ty,
+                                  ys: List(Ty)
+                                ) => any_step(
+                                  j,
+                                  and_left(and_right(fits_all(j))),
+                                  and_left(
+                                    and_right(
+                                      and_right(
+                                        and_right(
+                                          and_right(
+                                            and_right(
+                                              and_right(
+                                                and_right(
+                                                  and_right(
+                                                    and_right(
+                                                      and_right(
+                                                        and_right(and_right(and_right(fits_all(j))))
+                                                      )
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  ),
+                                  c,
+                                  a,
+                                  ys
+                                ),
+                                (
+                                  c: Checker,
+                                  pa: List(Ty),
+                                  pb: List(Ty)
+                                ) => params_step(
+                                  j,
+                                  and_left(fits_all(j)),
+                                  and_right(
+                                    and_right(
+                                      and_right(
+                                        and_right(
+                                          and_right(
+                                            and_right(
+                                              and_right(
+                                                and_right(
+                                                  and_right(
+                                                    and_right(
+                                                      and_right(
+                                                        and_right(and_right(and_right(fits_all(j))))
+                                                      )
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  ),
+                                  c,
+                                  pa,
+                                  pb
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem ck_fits_ok(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(c, ck_fits(c, a, b), (c2: Checker) => SubAt(c2, a, b)) {
+  post_unf(
+    c,
+    ck_fits(c, a, b),
+    ck_rewrap1(ck_fits_in(ck_steps_of(c), c, a, b)),
+    (c2: Checker) => SubAt(c2, a, b),
+    refl(),
+    post_map(
+      c,
+      ck_fits_in(ck_steps_of(c), c, a, b),
+      (c2: Checker) => SubAt(c2, a, b),
+      (c2: Checker) => SubAt(c2, a, b),
+      (c2: Checker, h: SubAt(c2, a, b)) => h,
+      and_left(fits_all(ck_steps_of(c)))(c, a, b)
+    )
+  )
+}
+
+theorem ck_attempt_fits_ok(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(c, ck_attempt_fits(c, a, b), (c2: Checker) => SubAt(c2, a, b)) {
+  post_unf(
+    c,
+    ck_attempt_fits(c, a, b),
+    ck_rewrap1(ck_attempt_fits_in(ck_steps_of(c), c, a, b)),
+    (c2: Checker) => SubAt(c2, a, b),
+    refl(),
+    post_map(
+      c,
+      ck_attempt_fits_in(ck_steps_of(c), c, a, b),
+      (c2: Checker) => SubAt(c2, a, b),
+      (c2: Checker) => SubAt(c2, a, b),
+      (c2: Checker, h: SubAt(c2, a, b)) => h,
+      and_left(and_right(fits_all(ck_steps_of(c))))(c, a, b)
+    )
+  )
+}

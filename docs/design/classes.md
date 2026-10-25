@@ -399,7 +399,7 @@ fn double_all<F: (shared) -> shared>(x: F(i64), Functor.map@F: <A: shared, B: sh
 
 ### どこで展開するか
 
-展開のパス（`crates/tauto/src/types/classes.rs`、`types/expand.rs`）が、宣言の検査（「宣言の検査（順に）」）、解決（「解決」）、展開（「展開」の「規則」）をする。順序は：
+展開のパス（`crates/tauto-nibcheck/src/types/classes.rs`、`types/expand.rs`）が、宣言の検査（「宣言の検査（順に）」）、解決（「解決」）、展開（「展開」の「規則」）をする。順序は：
 
 ```text
 構文解析 → surface → classes::check_declarations → types.rs（解決の結果を TypeReport に）
@@ -462,9 +462,9 @@ instance Ord(Point) {
 
 ### 構造的な述語の法則
 
-- `DecEq` と `PartialEq` の法則は、検査済みの `inductive`（カーネルの帰納型）について **生成** する：`I_deq<a: I, b: I>(): Iff(Eq(Bool, a == b, true), Eq(I, a, b))`。`==` は展開で、生成した決定手続き `I_beq(a, b)`（eliminator で定義し、フィールドごとに比べる）になる。どちらもカーネルが検査し、規則は足さない（添字つきの族の `match` が不可能な腕を除くのに使う no-confusion `I_nc` の生成と同じ作り）。
+- `DecEq` と `PartialEq` の法則は、検査済みの `inductive`（カーネルの帰納型）が **一覧に書いたときだけ** 生成する（`inductive T(…): Type => fn T_beq, theorem T_beq_refl, theorem T_beq_sound, theorem T_deq { … }`。四つ全部を書く。`macro.md`「作る宣言の一覧」）。書いた型に作れなければ、理由つきのエラー（同名の宣言がすでにある場合も、黙って飛ばさない）。生成するのは：`I_deq<a: I, b: I>(): Iff(Eq(Bool, a == b, true), Eq(I, a, b))`。`==` は展開で、生成した決定手続き `I_beq(a, b)`（eliminator で定義し、フィールドごとに比べる）になる。どちらもカーネルが検査し、規則は足さない（添字つきの族の `match` が不可能な腕を除くのに使う no-confusion `I_nc` の生成と同じ作り）。
 - フィールドに `DecEq` でない型（関数型、`Prop` の証明など）がある帰納型には生成しない（`DecEq` が成り立たない）。
-- Nib の `struct` / `enum` はカーネルの対象外なので、法則は生成しない（証明に現れない）。
+- Nib の `struct` / `enum` はカーネルの対象外なので、法則は生成しない（証明に現れない）。例外は prelude の `Option`・`List`・`Pair`・`Ordering`（`std/prelude/Std.taut`）で、証明はこれらを帰納族として読み、四つの宣言を生成する。`struct` の構成子は `S { f: e, … }` と書き、`S { f: p, … }` で照合する。
 
 ### 証明で法則を使う
 
@@ -572,7 +572,7 @@ enum Ordering {
   Greater
 }
 
-// std/prelude/Classes.taut（nibstd.rs の PRELUDE が読む）
+// std/prelude/Ord.taut（Nib のプログラムと証明の両方が読む）
 class Ord<A: linear> {
   fn compare(&a: A, &b: A) -> Ordering
   law equal_iff<a: A, b: A>(): Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(A, a, b))
@@ -580,15 +580,17 @@ class Ord<A: linear> {
   law trans<a: A, b: A, c: A>(h1: Eq(Ordering, Ord.compare(a, b), Less), h2: Eq(Ordering, Ord.compare(b, c), Less)): Eq(Ordering, Ord.compare(a, c), Less)
 }
 
+instance<A> Ord(List(A)) where Ord(A) { … }       // 辞書式。法則の証明つき
+instance<A> Ord(Option(A)) where Ord(A) { … }     // None < Some。法則の証明つき
+instance<A, B> Ord(Pair(A, B)) where Ord(A), Ord(B) { … }   // 法則の証明つき
+
+// std/prelude/Classes.taut
 class ToText<A: linear> {
   fn to_text(&a: A) -> Text
 }
 
 instance Ord(i64) { … }   instance Ord(i32) { … }   instance Ord(u8) { … }   instance Ord(u32) { … }   instance Ord(u64) { … }
 instance Ord(Bool) { … }  instance Ord(Text) { … }  instance Ord(()) { … }
-instance<A> Ord(List(A)) where Ord(A) { … }       // 辞書式
-instance<A> Ord(Option(A)) where Ord(A) { … }     // None < Some
-instance<A, B> Ord(Pair(A, B)) where Ord(A), Ord(B) { … }
 
 instance ToText(i64) { … }  …（整数型、Bool、Text、()）
 instance<A> ToText(List(A)) where ToText(A) { … }      // "[1, 2]"
@@ -603,7 +605,10 @@ fn join<A>(xs: List(A), sep: Text) -> Text where ToText(A)
 
 - `Ord(Text)` は UTF-8 のバイト列の辞書式（Rust の `str` の `Ord` と同じ）。[`self-host.md`](self-host.md) の `text_compare` と同じ結果であること。
 - `Ord(Float)` は置かない（全順序でない）。
-- `Ord` のインスタンスは std のものも法則を持つ。組み込みの型のものは信頼（「組み込みの型と extern のインスタンス」）、`List`・`Option`・`Pair` のものは tauto の `std/` の側（`std/Ord.taut`）で証明する。Nib の std（`std/prelude/Classes.taut`）のクラスは法則を書かない（Nib の層は `law` を読み飛ばす）。
+- `Ord` は一度だけ、`std/prelude/Ord.taut` で宣言する。Nib の層はこのファイルの `law` と `theorem` を読み飛ばし、カーネルはこのファイルをすべて検査する（`check.rs` の `kernel_prelude`。prelude の宣言はどれも両方のカーネルが受理し、公理も穴も持たないこと）。だから同じ `compare` を、プログラムが実行し、証明が開く。
+- `Ord` のインスタンスは std のものも法則を持つ。`List`・`Option`・`Pair` のものは `std/prelude/Ord.taut` に法則の証明とともに置き、その補題（`ord_then`、`ord_equal_eq` など）も同じファイルに置く。組み込みの型のもの（`std/prelude/Classes.taut`）は法則を書かず、信頼する（「組み込みの型と extern のインスタンス」）。カーネルはこれらの型を知らないので、証明には現れない。
+- `List` と `Pair` の `compare` は `ord_then(前の比較, 後の比較)` と書く（法則の証明はこの形を開く）。Nib は引数を先に評価するので、前が `Equal` でなくても後を比べる。
+- 証明の側だけの型のインスタンスは `std/` に置く：`Ord(Nat)` は `std/Ord.taut`。extraction は `Nat` を `u64` に写すので、これを `Ord(u64)` に写す。
 - `Functor` は std に置かない（「未決定」）。試験の中で宣言する。
 - `Map` を `Ord` を使う平衡木に替えるかは、この文書の範囲外（[`self-host.md`](self-host.md) の `ordmap` と合わせて別に決める）。
 
@@ -652,7 +657,7 @@ Nib の Lean のモデル（`lean/Proto/Nib/`）に `==` を入れるとき（�
 
 ### 未決定
 
-1. `DecEq(Decimal)`・`Hash(Decimal)`：`Decimal` の表現（OWN「未決定」）が正規化されていれば成り立つ。表現を決めるときに決める。
+1. `DecEq(Decimal)`・`Hash(Decimal)`：`Decimal` の表現（`ownership.md`「未決定」）が正規化されていれば成り立つ。表現を決めるときに決める。
 2. 利用者のクラスの、組み込みの型（`i64` など）へのインスタンスの法則：組み込みの型の算術を述べる補題がないので証明できず、incomplete のまま残る。組み込みの型の算術についての信頼する補題の集まり（prelude）を作るか。必要になってから決める。
 3. std に `Functor` を置くか：self-host か std の中で使い道が出てから決める。
 4. `Map`（`Shared.taut`）を `Ord` を使う平衡木に替えるか：[`self-host.md`](self-host.md) の `ordmap` と合わせて決める。

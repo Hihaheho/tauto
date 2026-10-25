@@ -1,6 +1,6 @@
 # tauto のマクロ：証明のステップ（tactic）
 
-実装は `crates/tauto/src/macros/expand/step.rs`、`std/Rewrite.taut`、`std/Tactic.taut`、試験は `crates/tauto/tests/steps.rs`。
+実装は `crates/tauto-macro/src/macros/expand/step.rs`、`std/Rewrite.taut`、`std/Tactic.taut`、試験は `crates/tauto/tests/steps.rs`。
 
 マクロの設計（[`macro.md`](macro.md)）の上に、証明を
 **元のゴールと次のゴールを明示したステップ** で書く仕組み。tactic は信用されないメタプログラムで、

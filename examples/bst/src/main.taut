@@ -1,0 +1,44 @@
+// Builds a tree from a list of numbers, asks for some of them, deletes the root and asks again.
+
+fn tree_of(l: List(u64), t: Tree(u64)) -> Tree(u64) {
+  match l {
+    Nil => t
+    Cons(x, rest) => tree_of(rest, tree_insert(x, t))
+  }
+}
+
+fn ask(t: Tree(u64), x: u64) -> () {
+  os_print(text_of_u64(x))
+  match tree_member(x, t) {
+    true => os_print(" is in the tree\n")
+    false => os_print(" is not in the tree\n")
+  }
+}
+
+let t = tree_of(Cons(5, Cons(2, Cons(8, Cons(1, Cons(9, Cons(3, Nil)))))), leaf)
+ask(t, 3)
+ask(t, 4)
+let u = tree_delete(5, t)
+ask(u, 5)
+ask(u, 8)
+ask(u, 9)
+
+// The same tree, with any keys that have an `Ord`: here, words.
+fn words_of(l: List(Text), t: Tree(Text)) -> Tree(Text) {
+  match l {
+    Nil => t
+    Cons(w, rest) => words_of(rest, tree_insert(w, t))
+  }
+}
+
+fn ask_word(t: Tree(Text), w: Text) -> () {
+  os_print(w)
+  match tree_member(w, t) {
+    true => os_print(" is in the tree\n")
+    false => os_print(" is not in the tree\n")
+  }
+}
+
+let words = words_of(Cons("tree", Cons("set", Cons("order", Nil))), leaf)
+ask_word(words, "set")
+ask_word(words, "sort")

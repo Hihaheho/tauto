@@ -1,0 +1,2470 @@
+import "unify.taut"
+import "ty_eq.taut"
+import "../../../std/MapLaws.taut"
+
+// The unifier of `src/checker.taut` is sound
+// (`docs/design/self-host.md`「層 2：`ck_unify`（`src/unify_sound.taut`）」):
+// when it says two types are the same, they are, under the substitution it leaves
+// (`TyEq`, with the rigid types it recorded); and whatever it says,
+// it only binds variables that were not bound and only records more.
+
+// ----- the checker's state -----
+
+fn ck_val<A>(m: Mut1(A, Checker)) -> A {
+  match m -> A {
+    mut1(v, c) => v
+  }
+}
+
+fn ck_st<A>(m: Mut1(A, Checker)) -> Checker {
+  match m -> Checker {
+    mut1(v, c) => c
+  }
+}
+
+fn ck_subst_of(c: Checker) -> Ordmap(Nat, Ty) {
+  c.subst
+}
+
+fn ck_kept_of(c: Checker) -> List(TyKept) {
+  c.kept
+}
+
+fn ck_datas_of(c: Checker) -> Datas {
+  c.datas
+}
+
+fn ck_bounds_of(c: Checker) -> List(TyBound) {
+  c.bounds
+}
+
+fn ck_rewrap1<A, S>(m: Mut1(A, S)) -> Mut1(A, S) {
+  match m -> Mut1(A, S) {
+    mut1(v, x) => mut1(v, x)
+  }
+}
+
+theorem ck_rewrap1_id<A: Type, S: Type>(m: Mut1(A, S)): Eq(Mut1(A, S), ck_rewrap1(m), m) {
+  match m -> Eq(Mut1(A, S), ck_rewrap1(m), m) {
+    mut1(v, x) => refl()
+  }
+}
+
+theorem ck_none_ne_some<A: Type>(x: A, e: Eq(Option(A), None, Some(x))): False {
+  match e -> False {
+  }
+}
+
+// A use of rigid types the checker recorded.
+inductive KeptIn(): (List(TyKept), List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop {
+  kept_here(
+    gs: List(Pair(Text, Kind)),
+    rigid: Ordmap(Text, Ty),
+    a: Ty,
+    b: Ty,
+    rest: List(TyKept)
+  ): KeptIn(Cons(ty_kept_mk(gs, rigid, a, b), rest), gs, rigid, a, b)
+  kept_there<ks: List(
+    TyKept
+  ), gs: List(
+    Pair(Text, Kind)
+  ), rigid: Ordmap(
+    Text,
+    Ty
+  ), a: Ty, b: Ty>(k: TyKept, h: KeptIn(ks, gs, rigid, a, b)): KeptIn(Cons(k, ks), gs, rigid, a, b)
+}
+
+fn KeptOk(ks: List(TyKept)) -> (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop {
+  (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), a: Ty, b: Ty) => KeptIn(ks, gs, rigid, a, b)
+}
+
+def CkOrdered(c: Checker): Prop := ordmap_ordered(ck_subst_of(c), ordmap_compare_nat)
+
+// A kind bound the checker recorded.
+inductive BoundIn(): (List(TyBound), TyBound) -> Prop {
+  bound_here(b: TyBound, rest: List(TyBound)): BoundIn(Cons(b, rest), b)
+  bound_there<bs: List(TyBound), b: TyBound>(x: TyBound, h: BoundIn(bs, b)): BoundIn(Cons(x, bs), b)
+}
+
+def BoundsExt(
+  bs: List(TyBound),
+  bs2: List(TyBound)
+): Prop := ∀ b: TyBound. (BoundIn(bs, b)) -> BoundIn(bs2, b)
+
+// What unifying and fitting keep: the declared data, and the kind bounds
+// recorded, which only grow.
+def CkFixed(
+  c: Checker,
+  c2: Checker
+): Prop := And(
+  Eq(Datas, ck_datas_of(c), ck_datas_of(c2)),
+  BoundsExt(ck_bounds_of(c), ck_bounds_of(c2))
+)
+
+// `c2` comes after `c`: its substitution is still ordered and extends `c`'s,
+// and it has recorded at least what `c` had.
+def Grows(
+  c: Checker,
+  c2: Checker
+): Prop := And(
+  CkOrdered(c2),
+  And(
+    SubstExt(ck_subst_of(c), ck_subst_of(c2)),
+    And(OkExt(KeptOk(ck_kept_of(c)), KeptOk(ck_kept_of(c2))), CkFixed(c, c2))
+  )
+)
+
+def TyEqAt(c: Checker, a: Ty, b: Ty): Prop := TyEq(ck_subst_of(c), KeptOk(ck_kept_of(c)), a, b)
+
+def TyEqListAt(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty)
+): Prop := TyEqList(ck_subst_of(c), KeptOk(ck_kept_of(c)), xs, ys)
+
+// What a unifying step gives: from an ordered substitution, a state after it,
+// and when it says yes, `a` and `b` the same there.
+def UOk(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a: Ty,
+  b: Ty
+): Prop := (
+  CkOrdered(c)
+) -> And(Grows(c, ck_st(m)), (Eq(Yn, ck_val(m), yes)) -> TyEqAt(ck_st(m), a, b))
+
+theorem fixed_refl(c: Checker): CkFixed(c, c) {
+  and_intro(refl(), (x: TyBound, h: BoundIn(ck_bounds_of(c), x)) => h)
+}
+
+theorem fixed_trans(
+  c1: Checker,
+  c2: Checker,
+  c3: Checker,
+  h1: CkFixed(c1, c2),
+  h2: CkFixed(c2, c3)
+): CkFixed(c1, c3) {
+  and_intro(
+    Eq_trans(and_left(h1), and_left(h2)),
+    (x: TyBound, h: BoundIn(ck_bounds_of(c1), x)) => and_right(h2)(x, and_right(h1)(x, h))
+  )
+}
+
+theorem grows_refl(c: Checker, o: CkOrdered(c)): Grows(c, c) {
+  and_intro(
+    o,
+    and_intro(
+      (
+        i: Nat,
+        t: Ty,
+        e: Eq(Option(Ty), ordmap_get(ck_subst_of(c), i, ordmap_compare_nat), Some(t))
+      ) => e,
+      and_intro(
+        (
+          gs: List(Pair(Text, Kind)),
+          r: Ordmap(Text, Ty),
+          a: Ty,
+          b: Ty,
+          h: KeptIn(ck_kept_of(c), gs, r, a, b)
+        ) => h,
+        fixed_refl(c)
+      )
+    )
+  )
+}
+
+theorem grows_trans(
+  c1: Checker,
+  c2: Checker,
+  c3: Checker,
+  g1: Grows(c1, c2),
+  g2: Grows(c2, c3)
+): Grows(c1, c3) {
+  and_intro(
+    and_left(g2),
+    and_intro(
+      (
+        i: Nat,
+        t: Ty,
+        e: Eq(Option(Ty), ordmap_get(ck_subst_of(c1), i, ordmap_compare_nat), Some(t))
+      ) => and_left(and_right(g2))(i, t, and_left(and_right(g1))(i, t, e)),
+      and_intro(
+        (
+          gs: List(Pair(Text, Kind)),
+          r: Ordmap(Text, Ty),
+          a: Ty,
+          b: Ty,
+          h: KeptIn(ck_kept_of(c1), gs, r, a, b)
+        ) => and_left(
+          and_right(and_right(g2))
+        )(gs, r, a, b, and_left(and_right(and_right(g1)))(gs, r, a, b, h)),
+        fixed_trans(
+          c1,
+          c2,
+          c3,
+          and_right(and_right(and_right(g1))),
+          and_right(and_right(and_right(g2)))
+        )
+      )
+    )
+  )
+}
+
+theorem tyeq_at_move(
+  c: Checker,
+  c2: Checker,
+  g: Grows(c, c2),
+  a: Ty,
+  b: Ty,
+  h: TyEqAt(c, a, b)
+): TyEqAt(c2, a, b) {
+  tyeq_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    ck_subst_of(c2),
+    KeptOk(ck_kept_of(c2)),
+    and_left(and_right(g)),
+    and_left(and_right(and_right(g))),
+    a,
+    b,
+    h
+  )
+}
+
+theorem tyeq_list_at_move(
+  c: Checker,
+  c2: Checker,
+  g: Grows(c, c2),
+  xs: List(Ty),
+  ys: List(Ty),
+  h: TyEqListAt(c, xs, ys)
+): TyEqListAt(c2, xs, ys) {
+  tyeq_list_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    ck_subst_of(c2),
+    KeptOk(ck_kept_of(c2)),
+    and_left(and_right(g)),
+    and_left(and_right(and_right(g))),
+    xs,
+    ys,
+    h
+  )
+}
+
+// `c2` has the substitution, the records, the data and the bounds of `c`.
+def CkSame(
+  c: Checker,
+  c2: Checker
+): Prop := And(
+  Eq(Ordmap(Nat, Ty), ck_subst_of(c), ck_subst_of(c2)),
+  And(
+    Eq(List(TyKept), ck_kept_of(c), ck_kept_of(c2)),
+    And(
+      Eq(Datas, ck_datas_of(c), ck_datas_of(c2)),
+      Eq(List(TyBound), ck_bounds_of(c), ck_bounds_of(c2))
+    )
+  )
+)
+
+theorem ck_same_refl(c: Checker): CkSame(c, c) {
+  and_intro(refl(), and_intro(refl(), and_intro(refl(), refl())))
+}
+
+theorem ck_same_trans(
+  c1: Checker,
+  c2: Checker,
+  c3: Checker,
+  h1: CkSame(c1, c2),
+  h2: CkSame(c2, c3)
+): CkSame(c1, c3) {
+  and_intro(
+    Eq_trans(and_left(h1), and_left(h2)),
+    and_intro(
+      Eq_trans(and_left(and_right(h1)), and_left(and_right(h2))),
+      and_intro(
+        Eq_trans(and_left(and_right(and_right(h1))), and_left(and_right(and_right(h2)))),
+        Eq_trans(and_right(and_right(and_right(h1))), and_right(and_right(and_right(h2))))
+      )
+    )
+  )
+}
+
+// A step that leaves the substitution and the records as they were.
+theorem grows_same(c: Checker, c2: Checker, o: CkOrdered(c), hs: CkSame(c, c2)): Grows(c, c2) {
+  and_intro(
+    Eq_subst((z: Ordmap(Nat, Ty)) => ordmap_ordered(z, ordmap_compare_nat), and_left(hs), o),
+    and_intro(
+      (
+        i: Nat,
+        t: Ty,
+        e: Eq(Option(Ty), ordmap_get(ck_subst_of(c), i, ordmap_compare_nat), Some(t))
+      ) => Eq_subst(
+        (z: Ordmap(Nat, Ty)) => Eq(Option(Ty), ordmap_get(z, i, ordmap_compare_nat), Some(t)),
+        and_left(hs),
+        e
+      ),
+      and_intro(
+        (
+          gs: List(Pair(Text, Kind)),
+          r: Ordmap(Text, Ty),
+          a: Ty,
+          b: Ty,
+          h: KeptIn(ck_kept_of(c), gs, r, a, b)
+        ) => Eq_subst((z: List(TyKept)) => KeptIn(z, gs, r, a, b), and_left(and_right(hs)), h),
+        and_intro(
+          and_left(and_right(and_right(hs))),
+          (
+            x: TyBound,
+            h: BoundIn(ck_bounds_of(c), x)
+          ) => Eq_subst((z: List(TyBound)) => BoundIn(z, x), and_right(and_right(and_right(hs))), h)
+        )
+      )
+    )
+  )
+}
+
+theorem grows_of_same(c: Checker, c2: Checker, o: CkOrdered(c), h: CkSame(c, c2)): Grows(c, c2) {
+  grows_same(c, c2, o, h)
+}
+
+// ----- binding -----
+
+theorem subst_ext_insert(
+  s: Ordmap(Nat, Ty),
+  v: Nat,
+  t: Ty,
+  o: ordmap_ordered(s, ordmap_compare_nat),
+  hn: Eq(Option(Ty), ordmap_get(s, v, ordmap_compare_nat), None)
+): SubstExt(s, ordmap_insert(s, v, t, ordmap_compare_nat)) {
+  (
+    i: Nat,
+    t2: Ty,
+    e: Eq(Option(Ty), ordmap_get(s, i, ordmap_compare_nat), Some(t2))
+  ) => ordering_cases(
+    (
+      x: Ordering
+    ) => Eq(
+      Option(Ty),
+      ordmap_get(ordmap_insert(s, v, t, ordmap_compare_nat), i, ordmap_compare_nat),
+      Some(t2)
+    ),
+    ordmap_compare_nat(i, v),
+    (
+      ej: Eq(Ordering, ordmap_compare_nat(i, v), Less)
+    ) => Eq_trans(
+      ordmap_get_insert_other(
+        ordmap_compare_nat,
+        ordmap_compare_nat_law(),
+        s,
+        v,
+        t,
+        i,
+        Less,
+        less_ne_equal,
+        ej,
+        o
+      ),
+      e
+    ),
+    (
+      ej: Eq(Ordering, ordmap_compare_nat(i, v), Equal)
+    ) => False_elim(
+      ck_none_ne_some(
+        t2,
+        Eq_trans(
+          Eq_sym(hn),
+          Eq_subst(
+            (z: Nat) => Eq(Option(Ty), ordmap_get(s, z, ordmap_compare_nat), Some(t2)),
+            ordmap_compare_nat_eq(i, v, ej),
+            e
+          )
+        )
+      )
+    ),
+    (
+      ej: Eq(Ordering, ordmap_compare_nat(i, v), Greater)
+    ) => Eq_trans(
+      ordmap_get_insert_other(
+        ordmap_compare_nat,
+        ordmap_compare_nat_law(),
+        s,
+        v,
+        t,
+        i,
+        Greater,
+        greater_ne_equal,
+        ej,
+        o
+      ),
+      e
+    )
+  )
+}
+
+theorem grows_set(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  o: CkOrdered(c),
+  hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+): Grows(c, ck_st(ck_set_subst(c, v, t))) {
+  and_intro(
+    ordmap_insert_ordered(ordmap_compare_nat, ordmap_compare_nat_law(), ck_subst_of(c), v, t, o),
+    and_intro(
+      subst_ext_insert(ck_subst_of(c), v, t, o, hn),
+      and_intro(
+        (
+          gs: List(Pair(Text, Kind)),
+          r: Ordmap(Text, Ty),
+          a: Ty,
+          b: Ty,
+          h: KeptIn(ck_kept_of(c), gs, r, a, b)
+        ) => h,
+        fixed_refl(c)
+      )
+    )
+  )
+}
+
+theorem set_binds(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  o: CkOrdered(c)
+): TyEqAt(ck_st(ck_set_subst(c, v, t)), TyVar(v), t) {
+  tyeq_var(v, ordmap_nat_get_insert_same(ck_subst_of(c), v, t, o))
+}
+
+theorem uok_rewrap(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a: Ty,
+  b: Ty,
+  h: UOk(c, m, a, b)
+): UOk(c, ck_rewrap1(m), a, b) {
+  Eq_subst((z: Mut1(Yn, Checker)) => UOk(c, z, a, b), Eq_sym(ck_rewrap1_id(m)), h)
+}
+
+theorem uok_no(c: Checker, a: Ty, b: Ty): UOk(c, mut1(no, c), a, b) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(grows_refl(c, o), (y: Eq(Yn, no, yes)) => False_elim(yes_ne_no(Eq_sym(y))))
+}
+
+fn ck_k_yes(m: Mut1(Unit, Checker)) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(x, c2) => mut1(yes, c2)
+  }
+}
+
+fn ck_bind_value_k(c: Checker, v: Nat, t: Ty, x: Yn) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => mut1(no, c)
+    no => ck_k_yes(ck_set_subst(c, v, t))
+  }
+}
+
+theorem ck_bind_value_ok(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+): UOk(c, ck_bind_value(c, v, t), TyVar(v), t) {
+  yn_cases(
+    (x: Yn) => UOk(c, ck_bind_value_k(c, v, t, x), TyVar(v), t),
+    ck_occurs(c, v, t),
+    (
+      e: Eq(Yn, ck_occurs(c, v, t), no)
+    ) => (
+      o: CkOrdered(c)
+    ) => and_intro(grows_set(c, v, t, o, hn), (y: Eq(Yn, yes, yes)) => set_binds(c, v, t, o)),
+    (e: Eq(Yn, ck_occurs(c, v, t), yes)) => uok_no(c, TyVar(v), t)
+  )
+}
+
+fn ck_bind_other_k(c: Checker, v: Nat, t: Ty, x: Yn) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => mut1(no, c)
+    no => ck_rewrap1(ck_bind_value(c, v, t))
+  }
+}
+
+theorem ck_bind_other_ok(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+): UOk(c, ck_bind_other(c, v, t), TyVar(v), t) {
+  yn_cases(
+    (x: Yn) => UOk(c, ck_bind_other_k(c, v, t, x), TyVar(v), t),
+    ck_is_int(c, v),
+    (
+      e: Eq(Yn, ck_is_int(c, v), no)
+    ) => uok_rewrap(c, ck_bind_value(c, v, t), TyVar(v), t, ck_bind_value_ok(c, v, t, hn)),
+    (e: Eq(Yn, ck_is_int(c, v), yes)) => uok_no(c, TyVar(v), t)
+  )
+}
+
+fn ck_int_k(c: Checker, w: Nat, x: Yn) -> Mut1(Unit, Checker) {
+  match x -> Mut1(Unit, Checker) {
+    yes => ck_rewrap1(ck_add_int(c, w))
+    no => mut1(star(), c)
+  }
+}
+
+fn ck_var_set(v: Nat, w: Nat, m: Mut1(Unit, Checker)) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(x, c2) => ck_k_yes(ck_set_subst(c2, v, TyVar(w)))
+  }
+}
+
+fn ck_bind_var_k(c: Checker, v: Nat, w: Nat, x: Yn) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => mut1(yes, c)
+    no => ck_var_set(v, w, ck_int_k(c, w, ck_is_int(c, v)))
+  }
+}
+
+// Marking a variable an integer leaves the substitution and the records.
+theorem ck_int_k_same(c: Checker, w: Nat, x: Yn): CkSame(c, ck_st(ck_int_k(c, w, x))) {
+  match x -> CkSame(c, ck_st(ck_int_k(c, w, x))) {
+    yes => ck_same_refl(c)
+    no => ck_same_refl(c)
+  }
+}
+
+theorem ck_var_set_ok(
+  c: Checker,
+  v: Nat,
+  w: Nat,
+  m: Mut1(Unit, Checker),
+  hs: CkSame(c, ck_st(m)),
+  hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+): UOk(c, ck_var_set(v, w, m), TyVar(v), TyVar(w)) {
+  match m -> UOk(c, ck_var_set(v, w, m), TyVar(v), TyVar(w)) {
+    mut1(
+      x,
+      c2
+    ) => (
+      o: CkOrdered(c)
+    ) => and_intro(
+      grows_trans(
+        c,
+        c2,
+        ck_st(ck_set_subst(c2, v, TyVar(w))),
+        grows_same(c, c2, o, hs),
+        grows_set(
+          c2,
+          v,
+          TyVar(w),
+          and_left(grows_same(c, c2, o, hs)),
+          Eq_subst(
+            (z: Ordmap(Nat, Ty)) => Eq(Option(Ty), ordmap_get(z, v, ordmap_compare_nat), None),
+            and_left(hs),
+            hn
+          )
+        )
+      ),
+      (y: Eq(Yn, yes, yes)) => set_binds(c2, v, TyVar(w), and_left(grows_same(c, c2, o, hs)))
+    )
+  }
+}
+
+theorem ck_bind_var_ok(
+  c: Checker,
+  v: Nat,
+  w: Nat,
+  hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+): UOk(c, ck_bind_var(c, v, w), TyVar(v), TyVar(w)) {
+  yn_cases(
+    (x: Yn) => UOk(c, ck_bind_var_k(c, v, w, x), TyVar(v), TyVar(w)),
+    nat_eq(w, v),
+    (
+      e: Eq(Yn, nat_eq(w, v), no)
+    ) => ck_var_set_ok(
+      c,
+      v,
+      w,
+      ck_int_k(c, w, ck_is_int(c, v)),
+      ck_int_k_same(c, w, ck_is_int(c, v)),
+      hn
+    ),
+    (
+      e: Eq(Yn, nat_eq(w, v), yes)
+    ) => (
+      o: CkOrdered(c)
+    ) => and_intro(
+      grows_refl(c, o),
+      (
+        y: Eq(Yn, yes, yes)
+      ) => Eq_subst(
+        (z: Nat) => TyEqAt(c, TyVar(v), TyVar(z)),
+        Eq_sym(nat_eq_sound(w, v, e)),
+        tyeq_refl(TyVar(v))
+      )
+    )
+  )
+}
+
+theorem ck_bind_unbound_ok(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+): UOk(c, ck_bind_unbound(c, v, t), TyVar(v), t) {
+  match t -> UOk(c, ck_bind_unbound(c, v, t), TyVar(v), t) {
+    TyVar(i) => uok_rewrap(c, ck_bind_var(c, v, i), TyVar(v), TyVar(i), ck_bind_var_ok(c, v, i, hn))
+    TyFn(
+      ps,
+      r,
+      fk
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyFn(ps, r, fk)),
+      TyVar(v),
+      TyFn(ps, r, fk),
+      ck_bind_other_ok(c, v, TyFn(ps, r, fk), hn)
+    )
+    TyUnion(
+      ts
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyUnion(ts)),
+      TyVar(v),
+      TyUnion(ts),
+      ck_bind_other_ok(c, v, TyUnion(ts), hn)
+    )
+    TyTagged(
+      tags,
+      x
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyTagged(tags, x)),
+      TyVar(v),
+      TyTagged(tags, x),
+      ck_bind_other_ok(c, v, TyTagged(tags, x), hn)
+    )
+    TyNamed(
+      n,
+      args
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyNamed(n, args)),
+      TyVar(v),
+      TyNamed(n, args),
+      ck_bind_other_ok(c, v, TyNamed(n, args), hn)
+    )
+    TyInfo(
+      x
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyInfo(x)),
+      TyVar(v),
+      TyInfo(x),
+      ck_bind_other_ok(c, v, TyInfo(x), hn)
+    )
+    TyBorrow(
+      x,
+      m
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyBorrow(x, m)),
+      TyVar(v),
+      TyBorrow(x, m),
+      ck_bind_other_ok(c, v, TyBorrow(x, m), hn)
+    )
+    TyInt(
+      w
+    ) => uok_rewrap(
+      c,
+      ck_bind_value(c, v, TyInt(w)),
+      TyVar(v),
+      TyInt(w),
+      ck_bind_value_ok(c, v, TyInt(w), hn)
+    )
+    TyBool => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyBool()),
+      TyVar(v),
+      TyBool(),
+      ck_bind_other_ok(c, v, TyBool(), hn)
+    )
+    TyText => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyText()),
+      TyVar(v),
+      TyText(),
+      ck_bind_other_ok(c, v, TyText(), hn)
+    )
+    TyUnit => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyUnit()),
+      TyVar(v),
+      TyUnit(),
+      ck_bind_other_ok(c, v, TyUnit(), hn)
+    )
+    TyNever => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyNever()),
+      TyVar(v),
+      TyNever(),
+      ck_bind_other_ok(c, v, TyNever(), hn)
+    )
+    TyDecimal => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyDecimal()),
+      TyVar(v),
+      TyDecimal(),
+      ck_bind_other_ok(c, v, TyDecimal(), hn)
+    )
+    TyFloat => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyFloat()),
+      TyVar(v),
+      TyFloat(),
+      ck_bind_other_ok(c, v, TyFloat(), hn)
+    )
+    TyParam(
+      n,
+      pk
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyParam(n, pk)),
+      TyVar(v),
+      TyParam(n, pk),
+      ck_bind_other_ok(c, v, TyParam(n, pk), hn)
+    )
+    TyPoly(
+      gs,
+      x
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyPoly(gs, x)),
+      TyVar(v),
+      TyPoly(gs, x),
+      ck_bind_other_ok(c, v, TyPoly(gs, x), hn)
+    )
+    TyApp(
+      h,
+      x
+    ) => uok_rewrap(
+      c,
+      ck_bind_other(c, v, TyApp(h, x)),
+      TyVar(v),
+      TyApp(h, x),
+      ck_bind_other_ok(c, v, TyApp(h, x), hn)
+    )
+  }
+}
+
+fn ck_bind_k(c: Checker, v: Nat, t: Ty, x: Yn) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => mut1(no, c)
+    no => ck_rewrap1(ck_bind_unbound(c, v, t))
+  }
+}
+
+fn ck_bound_yn(o: Option(Ty)) -> Yn {
+  match o -> Yn {
+    None => no
+    Some(x) => yes
+  }
+}
+
+theorem ck_option_cases<A: Type>(
+  P: (Option(A)) -> Prop,
+  o: Option(A),
+  a: (Eq(Option(A), o, None)) -> P(None),
+  b: ∀ x: A. (Eq(Option(A), o, Some(x))) -> P(Some(x))
+): P(o) {
+  match o -> P(o) {
+    None => a(refl())
+    Some(x) => b(x, refl())
+  }
+}
+
+// Binding `v` to `t`: `v` is `t` after it.
+theorem ck_bind_ok(c: Checker, v: Nat, t: Ty): UOk(c, ck_bind(c, v, t), TyVar(v), t) {
+  ck_option_cases(
+    (o: Option(Ty)) => UOk(c, ck_bind_k(c, v, t, ck_bound_yn(o)), TyVar(v), t),
+    ordmap_get(ck_subst_of(c), v, ordmap_compare_nat),
+    (
+      hn: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), None)
+    ) => uok_rewrap(c, ck_bind_unbound(c, v, t), TyVar(v), t, ck_bind_unbound_ok(c, v, t, hn)),
+    (
+      x: Ty,
+      hs: Eq(Option(Ty), ordmap_get(ck_subst_of(c), v, ordmap_compare_nat), Some(x))
+    ) => uok_no(c, TyVar(v), t)
+  )
+}
+
+// ----- rigid types -----
+
+fn tk_first(g: Pair(Text, Kind)) -> Text {
+  match g -> Text {
+    Pair { fst: a, snd: b } => a
+  }
+}
+
+fn tk_second(g: Pair(Text, Kind)) -> Kind {
+  match g -> Kind {
+    Pair { fst: a, snd: b } => b
+  }
+}
+
+fn ck_rigids_of(c: Checker) -> Nat {
+  c.rigids
+}
+
+fn ck_bump_rigids(&mut c: Checker) -> () {
+  bump(&mut c.rigids)
+}
+
+fn ck_rigid_k(
+  g: Pair(Text, Kind),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+) -> Mut1(Ordmap(Text, Ty), Checker) {
+  match m -> Mut1(Ordmap(Text, Ty), Checker) {
+    mut1(x, c2) => mut1(ordmap_insert(x, tk_first(g), t, ordmap_compare_text), c2)
+  }
+}
+
+theorem ck_rigid_k_same(
+  c: Checker,
+  g: Pair(Text, Kind),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  h: CkSame(c, ck_st(m))
+): CkSame(c, ck_st(ck_rigid_k(g, t, m))) {
+  match m -> CkSame(c, ck_st(ck_rigid_k(g, t, m))) {
+    mut1(x, c2) => h
+  }
+}
+
+// Making rigid types only counts them.
+theorem ck_rigid_same(gs: List(Pair(Text, Kind)), c: Checker): CkSame(c, ck_st(ck_rigid(gs, c))) {
+  match gs -> CkSame(c, ck_st(ck_rigid(gs, c))) {
+    Nil => ck_same_refl(c)
+    Cons(
+      g,
+      rest
+    ) => ck_rigid_k_same(
+      c,
+      g,
+      TyParam(cat3(tk_first(g), "#", text_of_nat(nat_add(ck_rigids_of(c), 1))), tk_second(g)),
+      ck_rigid(rest, ck_st(ck_bump_rigids(c))),
+      ck_rigid_same(rest, ck_st(ck_bump_rigids(c)))
+    )
+  }
+}
+
+fn ck_set_kept(&mut c: Checker, ks: List(TyKept)) -> () {
+  set_to(&mut c.kept, ks)
+}
+
+fn ck_keep_k(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  x: Yn
+) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => ck_k_yes(ck_set_kept(c, Cons(ty_kept_mk(gs, rigid, a, b), ck_kept_of(c))))
+    no => mut1(no, c)
+  }
+}
+
+def KeepOk(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  m: Mut1(Yn, Checker)
+): Prop := And(
+  Grows(c, ck_st(m)),
+  (Eq(Yn, ck_val(m), yes)) -> KeptIn(ck_kept_of(ck_st(m)), gs, rigid, a, b)
+)
+
+// Recording a use of rigid types.
+theorem ck_keep_ok(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  o: CkOrdered(c)
+): KeepOk(c, gs, rigid, a, b, ck_keep(c, gs, rigid, a, b)) {
+  yn_cases(
+    (x: Yn) => KeepOk(c, gs, rigid, a, b, ck_keep_k(c, gs, rigid, a, b, x)),
+    ck_rigid_kept(c, gs, rigid, a, b),
+    (
+      e: Eq(Yn, ck_rigid_kept(c, gs, rigid, a, b), no)
+    ) => and_intro(grows_refl(c, o), (y: Eq(Yn, no, yes)) => False_elim(yes_ne_no(Eq_sym(y)))),
+    (
+      e: Eq(Yn, ck_rigid_kept(c, gs, rigid, a, b), yes)
+    ) => and_intro(
+      and_intro(
+        o,
+        and_intro(
+          (
+            i: Nat,
+            t: Ty,
+            e2: Eq(Option(Ty), ordmap_get(ck_subst_of(c), i, ordmap_compare_nat), Some(t))
+          ) => e2,
+          and_intro(
+            (
+              gs2: List(Pair(Text, Kind)),
+              r: Ordmap(Text, Ty),
+              a2: Ty,
+              b2: Ty,
+              h: KeptIn(ck_kept_of(c), gs2, r, a2, b2)
+            ) => kept_there(ty_kept_mk(gs, rigid, a, b), h),
+            fixed_refl(c)
+          )
+        )
+      ),
+      (y: Eq(Yn, yes, yes)) => kept_here(gs, rigid, a, b, ck_kept_of(c))
+    )
+  )
+}
+
+// ----- steps in sequence -----
+
+// What a step gives, for a property `q` of the state it leaves when it says
+// yes.
+def Post(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q: (Checker) -> Prop
+): Prop := (CkOrdered(c)) -> And(Grows(c, ck_st(m)), (Eq(Yn, ck_val(m), yes)) -> q(ck_st(m)))
+
+// `q` still holds of a state that comes after.
+def Mono(
+  q: (Checker) -> Prop
+): Prop := ∀ c1: Checker. ∀ c2: Checker. (Grows(c1, c2)) -> (q(c1)) -> q(c2)
+
+fn ck_and_k(k: (Checker) -> Mut1(Yn, Checker), c2: Checker, v: Yn) -> Mut1(Yn, Checker) {
+  match v -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(k(c2))
+    no => mut1(no, c2)
+  }
+}
+
+// `if m { k } else { no }`, `m` a step that changes the state.
+fn ck_and(k: (Checker) -> Mut1(Yn, Checker), m: Mut1(Yn, Checker)) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(v, c2) => ck_and_k(k, c2, v)
+  }
+}
+
+def PostAnd(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  q2: (Checker) -> Prop
+): Prop := And(Grows(c, ck_st(m)), (Eq(Yn, ck_val(m), yes)) -> And(q1(ck_st(m)), q2(ck_st(m))))
+
+theorem post_and_k(
+  c: Checker,
+  c2: Checker,
+  v: Yn,
+  q1: (Checker) -> Prop,
+  k: (Checker) -> Mut1(Yn, Checker),
+  q2: (Checker) -> Prop,
+  mono1: Mono(q1),
+  g: Grows(c, c2),
+  h1: (Eq(Yn, v, yes)) -> q1(c2),
+  h2: Post(c2, k(c2), q2)
+): PostAnd(c, ck_and_k(k, c2, v), q1, q2) {
+  match v -> PostAnd(c, ck_and_k(k, c2, v), q1, q2) {
+    no => and_intro(g, (y: Eq(Yn, no, yes)) => False_elim(yes_ne_no(Eq_sym(y))))
+    yes => Eq_subst(
+      (z: Mut1(Yn, Checker)) => PostAnd(c, z, q1, q2),
+      Eq_sym(ck_rewrap1_id(k(c2))),
+      and_intro(
+        grows_trans(c, c2, ck_st(k(c2)), g, and_left(h2(and_left(g)))),
+        (
+          y: Eq(Yn, ck_val(k(c2)), yes)
+        ) => and_intro(
+          mono1(c2, ck_st(k(c2)), and_left(h2(and_left(g))), h1(refl())),
+          and_right(h2(and_left(g)))(y)
+        )
+      )
+    )
+  }
+}
+
+// One step and, when it says yes, another.
+theorem post_and(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  k: (Checker) -> Mut1(Yn, Checker),
+  q2: (Checker) -> Prop,
+  mono1: Mono(q1),
+  h1: Post(c, m, q1),
+  h2: ∀ c2: Checker. Post(c2, k(c2), q2),
+  o: CkOrdered(c)
+): PostAnd(c, ck_and(k, m), q1, q2) {
+  match m -> PostAnd(c, ck_and(k, m), q1, q2) {
+    mut1(v, c2) => post_and_k(c, c2, v, q1, k, q2, mono1, and_left(h1(o)), and_right(h1(o)), h2(c2))
+  }
+}
+
+// ----- unifying -----
+
+theorem uok_tyeq(c: Checker, a: Ty, b: Ty): UOk(c, mut1(ty_eq(a, b), c), a, b) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    grows_refl(c, o),
+    (
+      y: Eq(Yn, ty_eq(a, b), yes)
+    ) => Eq_subst((z: Ty) => TyEqAt(c, a, z), ty_eq_sound(a, b, y), tyeq_refl(a))
+  )
+}
+
+theorem uok_sym(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a: Ty,
+  b: Ty,
+  h: UOk(c, m, a, b)
+): UOk(c, m, b, a) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(and_left(h(o)), (y: Eq(Yn, ck_val(m), yes)) => tyeq_sym(and_right(h(o))(y)))
+}
+
+// From `a0 ~ a` and `b0 ~ b` before a step that makes `a` and `b` the same.
+theorem uok_resolve(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a0: Ty,
+  b0: Ty,
+  a: Ty,
+  b: Ty,
+  ha: TyEqAt(c, a0, a),
+  hb: TyEqAt(c, b0, b),
+  h: UOk(c, m, a, b)
+): UOk(c, m, a0, b0) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    and_left(h(o)),
+    (
+      y: Eq(Yn, ck_val(m), yes)
+    ) => tyeq_trans(
+      tyeq_at_move(c, ck_st(m), and_left(h(o)), a0, a, ha),
+      tyeq_trans(and_right(h(o))(y), tyeq_sym(tyeq_at_move(c, ck_st(m), and_left(h(o)), b0, b, hb)))
+    )
+  )
+}
+
+theorem mono_eq(a: Ty, b: Ty): Mono((c: Checker) => TyEqAt(c, a, b)) {
+  (
+    c1: Checker,
+    c2: Checker,
+    g: Grows(c1, c2),
+    h: TyEqAt(c1, a, b)
+  ) => tyeq_at_move(c1, c2, g, a, b, h)
+}
+
+def TyEqLenAt(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty)
+): Prop := (Eq(Yn, nat_eq(list_len(xs), list_len(ys)), yes)) -> TyEqListAt(c, xs, ys)
+
+theorem mono_len(xs: List(Ty), ys: List(Ty)): Mono((c: Checker) => TyEqLenAt(c, xs, ys)) {
+  (
+    c1: Checker,
+    c2: Checker,
+    g: Grows(c1, c2),
+    h: TyEqLenAt(c1, xs, ys)
+  ) => (
+    e: Eq(Yn, nat_eq(list_len(xs), list_len(ys)), yes)
+  ) => tyeq_list_at_move(c1, c2, g, xs, ys, h(e))
+}
+
+// Both steps said yes: what they give, together.
+theorem post_of_and(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  q2: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  f: ∀ c2: Checker. (q1(c2)) -> (q2(c2)) -> q(c2),
+  h: (CkOrdered(c)) -> PostAnd(c, m, q1, q2)
+): Post(c, m, q) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    and_left(h(o)),
+    (
+      y: Eq(Yn, ck_val(m), yes)
+    ) => f(ck_st(m), and_left(and_right(h(o))(y)), and_right(and_right(h(o))(y)))
+  )
+}
+
+// The first of two unifying steps and, when it says yes, the second.
+theorem uok_and(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a1: Ty,
+  b1: Ty,
+  k: (Checker) -> Mut1(Yn, Checker),
+  q2: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  h1: UOk(c, m, a1, b1),
+  h2: ∀ c2: Checker. Post(c2, k(c2), q2),
+  f: ∀ c2: Checker. (TyEqAt(c2, a1, b1)) -> (q2(c2)) -> q(c2)
+): Post(c, ck_and(k, m), q) {
+  post_of_and(
+    c,
+    ck_and(k, m),
+    (c2: Checker) => TyEqAt(c2, a1, b1),
+    q2,
+    q,
+    f,
+    (
+      o: CkOrdered(c)
+    ) => post_and(c, m, (c2: Checker) => TyEqAt(c2, a1, b1), k, q2, mono_eq(a1, b1), h1, h2, o)
+  )
+}
+
+def UnifyU(k: Nat): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. UOk(c, ck_unify_in(k, c, a, b), a, b)
+
+def UnifyR(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. UOk(c, ck_unify_rest_in(k, c, a, b), a, b)
+
+def UnifyP(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ xs: List(
+  Ty
+). ∀ ys: List(Ty). Post(c, ck_unify_pairs_in(k, c, xs, ys), (c2: Checker) => TyEqLenAt(c2, xs, ys))
+
+def UnifyA(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ h: Ty. ∀ x: Ty. ∀ n: Text. ∀ args: List(
+  Ty
+). UOk(c, ck_unify_app_in(k, c, h, x, n, args), TyApp(h, x), TyNamed(n, args))
+
+// ----- pairs -----
+
+theorem post_yes_len(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  e: Eq(Yn, nat_eq(list_len(xs), list_len(ys)), no)
+): Post(c, mut1(yes, c), (c2: Checker) => TyEqLenAt(c2, xs, ys)) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    grows_refl(c, o),
+    (
+      y: Eq(Yn, yes, yes)
+    ) => (
+      e2: Eq(Yn, nat_eq(list_len(xs), list_len(ys)), yes)
+    ) => False_elim(yes_ne_no(Eq_trans(Eq_sym(e2), e)))
+  )
+}
+
+theorem pairs_step(
+  j: Nat,
+  hu: UnifyU(j),
+  hp: UnifyP(j),
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty)
+): Post(c, ck_unify_pairs_in(succ(j), c, xs, ys), (c2: Checker) => TyEqLenAt(c2, xs, ys)) {
+  match xs -> Post(
+    c,
+    ck_unify_pairs_in(succ(j), c, xs, ys),
+    (c2: Checker) => TyEqLenAt(c2, xs, ys)
+  ) {
+    Nil => match ys -> Post(
+      c,
+      ck_unify_pairs_in(succ(j), c, Nil, ys),
+      (c2: Checker) => TyEqLenAt(c2, Nil, ys)
+    ) {
+      Nil => (
+        o: CkOrdered(c)
+      ) => and_intro(grows_refl(c, o), (y: Eq(Yn, yes, yes)) => (e: Eq(Yn, yes, yes)) => tyeq_nil())
+      Cons(y, yr) => post_yes_len(c, Nil, Cons(y, yr), refl())
+    }
+    Cons(
+      x,
+      xr
+    ) => match ys -> Post(
+      c,
+      ck_unify_pairs_in(succ(j), c, Cons(x, xr), ys),
+      (c2: Checker) => TyEqLenAt(c2, Cons(x, xr), ys)
+    ) {
+      Nil => post_yes_len(c, Cons(x, xr), Nil, refl())
+      Cons(
+        y,
+        yr
+      ) => uok_and(
+        c,
+        ck_unify_in(j, c, x, y),
+        x,
+        y,
+        (c2: Checker) => ck_unify_pairs_in(j, c2, xr, yr),
+        (c2: Checker) => TyEqLenAt(c2, xr, yr),
+        (c2: Checker) => TyEqLenAt(c2, Cons(x, xr), Cons(y, yr)),
+        hu(c, x, y),
+        (c2: Checker) => hp(c2, xr, yr),
+        (
+          c2: Checker,
+          h1: TyEqAt(c2, x, y),
+          h2: TyEqLenAt(c2, xr, yr)
+        ) => (e: Eq(Yn, nat_eq(list_len(xr), list_len(yr)), yes)) => tyeq_cons(h1, h2(e))
+      )
+    }
+  }
+}
+
+// ----- `h(x) ~ n(args)` -----
+
+fn ck_opt_or<A>(d: A, o: Option(A)) -> A {
+  match o -> A {
+    None => d
+    Some(x) => x
+  }
+}
+
+theorem ck_some_inj<A: Type>(x: A, y: A, e: Eq(Option(A), Some(x), Some(y))): Eq(A, x, y) {
+  Eq_subst((z: Option(A)) => Eq(A, x, ck_opt_or(x, z)), e, refl())
+}
+
+fn pair_fst_lt(p: Pair(List(Ty), Ty)) -> List(Ty) {
+  match p -> List(Ty) {
+    Pair { fst: a, snd: b } => a
+  }
+}
+
+fn pair_snd_lt(p: Pair(List(Ty), Ty)) -> Ty {
+  match p -> Ty {
+    Pair { fst: a, snd: b } => b
+  }
+}
+
+fn ck_split_k(a: Ty, o: Option(Pair(List(Ty), Ty))) -> Option(Pair(List(Ty), Ty)) {
+  match o -> Option(Pair(List(Ty), Ty)) {
+    None => Some(Pair { fst: Nil, snd: a })
+    Some(q) => Some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) })
+  }
+}
+
+theorem ck_split_k_some(
+  a: Ty,
+  o: Option(Pair(List(Ty), Ty)),
+  e: Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, o), None)
+): False {
+  match o -> (Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, o), None)) -> False {
+    None => (
+      e2: Eq(Option(Pair(List(Ty), Ty)), Some(Pair { fst: Nil, snd: a }), None)
+    ) => ck_none_ne_some(Pair { fst: Nil, snd: a }, Eq_sym(e2))
+    Some(
+      q
+    ) => (
+      e2: Eq(
+        Option(Pair(List(Ty), Ty)),
+        Some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }),
+        None
+      )
+    ) => ck_none_ne_some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }, Eq_sym(e2))
+  }(e)
+}
+
+theorem ck_split_none(
+  args: List(Ty),
+  e: Eq(Option(Pair(List(Ty), Ty)), ty_split_last(args), None)
+): Eq(List(Ty), args, Nil) {
+  match args -> (
+    Eq(Option(Pair(List(Ty), Ty)), ty_split_last(args), None)
+  ) -> Eq(List(Ty), args, Nil) {
+    Nil => (e2: Eq(Option(Pair(List(Ty), Ty)), None, None)) => refl()
+    Cons(
+      a,
+      rest
+    ) => (
+      e2: Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, ty_split_last(rest)), None)
+    ) => False_elim(ck_split_k_some(a, ty_split_last(rest), e2))
+  }(e)
+}
+
+def SplitOk(
+  args: List(Ty)
+): Prop := ∀ p: Pair(
+  List(Ty),
+  Ty
+). (
+  Eq(Option(Pair(List(Ty), Ty)), ty_split_last(args), Some(p))
+) -> Eq(List(Ty), list_append(pair_fst_lt(p), Cons(pair_snd_lt(p), Nil)), args)
+
+def SplitKOk(
+  a: Ty,
+  rest: List(Ty),
+  o: Option(Pair(List(Ty), Ty))
+): Prop := (Eq(Option(Pair(List(Ty), Ty)), ty_split_last(rest), o)) -> SplitOk(Cons(a, rest))
+
+theorem ck_split_cons(
+  a: Ty,
+  rest: List(Ty),
+  ih: SplitOk(rest),
+  o: Option(Pair(List(Ty), Ty))
+): SplitKOk(a, rest, o) {
+  match o -> SplitKOk(a, rest, o) {
+    None => (
+      eo: Eq(Option(Pair(List(Ty), Ty)), ty_split_last(rest), None)
+    ) => (
+      p: Pair(List(Ty), Ty),
+      e: Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, ty_split_last(rest)), Some(p))
+    ) => Eq_subst(
+      (
+        z: Pair(List(Ty), Ty)
+      ) => Eq(List(Ty), list_append(pair_fst_lt(z), Cons(pair_snd_lt(z), Nil)), Cons(a, rest)),
+      ck_some_inj(
+        Pair { fst: Nil, snd: a },
+        p,
+        Eq_subst(
+          (
+            w: Option(Pair(List(Ty), Ty))
+          ) => Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, w), Some(p)),
+          eo,
+          e
+        )
+      ),
+      Eq_subst(
+        (r: List(Ty)) => Eq(List(Ty), Cons(Ty, a, Nil(Ty)), Cons(Ty, a, r)),
+        Eq_sym(ck_split_none(rest, eo)),
+        refl()
+      )
+    )
+    Some(
+      q
+    ) => (
+      eo: Eq(Option(Pair(List(Ty), Ty)), ty_split_last(rest), Some(q))
+    ) => (
+      p: Pair(List(Ty), Ty),
+      e: Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, ty_split_last(rest)), Some(p))
+    ) => Eq_subst(
+      (
+        z: Pair(List(Ty), Ty)
+      ) => Eq(List(Ty), list_append(pair_fst_lt(z), Cons(pair_snd_lt(z), Nil)), Cons(a, rest)),
+      ck_some_inj(
+        Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) },
+        p,
+        Eq_subst(
+          (
+            w: Option(Pair(List(Ty), Ty))
+          ) => Eq(Option(Pair(List(Ty), Ty)), ck_split_k(a, w), Some(p)),
+          eo,
+          e
+        )
+      ),
+      Eq_subst(
+        (
+          r: List(Ty)
+        ) => Eq(
+          List(Ty),
+          Cons(Ty, a, list_append(Ty, pair_fst_lt(q), Cons(Ty, pair_snd_lt(q), Nil(Ty)))),
+          Cons(Ty, a, r)
+        ),
+        ih(q, eo),
+        refl()
+      )
+    )
+  }
+}
+
+theorem ck_split_last_ok(args: List(Ty)): SplitOk(args) {
+  match args -> SplitOk(args) {
+    Nil => (
+      p: Pair(List(Ty), Ty),
+      e: Eq(Option(Pair(List(Ty), Ty)), None, Some(p))
+    ) => False_elim(ck_none_ne_some(p, e))
+    Cons(a, rest) => ck_split_cons(a, rest, ck_split_last_ok(rest), ty_split_last(rest))(refl())
+  }
+}
+
+fn ck_app_k(
+  j: Nat,
+  c: Checker,
+  h: Ty,
+  x: Ty,
+  n: Text,
+  o: Option(Pair(List(Ty), Ty))
+) -> Mut1(Yn, Checker) {
+  match o -> Mut1(Yn, Checker) {
+    None => mut1(no, c)
+    Some(
+      p
+    ) => ck_and(
+      (c2: Checker) => ck_unify_in(j, c2, x, pair_snd_lt(p)),
+      ck_unify_in(j, c, h, TyNamed(n, pair_fst_lt(p)))
+    )
+  }
+}
+
+def AppKOk(
+  j: Nat,
+  c: Checker,
+  h: Ty,
+  x: Ty,
+  n: Text,
+  args: List(Ty),
+  o: Option(Pair(List(Ty), Ty))
+): Prop := (
+  Eq(Option(Pair(List(Ty), Ty)), ty_split_last(args), o)
+) -> UOk(c, ck_app_k(j, c, h, x, n, o), TyApp(h, x), TyNamed(n, args))
+
+theorem ck_app_k_ok(
+  j: Nat,
+  hu: UnifyU(j),
+  c: Checker,
+  h: Ty,
+  x: Ty,
+  n: Text,
+  args: List(Ty),
+  o: Option(Pair(List(Ty), Ty))
+): AppKOk(j, c, h, x, n, args, o) {
+  match o -> AppKOk(j, c, h, x, n, args, o) {
+    None => (
+      e: Eq(Option(Pair(List(Ty), Ty)), ty_split_last(args), None)
+    ) => uok_no(c, TyApp(h, x), TyNamed(n, args))
+    Some(
+      p
+    ) => (
+      e: Eq(Option(Pair(List(Ty), Ty)), ty_split_last(args), Some(p))
+    ) => uok_and(
+      c,
+      ck_unify_in(j, c, h, TyNamed(n, pair_fst_lt(p))),
+      h,
+      TyNamed(n, pair_fst_lt(p)),
+      (c2: Checker) => ck_unify_in(j, c2, x, pair_snd_lt(p)),
+      (c2: Checker) => TyEqAt(c2, x, pair_snd_lt(p)),
+      (c2: Checker) => TyEqAt(c2, TyApp(h, x), TyNamed(n, args)),
+      hu(c, h, TyNamed(n, pair_fst_lt(p))),
+      (c2: Checker) => hu(c2, x, pair_snd_lt(p)),
+      (
+        c2: Checker,
+        h1: TyEqAt(c2, h, TyNamed(n, pair_fst_lt(p))),
+        h2: TyEqAt(c2, x, pair_snd_lt(p))
+      ) => tyeq_trans(
+        tyeq_app(h1, h2),
+        tyeq_trans(
+          tyeq_app_norm(TyNamed(n, pair_fst_lt(p)), pair_snd_lt(p)),
+          Eq_subst(
+            (
+              z: List(Ty)
+            ) => TyEqAt(
+              c2,
+              TyNamed(n, list_append(Ty, pair_fst_lt(p), Cons(Ty, pair_snd_lt(p), Nil(Ty)))),
+              TyNamed(n, z)
+            ),
+            ck_split_last_ok(args, p, e),
+            tyeq_refl(
+              TyNamed(n, list_append(Ty, pair_fst_lt(p), Cons(Ty, pair_snd_lt(p), Nil(Ty))))
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem app_step(
+  j: Nat,
+  hu: UnifyU(j),
+  c: Checker,
+  h: Ty,
+  x: Ty,
+  n: Text,
+  args: List(Ty)
+): UOk(c, ck_unify_app_in(succ(j), c, h, x, n, args), TyApp(h, x), TyNamed(n, args)) {
+  ck_app_k_ok(j, hu, c, h, x, n, args, ty_split_last(args))(refl())
+}
+
+// ----- one step of `ck_unify_in` -----
+
+fn ck_steps_of(c: Checker) -> Nat {
+  c.steps
+}
+
+fn ck_unify_k(j: Nat, c: Checker, b: Ty, a1: Ty, a: Ty) -> Mut1(Yn, Checker) {
+  match a -> Mut1(Yn, Checker) {
+    TyVar(v) => ck_rewrap1(ck_bind(c, v, b))
+    _ => ck_rewrap1(ck_unify_rest_in(j, c, a1, b))
+  }
+}
+
+def UnifyKOk(
+  j: Nat,
+  c: Checker,
+  b: Ty,
+  a1: Ty,
+  a: Ty
+): Prop := (Eq(Ty, a1, a)) -> UOk(c, ck_unify_k(j, c, b, a1, a), a1, b)
+
+theorem ck_unify_k_ok(
+  j: Nat,
+  hr: UnifyR(j),
+  c: Checker,
+  b: Ty,
+  a1: Ty,
+  a: Ty
+): UnifyKOk(j, c, b, a1, a) {
+  match a -> UnifyKOk(j, c, b, a1, a) {
+    TyVar(
+      v
+    ) => (
+      e: Eq(Ty, a1, TyVar(v))
+    ) => Eq_subst(
+      (z: Ty) => UOk(c, ck_rewrap1(ck_bind(c, v, b)), z, b),
+      Eq_sym(e),
+      uok_rewrap(c, ck_bind(c, v, b), TyVar(v), b, ck_bind_ok(c, v, b))
+    )
+    _ => (e: Eq(Ty, a1, a)) => uok_rewrap(c, ck_unify_rest_in(j, c, a1, b), a1, b, hr(c, a1, b))
+  }
+}
+
+theorem unify_step(
+  j: Nat,
+  hr: UnifyR(j),
+  c: Checker,
+  a0: Ty,
+  b0: Ty
+): UOk(c, ck_unify_in(succ(j), c, a0, b0), a0, b0) {
+  uok_resolve(
+    c,
+    ck_unify_in(succ(j), c, a0, b0),
+    a0,
+    b0,
+    ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
+    ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
+    ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), a0),
+    ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), b0),
+    ck_unify_k_ok(
+      j,
+      hr,
+      c,
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
+      ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0)
+    )(refl())
+  )
+}
+
+// ----- what the conditions say -----
+
+theorem ck_yn_and_left(a: Yn, b: Yn, e: Eq(Yn, yn_and(a, b), yes)): Eq(Yn, a, yes) {
+  match a -> (Eq(Yn, yn_and(a, b), yes)) -> Eq(Yn, a, yes) {
+    no => (e2: Eq(Yn, no, yes)) => e2
+    yes => (e2: Eq(Yn, b, yes)) => refl()
+  }(e)
+}
+
+theorem ck_yn_and_right(a: Yn, b: Yn, e: Eq(Yn, yn_and(a, b), yes)): Eq(Yn, b, yes) {
+  match a -> (Eq(Yn, yn_and(a, b), yes)) -> Eq(Yn, b, yes) {
+    no => (e2: Eq(Yn, no, yes)) => False_elim(no_ne_yes(e2))
+    yes => (e2: Eq(Yn, b, yes)) => e2
+  }(e)
+}
+
+theorem ck_step_equal(o: Ordering, e: Eq(Yn, ty_eq_step(o), yes)): Eq(Ordering, o, Equal) {
+  ordering_cases(
+    (x: Ordering) => Eq(Ordering, x, Equal),
+    o,
+    (
+      q: Eq(Ordering, o, Less)
+    ) => False_elim(no_ne_yes(Eq_subst((x: Ordering) => Eq(Yn, ty_eq_step(x), yes), q, e))),
+    (q: Eq(Ordering, o, Equal)) => refl(),
+    (
+      q: Eq(Ordering, o, Greater)
+    ) => False_elim(no_ne_yes(Eq_subst((x: Ordering) => Eq(Yn, ty_eq_step(x), yes), q, e)))
+  )
+}
+
+theorem text_eq_sound(a: Text, b: Text, e: Eq(Yn, text_eq(a, b), yes)): Eq(Text, a, b) {
+  ordmap_compare_text_eq(a, b, ck_step_equal(text_compare(a, b), e))
+}
+
+theorem text_list_eq_sound(
+  a: List(Text),
+  b: List(Text),
+  e: Eq(Yn, text_list_eq(a, b), yes)
+): Eq(List(Text), a, b) {
+  cmp_text_list_eq(a, b, ck_step_equal(cmp_text_list(a, b), e))
+}
+
+theorem kind_eq_sound(a: Kind, b: Kind, e: Eq(Yn, kind_eq(a, b), yes)): Eq(Kind, a, b) {
+  kind_rank_inj(a, b, nat_eq_sound(kind_rank(a), kind_rank(b), e))
+}
+
+def KindSameIf(
+  a: Kind,
+  b: Kind,
+  x: Yn
+): Prop := (Eq(Yn, yn_or(x, yn_and(kind_dup(a), kind_dup(b))), yes)) -> KindSame(a, b)
+
+theorem kind_same_of(
+  a: Kind,
+  b: Kind,
+  e: Eq(Yn, yn_or(kind_eq(a, b), yn_and(kind_dup(a), kind_dup(b))), yes)
+): KindSame(a, b) {
+  yn_cases(
+    (x: Yn) => KindSameIf(a, b, x),
+    kind_eq(a, b),
+    (
+      q: Eq(Yn, kind_eq(a, b), no)
+    ) => (
+      e2: Eq(Yn, yn_and(kind_dup(a), kind_dup(b)), yes)
+    ) => kind_same_dup(
+      ck_yn_and_left(kind_dup(a), kind_dup(b), e2),
+      ck_yn_and_right(kind_dup(a), kind_dup(b), e2)
+    ),
+    (
+      q: Eq(Yn, kind_eq(a, b), yes)
+    ) => (
+      e2: Eq(Yn, yes, yes)
+    ) => Eq_subst((z: Kind) => KindSame(a, z), kind_eq_sound(a, b, q), kind_same_refl(a))
+  )(e)
+}
+
+// ----- one step of `ck_unify_rest_in` -----
+
+theorem post_seq(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  k: (Checker) -> Mut1(Yn, Checker),
+  q2: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  mono1: Mono(q1),
+  h1: Post(c, m, q1),
+  h2: ∀ c2: Checker. Post(c2, k(c2), q2),
+  f: ∀ c2: Checker. (q1(c2)) -> (q2(c2)) -> q(c2)
+): Post(c, ck_and(k, m), q) {
+  post_of_and(
+    c,
+    ck_and(k, m),
+    q1,
+    q2,
+    q,
+    f,
+    (o: CkOrdered(c)) => post_and(c, m, q1, k, q2, mono1, h1, h2, o)
+  )
+}
+
+theorem post_map(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  q1: (Checker) -> Prop,
+  q: (Checker) -> Prop,
+  f: ∀ c2: Checker. (q1(c2)) -> q(c2),
+  h: Post(c, m, q1)
+): Post(c, ck_rewrap1(m), q) {
+  Eq_subst(
+    (z: Mut1(Yn, Checker)) => Post(c, z, q),
+    Eq_sym(ck_rewrap1_id(m)),
+    (
+      o: CkOrdered(c)
+    ) => and_intro(and_left(h(o)), (y: Eq(Yn, ck_val(m), yes)) => f(ck_st(m), and_right(h(o))(y)))
+  )
+}
+
+// A step from a state that differs from `c` only in what unifying does not
+// look at.
+theorem post_pre(
+  c: Checker,
+  c2: Checker,
+  m: Mut1(Yn, Checker),
+  q: (Checker) -> Prop,
+  hs: CkSame(c, c2),
+  h: Post(c2, m, q)
+): Post(c, m, q) {
+  (
+    o: CkOrdered(c)
+  ) => and_intro(
+    grows_trans(
+      c,
+      c2,
+      ck_st(m),
+      grows_of_same(c, c2, o, hs),
+      and_left(h(and_left(grows_of_same(c, c2, o, hs))))
+    ),
+    and_right(h(and_left(grows_of_same(c, c2, o, hs))))
+  )
+}
+
+fn ck_poly_k(
+  j: Nat,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+) -> Mut1(Yn, Checker) {
+  match m -> Mut1(Yn, Checker) {
+    mut1(
+      rigid,
+      c2
+    ) => ck_and(
+      (c3: Checker) => ck_keep(c3, ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
+      ck_unify_in(j, c2, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid)))
+    )
+  }
+}
+
+fn ck_poly_c(
+  j: Nat,
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty,
+  x: Yn
+) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => ck_poly_k(j, ga, ta, gb, tb, ck_rigid(ga, c))
+    no => mut1(ty_eq(TyPoly(ga, ta), TyPoly(gb, tb)), c)
+  }
+}
+
+def PolyKOk(
+  j: Nat,
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): Prop := (
+  CkSame(c, ck_st(m))
+) -> UOk(c, ck_poly_k(j, ga, ta, gb, tb, m), TyPoly(ga, ta), TyPoly(gb, tb))
+
+theorem ck_poly_k_ok(
+  j: Nat,
+  hu: UnifyU(j),
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty,
+  hk: Eq(Yn, ty_kinds_match(ga, gb), yes),
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): PolyKOk(j, c, ga, ta, gb, tb, m) {
+  match m -> PolyKOk(j, c, ga, ta, gb, tb, m) {
+    mut1(
+      rigid,
+      c2
+    ) => (
+      hs: CkSame(c, c2)
+    ) => post_pre(
+      c,
+      c2,
+      ck_poly_k(j, ga, ta, gb, tb, mut1(rigid, c2)),
+      (c4: Checker) => TyEqAt(c4, TyPoly(ga, ta), TyPoly(gb, tb)),
+      hs,
+      post_seq(
+        c2,
+        ck_unify_in(j, c2, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))),
+        (
+          c4: Checker
+        ) => TyEqAt(c4, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))),
+        (c3: Checker) => ck_keep(c3, ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
+        (c4: Checker) => KeptIn(ck_kept_of(c4), ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
+        (c4: Checker) => TyEqAt(c4, TyPoly(ga, ta), TyPoly(gb, tb)),
+        mono_eq(ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))),
+        hu(c2, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))),
+        (
+          c3: Checker
+        ) => (o3: CkOrdered(c3)) => ck_keep_ok(c3, ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb), o3),
+        (
+          c4: Checker,
+          h1: TyEqAt(c4, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))),
+          h2: KeptIn(ck_kept_of(c4), ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb))
+        ) => tyeq_poly(ga, gb, rigid, hk, h2, h1)
+      )
+    )
+  }
+}
+
+theorem poly_ok(
+  j: Nat,
+  hu: UnifyU(j),
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty
+): UOk(c, ck_poly_c(j, c, ga, ta, gb, tb, ty_kinds_match(ga, gb)), TyPoly(ga, ta), TyPoly(gb, tb)) {
+  yn_cases(
+    (x: Yn) => UOk(c, ck_poly_c(j, c, ga, ta, gb, tb, x), TyPoly(ga, ta), TyPoly(gb, tb)),
+    ty_kinds_match(ga, gb),
+    (q: Eq(Yn, ty_kinds_match(ga, gb), no)) => uok_tyeq(c, TyPoly(ga, ta), TyPoly(gb, tb)),
+    (
+      q: Eq(Yn, ty_kinds_match(ga, gb), yes)
+    ) => ck_poly_k_ok(j, hu, c, ga, ta, gb, tb, q, ck_rigid(ga, c))(ck_rigid_same(ga, c))
+  )
+}
+
+fn ck_fn_c(
+  j: Nat,
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  x: Yn
+) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => ck_and((c2: Checker) => ck_unify_in(j, c2, ra, rb), ck_unify_pairs_in(j, c, pa, pb))
+    no => mut1(ty_eq(TyFn(pa, ra, ka), TyFn(pb, rb, kb)), c)
+  }
+}
+
+theorem fn_ok(
+  j: Nat,
+  hu: UnifyU(j),
+  hp: UnifyP(j),
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind
+): UOk(
+  c,
+  ck_fn_c(
+    j,
+    c,
+    pa,
+    ra,
+    ka,
+    pb,
+    rb,
+    kb,
+    yn_and(
+      nat_eq(list_len(pa), list_len(pb)),
+      yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb)))
+    )
+  ),
+  TyFn(pa, ra, ka),
+  TyFn(pb, rb, kb)
+) {
+  yn_cases(
+    (x: Yn) => UOk(c, ck_fn_c(j, c, pa, ra, ka, pb, rb, kb, x), TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+    yn_and(
+      nat_eq(list_len(pa), list_len(pb)),
+      yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb)))
+    ),
+    (
+      q: Eq(
+        Yn,
+        yn_and(
+          nat_eq(list_len(pa), list_len(pb)),
+          yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb)))
+        ),
+        no
+      )
+    ) => uok_tyeq(c, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+    (
+      q: Eq(
+        Yn,
+        yn_and(
+          nat_eq(list_len(pa), list_len(pb)),
+          yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb)))
+        ),
+        yes
+      )
+    ) => post_seq(
+      c,
+      ck_unify_pairs_in(j, c, pa, pb),
+      (c2: Checker) => TyEqLenAt(c2, pa, pb),
+      (c2: Checker) => ck_unify_in(j, c2, ra, rb),
+      (c2: Checker) => TyEqAt(c2, ra, rb),
+      (c2: Checker) => TyEqAt(c2, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+      mono_len(pa, pb),
+      hp(c, pa, pb),
+      (c2: Checker) => hu(c2, ra, rb),
+      (
+        c2: Checker,
+        h1: TyEqLenAt(c2, pa, pb),
+        h2: TyEqAt(c2, ra, rb)
+      ) => tyeq_fn(
+        h1(
+          ck_yn_and_left(
+            nat_eq(list_len(pa), list_len(pb)),
+            yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb))),
+            q
+          )
+        ),
+        h2,
+        kind_same_of(
+          ka,
+          kb,
+          ck_yn_and_right(
+            nat_eq(list_len(pa), list_len(pb)),
+            yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb))),
+            q
+          )
+        )
+      )
+    )
+  )
+}
+
+fn ck_named_c(
+  j: Nat,
+  c: Checker,
+  na: Text,
+  xa: List(Ty),
+  nb: Text,
+  xb: List(Ty),
+  x: Yn
+) -> Mut1(Yn, Checker) {
+  match x -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_unify_pairs_in(j, c, xa, xb))
+    no => mut1(ty_eq(TyNamed(na, xa), TyNamed(nb, xb)), c)
+  }
+}
+
+theorem named_ok(
+  j: Nat,
+  hp: UnifyP(j),
+  c: Checker,
+  na: Text,
+  xa: List(Ty),
+  nb: Text,
+  xb: List(Ty)
+): UOk(
+  c,
+  ck_named_c(j, c, na, xa, nb, xb, yn_and(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb)))),
+  TyNamed(na, xa),
+  TyNamed(nb, xb)
+) {
+  yn_cases(
+    (x: Yn) => UOk(c, ck_named_c(j, c, na, xa, nb, xb, x), TyNamed(na, xa), TyNamed(nb, xb)),
+    yn_and(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb))),
+    (
+      q: Eq(Yn, yn_and(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb))), no)
+    ) => uok_tyeq(c, TyNamed(na, xa), TyNamed(nb, xb)),
+    (
+      q: Eq(Yn, yn_and(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb))), yes)
+    ) => post_map(
+      c,
+      ck_unify_pairs_in(j, c, xa, xb),
+      (c2: Checker) => TyEqLenAt(c2, xa, xb),
+      (c2: Checker) => TyEqAt(c2, TyNamed(na, xa), TyNamed(nb, xb)),
+      (
+        c2: Checker,
+        h: TyEqLenAt(c2, xa, xb)
+      ) => Eq_subst(
+        (z: Text) => TyEqAt(c2, TyNamed(na, xa), TyNamed(z, xb)),
+        text_eq_sound(
+          na,
+          nb,
+          ck_yn_and_left(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb)), q)
+        ),
+        tyeq_named(na, h(ck_yn_and_right(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb)), q)))
+      ),
+      hp(c, xa, xb)
+    )
+  )
+}
+
+fn ck_borrow_c(j: Nat, c: Checker, x: Ty, ma: Yn, y: Ty, mb: Yn, e: Yn) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_unify_in(j, c, x, y))
+    no => mut1(ty_eq(TyBorrow(x, ma), TyBorrow(y, mb)), c)
+  }
+}
+
+theorem borrow_ok(
+  j: Nat,
+  hu: UnifyU(j),
+  c: Checker,
+  x: Ty,
+  ma: Yn,
+  y: Ty,
+  mb: Yn
+): UOk(c, ck_borrow_c(j, c, x, ma, y, mb, yn_eq(ma, mb)), TyBorrow(x, ma), TyBorrow(y, mb)) {
+  yn_cases(
+    (v: Yn) => UOk(c, ck_borrow_c(j, c, x, ma, y, mb, v), TyBorrow(x, ma), TyBorrow(y, mb)),
+    yn_eq(ma, mb),
+    (q: Eq(Yn, yn_eq(ma, mb), no)) => uok_tyeq(c, TyBorrow(x, ma), TyBorrow(y, mb)),
+    (
+      q: Eq(Yn, yn_eq(ma, mb), yes)
+    ) => post_map(
+      c,
+      ck_unify_in(j, c, x, y),
+      (c2: Checker) => TyEqAt(c2, x, y),
+      (c2: Checker) => TyEqAt(c2, TyBorrow(x, ma), TyBorrow(y, mb)),
+      (
+        c2: Checker,
+        h: TyEqAt(c2, x, y)
+      ) => Eq_subst(
+        (z: Yn) => TyEqAt(c2, TyBorrow(x, ma), TyBorrow(y, z)),
+        yn_eq_sound(ma, mb, q),
+        tyeq_borrow(ma, h)
+      ),
+      hu(c, x, y)
+    )
+  )
+}
+
+fn ck_tagged_c(
+  j: Nat,
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  tb: List(Text),
+  y: Ty,
+  e: Yn
+) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_unify_in(j, c, x, y))
+    no => mut1(ty_eq(TyTagged(ta, x), TyTagged(tb, y)), c)
+  }
+}
+
+theorem tagged_ok(
+  j: Nat,
+  hu: UnifyU(j),
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  tb: List(Text),
+  y: Ty
+): UOk(c, ck_tagged_c(j, c, ta, x, tb, y, text_list_eq(ta, tb)), TyTagged(ta, x), TyTagged(tb, y)) {
+  yn_cases(
+    (v: Yn) => UOk(c, ck_tagged_c(j, c, ta, x, tb, y, v), TyTagged(ta, x), TyTagged(tb, y)),
+    text_list_eq(ta, tb),
+    (q: Eq(Yn, text_list_eq(ta, tb), no)) => uok_tyeq(c, TyTagged(ta, x), TyTagged(tb, y)),
+    (
+      q: Eq(Yn, text_list_eq(ta, tb), yes)
+    ) => post_map(
+      c,
+      ck_unify_in(j, c, x, y),
+      (c2: Checker) => TyEqAt(c2, x, y),
+      (c2: Checker) => TyEqAt(c2, TyTagged(ta, x), TyTagged(tb, y)),
+      (
+        c2: Checker,
+        h: TyEqAt(c2, x, y)
+      ) => Eq_subst(
+        (z: List(Text)) => TyEqAt(c2, TyTagged(ta, x), TyTagged(z, y)),
+        text_list_eq_sound(ta, tb, q),
+        tyeq_tagged(ta, h)
+      ),
+      hu(c, x, y)
+    )
+  )
+}
+
+fn ck_union_c(j: Nat, c: Checker, xa: List(Ty), xb: List(Ty), e: Yn) -> Mut1(Yn, Checker) {
+  match e -> Mut1(Yn, Checker) {
+    yes => ck_rewrap1(ck_unify_pairs_in(j, c, xa, xb))
+    no => mut1(ty_eq(TyUnion(xa), TyUnion(xb)), c)
+  }
+}
+
+theorem union_ok(
+  j: Nat,
+  hp: UnifyP(j),
+  c: Checker,
+  xa: List(Ty),
+  xb: List(Ty)
+): UOk(c, ck_union_c(j, c, xa, xb, nat_eq(list_len(xa), list_len(xb))), TyUnion(xa), TyUnion(xb)) {
+  yn_cases(
+    (v: Yn) => UOk(c, ck_union_c(j, c, xa, xb, v), TyUnion(xa), TyUnion(xb)),
+    nat_eq(list_len(xa), list_len(xb)),
+    (q: Eq(Yn, nat_eq(list_len(xa), list_len(xb)), no)) => uok_tyeq(c, TyUnion(xa), TyUnion(xb)),
+    (
+      q: Eq(Yn, nat_eq(list_len(xa), list_len(xb)), yes)
+    ) => post_map(
+      c,
+      ck_unify_pairs_in(j, c, xa, xb),
+      (c2: Checker) => TyEqLenAt(c2, xa, xb),
+      (c2: Checker) => TyEqAt(c2, TyUnion(xa), TyUnion(xb)),
+      (c2: Checker, h: TyEqLenAt(c2, xa, xb)) => tyeq_union(h(q)),
+      hp(c, xa, xb)
+    )
+  )
+}
+
+theorem uok_eqs<a: Ty, b: Ty>(
+  c: Checker,
+  m: Mut1(Yn, Checker),
+  a1: Ty,
+  b1: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b),
+  h: UOk(c, m, a, b)
+): UOk(c, m, a1, b1) {
+  Eq_subst(
+    (z: Ty) => UOk(c, m, a1, z),
+    Eq_sym(eb),
+    Eq_subst((z: Ty) => UOk(c, m, z, b), Eq_sym(ea), h)
+  )
+}
+
+theorem uok_tyeq_eqs<a: Ty, b: Ty>(
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): UOk(c, mut1(ty_eq(a, b), c), a1, b1) {
+  uok_eqs(c, mut1(ty_eq(a, b), c), a1, b1, ea, eb, uok_tyeq(c, a, b))
+}
+
+// A wildcard arm does not name the constructor it stands for, so the step is
+// stated of `a1` and `b1`, equal to `a` and `b`.
+theorem rest_step_eqs(
+  j: Nat,
+  hu: UnifyU(j),
+  hp: UnifyP(j),
+  happ: UnifyA(j),
+  c: Checker,
+  a1: Ty,
+  b1: Ty,
+  a: Ty,
+  b: Ty,
+  ea: Eq(Ty, a1, a),
+  eb: Eq(Ty, b1, b)
+): UOk(c, ck_unify_rest_in(succ(j), c, a, b), a1, b1) {
+  match b -> UOk(c, ck_unify_rest_in(succ(j), c, a, b), a1, b1) {
+    TyVar(
+      v
+    ) => uok_eqs(
+      c,
+      ck_rewrap1(ck_bind(c, v, a)),
+      a1,
+      b1,
+      ea,
+      eb,
+      uok_rewrap(
+        c,
+        ck_bind(c, v, a),
+        a,
+        TyVar(v),
+        uok_sym(c, ck_bind(c, v, a), TyVar(v), a, ck_bind_ok(c, v, a))
+      )
+    )
+    TyApp(hb, xb) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyApp(hb, xb)), a1, b1) {
+      TyApp(
+        ha,
+        xa
+      ) => uok_eqs(
+        c,
+        ck_and((c2: Checker) => ck_unify_in(j, c2, xa, xb), ck_unify_in(j, c, ha, hb)),
+        a1,
+        b1,
+        ea,
+        eb,
+        uok_and(
+          c,
+          ck_unify_in(j, c, ha, hb),
+          ha,
+          hb,
+          (c2: Checker) => ck_unify_in(j, c2, xa, xb),
+          (c2: Checker) => TyEqAt(c2, xa, xb),
+          (c2: Checker) => TyEqAt(c2, TyApp(ha, xa), TyApp(hb, xb)),
+          hu(c, ha, hb),
+          (c2: Checker) => hu(c2, xa, xb),
+          (c2: Checker, h1: TyEqAt(c2, ha, hb), h2: TyEqAt(c2, xa, xb)) => tyeq_app(h1, h2)
+        )
+      )
+      TyNamed(
+        na,
+        xa
+      ) => uok_eqs(
+        c,
+        ck_rewrap1(ck_unify_app_in(j, c, hb, xb, na, xa)),
+        a1,
+        b1,
+        ea,
+        eb,
+        uok_rewrap(
+          c,
+          ck_unify_app_in(j, c, hb, xb, na, xa),
+          TyNamed(na, xa),
+          TyApp(hb, xb),
+          uok_sym(
+            c,
+            ck_unify_app_in(j, c, hb, xb, na, xa),
+            TyApp(hb, xb),
+            TyNamed(na, xa),
+            happ(c, hb, xb, na, xa)
+          )
+        )
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyPoly(gb, tb) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyPoly(gb, tb)), a1, b1) {
+      TyPoly(
+        ga,
+        ta
+      ) => uok_eqs(
+        c,
+        ck_poly_c(j, c, ga, ta, gb, tb, ty_kinds_match(ga, gb)),
+        a1,
+        b1,
+        ea,
+        eb,
+        poly_ok(j, hu, c, ga, ta, gb, tb)
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyFn(
+      pb,
+      rb,
+      kb
+    ) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyFn(pb, rb, kb)), a1, b1) {
+      TyFn(
+        pa,
+        ra,
+        ka
+      ) => uok_eqs(
+        c,
+        ck_fn_c(
+          j,
+          c,
+          pa,
+          ra,
+          ka,
+          pb,
+          rb,
+          kb,
+          yn_and(
+            nat_eq(list_len(pa), list_len(pb)),
+            yn_or(kind_eq(ka, kb), yn_and(kind_dup(ka), kind_dup(kb)))
+          )
+        ),
+        a1,
+        b1,
+        ea,
+        eb,
+        fn_ok(j, hu, hp, c, pa, ra, ka, pb, rb, kb)
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyNamed(nb, xb) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyNamed(nb, xb)), a1, b1) {
+      TyNamed(
+        na,
+        xa
+      ) => uok_eqs(
+        c,
+        ck_named_c(
+          j,
+          c,
+          na,
+          xa,
+          nb,
+          xb,
+          yn_and(text_eq(na, nb), nat_eq(list_len(xa), list_len(xb)))
+        ),
+        a1,
+        b1,
+        ea,
+        eb,
+        named_ok(j, hp, c, na, xa, nb, xb)
+      )
+      TyApp(
+        ha,
+        xa
+      ) => uok_eqs(
+        c,
+        ck_rewrap1(ck_unify_app_in(j, c, ha, xa, nb, xb)),
+        a1,
+        b1,
+        ea,
+        eb,
+        uok_rewrap(
+          c,
+          ck_unify_app_in(j, c, ha, xa, nb, xb),
+          TyApp(ha, xa),
+          TyNamed(nb, xb),
+          happ(c, ha, xa, nb, xb)
+        )
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyInfo(y) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyInfo(y)), a1, b1) {
+      TyInfo(
+        x
+      ) => uok_eqs(
+        c,
+        ck_rewrap1(ck_unify_in(j, c, x, y)),
+        a1,
+        b1,
+        ea,
+        eb,
+        post_map(
+          c,
+          ck_unify_in(j, c, x, y),
+          (c2: Checker) => TyEqAt(c2, x, y),
+          (c2: Checker) => TyEqAt(c2, TyInfo(x), TyInfo(y)),
+          (c2: Checker, h: TyEqAt(c2, x, y)) => tyeq_info(h),
+          hu(c, x, y)
+        )
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyBorrow(y, mb) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyBorrow(y, mb)), a1, b1) {
+      TyBorrow(
+        x,
+        ma
+      ) => uok_eqs(
+        c,
+        ck_borrow_c(j, c, x, ma, y, mb, yn_eq(ma, mb)),
+        a1,
+        b1,
+        ea,
+        eb,
+        borrow_ok(j, hu, c, x, ma, y, mb)
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyTagged(tb, y) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyTagged(tb, y)), a1, b1) {
+      TyTagged(
+        ta,
+        x
+      ) => uok_eqs(
+        c,
+        ck_tagged_c(j, c, ta, x, tb, y, text_list_eq(ta, tb)),
+        a1,
+        b1,
+        ea,
+        eb,
+        tagged_ok(j, hu, c, ta, x, tb, y)
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    TyUnion(xb) => match a -> UOk(c, ck_unify_rest_in(succ(j), c, a, TyUnion(xb)), a1, b1) {
+      TyUnion(
+        xa
+      ) => uok_eqs(
+        c,
+        ck_union_c(j, c, xa, xb, nat_eq(list_len(xa), list_len(xb))),
+        a1,
+        b1,
+        ea,
+        eb,
+        union_ok(j, hp, c, xa, xb)
+      )
+      _ => uok_no(c, a1, b1)
+    }
+    _ => uok_tyeq_eqs(c, a1, b1, ea, eb)
+  }
+}
+
+theorem rest_step(
+  j: Nat,
+  hu: UnifyU(j),
+  hp: UnifyP(j),
+  happ: UnifyA(j),
+  c: Checker,
+  a: Ty,
+  b: Ty
+): UOk(c, ck_unify_rest_in(succ(j), c, a, b), a, b) {
+  rest_step_eqs(j, hu, hp, happ, c, a, b, a, b, refl(), refl())
+}
+
+// ----- by fuel -----
+
+def UnifyAt(k: Nat): Prop := And(UnifyU(k), And(UnifyR(k), And(UnifyP(k), UnifyA(k))))
+
+theorem unify_at(k: Nat): UnifyAt(k) {
+  match k -> UnifyAt(k) {
+    zero => and_intro(
+      (c: Checker, a: Ty, b: Ty) => uok_no(c, a, b),
+      and_intro(
+        (c: Checker, a: Ty, b: Ty) => uok_no(c, a, b),
+        and_intro(
+          (
+            c: Checker,
+            xs: List(Ty),
+            ys: List(Ty)
+          ) => (
+            o: CkOrdered(c)
+          ) => and_intro(grows_refl(c, o), (y: Eq(Yn, no, yes)) => False_elim(no_ne_yes(y))),
+          (
+            c: Checker,
+            h: Ty,
+            x: Ty,
+            n: Text,
+            args: List(Ty)
+          ) => uok_no(c, TyApp(h, x), TyNamed(n, args))
+        )
+      )
+    )
+    succ(
+      j
+    ) => and_intro(
+      (c: Checker, a: Ty, b: Ty) => unify_step(j, and_left(and_right(unify_at(j))), c, a, b),
+      and_intro(
+        (
+          c: Checker,
+          a: Ty,
+          b: Ty
+        ) => rest_step(
+          j,
+          and_left(unify_at(j)),
+          and_left(and_right(and_right(unify_at(j)))),
+          and_right(and_right(and_right(unify_at(j)))),
+          c,
+          a,
+          b
+        ),
+        and_intro(
+          (
+            c: Checker,
+            xs: List(Ty),
+            ys: List(Ty)
+          ) => pairs_step(
+            j,
+            and_left(unify_at(j)),
+            and_left(and_right(and_right(unify_at(j)))),
+            c,
+            xs,
+            ys
+          ),
+          (
+            c: Checker,
+            h: Ty,
+            x: Ty,
+            n: Text,
+            args: List(Ty)
+          ) => app_step(j, and_left(unify_at(j)), c, h, x, n, args)
+        )
+      )
+    )
+  }
+}
+
+// `ck_unify` is sound: from an ordered substitution, the state after it
+// extends the one before, and when it says yes, `a` and `b` are the same
+// type there.
+theorem ck_unify_ok(c: Checker, a: Ty, b: Ty): UOk(c, ck_unify(c, a, b), a, b) {
+  uok_rewrap(
+    c,
+    ck_unify_in(ck_steps_of(c), c, a, b),
+    a,
+    b,
+    and_left(unify_at(ck_steps_of(c)))(c, a, b)
+  )
+}

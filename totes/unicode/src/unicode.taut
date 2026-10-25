@@ -1,0 +1,78 @@
+import "../../ordmap/src/ordmap.taut"
+import "../../text/src/text.taut"
+
+// Which characters are letters or digits, and which are white space, as
+// Rust's `char::is_alphanumeric` and `char::is_whitespace` say
+// (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」). The ASCII ones are decided here; the others by the
+// ranges of the tables that `tables.taut` holds and `classes.taut` passes in.
+
+inductive UnicodeClasses(): Type {
+  unicode_classes_with(alphanumeric: Ordmap(Nat, Nat), whitespace: Ordmap(Nat, Nat)): UnicodeClasses
+}
+
+fn unicode_number(t: Text) -> Nat {
+  match text_parse_u64(t) -> Nat {
+    None => 0
+    Some(n) => n
+  }
+}
+
+// The ranges of a table ("start end start end …", both ends in) by start;
+// `first` is the start read before the end that comes next.
+fn unicode_ranges(
+  numbers: List(Text),
+  first: Option(Nat),
+  done: Ordmap(Nat, Nat)
+) -> Ordmap(Nat, Nat) {
+  match numbers -> Ordmap(Nat, Nat) {
+    Nil => done
+    Cons(n, rest) => match first -> Ordmap(Nat, Nat) {
+      None => unicode_ranges(rest, Some(unicode_number(n)), done)
+      Some(
+        start
+      ) => unicode_ranges(
+        rest,
+        None,
+        ordmap_insert(done, start, unicode_number(n), ordmap_compare_nat)
+      )
+    }
+  }
+}
+
+// The classes from the texts of the two tables.
+fn unicode_classes_of(alphanumeric: Text, whitespace: Text) -> UnicodeClasses {
+  unicode_classes_with(
+    unicode_ranges(text_split(alphanumeric, " "), None, ordmap_empty),
+    unicode_ranges(text_split(whitespace, " "), None, ordmap_empty)
+  )
+}
+
+fn unicode_in(ranges: Ordmap(Nat, Nat), c: Nat) -> Yn {
+  match ordmap_floor(ranges, c, ordmap_compare_nat) -> Yn {
+    None => no
+    Some(range) => match range -> Yn {
+      Pair { fst: start, snd: last } => nat_le(c, last)
+    }
+  }
+}
+
+fn unicode_is_alphanumeric(classes: UnicodeClasses, c: Nat) -> Yn {
+  match nat_lt(c, 128) -> Yn {
+    yes => yn_or(
+      yn_and(nat_le(48, c), nat_le(c, 57)),
+      yn_or(yn_and(nat_le(65, c), nat_le(c, 90)), yn_and(nat_le(97, c), nat_le(c, 122)))
+    )
+    no => match classes -> Yn {
+      unicode_classes_with(alphanumeric, whitespace) => unicode_in(alphanumeric, c)
+    }
+  }
+}
+
+fn unicode_is_whitespace(classes: UnicodeClasses, c: Nat) -> Yn {
+  match nat_lt(c, 128) -> Yn {
+    yes => yn_or(nat_eq(c, 32), yn_and(nat_le(9, c), nat_le(c, 13)))
+    no => match classes -> Yn {
+      unicode_classes_with(alphanumeric, whitespace) => unicode_in(whitespace, c)
+    }
+  }
+}

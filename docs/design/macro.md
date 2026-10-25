@@ -95,7 +95,7 @@
 | 評価器 | `eval.rs`。builtin は `extern "builtin"` を `fn builtin` で実装 | マクロ関数を走らせる。関数を値の引数で呼び値を受け取る入口と、許可リストつきのホスト（`macro-implementation.md`「評価器（`eval.rs`）」） |
 | prelude の span | `PRELUDE_BASE = 1 << 31` から始まる仮の位置で、プログラムの span と重ならない | 展開で作った節点にも重ならない仮の位置を割り当てる（「span と由来」） |
 | 文字列 | `"…"`（エスケープあり）、`'…'`（生）、``plaintext`…` ``（生、バッククォートと改行は入らない） | ``plaintext`…` `` は「名前つきの生の文字列」の一般形の一つ（「リテラルの三つの形」） |
-| tote | `Tauto.eure` の単位。依存が先、ファイルはパスの辞書順（`main.nib` は最後）に読む（[`self-host.md`](self-host.md)） | マクロの段の境界（「段の境界とファイル」） |
+| tote | `Tauto.eure` の単位。依存が先、ファイルはパスの辞書順（`main.taut` は最後）に読む（[`self-host.md`](self-host.md)） | マクロの段の境界（「段の境界とファイル」） |
 | self-host の構文 | `totes/scan`・`totes/llk`・`totes/syntax` が表を Nib のデータとして読み、駆動部を Nib で書く（`self-host.md`） | DSL の解析も同じ表の形と同じ駆動部で動く（「`tauto.par` との共通性と self-host」） |
 
 隣の仕様への依存：
@@ -235,7 +235,7 @@ struct math_Paren { span: SynSpan, l_paren: SynToken, sum: math_Sum, r_paren: Sy
 
 ### 文法から作られるもの
 
-`syntax math = …` は、その位置に次の宣言を置いたのと同じになる：
+`syntax math = …` は、その位置に次の宣言を置いたのと同じになる。**作る宣言の一覧は `=>` の後ろに書く**（「作る宣言の一覧」）：
 
 - 「型付き AST の生成規則」の型。
 - `fn math_parse(t: Text) -> Result(math_Eqn, SynDiag)`：実行時にも使える解析関数（builtin
@@ -398,6 +398,34 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }   // 中身は検査して
 - `macro` の名前は、マクロの名前の空間に入る。同じ tote で同じ名前は一度だけ。依存先の tote のマクロも
   同じ空間に入り、ぶつかればエラー（マクロの名前はモジュールに入らない）。
 - 組み込みの構文：`plaintext`（「リテラルの三つの形」の三つの形のどれでも、値は中身の `Text`）。組み込みのマクロはない。
+  `NAME!(…)` の形で書く組み込みは、読み込み `include_text!("path")` だけで、これはマクロではない（次の節）。
+
+### 組み込みの読み込み `include_text!`
+
+```tauto
+fn syntax_tables_terminal_names() -> Text {
+  concat("", include_text!("tables/terminal_names.txt"))
+}
+```
+
+- `include_text!("path")` は、ファイルを読むとき（「段と実行のモデル」の Read。構文解析の直後、そのファイルのマクロの
+  展開より前）に、書かれた場所で、ファイルの中身のバイト列を持つ `Text` のリテラルに置き換わる。後の段（マクロ、
+  検査器、カーネル）はリテラルしか見ない。カーネルに規則は足さない。
+- 引数は文字列のリテラル一つ。パスは **呼び出しを書いたファイルからの相対パス** で、そのファイルの tote（ファイルの上で
+  最も近い `Tauto.eure` のあるディレクトリ。どの tote にも入らないファイルは、そのファイルのディレクトリ）の中に
+  とどまらなければならない。絶対パス（`include.absolute`）、`..` で外に出るパスと、外を指すシンボリックリンク
+  （`include.outside`）、読めないファイル（`include.read`）、UTF-8 でないファイル（`include.not_utf8`）はエラー。
+- マクロではない：利用者のコードは走らず、マクロ関数の許可リスト（`macro-security.md`「マクロのホストの許可リスト」）も
+  変わらない。読み込みは書かれたファイルの中の呼び出しだけを置き換えるので、マクロの出力に現れた `include_text!` は
+  読まれず、展開がエラー `macro.include_text` にする（マクロはこれを通してもファイルを読めない）。ファイルのない
+  テキスト（`tauto::read::parse_program`）の中の呼び出しも同じエラー。`macro include_text = …` は `macro.reserved`。
+  ファイルに書かれた `quote { … }` の中の呼び出しは、そのファイルを読むときに置き換わる（書いた人の tote のファイルを読む）。
+- 読んだファイルの中身は結果の入力である：リテラルは宣言の一部なので、証明のキャッシュの鍵（`check/cache.rs`。宣言の
+  `Debug` の文字列）と、増分の検査の指紋（`check/incremental.rs`、`tauto-analyzer`）に入る。`tauto-analyzer` は読んだ
+  ファイルを `Source`（エディタのバッファ）から引くので、その変更でも読み直す。`tauto-build` は読んだファイルを
+  `cargo:rerun-if-changed` に出す（`program::tote_inputs`）。
+- 生成した表のデータ（`totes/syntax/src/tables/*.txt`、`totes/unicode/src/tables/*.txt`、`totes/llkgen/src/uni/*.txt`）は
+  これで読む。データのファイルは中身がそのまま値なので、由来は `.taut` の側の先頭に書く。
 
 ## 構文の値、衛生、span
 
@@ -595,6 +623,57 @@ Expansion = { id, macro, kind, call: Written, def: Written, parent: Option(id) }
 - 属性は宣言一つに一つまで。`quote` の中には書けない。
 - カーネルに規則は足さない。出力は、手で書いたものと同じ道（カーネルと独立カーネル）を通る。
 
+#### `mode!`（`std/Mode.taut`）：規則を関数にする属性マクロ
+
+`inductive` の関係に付けると、ある位置を入力から求める関数と、証明つきの答えの型を作る。
+`examples/lambda/Lib.taut` は `Typing` に付けて `infer` と `Inferred` を作る。
+
+```
+#[mode!(spec(in(G), rec(t), out(A), name(infer), result(Inferred, inferred, not_inferred),
+             via(Has, lookup, has_found, has_none), eq(Ty, ty_dec, ty_same, ty_diff))) => inductive Inferred, fn infer]
+inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop { … }
+```
+
+- **役割。** `in`・`rec`・`out` を関係の位置の順に書く（名前は生成する関数の引数名）。`rec` が場合分けする位置で、
+  規則の結論のその位置が `ctor(x, …)` の形でなければならない。`out` は一つで、`in` は結論で変数でなければならず、その名前は spec と同じ。
+  `rec` を関数の最初の引数にするのは、構造再帰が最初の引数で減るという決まりのため。
+- **答えの型。** `result(R, ok, bad)` は `inductive R(rec, in…) { ok(out: T, h: 関係(…)), bad() }`。`ok` が答えと、その導出を一緒に運ぶので、
+  健全性の定理と逆転補題は要らない（構成で正しい）。
+- **規則から腕へ。** 規則一つが `rec` の構成子の腕一つ。前提を順に読み、同じ関係の前提は `infer` の再帰呼び出し、
+  結果の `ok` を `match` して次へ進む。最後は `ok(結論の out, 規則(導出…))`。どれかの前提が失敗すれば `bad()`。
+  前提の `out` の書き方で三通り：新しい名前（そのまま束縛）、既知の名前（`eq(…)` の判定関数で比べ、`refl` で書き換える）、
+  構成子（答えを `match` し、導出を腕の引数にして型を合わせる。他の構成子は `bad()`）。
+- **他の関係の前提。** `via(P, f, found, none)`：関係 `P` の前提は、関数 `f`（引数は前提の引数から最後を除いたもの）が返す
+  `found(x, h)` / `none` の `match` で答える。`f` と、その結果の型は手で書く（`Has` には `lookup`）。
+- **一覧。** 作るのは spec の `result` の型と `name` の関数で、属性の `=>` の一覧と完全に一致しなければならない。元の `inductive` は数えない。
+- **扱わないもの。** `out` が二つ以上、`in` の位置の構成子による場合分け（`lookup` 自体を `mode!` で作ること）、
+  一つの構成子に複数の規則、`rec` に入れ子の構成子。どれも誤りとして報告する。
+- 生成した名前（`h`、`Type` など）は衛生のとおりマクロのもので、`lint` の `macro-capture` に触れない。構成子の `refl` は `refl()` の形で書く。
+
+### 作る宣言の一覧
+
+宣言や呼び出しが **別の宣言を作る** ものは、作る宣言の（種別、名前）の完全な一覧を `=> 種別 名前, …` と書く。
+属性マクロ（「属性マクロ」）と同じ規則で、暗黙に宣言を作る機能のすべてに当てはまる。
+
+| 書き方 | 一覧に書くもの |
+|---|---|
+| `#[NAME!(…) => …]` 宣言 | マクロが宣言の他に作るもの |
+| `NAME!(…) => …`（文の位置） | 呼び出しが作る宣言。宣言を作る呼び出しは一覧が必須 |
+| `syntax s => … = ```par …` | `struct s_N` / `enum s_N`（補助の `s_N_Rep1` などを含む）、`fn s_parse` |
+| `inductive syntax s => … = ```par …` | 上に加えて、型ごとに `inductive s_N_I` と `fn s_N_to_i`、リストを通した入れ子の `fn s_N_Rep1_list_to_i` |
+| `fn f(…) -> R decreasing_by W => theorem f_eq { … }` | `theorem f_eq` |
+| `inductive T(…): Type => fn T_beq, theorem T_beq_refl, theorem T_beq_sound, theorem T_deq { … }` | 決定可能な等しさ（`classes.md`「構造的な述語の法則」）。書かなければ作らない |
+
+- **完全一致。** 作られたが書かれていないもの、書かれたが作られていないものを両方出す（`macro.generates`。`syntax`、
+  `decreasing_by`、`inductive` では、それぞれの宣言の名前をつけたエラー）。順序は問わず、種別が違えば不一致。
+- **一覧は `tauto fmt --fill-generated FILE` が埋める**（エラーの修正案をそのまま書く。一覧の改行は `tauto fmt` が保つ）。
+  埋めるのは書き手の手間を減らすためで、一覧がソースにあることは変わらない。ワイルドカードは入れない。
+- **文の位置の呼び出し**の一覧は一行に書く（`decreasing_by` と同じ形。構文は `Expr` の `=>` の右に一覧を許す）。
+- **例外**（一覧に書かない）：書いた宣言の中身から名前が決まるもの（コンストラクタ、フィールド、クラスの `C.m` と `C.mk`）、
+  `@` を含み利用者が書けない内部名（`f@step`、`C.inst@H`、`C.m@H`）、`inductive` の標準の付属物
+  （`T_ind`、`T_rec`、添字つきの族の `match` が不可能な腕を落とすのに使う `T_nc`・`T_nc_diag`・`T_noconf`。型ごとに
+  無条件に作る、`inductive` の意味そのもの）。構文糖（入れ子パターン、`T { f: e }`、文字列リテラル、演算子）は宣言を作らない。
+
 ### 型なしマクロ
 
 関数の入力の型が `SynExpr` のマクロ。括弧の中身を **tauto の式として読み、検査せずに** 構文の値で渡す。
@@ -708,7 +787,7 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 | `e` | 項（精密化の後。暗黙の引数はすべて書かれている） | カーネルの精密化の結果、または表面の項 |
 | `A` | 型（`Code`） | 穴の `goal` と同じ道、`TypeReport.terms` |
 | `ε` | 効果の行 | `RowReport.calls` を部分項で合わせたもの。カーネルの断片は空 |
-| `U` | 使用の要約：`Γ` の束縛ごとに、`e` の中で move・借用・`&mut` 借用・未使用のどれか | 型付きマクロの変換が、素の検査の結果から作る（`macro-implementation.md`「`crates/tauto/src/macros/`」） |
+| `U` | 使用の要約：`Γ` の束縛ごとに、`e` の中で move・借用・`&mut` 借用・未使用のどれか | 型付きマクロの変換が、素の検査の結果から作る（`macro-implementation.md`「マクロの実装」） |
 | 断片 | `Kernel` か `Program` | どちらの検査器が検査したか |
 
  `Code<Γ, Δin, Δout, A, ε>` との対応：`Δin` は `Γ` の種と持ち方、`Δout` は `U`。これらは
@@ -845,6 +924,8 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 ```text
 Parse                     tauto.par の字句・構文解析。呼び出しは一つのトークン
   ↓
+Read                      ファイルごとに、書かれた include_text!("path") をファイルの中身の Text のリテラルにする
+  ↓
 Syntax Expansion          ファイルごとに外側から。DSL の解析 → 型付き AST → 関数 → flip → 下ろす
   ↓
 Elaboration / Checking    通常の検査：カーネル + 独立カーネル、types.rs・rows.rs・lin.rs
@@ -934,6 +1015,8 @@ effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   /
 - 展開の結果は、次の指紋で引く：マクロ関数とそれが届くすべての宣言の **展開・検査後の** 正規形の指紋、
   入力（DSL の文字列と開始位置を除いた中身、または `Code` の正規形）、文法の表の指紋、tauto の版、
   評価器の版、予算の設定。
+- `include_text!` が読んだファイルの中身は、マクロの入力ではなく、書かれたプログラムの一部（リテラル）として鍵に入る
+  （「組み込みの読み込み `include_text!`」）。
 - 決定性の根拠：マクロ関数は許可リストの builtin しか呼べない（ホストの時刻・乱数・環境変数・ファイルがない）、
   評価器は決定的（ハッシュの順序に依存しない。`macro-security.md`「決定性」で監査項目にする）、展開のスコープの番号は位置から
   決まる（「衛生（スコープ集合）」の 10）。

@@ -9,9 +9,9 @@ kernel が検査する全域な層（`inductive` と total な `fn`）で書き�
 | 項目 | 方針 |
 | --- | --- |
 | 何を書くか | Rust バックエンドを使わずに進められる部分だけ（「構成」）。実行は `eval.rs`（インタプリタ）で、遅くても正しければよい |
-| どこまで証明するか | 全域性と型（kernel が検査し、止まり、網羅的）に加え、要所の正しさの定理。全関数の仕様は書かない。ただし `totes/nibcheck` は検査器全体の健全性まで示す（「nibcheck の健全性（`totes/nibcheck/proof/`）」） |
+| どこまで証明するか | 全域性と型（kernel が検査し、止まり、網羅的）に加え、要所の正しさの定理。全関数の仕様は書かない。ただし `totes/nibcheck` は検査器全体の健全性まで示す（「nibcheck の健全性（`totes/nibcheck/src/`）」） |
 | kernel | **変えない**（`check.rs`、`check/core.rs`）。精密化の糖衣（「精密化の糖衣」）は kernel の外にあり、kernel と `check/core.rs` が受け取る項の形は糖衣なしで書いたときと同じ |
-| 実行 | **Nib への extraction**（「extraction」）。生成した Nib が `eval.rs` で動き、[`rust-backend.md`](rust-backend.md) でネイティブにもなる |
+| 実行 | **Nib への extraction**（「extraction（`crates/tauto/src/extract.rs`）」）。生成した Nib が `eval.rs` で動き、[`rust-backend.md`](rust-backend.md) でネイティブにもなる |
 | OS IO | **薄い Nib の殻**として残す（「殻」） |
 | 確かめ方 | 同じ入力を Rust の実装と tauto の実装に与えて出力を比べる差分試験（「差分試験」）。比べる相手の Rust の実装は変えない |
 | builtin | 最小にする。Nib で書けないものだけ（バイトを読む、文字列を作る、数の幅を変える、OS）。どの builtin も `tauto-rt` が実装する |
@@ -24,9 +24,9 @@ kernel が検査する全域な層（`inductive` と total な `fn`）で書き�
 | `crates/tauto/src/fmt.rs` | `totes/fmt` |
 | `crates/tauto-parol`（字句・構文解析、`cst.rs`） | `totes/scan`、`totes/llk`、`totes/syntax`（「構文」） |
 | 文法の表の生成（`tools/tauto-parol-gen`） | `totes/llkgen`（[`macro-implementation.md`](macro-implementation.md)「`totes/llkgen` と表のファイル」） |
-| `crates/tauto/src/surface.rs`、`surface/program.rs` | `totes/surface` |
-| `crates/tauto/src/macros/scope.rs` | `totes/macros` |
-| `crates/tauto/src/types.rs`、`rows.rs`、`lin.rs` | `totes/nibcheck` |
+| `crates/tauto-surface/src/surface.rs`、`surface/program.rs` | `totes/surface` |
+| `crates/tauto-surface/src/macros/scope.rs` | `totes/macros` |
+| `crates/tauto-nibcheck/src/types.rs`、`rows.rs`、`lin.rs` | `totes/nibcheck` |
 | `tauto-rt`、`tools/tauto-parol-gen` | Rust のまま（後者は Rust の表の生成器を動かす道具なので。`totes/llkgen` が同じ表を作る） |
 
 依存は一方向で、循環は tote の読み込みが拒否する。
@@ -46,20 +46,27 @@ cargo test --locked -p tauto-selfhost                      # 差分試験と証�
 ## 全体の形
 
 ```text
-totes/<name>/src/*.taut   証明側の宣言だけ（inductive、total fn、theorem）
-totes/<name>/src/main.nib  殻：読む → 純粋な関数 → 書く
-totes/<name>/proof/*.taut tote の定理（「証明」）
-std/*.taut                証明側の標準ライブラリ
+totes/<name>/src/*.taut   型・関数・定理・実行コード
+totes/<name>/src/main.taut 実行の入口
+std/*.taut                標準ライブラリ
 ```
 
-`tauto run --tote DIR` は tote とその依存の `.taut` を kernel で検査し、すべて受理されたら
-Nib に extraction して、その Nib を `.nib` の前に置いて実行する（`program::load_tote`）。
-ファイルは依存が先、tote の中はパスの辞書順（`main.nib` は最後）に読む。
-生成した Nib はリポジトリに置かない。`tauto extract FILE…` は読むためだけのもの。
+`totes/` のソースは `.taut` に統一する。定理も同じソースに置き、独立した
+`proof/` ディレクトリは使わない。定理と実装を同じファイルに書いても、別の
+モジュールに分けて import してもよい。
 
-tote の `.taut` は **証明側の宣言だけ** を持つ。kernel が飛ばす実行コード（`while`、`return`、
-`perform`）は書かない。kernel が拒否したもの、穴のあるもの、公理を使うものが一つでもあれば
-extraction は失敗し、tote は動かない。
+`tauto run --tote DIR` と build は同じ読み込みを使う。依存 tote が先、各 tote
+のソースはパスの辞書順、`main.taut` は最後。依存 tote の main は読み込まない。
+import 先は先に読み、同じファイルは一度だけ読む。
+
+検査と実行の境界は宣言ごとに決まる。実行用の型・関数・効果を使う関数と
+トップレベルの実行文は実行側の検査に渡し、証明の仮定にはしない。
+それ以外の関数・帰納型・定理は二つのカーネルで検査する。検査失敗を
+実行コードとして再試行しない。証明に穴・公理・失敗があれば tote を拒否する。
+
+検査した関数は実行用の表現に変換し、実行コードと合わせる。tote 自身の関数で
+入出力が実行用の型で表せるものは、外部からも呼べるように残す。定理と、実行から
+使われない証明専用の補助関数は出力しない。生成物はソースとして保存しない。
 
 ## コードを書くときの規則
 
@@ -109,7 +116,7 @@ extraction は失敗し、tote は動かない。
 11. **`mutual` の fuel。** 「停止性の書き方」。
 12. **`&mut` と `var`。** 「`&mut` と `var`」。
 
-### `&mut` と `var`（`crates/tauto/src/check/mutable.rs`）
+### `&mut` と `var`（`crates/tauto-kernel/src/check/mutable.rs`）
 
 状態を持ち回るコードを、Nib の形のまま証明言語に書くための糖衣。書き換えは構文だけで、結果は
 kernel と `check/core.rs` が検査する。extraction は書かれたままを読み、元の `&mut` の Nib を出す。
@@ -149,7 +156,7 @@ kernel の型から、各宣言の引数が **型・証明・値** のどれか�
 | --- | --- |
 | `Nat`、`zero`、`succ(n)` | `u64`、`0`、`n + 1` |
 | `Yn`、`yes`、`no` | `Bool`、`true`、`false` |
-| `List`、`Option`、`Pair`、`Unit` | Nib std の `List`、`Option`、`Pair`、`()` |
+| `List`、`Option`、`Pair`、`Unit` | Nib std の `List`、`Option`、`Pair`（証明が族として読む prelude の宣言そのもの）、`()` |
 | `Text` | `Text`（「`std/Text.taut`」の関数） |
 | `Array`、`array_of_list`、`array_get`、`array_len`、`array_to_list` | Nib std の `Array` と同名の builtin（「配列」） |
 | `Stack` と `stack_*` | Nib std の `Vec` と `vec_*`（「スタック」） |
@@ -182,7 +189,7 @@ kernel の型から、各宣言の引数が **型・証明・値** のどれか�
 
 互いに呼び合う関数が同じ fuel を分け合うときは、`mutual { fn … }` にまとめ、どれも `fuel: Nat` を
 最初の引数にして `match fuel { zero => … succ(j) => … }` と書き、呼び合いには `j` を渡す。フロント
-エンド（`crates/tauto/src/check/steps.rs`）がこの組を、要求の帰納型と答えの帰納型、要求に答える
+エンド（`crates/tauto-kernel/src/check/steps.rs`）がこの組を、要求の帰納型と答えの帰納型、要求に答える
 一つの関数 `F'read`（`fuel` についての構造的再帰）と、それを呼ぶ元の名前の関数に書き換える。
 各関数の `zero` 腕は `F'zero'f(a⃗)` という関数になり、呼び出しごとに同じ引数で渡される（答えの型が
 違うときの既定値。実際には使われない）。だから `zero` 腕は引数を使ってよい（`&mut` の関数の `zero` 腕は
@@ -215,7 +222,7 @@ Nib の `Vec`（affine）に、五つの関数を `vec_new`・`vec_push`・`vec_
 
 ## 殻
 
-殻（`src/main.nib`）は `os_args` で引数を、`os_read_file` で入力を受け、証明側の純粋な関数を一度
+殻（`src/main.taut`）は `os_args` で引数を、`os_read_file` で入力を受け、証明側の純粋な関数を一度
 呼び、結果を `os_print`・`os_eprint` で書くだけにする。殻の行数は tote ごとに数十行に収め、
 人間が目で確かめる。OS の builtin は `std/prelude/Os.taut`、テキストと数の builtin は `std/prelude/Text.taut`、`std/prelude/Num.taut`。
 
@@ -231,14 +238,14 @@ Nib の `Vec`（affine）に、五つの関数を `vec_new`・`vec_push`・`vec_
 
 構文は手書きしない。`tools/tauto-parol-gen` が `tauto.par` から作った表を、tauto のデータとして書き出し、それを読む駆動部を tauto で書く。
 
-1. 表の書き出し：`tauto_parol::nib_tables()` が `generated/parser.rs` の定数を読んで `totes/syntax/src/tables.nib` の中身を作る。書き出すもの：終端記号と非終端記号の名前、宣言された非終端記号、先読みの最大 k、読み飛ばすトークン、先読み DFA、生成規則（逆順で入っている）、字句のモードと DFA、文字クラス（全 Unicode スカラー値を区間にまとめる）、開始の非終端記号。
-2. 静的なデータのリテラルがないので、数を空白で区切った長い文字列にして tote の中で読む。
+1. 表の書き出し：`tauto_parol::syntax_tables()` が `generated/parser.rs` の定数を読んで表を作り、`scripts/generate-syntax-tables.sh` が表ごとのデータ `totes/syntax/src/tables/<name>.txt` と、それを `include_text!` で返す関数の `totes/syntax/src/tables.taut` に書く（`--check` で確かめるだけ）。書き出すもの：終端記号と非終端記号の名前、宣言された非終端記号、先読みの最大 k、読み飛ばすトークン、先読み DFA、生成規則（逆順で入っている）、字句のモードと DFA、文字クラス（全 Unicode スカラー値を区間にまとめる）、開始の非終端記号。
+2. 静的なデータのリテラルがないので、数を空白で区切った長い文字列（データのファイルの中身）にして tote の中で読む。
 3. `totes/scan` は字句の DFA の実行部分（最長一致、優先度、先読み、モードの切り替え）、`totes/llk` は LL(k) の駆動部、`totes/syntax` は表と CST の組み立て。それぞれの README に振る舞いを書く。
 4. 差分試験：同じソースから `tauto_parol::parse` と `totes/syntax` が同じ CST を作ることを確かめる。
 
-## 証明（`totes/*/proof/`、`std/`）
+## 証明（`totes/*/src/`、`std/`）
 
-tote の定理は `totes/<tote>/proof/*.taut` に置く。プログラム（`src/`）からは読まれず、
+tote の定理は `totes/<tote>/src/*.taut` に置く。プログラム（`src/`）からは読まれず、
 `crates/tauto-selfhost/tests/proofs.rs` が、どの宣言も穴も公理もなく検査を通ることを見る。
 
 ### ordmap（`std/Map.taut`、`std/MapLaws.taut`、`std/MapRemoveFloor.taut`）
@@ -270,18 +277,18 @@ tote の定理は `totes/<tote>/proof/*.taut` に置く。プログラム（`src
 ### text と unicode（`totes/text`、`totes/unicode`）
 
 文字 `c`（0x110000 未満でサロゲートでない、`text_is_char`）について、
-`text_decode(text_of_code_point(c), 0)` は `c` と符号化の全長を返す（`text_decode_of_code_point`、`totes/text/proof/utf8.taut`）。
+`text_decode(text_of_code_point(c), 0)` は `c` と符号化の全長を返す（`text_decode_of_code_point`、`totes/text/src/utf8.taut`）。
 符号化の長さ 1〜4 ごとに示し（`utf8_round_1`〜`utf8_round_4`）、`text_of_code_point` の各段
 （`text_utf8_from_128` ほか、証明側に置く。計算だけで本体に一致する）をそれに繋ぐ。
-算術は `proof/nat.taut`：`nat_add`・`nat_mul` の法則、商と余りの一意性、商の商は積での商（`nat_div_div`）。
-`totes/unicode` は Rust の `char::is_alphanumeric`・`char::is_whitespace` と同じ分類を、ASCII は証明側で決め、残りは表（`tables.nib`）の区間で引く。
+算術は `src/nat.taut`：`nat_add`・`nat_mul` の法則、商と余りの一意性、商の商は積での商（`nat_div_div`）。
+`totes/unicode` は Rust の `char::is_alphanumeric`・`char::is_whitespace` と同じ分類を、ASCII は証明側で決め、残りは表（`tables.taut` が `include_text!` で読む `tables/*.txt`）の区間で引く。
 
 * 復号（`text_decode_with`）は積を `nat_mul(64, x)` と書く。`nat_mul` は第二引数で再帰するので、
   未知の `x` に対して展開されない（`nat_mul(x, 64)` だと入れ子の深さに対して 64 の冪で項が膨らむ）。
 * カーネルは止まった `match` の腕の下まで正規化するので、大きなリテラルとの比較（`nat_le(55296, c)`）は
   その数だけ深く再帰する。`tauto check` と `proofs.rs` は深いスタック（256MB）のスレッドで検査する。
 
-### scan（`totes/scan/proof/longest.taut`）
+### scan（`totes/scan/src/longest.taut`）
 
 オートマトンの走りを `scan_walk`（状態から `m` 文字、表の行 `scan_next` で一つずつ遷移）で書き、
 走りが一文字以上で着いた状態で受理項目が成り立つ（`scan_accept`、先読みを含む）ところをその走りのトークンとする。
@@ -292,7 +299,7 @@ tote の定理は `totes/<tote>/proof/*.taut` に置く。プログラム（`src
 * 燃料（残りのバイト数）が足りることは、`m + 1` 文字の走りが `pos + m < n` を満たすことから示す
   （`scan_walk_bound`）。
 
-### llk（`totes/llk/proof/derives.taut`）
+### llk（`totes/llk/src/derives.taut`）
 
 パーサのスタック（上が先頭）を、まだ導出するものとして読む関係 `LlkDerives(t, stack, tokens)` を置く。
 非終端記号は表の生成規則のうちその記号を左辺に持つものの右辺（展開する順）と生成規則の終わりに置き換わり、
@@ -311,17 +318,17 @@ nibcheck の証明も同じ書き方をする。
 
 ### surface、syntax、fmt
 
-`totes/surface`（`crates/tauto/src/surface.rs` の移植）、`totes/syntax`、`totes/fmt` は全域性と型までで、
+`totes/surface`（`crates/tauto-surface/src/surface.rs` の移植）、`totes/syntax`、`totes/fmt` は全域性と型までで、
 正しさは差分試験で見る。
 
-## nibcheck の健全性（`totes/nibcheck/proof/`）
+## nibcheck の健全性（`totes/nibcheck/src/`）
 
 **目標。** nibcheck がエラーを報告しないプログラムは、宣言的に書いた Nib の規則（型、種、クラス、
 効果、線形性）のすべてで型が付く。検査器全体の健全性で、要所だけではない。
 
 **規則は検査器と別に書く。** [`nib.md`](nib.md)、[`semantics.md`](semantics.md)、[`ownership.md`](ownership.md)、
 [`classes.md`](classes.md) から、検査器を参照しない帰納的な関係として
-`totes/nibcheck/proof/rules_*.taut` に置く。規則そのものが仕様なので、人間が読んで確かめる対象になる。
+`totes/nibcheck/src/rules_*.taut` に置く。規則そのものが仕様なので、人間が読んで確かめる対象になる。
 検査器が文書より緩いところが見つかれば、規則に合わせて検査器を直すか、文書と規則に書き足す。
 
 **層。** 下の層の定理を上の層が使う。
@@ -343,7 +350,7 @@ nibcheck の証明も同じ書き方をする。
 **`&mut Checker`。** 状態は `Checker` 一つにまとまっている。定理は `mut1(v, c')` の形で値と最後の状態を
 語り、本体の途中で止まる式ごとに続きを最後の引数で受ける関数を置く（llk の証明と同じ）。
 
-### 層 1：合併とタグ（`proof/union_sound.taut`）
+### 層 1：合併とタグ（`src/union_sound.taut`）
 
 集合として読む（`std/Row.taut` の `Mem`）。順序と重複のなさは示していない。
 
@@ -353,9 +360,10 @@ nibcheck の証明も同じ書き方をする。
   `tagged_shape`：`ty_tagged` は新しいタグと型自身のタグを合わせて、その下の型に付ける。
 * 挿入の内側の `match`（比較の結果で分ける）は、比較の結果を最後の引数に取る関数（`ins_k`）に出して
   `refl()` で等しいことを示す。前の引数にすると `match` がそれらを抽象し、形が合わない。
-* 置換 `ty_substitute` の性質は、使う側（層 2 の総称の規則と層 3）の形が決まってから選ぶ。
+* 置換 `ty_substitute` について一般の性質は示さない。層 2 の総称の規則は置換した型をそのまま述べ、
+  層 3 は `fk_sound` の形（代入した型の種を抑える）で使う。
 
-### 層 2：`ck_unify`（`proof/unify_sound.taut`）
+### 層 2：`ck_unify`（`src/unify_sound.taut`）
 
 `TyEq` の `ok`（`tyeq_poly` の rigid な型が二つの型に出ないこと）は、検査器が `kept` に記録した使い方とする（`KeptOk`）。
 記録は終わりの置換でもう一度確かめられる（`ck_check_kept`）。
@@ -369,7 +377,7 @@ nibcheck の証明も同じ書き方をする。
 * ワイルドカードの腕は、どの構成子の代わりかを本体で名指せないので、`a`・`b` に等しい `a1`・`b1` についての
   定理にし（`rest_step_eqs`）、等式の仮定の型が腕ごとに精密化されるのを使う。
 
-### 層 2：`ck_fits`（`proof/fits_sound.taut`、規則は `proof/rules_ty.taut` の `TySub`）
+### 層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）
 
 `TySub` は等しさ、`never`、総称の右（rigid に置いた形が合い、`kept` に記録がある）と左（`bounds` の
 新しい変数で具体化した形が合う）、借用（`&mut` は `&` として、借用は値として）、複製できる値を借用として、
@@ -383,7 +391,7 @@ nibcheck の証明も同じ書き方をする。
   なり検査が終わらないので、内側を段に分けた（`ck_fits_inst_in`・`ck_fits_lend_in`・`ck_fits_untag_in`・
   `ck_fits_fn_in`）。答えは同じで、燃料を一段多く使う。
 
-### 層 2：`ck_join`（`proof/join_sound.taut`）
+### 層 2：`ck_join`（`src/join_sound.taut`）
 
 `ck_join` は二つの枝の型から一つの型を作る（同じ型、`never` でない方、`&A` と `A` なら `A`、それ以外は合併）。
 
@@ -392,7 +400,67 @@ nibcheck の証明も同じ書き方をする。
 * `&mut` の脱糖が作る形（`ck_join_my`・`ck_join_k`・`ck_jb2` など）を書き、`refl()` で元の関数と等しいことを
   一度示して、その形について示す。開いた型で `match` が止まる腕は、`opt_cases` で構成子ごとに展開する。
 
-## 証明のキャッシュ（`crates/tauto/src/check/cache.rs`）
+### 層 3：種（`src/kind_sound.taut`）
+
+`kind(T)` の式（[`ownership.md`](ownership.md)）を不等式として示す。最小解はこの不等式を満たすものの中で
+最も小さいので、`datas_kind` の答えは文書の種以上、つまり安全側になる。
+
+* `KLe(a, b)` は `kind_join(a, b) = b`。
+* `SummaryOk(d)`：どの宣言の要約（`base`・`holds`）も解である。フィールドを足しても増えず、最小の要約
+  （宣言した種、再帰なら `shared`、どのフィールドも言及しない総称）から始まっている。
+* `kind_field_le`：`SummaryOk(d)` で、`D` の総称すべてに引数があれば、`D` の各フィールドに引数を
+  代入した型の種は `kind(D(args))` 以下。`kind_declared_le`・`kind_recursive_le`・
+  `kind_unmentioned_le` も同じ形。
+* 中心は `fk_sound`。`map` が総称のちょうどそれぞれに型を与えるとき（`MapKeys`・`MapCover`）、
+  `field_kind` がフィールドについて言う種と、保持する総称の引数が `k` 以下なら、`ty_substitute` で
+  代入した型の種も `k` 以下。`ty_substitute` について使うのはこの形だけである。合併は `union_sound.taut`
+  の葉の性質、タグは `tagged_shape` を使う。
+* `field_kind` は Rust と nibcheck で同じに読む。`F(X)` は `F` と `X` の両方を見る。
+  総称の名前で書かれた引数なしの `TyNamed` は、`ty_substitute` と同じく総称として読む。nibcheck の
+  不動点の反復は、要約が増えたかを長さでなく包含で調べる。
+
+### 層 3：要約の構築（`src/summary_sound.taut`、`src/summary_state.taut`）
+
+* `datas_summarize_summary_ok`：宣言マップが整列していれば、`datas_summarize` の結果は `SummaryOk`。
+  入力の要約の正しさや、燃料が十分であることは仮定しない。
+* `summary_field`・`summary_ctors`：保持する総称は、入力の `holds` が総称の中にあれば、計算後も
+  総称の中にある。これと種の上限から、燃料切れの `data_top` は `DataOk` を満たす。
+* `summary_least`・`summary_update_floor`：宣言した種、再帰の下界、言及しない総称の条件は、
+  `data_least` が満たし、一周の更新で保たれる。
+* `summary_round_unchanged`・`summary_round_quiet`：`grew = no` で終わる一周は状態を変えず、
+  訪問した各宣言が固定点条件を満たす。`summary_map_key` は、検索できるキーが `ordmap_entries` に
+  含まれることを示す。したがって全宣言について固定点条件が得られる。
+* `ck_finish_datas_summary_ok`：宣言マップが整列していれば、`ck_finish_datas` の後の状態は
+  `CkSummaryOk`（`SummaryOk(c.datas)`）を満たす。再帰フラグの設定は整列性を保ち、宣言の診断は
+  `datas` を変更しない。
+* `ck_summary_fixed`・`ck_summary_grows`：宣言環境を保つ状態遷移は `CkSummaryOk` を保つ。
+  `ck_unify_summary_ok`・`ck_fits_summary_ok`・`ck_join_summary_ok` は、既存の保存定理を介して
+  単一化・適合判定・join についてこれを示す。
+
+### 層 3：宣言登録から要約の不変条件へ
+
+* `src/datas_frame.taut` の `CkReadFrame(c, m)` は、処理の前後で `datas` と `subst` が
+  等しいこと。`frame_bind_ok` で逐次処理をつなぎ、`frame_summary` で `CkSummaryOk` の保存に移す。
+  `ck_written_in_frame` などは、書かれた型を読む相互再帰全体についてこれを示す。
+* `src/datas_registration.taut`：フィールドとコンストラクタを読んでも宣言環境は変わらず、
+  コンストラクタ索引の登録は宣言マップを変えない。`ck_declare_data_ordered` は宣言の挿入が
+  マップの整列性を保つことを示す。prelude とプログラムの一覧について帰納し、
+  `ck_prepare_datas_summary_ok` で要約の構築につなぐ。`ck_prepare_new_summary_ok` は初期状態からの
+  定理で、整列性を外から仮定しない。効果の宣言も `CkReadFrame` を保つ。
+* `src/signature_frame.taut`：引数、戻り値、借用、`where` を読む処理、関数の登録、prelude と
+  プログラムの署名一覧の登録は `CkReadFrame` を保つ。
+* `src/classes_frame.taut`・`src/instances_frame.taut`：クラスの種注釈・メソッド・法則の診断、
+  インスタンスの頭・制約・法則・署名比較・登録について同じ保存を示し、
+  `ck_declare_classes_frame` でクラスとインスタンスの登録全体につなぐ。
+* `src/prepare_sound.taut` の `ck_prepare_fns_summary_ok`：クラス、インスタンス、prelude の関数、
+  プログラムの関数を登録しても要約は正しい。`registration_new_summary_ok` は初期状態から
+  データと呼出可能な宣言の準備を続けて行った後の `CkSummaryOk` を、追加の前提なしに示す。
+* `types_run.taut` の `ck_prepare_datas` と `ck_prepare_fns` は、`ck_run` が検査の前に行う宣言の準備で、
+  `ck_run` はこの順に呼ぶ。証明は各処理の展開との等式をカーネルで確かめている。
+
+上の保存定理は宣言環境を変えないことを示すもので、クラス解決や式の型付けの健全性の代わりにはならない。
+
+## 証明のキャッシュ（`crates/tauto-kernel/src/check/cache.rs`）
 
 一度検査を通った定理の証明は、それが依るものが変わらない限り検査し直さない（項目ごと、内容アドレス）。
 
@@ -430,3 +498,4 @@ nibcheck の証明も同じ書き方をする。
 | 3 | `u128` か多倍長の整数（カーネルのリテラルの算術のため） |
 | 4 | 静的なデータのリテラル（`const` の表、バイト列の埋め込み） |
 | 5 | 証明側の遅さが問題になったとき、kernel の primitive（`Text`、機械整数）を足すか |
+| 6 | nibcheck の健全性の残り：関数本体・トップレベルの式・最終診断を含む検査全体が `datas` を保つこと、データと関数の宣言が宣言的な規則でよく形成されていること、層 4〜8（式、クラス、効果、線形性、全体） |

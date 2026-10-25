@@ -1,0 +1,831 @@
+import "rows.taut"
+
+// The value types of `crates/tauto/src/types.rs`: `Width`, `Kind`, `Ty`, with
+// the order the derived `Ord` gives them, the text `Display` gives them, and
+// the unions and tagged types built from them, in the proof language
+// (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+
+inductive Width(): Type {
+  Width32(): Width
+  Width64(): Width
+  WidthU8(): Width
+  WidthU32(): Width
+  WidthU64(): Width
+}
+
+// How freely a value may be copied and dropped: `copy ⊑ shared ⊑ affine ⊑
+// linear`.
+inductive Kind(): Type {
+  KindCopy(): Kind
+  KindShared(): Kind
+  KindAffine(): Kind
+  KindLinear(): Kind
+}
+
+inductive Ty(): Type {
+  TyInt(w: Width): Ty
+  TyBool(): Ty
+  TyText(): Ty
+  TyUnit(): Ty
+  TyNever(): Ty
+  TyDecimal(): Ty
+  TyFloat(): Ty
+  // Parameters (a borrowed one is a `TyBorrow`), result, and the function's
+  // kind.
+  TyFn(params: List(Ty), result: Ty, kind: Kind): Ty
+  // Two or more members, flattened, sorted and without repeats.
+  TyUnion(members: List(Ty)): Ty
+  // A non-empty set of tags (sorted) on a type that is not tagged itself.
+  TyTagged(tags: List(Text), inner: Ty): Ty
+  // A declared type, or a type nothing declares.
+  TyNamed(name: Text, args: List(Ty)): Ty
+  // A type parameter inside its declaration, with its bound.
+  TyParam(name: Text, bound: Kind): Ty
+  // What an `exceeded` arm receives; `more` and `unbounded` give the type.
+  TyInfo(inner: Ty): Ty
+  // `&A` (`no`) or `&mut A` (`yes`).
+  TyBorrow(inner: Ty, mutable: Yn): Ty
+  TyVar(v: Nat): Ty
+  // `<A, B>(…) -> …`: a function that takes its type parameters at each call.
+  // Only the expansion makes one: the dictionary of a
+  // method that has generics of its own.
+  TyPoly(generics: List(Pair(Text, Kind)), inner: Ty): Ty
+  // `F(X)`: a type constructor that is not known yet (a variable, or a
+  // parameter of the declaration) applied to its last argument. It reads as
+  // `TyNamed` once the constructor is.
+  TyApp(head: Ty, arg: Ty): Ty
+}
+
+// ----- widths and kinds -----
+
+fn width_rank(w: Width) -> Nat {
+  match w -> Nat {
+    Width32 => 0
+    Width64 => 1
+    WidthU8 => 2
+    WidthU32 => 3
+    WidthU64 => 4
+  }
+}
+
+fn width_name(w: Width) -> Text {
+  match w -> Text {
+    Width32 => "i32"
+    Width64 => "i64"
+    WidthU8 => "u8"
+    WidthU32 => "u32"
+    WidthU64 => "u64"
+  }
+}
+
+fn kind_rank(k: Kind) -> Nat {
+  match k -> Nat {
+    KindCopy => 0
+    KindShared => 1
+    KindAffine => 2
+    KindLinear => 3
+  }
+}
+
+fn kind_name(k: Kind) -> Text {
+  match k -> Text {
+    KindCopy => "copy"
+    KindShared => "shared"
+    KindAffine => "affine"
+    KindLinear => "linear"
+  }
+}
+
+fn kind_parse(word: Text) -> Option(Kind) {
+  if word == "copy" {
+    Some(KindCopy)
+  } else if word == "shared" {
+    Some(KindShared)
+  } else if word == "affine" {
+    Some(KindAffine)
+  } else if word == "linear" {
+    Some(KindLinear)
+  } else {
+    None()
+  }
+}
+
+fn kind_all() -> List(Kind) {
+  Cons(KindCopy, Cons(KindShared, Cons(KindAffine, Cons(KindLinear, Nil))))
+}
+
+// The spelling `(arg)->result` of the bound of a type constructor variable.
+fn kind_ctor_word(arg: Kind, result: Kind) -> Text {
+  match arg -> Text {
+    KindCopy => match result -> Text {
+      KindCopy => "(copy)->copy"
+      KindShared => "(copy)->shared"
+      KindAffine => "(copy)->affine"
+      KindLinear => "(copy)->linear"
+    }
+    KindShared => match result -> Text {
+      KindCopy => "(shared)->copy"
+      KindShared => "(shared)->shared"
+      KindAffine => "(shared)->affine"
+      KindLinear => "(shared)->linear"
+    }
+    KindAffine => match result -> Text {
+      KindCopy => "(affine)->copy"
+      KindShared => "(affine)->shared"
+      KindAffine => "(affine)->affine"
+      KindLinear => "(affine)->linear"
+    }
+    KindLinear => match result -> Text {
+      KindCopy => "(linear)->copy"
+      KindShared => "(linear)->shared"
+      KindAffine => "(linear)->affine"
+      KindLinear => "(linear)->linear"
+    }
+  }
+}
+
+fn kind_parse_ctor_to(word: Text, arg: Kind, results: List(Kind)) -> Option(Pair(Kind, Kind)) {
+  match results -> Option(Pair(Kind, Kind)) {
+    Nil => None()
+    Cons(r, rest) => if word == kind_ctor_word(arg, r) {
+      Some(Pair { fst: arg, snd: r })
+    } else {
+      kind_parse_ctor_to(word, arg, rest)
+    }
+  }
+}
+
+fn kind_parse_ctor_from(word: Text, args: List(Kind)) -> Option(Pair(Kind, Kind)) {
+  match args -> Option(Pair(Kind, Kind)) {
+    Nil => None()
+    Cons(a, rest) => match kind_parse_ctor_to(word, a, kind_all()) -> Option(Pair(Kind, Kind)) {
+      Some(p) => Some(p)
+      None => kind_parse_ctor_from(word, rest)
+    }
+  }
+}
+
+// `(k₁)->k₂`, the bound of a type constructor variable: what it takes and
+// what it makes.
+fn kind_parse_ctor(word: Text) -> Option(Pair(Kind, Kind)) {
+  kind_parse_ctor_from(word, kind_all())
+}
+
+fn kind_join(a: Kind, b: Kind) -> Kind {
+  if kind_rank(a) >= kind_rank(b) { a } else { b }
+}
+
+// Copied and dropped freely: `copy` or `shared`.
+fn kind_dup(k: Kind) -> Yn {
+  kind_rank(k) <= 1
+}
+
+// `a` may stand where `bound` is expected; the two duplicable kinds differ
+// only in their run-time cost.
+fn kind_fits(a: Kind, bound: Kind) -> Yn {
+  kind_rank(a) <= kind_rank(bound) || (kind_dup(a) && kind_dup(bound))
+}
+
+// The kind of the continuation `k` of an operation of quantity `q`: `<=1` an
+// affine function, `1` a linear one, `ω` a duplicable one.
+fn quant_continuation_kind(q: Quant) -> Kind {
+  match q -> Kind {
+    QuantZero => KindAffine
+    QuantAtMostOne => KindAffine
+    QuantOne => KindLinear
+    QuantMany => KindShared
+    QuantDirect => KindLinear
+  }
+}
+
+// ----- the order -----
+
+fn ty_variant(t: Ty) -> Nat {
+  match t -> Nat {
+    TyInt(w) => 0
+    TyBool => 1
+    TyText => 2
+    TyUnit => 3
+    TyNever => 4
+    TyDecimal => 5
+    TyFloat => 6
+    TyFn(ps, r, k) => 7
+    TyUnion(ts) => 8
+    TyTagged(tags, x) => 9
+    TyNamed(n, args) => 10
+    TyParam(n, k) => 11
+    TyInfo(x) => 12
+    TyBorrow(x, m) => 13
+    TyVar(v) => 14
+    TyPoly(gs, x) => 15
+    TyApp(h, x) => 16
+  }
+}
+
+// `first`, or `then` when `first` is `equal`.
+fn ty_then(first: Ordering, then: Ordering) -> Ordering {
+  match first -> Ordering {
+    Equal => then
+    _ => first
+  }
+}
+
+// Lexicographic, a shorter list first when it is a prefix.
+fn cmp_text_list(a: List(Text), b: List(Text)) -> Ordering {
+  match a -> Ordering {
+    Nil => match b -> Ordering {
+      Nil => Equal
+      Cons(y, ys) => Less
+    }
+    Cons(x, xs) => match b -> Ordering {
+      Nil => Greater
+      Cons(y, ys) => ty_then(ordmap_compare_text(x, y), cmp_text_list(xs, ys))
+    }
+  }
+}
+
+// The generics of two `TyPoly`s: by name, then by kind.
+fn cmp_generics(a: List(Pair(Text, Kind)), b: List(Pair(Text, Kind))) -> Ordering {
+  match a -> Ordering {
+    Nil => match b -> Ordering {
+      Nil => Equal
+      Cons(y, ys) => Less
+    }
+    Cons(x, xs) => match b -> Ordering {
+      Nil => Greater
+      Cons(
+        y,
+        ys
+      ) => ty_then(
+        ty_then(
+          ordmap_compare_text(x.fst, y.fst),
+          ordmap_compare_nat(kind_rank(x.snd), kind_rank(y.snd))
+        ),
+        cmp_generics(xs, ys)
+      )
+    }
+  }
+}
+
+fn yn_rank(m: Yn) -> Nat {
+  match m -> Nat {
+    yes => 1
+    no => 0
+  }
+}
+
+mutual {
+  fn ty_compare_list(a: List(Ty), b: List(Ty)) -> Ordering {
+    match a -> Ordering {
+      Nil => match b -> Ordering {
+        Nil => Equal
+        Cons(y, ys) => Less
+      }
+      Cons(x, xs) => match b -> Ordering {
+        Nil => Greater
+        Cons(y, ys) => ty_then(ty_compare(x, y), ty_compare_list(xs, ys))
+      }
+    }
+  }
+
+  // The order of the derived `Ord` of `Ty`: by variant, then by the fields.
+  fn ty_compare(a: Ty, b: Ty) -> Ordering {
+    match a -> Ordering {
+      TyInt(wa) => match b -> Ordering {
+        TyInt(wb) => ordmap_compare_nat(width_rank(wa), width_rank(wb))
+        _ => ordmap_compare_nat(0, ty_variant(b))
+      }
+      TyFn(pa, ra, ka) => match b -> Ordering {
+        TyFn(
+          pb,
+          rb,
+          kb
+        ) => ty_then(
+          ty_compare_list(pa, pb),
+          ty_then(ty_compare(ra, rb), ordmap_compare_nat(kind_rank(ka), kind_rank(kb)))
+        )
+        _ => ordmap_compare_nat(7, ty_variant(b))
+      }
+      TyUnion(xa) => match b -> Ordering {
+        TyUnion(xb) => ty_compare_list(xa, xb)
+        _ => ordmap_compare_nat(8, ty_variant(b))
+      }
+      TyTagged(ta, xa) => match b -> Ordering {
+        TyTagged(tb, xb) => ty_then(cmp_text_list(ta, tb), ty_compare(xa, xb))
+        _ => ordmap_compare_nat(9, ty_variant(b))
+      }
+      TyNamed(na, xa) => match b -> Ordering {
+        TyNamed(nb, xb) => ty_then(ordmap_compare_text(na, nb), ty_compare_list(xa, xb))
+        _ => ordmap_compare_nat(10, ty_variant(b))
+      }
+      TyParam(na, ka) => match b -> Ordering {
+        TyParam(
+          nb,
+          kb
+        ) => ty_then(ordmap_compare_text(na, nb), ordmap_compare_nat(kind_rank(ka), kind_rank(kb)))
+        _ => ordmap_compare_nat(11, ty_variant(b))
+      }
+      TyInfo(xa) => match b -> Ordering {
+        TyInfo(xb) => ty_compare(xa, xb)
+        _ => ordmap_compare_nat(12, ty_variant(b))
+      }
+      TyBorrow(xa, ma) => match b -> Ordering {
+        TyBorrow(xb, mb) => ty_then(
+          ty_compare(xa, xb),
+          ordmap_compare_nat(yn_rank(ma), yn_rank(mb))
+        )
+        _ => ordmap_compare_nat(13, ty_variant(b))
+      }
+      TyVar(va) => match b -> Ordering {
+        TyVar(vb) => ordmap_compare_nat(va, vb)
+        _ => ordmap_compare_nat(14, ty_variant(b))
+      }
+      TyPoly(ga, xa) => match b -> Ordering {
+        TyPoly(gb, xb) => ty_then(cmp_generics(ga, gb), ty_compare(xa, xb))
+        _ => ordmap_compare_nat(15, ty_variant(b))
+      }
+      TyApp(ha, xa) => match b -> Ordering {
+        TyApp(hb, xb) => ty_then(ty_compare(ha, hb), ty_compare(xa, xb))
+        _ => ordmap_compare_nat(16, ty_variant(b))
+      }
+      TyBool => ordmap_compare_nat(1, ty_variant(b))
+      TyText => ordmap_compare_nat(2, ty_variant(b))
+      TyUnit => ordmap_compare_nat(3, ty_variant(b))
+      TyNever => ordmap_compare_nat(4, ty_variant(b))
+      TyDecimal => ordmap_compare_nat(5, ty_variant(b))
+      TyFloat => ordmap_compare_nat(6, ty_variant(b))
+    }
+  }
+}
+
+// ----- the text of a type (`Display`) -----
+
+fn ty_cat(parts: List(Text)) -> Text {
+  text_concat_all(parts)
+}
+
+fn ty_show_tags(tags: List(Text)) -> Text {
+  match tags -> Text {
+    Nil => ""
+    Cons(tag, rest) => ty_cat(Cons("@", Cons(tag, Cons(" ", Cons(ty_show_tags(rest), Nil)))))
+  }
+}
+
+fn ty_fn_prefix(k: Kind) -> Text {
+  match k -> Text {
+    KindAffine => "affine "
+    KindLinear => "linear "
+    _ => ""
+  }
+}
+
+fn generic_names(gs: List(Pair(Text, Kind))) -> List(Text) {
+  match gs -> List(Text) {
+    Nil => Nil
+    Cons(g, rest) => Cons(g.fst, generic_names(rest))
+  }
+}
+
+fn generic_dumps(gs: List(Pair(Text, Kind))) -> List(Text) {
+  match gs -> List(Text) {
+    Nil => Nil
+    Cons(
+      g,
+      rest
+    ) => Cons(
+      text_concat_all(Cons(g.fst, Cons(":", Cons(kind_name(g.snd), Nil)))),
+      generic_dumps(rest)
+    )
+  }
+}
+
+mutual {
+  fn ty_show_each(ts: List(Ty)) -> List(Text) {
+    match ts -> List(Text) {
+      Nil => Nil
+      Cons(t, rest) => Cons(ty_show(t), ty_show_each(rest))
+    }
+  }
+
+  fn ty_show(t: Ty) -> Text {
+    match t -> Text {
+      TyInt(w) => width_name(w)
+      TyBool => "Bool"
+      TyText => "Text"
+      TyUnit => "()"
+      TyNever => "Never"
+      TyDecimal => "Decimal"
+      TyFloat => "Float"
+      TyFn(
+        ps,
+        r,
+        k
+      ) => ty_cat(
+        Cons(
+          ty_fn_prefix(k),
+          Cons("(", Cons(text_join(ty_show_each(ps), ", "), Cons(") -> ", Cons(ty_show(r), Nil))))
+        )
+      )
+      TyUnion(ts) => text_join(ty_show_each(ts), " | ")
+      TyTagged(tags, x) => ty_cat(Cons(ty_show_tags(tags), Cons(ty_show(x), Nil)))
+      TyNamed(n, args) => match args -> Text {
+        Nil => n
+        Cons(
+          a,
+          rest
+        ) => ty_cat(Cons(n, Cons("(", Cons(text_join(ty_show_each(args), ", "), Cons(")", Nil)))))
+      }
+      TyParam(n, k) => n
+      TyInfo(x) => ty_cat(Cons("Info(", Cons(ty_show(x), Cons(")", Nil))))
+      TyBorrow(x, m) => match m -> Text {
+        yes => ty_cat(Cons("&mut ", Cons(ty_show(x), Nil)))
+        no => ty_cat(Cons("&", Cons(ty_show(x), Nil)))
+      }
+      TyVar(v) => "_"
+      TyPoly(
+        gs,
+        x
+      ) => ty_cat(
+        Cons("<", Cons(text_join(generic_names(gs), ", "), Cons(">", Cons(ty_show(x), Nil))))
+      )
+      TyApp(h, x) => ty_cat(Cons(ty_show(h), Cons("(", Cons(ty_show(x), Cons(")", Nil)))))
+    }
+  }
+}
+
+fn ty_show_list(ts: List(Ty), sep: Text) -> Text {
+  text_join(ty_show_each(ts), sep)
+}
+
+// ----- the dump of a type, with everything in it (the differential test's) -----
+
+mutual {
+  fn ty_dump_each(ts: List(Ty)) -> List(Text) {
+    match ts -> List(Text) {
+      Nil => Nil
+      Cons(t, rest) => Cons(ty_dump(t), ty_dump_each(rest))
+    }
+  }
+
+  fn ty_dump(t: Ty) -> Text {
+    match t -> Text {
+      TyInt(w) => ty_cat(Cons("Int(", Cons(width_name(w), Cons(")", Nil))))
+      TyBool => "Bool"
+      TyText => "Text"
+      TyUnit => "Unit"
+      TyNever => "Never"
+      TyDecimal => "Decimal"
+      TyFloat => "Float"
+      TyFn(
+        ps,
+        r,
+        k
+      ) => ty_cat(
+        Cons(
+          "Fn([",
+          Cons(
+            text_join(ty_dump_each(ps), ","),
+            Cons("],", Cons(ty_dump(r), Cons(",", Cons(kind_name(k), Cons(")", Nil)))))
+          )
+        )
+      )
+      TyUnion(ts) => ty_cat(
+        Cons("Union([", Cons(text_join(ty_dump_each(ts), ","), Cons("])", Nil)))
+      )
+      TyTagged(
+        tags,
+        x
+      ) => ty_cat(
+        Cons("Tagged([", Cons(text_join(tags, ","), Cons("],", Cons(ty_dump(x), Cons(")", Nil)))))
+      )
+      TyNamed(
+        n,
+        args
+      ) => ty_cat(
+        Cons(
+          "Named(",
+          Cons(n, Cons(",[", Cons(text_join(ty_dump_each(args), ","), Cons("])", Nil))))
+        )
+      )
+      TyParam(n, k) => ty_cat(
+        Cons("Param(", Cons(n, Cons(",", Cons(kind_name(k), Cons(")", Nil)))))
+      )
+      TyInfo(x) => ty_cat(Cons("Info(", Cons(ty_dump(x), Cons(")", Nil))))
+      TyBorrow(x, m) => ty_cat(
+        Cons(
+          "Borrow(",
+          Cons(
+            ty_dump(x),
+            Cons(
+              ",",
+              Cons(
+                match m -> Text {
+                  yes => "mut"
+                  no => "ref"
+                },
+                Cons(")", Nil)
+              )
+            )
+          )
+        )
+      )
+      TyVar(v) => ty_cat(Cons("Var(", Cons(text_of_nat(v), Cons(")", Nil))))
+      TyPoly(
+        gs,
+        x
+      ) => ty_cat(
+        Cons(
+          "Poly([",
+          Cons(text_join(generic_dumps(gs), ","), Cons("],", Cons(ty_dump(x), Cons(")", Nil))))
+        )
+      )
+      TyApp(
+        h,
+        x
+      ) => ty_cat(Cons("App(", Cons(ty_dump(h), Cons(",", Cons(ty_dump(x), Cons(")", Nil))))))
+    }
+  }
+}
+
+fn ty_dump_list(ts: List(Ty)) -> Text {
+  ty_cat(Cons("[", Cons(text_join(ty_dump_each(ts), ","), Cons("]", Nil))))
+}
+
+// ----- sets of tags, and unions -----
+
+// `tags` (sorted, without repeats) with `tag` in it.
+fn tags_insert(tags: List(Text), tag: Text) -> List(Text) {
+  match tags -> List(Text) {
+    Nil => Cons(tag, Nil)
+    Cons(t, rest) => match ordmap_compare_text(tag, t) -> List(Text) {
+      Less => Cons(tag, Cons(t, rest))
+      Equal => Cons(t, rest)
+      Greater => Cons(t, tags_insert(rest, tag))
+    }
+  }
+}
+
+fn tags_union_into(b: List(Text), a: List(Text)) -> List(Text) {
+  match b -> List(Text) {
+    Nil => a
+    Cons(t, rest) => tags_union_into(rest, tags_insert(a, t))
+  }
+}
+
+fn tags_union(a: List(Text), b: List(Text)) -> List(Text) {
+  tags_union_into(b, a)
+}
+
+fn tags_has(tags: List(Text), tag: Text) -> Yn {
+  match tags -> Yn {
+    Nil => no
+    Cons(t, rest) => t == tag || tags_has(rest, tag)
+  }
+}
+
+// Whether every tag of `sub` is in `tags`.
+fn tags_subset(sub: List(Text), tags: List(Text)) -> Yn {
+  match sub -> Yn {
+    Nil => yes
+    Cons(t, rest) => tags_has(tags, t) && tags_subset(rest, tags)
+  }
+}
+
+// `members` (sorted, without repeats) with `t` in it.
+fn members_insert(members: List(Ty), t: Ty) -> List(Ty) {
+  match members -> List(Ty) {
+    Nil => Cons(t, Nil)
+    Cons(m, rest) => match ty_compare(t, m) -> List(Ty) {
+      Less => Cons(t, Cons(m, rest))
+      Equal => Cons(m, rest)
+      Greater => Cons(m, members_insert(rest, t))
+    }
+  }
+}
+
+mutual {
+  fn members_add(ts: List(Ty), members: List(Ty)) -> List(Ty) {
+    match ts -> List(Ty) {
+      Nil => members
+      Cons(t, rest) => members_add(rest, members_add_one(t, t, members))
+    }
+  }
+
+  // `whole` is `t`, which its arms do not see.
+  fn members_add_one(t: Ty, whole: Ty, members: List(Ty)) -> List(Ty) {
+    match t -> List(Ty) {
+      TyUnion(inner) => members_add(inner, members)
+      TyNever => members
+      _ => members_insert(members, whole)
+    }
+  }
+}
+
+// The union of `ts`: associative, commutative, idempotent; `Never` is its
+// unit.
+fn ty_union_of(members: List(Ty)) -> Ty {
+  match members -> Ty {
+    Nil => TyNever
+    Cons(only, rest) => match rest -> Ty {
+      Nil => only
+      Cons(second, more) => TyUnion(Cons(only, Cons(second, more)))
+    }
+  }
+}
+
+fn ty_union(ts: List(Ty)) -> Ty {
+  ty_union_of(members_add(ts, Nil))
+}
+
+// Tags on a type, merged with the type's own; no tags is the type itself.
+fn ty_tagged_with(tags: List(Text), t: Ty) -> Ty {
+  match tags -> Ty {
+    Nil => t
+    Cons(tag, rest) => TyTagged(Cons(tag, rest), t)
+  }
+}
+
+fn ty_tagged(tags: List(Text), t: Ty) -> Ty {
+  match t -> Ty {
+    TyTagged(inner, x) => ty_tagged_with(tags_union(tags, inner), x)
+    _ => ty_tagged_with(tags, t)
+  }
+}
+
+// ----- the shape of a type -----
+
+// The type under a borrow.
+fn ty_unborrowed(t: Ty) -> Ty {
+  match t -> Ty {
+    TyBorrow(x, m) => ty_unborrowed(x)
+    _ => t
+  }
+}
+
+fn ty_is_borrow(t: Ty) -> Yn {
+  match t -> Yn {
+    TyBorrow(x, m) => yes
+    _ => no
+  }
+}
+
+fn ty_is_tagged(t: Ty) -> Yn {
+  match t -> Yn {
+    TyTagged(tags, x) => yes
+    _ => no
+  }
+}
+
+fn ty_is_never(t: Ty) -> Yn {
+  match t -> Yn {
+    TyNever => yes
+    _ => no
+  }
+}
+
+// ----- substitution -----
+
+fn ty_substitute_name(n: Text, map: Ordmap(Text, Ty), t: Ty) -> Ty {
+  match ordmap_get(map, n, ordmap_compare_text) -> Ty {
+    Some(x) => x
+    None => t
+  }
+}
+
+// `h(x)`: a `TyNamed` constructor takes `x` as its next argument; any other
+// head stays an application.
+fn ty_apply(h: Ty, x: Ty) -> Ty {
+  match h -> Ty {
+    TyNamed(n, args) => TyNamed(n, list_append(args, Cons(x, Nil)))
+    _ => TyApp(h, x)
+  }
+}
+
+// `map` without the generics a `TyPoly` binds.
+fn ty_map_without(gs: List(Pair(Text, Kind)), map: Ordmap(Text, Ty)) -> Ordmap(Text, Ty) {
+  match gs -> Ordmap(Text, Ty) {
+    Nil => map
+    Cons(g, rest) => ty_map_without(rest, ordmap_remove(map, g.fst, ordmap_compare_text))
+  }
+}
+
+fn ty_no_args(args: List(Ty)) -> Yn {
+  match args -> Yn {
+    Nil => yes
+    _ => no
+  }
+}
+
+mutual {
+  fn ty_map_list(ts: List(Ty), map: Ordmap(Text, Ty)) -> List(Ty) {
+    match ts -> List(Ty) {
+      Nil => Nil
+      Cons(t, rest) => Cons(ty_substitute(t, map), ty_map_list(rest, map))
+    }
+  }
+
+  // Type parameters and names without arguments replaced by what `map` has.
+  fn ty_substitute(t: Ty, map: Ordmap(Text, Ty)) -> Ty {
+    match t -> Ty {
+      TyNamed(n, args) => match ty_no_args(args) -> Ty {
+        yes => ty_substitute_name(n, map, TyNamed(n, Nil))
+        no => TyNamed(n, ty_map_list(args, map))
+      }
+      TyParam(n, k) => ty_substitute_name(n, map, TyParam(n, k))
+      TyFn(ps, r, k) => TyFn(ty_map_list(ps, map), ty_substitute(r, map), k)
+      TyUnion(ts) => ty_union(ty_map_list(ts, map))
+      TyTagged(tags, x) => ty_tagged(tags, ty_substitute(x, map))
+      TyInfo(x) => TyInfo(ty_substitute(x, map))
+      TyBorrow(x, m) => TyBorrow(ty_substitute(x, map), m)
+      TyInt(w) => TyInt(w)
+      TyBool => TyBool
+      TyText => TyText
+      TyUnit => TyUnit
+      TyNever => TyNever
+      TyDecimal => TyDecimal
+      TyFloat => TyFloat
+      TyVar(v) => TyVar(v)
+      TyApp(h, x) => ty_apply(ty_substitute(h, map), ty_substitute(x, map))
+      TyPoly(gs, x) => TyPoly(gs, ty_substitute(x, ty_map_without(gs, map)))
+    }
+  }
+}
+
+mutual {
+  fn ty_any_param(ts: List(Ty), generic: Text) -> Yn {
+    match ts -> Yn {
+      Nil => no
+      Cons(t, rest) => ty_param_in(t, generic) || ty_any_param(rest, generic)
+    }
+  }
+
+  // Whether `Ty::Param(generic)` is in the type.
+  fn ty_param_in(t: Ty, generic: Text) -> Yn {
+    match t -> Yn {
+      TyParam(n, k) => n == generic
+      TyNamed(name, args) => ty_any_param(args, generic)
+      TyFn(ps, r, k) => ty_any_param(ps, generic) || ty_param_in(r, generic)
+      TyUnion(ts) => ty_any_param(ts, generic)
+      TyTagged(tags, x) => ty_param_in(x, generic)
+      TyInfo(x) => ty_param_in(x, generic)
+      TyBorrow(x, m) => ty_param_in(x, generic)
+      _ => no
+    }
+  }
+}
+
+mutual {
+  fn ty_named_each(ts: List(Ty), out: List(Text)) -> List(Text) {
+    match ts -> List(Text) {
+      Nil => out
+      Cons(t, rest) => ty_named_each(rest, ty_named_in(t, out))
+    }
+  }
+
+  // The declarations a type names, in order.
+  fn ty_named_in(t: Ty, out: List(Text)) -> List(Text) {
+    match t -> List(Text) {
+      TyNamed(n, args) => ty_named_each(args, Cons(n, out))
+      TyUnion(ts) => ty_named_each(ts, out)
+      TyTagged(tags, x) => ty_named_in(x, out)
+      TyInfo(x) => ty_named_in(x, out)
+      TyBorrow(x, m) => ty_named_in(x, out)
+      // A function holds no value of its parameters' or result's types.
+      _ => out
+    }
+  }
+}
+
+fn cat2(a: Text, b: Text) -> Text {
+  text_concat_all(Cons(a, Cons(b, Nil)))
+}
+
+fn cat3(a: Text, b: Text, c: Text) -> Text {
+  text_concat_all(Cons(a, Cons(b, Cons(c, Nil))))
+}
+
+fn cat4(a: Text, b: Text, c: Text, d: Text) -> Text {
+  text_concat_all(Cons(a, Cons(b, Cons(c, Cons(d, Nil)))))
+}
+
+fn cat5(a: Text, b: Text, c: Text, d: Text, e: Text) -> Text {
+  text_concat_all(Cons(a, Cons(b, Cons(c, Cons(d, Cons(e, Nil))))))
+}
+
+fn ty_eq(a: Ty, b: Ty) -> Yn {
+  match ty_compare(a, b) -> Yn {
+    Equal => yes
+    _ => no
+  }
+}
+
+fn kind_eq(a: Kind, b: Kind) -> Yn {
+  kind_rank(a) == kind_rank(b)
+}
+
+fn text_list_eq(a: List(Text), b: List(Text)) -> Yn {
+  match cmp_text_list(a, b) -> Yn {
+    Equal => yes
+    _ => no
+  }
+}

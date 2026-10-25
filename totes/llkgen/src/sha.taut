@@ -1,0 +1,239 @@
+// SHA-256 of a text (FIPS 180-4), for the hash of a grammar in the table
+// file. There are no bitwise operations in Nib, so they are made of the
+// bits of the numbers.
+
+fn sh_pow2(n: u64) -> u64 {
+  var r: u64 = 1
+  var i: u64 = 0
+  while i < n {
+    r := r * 2
+    i := i + 1
+  }
+  r
+}
+
+// A bitwise operation on 32-bit numbers: `op` 0 and, 1 or, 2 xor.
+fn sh_bits(op: u64, a: u64, b: u64) -> u64 {
+  var x = a
+  var y = b
+  var place: u64 = 1
+  var out: u64 = 0
+  var i: u64 = 0
+  while i < 32 {
+    let p = mod(x, 2)
+    let q = mod(y, 2)
+    let bit = if op == 0 {
+      p * q
+    } else if op == 1 {
+      if p + q > 0 { 1 } else { 0 }
+    } else {
+      if p == q { 0 } else { 1 }
+    }
+    out := out + bit * place
+    place := place * 2
+    x := div(x, 2)
+    y := div(y, 2)
+    i := i + 1
+  }
+  out
+}
+
+fn sh_and(a: u64, b: u64) -> u64 {
+  sh_bits(0, a, b)
+}
+
+fn sh_xor(a: u64, b: u64) -> u64 {
+  sh_bits(2, a, b)
+}
+
+fn sh_not(a: u64) -> u64 {
+  4294967295 - a
+}
+
+fn sh_add(a: u64, b: u64) -> u64 {
+  mod(a + b, 4294967296)
+}
+
+fn sh_rotr(x: u64, n: u64) -> u64 {
+  div(x, sh_pow2(n)) + mod(x, sh_pow2(n)) * sh_pow2(32 - n)
+}
+
+fn sh_shr(x: u64, n: u64) -> u64 {
+  div(x, sh_pow2(n))
+}
+
+fn sh_numbers(t: Text) -> Array(u64) {
+  var out: List(u64) = Nil
+  var words = text_split(t, " ")
+  var running = true
+  while running {
+    match words {
+      Nil => {
+        running := false
+      }
+      Cons(w, rest) => {
+        out := Cons(rx_nat(w), out)
+        words := rest
+      }
+    }
+  }
+  array_of_list(text_u64_reverse(out))
+}
+
+fn sh_k() -> Array(u64) {
+  sh_numbers(
+    "1116352408 1899447441 3049323471 3921009573 961987163 1508970993 2453635748 2870763221 3624381080 310598401 607225278 1426881987 1925078388 2162078206 2614888103 3248222580 3835390401 4022224774 264347078 604807628 770255983 1249150122 1555081692 1996064986 2554220882 2821834349 2952996808 3210313671 3336571891 3584528711 113926993 338241895 666307205 773529912 1294757372 1396182291 1695183700 1986661051 2177026350 2456956037 2730485921 2820302411 3259730800 3345764771 3516065817 3600352804 4094571909 275423344 430227734 506948616 659060556 883997877 958139571 1322822218 1537002063 1747873779 1955562222 2024104815 2227730452 2361852424 2428436474 2756734187 3204031479 3329325298"
+  )
+}
+
+fn sh_h0() -> Array(u64) {
+  sh_numbers(
+    "1779033703 3144134277 1013904242 2773480762 1359893119 2600822924 528734635 1541459225"
+  )
+}
+
+fn sh_at(a: Array(u64), i: u64) -> u64 {
+  match array_get(a, i) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+// The byte `i` of the padded message of `len` bytes, `total` with the padding.
+fn sh_byte(t: Text, len: u64, total: u64, i: u64) -> u64 {
+  if i < len {
+    text_byte_value(t, i)
+  } else if i == len {
+    128
+  } else if i >= total - 8 {
+    // The length in bits, big endian.
+    let shift = (total - 1 - i) * 8
+    mod(div(len * 8, sh_pow2(shift)), 256)
+  } else {
+    0
+  }
+}
+
+fn sh_u64_at(&v: Vec(u64), i: u64) -> u64 {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sh_set(&mut v: Vec(u64), i: u64, x: u64) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := x
+    }
+    None => ()
+  }
+}
+
+fn sh_hex8(x: u64) -> Text {
+  var b = buf_new()
+  var shift: u64 = 28
+  var running = true
+  while running {
+    buf_push(
+      &mut b,
+      &text_slice_or_empty(
+        "0123456789abcdef",
+        mod(div(x, sh_pow2(shift)), 16),
+        mod(div(x, sh_pow2(shift)), 16) + 1
+      )
+    )
+    if shift == 0 {
+      running := false
+    } else {
+      shift := shift - 4
+    }
+  }
+  text_of(b)
+}
+
+// The digest of the bytes of a text, in lower case hexadecimal.
+fn sha256_hex(t: Text) -> Text {
+  let len = text_len(t)
+  let blocks = div(len + 8, 64) + 1
+  let total = blocks * 64
+  let k = sh_k()
+  var h: Vec(u64) = vec_new()
+  let h0 = sh_h0()
+  var i: u64 = 0
+  while i < 8 {
+    vec_push(&mut h, sh_at(h0, i))
+    i := i + 1
+  }
+  var block: u64 = 0
+  while block < blocks {
+    var w: Vec(u64) = vec_new()
+    var j: u64 = 0
+    while j < 16 {
+      let at = block * 64 + j * 4
+      vec_push(
+        &mut w,
+        sh_byte(
+          t,
+          len,
+          total,
+          at
+        ) * 16777216 + sh_byte(
+          t,
+          len,
+          total,
+          at + 1
+        ) * 65536 + sh_byte(t, len, total, at + 2) * 256 + sh_byte(t, len, total, at + 3)
+      )
+      j := j + 1
+    }
+    while j < 64 {
+      let w15 = sh_u64_at(&w, j - 15)
+      let w2 = sh_u64_at(&w, j - 2)
+      let s0 = sh_xor(sh_xor(sh_rotr(w15, 7), sh_rotr(w15, 18)), sh_shr(w15, 3))
+      let s1 = sh_xor(sh_xor(sh_rotr(w2, 17), sh_rotr(w2, 19)), sh_shr(w2, 10))
+      vec_push(&mut w, sh_add(sh_add(sh_u64_at(&w, j - 16), s0), sh_add(sh_u64_at(&w, j - 7), s1)))
+      j := j + 1
+    }
+    var a = sh_u64_at(&h, 0)
+    var b = sh_u64_at(&h, 1)
+    var c = sh_u64_at(&h, 2)
+    var d = sh_u64_at(&h, 3)
+    var e = sh_u64_at(&h, 4)
+    var f = sh_u64_at(&h, 5)
+    var g = sh_u64_at(&h, 6)
+    var hh = sh_u64_at(&h, 7)
+    var r: u64 = 0
+    while r < 64 {
+      let big1 = sh_xor(sh_xor(sh_rotr(e, 6), sh_rotr(e, 11)), sh_rotr(e, 25))
+      let ch = sh_xor(sh_and(e, f), sh_and(sh_not(e), g))
+      let t1 = sh_add(sh_add(sh_add(hh, big1), sh_add(ch, sh_at(k, r))), sh_u64_at(&w, r))
+      let big0 = sh_xor(sh_xor(sh_rotr(a, 2), sh_rotr(a, 13)), sh_rotr(a, 22))
+      let maj = sh_xor(sh_xor(sh_and(a, b), sh_and(a, c)), sh_and(b, c))
+      let t2 = sh_add(big0, maj)
+      hh := g
+      g := f
+      f := e
+      e := sh_add(d, t1)
+      d := c
+      c := b
+      b := a
+      a := sh_add(t1, t2)
+      r := r + 1
+    }
+    sh_set(&mut h, 0, sh_add(sh_u64_at(&h, 0), a))
+    sh_set(&mut h, 1, sh_add(sh_u64_at(&h, 1), b))
+    sh_set(&mut h, 2, sh_add(sh_u64_at(&h, 2), c))
+    sh_set(&mut h, 3, sh_add(sh_u64_at(&h, 3), d))
+    sh_set(&mut h, 4, sh_add(sh_u64_at(&h, 4), e))
+    sh_set(&mut h, 5, sh_add(sh_u64_at(&h, 5), f))
+    sh_set(&mut h, 6, sh_add(sh_u64_at(&h, 6), g))
+    sh_set(&mut h, 7, sh_add(sh_u64_at(&h, 7), hh))
+    block := block + 1
+  }
+  var out = buf_new()
+  var q: u64 = 0
+  while q < 8 {
+    buf_push(&mut out, &sh_hex8(sh_u64_at(&h, q)))
+    q := q + 1
+  }
+  text_of(out)
+}

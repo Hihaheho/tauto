@@ -1,0 +1,832 @@
+// The values a syntax makes.
+// A syntax's own types are named `<syntax>_<Name>` and made from its grammar;
+// these are the parts every one of them shares.
+
+// Where a node was written: the number is a position in the file, as written.
+// The origin of a node a macro makes is in `docs/design/macro.md`「span と由来」.
+struct SynSpan { id: u64 }
+
+// The scopes a name carries (hygiene); empty outside macros.
+struct SynCtx { scopes: List(u64) }
+
+// A token of a syntax's text, with where it is and the scopes it carries.
+struct SynToken { text: Text, span: SynSpan, ctx: SynCtx }
+
+// Why a text is not of a syntax, or what a macro objects to: the message, the
+// byte it stopped at, the terminals that would have been taken there, and the
+// code a tool shows (`macro.error` for a macro's own).
+struct SynDiag { message: Text, at: u64, expected: List(Text), code: Text }
+
+// A name with the scopes it carries.
+struct SynIdent { name: Text, ctx: SynCtx, span: SynSpan }
+
+// A binder: a name or an atom of a `Code`, and the type when written.
+enum SynBinder {
+  BName(SynIdent, Option(SynExpr))
+  BAtom(u64, Option(SynExpr))
+}
+
+// A parameter of a function type; it has a name when the result mentions it.
+struct SynParam { name: Option(SynIdent), ty: SynExpr }
+
+// An expression or a type, one constructor for each kind of term of the
+// surface syntax (`TermKind` in `crates/tauto/src/surface.rs`;
+// `crates/tauto/src/macros/syn.rs` turns each into the other). There is no
+// unread syntax: a macro cannot make it. A hole is `?name`; a tactic leaves its goals as `?arm1`, `?arm2`, …
+enum SynExpr {
+  ExVar(SynIdent)
+  ExAtom(u64, SynSpan)
+  ExNat(Text, SynSpan)
+  ExText(Text, SynSpan)
+  ExBool(Bool, SynSpan)
+  ExApp(SynExpr, List(SynExpr), SynSpan)
+  ExPi(List(SynParam), SynExpr, Option(List(Text)), SynSpan)
+  ExLam(List(SynBinder), SynExpr, SynSpan)
+  ExIf(SynExpr, SynExpr, Option(SynExpr), SynSpan)
+  ExField(SynExpr, Text, SynSpan)
+  ExBlock(List(SynStmt), SynSpan)
+  ExPerform(SynIdent, List(SynExpr), SynSpan)
+  ExHandle(SynExpr, List(SynHandler), SynSpan)
+  ExBudget(SynExpr, SynExpr, SynSpan)
+  ExMatch(SynExpr, Option(SynExpr), List(SynArm), Option(SynIdent), SynSpan)
+  ExRecord(SynIdent, List(Pair(Text, SynExpr)), SynSpan)
+  ExBorrow(Bool, SynExpr, SynSpan)
+  ExUnion(List(SynExpr), SynSpan)
+  ExTagged(Text, SynExpr, SynSpan)
+  ExExists(SynBinder, SynExpr, SynExpr, SynSpan)
+  ExFnKind(Text, SynExpr, SynSpan)
+  ExBorrowLam(List(Option(Bool)), SynExpr, SynSpan)
+  ExMacroCall(SynIdent, Text, SynSpan)
+  // A call whose argument is an expression (an untyped or a typed macro).
+  ExMacroExpr(SynIdent, SynExpr, SynSpan)
+  // `?name`: a term not written yet.
+  ExHole(Text, SynSpan)
+}
+
+enum SynPattern {
+  PtWild
+  PtBind(SynIdent)
+  PtInt(i64)
+  PtBool(Bool)
+  PtText(Text)
+  PtCtor(SynIdent, List(SynPattern))
+  PtRecord(SynIdent, List(Pair(Text, SynPattern)))
+}
+
+struct SynArm { pattern: SynPattern, guard: Option(SynExpr), goal: Option(SynExpr), body: SynExpr }
+
+enum SynHandler {
+  HReturn(SynPattern, SynExpr)
+  HOp(SynIdent, List(SynPattern), Option(SynIdent), Option(SynExpr), SynExpr)
+}
+
+struct SynFn {
+  name: SynIdent
+  generics: List(Text)
+  bounds: List(Option(Text))
+  params: List(SynIdent)
+  borrows: List(Option(Bool))
+  param_types: List(Option(SynExpr))
+  result: Option(SynExpr)
+  effects: Option(List(Text))
+  body: SynExpr
+  span: SynSpan
+}
+
+struct SynTheorem {
+  name: SynIdent
+  implicit: u64
+  params: List(Pair(SynIdent, SynExpr))
+  ty: SynExpr
+  body: Option(SynExpr)
+  span: SynSpan
+}
+
+struct SynCtor { name: SynIdent, fields: List(Pair(Option(SynIdent), SynExpr)) }
+
+// A constructor of an `inductive` family: its generics come first among `params`
+// (the first `implicit` of them), and `result` is the family applied to its indices.
+struct SynIndCtor {
+  name: SynIdent
+  implicit: u64
+  params: List(Pair(SynIdent, SynExpr))
+  result: SynExpr
+}
+
+struct SynInductive {
+  name: SynIdent
+  params: List(Pair(SynIdent, SynExpr))
+  sort: SynExpr
+  ctors: List(SynIndCtor)
+  span: SynSpan
+}
+
+struct SynData {
+  kind: Option(Text)
+  name: SynIdent
+  generics: List(Text)
+  ctors: List(SynCtor)
+  span: SynSpan
+}
+
+struct SynEffect {
+  name: SynIdent
+  generics: List(Text)
+  params: List(Option(SynExpr))
+  result: Option(SynExpr)
+  resume: Option(Text)
+  span: SynSpan
+}
+
+enum SynStmt {
+  StLet(SynIdent, Option(SynExpr), SynExpr, Bool, Bool, SynSpan)
+  StVar(SynIdent, Option(SynExpr), SynExpr, Bool, SynSpan)
+  StAssign(SynIdent, SynExpr, SynSpan)
+  StFn(SynFn)
+  StExpr(SynExpr)
+  StWhile(SynExpr, SynExpr)
+  StReturn(Option(SynExpr))
+  StTheorem(SynTheorem)
+  StDef(SynTheorem)
+  StStruct(SynData)
+  StEnum(SynData)
+  StInductive(SynInductive)
+  StEffect(SynEffect)
+  StMutual(List(SynStmt), SynSpan)
+  StMacroCall(SynIdent, Text, SynSpan)
+}
+
+// What a macro objects to (`macro_error`) and what it only remarks on
+// (`macro_warn`). An error does not return.
+effect macro_error: (d: SynDiag) -> Never resume 0
+effect macro_warn: (d: SynDiag) -> () resume 1
+
+fn syn_error(at: SynSpan, message: Text) -> Never ! {macro_error} {
+  perform macro_error(SynDiag { message: message, at: at.id, expected: Nil, code: "macro.error" })
+}
+
+fn syn_ident(t: SynToken) -> SynIdent {
+  SynIdent { name: t.text, ctx: t.ctx, span: t.span }
+}
+
+// A name that borrows the scopes of `model`: the only way to write a name the
+// caller can see (`docs/design/macro.md`「衛生（スコープ集合）」).
+fn syn_ident_like(model: SynIdent, name: Text) -> SynIdent {
+  SynIdent { name: name, ctx: model.ctx, span: model.span }
+}
+
+fn syn_all_digits(t: Text, i: u64) -> Bool {
+  if i >= text_len(t) {
+    true
+  } else {
+    match text_byte(t, i) {
+      Some(b) => if b >= 48 && b <= 57 { syn_all_digits(t, i + 1) } else { false }
+      None => false
+    }
+  }
+}
+
+// A number token as an expression; anything but digits is the macro's error.
+fn syn_nat(t: SynToken) -> SynExpr ! {macro_error, Div} {
+  if text_len(t.text) > 0 && syn_all_digits(t.text, 0) {
+    ExNat(t.text, t.span)
+  } else {
+    syn_error(t.span, concat("not a number: ", t.text))
+  }
+}
+
+// A value known when the macro runs, as syntax: the one way to carry it to the run time.
+fn syn_lift_i64(n: i64, at: SynSpan) -> SynExpr {
+  if n < 0 {
+    ExApp(
+      ExVar(SynIdent { name: "-", ctx: SynCtx { scopes: Nil }, span: at }),
+      Cons(ExNat(text_of_i64(0 - n), at), Nil),
+      at
+    )
+  } else {
+    ExNat(text_of_i64(n), at)
+  }
+}
+
+fn syn_lift_u64(n: u64, at: SynSpan) -> SynExpr { ExNat(text_of_u64(n), at) }
+fn syn_lift_text(t: Text, at: SynSpan) -> SynExpr { ExText(t, at) }
+fn syn_lift_bool(b: Bool, at: SynSpan) -> SynExpr { ExBool(b, at) }
+
+// The items of `a`, then those of `b`: what `$list` in a `quote stmts` is.
+fn syn_append<T>(a: List(T), b: List(T)) -> List(T) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, syn_append(rest, b))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Typed terms. A `Code` is what the
+// checker saw of an expression: it is made by the host, and what a macro makes
+// of it is checked again, so nothing here is trusted.
+
+// A variable of the context: its atom, the name it has, and its type.
+struct CodeBinder { atom: u64, name: Text, ty: SynExpr }
+
+// How the term uses a variable of the context: `moved`, `borrowed`,
+// `borrowed_mut` or `unused`.
+struct CodeUse { atom: u64, how: Text }
+
+// `ctx |- term : ty ! row`. `tys` holds the type of the subterms by their span.
+struct Code {
+  term: SynExpr
+  ty: SynExpr
+  row: List(Text)
+  ctx: List(CodeBinder)
+  fragment: Text
+  tys: List(Pair(u64, SynExpr))
+  usage: List(CodeUse)
+  span: SynSpan
+}
+
+// A step of a proof, `by t!(arg) -> G0 { Δ ⊢ G => p … }`. A macro whose
+// function takes a `ProofStep` is a tactic, called only after `by`. `before`
+// is the goal written, as a `Code` (its term is the goal, its context the
+// variables in scope); `arg` is what the call
+// has in its parentheses, not checked; `after` are the goals written in the
+// arms, in order, or `Nil` when a tool asks the tactic which goals it leaves.
+// The tactic makes a term of `before` with a hole `?armK` for the goal of the
+// K-th arm; each hole is under binders for the variables of its arm, by their
+// atoms (`BAtom`).
+struct ProofStep { before: Code, arg: SynExpr, after: List(StepGoal), span: SynSpan }
+
+// A goal of an arm: the variables it adds (each atom new, its type written
+// in the context of the ones before) and the goal, in the context with them.
+struct StepGoal { binders: List(CodeBinder), ty: Code }
+
+// The hole of the goal of the K-th arm, from 1.
+fn syn_hole(k: u64, at: SynSpan) -> SynExpr { ExHole(concat("arm", text_of_u64(k)), at) }
+
+// Whether two expressions are written the same, apart from where they are and
+// the scopes their names carry: what a tactic compares goals by. A name is
+// compared by its text and an atom by its number; a form with binders, by its
+// binders' names and types and its body. Only names, atoms, numerals, texts,
+// booleans, applications, function types, functions `x => …`, `∃` and holes
+// are compared; two expressions of any other form are not the same.
+fn syn_same(a: SynExpr, b: SynExpr) -> Bool {
+  match a {
+    ExVar(x) => match b {
+      ExVar(y) => x.name == y.name
+      _ => false
+    }
+    ExAtom(n, _) => match b {
+      ExAtom(m, _) => n == m
+      _ => false
+    }
+    ExNat(n, _) => match b {
+      ExNat(m, _) => n == m
+      _ => false
+    }
+    ExText(n, _) => match b {
+      ExText(m, _) => n == m
+      _ => false
+    }
+    ExBool(n, _) => match b {
+      ExBool(m, _) => n == m
+      _ => false
+    }
+    ExApp(f, xs, _) => match b {
+      ExApp(g, ys, _) => syn_same(f, g) && syn_same_all(xs, ys)
+      _ => false
+    }
+    ExPi(ps, r, _, _) => match b {
+      ExPi(qs, t, _, _) => syn_same_params(ps, qs) && syn_same(r, t)
+      _ => false
+    }
+    ExLam(bs, body, _) => match b {
+      ExLam(cs, body2, _) => syn_same_binders(bs, cs) && syn_same(body, body2)
+      _ => false
+    }
+    ExExists(x, d, body, _) => match b {
+      ExExists(
+        y,
+        d2,
+        body2,
+        _
+      ) => syn_same_binders(Cons(x, Nil), Cons(y, Nil)) && syn_same(d, d2) && syn_same(body, body2)
+      _ => false
+    }
+    ExHole(n, _) => match b {
+      ExHole(m, _) => n == m
+      _ => false
+    }
+    _ => false
+  }
+}
+
+fn syn_same_all(xs: List(SynExpr), ys: List(SynExpr)) -> Bool {
+  match xs {
+    Nil => match ys {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(x, xr) => match ys {
+      Nil => false
+      Cons(y, yr) => syn_same(x, y) && syn_same_all(xr, yr)
+    }
+  }
+}
+
+fn syn_same_name(a: Option(SynIdent), b: Option(SynIdent)) -> Bool {
+  match a {
+    None => match b {
+      None => true
+      Some(_) => false
+    }
+    Some(x) => match b {
+      None => false
+      Some(y) => x.name == y.name
+    }
+  }
+}
+
+fn syn_same_params(ps: List(SynParam), qs: List(SynParam)) -> Bool {
+  match ps {
+    Nil => match qs {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(p, pr) => match qs {
+      Nil => false
+      Cons(q, qr) => syn_same_name(p.name, q.name) && syn_same(p.ty, q.ty) && syn_same_params(
+        pr,
+        qr
+      )
+    }
+  }
+}
+
+fn syn_same_ty(a: Option(SynExpr), b: Option(SynExpr)) -> Bool {
+  match a {
+    None => match b {
+      None => true
+      Some(_) => false
+    }
+    Some(x) => match b {
+      None => false
+      Some(y) => syn_same(x, y)
+    }
+  }
+}
+
+fn syn_same_binders(bs: List(SynBinder), cs: List(SynBinder)) -> Bool {
+  match bs {
+    Nil => match cs {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(b, br) => match cs {
+      Nil => false
+      Cons(c, cr) => {
+        let same = match b {
+          BName(x, t) => match c {
+            BName(y, u) => x.name == y.name && syn_same_ty(t, u)
+            BAtom(_, _) => false
+          }
+          BAtom(n, t) => match c {
+            BAtom(m, u) => n == m && syn_same_ty(t, u)
+            BName(_, _) => false
+          }
+        }
+        same && syn_same_binders(br, cr)
+      }
+    }
+  }
+}
+
+// `a` with `z` where `a` has `l` and `b` has `r`, the two being written the same
+// elsewhere: the body of the motive that turns `b` into `a`. Only applications
+// are looked into; `None` when `a` and `b` differ otherwise.
+fn syn_abstract(a: SynExpr, b: SynExpr, l: SynExpr, r: SynExpr, z: SynExpr) -> Option(SynExpr) {
+  if syn_same(a, b) {
+    Some(a)
+  } else {
+    if syn_same(a, l) && syn_same(b, r) {
+      Some(z)
+    } else {
+      match a {
+        ExApp(f, xs, sp) => match b {
+          ExApp(g, ys, _) => match syn_abstract(f, g, l, r, z) {
+            Some(f2) => match syn_abstract_all(xs, ys, l, r, z) {
+              Some(zs) => Some(ExApp(f2, zs, sp))
+              None => None
+            }
+            None => None
+          }
+          _ => None
+        }
+        _ => None
+      }
+    }
+  }
+}
+
+fn syn_abstract_all(
+  xs: List(SynExpr),
+  ys: List(SynExpr),
+  l: SynExpr,
+  r: SynExpr,
+  z: SynExpr
+) -> Option(List(SynExpr)) {
+  match xs {
+    Nil => match ys {
+      Nil => Some(Nil)
+      Cons(_, _) => None
+    }
+    Cons(x, xr) => match ys {
+      Nil => None
+      Cons(y, yr) => match syn_abstract(x, y, l, r, z) {
+        Some(x2) => match syn_abstract_all(xr, yr, l, r, z) {
+          Some(rest) => Some(Cons(x2, rest))
+          None => None
+        }
+        None => None
+      }
+    }
+  }
+}
+
+// `e` with each `l` in it, looked for through applications, written `r`.
+fn syn_replace(e: SynExpr, l: SynExpr, r: SynExpr) -> SynExpr {
+  if syn_same(e, l) {
+    r
+  } else {
+    match e {
+      ExApp(f, xs, sp) => ExApp(syn_replace(f, l, r), syn_replace_all(xs, l, r), sp)
+      _ => e
+    }
+  }
+}
+
+fn syn_replace_all(xs: List(SynExpr), l: SynExpr, r: SynExpr) -> List(SynExpr) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(syn_replace(x, l, r), syn_replace_all(rest, l, r))
+  }
+}
+
+// Where `a` and `b` are not written the same: the smallest parts `l` of `a`
+// and `r` of `b` such that `b` is `a` with some `l` written `r`, looking through
+// applications with the same function and as many arguments. `None` when they
+// are written the same.
+fn syn_diff(a: SynExpr, b: SynExpr) -> Option(Pair(SynExpr, SynExpr)) {
+  if syn_same(a, b) {
+    None
+  } else {
+    match a {
+      ExApp(f, xs, _) => match b {
+        ExApp(g, ys, _) => if syn_same(f, g) && syn_same_length(xs, ys) {
+          match syn_diff_all(xs, ys, None) {
+            Some(d) => d
+            None => Some(Pair { fst: a, snd: b })
+          }
+        } else {
+          Some(Pair { fst: a, snd: b })
+        }
+        _ => Some(Pair { fst: a, snd: b })
+      }
+      _ => Some(Pair { fst: a, snd: b })
+    }
+  }
+}
+
+// The one difference of the arguments, as `Some(d)`, when every argument that
+// differs differs by the same `l` and `r`; `None` when they differ by several.
+fn syn_diff_all(
+  xs: List(SynExpr),
+  ys: List(SynExpr),
+  found: Option(Pair(SynExpr, SynExpr))
+) -> Option(Option(Pair(SynExpr, SynExpr))) {
+  match xs {
+    Nil => Some(found)
+    Cons(x, xr) => match ys {
+      Nil => Some(found)
+      Cons(y, yr) => match syn_diff(x, y) {
+        None => syn_diff_all(xr, yr, found)
+        Some(d) => match found {
+          None => syn_diff_all(xr, yr, Some(d))
+          Some(e) => if syn_same(d.fst, e.fst) && syn_same(d.snd, e.snd) {
+            syn_diff_all(xr, yr, found)
+          } else {
+            None
+          }
+        }
+      }
+    }
+  }
+}
+
+fn syn_same_length(xs: List(SynExpr), ys: List(SynExpr)) -> Bool {
+  match xs {
+    Nil => match ys {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(_, xr) => match ys {
+      Nil => false
+      Cons(_, yr) => syn_same_length(xr, yr)
+    }
+  }
+}
+
+// The function and the arguments of an application.
+fn syn_app_parts(e: SynExpr) -> Option(Pair(SynExpr, List(SynExpr))) {
+  match e {
+    ExApp(f, xs, _) => Some(Pair { fst: f, snd: xs })
+    _ => None
+  }
+}
+
+// The digits an expression is, when it is a number.
+fn syn_nat_text(e: SynExpr) -> Option(Text) {
+  match e {
+    ExNat(n, _) => Some(n)
+    _ => None
+  }
+}
+
+// The name an expression is, when it is one.
+fn syn_name_of(e: SynExpr) -> Option(Text) {
+  match e {
+    ExVar(x) => Some(x.name)
+    _ => None
+  }
+}
+
+// The name an expression is, with the scopes it carries, when it is one.
+fn syn_ident_of(e: SynExpr) -> Option(SynIdent) {
+  match e {
+    ExVar(x) => Some(x)
+    _ => None
+  }
+}
+
+// The `inductive` a statement is, when it is one.
+fn syn_inductive_of(s: SynStmt) -> Option(SynInductive) {
+  match s {
+    StInductive(d) => Some(d)
+    _ => None
+  }
+}
+
+// The parameters and the result of a function type.
+fn syn_pi_parts(e: SynExpr) -> Option(Pair(List(SynParam), SynExpr)) {
+  match e {
+    ExPi(ps, r, _, _) => Some(Pair { fst: ps, snd: r })
+    _ => None
+  }
+}
+
+// One step into a term; the parts are `Code` too.
+enum CodeView {
+  VAtom(u64)
+  VConst(Text)
+  VInt(Text)
+  VText(Text)
+  VBool(Bool)
+  VApp(Code, List(Code))
+  VIf(Code, Code, Option(Code))
+  VField(Code, Text)
+  // A `λ` with its first binder opened: the atom the binder is now, the binder's
+  // type, and the body in a context that has the atom.
+  VLam(u64, Code, Code)
+  VOther(Code)
+}
+
+fn code_term(c: Code) -> SynExpr { c.term }
+fn code_row(c: Code) -> List(Text) { c.row }
+fn code_ctx(c: Code) -> List(CodeBinder) { c.ctx }
+fn code_fragment(c: Code) -> Text { c.fragment }
+fn code_span(c: Code) -> SynSpan { c.span }
+fn code_usage(c: Code) -> List(CodeUse) { c.usage }
+
+// The judgement `ty : Type`, for any type `ty` in the context of `c`.
+fn code_ty_of(c: Code, ty: SynExpr) -> Code {
+  Code {
+    term: ty
+    ty: ExVar(SynIdent { name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span })
+    row: Nil
+    ctx: c.ctx
+    fragment: c.fragment
+    tys: c.tys
+    usage: c.usage
+    span: c.span
+  }
+}
+
+// The judgement `ty : Type`.
+fn code_type(c: Code) -> Code {
+  Code {
+    term: c.ty
+    ty: ExVar(SynIdent { name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span })
+    row: Nil
+    ctx: c.ctx
+    fragment: c.fragment
+    tys: c.tys
+    usage: c.usage
+    span: c.span
+  }
+}
+
+fn code_lookup(tys: List(Pair(u64, SynExpr)), id: u64, other: SynExpr) -> SynExpr {
+  match tys {
+    Nil => other
+    Cons(p, rest) => match p {
+      Pair(k, t) => if k == id { t } else { code_lookup(rest, id, other) }
+    }
+  }
+}
+
+fn syn_expr_span(e: SynExpr) -> u64 {
+  match e {
+    ExVar(i) => i.span.id
+    ExAtom(_, s) => s.id
+    ExNat(_, s) => s.id
+    ExText(_, s) => s.id
+    ExBool(_, s) => s.id
+    ExApp(_, _, s) => s.id
+    ExPi(_, _, _, s) => s.id
+    ExLam(_, _, s) => s.id
+    ExIf(_, _, _, s) => s.id
+    ExField(_, _, s) => s.id
+    ExBlock(_, s) => s.id
+    ExPerform(_, _, s) => s.id
+    ExHandle(_, _, s) => s.id
+    ExBudget(_, _, s) => s.id
+    ExMatch(_, _, _, _, s) => s.id
+    ExRecord(_, _, s) => s.id
+    ExBorrow(_, _, s) => s.id
+    ExUnion(_, s) => s.id
+    ExTagged(_, _, s) => s.id
+    ExExists(_, _, _, s) => s.id
+    ExFnKind(_, _, s) => s.id
+    ExBorrowLam(_, _, s) => s.id
+    ExMacroCall(_, _, s) => s.id
+    ExMacroExpr(_, _, s) => s.id
+    ExHole(_, s) => s.id
+  }
+}
+
+fn code_sub(c: Code, e: SynExpr) -> Code {
+  let id = syn_expr_span(e)
+  Code {
+    term: e
+    ty: code_lookup(
+      c.tys,
+      id,
+      ExVar(SynIdent { name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
+    )
+    row: c.row
+    ctx: c.ctx
+    fragment: c.fragment
+    tys: c.tys
+    usage: c.usage
+    span: SynSpan { id: id }
+  }
+}
+
+fn code_subs(c: Code, es: List(SynExpr)) -> List(Code) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => Cons(code_sub(c, e), code_subs(c, rest))
+  }
+}
+
+fn code_sub_opt(c: Code, e: Option(SynExpr)) -> Option(Code) {
+  match e {
+    None => None
+    Some(x) => Some(code_sub(c, x))
+  }
+}
+
+fn code_unknown(c: Code) -> SynExpr {
+  ExVar(SynIdent { name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
+}
+
+fn code_snoc(xs: List(CodeBinder), x: CodeBinder) -> List(CodeBinder) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(h, t) => Cons(h, code_snoc(t, x))
+  }
+}
+
+// The type of the first parameter of a function type.
+fn code_param_type(c: Code, ty: SynExpr) -> SynExpr {
+  match ty {
+    ExPi(ps, _, _, _) => match ps {
+      Cons(p, _) => p.ty
+      Nil => code_unknown(c)
+    }
+    _ => code_unknown(c)
+  }
+}
+
+// The result of a function type of one parameter.
+fn code_result_type(c: Code, ty: SynExpr) -> SynExpr {
+  match ty {
+    ExPi(ps, r, _, _) => match ps {
+      Cons(_, rest) => match rest {
+        Nil => r
+        Cons(_, _) => code_unknown(c)
+      }
+      Nil => code_unknown(c)
+    }
+    _ => code_unknown(c)
+  }
+}
+
+fn code_lam_view(c: Code, bs: List(SynBinder), body: SynExpr, sp: SynSpan) -> CodeView {
+  match bs {
+    Nil => VOther(c)
+    Cons(b, rest) => match b {
+      BAtom(_, _) => VOther(c)
+      BName(id, ann) => {
+        // Apart from the host's atoms, which count from 1; the binder's
+        // position keeps the atoms of two binders apart.
+        let atom = 1000000000 + id.span.id
+        let inner = match rest {
+          Nil => body
+          Cons(_, _) => ExLam(rest, body, sp)
+        }
+        match syn_open(inner, id.name, atom) {
+          None => VOther(c)
+          Some(opened) => {
+            let pty = match ann {
+              Some(t) => t
+              None => code_param_type(c, c.ty)
+            }
+            let binder = CodeBinder { atom: atom, name: id.name, ty: pty }
+            let ctx = code_snoc(c.ctx, binder)
+            VLam(atom, code_ty_of(c, pty), Code {
+              term: opened
+              ty: code_result_type(c, c.ty)
+              row: c.row
+              ctx: ctx
+              fragment: c.fragment
+              tys: c.tys
+              usage: c.usage
+              span: SynSpan { id: syn_expr_span(opened) }
+            })
+          }
+        }
+      }
+    }
+  }
+}
+
+// The top of a term, one step; a global is `VConst`, a variable of the context
+// an atom. What is not listed is `VOther`, the term as it is.
+fn code_view(c: Code) -> CodeView {
+  match c.term {
+    ExAtom(n, _) => VAtom(n)
+    ExVar(i) => VConst(i.name)
+    ExNat(t, _) => VInt(t)
+    ExText(t, _) => VText(t)
+    ExBool(b, _) => VBool(b)
+    ExApp(f, args, _) => VApp(code_sub(c, f), code_subs(c, args))
+    ExIf(a, b, d, _) => VIf(code_sub(c, a), code_sub(c, b), code_sub_opt(c, d))
+    ExField(e, name, _) => VField(code_sub(c, e), name)
+    ExLam(bs, body, sp) => code_lam_view(c, bs, body, sp)
+    _ => VOther(c)
+  }
+}
+
+// Reads a text as the syntax whose grammar has this hash. Each syntax gets
+// its own `<syntax>_parse` over this one.
+extern {
+  fn syn_parse<T>(syntax: Text, sha: Text, t: Text) -> Result(T, SynDiag)
+  // What fills a `$name` or a `$(e)` in an expression of a `quote`: a SynExpr
+  // as it is, a SynIdent as the variable it names.
+  fn syn_expr_of<T>(x: T) -> SynExpr
+  // The expression with the macro calls in it expanded (outside in, as the host does
+  // for the output of a macro). A macro reads an argument that holds a call, such as
+  // `lc!(`…`)`, as what the call makes by asking for it.
+  fn syn_expand(e: SynExpr) -> SynExpr
+  // The variable `name` of an expression as the atom, to open its binder; `None`
+  // when the name is written in the expression other than as a variable.
+  fn syn_open(e: SynExpr, name: Text, atom: u64) -> Option(SynExpr)
+  // Whether the atom is in the term of the `Code`, and whether the term is it.
+  fn code_mentions(c: Code, n: u64) -> Bool
+  fn code_same_atom(c: Code, n: u64) -> Bool
+  // Ask the checker: reading the
+  // declarations before the one in hand, changing nothing.
+  fn elab_whnf(c: Code) -> Code ! {elab}
+  fn elab_defeq(a: Code, b: Code) -> Bool ! {elab}
+  fn elab_check(e: SynExpr, ctx: Code, ty: Option(Code)) -> Result(Code, SynDiag) ! {elab}
+  fn elab_global(name: Text) -> Option(Code) ! {elab}
+  fn elab_resolve(id: SynIdent, ctx: Code) -> Option(Code) ! {elab}
+}
+
+// What a macro of the kernel's fragment may return instead of a bare term: the
+// term, and a proof the kernel checks that it equals the expression it
+// replaces.
+struct Proved { term: SynExpr, proof: SynExpr }
+
+// The mark of a function that reads the checker's environment (the `elab_*`
+// operations): it is allowed in a macro and nowhere else a macro may run.
+effect elab: () -> () resume 1

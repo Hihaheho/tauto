@@ -1,0 +1,43 @@
+// The data every program sees before its own declarations: `Option`,
+// `List`, `Pair`, `Ordering` and `Result`, and the `fail` effect with
+// `raise` and `catch` between it and a `Result`.
+
+enum Option<A> {
+  None
+  Some(A)
+}
+
+enum List<A> {
+  Nil
+  Cons(A, List(A))
+}
+
+struct Pair<A, B> { fst: A, snd: B }
+
+enum Ordering {
+  Less
+  Equal
+  Greater
+}
+
+enum Result<T, E> {
+  Ok(T)
+  Err(E)
+}
+
+effect fail<E>: (e: E) -> Never resume 0
+
+// A Result as an effect: an `Err` performs `fail(E)` and does not return.
+fn raise<T, E>(r: Result(T, E)) -> T ! {fail} {
+  match r {
+    Ok(v) => v
+    Err(e) => perform fail(e)
+  }
+}
+
+// The effect as a Result again: catches the `fail(E)` of `body`.
+fn catch<T, E, e>(&body: () -> T ! {fail | e}) -> Result(T, E) ! {|e} {
+  handle { Ok(body()) } with {
+    fail(x) => Err(x)
+  }
+}

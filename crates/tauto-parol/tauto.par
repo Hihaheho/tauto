@@ -65,7 +65,9 @@ Stmt: [ Attribute ] OtherStmt ;
 // `#[mode!(infer(in, in, out)) => fn infer, theorem infer_sound]` before a declaration: the macro is given the
 // declaration and makes the statements that replace it; what follows `=>` is the complete list (kind and
 // name) of the declarations it makes besides the one it was given.
-Attribute: AttrOpen MacroCall [ FatArrow Generated { Comma Generated } ] AttrClose Nl ;
+Attribute: AttrOpen MacroCall [ Generates ] AttrClose Nl ;
+// `=> fn infer, theorem infer_sound`: the complete list of what a declaration makes besides itself. A line may end at a comma.
+Generates: FatArrow [ Nl ] Generated { Comma [ Nl ] Generated } ;
 Generated: GeneratedKind Ident ;
 GeneratedKind: KwFn | KwTheorem | KwDef | KwInductive | KwStruct | KwEnum ;
 AttrOpen: <INITIAL, InBrace>/#\[/ ;
@@ -174,7 +176,8 @@ BraceTerm: LBrace Gap Expr Gap RBrace ;
 FnType: LParen [ FnTypeParam { Comma FnTypeParam } ] RParen [ ThinArrow ReturnType | EffectRow ] ;
 FnTypeParam: Type [ Colon Type ] ;
 
-Expr: Or [ FatArrow Gap Expr ] ;
+// After `=>`, a list of kinds and names is not a lambda's body: it is what a macro call statement or a `decreasing_by` makes.
+Expr: Or [ FatArrow Gap ( Expr | Generated { Comma Generated } ) ] ;
 Or: And { OrOp Gap And } ;
 OrOp: PipePipe ;
 And: Compare { AndOp Gap Compare } ;
@@ -455,7 +458,7 @@ MacroBlock6: MacroBlockStart6 { MacroChunk | MacroTicks5 } MacroBlockEnd6 ;
 // `syntax math = ```par … ``` `, or `inductive syntax math = …` (which also makes the proof side's `inductive` types): a syntax's grammar, in a block named `par`
 // (the reader checks the name). Contextual, so `syntax` stays a name elsewhere.
 KwSyntax: <INITIAL, InBrace>/syntax/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
-SyntaxDecl: [KwInductiveSyntax] KwSyntax Ident Eq MacroBlock ;
+SyntaxDecl: [KwInductiveSyntax] KwSyntax Ident [ Generates [ Nl ] ] Eq MacroBlock ;
 // `macro math = math_expand`: registers a function as a macro.
 KwMacro: <INITIAL, InBrace>/macro/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
 MacroDecl: KwMacro Ident Eq Ident ;
@@ -499,7 +502,7 @@ DefDecl: KwDef Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon 
 AxiomDecl: KwAxiom Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon Type ;
 // An inductive family, possibly indexed and living in `Prop`:
 // `inductive Typing(g: Ctx, t: Term, a: Term): Prop { var(i: Nat): Typing(g, t, a) }`
-InductiveDecl: KwInductive Ident LParen [ Param { Comma Param } ] RParen Colon Type OpenBrace Constructors RBrace ;
+InductiveDecl: KwInductive Ident LParen [ Param { Comma Param } ] RParen Colon Type [ Generates ] OpenBrace Constructors RBrace ;
 Constructors: { MemberSep } [ Constructor ConstructorsTail ] ;
 ConstructorsTail: [ MemberSep { MemberSep } [ Constructor ConstructorsTail ] ] ;
 // A constructor's generics are fields a call may leave out, as a theorem's:

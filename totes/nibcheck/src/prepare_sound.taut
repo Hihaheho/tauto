@@ -1,0 +1,221 @@
+import "instances_frame.taut"
+
+// All callable declarations preserve the already computed data summaries.
+
+fn registration_fns(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn)
+) -> Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    List(SurfaceFn),
+    List(Pair(SurfaceFn, Scheme)),
+    (
+      synthesized: List(SurfaceFn),
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      List(Pair(SurfaceFn, Scheme)),
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => frame_bind(
+        List(Pair(SurfaceFn, Scheme)),
+        List(Pair(SurfaceFn, Scheme)),
+        (
+          fns: List(Pair(SurfaceFn, Scheme)),
+          c3: Checker
+        ) => mut1(list_append(fns, ck_synthesized_schemes(synthesized, c3)), c3),
+        ck_program_decls(program, c2)
+      ),
+      ck_prelude_fns(prelude, c1, own)
+    ),
+    ck_declare_classes(c, program)
+  )
+}
+
+theorem registration_fns_frame(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn)
+): CkReadFrame(c, registration_fns(c, prelude, program, own)) {
+  frame_bind_ok(
+    List(SurfaceFn),
+    List(Pair(SurfaceFn, Scheme)),
+    c,
+    (
+      synthesized: List(SurfaceFn),
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      List(Pair(SurfaceFn, Scheme)),
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => frame_bind(
+        List(Pair(SurfaceFn, Scheme)),
+        List(Pair(SurfaceFn, Scheme)),
+        (
+          fns: List(Pair(SurfaceFn, Scheme)),
+          c3: Checker
+        ) => mut1(list_append(fns, ck_synthesized_schemes(synthesized, c3)), c3),
+        ck_program_decls(program, c2)
+      ),
+      ck_prelude_fns(prelude, c1, own)
+    ),
+    ck_declare_classes(c, program),
+    ck_declare_classes_frame(c, program),
+    synthesized => c1 => frame_bind_ok(
+      Unit,
+      List(Pair(SurfaceFn, Scheme)),
+      c1,
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => frame_bind(
+        List(Pair(SurfaceFn, Scheme)),
+        List(Pair(SurfaceFn, Scheme)),
+        (
+          fns: List(Pair(SurfaceFn, Scheme)),
+          c3: Checker
+        ) => mut1(list_append(fns, ck_synthesized_schemes(synthesized, c3)), c3),
+        ck_program_decls(program, c2)
+      ),
+      ck_prelude_fns(prelude, c1, own),
+      ck_prelude_fns_frame(prelude, c1, own),
+      ignored => c2 => frame_bind_ok(
+        List(Pair(SurfaceFn, Scheme)),
+        List(Pair(SurfaceFn, Scheme)),
+        c2,
+        (
+          fns: List(Pair(SurfaceFn, Scheme)),
+          c3: Checker
+        ) => mut1(list_append(fns, ck_synthesized_schemes(synthesized, c3)), c3),
+        ck_program_decls(program, c2),
+        ck_program_decls_frame(program, c2),
+        fns => c3 => refl()
+      )
+    )
+  )
+}
+
+theorem registration_fns_unf(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  ck_prepare_fns(c, prelude, program, own),
+  registration_fns(c, prelude, program, own)
+) { refl() }
+
+theorem ck_prepare_fns_frame(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn)
+): CkReadFrame(
+  c,
+  ck_prepare_fns(c, prelude, program, own)
+) { Eq_subst(
+  (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkReadFrame(c, z),
+  Eq_sym(registration_fns_unf(c, prelude, program, own)),
+  registration_fns_frame(c, prelude, program, own)
+) }
+
+theorem ck_prepare_fns_summary_ok(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn),
+  ok: CkSummaryOk(c)
+): CkSummaryOk(ck_st(ck_prepare_fns(c, prelude, program, own))) {
+  frame_summary(
+    c,
+    ck_prepare_fns(c, prelude, program, own),
+    ck_prepare_fns_frame(c, prelude, program, own),
+    ok
+  )
+}
+fn registration_after_datas(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn)
+) -> Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Unit,
+    List(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
+    ck_prepare_datas(c, prelude, program, own)
+  )
+}
+theorem registration_after_datas_ok(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn),
+  m: Mut1(Unit, Checker),
+  ok: CkSummaryOk(ck_st(m))
+): CkSummaryOk(
+  ck_st(
+    frame_bind(
+      Unit,
+      List(Pair(SurfaceFn, Scheme)),
+      (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
+      m
+    )
+  )
+) {
+  match m -> CkSummaryOk(
+    ck_st(
+      frame_bind(
+        Unit,
+        List(Pair(SurfaceFn, Scheme)),
+        (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
+        m
+      )
+    )
+  ) {
+    mut1(v, next) => ck_prepare_fns_summary_ok(next, prelude, program, own, ok)
+  }
+}
+theorem registration_all_summary_ok(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn),
+  ordered: CkDatasOrdered(c)
+): CkSummaryOk(ck_st(registration_after_datas(c, prelude, program, own))) {
+  registration_after_datas_ok(
+    prelude,
+    program,
+    own,
+    ck_prepare_datas(c, prelude, program, own),
+    ck_prepare_datas_summary_ok(c, prelude, program, own, ordered)
+  )
+}
+theorem registration_new_summary_ok(
+  steps: Nat,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): CkSummaryOk(
+  ck_st(
+    registration_after_datas(
+      checker_new(steps),
+      prelude,
+      program,
+      types_own(program, ordmap_empty())
+    )
+  )
+) {
+  registration_all_summary_ok(
+    checker_new(steps),
+    prelude,
+    program,
+    types_own(program, ordmap_empty()),
+    checker_new_datas_ordered(steps)
+  )
+}

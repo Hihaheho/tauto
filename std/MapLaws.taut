@@ -117,7 +117,7 @@ fn ordmap_list_get<K, V>(es: List(Pair(K, V)), k: K, cmp: (K, K) -> Ordering) ->
   match es -> Option(V) {
     Nil => None
     Cons(e, rest) => match e -> Option(V) {
-      pair(ek, ev) => match cmp(k, ek) -> Option(V) {
+      Pair { fst: ek, snd: ev } => match cmp(k, ek) -> Option(V) {
         Less => ordmap_list_get(rest, k, cmp)
         Equal => Some(ev)
         Greater => ordmap_list_get(rest, k, cmp)
@@ -134,12 +134,12 @@ fn ordmap_list_insert<K, V>(
   cmp: (K, K) -> Ordering
 ) -> List(Pair(K, V)) {
   match es -> List(Pair(K, V)) {
-    Nil => Cons(pair(k, v), Nil)
+    Nil => Cons(Pair { fst: k, snd: v }, Nil)
     Cons(e, rest) => match e -> List(Pair(K, V)) {
-      pair(ek, ev) => match cmp(k, ek) -> List(Pair(K, V)) {
-        Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
-        Equal => Cons(pair(k, v), rest)
-        Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+      Pair { fst: ek, snd: ev } => match cmp(k, ek) -> List(Pair(K, V)) {
+        Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: ek, snd: ev }, rest))
+        Equal => Cons(Pair { fst: k, snd: v }, rest)
+        Greater => Cons(Pair { fst: ek, snd: ev }, ordmap_list_insert(rest, k, v, cmp))
       }
     }
   }
@@ -150,7 +150,7 @@ fn ordmap_keys<K, V>(es: List(Pair(K, V)), k: K, o: Ordering, cmp: (K, K) -> Ord
   match es -> Prop {
     Nil => True
     Cons(e, rest) => match e -> Prop {
-      pair(ek, ev) => And(Eq(Ordering, cmp(k, ek), o), ordmap_keys(rest, k, o, cmp))
+      Pair { fst: ek, snd: ev } => And(Eq(Ordering, cmp(k, ek), o), ordmap_keys(rest, k, o, cmp))
     }
   }
 }
@@ -160,7 +160,7 @@ fn ordmap_sorted<K, V>(es: List(Pair(K, V)), cmp: (K, K) -> Ordering) -> Prop {
   match es -> Prop {
     Nil => True
     Cons(e, rest) => match e -> Prop {
-      pair(ek, ev) => And(ordmap_keys(rest, ek, Less, cmp), ordmap_sorted(rest, cmp))
+      Pair { fst: ek, snd: ev } => And(ordmap_keys(rest, ek, Less, cmp), ordmap_sorted(rest, cmp))
     }
   }
 }
@@ -175,7 +175,7 @@ theorem ordmap_list_get_equal<K: Type, V: Type>(
   k: K,
   cmp: (K, K) -> Ordering,
   e: Eq(Ordering, cmp(k, ek), Equal)
-): Eq(Option(V), ordmap_list_get(Cons(pair(ek, ev), rest), k, cmp), Some(ev)) {
+): Eq(Option(V), ordmap_list_get(Cons(Pair { fst: ek, snd: ev }, rest), k, cmp), Some(ev)) {
   ordering_cases(
     (x: Ordering) => Eq(Option(V), match x -> Option(V) {
       Less => ordmap_list_get(rest, k, cmp)
@@ -198,7 +198,11 @@ theorem ordmap_list_get_skip<K: Type, V: Type>(
   k: K,
   cmp: (K, K) -> Ordering,
   e: Eq(Ordering, cmp(k, ek), o)
-): Eq(Option(V), ordmap_list_get(Cons(pair(ek, ev), rest), k, cmp), ordmap_list_get(rest, k, cmp)) {
+): Eq(
+  Option(V),
+  ordmap_list_get(Cons(Pair { fst: ek, snd: ev }, rest), k, cmp),
+  ordmap_list_get(rest, k, cmp)
+) {
   ordering_cases(
     (x: Ordering) => Eq(Option(V), match x -> Option(V) {
       Less => ordmap_list_get(rest, k, cmp)
@@ -222,15 +226,15 @@ theorem ordmap_list_insert_less<K: Type, V: Type>(
   e: Eq(Ordering, cmp(k, ek), Less)
 ): Eq(
   List(Pair(K, V)),
-  ordmap_list_insert(Cons(pair(ek, ev), rest), k, v, cmp),
-  Cons(pair(k, v), Cons(pair(ek, ev), rest))
+  ordmap_list_insert(Cons(Pair { fst: ek, snd: ev }, rest), k, v, cmp),
+  Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: ek, snd: ev }, rest))
 ) {
   ordering_cases(
     (x: Ordering) => Eq(List(Pair(K, V)), match x -> List(Pair(K, V)) {
-      Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
-      Equal => Cons(pair(k, v), rest)
-      Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
-    }, Cons(pair(k, v), Cons(pair(ek, ev), rest))),
+      Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: ek, snd: ev }, rest))
+      Equal => Cons(Pair { fst: k, snd: v }, rest)
+      Greater => Cons(Pair { fst: ek, snd: ev }, ordmap_list_insert(rest, k, v, cmp))
+    }, Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: ek, snd: ev }, rest))),
     cmp(k, ek),
     (h: Eq(Ordering, cmp(k, ek), Less)) => refl(),
     (h: Eq(Ordering, cmp(k, ek), Equal)) => False_elim(equal_ne_less(Eq_trans(Eq_sym(h), e))),
@@ -248,15 +252,15 @@ theorem ordmap_list_insert_equal<K: Type, V: Type>(
   e: Eq(Ordering, cmp(k, ek), Equal)
 ): Eq(
   List(Pair(K, V)),
-  ordmap_list_insert(Cons(pair(ek, ev), rest), k, v, cmp),
-  Cons(pair(k, v), rest)
+  ordmap_list_insert(Cons(Pair { fst: ek, snd: ev }, rest), k, v, cmp),
+  Cons(Pair { fst: k, snd: v }, rest)
 ) {
   ordering_cases(
     (x: Ordering) => Eq(List(Pair(K, V)), match x -> List(Pair(K, V)) {
-      Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
-      Equal => Cons(pair(k, v), rest)
-      Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
-    }, Cons(pair(k, v), rest)),
+      Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: ek, snd: ev }, rest))
+      Equal => Cons(Pair { fst: k, snd: v }, rest)
+      Greater => Cons(Pair { fst: ek, snd: ev }, ordmap_list_insert(rest, k, v, cmp))
+    }, Cons(Pair { fst: k, snd: v }, rest)),
     cmp(k, ek),
     (h: Eq(Ordering, cmp(k, ek), Less)) => False_elim(less_ne_equal(Eq_trans(Eq_sym(h), e))),
     (h: Eq(Ordering, cmp(k, ek), Equal)) => refl(),
@@ -274,15 +278,15 @@ theorem ordmap_list_insert_greater<K: Type, V: Type>(
   e: Eq(Ordering, cmp(k, ek), Greater)
 ): Eq(
   List(Pair(K, V)),
-  ordmap_list_insert(Cons(pair(ek, ev), rest), k, v, cmp),
-  Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
+  ordmap_list_insert(Cons(Pair { fst: ek, snd: ev }, rest), k, v, cmp),
+  Cons(Pair { fst: ek, snd: ev }, ordmap_list_insert(rest, k, v, cmp))
 ) {
   ordering_cases(
     (x: Ordering) => Eq(List(Pair(K, V)), match x -> List(Pair(K, V)) {
-      Less => Cons(pair(k, v), Cons(pair(ek, ev), rest))
-      Equal => Cons(pair(k, v), rest)
-      Greater => Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))
-    }, Cons(pair(ek, ev), ordmap_list_insert(rest, k, v, cmp))),
+      Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: ek, snd: ev }, rest))
+      Equal => Cons(Pair { fst: k, snd: v }, rest)
+      Greater => Cons(Pair { fst: ek, snd: ev }, ordmap_list_insert(rest, k, v, cmp))
+    }, Cons(Pair { fst: ek, snd: ev }, ordmap_list_insert(rest, k, v, cmp))),
     cmp(k, ek),
     (h: Eq(Ordering, cmp(k, ek), Less)) => False_elim(less_ne_greater(Eq_trans(Eq_sym(h), e))),
     (h: Eq(Ordering, cmp(k, ek), Equal)) => False_elim(equal_ne_greater(Eq_trans(Eq_sym(h), e))),
@@ -309,9 +313,11 @@ theorem ordmap_entries_append<K: Type, V: Type>(
       h
     ) => Eq_trans(
       Eq_trans(
-        ordmap_entries_append(l, Cons(pair(k, v), ordmap_tree_entries(r, d))),
+        ordmap_entries_append(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d))),
         Eq_congr(
-          (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), Cons(pair(k, v), z)),
+          (
+            z: List(Pair(K, V))
+          ) => list_append(ordmap_tree_entries(l, Nil), Cons(Pair { fst: k, snd: v }, z)),
           ordmap_entries_append(r, d)
         )
       ),
@@ -319,11 +325,11 @@ theorem ordmap_entries_append<K: Type, V: Type>(
         Eq_trans(
           Eq_congr(
             (z: List(Pair(K, V))) => list_append(z, d),
-            ordmap_entries_append(l, Cons(pair(k, v), ordmap_tree_entries(r, Nil)))
+            ordmap_entries_append(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, Nil)))
           ),
           list_append_assoc(
             ordmap_tree_entries(l, Nil),
-            Cons(pair(k, v), ordmap_tree_entries(r, Nil)),
+            Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, Nil)),
             d
           )
         )
@@ -343,10 +349,10 @@ theorem ordmap_keys_append_left<K: Type, V: Type>(
   match a -> ordmap_keys(a, x, o, cmp) {
     Nil => trivial()
     Cons(e, rest) => match e {
-      pair(
-        ek,
-        ev
-      ) => and_intro(and_left(h), ordmap_keys_append_left(rest, b, x, o, cmp, and_right(h)))
+      Pair { fst: ek, snd: ev } => and_intro(
+        and_left(h),
+        ordmap_keys_append_left(rest, b, x, o, cmp, and_right(h))
+      )
     }
   }
 }
@@ -362,7 +368,7 @@ theorem ordmap_keys_append_right<K: Type, V: Type>(
   match a -> ordmap_keys(b, x, o, cmp) {
     Nil => h
     Cons(e, rest) => match e {
-      pair(ek, ev) => ordmap_keys_append_right(rest, b, x, o, cmp, and_right(h))
+      Pair { fst: ek, snd: ev } => ordmap_keys_append_right(rest, b, x, o, cmp, and_right(h))
     }
   }
 }
@@ -379,10 +385,7 @@ theorem ordmap_keys_less_trans<K: Type, V: Type>(
   match ys -> ordmap_keys(ys, b, Less, cmp) {
     Nil => trivial()
     Cons(y, rest) => match y {
-      pair(
-        yk,
-        yv
-      ) => and_intro(
+      Pair { fst: yk, snd: yv } => and_intro(
         ordmap_law_less_trans(cmp, w, b, a, yk, e, and_left(h)),
         ordmap_keys_less_trans(cmp, w, rest, a, b, e, and_right(h))
       )
@@ -402,10 +405,7 @@ theorem ordmap_keys_greater_trans<K: Type, V: Type>(
   match ys -> ordmap_keys(ys, b, Greater, cmp) {
     Nil => trivial()
     Cons(y, rest) => match y {
-      pair(
-        yk,
-        yv
-      ) => and_intro(
+      Pair { fst: yk, snd: yv } => and_intro(
         ordmap_law_greater_trans(cmp, w, b, a, yk, e, and_left(h)),
         ordmap_keys_greater_trans(cmp, w, rest, a, b, e, and_right(h))
       )
@@ -434,7 +434,7 @@ theorem ordmap_sorted_split<K: Type, V: Type>(
   nk: K,
   nv: V,
   ys: List(Pair(K, V)),
-  h: ordmap_sorted(list_append(xs, Cons(pair(nk, nv), ys)), cmp)
+  h: ordmap_sorted(list_append(xs, Cons(Pair { fst: nk, snd: nv }, ys)), cmp)
 ): And(
   ordmap_keys(xs, nk, Greater, cmp),
   And(ordmap_sorted(xs, cmp), And(ordmap_keys(ys, nk, Less, cmp), ordmap_sorted(ys, cmp)))
@@ -445,10 +445,7 @@ theorem ordmap_sorted_split<K: Type, V: Type>(
   ) {
     Nil => and_intro(trivial(), and_intro(trivial(), h))
     Cons(x, rest) => match x {
-      pair(
-        xk,
-        xv
-      ) => and_intro(
+      Pair { fst: xk, snd: xv } => and_intro(
         and_intro(
           ordmap_law_flip_less(
             cmp,
@@ -456,14 +453,28 @@ theorem ordmap_sorted_split<K: Type, V: Type>(
             xk,
             nk,
             and_left(
-              ordmap_keys_append_right(rest, Cons(pair(nk, nv), ys), xk, Less, cmp, and_left(h))
+              ordmap_keys_append_right(
+                rest,
+                Cons(Pair { fst: nk, snd: nv }, ys),
+                xk,
+                Less,
+                cmp,
+                and_left(h)
+              )
             )
           ),
           and_left(ordmap_sorted_split(cmp, w, rest, nk, nv, ys, and_right(h)))
         ),
         and_intro(
           and_intro(
-            ordmap_keys_append_left(rest, Cons(pair(nk, nv), ys), xk, Less, cmp, and_left(h)),
+            ordmap_keys_append_left(
+              rest,
+              Cons(Pair { fst: nk, snd: nv }, ys),
+              xk,
+              Less,
+              cmp,
+              and_left(h)
+            ),
             and_left(and_right(ordmap_sorted_split(cmp, w, rest, nk, nv, ys, and_right(h))))
           ),
           and_right(and_right(ordmap_sorted_split(cmp, w, rest, nk, nv, ys, and_right(h))))
@@ -485,10 +496,7 @@ theorem ordmap_list_get_keys_none<K: Type, V: Type>(
   match ys -> Eq(Option(V), ordmap_list_get(ys, k, cmp), None) {
     Nil => refl()
     Cons(y, rest) => match y {
-      pair(
-        yk,
-        yv
-      ) => Eq_trans(
+      Pair { fst: yk, snd: yv } => Eq_trans(
         ordmap_list_get_skip(o, ne, yk, yv, rest, k, cmp, and_left(h)),
         ordmap_list_get_keys_none(k, o, ne, rest, cmp, and_right(h))
       )
@@ -510,7 +518,7 @@ theorem ordmap_list_get_append_none<K: Type, V: Type>(
   ) {
     Nil => n
     Cons(x, rest) => match x {
-      pair(xk, xv) => ordering_cases(
+      Pair { fst: xk, snd: xv } => ordering_cases(
         (c: Ordering) => Eq(Option(V), match c -> Option(V) {
           Less => ordmap_list_get(list_append(rest, ys), k, cmp)
           Equal => Some(xv)
@@ -545,10 +553,7 @@ theorem ordmap_list_get_append_skip<K: Type, V: Type>(
   ) {
     Nil => refl()
     Cons(x, rest) => match x {
-      pair(
-        xk,
-        xv
-      ) => Eq_trans(
+      Pair { fst: xk, snd: xv } => Eq_trans(
         ordmap_list_get_skip(o, ne, xk, xv, list_append(rest, ys), k, cmp, and_left(h)),
         ordmap_list_get_append_skip(o, ne, rest, ys, k, cmp, and_right(h))
       )
@@ -566,8 +571,8 @@ theorem ordmap_list_get_cons_congr<K: Type, V: Type>(
   e: Eq(Option(V), ordmap_list_get(a, j, cmp), ordmap_list_get(b, j, cmp))
 ): Eq(
   Option(V),
-  ordmap_list_get(Cons(pair(xk, xv), a), j, cmp),
-  ordmap_list_get(Cons(pair(xk, xv), b), j, cmp)
+  ordmap_list_get(Cons(Pair { fst: xk, snd: xv }, a), j, cmp),
+  ordmap_list_get(Cons(Pair { fst: xk, snd: xv }, b), j, cmp)
 ) {
   ordering_cases(
     (c: Ordering) => Eq(Option(V), match c -> Option(V) {
@@ -599,34 +604,34 @@ theorem ordmap_list_insert_append_less<K: Type, V: Type>(
   e: Eq(Ordering, cmp(k, nk), Less)
 ): Eq(
   List(Pair(K, V)),
-  ordmap_list_insert(list_append(xs, Cons(pair(nk, nv), ys)), k, v, cmp),
-  list_append(ordmap_list_insert(xs, k, v, cmp), Cons(pair(nk, nv), ys))
+  ordmap_list_insert(list_append(xs, Cons(Pair { fst: nk, snd: nv }, ys)), k, v, cmp),
+  list_append(ordmap_list_insert(xs, k, v, cmp), Cons(Pair { fst: nk, snd: nv }, ys))
 ) {
   match xs -> Eq(
     List(Pair(K, V)),
-    ordmap_list_insert(list_append(xs, Cons(pair(nk, nv), ys)), k, v, cmp),
-    list_append(ordmap_list_insert(xs, k, v, cmp), Cons(pair(nk, nv), ys))
+    ordmap_list_insert(list_append(xs, Cons(Pair { fst: nk, snd: nv }, ys)), k, v, cmp),
+    list_append(ordmap_list_insert(xs, k, v, cmp), Cons(Pair { fst: nk, snd: nv }, ys))
   ) {
     Nil => ordmap_list_insert_less(nk, nv, ys, k, v, cmp, e)
     Cons(x, rest) => match x {
-      pair(xk, xv) => ordering_cases(
+      Pair { fst: xk, snd: xv } => ordering_cases(
         (c: Ordering) => Eq(List(Pair(K, V)), match c -> List(Pair(K, V)) {
-          Less => Cons(pair(k, v), Cons(pair(xk, xv), list_append(rest, Cons(pair(nk, nv), ys))))
-          Equal => Cons(pair(k, v), list_append(rest, Cons(pair(nk, nv), ys)))
+          Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: xk, snd: xv }, list_append(rest, Cons(Pair { fst: nk, snd: nv }, ys))))
+          Equal => Cons(Pair { fst: k, snd: v }, list_append(rest, Cons(Pair { fst: nk, snd: nv }, ys)))
           Greater => Cons(
-            pair(xk, xv),
-            ordmap_list_insert(list_append(rest, Cons(pair(nk, nv), ys)), k, v, cmp)
+            Pair { fst: xk, snd: xv },
+            ordmap_list_insert(list_append(rest, Cons(Pair { fst: nk, snd: nv }, ys)), k, v, cmp)
           )
         }, list_append(match c -> List(Pair(K, V)) {
-          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
-          Equal => Cons(pair(k, v), rest)
-          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
-        }, Cons(pair(nk, nv), ys))),
+          Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: xk, snd: xv }, rest))
+          Equal => Cons(Pair { fst: k, snd: v }, rest)
+          Greater => Cons(Pair { fst: xk, snd: xv }, ordmap_list_insert(rest, k, v, cmp))
+        }, Cons(Pair { fst: nk, snd: nv }, ys))),
         cmp(k, xk),
         (q: Eq(Ordering, cmp(k, xk), Less)) => refl(),
         (q: Eq(Ordering, cmp(k, xk), Equal)) => refl(),
         (q: Eq(Ordering, cmp(k, xk), Greater)) => Eq_congr(
-          (z: List(Pair(K, V))) => Cons(pair(xk, xv), z),
+          (z: List(Pair(K, V))) => Cons(Pair { fst: xk, snd: xv }, z),
           ordmap_list_insert_append_less(rest, nk, nv, ys, k, v, cmp, e)
         )
       )
@@ -654,13 +659,10 @@ theorem ordmap_list_insert_append_skip<K: Type, V: Type>(
   ) {
     Nil => refl()
     Cons(x, rest) => match x {
-      pair(
-        xk,
-        xv
-      ) => Eq_trans(
+      Pair { fst: xk, snd: xv } => Eq_trans(
         ordmap_list_insert_greater(xk, xv, list_append(rest, ys), k, v, cmp, and_left(h)),
         Eq_congr(
-          (z: List(Pair(K, V))) => Cons(pair(xk, xv), z),
+          (z: List(Pair(K, V))) => Cons(Pair { fst: xk, snd: xv }, z),
           ordmap_list_insert_append_skip(rest, ys, k, v, cmp, and_right(h))
         )
       )
@@ -681,11 +683,11 @@ theorem ordmap_keys_insert<K: Type, V: Type>(
   match es -> ordmap_keys(ordmap_list_insert(es, k, v, cmp), a, Less, cmp) {
     Nil => and_intro(ea, trivial())
     Cons(x, rest) => match x {
-      pair(xk, xv) => ordering_cases(
+      Pair { fst: xk, snd: xv } => ordering_cases(
         (c: Ordering) => ordmap_keys(match c -> List(Pair(K, V)) {
-          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
-          Equal => Cons(pair(k, v), rest)
-          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+          Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: xk, snd: xv }, rest))
+          Equal => Cons(Pair { fst: k, snd: v }, rest)
+          Greater => Cons(Pair { fst: xk, snd: xv }, ordmap_list_insert(rest, k, v, cmp))
         }, a, Less, cmp),
         cmp(k, xk),
         (q: Eq(Ordering, cmp(k, xk), Less)) => and_intro(ea, h),
@@ -711,11 +713,11 @@ theorem ordmap_list_insert_sorted<K: Type, V: Type>(
   match es -> ordmap_sorted(ordmap_list_insert(es, k, v, cmp), cmp) {
     Nil => and_intro(trivial(), trivial())
     Cons(x, rest) => match x {
-      pair(xk, xv) => ordering_cases(
+      Pair { fst: xk, snd: xv } => ordering_cases(
         (c: Ordering) => ordmap_sorted(match c -> List(Pair(K, V)) {
-          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
-          Equal => Cons(pair(k, v), rest)
-          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+          Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: xk, snd: xv }, rest))
+          Equal => Cons(Pair { fst: k, snd: v }, rest)
+          Greater => Cons(Pair { fst: xk, snd: xv }, ordmap_list_insert(rest, k, v, cmp))
         }, cmp),
         cmp(k, xk),
         (q: Eq(Ordering, cmp(k, xk), Less)) => and_intro(
@@ -755,17 +757,17 @@ theorem ordmap_list_get_insert_same<K: Type, V: Type>(
   match es -> Eq(Option(V), ordmap_list_get(ordmap_list_insert(es, k, v, cmp), k, cmp), Some(v)) {
     Nil => ordmap_list_get_equal(k, v, Nil, k, cmp, ordmap_law_same(cmp, w, k))
     Cons(x, rest) => match x {
-      pair(xk, xv) => ordering_cases(
+      Pair { fst: xk, snd: xv } => ordering_cases(
         (c: Ordering) => Eq(Option(V), ordmap_list_get(match c -> List(Pair(K, V)) {
-          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
-          Equal => Cons(pair(k, v), rest)
-          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
+          Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: xk, snd: xv }, rest))
+          Equal => Cons(Pair { fst: k, snd: v }, rest)
+          Greater => Cons(Pair { fst: xk, snd: xv }, ordmap_list_insert(rest, k, v, cmp))
         }, k, cmp), Some(v)),
         cmp(k, xk),
         (q: Eq(Ordering, cmp(k, xk), Less)) => ordmap_list_get_equal(
           k,
           v,
-          Cons(pair(xk, xv), rest),
+          Cons(Pair { fst: xk, snd: xv }, rest),
           k,
           cmp,
           ordmap_law_same(cmp, w, k)
@@ -812,14 +814,14 @@ theorem ordmap_list_get_insert_other<K: Type, V: Type>(
   ) {
     Nil => ordmap_list_get_skip(o, ne, k, v, Nil, j, cmp, ej)
     Cons(x, rest) => match x {
-      pair(xk, xv) => ordering_cases(
+      Pair { fst: xk, snd: xv } => ordering_cases(
         (c: Ordering) => Eq(Option(V), ordmap_list_get(match c -> List(Pair(K, V)) {
-          Less => Cons(pair(k, v), Cons(pair(xk, xv), rest))
-          Equal => Cons(pair(k, v), rest)
-          Greater => Cons(pair(xk, xv), ordmap_list_insert(rest, k, v, cmp))
-        }, j, cmp), ordmap_list_get(Cons(pair(xk, xv), rest), j, cmp)),
+          Less => Cons(Pair { fst: k, snd: v }, Cons(Pair { fst: xk, snd: xv }, rest))
+          Equal => Cons(Pair { fst: k, snd: v }, rest)
+          Greater => Cons(Pair { fst: xk, snd: xv }, ordmap_list_insert(rest, k, v, cmp))
+        }, j, cmp), ordmap_list_get(Cons(Pair { fst: xk, snd: xv }, rest), j, cmp)),
         cmp(k, xk),
-        (q: Eq(Ordering, cmp(k, xk), Less)) => ordmap_list_get_skip(o, ne, k, v, Cons(pair(xk, xv), rest), j, cmp, ej),
+        (q: Eq(Ordering, cmp(k, xk), Less)) => ordmap_list_get_skip(o, ne, k, v, Cons(Pair { fst: xk, snd: xv }, rest), j, cmp, ej),
         (q: Eq(Ordering, cmp(k, xk), Equal)) => Eq_trans(
           ordmap_list_get_skip(o, ne, k, v, rest, j, cmp, ej),
           Eq_sym(
@@ -860,9 +862,12 @@ theorem ordmap_node_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(OrdmapNode(l, nk, nv, r, h), Nil),
-  list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)))
+  list_append(
+    ordmap_tree_entries(l, Nil),
+    Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil))
+  )
 ) {
-  ordmap_entries_append(l, Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)))
+  ordmap_entries_append(l, Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)))
 }
 
 theorem ordmap_node_split<K: Type, V: Type>(
@@ -920,21 +925,21 @@ theorem ordmap_tree_get_entries<K: Type, V: Type>(
           Less => ordmap_tree_get(l, k, cmp)
           Equal => Some(nv)
           Greater => ordmap_tree_get(r, k, cmp)
-        }, ordmap_list_get(list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))), k, cmp)),
+        }, ordmap_list_get(list_append(ordmap_tree_entries(l, Nil), Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil))), k, cmp)),
         cmp(k, nk),
         (q: Eq(Ordering, cmp(k, nk), Less)) => Eq_trans(
           ordmap_tree_get_entries(cmp, w, l, k, and_left(and_right(ordmap_node_split(cmp, w, l, nk, nv, r, h, s)))),
           Eq_sym(
             ordmap_list_get_append_none(
               ordmap_tree_entries(l, Nil),
-              Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+              Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)),
               k,
               cmp,
               ordmap_list_get_keys_none(
                 k,
                 Less,
                 less_ne_equal,
-                Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)),
                 cmp,
                 and_intro(
                   q,
@@ -958,7 +963,7 @@ theorem ordmap_tree_get_entries<K: Type, V: Type>(
               Greater,
               greater_ne_equal,
               ordmap_tree_entries(l, Nil),
-              Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+              Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)),
               k,
               cmp,
               ordmap_keys_eq(
@@ -988,7 +993,7 @@ theorem ordmap_tree_get_entries<K: Type, V: Type>(
                 Greater,
                 greater_ne_equal,
                 ordmap_tree_entries(l, Nil),
-                Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)),
                 k,
                 cmp,
                 ordmap_keys_greater_trans(
@@ -1039,15 +1044,15 @@ theorem ordmap_tree_insert_entries<K: Type, V: Type>(
           Less => ordmap_balance(ordmap_tree_insert(l, k, v, cmp), nk, nv, r)
           Equal => OrdmapNode(l, k, v, r, h)
           Greater => ordmap_balance(l, nk, nv, ordmap_tree_insert(r, k, v, cmp))
-        }, Nil), ordmap_list_insert(list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))), k, v, cmp)),
+        }, Nil), ordmap_list_insert(list_append(ordmap_tree_entries(l, Nil), Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil))), k, v, cmp)),
         cmp(k, nk),
         (q: Eq(Ordering, cmp(k, nk), Less)) => Eq_trans(
           ordmap_balance_entries(ordmap_tree_insert(l, k, v, cmp), nk, nv, r, Nil),
           Eq_trans(
-            ordmap_entries_append(ordmap_tree_insert(l, k, v, cmp), Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))),
+            ordmap_entries_append(ordmap_tree_insert(l, k, v, cmp), Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil))),
             Eq_trans(
               Eq_congr(
-                (z: List(Pair(K, V))) => list_append(z, Cons(pair(nk, nv), ordmap_tree_entries(r, Nil))),
+                (z: List(Pair(K, V))) => list_append(z, Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil))),
                 ordmap_tree_insert_entries(
                   cmp,
                   w,
@@ -1062,12 +1067,12 @@ theorem ordmap_tree_insert_entries<K: Type, V: Type>(
           )
         ),
         (q: Eq(Ordering, cmp(k, nk), Equal)) => Eq_trans(
-          ordmap_entries_append(l, Cons(pair(k, v), ordmap_tree_entries(r, Nil))),
+          ordmap_entries_append(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, Nil))),
           Eq_sym(
             Eq_trans(
               ordmap_list_insert_append_skip(
                 ordmap_tree_entries(l, Nil),
-                Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)),
                 k,
                 v,
                 cmp,
@@ -1093,11 +1098,11 @@ theorem ordmap_tree_insert_entries<K: Type, V: Type>(
           Eq_trans(
             ordmap_entries_append(
               l,
-              Cons(pair(nk, nv), ordmap_tree_entries(ordmap_tree_insert(r, k, v, cmp), Nil))
+              Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(ordmap_tree_insert(r, k, v, cmp), Nil))
             ),
             Eq_trans(
               Eq_congr(
-                (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), Cons(pair(nk, nv), z)),
+                (z: List(Pair(K, V))) => list_append(ordmap_tree_entries(l, Nil), Cons(Pair { fst: nk, snd: nv }, z)),
                 ordmap_tree_insert_entries(
                   cmp,
                   w,
@@ -1111,7 +1116,7 @@ theorem ordmap_tree_insert_entries<K: Type, V: Type>(
                 Eq_trans(
                   ordmap_list_insert_append_skip(
                     ordmap_tree_entries(l, Nil),
-                    Cons(pair(nk, nv), ordmap_tree_entries(r, Nil)),
+                    Cons(Pair { fst: nk, snd: nv }, ordmap_tree_entries(r, Nil)),
                     k,
                     v,
                     cmp,

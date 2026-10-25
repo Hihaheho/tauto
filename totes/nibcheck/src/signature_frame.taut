@@ -1,0 +1,1154 @@
+import "datas_registration.taut"
+
+// Reading and storing function signatures preserves the declaration environment.
+fn signature_some_borrow(b: Option(Yn)) -> Yn {
+  match b -> Yn {
+    None => no
+    Some(m) => yes
+  }
+}
+fn signature_wrap_if(c: Checker, t: Ty, mutable: Yn, borrowed: Yn) -> Mut1(Ty, Checker) {
+  match borrowed -> Mut1(Ty, Checker) {
+    yes => mut1(t, c)
+    no => mut1(TyBorrow(t, mutable), c)
+  }
+}
+fn signature_wrap(c: Checker, t: Ty, b: Option(Yn)) -> Mut1(Ty, Checker) {
+  match b -> Mut1(Ty, Checker) {
+    None => mut1(t, c)
+    Some(m) => signature_wrap_if(c, t, m, ty_is_borrow(t))
+  }
+}
+theorem signature_wrap_if_frame(
+  c: Checker,
+  t: Ty,
+  mutable: Yn,
+  borrowed: Yn
+): CkReadFrame(c, signature_wrap_if(c, t, mutable, borrowed)) {
+  match borrowed -> CkReadFrame(c, signature_wrap_if(c, t, mutable, borrowed)) {
+    yes => refl()
+    no => refl()
+  }
+}
+theorem signature_wrap_frame(
+  c: Checker,
+  t: Ty,
+  b: Option(Yn)
+): CkReadFrame(c, signature_wrap(c, t, b)) {
+  match b -> CkReadFrame(c, signature_wrap(c, t, b)) {
+    None => refl()
+    Some(m) => signature_wrap_if_frame(c, t, m, ty_is_borrow(t))
+  }
+}
+theorem ck_sig_written_frame(
+  c: Checker,
+  p: Option(SurfaceTerm),
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_sig_written(c, p, map)) {
+  match p -> CkReadFrame(c, ck_sig_written(c, p, map)) {
+    None => refl()
+    Some(x) => frame_rewrap(c, ck_written(c, x, map), ck_written_frame(c, x, map))
+  }
+}
+fn signature_param_k(
+  c: Checker,
+  p: Option(SurfaceTerm),
+  b: Option(Yn),
+  map: Ordmap(Text, Ty)
+) -> Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (t: Ty, next: Checker) => signature_wrap(next, t, b),
+    ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(b)), p, map)
+  )
+}
+theorem signature_param_unf(
+  c: Checker,
+  p: Option(SurfaceTerm),
+  b: Option(Yn),
+  map: Ordmap(Text, Ty)
+): Eq(Mut1(Ty, Checker), ck_sig_param(c, p, b, map), signature_param_k(c, p, b, map)) { refl() }
+theorem ck_sig_param_frame(
+  c: Checker,
+  p: Option(SurfaceTerm),
+  b: Option(Yn),
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_sig_param(c, p, b, map)) {
+  Eq_subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq_sym(signature_param_unf(c, p, b, map)),
+    frame_bind_ok(
+      Ty,
+      Ty,
+      c,
+      (t: Ty, next: Checker) => signature_wrap(next, t, b),
+      ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(b)), p, map),
+      frame_changed(
+        c,
+        frame_set_under_borrow(c, signature_some_borrow(b)),
+        ck_sig_written(frame_set_under_borrow(c, signature_some_borrow(b)), p, map),
+        frame_set_under_borrow_same(c, signature_some_borrow(b)),
+        ck_sig_written_frame(frame_set_under_borrow(c, signature_some_borrow(b)), p, map)
+      ),
+      t => next => signature_wrap_frame(next, t, b)
+    )
+  )
+}
+
+theorem ck_report_frame(
+  c: Checker,
+  message: Option(Text),
+  span: TySpan
+): CkReadFrame(c, ck_report(c, message, span)) {
+  match message -> CkReadFrame(c, ck_report(c, message, span)) {
+    None => refl()
+    Some(m) => refl()
+  }
+}
+fn signature_result(f: SurfaceFn) -> Option(SurfaceTerm) { f.result }
+fn signature_result_k(
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  p: Option(SurfaceTerm)
+) -> Mut1(Ty, Checker) {
+  match p -> Mut1(Ty, Checker) {
+    None => ck_rewrap1(ck_fresh(c))
+    Some(r) => ck_rewrap1(ck_written(c, r, map))
+  }
+}
+theorem signature_result_k_frame(
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  p: Option(SurfaceTerm)
+): CkReadFrame(c, signature_result_k(c, map, p)) {
+  match p -> CkReadFrame(c, signature_result_k(c, map, p)) {
+    None => refl()
+    Some(r) => frame_rewrap(c, ck_written(c, r, map), ck_written_frame(c, r, map))
+  }
+}
+theorem signature_result_unf(
+  c: Checker,
+  f: SurfaceFn,
+  map: Ordmap(Text, Ty)
+): Eq(
+  Mut1(Ty, Checker),
+  ck_sig_result(c, f, map),
+  signature_result_k(c, map, signature_result(f))
+) { refl() }
+theorem ck_sig_result_frame(
+  c: Checker,
+  f: SurfaceFn,
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_sig_result(c, f, map)) {
+  Eq_subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq_sym(signature_result_unf(c, f, map)),
+    signature_result_k_frame(c, map, signature_result(f))
+  )
+}
+
+fn signature_constraint_span(
+  w: SurfaceConstraint
+) -> TySpan { TySpan { start: w.start, end: w.end } }
+fn signature_constraint_class(w: SurfaceConstraint) -> Text { w.class }
+fn signature_constraint_type(w: SurfaceConstraint) -> SurfaceTerm { w.ty }
+fn signature_class_missing(c: Checker, w: SurfaceConstraint) -> Yn {
+  yn_and(
+    yn_not(class_is_structural(w.class)),
+    yn_not(ordmap_contains(c.classes, w.class, ordmap_compare_text))
+  )
+}
+fn signature_pred_duplicate(
+  c: Checker,
+  w: SurfaceConstraint,
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Yn
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match dup -> Mut1(List(Pair(Text, Text)), Checker) {
+    yes => frame_return(
+      preds,
+      ck_error(c, cat5(w.class, "(", g, ") is written twice", ""), signature_constraint_span(w))
+    )
+    no => mut1(Cons(Pair { fst: w.class, snd: g }, preds), c)
+  }
+}
+fn signature_pred_generic(
+  c: Checker,
+  w: SurfaceConstraint,
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  o: Option(Text)
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match o -> Mut1(List(Pair(Text, Text)), Checker) {
+    None => frame_return(
+      preds,
+      ck_error(c, cat2("where constrains only generics of ", name), signature_constraint_span(w))
+    )
+    Some(g) => signature_pred_duplicate(c, w, preds, g, preds_have(preds, w.class, g))
+  }
+}
+fn signature_pred_missing(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  missing: Yn
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match missing -> Mut1(List(Pair(Text, Text)), Checker) {
+    yes => frame_return(
+      preds,
+      ck_error(c, cat2(w.class, " is not a class"), signature_constraint_span(w))
+    )
+    no => signature_pred_generic(c, w, name, preds, constraint_generic(w.ty, gs))
+  }
+}
+theorem signature_pred_unf(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): Eq(
+  Mut1(List(Pair(Text, Text)), Checker),
+  ck_where_pred(c, w, gs, name, preds),
+  signature_pred_missing(c, w, gs, name, preds, signature_class_missing(c, w))
+) { refl() }
+theorem signature_pred_duplicate_frame(
+  c: Checker,
+  w: SurfaceConstraint,
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Yn
+): CkReadFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+  match dup -> CkReadFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+    yes => refl()
+    no => refl()
+  }
+}
+theorem signature_pred_generic_frame(
+  c: Checker,
+  w: SurfaceConstraint,
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  o: Option(Text)
+): CkReadFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+  match o -> CkReadFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+    None => refl()
+    Some(
+      g
+    ) => signature_pred_duplicate_frame(
+      c,
+      w,
+      preds,
+      g,
+      preds_have(preds, signature_constraint_class(w), g)
+    )
+  }
+}
+theorem signature_pred_missing_frame(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  missing: Yn
+): CkReadFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+  match missing -> CkReadFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+    yes => refl()
+    no => signature_pred_generic_frame(
+      c,
+      w,
+      name,
+      preds,
+      constraint_generic(signature_constraint_type(w), gs)
+    )
+  }
+}
+theorem ck_where_pred_frame(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): CkReadFrame(c, ck_where_pred(c, w, gs, name, preds)) {
+  Eq_subst(
+    (z: Mut1(List(Pair(Text, Text)), Checker)) => CkReadFrame(c, z),
+    Eq_sym(signature_pred_unf(c, w, gs, name, preds)),
+    signature_pred_missing_frame(c, w, gs, name, preds, signature_class_missing(c, w))
+  )
+}
+
+fn signature_params_cons(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Yn)),
+  map: Ordmap(Text, Ty)
+) -> Mut1(List(Ty), Checker) {
+  frame_bind(
+    Ty,
+    List(Ty),
+    (
+      head: Ty,
+      c1: Checker
+    ) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_sig_params(rest, c1, list_tail(borrows), map)
+    ),
+    ck_sig_param(c, p, list_head_or_none(borrows), map)
+  )
+}
+
+theorem signature_params_cons_frame(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Yn)),
+  map: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. ∀ bs: List(Option(Yn)). CkReadFrame(next, ck_sig_params(rest, next, bs, map))
+): CkReadFrame(c, signature_params_cons(p, rest, c, borrows, map)) {
+  frame_bind_ok(
+    Ty,
+    List(Ty),
+    c,
+    (
+      head: Ty,
+      c1: Checker
+    ) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_sig_params(rest, c1, list_tail(borrows), map)
+    ),
+    ck_sig_param(c, p, list_head_or_none(borrows), map),
+    ck_sig_param_frame(c, p, list_head_or_none(borrows), map),
+    head => c1 => frame_bind_ok(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_sig_params(rest, c1, list_tail(borrows), map),
+      ih(c1, list_tail(borrows)),
+      tail => c2 => refl()
+    )
+  )
+}
+
+theorem signature_params_unf(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Yn)),
+  map: Ordmap(Text, Ty)
+): Eq(
+  Mut1(List(Ty), Checker),
+  ck_sig_params(Cons(p, rest), c, borrows, map),
+  signature_params_cons(p, rest, c, borrows, map)
+) { refl() }
+theorem ck_sig_params_frame(
+  pts: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Yn)),
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  match pts -> CkReadFrame(c, ck_sig_params(pts, c, borrows, map)) {
+    Nil => refl()
+    Cons(
+      p,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_params_unf(p, rest, c, borrows, map)),
+      signature_params_cons_frame(
+        p,
+        rest,
+        c,
+        borrows,
+        map,
+        next => bs => ck_sig_params_frame(rest, next, bs, map)
+      )
+    )
+  }
+}
+
+fn signature_preds_cons(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  frame_bind(
+    List(Pair(Text, Text)),
+    List(Pair(Text, Text)),
+    (
+      head: List(Pair(Text, Text)),
+      c1: Checker
+    ) => ck_rewrap1(ck_where_preds(rest, c1, gs, name, head)),
+    ck_where_pred(c, w, gs, name, preds)
+  )
+}
+
+theorem signature_preds_cons_frame(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkReadFrame(next, ck_where_preds(rest, next, gs, name, ps))
+): CkReadFrame(c, signature_preds_cons(w, rest, c, gs, name, preds)) {
+  frame_bind_ok(
+    List(Pair(Text, Text)),
+    List(Pair(Text, Text)),
+    c,
+    (
+      head: List(Pair(Text, Text)),
+      c1: Checker
+    ) => ck_rewrap1(ck_where_preds(rest, c1, gs, name, head)),
+    ck_where_pred(c, w, gs, name, preds),
+    ck_where_pred_frame(c, w, gs, name, preds),
+    head => c1 => frame_rewrap(c1, ck_where_preds(rest, c1, gs, name, head), ih(c1, head))
+  )
+}
+
+theorem signature_preds_unf(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): Eq(
+  Mut1(List(Pair(Text, Text)), Checker),
+  ck_where_preds(Cons(w, rest), c, gs, name, preds),
+  signature_preds_cons(w, rest, c, gs, name, preds)
+) { refl() }
+theorem ck_where_preds_frame(
+  ws: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): CkReadFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+  match ws -> CkReadFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+    Nil => refl()
+    Cons(
+      w,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(Pair(Text, Text)), Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_preds_unf(w, rest, c, gs, name, preds)),
+      signature_preds_cons_frame(
+        w,
+        rest,
+        c,
+        gs,
+        name,
+        preds,
+        next => ps => ck_where_preds_frame(rest, next, gs, name, ps)
+      )
+    )
+  }
+}
+
+fn signature_generics(
+  f: SurfaceFn
+) -> SigGenerics { sig_generics(
+  f.generics,
+  f.bounds,
+  0,
+  SigGenerics { generics: Nil, map: ordmap_empty(), ctors: Nil }
+) }
+fn signature_map(g: SigGenerics) -> Ordmap(Text, Ty) { g.map }
+fn signature_gens(g: SigGenerics) -> List(Pair(Text, Kind)) { g.generics }
+fn signature_ptypes(f: SurfaceFn) -> List(Option(SurfaceTerm)) { f.param_types }
+fn signature_borrows(f: SurfaceFn) -> List(Option(Yn)) { f.borrows }
+fn signature_wheres(f: SurfaceFn) -> List(SurfaceConstraint) { f.wheres }
+fn signature_name(f: SurfaceFn) -> Text { f.name }
+fn signature_scheme(
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  preds: List(Pair(Text, Text))
+) -> Scheme { Scheme { generics: list_reverse(
+  g.generics
+), ty: TyFn(
+  params,
+  result,
+  KindShared
+), preds: list_reverse(preds), ctors: list_reverse(g.ctors) } }
+
+fn signature_read(c: Checker, f: SurfaceFn, g: SigGenerics) -> Mut1(Scheme, Checker) {
+  frame_bind(
+    List(Ty),
+    Scheme,
+    (
+      params: List(Ty),
+      c1: Checker
+    ) => frame_bind(
+      Ty,
+      Scheme,
+      (
+        result: Ty,
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Scheme,
+        (
+          ignored: Unit,
+          c3: Checker
+        ) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (
+            preds: List(Pair(Text, Text)),
+            c4: Checker
+          ) => mut1(signature_scheme(g, params, result, preds), c4),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+      ),
+      ck_sig_result(c1, f, signature_map(g))
+    ),
+    ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g))
+  )
+}
+
+theorem signature_read_frame(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics
+): CkReadFrame(c, signature_read(c, f, g)) {
+  frame_bind_ok(
+    List(Ty),
+    Scheme,
+    c,
+    (
+      params: List(Ty),
+      c1: Checker
+    ) => frame_bind(
+      Ty,
+      Scheme,
+      (
+        result: Ty,
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Scheme,
+        (
+          ignored: Unit,
+          c3: Checker
+        ) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (
+            preds: List(Pair(Text, Text)),
+            c4: Checker
+          ) => mut1(signature_scheme(g, params, result, preds), c4),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+      ),
+      ck_sig_result(c1, f, signature_map(g))
+    ),
+    ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    ck_sig_params_frame(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    params => c1 => frame_bind_ok(
+      Ty,
+      Scheme,
+      c1,
+      (
+        result: Ty,
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Scheme,
+        (
+          ignored: Unit,
+          c3: Checker
+        ) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (
+            preds: List(Pair(Text, Text)),
+            c4: Checker
+          ) => mut1(signature_scheme(g, params, result, preds), c4),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+      ),
+      ck_sig_result(c1, f, signature_map(g)),
+      ck_sig_result_frame(c1, f, signature_map(g)),
+      result => c2 => frame_bind_ok(
+        Unit,
+        Scheme,
+        c2,
+        (
+          ignored: Unit,
+          c3: Checker
+        ) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (
+            preds: List(Pair(Text, Text)),
+            c4: Checker
+          ) => mut1(signature_scheme(g, params, result, preds), c4),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f)),
+        ck_report_frame(c2, ck_view_result_message(c2, params, result), ck_sig_span(f)),
+        ignored => c3 => frame_bind_ok(
+          List(Pair(Text, Text)),
+          Scheme,
+          c3,
+          (
+            preds: List(Pair(Text, Text)),
+            c4: Checker
+          ) => mut1(signature_scheme(g, params, result, preds), c4),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil),
+          ck_where_preds_frame(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil),
+          preds => c4 => refl()
+        )
+      )
+    )
+  )
+}
+
+theorem signature_read_unf(
+  c: Checker,
+  f: SurfaceFn
+): Eq(
+  Mut1(Scheme, Checker),
+  ck_signature(c, f),
+  signature_read(c, f, signature_generics(f))
+) { refl() }
+theorem ck_signature_frame(c: Checker, f: SurfaceFn): CkReadFrame(c, ck_signature(c, f)) {
+  Eq_subst(
+    (z: Mut1(Scheme, Checker)) => CkReadFrame(c, z),
+    Eq_sym(signature_read_unf(c, f)),
+    signature_read_frame(c, f, signature_generics(f))
+  )
+}
+
+fn signature_store(&mut c: Checker, f: SurfaceFn, scheme: Scheme) -> Scheme {
+  set_to(&mut c.fns, ordmap_insert(c.fns, f.name, scheme, ordmap_compare_text))
+  scheme
+}
+theorem signature_store_frame(
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme
+): CkReadFrame(c, signature_store(c, f, scheme)) { refl() }
+
+fn signature_add(c: Checker, f: SurfaceFn) -> Mut1(Scheme, Checker) {
+  frame_bind(
+    Scheme,
+    Scheme,
+    (scheme: Scheme, c1: Checker) => signature_store(c1, f, scheme),
+    ck_signature(c, f)
+  )
+}
+
+theorem signature_add_frame(c: Checker, f: SurfaceFn): CkReadFrame(c, signature_add(c, f)) {
+  frame_bind_ok(
+    Scheme,
+    Scheme,
+    c,
+    (scheme: Scheme, c1: Checker) => signature_store(c1, f, scheme),
+    ck_signature(c, f),
+    ck_signature_frame(c, f),
+    scheme => c1 => signature_store_frame(c1, f, scheme)
+  )
+}
+
+theorem signature_add_unf(
+  c: Checker,
+  f: SurfaceFn
+): Eq(Mut1(Scheme, Checker), ck_add_fn(c, f), signature_add(c, f)) { refl() }
+theorem ck_add_fn_frame(c: Checker, f: SurfaceFn): CkReadFrame(c, ck_add_fn(c, f)) {
+  Eq_subst(
+    (z: Mut1(Scheme, Checker)) => CkReadFrame(c, z),
+    Eq_sym(signature_add_unf(c, f)),
+    signature_add_frame(c, f)
+  )
+}
+fn signature_prelude_if(c: Checker, f: SurfaceFn, take: Yn) -> Mut1(Unit, Checker) {
+  match take -> Mut1(Unit, Checker) {
+    yes => frame_return(star(), ck_add_fn(c, f))
+    no => mut1(star(), c)
+  }
+}
+theorem signature_prelude_if_frame(
+  c: Checker,
+  f: SurfaceFn,
+  take: Yn
+): CkReadFrame(c, signature_prelude_if(c, f, take)) {
+  match take -> CkReadFrame(c, signature_prelude_if(c, f, take)) {
+    yes => frame_return_ok(c, star(), ck_add_fn(c, f), ck_add_fn_frame(c, f))
+    no => refl()
+  }
+}
+
+fn signature_prelude_fns_each_cons(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns_each(rest, c1, own)),
+    signature_prelude_if(c, f, yn_not(types_is_own(own, signature_name(f))))
+  )
+}
+
+theorem signature_prelude_fns_each_cons_frame(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Yn),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_prelude_fns_each(rest, next, own))
+): CkReadFrame(c, signature_prelude_fns_each_cons(f, rest, c, own)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns_each(rest, c1, own)),
+    signature_prelude_if(c, f, yn_not(types_is_own(own, signature_name(f)))),
+    signature_prelude_if_frame(c, f, yn_not(types_is_own(own, signature_name(f)))),
+    ignored => c1 => frame_rewrap(c1, ck_prelude_fns_each(rest, c1, own), ih(c1))
+  )
+}
+
+theorem signature_prelude_fns_each_unf(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_fns_each(Cons(f, rest), c, own),
+  signature_prelude_fns_each_cons(f, rest, c, own)
+) { refl() }
+theorem ck_prelude_fns_each_frame(
+  fs: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): CkReadFrame(c, ck_prelude_fns_each(fs, c, own)) {
+  match fs -> CkReadFrame(c, ck_prelude_fns_each(fs, c, own)) {
+    Nil => refl()
+    Cons(
+      f,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_prelude_fns_each_unf(f, rest, c, own)),
+      signature_prelude_fns_each_cons_frame(
+        f,
+        rest,
+        c,
+        own,
+        next => ck_prelude_fns_each_frame(rest, next, own)
+      )
+    )
+  }
+}
+
+fn signature_extern_fns_cons(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Scheme,
+    Unit,
+    (ignored: Scheme, c1: Checker) => ck_rewrap1(ck_extern_fns(rest, c1)),
+    ck_add_fn(c, f)
+  )
+}
+
+theorem signature_extern_fns_cons_frame(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_extern_fns(rest, next))
+): CkReadFrame(c, signature_extern_fns_cons(f, rest, c)) {
+  frame_bind_ok(
+    Scheme,
+    Unit,
+    c,
+    (ignored: Scheme, c1: Checker) => ck_rewrap1(ck_extern_fns(rest, c1)),
+    ck_add_fn(c, f),
+    ck_add_fn_frame(c, f),
+    ignored => c1 => frame_rewrap(c1, ck_extern_fns(rest, c1), ih(c1))
+  )
+}
+
+theorem signature_extern_fns_unf(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker
+): Eq(
+  Mut1(Unit, Checker),
+  ck_extern_fns(Cons(f, rest), c),
+  signature_extern_fns_cons(f, rest, c)
+) { refl() }
+theorem ck_extern_fns_frame(fs: List(SurfaceFn), c: Checker): CkReadFrame(c, ck_extern_fns(fs, c)) {
+  match fs -> CkReadFrame(c, ck_extern_fns(fs, c)) {
+    Nil => refl()
+    Cons(
+      f,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_extern_fns_unf(f, rest, c)),
+      signature_extern_fns_cons_frame(f, rest, c, next => ck_extern_fns_frame(rest, next))
+    )
+  }
+}
+
+theorem signature_prelude_fns_one_StFn_unf(
+  f: SurfaceFn,
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_fns_one(c, StFn(f), own),
+  ck_rewrap1(ck_prelude_fns_each(Cons(f, Nil), c, own))
+) { refl() }
+
+theorem signature_prelude_fns_one_StExtern_unf(
+  abi: Text,
+  fns: List(SurfaceFn),
+  start: Nat,
+  end: Nat,
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_fns_one(c, StExtern(abi, fns, start, end), own),
+  ck_rewrap1(ck_prelude_fns_each(fns, c, own))
+) { refl() }
+
+theorem ck_prelude_fns_one_frame(
+  c: Checker,
+  s: SurfaceStmt,
+  own: Ordmap(Text, Yn)
+): CkReadFrame(c, ck_prelude_fns_one(c, s, own)) {
+  match s -> CkReadFrame(c, ck_prelude_fns_one(c, s, own)) {
+    StLet(name, ty, value, borrow, mutable) => refl()
+    StVar(name, ty, value, borrow) => refl()
+    StModule(name, stmts, start, end) => refl()
+    StAssign(name, value) => refl()
+    StFn(
+      f
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_prelude_fns_one_StFn_unf(f, c, own)),
+      frame_rewrap(
+        c,
+        ck_prelude_fns_each(Cons(f, Nil), c, own),
+        ck_prelude_fns_each_frame(Cons(f, Nil), c, own)
+      )
+    )
+    StTheorem(t) => refl()
+    StDef(t) => refl()
+    StMutual(stmts, start, end) => refl()
+    StImport(path, start, end) => refl()
+    StInductive(i) => refl()
+    StEffect(e) => refl()
+    StStruct(d) => refl()
+    StEnum(d) => refl()
+    StExtern(
+      abi,
+      fns,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_prelude_fns_one_StExtern_unf(abi, fns, start, end, c, own)),
+      frame_rewrap(c, ck_prelude_fns_each(fns, c, own), ck_prelude_fns_each_frame(fns, c, own))
+    )
+    StClass(cls) => refl()
+    StInstance(i) => refl()
+    StWhile(cond, body) => refl()
+    StReturn(value) => refl()
+    StExpr(value) => refl()
+    StOther(what, start, end) => refl()
+    StMacro(name, function, start, end) => refl()
+    StSyntax(name, grammar, start, end) => refl()
+  }
+}
+
+theorem signature_program_decl_StFn_unf(
+  f: SurfaceFn,
+  c: Checker
+): Eq(
+  Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  ck_program_decl(c, StFn(f)),
+  frame_bind(
+    Scheme,
+    Option(Pair(SurfaceFn, Scheme)),
+    (scheme: Scheme, c1: Checker) => mut1(Some(Pair { fst: f, snd: scheme }), c1),
+    ck_add_fn(c, f)
+  )
+) { refl() }
+
+theorem signature_program_decl_StEffect_unf(
+  e: SurfaceEffect,
+  c: Checker
+): Eq(
+  Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  ck_program_decl(c, StEffect(e)),
+  frame_bind(
+    Unit,
+    Option(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, c1: Checker) => mut1(None(), c1),
+    ck_declare_effect(c, e)
+  )
+) { refl() }
+
+theorem signature_program_decl_StExtern_unf(
+  abi: Text,
+  fns: List(SurfaceFn),
+  start: Nat,
+  end: Nat,
+  c: Checker
+): Eq(
+  Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  ck_program_decl(c, StExtern(abi, fns, start, end)),
+  frame_bind(
+    Unit,
+    Option(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, c1: Checker) => mut1(None(), c1),
+    ck_extern_fns(fns, c)
+  )
+) { refl() }
+
+theorem ck_program_decl_frame(c: Checker, s: SurfaceStmt): CkReadFrame(c, ck_program_decl(c, s)) {
+  match s -> CkReadFrame(c, ck_program_decl(c, s)) {
+    StLet(name, ty, value, borrow, mutable) => refl()
+    StVar(name, ty, value, borrow) => refl()
+    StModule(name, stmts, start, end) => refl()
+    StAssign(name, value) => refl()
+    StFn(
+      f
+    ) => Eq_subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_program_decl_StFn_unf(f, c)),
+      frame_bind_ok(
+        Scheme,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (scheme: Scheme, c1: Checker) => mut1(Some(Pair { fst: f, snd: scheme }), c1),
+        ck_add_fn(c, f),
+        ck_add_fn_frame(c, f),
+        scheme => c1 => refl()
+      )
+    )
+    StTheorem(t) => refl()
+    StDef(t) => refl()
+    StMutual(stmts, start, end) => refl()
+    StImport(path, start, end) => refl()
+    StInductive(i) => refl()
+    StEffect(
+      e
+    ) => Eq_subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_program_decl_StEffect_unf(e, c)),
+      frame_bind_ok(
+        Unit,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (ignored: Unit, c1: Checker) => mut1(None(), c1),
+        ck_declare_effect(c, e),
+        ck_declare_effect_frame(c, e),
+        ignored => c1 => refl()
+      )
+    )
+    StStruct(d) => refl()
+    StEnum(d) => refl()
+    StExtern(
+      abi,
+      fns,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      frame_bind_ok(
+        Unit,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (ignored: Unit, c1: Checker) => mut1(None(), c1),
+        ck_extern_fns(fns, c),
+        ck_extern_fns_frame(fns, c),
+        ignored => c1 => refl()
+      )
+    )
+    StClass(cls) => refl()
+    StInstance(i) => refl()
+    StWhile(cond, body) => refl()
+    StReturn(value) => refl()
+    StExpr(value) => refl()
+    StOther(what, start, end) => refl()
+    StMacro(name, function, start, end) => refl()
+    StSyntax(name, grammar, start, end) => refl()
+  }
+}
+
+fn signature_prelude_fns_cons(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (head: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns(rest, c1, own)),
+    ck_prelude_fns_one(c, s, own)
+  )
+}
+
+theorem signature_prelude_fns_cons_frame(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Yn),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_prelude_fns(rest, next, own))
+): CkReadFrame(c, signature_prelude_fns_cons(s, rest, c, own)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (head: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns(rest, c1, own)),
+    ck_prelude_fns_one(c, s, own),
+    ck_prelude_fns_one_frame(c, s, own),
+    head => c1 => frame_rewrap(c1, ck_prelude_fns(rest, c1, own), ih(c1))
+  )
+}
+
+theorem signature_prelude_fns_cons_unf(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_fns(Cons(s, rest), c, own),
+  signature_prelude_fns_cons(s, rest, c, own)
+) { refl() }
+theorem ck_prelude_fns_frame(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): CkReadFrame(c, ck_prelude_fns(ss, c, own)) {
+  match ss -> CkReadFrame(c, ck_prelude_fns(ss, c, own)) {
+    Nil => refl()
+    Cons(
+      s,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_prelude_fns_cons_unf(s, rest, c, own)),
+      signature_prelude_fns_cons_frame(
+        s,
+        rest,
+        c,
+        own,
+        next => ck_prelude_fns_frame(rest, next, own)
+      )
+    )
+  }
+}
+
+fn signature_program_decls_cons(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker
+) -> Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    (
+      head: Option(Pair(SurfaceFn, Scheme)),
+      c1: Checker
+    ) => frame_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1)
+    ),
+    ck_program_decl(c, s)
+  )
+}
+
+theorem signature_program_decls_cons_frame(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_program_decls(rest, next))
+): CkReadFrame(c, signature_program_decls_cons(s, rest, c)) {
+  frame_bind_ok(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    c,
+    (
+      head: Option(Pair(SurfaceFn, Scheme)),
+      c1: Checker
+    ) => frame_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1)
+    ),
+    ck_program_decl(c, s),
+    ck_program_decl_frame(c, s),
+    head => c1 => frame_bind_ok(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      c1,
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1),
+      ih(c1),
+      tail => c2 => refl()
+    )
+  )
+}
+
+theorem signature_program_decls_cons_unf(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker
+): Eq(
+  Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  ck_program_decls(Cons(s, rest), c),
+  signature_program_decls_cons(s, rest, c)
+) { refl() }
+theorem ck_program_decls_frame(
+  ss: List(SurfaceStmt),
+  c: Checker
+): CkReadFrame(c, ck_program_decls(ss, c)) {
+  match ss -> CkReadFrame(c, ck_program_decls(ss, c)) {
+    Nil => refl()
+    Cons(
+      s,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkReadFrame(c, z),
+      Eq_sym(signature_program_decls_cons_unf(s, rest, c)),
+      signature_program_decls_cons_frame(s, rest, c, next => ck_program_decls_frame(rest, next))
+    )
+  }
+}

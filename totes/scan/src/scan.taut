@@ -1,0 +1,630 @@
+import "../../../std/Array.taut"
+import "../../text/src/text.taut"
+
+// The scanner of Tauto's syntax, reading the scanner tables, in the proof
+// language (`docs/design/self-host.md`). `README.md` says what it does and
+// why. Every loop is a recursion on what is left: the bytes of the text, or
+// the numbers of a table.
+
+// A token the scanner cut: its terminal, where it is (bytes, end excluded)
+// and the mode the scanner was in when it cut it.
+inductive ScanToken(): Type {
+  scan_token(token_type: Nat, start: Nat, end: Nat, mode: Nat): ScanToken
+}
+
+// What happens to the mode after a token: kind 0 sets it to `target`, 1
+// pushes the current one and sets `target`, 2 pops one.
+inductive ScanModeChange(): Type {
+  scan_mode_change(kind: Nat, token: Nat, target: Nat): ScanModeChange
+}
+
+// The scanner's tables, read from the numbers of `syntax_tables_scan_*`.
+// A "class" is stored plus one: 0 means the character has none.
+inductive ScanTables(): Type {
+  scan_tables(
+    classes: Nat,
+    ascii: Array(Nat),
+    run_start: Array(Nat),
+    run_end: Array(Nat),
+    run_class: Array(Nat),
+    // The first state of each automaton (all states are numbered together).
+    dfa_first: Array(Nat),
+    // For each state its first entry in `accept_*`; one more at the end.
+    accept_first: Array(Nat),
+    accept_token: Array(Nat),
+    accept_kind: Array(Nat),
+    accept_dfa: Array(Nat),
+    // State * classes + class: the next state plus one, 0 for none.
+    rows: Array(Nat),
+    mode_changes: Array(List(ScanModeChange))
+  ): ScanTables
+}
+
+// The number at `i`; 0 past the end (`scan_tables_read` checks that no
+// read is past the end).
+fn scan_number(a: Array(Nat), i: Nat) -> Nat {
+  array_get_or(a, i, 0)
+}
+
+// ---- classes of characters ---------------------------------------------------
+
+// The first run in `lo` to `hi` that starts after `code` (a binary search).
+// The range halves each time, so `fuel` is its length.
+fn scan_search(fuel: Nat, starts: Array(Nat), code: Nat, lo: Nat, hi: Nat) -> Nat {
+  match fuel -> Nat {
+    zero => lo
+    succ(f) => match lo < hi -> Nat {
+      no => lo
+      yes => match scan_number(starts, nat_div(lo + hi, 2)) <= code -> Nat {
+        yes => scan_search(f, starts, code, nat_div(lo + hi, 2) + 1, hi)
+        no => scan_search(f, starts, code, lo, nat_div(lo + hi, 2))
+      }
+    }
+  }
+}
+
+// The class + 1 of a code point by the runs: the last run that starts at or
+// before it, if it ends at or after it.
+fn scan_run_class(starts: Array(Nat), ends: Array(Nat), classes: Array(Nat), code: Nat) -> Nat {
+  match scan_search(array_len(starts), starts, code, 0, array_len(starts)) -> Nat {
+    zero => 0
+    succ(j) => match code <= scan_number(ends, j) -> Nat {
+      yes => scan_number(classes, j) + 1
+      no => 0
+    }
+  }
+}
+
+// The length in bytes of the character that starts with this byte.
+fn scan_char_length(first: Nat) -> Nat {
+  match first < 128 -> Nat {
+    yes => 1
+    no => match first < 224 -> Nat {
+      yes => 2
+      no => match first < 240 -> Nat {
+        yes => 3
+        no => 4
+      }
+    }
+  }
+}
+
+// ---- reading the tables ------------------------------------------------------
+
+// `k` numbers of `a`, from `at`, `step` apart.
+fn scan_column(k: Nat, a: Array(Nat), at: Nat, step: Nat) -> List(Nat) {
+  match k -> List(Nat) {
+    zero => Nil
+    succ(k2) => Cons(scan_number(a, at), scan_column(k2, a, at + step, step))
+  }
+}
+
+// The class + 1 of the `k` code points from `code`.
+fn scan_classes_from(
+  k: Nat,
+  starts: Array(Nat),
+  ends: Array(Nat),
+  classes: Array(Nat),
+  code: Nat
+) -> List(Nat) {
+  match k -> List(Nat) {
+    zero => Nil
+    succ(
+      k2
+    ) => Cons(
+      scan_run_class(starts, ends, classes, code),
+      scan_classes_from(k2, starts, ends, classes, succ(code))
+    )
+  }
+}
+
+// The `k` changes from `p`, put before `done` last first.
+fn scan_changes_in(
+  k: Nat,
+  m: Array(Nat),
+  p: Nat,
+  done: List(ScanModeChange)
+) -> List(ScanModeChange) {
+  match k -> List(ScanModeChange) {
+    zero => done
+    succ(
+      k2
+    ) => scan_changes_in(
+      k2,
+      m,
+      p + 3,
+      Cons(
+        ScanModeChange { kind: scan_number(
+          m,
+          p
+        ), token: scan_number(m, p + 1), target: scan_number(m, p + 2) },
+        done
+      )
+    )
+  }
+}
+
+// The changes of `k` modes from `p` (last mode first), and where they end.
+fn scan_modes_in(
+  k: Nat,
+  m: Array(Nat),
+  p: Nat,
+  done: List(List(ScanModeChange))
+) -> Pair(List(List(ScanModeChange)), Nat) {
+  match k -> Pair(List(List(ScanModeChange)), Nat) {
+    zero => Pair { fst: done, snd: p }
+    succ(
+      k2
+    ) => scan_modes_in(
+      k2,
+      m,
+      p + 1 + scan_number(m, p) * 3,
+      Cons(scan_changes_in(scan_number(m, p), m, p + 1, Nil), done)
+    )
+  }
+}
+
+// Where the automata are read: the next number of `states` and of `rows`,
+// the states and accept entries so far, and the tables built so far (each
+// last entry first).
+inductive ScanBuild(): Type {
+  scan_build(
+    sp: Nat,
+    rp: Nat,
+    total: Nat,
+    accepts: Nat,
+    built_dfa_first: List(Nat),
+    built_accept_first: List(Nat),
+    built_accept_token: List(Nat),
+    built_accept_kind: List(Nat),
+    built_accept_dfa: List(Nat),
+    built_rows: List(Nat)
+  ): ScanBuild
+}
+
+// `n` copies of `x` before `l`.
+fn scan_repeat_onto(n: Nat, x: Nat, l: List(Nat)) -> List(Nat) {
+  match n -> List(Nat) {
+    zero => l
+    succ(n2) => scan_repeat_onto(n2, x, Cons(x, l))
+  }
+}
+
+// `k` accept entries.
+fn scan_accepts_in(k: Nat, s: Array(Nat), b: ScanBuild) -> ScanBuild {
+  match k -> ScanBuild {
+    zero => b
+    succ(k2) => scan_accepts_in(
+      k2,
+      s,
+      ScanBuild {
+        sp: b.sp + 3,
+        rp: b.rp,
+        total: b.total,
+        accepts: succ(b.accepts),
+        built_dfa_first: b.built_dfa_first,
+        built_accept_first: b.built_accept_first,
+        built_accept_token: Cons(scan_number(s, b.sp), b.built_accept_token),
+        built_accept_kind: Cons(scan_number(s, b.sp + 1), b.built_accept_kind),
+        built_accept_dfa: Cons(scan_number(s, b.sp + 2), b.built_accept_dfa),
+        built_rows: b.built_rows
+      }
+    )
+  }
+}
+
+// A state's row, run by run, once `filled` classes are: each run is a count
+// and a next state (0 for none). Each run fills one class at least, so
+// `fuel` is the number of classes.
+fn scan_row_in(fuel: Nat, n_classes: Nat, r: Array(Nat), filled: Nat, b: ScanBuild) -> ScanBuild {
+  match fuel -> ScanBuild {
+    zero => b
+    succ(f) => match filled < n_classes -> ScanBuild {
+      no => b
+      yes => scan_row_in(
+        f,
+        n_classes,
+        r,
+        filled + scan_number(r, b.rp),
+        ScanBuild {
+          sp: b.sp,
+          rp: b.rp + 2,
+          total: b.total,
+          accepts: b.accepts,
+          built_dfa_first: b.built_dfa_first,
+          built_accept_first: b.built_accept_first,
+          built_accept_token: b.built_accept_token,
+          built_accept_kind: b.built_accept_kind,
+          built_accept_dfa: b.built_accept_dfa,
+          built_rows: scan_repeat_onto(
+            scan_number(r, b.rp),
+            match scan_number(r, b.rp + 1) -> Nat {
+              zero => 0
+              succ(v) => b.total + succ(v)
+            },
+            b.built_rows
+          )
+        }
+      )
+    }
+  }
+}
+
+// `k` states of an automaton: each one's accept entries and row.
+fn scan_states_in(k: Nat, n_classes: Nat, s: Array(Nat), r: Array(Nat), b: ScanBuild) -> ScanBuild {
+  match k -> ScanBuild {
+    zero => b
+    succ(k2) => scan_states_in(
+      k2,
+      n_classes,
+      s,
+      r,
+      scan_row_in(
+        n_classes,
+        n_classes,
+        r,
+        0,
+        scan_accepts_in(
+          scan_number(s, b.sp),
+          s,
+          ScanBuild {
+            sp: b.sp + 1,
+            rp: b.rp,
+            total: b.total,
+            accepts: b.accepts,
+            built_dfa_first: b.built_dfa_first,
+            built_accept_first: Cons(b.accepts, b.built_accept_first),
+            built_accept_token: b.built_accept_token,
+            built_accept_kind: b.built_accept_kind,
+            built_accept_dfa: b.built_accept_dfa,
+            built_rows: b.built_rows
+          }
+        )
+      )
+    )
+  }
+}
+
+// After an automaton's states: its states count in `total`.
+fn scan_add_states(n: Nat, b: ScanBuild) -> ScanBuild {
+  ScanBuild {
+    sp: b.sp,
+    rp: b.rp,
+    total: b.total + n,
+    accepts: b.accepts,
+    built_dfa_first: b.built_dfa_first,
+    built_accept_first: b.built_accept_first,
+    built_accept_token: b.built_accept_token,
+    built_accept_kind: b.built_accept_kind,
+    built_accept_dfa: b.built_accept_dfa,
+    built_rows: b.built_rows
+  }
+}
+
+// `k` automata.
+fn scan_dfas_in(k: Nat, n_classes: Nat, s: Array(Nat), r: Array(Nat), b: ScanBuild) -> ScanBuild {
+  match k -> ScanBuild {
+    zero => b
+    succ(k2) => scan_dfas_in(
+      k2,
+      n_classes,
+      s,
+      r,
+      scan_add_states(
+        scan_number(s, b.sp),
+        scan_states_in(
+          scan_number(s, b.sp),
+          n_classes,
+          s,
+          r,
+          ScanBuild {
+            sp: b.sp + 1,
+            rp: b.rp,
+            total: b.total,
+            accepts: b.accepts,
+            built_dfa_first: Cons(b.total, b.built_dfa_first),
+            built_accept_first: b.built_accept_first,
+            built_accept_token: b.built_accept_token,
+            built_accept_kind: b.built_accept_kind,
+            built_accept_dfa: b.built_accept_dfa,
+            built_rows: b.built_rows
+          }
+        )
+      )
+    )
+  }
+}
+
+fn scan_array(l: List(Nat)) -> Array(Nat) {
+  array_of_list(list_reverse(l))
+}
+
+// Whether every read of `a` was before `end`.
+fn scan_within(end: Nat, a: Array(Nat)) -> Yn {
+  end <= array_len(a)
+}
+
+fn scan_tables_from(
+  m: Array(Nat),
+  c: Array(Nat),
+  s: Array(Nat),
+  r: Array(Nat)
+) -> Option(ScanTables) {
+  let n_classes = scan_number(m, 0)
+  let n_runs = scan_number(c, 0)
+  let run_start = array_of_list(scan_column(n_runs, c, 1, 3))
+  let run_end = array_of_list(scan_column(n_runs, c, 2, 3))
+  let run_class = array_of_list(scan_column(n_runs, c, 3, 3))
+  let modes = scan_modes_in(scan_number(m, 1), m, 3, Nil)
+  let b = scan_dfas_in(
+    scan_number(m, 2),
+    n_classes,
+    s,
+    r,
+    ScanBuild {
+      sp: 0,
+      rp: 0,
+      total: 0,
+      accepts: 0,
+      built_dfa_first: Nil,
+      built_accept_first: Nil,
+      built_accept_token: Nil,
+      built_accept_kind: Nil,
+      built_accept_dfa: Nil,
+      built_rows: Nil
+    }
+  )
+  match scan_within(
+    modes.snd,
+    m
+  ) && scan_within(
+    1 + n_runs * 3,
+    c
+  ) && scan_within(b.sp, s) && scan_within(b.rp, r) -> Option(ScanTables) {
+    no => None
+    yes => Some(
+      ScanTables {
+        classes: n_classes,
+        ascii: array_of_list(scan_classes_from(128, run_start, run_end, run_class, 0)),
+        run_start: run_start,
+        run_end: run_end,
+        run_class: run_class,
+        dfa_first: scan_array(b.built_dfa_first),
+        accept_first: scan_array(Cons(b.accepts, b.built_accept_first)),
+        accept_token: scan_array(b.built_accept_token),
+        accept_kind: scan_array(b.built_accept_kind),
+        accept_dfa: scan_array(b.built_accept_dfa),
+        rows: scan_array(b.built_rows),
+        mode_changes: array_of_list(list_reverse(modes.fst))
+      }
+    )
+  }
+}
+
+// Reads the tables from the four texts (`meta`, `classes`, `states`, `rows`).
+// A table too short for what it says is not a scanner: `None`.
+fn scan_tables_read(meta: Text, classes: Text, states: Text, rows: Text) -> Option(ScanTables) {
+  scan_tables_from(
+    array_of_list(text_number_list(meta)),
+    array_of_list(text_number_list(classes)),
+    array_of_list(text_number_list(states)),
+    array_of_list(text_number_list(rows))
+  )
+}
+
+// The code point at byte `i` of a text that has a character there.
+fn scan_code_point(text: Text, i: Nat, first: Nat) -> Nat {
+  match text_decode(text, i) -> Nat {
+    None => first
+    Some(p) => p.fst
+  }
+}
+
+// The class + 1 of the character at byte `i` (the first byte is `first`).
+fn scan_class(&t: ScanTables, text: Text, i: Nat, first: Nat) -> Nat {
+  match first < 128 -> Nat {
+    yes => scan_number(t.ascii, first)
+    no => scan_run_class(t.run_start, t.run_end, t.run_class, scan_code_point(text, i, first))
+  }
+}
+
+// The state after the character at `i` in `state`, plus one; 0 for none.
+fn scan_next(&t: ScanTables, text: Text, state: Nat, i: Nat) -> Nat {
+  match scan_class(t, text, i, text_byte_value(text, i)) -> Nat {
+    zero => 0
+    succ(c) => scan_number(t.rows, state * t.classes + c)
+  }
+}
+
+// ---- tokens ------------------------------------------------------------------
+
+// Whether the automaton reaches a state that accepts, from `state` at byte
+// `i`, within `k` characters. This is the lookahead of an accept entry: it
+// says yes at the first one, so how much longer it could read does not
+// matter.
+fn scan_probe_in(k: Nat, &t: ScanTables, text: Text, state: Nat, i: Nat, n: Nat) -> Yn {
+  match k -> Yn {
+    zero => no
+    succ(k2) => match i < n -> Yn {
+      no => no
+      yes => match scan_next(t, text, state, i) -> Yn {
+        zero => no
+        succ(
+          s2
+        ) => match scan_number(t.accept_first, s2) < scan_number(t.accept_first, succ(s2)) -> Yn {
+          yes => yes
+          no => scan_probe_in(k2, t, text, s2, i + scan_char_length(text_byte_value(text, i)), n)
+        }
+      }
+    }
+  }
+}
+
+// Whether the automaton `dfa`, run from byte `from`, reaches a state that
+// accepts. Each character is a byte at least, so `n - from` of them do.
+fn scan_probe(&t: ScanTables, text: Text, dfa: Nat, from: Nat, n: Nat) -> Yn {
+  scan_probe_in(n - from, t, text, scan_number(t.dfa_first, dfa), from, n)
+}
+
+// Whether the accept entry `j` holds at byte `i`.
+fn scan_holds(&t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat) -> Yn {
+  match scan_number(t.accept_kind, j) -> Yn {
+    zero => yes
+    succ(kind) => match kind -> Yn {
+      zero => scan_probe(t, text, scan_number(t.accept_dfa, j), i, n)
+      succ(other) => !scan_probe(t, text, scan_number(t.accept_dfa, j), i, n)
+    }
+  }
+}
+
+// The terminal of the first of the `k` accept entries from `j` that holds.
+fn scan_accept_in(k: Nat, &t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat) -> Option(Nat) {
+  match k -> Option(Nat) {
+    zero => None
+    succ(k2) => match scan_holds(t, text, j, i, n) -> Option(Nat) {
+      yes => Some(scan_number(t.accept_token, j))
+      no => scan_accept_in(k2, t, text, succ(j), i, n)
+    }
+  }
+}
+
+// The terminal of the first entry of `state` that holds at byte `i`.
+fn scan_accept(&t: ScanTables, text: Text, state: Nat, i: Nat, n: Nat) -> Option(Nat) {
+  scan_accept_in(
+    scan_number(t.accept_first, succ(state)) - scan_number(t.accept_first, state),
+    t,
+    text,
+    scan_number(t.accept_first, state),
+    i,
+    n
+  )
+}
+
+// The longest token from `state` at byte `i` within `k` characters, or
+// `best` (its end and terminal).
+fn scan_find_in(
+  k: Nat,
+  &t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat,
+  best: Option(Pair(Nat, Nat))
+) -> Option(Pair(Nat, Nat)) {
+  match k -> Option(Pair(Nat, Nat)) {
+    zero => best
+    succ(k2) => match i < n -> Option(Pair(Nat, Nat)) {
+      no => best
+      yes => match scan_next(t, text, state, i) -> Option(Pair(Nat, Nat)) {
+        zero => best
+        succ(s2) => scan_find_in(
+          k2,
+          t,
+          text,
+          s2,
+          i + scan_char_length(text_byte_value(text, i)),
+          n,
+          match scan_accept(t, text, s2, i + scan_char_length(text_byte_value(text, i)), n) -> Option(Pair(Nat, Nat)) {
+            None => best
+            Some(token) => Some(Pair { fst: i + scan_char_length(text_byte_value(text, i)), snd: token })
+          }
+        )
+      }
+    }
+  }
+}
+
+// The longest token of the automaton `dfa` at byte `pos`, if there is one:
+// it reads as long as there is a transition, and
+// remembers the last state that accepts, an entry with a lookahead only if
+// the lookahead holds.
+fn scan_find(&t: ScanTables, text: Text, dfa: Nat, pos: Nat, n: Nat) -> Option(Pair(Nat, Nat)) {
+  scan_find_in(n - pos, t, text, scan_number(t.dfa_first, dfa), pos, n, None)
+}
+
+// ---- modes -------------------------------------------------------------------
+
+// The mode after a token, and the modes pushed before it.
+inductive ScanMode(): Type {
+  scan_mode(current: Nat, pushed: List(Nat)): ScanMode
+}
+
+fn scan_pop(mode: ScanMode) -> ScanMode {
+  match mode.pushed -> ScanMode {
+    Nil => mode
+    Cons(before, more) => ScanMode { current: before, pushed: more }
+  }
+}
+
+fn scan_change_with(changes: List(ScanModeChange), mode: ScanMode, token: Nat) -> ScanMode {
+  match changes -> ScanMode {
+    Nil => mode
+    Cons(change, rest) => match change.token == token -> ScanMode {
+      no => scan_change_with(rest, mode, token)
+      yes => match change.kind -> ScanMode {
+        zero => ScanMode { current: change.target, pushed: mode.pushed }
+        succ(kind) => match kind -> ScanMode {
+          zero => ScanMode { current: change.target, pushed: Cons(mode.current, mode.pushed) }
+          succ(other) => scan_pop(mode)
+        }
+      }
+    }
+  }
+}
+
+fn scan_change(&t: ScanTables, mode: ScanMode, token: Nat) -> ScanMode {
+  scan_change_with(array_get_or(t.mode_changes, mode.current, Nil), mode, token)
+}
+
+// ---- the scanner -------------------------------------------------------------
+
+// The tokens from byte `pos` within `k` steps, after `done` (last first).
+// Each step moves on a byte at least.
+fn scan_all_in(
+  k: Nat,
+  &t: ScanTables,
+  text: Text,
+  n: Nat,
+  pos: Nat,
+  mode: ScanMode,
+  done: List(ScanToken)
+) -> List(ScanToken) {
+  match k -> List(ScanToken) {
+    zero => list_reverse(done)
+    succ(k2) => match pos < n -> List(ScanToken) {
+      no => list_reverse(done)
+      yes => match scan_find(t, text, mode.current, pos, n) -> List(ScanToken) {
+        None => scan_all_in(
+          k2,
+          t,
+          text,
+          n,
+          pos + scan_char_length(text_byte_value(text, pos)),
+          mode,
+          done
+        )
+        Some(
+          found
+        ) => scan_all_in(
+          k2,
+          t,
+          text,
+          n,
+          found.fst,
+          scan_change(t, mode, found.snd),
+          Cons(
+            ScanToken { token_type: found.snd, start: pos, end: found.fst, mode: mode.current },
+            done
+          )
+        )
+      }
+    }
+  }
+}
+
+// Every token of `text`, in order. A character that no token starts with
+// is skipped (the grammar has a token for every character,
+// so it does not happen).
+fn scan_all(&t: ScanTables, text: Text) -> List(ScanToken) {
+  scan_all_in(text_len(text), t, text, text_len(text), 0, ScanMode { current: 0, pushed: Nil }, Nil)
+}

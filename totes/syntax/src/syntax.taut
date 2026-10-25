@@ -1,0 +1,418 @@
+import "tables.taut"
+import "../../llk/src/llk.taut"
+
+// The syntax of Tauto, read from the parser and scanner tables of
+// `crates/tauto-parol` (`tables.taut`), in the proof language (`docs/design/self-host.md`). `README.md`
+// says what the tables hold. `syntax.taut` reads the texts of `tables.taut`
+// and passes them to `syntax_tables_read`.
+
+inductive SyntaxTables(): Type {
+  syntax_tables_of(
+    scan: ScanTables,
+    llk: LlkTables,
+    // The names the dump gives the terminals and the non-terminals (the
+    // root is the last of the non-terminals).
+    terminal_kinds: Array(Text),
+    non_terminal_kinds: Array(Text),
+    declared: List(Text),
+    // For each non-terminal, by number: whether the grammar declares it.
+    declared_flags: Array(Yn)
+  ): SyntaxTables
+}
+
+fn syntax_has_name(names: List(Text), name: Text) -> Yn {
+  match names -> Yn {
+    Nil => no
+    Cons(n, rest) => match n == name -> Yn {
+      yes => yes
+      no => syntax_has_name(rest, name)
+    }
+  }
+}
+
+// For each non-terminal, in order, whether its name is among the declared
+// ones.
+fn syntax_flags_of(non_terminals: List(Text), declared: List(Text)) -> List(Yn) {
+  match non_terminals -> List(Yn) {
+    Nil => Nil
+    Cons(name, rest) => Cons(syntax_has_name(declared, name), syntax_flags_of(rest, declared))
+  }
+}
+
+fn syntax_names(t: Text) -> Array(Text) {
+  array_of_list(text_split(t, " "))
+}
+
+// The tables from the texts of `tables.taut`.
+fn syntax_tables_read(
+  scan_meta: Text,
+  scan_classes: Text,
+  scan_states: Text,
+  scan_rows: Text,
+  parser_meta: Text,
+  skip: Text,
+  lookahead_meta: Text,
+  lookahead_cells: Text,
+  productions: Text,
+  terminal_kinds: Text,
+  non_terminal_kinds: Text,
+  non_terminal_names: Text,
+  declared: Text
+) -> Option(SyntaxTables) {
+  match scan_tables_read(scan_meta, scan_classes, scan_states, scan_rows) -> Option(SyntaxTables) {
+    None => None
+    Some(
+      scan
+    ) => match llk_tables_read(
+      parser_meta,
+      skip,
+      lookahead_meta,
+      lookahead_cells,
+      productions
+    ) -> Option(SyntaxTables) {
+      None => None
+      Some(llk) => Some(
+        SyntaxTables {
+          scan: scan,
+          llk: llk,
+          terminal_kinds: syntax_names(terminal_kinds),
+          non_terminal_kinds: syntax_names(text_concat_all(Cons(non_terminal_kinds, Cons(" Root", Nil)))),
+          declared: text_split(declared, " "),
+          declared_flags: array_of_list(syntax_flags_of(text_split(non_terminal_names, " "), text_split(declared, " ")))
+        }
+      )
+    }
+  }
+}
+
+fn syntax_name(names: Array(Text), i: Nat) -> Text {
+  array_get_or(names, i, "?")
+}
+
+fn syntax_flag(flags: Array(Yn), i: Nat) -> Yn {
+  array_get_or(flags, i, no)
+}
+
+// ---- the tree ------------------------------------------------------------------
+
+inductive CstKind(): Type {
+  cst_non_terminal(non_terminal: Nat): CstKind
+  cst_terminal(terminal: Nat): CstKind
+}
+
+// A node of the tree: a non-terminal with its children, or a token. `name`
+// is its kind's name (`NonTerminalKind` or `TerminalKind`), `terminal` tells
+// which; `declared` is whether the grammar declares the non-terminal.
+// `children` are all of them; `flat` are those of `Cst::children`: the
+// helper non-terminals the grammar does not declare (`…List`, `…Opt`) are
+// replaced by their own children, and white space and comments are left out.
+inductive CstNode(): Type {
+  cst_node(
+    kind: CstKind,
+    name: Text,
+    terminal: Yn,
+    trivia: Yn,
+    declared: Yn,
+    start: Nat,
+    end: Nat,
+    children: List(CstNode),
+    flat: List(CstNode)
+  ): CstNode
+}
+
+inductive CstSpan(): Type {
+  cst_span(start: Nat, end: Nat): CstSpan
+}
+
+// A non-terminal that is open: what has been read of it, its children in
+// order (left empty when the tree is built without them) and its `flat`.
+inductive CstFrame(): Type {
+  cst_frame(span: CstSpan, children: List(CstNode), flat: List(CstNode)): CstFrame
+}
+
+fn cst_empty(s: CstSpan) -> Yn {
+  s.end <= s.start && s.start == 0
+}
+
+// `Span::merge` of `cst.rs`: an empty span at 0 is no span.
+fn cst_merge(a: CstSpan, b: CstSpan) -> CstSpan {
+  match cst_empty(a) -> CstSpan {
+    yes => b
+    no => match cst_empty(b) -> CstSpan {
+      yes => a
+      no => CstSpan { start: nat_min(a.start, b.start), end: nat_max(a.end, b.end) }
+    }
+  }
+}
+
+// `is_trivia` of `cst.rs`: NewLine, Whitespace, LineComment, BlockComment
+// and Comment.
+fn cst_is_trivia(kinds: Array(Text), terminal: Nat) -> Yn {
+  let name = syntax_name(kinds, terminal)
+  name == "NewLine" || name == "Whitespace" || name == "LineComment" || name == "BlockComment" || name == "Comment"
+}
+
+// The node of `non_terminal` that a frame closes into. Without `keep` it has
+// no `children`, which saves the box they would be in.
+fn cst_closed(&t: SyntaxTables, keep: Yn, non_terminal: Nat, frame: CstFrame) -> CstNode {
+  match keep -> CstNode {
+    yes => CstNode {
+      kind: cst_non_terminal(non_terminal),
+      name: syntax_name(t.non_terminal_kinds, non_terminal),
+      terminal: no,
+      trivia: no,
+      declared: syntax_flag(t.declared_flags, non_terminal),
+      start: frame.span.start,
+      end: frame.span.end,
+      children: frame.children,
+      flat: frame.flat
+    }
+    no => CstNode {
+      kind: cst_non_terminal(non_terminal),
+      name: syntax_name(t.non_terminal_kinds, non_terminal),
+      terminal: no,
+      trivia: no,
+      declared: syntax_flag(t.declared_flags, non_terminal),
+      start: frame.span.start,
+      end: frame.span.end,
+      children: Nil,
+      flat: frame.flat
+    }
+  }
+}
+
+// A token goes into the innermost open node, before the children it has.
+fn cst_add_token(
+  &t: SyntaxTables,
+  keep: Yn,
+  &mut frames: Stack(CstFrame),
+  terminal: Nat,
+  from: Nat,
+  to: Nat
+) -> () {
+  match stack_pop(&mut frames) -> () {
+    None => ()
+    Some(parent) => {
+      let trivia = cst_is_trivia(t.terminal_kinds, terminal)
+      let node = CstNode {
+        kind: cst_terminal(terminal),
+        name: syntax_name(t.terminal_kinds, terminal),
+        terminal: yes,
+        trivia: trivia,
+        declared: no,
+        start: from,
+        end: to,
+        children: Nil,
+        flat: Nil
+      }
+      stack_push(
+        &mut frames,
+        CstFrame {
+          span: match trivia -> CstSpan {
+            yes => parent.span
+            no => cst_merge(parent.span, CstSpan { start: from, end: to })
+          },
+          children: match keep -> List(CstNode) {
+            yes => Cons(node, parent.children)
+            no => parent.children
+          },
+          flat: match trivia -> List(CstNode) {
+            yes => parent.flat
+            no => Cons(node, parent.flat)
+          }
+        }
+      )
+    }
+  }
+}
+
+// A closed node goes into the open node around it, before the children it has.
+fn cst_add_node(keep: Yn, parent: CstFrame, span: CstSpan, node: CstNode) -> CstFrame {
+  CstFrame {
+    span: cst_merge(parent.span, span),
+    children: match keep -> List(CstNode) {
+      yes => Cons(node, parent.children)
+      no => parent.children
+    },
+    flat: match node.declared -> List(CstNode) {
+      yes => Cons(node, parent.flat)
+      no => list_append(node.flat, parent.flat)
+    }
+  }
+}
+
+// The tree the events build (`CstBuilder`), taking at most `fuel` of them off
+// `events`. The last event is on top, so a node is met at its end and is
+// closed when its opening is reached: `frames` hold what has been read of
+// the nodes still open (innermost on top), their children in order. The
+// events of a parse that succeeded close everything they open. `keep` is
+// whether the nodes keep all their `children`; `flat` is built either way.
+fn cst_build_in(
+  fuel: Nat,
+  &t: SyntaxTables,
+  keep: Yn,
+  &mut events: Stack(LlkEvent),
+  &mut frames: Stack(CstFrame),
+  root: Option(CstNode)
+) -> Option(CstNode) {
+  match fuel -> Option(CstNode) {
+    zero => root
+    succ(f) => match stack_pop(&mut events) -> Option(CstNode) {
+      None => root
+      Some(event) => match event -> Option(CstNode) {
+        llk_close => {
+          stack_push(
+            &mut frames,
+            CstFrame { span: CstSpan { start: 0, end: 0 }, children: Nil, flat: Nil }
+          )
+          cst_build_in(f, &t, keep, &mut events, &mut frames, root)
+        }
+        llk_open(non_terminal) => match stack_pop(&mut frames) -> Option(CstNode) {
+          None => cst_build_in(f, &t, keep, &mut events, &mut frames, root)
+          Some(frame) => match stack_pop(&mut frames) -> Option(CstNode) {
+            None => cst_build_in(
+              f,
+              &t,
+              keep,
+              &mut events,
+              &mut frames,
+              Some(cst_closed(&t, keep, non_terminal, frame))
+            )
+            Some(parent) => {
+              let span = frame.span
+              let node = cst_closed(&t, keep, non_terminal, frame)
+              stack_push(&mut frames, cst_add_node(keep, parent, span, node))
+              cst_build_in(f, &t, keep, &mut events, &mut frames, root)
+            }
+          }
+        }
+        llk_token(terminal, from, to) => {
+          cst_add_token(&t, keep, &mut frames, terminal, from, to)
+          cst_build_in(f, &t, keep, &mut events, &mut frames, root)
+        }
+      }
+    }
+  }
+}
+
+// The tree of the events on `events`, the last on top.
+fn cst_build(&t: SyntaxTables, keep: Yn, &mut events: Stack(LlkEvent)) -> Option(CstNode) {
+  var frames: Stack(CstFrame) = stack_new()
+  cst_build_in(stack_len(&events) + 1, &t, keep, &mut events, &mut frames, None)
+}
+
+// ---- the dump ------------------------------------------------------------------
+
+// The nodes, each at `depth`, before `rest`.
+fn cst_at_depth(
+  nodes: List(CstNode),
+  depth: Nat,
+  rest: List(Pair(CstNode, Nat))
+) -> List(Pair(CstNode, Nat)) {
+  match nodes -> List(Pair(CstNode, Nat)) {
+    Nil => rest
+    Cons(node, more) => Cons(Pair { fst: node, snd: depth }, cst_at_depth(more, depth, rest))
+  }
+}
+
+// A node's line: its depth, its kind, its start and its end.
+fn cst_line(node: CstNode, depth: Nat) -> Text {
+  text_concat_all(
+    Cons(
+      text_of_nat(depth),
+      Cons(
+        " ",
+        Cons(
+          node.name,
+          Cons(
+            " ",
+            Cons(
+              text_of_nat(node.start),
+              Cons(" ", Cons(text_of_nat(node.end), Cons(text_newline(), Nil)))
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// The lines of at most `fuel` nodes of `todo` and their children, parents
+// first, after `lines` (last first).
+fn cst_dump_in(fuel: Nat, todo: List(Pair(CstNode, Nat)), lines: List(Text)) -> List(Text) {
+  match fuel -> List(Text) {
+    zero => lines
+    succ(f) => match todo -> List(Text) {
+      Nil => lines
+      Cons(
+        item,
+        rest
+      ) => cst_dump_in(
+        f,
+        cst_at_depth(item.fst.children, succ(item.snd), rest),
+        Cons(cst_line(item.fst, item.snd), lines)
+      )
+    }
+  }
+}
+
+// The dump of a tree of at most `size` nodes: a line for each node, the
+// parent first, its children in order.
+fn cst_dump(node: CstNode, size: Nat) -> Text {
+  text_concat_all(list_reverse(cst_dump_in(size, Cons(Pair { fst: node, snd: 0 }, Nil), Nil)))
+}
+
+// ---- parsing -------------------------------------------------------------------
+
+// The events of the parse of `source` are left on `events`, the last on top.
+fn syntax_events(&t: SyntaxTables, source: Text, &mut events: Stack(LlkEvent)) -> Yn {
+  let tokens = llk_tokens(t.llk, scan_all(t.scan, source), text_len(source))
+  match llk_parse(llk_fuel(t.llk, tokens), t.llk, tokens, &mut events) -> Yn {
+    llk_failed(error) => no
+    llk_parsed => yes
+  }
+}
+
+// The tree of `source`, or `None` when it is not a program of the grammar.
+fn syntax_parse(&t: SyntaxTables, source: Text) -> Option(CstNode) {
+  var events: Stack(LlkEvent) = stack_new()
+  match syntax_events(&t, source, &mut events) -> Option(CstNode) {
+    no => None
+    yes => cst_build(&t, no, &mut events)
+  }
+}
+
+// The dump of the tree of `source`, or `None` when it is not a program of
+// the grammar. Each node opens or is a token, so there are no more nodes
+// than events.
+fn syntax_dump(&t: SyntaxTables, source: Text) -> Option(Text) {
+  var events: Stack(LlkEvent) = stack_new()
+  match syntax_events(&t, source, &mut events) -> Option(Text) {
+    no => None
+    yes => {
+      let size = stack_len(&events)
+      match cst_build(&t, yes, &mut events) -> Option(Text) {
+        None => None
+        Some(tree) => Some(cst_dump(tree, size))
+      }
+    }
+  }
+}
+
+fn syntax_tables() -> Option(SyntaxTables) {
+  syntax_tables_read(
+    syntax_tables_scan_meta(),
+    syntax_tables_scan_classes(),
+    syntax_tables_scan_states(),
+    syntax_tables_scan_rows(),
+    syntax_tables_parser_meta(),
+    syntax_tables_skip(),
+    syntax_tables_lookahead_meta(),
+    syntax_tables_lookahead_cells(),
+    syntax_tables_productions(),
+    syntax_tables_terminal_kinds(),
+    syntax_tables_non_terminal_kinds(),
+    syntax_tables_non_terminal_names(),
+    syntax_tables_declared()
+  )
+}

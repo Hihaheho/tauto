@@ -1,0 +1,431 @@
+import "lin_state.taut"
+
+// Control-flow linearity, frames, statements' spans and the paths of a walk
+// (`event`, `merge` of `lin.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+
+// The indexes from `from`, `n` of them.
+fn range_from(n: Nat, from: Nat) -> List(Nat) {
+  match n -> List(Nat) {
+    zero => Nil
+    succ(m) => Cons(from, range_from(m, from + 1))
+  }
+}
+
+fn range_list(from: Nat, to: Nat) -> List(Nat) {
+  range_from(nat_sub(to, from), from)
+}
+
+fn trim_bars_in(n: Nat, t: Text) -> Text {
+  match n -> Text {
+    zero => t
+    succ(
+      m
+    ) => if text_starts_with(
+      t,
+      "|",
+      0
+    ) { trim_bars_in(m, text_slice_or_empty(t, 1, text_len(t))) } else { t }
+  }
+}
+
+fn trim_bars(t: Text) -> Text {
+  trim_bars_in(text_len(t), t)
+}
+
+// The quantities an effect of a row may have: a declared one's own, any for a
+// row variable (`<=1` and below when it is bounded so), none for an effect
+// that cannot be followed.
+fn lin_row_var_quants(v: Text, bounded: List(Text), direct: List(Text)) -> List(Quant) {
+  if list_has_text(direct, v) {
+    Cons(QuantDirect, Nil)
+  } else if list_has_text(bounded, v) {
+    Cons(QuantZero, Cons(QuantAtMostOne, Cons(QuantOne, Nil)))
+  } else {
+    Cons(QuantZero, Cons(QuantAtMostOne, Cons(QuantOne, Cons(QuantMany, Nil))))
+  }
+}
+
+fn lin_quants_of(c: Lin, eff: Text, bounded: List(Text), direct: List(Text)) -> List(Quant) {
+  if text_starts_with(eff, "|", 0) {
+    lin_row_var_quants(text_slice_or_empty(eff, 1, text_len(eff)), bounded, direct)
+  } else if text_starts_with(eff, "?", 0) {
+    Nil
+  } else {
+    match ordmap_get(c.rows.quants, eff, ordmap_compare_text) -> List(Quant) {
+      Some(q) => Cons(q, Nil)
+      None => Cons(QuantAtMostOne, Nil)
+    }
+  }
+}
+
+fn quants_any_many(qs: List(Quant)) -> Yn {
+  match qs -> Yn {
+    Nil => no
+    Cons(q, rest) => quant_is_many(q) || quants_any_many(rest)
+  }
+}
+
+fn quant_is_one(q: Quant) -> Yn {
+  match q -> Yn {
+    QuantOne => yes
+    _ => no
+  }
+}
+
+fn quants_any_not_one(qs: List(Quant)) -> Yn {
+  match qs -> Yn {
+    Nil => no
+    Cons(q, rest) => (!quant_is_one(q) && !quant_is_direct(q)) || quants_any_not_one(rest)
+  }
+}
+
+fn handles_answering(hs: List(HandleCtx), eff: Text) -> Option(HandleCtx) {
+  match hs -> Option(HandleCtx) {
+    Nil => None()
+    Cons(h, rest) => if ordmap_contains(h.answers, eff, ordmap_compare_text) {
+      Some(h)
+    } else {
+      handles_answering(rest, eff)
+    }
+  }
+}
+
+fn indexes_below(xs: List(Nat), limit: Nat) -> List(Nat) {
+  match xs -> List(Nat) {
+    Nil => Nil
+    Cons(
+      i,
+      rest
+    ) => if i < limit { Cons(i, indexes_below(rest, limit)) } else { indexes_below(rest, limit) }
+  }
+}
+
+// Whether a binding is duplicated when a continuation runs more than once.
+fn binding_duplicated(b: Binding) -> Yn {
+  if class_is_dup(b.class) {
+    no
+  } else {
+    match b.mode -> Yn {
+      ModeOwned => yes
+      ModeVar => yes
+      ModeVarInClosure => yes
+      ModeBorrow(m) => m
+      ModeBorrowClosure(names, m) => m
+    }
+  }
+}
+
+fn lin_event_one(&mut c: Lin, i: Nat, many: Yn, not_one: Yn, shown: Text, span: TySpan) -> () {
+  let b = lin_get(c, i)
+  if !state_is_moved(b.state) {
+    if many && binding_duplicated(b) {
+      lin_error(&mut c, cat4(b.name, " is live across ", shown, ", which resumes \u{3c9}"), span)
+    } else if not_one && class_is_linear(b.class) && mode_is_owned(b.mode) {
+      lin_error(&mut c, cat4(b.name, " is live across ", shown, ", which may not resume"), span)
+    }
+  }
+}
+
+fn lin_event_live(
+  live: List(Nat),
+  &mut c: Lin,
+  many: Yn,
+  not_one: Yn,
+  shown: Text,
+  span: TySpan
+) -> () {
+  match live -> () {
+    Nil => ()
+    Cons(i, rest) => {
+      lin_event_one(&mut c, i, many, not_one, shown, span)
+      lin_event_live(rest, &mut c, many, not_one, shown, span)
+    }
+  }
+}
+
+fn handle_start(frame: Frame, eff: Text) -> Nat {
+  match handles_answering(frame.handles, eff) -> Nat {
+    Some(h) => h.start
+    None => frame.base
+  }
+}
+
+fn handle_extra(frame: Frame, eff: Text, from: Nat) -> List(Nat) {
+  match handles_answering(frame.handles, eff) -> List(Nat) {
+    Some(h) => indexes_below(h.return_uses, from)
+    None => Nil
+  }
+}
+
+fn lin_event_effect(&mut c: Lin, eff: Text, span: TySpan) -> () {
+  let frame = lin_frame(c)
+  let quants = lin_quants_of(c, eff, frame.bounded, frame.direct_bounded)
+  let many = quants_any_many(quants)
+  let not_one = quants_any_not_one(quants)
+  if many || not_one {
+    let from = handle_start(frame, eff)
+    let live = list_append(handle_extra(frame, eff, from), range_list(from, c.count))
+    lin_event_live(live, &mut c, many, not_one, trim_bars(eff), span)
+  }
+}
+
+fn lin_event_effects(effects: List(Text), &mut c: Lin, span: TySpan) -> () {
+  match effects -> () {
+    Nil => ()
+    Cons(eff, rest) => {
+      lin_event_effect(&mut c, eff, span)
+      lin_event_effects(rest, &mut c, span)
+    }
+  }
+}
+
+// `row` may be performed here: the bindings live across it must suit its
+// quantities.
+fn lin_event(&mut c: Lin, row: RowSet, span: TySpan) -> () {
+  match c.frames -> () {
+    Nil => ()
+    Cons(f, rest) => lin_event_effects(rowset_list(row), &mut c, span)
+  }
+}
+
+fn lin_call_event(&mut c: Lin, t: SurfaceTerm) -> () {
+  match ordmap_get(c.rows.calls, RowSpan { start: t.start, end: t.end }, rows_compare_span) -> () {
+    Some(row) => lin_event(&mut c, row, span_of(t))
+    None => ()
+  }
+}
+
+// ----- functions and blocks -----
+
+fn bound_is_at_most_one(b: Option(Text)) -> Yn {
+  match b -> Yn {
+    Some(x) => x == "<=1"
+    None => no
+  }
+}
+
+fn lin_bounded(gs: List(Text), bs: List(Option(Text))) -> List(Text) {
+  match gs -> List(Text) {
+    Nil => Nil
+    Cons(g, rest) => if bound_is_at_most_one(list_head_or_none(bs)) {
+      Cons(g, lin_bounded(rest, list_tail(bs)))
+    } else {
+      lin_bounded(rest, list_tail(bs))
+    }
+  }
+}
+
+fn lin_push_params(ps: List(Text), &mut c: Lin, site: Nat) -> () {
+  match ps -> () {
+    Nil => ()
+    Cons(p, rest) => {
+      lin_push_unit(&mut c, p, site, no)
+      lin_push_params(rest, &mut c, site)
+    }
+  }
+}
+
+fn fn_returns_borrow(f: SurfaceFn) -> Yn {
+  match f.result -> Yn {
+    Some(r) => match r.kind -> Yn {
+      SkBorrow(m, x) => yes
+      _ => no
+    }
+    None => no
+  }
+}
+
+fn opt_span(e: Option(SurfaceTerm)) -> TySpan {
+  match e -> TySpan {
+    Some(x) => span_of(x)
+    None => TySpan { start: 0, end: 0 }
+  }
+}
+
+fn stmt_span(s: SurfaceStmt) -> TySpan {
+  match s -> TySpan {
+    StLet(n, ty, value, b, bm) => span_of(value)
+    StVar(n, ty, value, vb) => span_of(value)
+    StAssign(n, value) => span_of(value)
+    StFn(f) => TySpan { start: f.start, end: f.end }
+    StWhile(c, body) => span_of(body)
+    StReturn(e) => opt_span(e)
+    StExpr(e) => span_of(e)
+    StStruct(d) => TySpan { start: d.start, end: d.end }
+    StEnum(d) => TySpan { start: d.start, end: d.end }
+    StExtern(n, fns, a, b) => TySpan { start: a, end: b }
+    StOther(n, a, b) => TySpan { start: a, end: b }
+    StMacro(m1, m2, a, b) => TySpan { start: a, end: b }
+    StSyntax(m1, m2, a, b) => TySpan { start: a, end: b }
+    _ => TySpan { start: 0, end: 0 }
+  }
+}
+
+fn last_stmt_span(ss: List(SurfaceStmt)) -> TySpan {
+  match ss -> TySpan {
+    Nil => TySpan { start: 0, end: 0 }
+    Cons(s, rest) => match rest -> TySpan {
+      Nil => stmt_span(s)
+      Cons(x, more) => last_stmt_span(rest)
+    }
+  }
+}
+
+fn lin_freeze_all(lent: List(Pair(Nat, Yn)), &mut c: Lin, by: Nat) -> () {
+  match lent -> () {
+    Nil => ()
+    Cons(l, rest) => {
+      let b = lin_get(c, l.fst)
+      lin_put(
+        &mut c,
+        l.fst,
+        binding_with_frozen(b, list_append(b.frozen, Cons(Pair { fst: by, snd: l.snd }, Nil)))
+      )
+      lin_freeze_all(rest, &mut c, by)
+    }
+  }
+}
+
+fn frame_with(f: Frame, handles: List(HandleCtx), budgets: Nat, loops: Nat) -> Frame {
+  Frame {
+    base: f.base,
+    handles: handles,
+    budgets: budgets,
+    loops: loops,
+    bounded: f.bounded,
+    direct_bounded: f.direct_bounded,
+    returns_borrow: f.returns_borrow
+  }
+}
+
+fn lin_frame_loops_add(&mut c: Lin) -> () {
+  let f = lin_frame(c)
+  lin_set_frame(&mut c, frame_with(f, f.handles, f.budgets, f.loops + 1))
+}
+
+fn lin_frame_loops_sub(&mut c: Lin) -> () {
+  let f = lin_frame(c)
+  lin_set_frame(&mut c, frame_with(f, f.handles, f.budgets, nat_pred(f.loops)))
+}
+
+fn lin_frame_budgets_add(&mut c: Lin) -> () {
+  let f = lin_frame(c)
+  lin_set_frame(&mut c, frame_with(f, f.handles, f.budgets + 1, f.loops))
+}
+
+fn lin_frame_budgets_sub(&mut c: Lin) -> () {
+  let f = lin_frame(c)
+  lin_set_frame(&mut c, frame_with(f, f.handles, nat_pred(f.budgets), f.loops))
+}
+
+fn lin_frame_handles(&mut c: Lin, handles: List(HandleCtx)) -> () {
+  let f = lin_frame(c)
+  lin_set_frame(&mut c, frame_with(f, handles, f.budgets, f.loops))
+}
+
+// `return`: the linear bindings of the function must be used by now.
+fn lin_leave_function(&mut c: Lin, span: TySpan) -> () {
+  lin_report_unused_below(c.count, &mut c, lin_frame(c).base, span)
+  set_to(&mut c.dead, yes)
+}
+
+// ----- paths -----
+
+fn lin_states_below(n: Nat, c: Lin, acc: List(LinState)) -> List(LinState) {
+  match n -> List(LinState) {
+    zero => acc
+    succ(i) => lin_states_below(i, c, Cons(lin_get(c, i).state, acc))
+  }
+}
+
+fn lin_snapshot(c: Lin) -> Option(List(LinState)) {
+  if c.dead { None() } else { Some(lin_states_below(c.count, c, Nil)) }
+}
+
+fn lin_restore_from(states: List(LinState), &mut c: Lin, i: Nat) -> () {
+  match states -> () {
+    Nil => ()
+    Cons(s, rest) => if i < c.count {
+      lin_set_state(&mut c, i, s)
+      lin_restore_from(rest, &mut c, i + 1)
+    }
+  }
+}
+
+fn lin_restore(&mut c: Lin, states: Option(List(LinState))) -> () {
+  match states -> () {
+    None => set_to(&mut c.dead, yes)
+    Some(ss) => {
+      set_to(&mut c.dead, no)
+      lin_restore_from(ss, &mut c, 0)
+    }
+  }
+}
+
+fn live_paths(paths: List(Option(List(LinState)))) -> List(List(LinState)) {
+  match paths -> List(List(LinState)) {
+    Nil => Nil
+    Cons(p, rest) => match p -> List(List(LinState)) {
+      Some(ss) => Cons(ss, live_paths(rest))
+      None => live_paths(rest)
+    }
+  }
+}
+
+fn state_at(ss: List(LinState), i: Nat) -> LinState {
+  match nth_item(ss, i) -> LinState {
+    Some(s) => s
+    None => BsOwned
+  }
+}
+
+fn states_at(paths: List(List(LinState)), i: Nat) -> List(LinState) {
+  match paths -> List(LinState) {
+    Nil => Nil
+    Cons(p, rest) => Cons(state_at(p, i), states_at(rest, i))
+  }
+}
+
+fn all_state(ss: List(LinState), s: LinState) -> Yn {
+  match ss -> Yn {
+    Nil => yes
+    Cons(x, rest) => state_eq(x, s) && all_state(rest, s)
+  }
+}
+
+fn lin_merged_state(&mut c: Lin, states: List(LinState), b: Binding, span: TySpan) -> LinState {
+  if all_state(states, BsOwned) {
+    BsOwned
+  } else if all_state(states, BsMoved) {
+    BsMoved
+  } else if class_is_linear(b.class) && mode_is_owned(b.mode) {
+    lin_error(&mut c, cat2(b.name, " is used on some paths only"), span)
+    BsMoved
+  } else {
+    BsMaybe
+  }
+}
+
+// The bindings from `i` on, `r` of them, take the state their paths join in.
+fn lin_merge_from(r: Nat, &mut c: Lin, live: List(List(LinState)), i: Nat, span: TySpan) -> () {
+  match r -> () {
+    zero => ()
+    succ(r2) => {
+      let state = lin_merged_state(&mut c, states_at(live, i), lin_get(c, i), span)
+      lin_set_state(&mut c, i, state)
+      lin_merge_from(r2, &mut c, live, i + 1, span)
+    }
+  }
+}
+
+// The state after paths join: a binding moved on some paths only is `Maybe`,
+// which a linear one may not be.
+fn lin_merge(&mut c: Lin, paths: List(Option(List(LinState))), span: TySpan) -> () {
+  match live_paths(paths) -> () {
+    Nil => set_to(&mut c.dead, yes)
+    Cons(first, rest) => {
+      set_to(&mut c.dead, no)
+      lin_merge_from(nat_min(list_len(first), c.count), &mut c, Cons(first, rest), 0, span)
+    }
+  }
+}

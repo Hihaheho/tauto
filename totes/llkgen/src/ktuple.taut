@@ -1,0 +1,472 @@
+// The k-tuples of the lookahead analysis. The order of the tuples decides
+// the numbering of the lookahead automata, which is checked against the
+// reference tables.
+
+// A tuple is one number, and tuples are ordered as their numbers are. From
+// the high end: whether the tuple is complete (0 or 1), its length (3 bits),
+// its terminals as base 256 digits in 32 bits (the first is the least
+// significant; the epsilon is 255, bigger than any terminal) and the tuple's
+// own `k` (3 bits). So a tuple holds at most 4 terminals, each numbered
+// below 255; the analysis runs with `k` at most 3 (`lg_lookahead(g, 3)`).
+
+fn lg_min(a: u64, b: u64) -> u64 {
+  if a < b { a } else { b }
+}
+
+fn lg_len(xs: List(u64)) -> u64 {
+  var n: u64 = 0
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        n := n + 1
+        rest := more
+      }
+    }
+  }
+  n
+}
+
+fn lg_rev(xs: List(u64)) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The reverse of `rev`, then `tail`.
+fn lg_rev_onto(rev: List(u64), tail: List(u64)) -> List(u64) {
+  var out = tail
+  var rest = rev
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn lg_append(xs: List(u64), ys: List(u64)) -> List(u64) {
+  lg_rev_onto(lg_rev(xs), ys)
+}
+
+fn lg_take(xs: List(u64), n: u64) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = xs
+  var left = n
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => if left == 0 {
+        running := false
+      } else {
+        out := Cons(x, out)
+        rest := more
+        left := left - 1
+      }
+    }
+  }
+  lg_rev(out)
+}
+
+fn lg_last(xs: List(u64)) -> Option(u64) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match rest {
+      Nil => Some(x)
+      Cons(y, more) => lg_last(rest)
+    }
+  }
+}
+
+fn lg_head_is(xs: List(u64), v: u64) -> Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => x == v
+  }
+}
+
+fn lg_list_eq(xs: List(u64), ys: List(u64)) -> Bool {
+  var a = xs
+  var b = ys
+  var same = true
+  var running = true
+  while running {
+    match a {
+      Nil => {
+        same := match b {
+          Nil => true
+          Cons(y, more) => false
+        }
+        running := false
+      }
+      Cons(x, rest) => match b {
+        Nil => {
+          same := false
+          running := false
+        }
+        Cons(y, more) => if x == y {
+          a := rest
+          b := more
+        } else {
+          same := false
+          running := false
+        }
+      }
+    }
+  }
+  same
+}
+
+// Merges two sorted lists without repeats into one.
+fn lg_union(xs: List(u64), ys: List(u64)) -> List(u64) {
+  var out: List(u64) = Nil
+  var a = xs
+  var b = ys
+  var running = true
+  while running {
+    match a {
+      Nil => {
+        out := lg_rev_onto(out, b)
+        running := false
+      }
+      Cons(x, rest) => match b {
+        Nil => {
+          out := lg_rev_onto(out, a)
+          running := false
+        }
+        Cons(y, more) => if x == y {
+          out := Cons(x, out)
+          a := rest
+          b := more
+        } else if x < y {
+          out := Cons(x, out)
+          a := rest
+        } else {
+          out := Cons(y, out)
+          b := more
+        }
+      }
+    }
+  }
+  out
+}
+
+// A list sorted, without repeats.
+fn lg_sort(xs: List(u64)) -> List(u64) {
+  let n = lg_len(xs)
+  if n < 2 {
+    xs
+  } else {
+    let half = div(n, 2)
+    lg_union(lg_sort(lg_take(xs, half)), lg_sort(lg_drop(xs, half)))
+  }
+}
+
+fn lg_drop(xs: List(u64), n: u64) -> List(u64) {
+  var rest = xs
+  var left = n
+  var running = true
+  while running {
+    if left == 0 {
+      running := false
+    } else {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(x, more) => {
+          rest := more
+          left := left - 1
+        }
+      }
+    }
+  }
+  rest
+}
+
+// Whether two sorted lists have nothing in common.
+fn lg_disjoint(xs: List(u64), ys: List(u64)) -> Bool {
+  var a = xs
+  var b = ys
+  var free = true
+  var running = true
+  while running {
+    match a {
+      Nil => {
+        running := false
+      }
+      Cons(x, rest) => match b {
+        Nil => {
+          running := false
+        }
+        Cons(y, more) => if x == y {
+          free := false
+          running := false
+        } else if x < y {
+          a := rest
+        } else {
+          b := more
+        }
+      }
+    }
+  }
+  free
+}
+
+// ---------------------------------------------------------------- tuples
+
+fn lg_unpack(packed: u64, n: u64) -> List(u64) {
+  if n == 0 {
+    Nil
+  } else {
+    Cons(mod(packed, 256), lg_unpack(div(packed, 256), n - 1))
+  }
+}
+
+fn lg_pack(xs: List(u64), unit: u64) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => x * unit + lg_pack(rest, unit * 256)
+  }
+}
+
+fn kt_make(complete: Bool, terms: List(u64), k: u64) -> u64 {
+  let c: u64 = if complete { 1 } else { 0 }
+  ((c * 8 + lg_len(terms)) * 4294967296 + lg_pack(terms, 1)) * 8 + k
+}
+
+fn kt_complete(key: u64) -> Bool {
+  div(key, 274877906944) == 1
+}
+
+fn kt_k(key: u64) -> u64 {
+  mod(key, 8)
+}
+
+fn kt_len(key: u64) -> u64 {
+  mod(div(key, 34359738368), 8)
+}
+
+fn kt_terms(key: u64) -> List(u64) {
+  lg_unpack(mod(div(key, 8), 4294967296), kt_len(key))
+}
+
+// Whether the terminals are the epsilon: the one terminal 255.
+fn lg_is_eps(ts: List(u64)) -> Bool {
+  match ts {
+    Nil => false
+    Cons(x, rest) => match rest {
+      Nil => x == 255
+      Cons(y, more) => false
+    }
+  }
+}
+
+// Whether the terminals are complete for `k`: not the epsilon, and `k` long
+// or ending with terminal 0 (the end of the input).
+fn lg_terms_complete(ts: List(u64), k: u64) -> Bool {
+  !lg_is_eps(ts) && (lg_len(ts) >= k || match lg_last(ts) {
+    Some(t) => t == 0
+    None => false
+  })
+}
+
+// `a` followed by `b`, cut at `k` terminals; a complete `a` stays as it is.
+fn lg_terms_concat(a: List(u64), b: List(u64), k: u64) -> List(u64) {
+  let nb = lg_len(b)
+  if lg_is_eps(b) || nb == 0 {
+    a
+  } else {
+    let a2: List(u64) = if lg_is_eps(a) { Nil } else { a }
+    if lg_terms_complete(a2, k) {
+      a2
+    } else {
+      let mine = lg_min(lg_len(a2), k)
+      let take = lg_min(k - mine, lg_min(nb, k))
+      if take == 0 {
+        a2
+      } else {
+        lg_append(lg_take(a2, mine), lg_take(b, take))
+      }
+    }
+  }
+}
+
+// Tuple `a` followed by tuple `b`, cut at `k`.
+fn kt_concat(a: u64, b: u64, k: u64) -> u64 {
+  if kt_complete(a) {
+    kt_make(true, kt_terms(a), lg_min(kt_len(a), k))
+  } else {
+    let ts = lg_terms_concat(kt_terms(a), kt_terms(b), k)
+    kt_make(lg_terms_complete(ts, k), ts, lg_min(lg_len(ts), k))
+  }
+}
+
+fn kt_is_eps(key: u64) -> Bool {
+  !kt_complete(key) && lg_is_eps(kt_terms(key))
+}
+
+// ---------------------------------------------------------------- sets
+
+// A set of tuples: the tuples (sorted), the set's `k` and its completeness
+// flag, which is kept as the operations below set it (it is not always what
+// the tuples say).
+struct LgSet { tuples: List(u64), k: u64, done: Bool }
+
+fn lg_set_empty(k: u64) -> LgSet {
+  LgSet { tuples: Nil, k: k, done: false }
+}
+
+fn lg_set_eps(k: u64) -> LgSet {
+  LgSet { tuples: Cons(kt_make(false, Cons(255, Nil), k), Nil), k: k, done: false }
+}
+
+fn lg_set_end(k: u64) -> LgSet {
+  LgSet { tuples: Cons(kt_make(true, Cons(0, Nil), k), Nil), k: k, done: true }
+}
+
+// The set of one string of terminals read with lookahead `k`.
+fn lg_set_of(run: List(u64), k: u64) -> LgSet {
+  let ts = lg_take(run, k)
+  let c = lg_terms_complete(ts, k)
+  LgSet { tuples: Cons(kt_make(c, ts, k), Nil), k: k, done: c }
+}
+
+fn lg_all_complete(xs: List(u64)) -> Bool {
+  var rest = xs
+  var all = true
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => if kt_complete(x) {
+        rest := more
+      } else {
+        all := false
+        running := false
+      }
+    }
+  }
+  all
+}
+
+fn lg_set_k(s: LgSet, k: u64) -> LgSet {
+  LgSet { tuples: s.tuples, k: k, done: lg_all_complete(s.tuples) }
+}
+
+// Each tuple of `s` followed by each of `other`, cut at `k`; a set already
+// complete stays as it is.
+fn lg_set_concat(s: LgSet, other: LgSet, k: u64) -> LgSet {
+  if s.done {
+    s
+  } else {
+    var keep: List(u64) = Nil
+    var made: List(u64) = Nil
+    var rest = s.tuples
+    var running = true
+    while running {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(t, more) => {
+          if kt_complete(t) {
+            keep := Cons(t, keep)
+          } else {
+            var os = other.tuples
+            var inner = true
+            while inner {
+              match os {
+                Nil => {
+                  inner := false
+                }
+                Cons(o, rest_o) => {
+                  made := Cons(kt_concat(t, o, k), made)
+                  os := rest_o
+                }
+              }
+            }
+          }
+          rest := more
+        }
+      }
+    }
+    let all = lg_sort(lg_append(keep, made))
+    LgSet { tuples: all, k: s.k, done: lg_all_complete(all) }
+  }
+}
+
+// The union; the flag stays unless an incomplete tuple was added.
+fn lg_set_union(s: LgSet, other: LgSet) -> LgSet {
+  let all = lg_union(s.tuples, other.tuples)
+  let grew = lg_len(all) != lg_len(s.tuples)
+  var added_incomplete = false
+  if grew {
+    var rest = other.tuples
+    var running = true
+    while running {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(t, more) => {
+          if !kt_complete(t) && !lg_member(s.tuples, t) {
+            added_incomplete := true
+          }
+          rest := more
+        }
+      }
+    }
+  }
+  LgSet { tuples: all, k: s.k, done: if added_incomplete { false } else { s.done } }
+}
+
+fn lg_member(xs: List(u64), v: u64) -> Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => if x == v {
+      true
+    } else if x > v {
+      false
+    } else {
+      lg_member(rest, v)
+    }
+  }
+}
+
+// The union, the flag as it was.
+fn lg_set_append(s: LgSet, other: LgSet) -> LgSet {
+  LgSet { tuples: lg_union(s.tuples, other.tuples), k: s.k, done: s.done }
+}
+
+fn lg_set_eq(a: LgSet, b: LgSet) -> Bool {
+  a.k == b.k && a.done == b.done && lg_list_eq(a.tuples, b.tuples)
+}

@@ -1,0 +1,333 @@
+import "checker.taut"
+
+// The rules (`docs/design/self-host.md`「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」): when two types are the same type
+// under a substitution `s` of type variables. The checker is not mentioned:
+// `nibcheck` is proved sound against these.
+//
+// * A bound variable is what it is bound to.
+// * Types with the same constructor are the same when their parts are.
+// * The two duplicable kinds of a function (`copy`, `shared`) are the same
+//   type: they differ only at run time.
+// * A union is its normal form (`ty_union`: flattened, sorted, without
+//   repeats, `Never` dropped, one member is that member), tags are their
+//   normal form (`ty_tagged`), and `F(X)` with `F` a declared type
+//   constructor is that type with one more argument (`ty_apply`).
+// * Two `TyPoly` with the same kinds of generics are the same when their
+//   bodies are, the generics of each read as the same new type parameters
+//   (`ty_poly_map`): parameters of their own, in neither type.
+
+// A type parameter named `n` is in `t`, with `s`'s variables replaced.
+mutual {
+  inductive TyMentions(s: Ordmap(Nat, Ty), n: Text): (Ty) -> Prop {
+    men_param(k: Kind): TyMentions(s, n, TyParam(n, k))
+    men_var<t: Ty>(
+      i: Nat,
+      e: Eq(Option(Ty), ordmap_get(s, i, ordmap_compare_nat), Some(t)),
+      h: TyMentions(s, n, t)
+    ): TyMentions(s, n, TyVar(i))
+    men_fn_param<ps: List(
+      Ty
+    )>(r: Ty, k: Kind, h: TyMentionsList(s, n, ps)): TyMentions(s, n, TyFn(ps, r, k))
+    men_fn_result<r: Ty>(
+      ps: List(Ty),
+      k: Kind,
+      h: TyMentions(s, n, r)
+    ): TyMentions(s, n, TyFn(ps, r, k))
+    men_union<ts: List(Ty)>(h: TyMentionsList(s, n, ts)): TyMentions(s, n, TyUnion(ts))
+    men_tagged<x: Ty>(tags: List(Text), h: TyMentions(s, n, x)): TyMentions(s, n, TyTagged(tags, x))
+    men_named<ts: List(Ty)>(m: Text, h: TyMentionsList(s, n, ts)): TyMentions(s, n, TyNamed(m, ts))
+    men_info<x: Ty>(h: TyMentions(s, n, x)): TyMentions(s, n, TyInfo(x))
+    men_borrow<x: Ty>(m: Yn, h: TyMentions(s, n, x)): TyMentions(s, n, TyBorrow(x, m))
+    men_poly<x: Ty>(
+      gs: List(Pair(Text, Kind)),
+      h: TyMentions(s, n, x)
+    ): TyMentions(s, n, TyPoly(gs, x))
+    men_app_head<f: Ty>(x: Ty, h: TyMentions(s, n, f)): TyMentions(s, n, TyApp(f, x))
+    men_app_arg<x: Ty>(f: Ty, h: TyMentions(s, n, x)): TyMentions(s, n, TyApp(f, x))
+  }
+
+  inductive TyMentionsList(s: Ordmap(Nat, Ty), n: Text): (List(Ty)) -> Prop {
+    men_head<x: Ty>(xs: List(Ty), h: TyMentions(s, n, x)): TyMentionsList(s, n, Cons(x, xs))
+    men_tail<xs: List(Ty)>(x: Ty, h: TyMentionsList(s, n, xs)): TyMentionsList(s, n, Cons(x, xs))
+  }
+}
+
+// None of the parameters named `ns` is in `t`.
+def RigidAbsent(
+  s: Ordmap(Nat, Ty),
+  ns: List(Text),
+  t: Ty
+): Prop := ∀ n: Text. (Eq(Yn, list_has_text(ns, n), yes)) -> Not(TyMentions(s, n, t))
+
+// `rigid` reads the generics `gs` as type parameters of their own: each
+// generic is read as one, no two as the same, and none of them is in `a`
+// or `b`.
+inductive RigidFor(
+  s: Ordmap(Nat, Ty),
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty
+): Prop {
+  rigid_for(
+    ns: List(Text),
+    hn: Eq(Option(List(Text)), ty_rigid_names(gs, rigid), Some(ns)),
+    hd: Eq(Yn, text_list_distinct(ns), yes),
+    ha: RigidAbsent(s, ns, a),
+    hb: RigidAbsent(s, ns, b)
+  ): RigidFor(s, gs, rigid, a, b)
+}
+
+// The two kinds of a function may stand for each other.
+inductive KindSame(): (Kind, Kind) -> Prop {
+  kind_same_refl(k: Kind): KindSame(k, k)
+  kind_same_dup<a: Kind, b: Kind>(
+    ha: Eq(Yn, kind_dup(a), yes),
+    hb: Eq(Yn, kind_dup(b), yes)
+  ): KindSame(a, b)
+}
+
+mutual {
+  inductive TyEq(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ): (Ty, Ty) -> Prop {
+    tyeq_refl(a: Ty): TyEq(s, ok, a, a)
+    tyeq_sym<a: Ty, b: Ty>(h: TyEq(s, ok, a, b)): TyEq(s, ok, b, a)
+    tyeq_trans<a: Ty, b: Ty, c: Ty>(h1: TyEq(s, ok, a, b), h2: TyEq(s, ok, b, c)): TyEq(s, ok, a, c)
+    tyeq_var<t: Ty>(
+      i: Nat,
+      e: Eq(Option(Ty), ordmap_get(s, i, ordmap_compare_nat), Some(t))
+    ): TyEq(s, ok, TyVar(i), t)
+    tyeq_fn<ps: List(
+      Ty
+    ), qs: List(
+      Ty
+    ), r: Ty, r2: Ty, k: Kind, k2: Kind>(
+      hp: TyEqList(s, ok, ps, qs),
+      hr: TyEq(s, ok, r, r2),
+      hk: KindSame(k, k2)
+    ): TyEq(s, ok, TyFn(ps, r, k), TyFn(qs, r2, k2))
+    tyeq_union<xs: List(
+      Ty
+    ), ys: List(Ty)>(h: TyEqList(s, ok, xs, ys)): TyEq(s, ok, TyUnion(xs), TyUnion(ys))
+    tyeq_union_norm(xs: List(Ty)): TyEq(s, ok, TyUnion(xs), ty_union(xs))
+    tyeq_tagged<x: Ty, y: Ty>(
+      tags: List(Text),
+      h: TyEq(s, ok, x, y)
+    ): TyEq(s, ok, TyTagged(tags, x), TyTagged(tags, y))
+    tyeq_tagged_norm(tags: List(Text), x: Ty): TyEq(s, ok, TyTagged(tags, x), ty_tagged(tags, x))
+    tyeq_named<xs: List(
+      Ty
+    ), ys: List(
+      Ty
+    )>(n: Text, h: TyEqList(s, ok, xs, ys)): TyEq(s, ok, TyNamed(n, xs), TyNamed(n, ys))
+    tyeq_info<x: Ty, y: Ty>(h: TyEq(s, ok, x, y)): TyEq(s, ok, TyInfo(x), TyInfo(y))
+    tyeq_borrow<x: Ty, y: Ty>(
+      m: Yn,
+      h: TyEq(s, ok, x, y)
+    ): TyEq(s, ok, TyBorrow(x, m), TyBorrow(y, m))
+    tyeq_app<h1: Ty, h2: Ty, x1: Ty, x2: Ty>(
+      hh: TyEq(s, ok, h1, h2),
+      hx: TyEq(s, ok, x1, x2)
+    ): TyEq(s, ok, TyApp(h1, x1), TyApp(h2, x2))
+    tyeq_app_norm(h: Ty, x: Ty): TyEq(s, ok, TyApp(h, x), ty_apply(h, x))
+    tyeq_poly_body<x: Ty, y: Ty>(
+      gs: List(Pair(Text, Kind)),
+      h: TyEq(s, ok, x, y)
+    ): TyEq(s, ok, TyPoly(gs, x), TyPoly(gs, y))
+    tyeq_poly<ta: Ty, tb: Ty>(
+      ga: List(Pair(Text, Kind)),
+      gb: List(Pair(Text, Kind)),
+      rigid: Ordmap(Text, Ty),
+      hk: Eq(Yn, ty_kinds_match(ga, gb), yes),
+      hr: ok(ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
+      h: TyEq(s, ok, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid)))
+    ): TyEq(s, ok, TyPoly(ga, ta), TyPoly(gb, tb))
+  }
+
+  inductive TyEqList(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ): (List(Ty), List(Ty)) -> Prop {
+    tyeq_nil(): TyEqList(s, ok, Nil, Nil)
+    tyeq_cons<x: Ty, y: Ty, xs: List(
+      Ty
+    ), ys: List(
+      Ty
+    )>(h: TyEq(s, ok, x, y), hs: TyEqList(s, ok, xs, ys)): TyEqList(s, ok, Cons(x, xs), Cons(y, ys))
+  }
+}
+
+// `s2` binds every variable `s` binds, to the same type.
+def SubstExt(
+  s: Ordmap(Nat, Ty),
+  s2: Ordmap(Nat, Ty)
+): Prop := ∀ i: Nat. ∀ t: Ty. (
+  Eq(Option(Ty), ordmap_get(s, i, ordmap_compare_nat), Some(t))
+) -> Eq(Option(Ty), ordmap_get(s2, i, ordmap_compare_nat), Some(t))
+
+// The rules with the rigid types of each `tyeq_poly` kept out of the two
+// types under `s` itself: what the unifier is sound against. A proof goes
+// through `TyEq` with `ok` the uses the checker recorded, and the checker
+// checks them all again with the substitution it ends with.
+def TyEqIn(
+  s: Ordmap(Nat, Ty),
+  a: Ty,
+  b: Ty
+): Prop := TyEq(
+  s,
+  (
+    gs: List(Pair(Text, Kind)),
+    rigid: Ordmap(Text, Ty),
+    x: Ty,
+    y: Ty
+  ) => RigidFor(s, gs, rigid, x, y),
+  a,
+  b
+)
+
+// When a value of type `a` may stand where `b` is expected, under `s`
+// (`docs/design/self-host.md`
+// 「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」).
+// `ok` is as for `TyEq`; `inst` says which instances of a generic type may be
+// taken (the checker records a kind bound for each, checked at the end); `dup`
+// says which types are duplicable.
+//
+// * The same type fits, and fitting is transitive.
+// * `Never` fits anywhere.
+// * A generic type is wanted: `a` fits it when it fits the body with the
+//   generics read as rigid types. A generic type is given: some instance of
+//   it fits.
+// * A borrow fits a borrow of what it borrows fits; a `&mut` may be lent as a
+//   `&`. A borrow fits where its referent does (whether it may be used so is
+//   the linearity rules'). A duplicable type fits where a borrow of it is
+//   wanted.
+// * A union fits when each member does; a type fits a union when it fits a
+//   member.
+// * Tags are forgotten, never added.
+// * Functions: contravariant in the parameters, covariant in the result, and
+//   a function of a kind may stand for one of a kind it fits (`kind_fits`).
+mutual {
+  inductive TySub(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop
+  ): (Ty, Ty) -> Prop {
+    tysub_eq<a: Ty, b: Ty>(h: TyEq(s, ok, a, b)): TySub(s, ok, inst, dup, a, b)
+    tysub_trans<a: Ty, b: Ty, c: Ty>(
+      h1: TySub(s, ok, inst, dup, a, b),
+      h2: TySub(s, ok, inst, dup, b, c)
+    ): TySub(s, ok, inst, dup, a, c)
+    tysub_never(b: Ty): TySub(s, ok, inst, dup, TyNever, b)
+    tysub_poly_r<a: Ty>(
+      gs: List(Pair(Text, Kind)),
+      t: Ty,
+      rigid: Ordmap(Text, Ty),
+      h: TySub(s, ok, inst, dup, a, ty_substitute(t, rigid)),
+      hr: ok(gs, rigid, a, TyPoly(gs, t))
+    ): TySub(s, ok, inst, dup, a, TyPoly(gs, t))
+    tysub_poly_l<b: Ty>(
+      gs: List(Pair(Text, Kind)),
+      t: Ty,
+      map: Ordmap(Text, Ty),
+      h: TySub(s, ok, inst, dup, ty_substitute(t, map), b),
+      hi: inst(gs, map)
+    ): TySub(s, ok, inst, dup, TyPoly(gs, t), b)
+    tysub_borrow<x: Ty, y: Ty>(
+      ma: Yn,
+      mb: Yn,
+      hm: Eq(Yn, yn_or(yn_eq(ma, mb), yn_not(mb)), yes),
+      h: TySub(s, ok, inst, dup, x, y)
+    ): TySub(s, ok, inst, dup, TyBorrow(x, ma), TyBorrow(y, mb))
+    tysub_unborrow<x: Ty, b: Ty>(
+      m: Yn,
+      h: TySub(s, ok, inst, dup, x, b)
+    ): TySub(s, ok, inst, dup, TyBorrow(x, m), b)
+    tysub_dup<a: Ty, y: Ty>(
+      m: Yn,
+      h: TySub(s, ok, inst, dup, a, y),
+      hd: dup(a)
+    ): TySub(s, ok, inst, dup, a, TyBorrow(y, m))
+    tysub_union_l<b: Ty>(
+      xs: List(Ty),
+      h: TySubEach(s, ok, inst, dup, b, xs)
+    ): TySub(s, ok, inst, dup, TyUnion(xs), b)
+    tysub_union_r<a: Ty>(
+      ys: List(Ty),
+      h: TySubAny(s, ok, inst, dup, a, ys)
+    ): TySub(s, ok, inst, dup, a, TyUnion(ys))
+    tysub_tagged<x: Ty, y: Ty>(
+      ta: List(Text),
+      tb: List(Text),
+      ht: Eq(Yn, tags_subset(tb, ta), yes),
+      h: TySub(s, ok, inst, dup, x, y)
+    ): TySub(s, ok, inst, dup, TyTagged(ta, x), TyTagged(tb, y))
+    tysub_untag<x: Ty, b: Ty>(
+      ta: List(Text),
+      h: TySub(s, ok, inst, dup, x, b)
+    ): TySub(s, ok, inst, dup, TyTagged(ta, x), b)
+    tysub_fn<pa: List(
+      Ty
+    ), pb: List(
+      Ty
+    ), ra: Ty, rb: Ty>(
+      ka: Kind,
+      kb: Kind,
+      hk: Eq(Yn, kind_fits(ka, kb), yes),
+      hp: TySubList(s, ok, inst, dup, pb, pa),
+      hr: TySub(s, ok, inst, dup, ra, rb)
+    ): TySub(s, ok, inst, dup, TyFn(pa, ra, ka), TyFn(pb, rb, kb))
+  }
+
+  // Each of the first list fits the one of the second at its place.
+  inductive TySubList(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop
+  ): (List(Ty), List(Ty)) -> Prop {
+    tysub_nil(): TySubList(s, ok, inst, dup, Nil, Nil)
+    tysub_cons<x: Ty, y: Ty, xs: List(
+      Ty
+    ), ys: List(
+      Ty
+    )>(
+      h: TySub(s, ok, inst, dup, x, y),
+      hs: TySubList(s, ok, inst, dup, xs, ys)
+    ): TySubList(s, ok, inst, dup, Cons(x, xs), Cons(y, ys))
+  }
+
+  // Each of the list fits `b`.
+  inductive TySubEach(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop
+  ): (Ty, List(Ty)) -> Prop {
+    tysub_each_nil(b: Ty): TySubEach(s, ok, inst, dup, b, Nil)
+    tysub_each_cons<b: Ty, x: Ty, xs: List(
+      Ty
+    )>(
+      h: TySub(s, ok, inst, dup, x, b),
+      hs: TySubEach(s, ok, inst, dup, b, xs)
+    ): TySubEach(s, ok, inst, dup, b, Cons(x, xs))
+  }
+
+  // `a` fits one of the list.
+  inductive TySubAny(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+    dup: (Ty) -> Prop
+  ): (Ty, List(Ty)) -> Prop {
+    tysub_any_here<a: Ty, y: Ty>(
+      ys: List(Ty),
+      h: TySub(s, ok, inst, dup, a, y)
+    ): TySubAny(s, ok, inst, dup, a, Cons(y, ys))
+    tysub_any_there<a: Ty, ys: List(
+      Ty
+    )>(y: Ty, h: TySubAny(s, ok, inst, dup, a, ys)): TySubAny(s, ok, inst, dup, a, Cons(y, ys))
+  }
+}

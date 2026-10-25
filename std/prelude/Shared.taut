@@ -1,0 +1,89 @@
+// The ω standard library: duplicable data, and
+// higher-order functions that take what they call by `&f`. A program sees
+// it before its own declarations. The evaluator implements the `extern`
+// functions, and their signatures are trusted; the functions with a body
+// are checked as a program's own are.
+
+// A persistent map; kind = join(shared, kind K, kind V).
+shared struct Map<K, V> { entries: List(Pair(K, V)) }
+
+extern {
+  fn words(t: Text) -> List(Text)
+  fn concat(a: Text, b: Text) -> Text
+}
+
+// A read-only array: the elements of a list, read
+// by index in O(1). `std/Array.taut` says what each function does.
+shared struct Array<A> {}
+
+extern {
+  fn array_of_list<A: shared>(l: List(A)) -> Array(A)
+  fn array_get<A: shared>(a: Array(A), i: u64) -> Option(A)
+  fn array_len<A: shared>(a: Array(A)) -> u64
+  fn array_to_list<A: shared>(a: Array(A)) -> List(A)
+}
+
+fn map<A: shared, B: shared, e>(xs: List(A), &f: (A) -> B ! {|e}) -> List(B) ! {|e} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(f(x), map(rest, &f))
+  }
+}
+
+fn each<A: shared, e>(xs: List(A), &f: (A) -> () ! {|e}) -> () ! {|e} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      f(x)
+      each(rest, &f)
+    }
+  }
+}
+
+fn fold<A: shared, B: shared, e>(xs: List(A), init: B, &f: (B, A) -> B ! {|e}) -> B ! {|e} {
+  match xs {
+    Nil => init
+    Cons(x, rest) => fold(rest, f(init, x), &f)
+  }
+}
+
+fn fold_once<A, B, e: <=1>(xs: List(A), init: B, &f: (B, A) -> B ! {|e}) -> B ! {|e} {
+  match xs {
+    Nil => init
+    Cons(x, rest) => fold_once(rest, f(init, x), &f)
+  }
+}
+
+fn map_empty<K, V>() -> Map(K, V) {
+  Map { entries: Nil }
+}
+
+fn map_get<K: shared, V: shared>(m: Map(K, V), k: K) -> Option(V) where DecEq(K) {
+  map_find(m.entries, k)
+}
+
+fn map_find<K: shared, V: shared>(es: List(Pair(K, V)), k: K) -> Option(V) where DecEq(K) {
+  match es {
+    Nil => None
+    Cons(p, rest) => if p.fst == k { Some(p.snd) } else { map_find(rest, k) }
+  }
+}
+
+fn map_insert<K: shared, V>(m: Map(K, V), k: K, v: V) -> Map(K, V) where DecEq(K) {
+  match m {
+    Map { entries } => Map { entries: Cons(Pair { fst: k, snd: v }, map_without(entries, k)) }
+  }
+}
+
+fn map_without<K: shared, V>(es: List(Pair(K, V)), k: K) -> List(Pair(K, V)) where DecEq(K) {
+  match es {
+    Nil => Nil
+    Cons(p, rest) => if p.fst == k { rest } else { Cons(p, map_without(rest, k)) }
+  }
+}
+
+fn map_entries<K, V>(m: Map(K, V)) -> List(Pair(K, V)) {
+  match m {
+    Map { entries } => entries
+  }
+}

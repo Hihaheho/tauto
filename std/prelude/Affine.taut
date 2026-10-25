@@ -1,0 +1,124 @@
+// The affine standard library: owned buffers and containers, used at most
+// once, moved, and read or changed through `&` and `&mut` borrows
+// (`docs/design/ownership.md`「標準ライブラリ」). The evaluator implements
+// the `extern` functions, and nothing checks their signatures against it:
+// they are trusted. `text_of` and `buf_of` are the only bridges to the ω
+// library.
+
+affine struct Buf {}
+affine struct Vec<A> {}
+affine struct HashMap<K, V> {}
+// A run of elements, which can only be borrowed (`&Slice(A)`).
+affine struct Slice<A> {}
+effect missing: () -> Never resume 0
+effect out_of_bounds: () -> Never resume 0
+
+extern {
+  fn text_of(b: Buf) -> Text
+  fn buf_of(&t: Text) -> Buf
+  fn buf_clone(&b: Buf) -> Buf
+
+  fn vec_new<A: linear>() -> Vec(A)
+  fn vec_push<A: linear>(&mut v: Vec(A), x: A) -> ()
+  fn vec_pop<A: linear>(&mut v: Vec(A)) -> Option(A)
+  fn vec_len<A: linear>(&v: Vec(A)) -> u64
+  fn vec_index<A: linear>(&v: Vec(A), i: u64) -> &A ! {out_of_bounds}
+  fn vec_get<A: linear>(&v: Vec(A), i: u64) -> Option(&A)
+  fn vec_get_mut<A: linear>(&mut v: Vec(A), i: u64) -> Option(&mut A)
+  fn vec_last_mut<A: linear>(&mut v: Vec(A)) -> Option(&mut A)
+  fn vec_as_slice<A: linear>(&v: Vec(A)) -> &Slice(A)
+  fn vec_as_mut_slice<A: linear>(&mut v: Vec(A)) -> &mut Slice(A)
+  fn slice_len<A: linear>(&s: Slice(A)) -> u64
+  fn slice_get<A: linear>(&s: Slice(A), i: u64) -> Option(&A)
+  fn vec_clear<A>(&mut v: Vec(A)) -> ()
+  fn vec_truncate<A>(&mut v: Vec(A), n: u64) -> ()
+  fn vec_swap<A: linear>(&mut v: Vec(A), i: u64, j: u64) -> () ! {out_of_bounds}
+  // Every element, in order.
+  fn vec_into_list<A: linear>(v: Vec(A)) -> List(A)
+
+  fn hashmap_new<K: linear, V: linear>() -> HashMap(K, V) where DecEq(K), Hash(K)
+  fn hashmap_get<K: linear, V: linear>(
+    &m: HashMap(K, V),
+    &k: K
+  ) -> Option(&V) where DecEq(K), Hash(K)
+  fn hashmap_get_mut<K: linear, V: linear>(
+    &mut m: HashMap(K, V),
+    &k: K
+  ) -> Option(&mut V) where DecEq(K), Hash(K)
+  fn hashmap_index<K: linear, V: linear>(
+    &m: HashMap(K, V),
+    &k: K
+  ) -> &V ! {missing} where DecEq(K), Hash(K)
+  fn hashmap_insert<K: linear, V: linear>(
+    &mut m: HashMap(K, V),
+    k: K,
+    v: V
+  ) -> Option(V) where DecEq(K), Hash(K)
+  fn hashmap_into_vec<K: linear, V: linear>(m: HashMap(K, V)) -> Vec(Pair(K, V))
+
+  // The only way to move a value out of a `&mut` borrow.
+  fn replace<A: linear>(&mut x: A, v: A) -> A
+}
+
+fn buf_each_word<e: <=1>(&s: Buf, &f: (&w: Buf) -> () ! {|e}) -> () ! {|e} {
+  each(words(text_of(buf_clone(&s))), (w) => {
+    let b = buf_of(&w)
+    f(&b)
+  })
+}
+
+fn vec_each<A: linear, e>(&v: Vec(A), &f: (&x: A) -> () ! {|e}) -> () ! {|e} {
+  handle {
+    var i: u64 = 0
+    while i < vec_len(&v) {
+      let &x = vec_index(&v, i)
+      f(&x)
+      i := i + 1
+    }
+  } with {
+    out_of_bounds() => ()
+  }
+}
+
+fn vec_consume<A, e: <=1>(v: Vec(A), &f: (x: A) -> () ! {|e}) -> () ! {|e} {
+  list_consume(vec_into_list(v), &f)
+}
+
+// Insertion sort in place: the elements stay in `v`, so none is held
+// across the loops.
+fn vec_sort_by<A: linear>(&mut v: Vec(A), &lt: (&a: A, &b: A) -> Bool) -> () {
+  var i: u64 = 1
+  while i < vec_len(&v) {
+    var j: u64 = i
+    while 0 < j {
+      if vec_before(&v, j, &lt) {
+        handle { vec_swap(&mut v, j - 1, j) } with { out_of_bounds() => () }
+        j := j - 1
+      } else {
+        j := 0
+      }
+    }
+    i := i + 1
+  }
+}
+
+// Whether element `j` goes before element `j - 1`.
+fn vec_before<A: linear>(&v: Vec(A), j: u64, &lt: (&a: A, &b: A) -> Bool) -> Bool {
+  handle {
+    let &a = vec_index(&v, j)
+    let &b = vec_index(&v, j - 1)
+    lt(&a, &b)
+  } with {
+    out_of_bounds() => false
+  }
+}
+
+fn list_consume<A, e: <=1>(xs: List(A), &f: (x: A) -> () ! {|e}) -> () ! {|e} {
+  match xs {
+    Nil => ()
+    Cons(x, rest) => {
+      f(x)
+      list_consume(rest, &f)
+    }
+  }
+}

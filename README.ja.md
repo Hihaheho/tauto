@@ -11,17 +11,18 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 
 ## この先行公開に含まれるもの
 
-これは一部だけの早期公開です。実装（Rust で書かれています）はまだ公開していません。
-ここにあるのは、プロジェクトの仕様の側です。
+これは一部だけの早期公開です。Rust で書いた実装はまだ公開していません。ここにあるのは、
+プロジェクトの仕様の側と、Tauto 自身で書いた道具の部分です。
 
 | パス | 内容 |
 | --- | --- |
 | `lean/` | Lean 4 による形式化：参照意味論と、それについての証明 |
-| `std/` | Tauto で書き、Tauto で証明した標準ライブラリ |
+| `std/` | Tauto で書き、Tauto で証明した標準ライブラリ。`std/prelude/` は、どのプログラムも import なしで見る部分：データ（`Option`、`List`、`Pair`、`Ordering`、`Result`）、法則つきのクラス `Ord`、効果、`extern` で宣言したホストの関数 |
 | `meta/` | Lean による形式化の一部を Tauto で書き直したもの：小さな核と、カーネルのモデル（合流性、subject reduction、型付けの導出を返す検査器） |
-| `crates/tauto/src/prelude.taut` | プレリュード：証明が宣言なしで使える型と定理（`Nat`、`Eq`、`And`、`Or`、`Not`、`Iff` など）。公理はない。実装のうち、ここで公開するのはこのファイルと `crates/tauto-parol/tauto.par` だけ |
+| `crates/tauto-kernel/src/prelude.taut` | カーネルのプレリュード：証明が宣言なしで使える型と定理（`Nat`、`Eq`、`And`、`Or`、`Not`、`Iff` など）。公理はない。Rust の実装のうち、ここで公開するのはこのファイルと `crates/tauto-parol/tauto.par` だけ |
 | `crates/tauto-parol/tauto.par` | Tauto の文法：読み込みが受け付けるすべての形。基本の規則のあとに、tauto 自身の規則（依存型と証明）が続く |
 | `docs/design/` | 設計文書：意味論、所有権、クラス、マクロとステップ、Lean による形式化、そして（まだ公開していない）実装のバックエンドと自己ホスティング |
+| `totes/` | Tauto で書いた道具の部分：プログラムの検査器（`nibcheck`）、構文の読み込み（`scan`、`llk`、`syntax`、`surface`）、構文リテラルの表の生成器（`llkgen`）、フォーマッタ、マクロの衛生、テキストと順序つきの写像。それぞれ、何をするかの証明つき。同じ入力で Rust の実装と照らし合わせて確かめる |
 | `examples/` | Tauto のプログラムと証明 |
 | `cases/` | 入力に対して実装が何を答えるべきかを定めるケースファイル（tauto とその Nib の部分） |
 | `Tauto.eure` | プロジェクトのマニフェスト（まだどのツールも読みません） |

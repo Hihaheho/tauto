@@ -1,0 +1,19 @@
+// Compiles (2 + 3) * (4 + 5), runs the code on the stack machine, and prints what is left.
+
+fn show_stack(r: Option(List(u64))) -> () {
+  match r {
+    None => os_print("stack underflow\n")
+    Some(st) => match st {
+      Nil => os_print("empty\n")
+      Cons(top, rest) => {
+        os_print(text_of_u64(top))
+        os_print("\n")
+      }
+    }
+  }
+}
+
+let e = e_mul(e_add(e_lit(2), e_lit(3)), e_add(e_lit(4), e_lit(5)))
+show_stack(run_code(compile_expr(e), Nil))
+show_stack(run_code(compile_expr(fold_expr(e)), Nil))
+show_stack(run_code(Cons(i_add, Nil), Nil))

@@ -40,25 +40,25 @@ fn option_or<A>(o: Option(A), p: Option(A)) -> Option(A) {
 
 fn pair_fst<A, B>(p: Pair(A, B)) -> A {
   match p -> A {
-    pair(a, b) => a
+    Pair { fst: a, snd: b } => a
   }
 }
 
 fn pair_snd<A, B>(p: Pair(A, B)) -> B {
   match p -> B {
-    pair(a, b) => b
+    Pair { fst: a, snd: b } => b
   }
 }
 
 fn pair_swap<A, B>(p: Pair(A, B)) -> Pair(B, A) {
   match p -> Pair(B, A) {
-    pair(a, b) => pair(b, a)
+    Pair { fst: a, snd: b } => Pair { fst: b, snd: a }
   }
 }
 
 fn pair_map<A, B, C, D>(f: (A) -> C, g: (B) -> D, p: Pair(A, B)) -> Pair(C, D) {
   match p -> Pair(C, D) {
-    pair(a, b) => pair(f(a), g(b))
+    Pair { fst: a, snd: b } => Pair { fst: f(a), snd: g(b) }
   }
 }
 
@@ -108,14 +108,14 @@ theorem pair_swap_swap<A: Type, B: Type>(
   p: Pair(A, B)
 ): Eq(Pair(A, B), pair_swap(pair_swap(p)), p) {
   match p -> Eq(Pair(A, B), pair_swap(pair_swap(p)), p) {
-    pair(a, b) => refl()
+    Pair { fst: a, snd: b } => refl()
   }
 }
 
 theorem pair_eta<A: Type, B: Type>(
   p: Pair(A, B)
-): Eq(Pair(A, B), pair(pair_fst(p), pair_snd(p)), p) {
-  match p -> Eq(Pair(A, B), pair(pair_fst(p), pair_snd(p)), p) {
-    pair(a, b) => refl()
+): Eq(Pair(A, B), Pair { fst: pair_fst(p), snd: pair_snd(p) }, p) {
+  match p -> Eq(Pair(A, B), Pair { fst: pair_fst(p), snd: pair_snd(p) }, p) {
+    Pair { fst: a, snd: b } => refl()
   }
 }

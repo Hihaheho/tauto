@@ -1,0 +1,1269 @@
+import "scan.taut"
+import "../../../std/Nat.taut"
+
+// The scanner cuts the longest token the automaton accepts (`docs/design/self-host.md`「scan（`totes/scan/src/longest.taut`）」).
+// An automaton run is `scan_walk`: `m` characters from a state, one
+// transition (`scan_next`, the tables' row) each. A token of the run is a
+// state it reaches after a character at least, where an accept entry holds
+// (`scan_accept`).
+//
+// * Every token `scan_find` gives is one (`scan_find_sound`).
+// * Every one is no longer than what `scan_find` gives
+//   (`scan_find_longest`).
+
+// ---- runs of the automaton --------------------------------------------------
+
+// The byte after the character at `i`.
+fn scan_after(text: Text, i: Nat) -> Nat {
+  i + scan_char_length(text_byte_value(text, i))
+}
+
+// The state and byte after `m` characters from `state` at byte `i`, or
+// `None` if the automaton stops before.
+fn scan_walk(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat
+) -> Option(Pair(Nat, Nat)) {
+  match m -> Option(Pair(Nat, Nat)) {
+    zero => Some(Pair { fst: state, snd: i })
+    succ(m2) => match i < n -> Option(Pair(Nat, Nat)) {
+      no => None
+      yes => match scan_next(t, text, state, i) -> Option(Pair(Nat, Nat)) {
+        zero => None
+        succ(s2) => scan_walk(m2, t, text, s2, scan_after(text, i), n)
+      }
+    }
+  }
+}
+
+// The steps of `scan_walk`, on the comparison and on the next state.
+fn scan_walk_in(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat,
+  c: Yn
+) -> Option(Pair(Nat, Nat)) {
+  match c -> Option(Pair(Nat, Nat)) {
+    no => None
+    yes => match scan_next(t, text, state, i) -> Option(Pair(Nat, Nat)) {
+      zero => None
+      succ(s2) => scan_walk(m, t, text, s2, scan_after(text, i), n)
+    }
+  }
+}
+
+fn scan_walk_next(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  i: Nat,
+  n: Nat,
+  x: Nat
+) -> Option(Pair(Nat, Nat)) {
+  match x -> Option(Pair(Nat, Nat)) {
+    zero => None
+    succ(s2) => scan_walk(m, t, text, s2, scan_after(text, i), n)
+  }
+}
+
+// What the accept entries of the state say at the byte.
+fn scan_accept_at(t: ScanTables, text: Text, n: Nat, p: Pair(Nat, Nat)) -> Option(Nat) {
+  match p -> Option(Nat) {
+    Pair { fst: s, snd: e } => scan_accept(t, text, s, e, n)
+  }
+}
+
+fn scan_pair_snd(p: Pair(Nat, Nat)) -> Nat {
+  match p -> Nat {
+    Pair { fst: a, snd: b } => b
+  }
+}
+
+// ---- small facts ------------------------------------------------------------
+
+theorem scan_none_ne_some<A: Type>(x: A, e: Eq(Option(A), None, Some(x))): False {
+  match e -> False {
+  }
+}
+
+fn scan_option_or<A>(o: Option(A), d: A) -> A {
+  match o -> A {
+    None => d
+    Some(x) => x
+  }
+}
+
+theorem scan_some_inj<A: Type>(a: A, b: A, e: Eq(Option(A), Some(a), Some(b))): Eq(A, a, b) {
+  Eq_congr((z: Option(A)) => scan_option_or(z, a), e)
+}
+
+theorem scan_nat_cases(
+  P: (Nat) -> Prop,
+  o: Nat,
+  a: (Eq(Nat, o, zero)) -> P(zero),
+  b: ∀ x: Nat. (Eq(Nat, o, succ(x))) -> P(succ(x))
+): P(o) {
+  match o -> P(o) {
+    zero => a(refl())
+    succ(x) => b(x, refl())
+  }
+}
+
+theorem scan_option_cases<A: Type>(
+  P: (Option(A)) -> Prop,
+  o: Option(A),
+  a: (Eq(Option(A), o, None)) -> P(None),
+  b: ∀ x: A. (Eq(Option(A), o, Some(x))) -> P(Some(x))
+): P(o) {
+  match o -> P(o) {
+    None => a(refl())
+    Some(x) => b(x, refl())
+  }
+}
+
+theorem scan_le_add(a: Nat, d: Nat): Eq(Yn, nat_le(a, nat_add(a, d)), yes) {
+  match d -> Eq(Yn, nat_le(a, nat_add(a, d)), yes) {
+    zero => nat_le_refl(a)
+    succ(
+      d2
+    ) => nat_le_trans(
+      a,
+      nat_add(a, d2),
+      succ(nat_add(a, d2)),
+      scan_le_add(a, d2),
+      nat_le_succ(nat_add(a, d2))
+    )
+  }
+}
+
+theorem scan_le_after(text: Text, i: Nat): Eq(Yn, nat_le(i, scan_after(text, i)), yes) {
+  scan_le_add(i, scan_char_length(text_byte_value(text, i)))
+}
+
+// ---- the steps of `scan_find_in` --------------------------------------------
+
+fn scan_find_upd(best: Option(Pair(Nat, Nat)), e: Nat, o: Option(Nat)) -> Option(Pair(Nat, Nat)) {
+  match o -> Option(Pair(Nat, Nat)) {
+    None => best
+    Some(token) => Some(Pair { fst: e, snd: token })
+  }
+}
+
+fn scan_find_next(
+  k: Nat,
+  t: ScanTables,
+  text: Text,
+  i: Nat,
+  n: Nat,
+  best: Option(Pair(Nat, Nat)),
+  x: Nat
+) -> Option(Pair(Nat, Nat)) {
+  match x -> Option(Pair(Nat, Nat)) {
+    zero => best
+    succ(
+      s2
+    ) => scan_find_in(
+      k,
+      t,
+      text,
+      s2,
+      scan_after(text, i),
+      n,
+      scan_find_upd(best, scan_after(text, i), scan_accept(t, text, s2, scan_after(text, i), n))
+    )
+  }
+}
+
+fn scan_find_cmp(
+  k: Nat,
+  t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat,
+  best: Option(Pair(Nat, Nat)),
+  c: Yn
+) -> Option(Pair(Nat, Nat)) {
+  match c -> Option(Pair(Nat, Nat)) {
+    no => best
+    yes => scan_find_next(k, t, text, i, n, best, scan_next(t, text, state, i))
+  }
+}
+
+// A result ends at `j` or later.
+fn scan_at_least(j: Nat, r: Option(Pair(Nat, Nat))) -> Prop {
+  match r -> Prop {
+    None => False
+    Some(p) => match p -> Prop {
+      Pair { fst: e, snd: token } => Eq(Yn, nat_le(j, e), yes)
+    }
+  }
+}
+
+// `scan_find_in` gives `best` or a token that ends later.
+theorem scan_find_in_mono(
+  k: Nat,
+  t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat,
+  best: Option(Pair(Nat, Nat)),
+  e0: Nat,
+  hb: scan_at_least(e0, best),
+  hi: Eq(Yn, nat_le(e0, i), yes)
+): scan_at_least(e0, scan_find_in(k, t, text, state, i, n, best)) {
+  match k -> scan_at_least(e0, scan_find_in(k, t, text, state, i, n, best)) {
+    zero => hb
+    succ(
+      k2
+    ) => yn_cases(
+      (c: Yn) => scan_at_least(e0, scan_find_cmp(k2, t, text, state, i, n, best, c)),
+      i < n,
+      (q: Eq(Yn, i < n, no)) => hb,
+      (
+        q: Eq(Yn, i < n, yes)
+      ) => scan_nat_cases(
+        (x: Nat) => scan_at_least(e0, scan_find_next(k2, t, text, i, n, best, x)),
+        scan_next(t, text, state, i),
+        (qz: Eq(Nat, scan_next(t, text, state, i), zero)) => hb,
+        (
+          s2: Nat
+        ) => (
+          qs: Eq(Nat, scan_next(t, text, state, i), succ(s2))
+        ) => scan_option_cases(
+          (
+            o: Option(Nat)
+          ) => scan_at_least(
+            e0,
+            scan_find_in(
+              k2,
+              t,
+              text,
+              s2,
+              scan_after(text, i),
+              n,
+              scan_find_upd(best, scan_after(text, i), o)
+            )
+          ),
+          scan_accept(t, text, s2, scan_after(text, i), n),
+          (
+            qa: Eq(Option(Nat), scan_accept(t, text, s2, scan_after(text, i), n), None)
+          ) => scan_find_in_mono(
+            k2,
+            t,
+            text,
+            s2,
+            scan_after(text, i),
+            n,
+            best,
+            e0,
+            hb,
+            nat_le_trans(e0, i, scan_after(text, i), hi, scan_le_after(text, i))
+          ),
+          (
+            tok: Nat
+          ) => (
+            qa: Eq(Option(Nat), scan_accept(t, text, s2, scan_after(text, i), n), Some(tok))
+          ) => scan_find_in_mono(
+            k2,
+            t,
+            text,
+            s2,
+            scan_after(text, i),
+            n,
+            Some(Pair { fst: scan_after(text, i), snd: tok }),
+            e0,
+            nat_le_trans(e0, i, scan_after(text, i), hi, scan_le_after(text, i)),
+            nat_le_trans(e0, i, scan_after(text, i), hi, scan_le_after(text, i))
+          )
+        )
+      )
+    )
+  }
+}
+
+// A run of no character ends where it starts.
+theorem scan_le_at(
+  t: ScanTables,
+  text: Text,
+  i: Nat,
+  n: Nat,
+  m: Nat,
+  s3: Nat,
+  s2: Nat,
+  j: Nat,
+  qm: Eq(Nat, m, zero),
+  w: Eq(
+    Option(Pair(Nat, Nat)),
+    scan_walk(m, t, text, s3, scan_after(text, i), n),
+    Some(Pair { fst: s2, snd: j })
+  )
+): Eq(Yn, nat_le(j, scan_after(text, i)), yes) {
+  Eq_subst(
+    (z: Nat) => Eq(Yn, nat_le(z, scan_after(text, i)), yes),
+    Eq_congr(
+      scan_pair_snd,
+      scan_some_inj(
+        Pair { fst: s3, snd: scan_after(text, i) },
+        Pair { fst: s2, snd: j },
+        Eq_subst(
+          (
+            z: Nat
+          ) => Eq(
+            Option(Pair(Nat, Nat)),
+            scan_walk(z, t, text, s3, scan_after(text, i), n),
+            Some(Pair { fst: s2, snd: j })
+          ),
+          qm,
+          w
+        )
+      )
+    ),
+    nat_le_refl(scan_after(text, i))
+  )
+}
+
+// A run of `m + 1` characters (fewer than `k`) to a state that accepts is
+// no longer than what `scan_find_in` gives.
+theorem scan_find_in_longest(
+  k: Nat,
+  t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat,
+  best: Option(Pair(Nat, Nat)),
+  m: Nat,
+  s2: Nat,
+  j: Nat,
+  tok: Nat,
+  lt: Eq(Yn, m < k, yes),
+  w: Eq(
+    Option(Pair(Nat, Nat)),
+    scan_walk(succ(m), t, text, state, i, n),
+    Some(Pair { fst: s2, snd: j })
+  ),
+  a: Eq(Option(Nat), scan_accept(t, text, s2, j, n), Some(tok))
+): scan_at_least(j, scan_find_in(k, t, text, state, i, n, best)) {
+  match k -> scan_at_least(j, scan_find_in(k, t, text, state, i, n, best)) {
+    zero => False_elim(no_ne_yes(Eq_trans(Eq_sym(nat_lt_zero_no(m)), lt)))
+    succ(
+      k2
+    ) => yn_cases(
+      (c: Yn) => scan_at_least(j, scan_find_cmp(k2, t, text, state, i, n, best, c)),
+      i < n,
+      (
+        q: Eq(Yn, i < n, no)
+      ) => False_elim(
+        scan_none_ne_some(
+          Pair { fst: s2, snd: j },
+          Eq_subst(
+            (
+              c: Yn
+            ) => Eq(
+              Option(Pair(Nat, Nat)),
+              scan_walk_in(m, t, text, state, i, n, c),
+              Some(Pair { fst: s2, snd: j })
+            ),
+            q,
+            w
+          )
+        )
+      ),
+      (
+        q: Eq(Yn, i < n, yes)
+      ) => scan_nat_cases(
+        (x: Nat) => scan_at_least(j, scan_find_next(k2, t, text, i, n, best, x)),
+        scan_next(t, text, state, i),
+        (
+          qz: Eq(Nat, scan_next(t, text, state, i), zero)
+        ) => False_elim(
+          scan_none_ne_some(
+            Pair { fst: s2, snd: j },
+            Eq_subst(
+              (
+                x: Nat
+              ) => Eq(
+                Option(Pair(Nat, Nat)),
+                scan_walk_next(m, t, text, i, n, x),
+                Some(Pair { fst: s2, snd: j })
+              ),
+              qz,
+              Eq_subst(
+                (
+                  c: Yn
+                ) => Eq(
+                  Option(Pair(Nat, Nat)),
+                  scan_walk_in(m, t, text, state, i, n, c),
+                  Some(Pair { fst: s2, snd: j })
+                ),
+                q,
+                w
+              )
+            )
+          )
+        ),
+        (
+          s3: Nat
+        ) => (
+          qs: Eq(Nat, scan_next(t, text, state, i), succ(s3))
+        ) => scan_nat_cases(
+          (
+            z: Nat
+          ) => scan_at_least(
+            j,
+            scan_find_in(
+              k2,
+              t,
+              text,
+              s3,
+              scan_after(text, i),
+              n,
+              scan_find_upd(
+                best,
+                scan_after(text, i),
+                scan_accept(t, text, s3, scan_after(text, i), n)
+              )
+            )
+          ),
+          m,
+          (
+            qm: Eq(Nat, m, zero)
+          ) => Eq_subst(
+            (
+              o: Option(Nat)
+            ) => scan_at_least(
+              j,
+              scan_find_in(
+                k2,
+                t,
+                text,
+                s3,
+                scan_after(text, i),
+                n,
+                scan_find_upd(best, scan_after(text, i), o)
+              )
+            ),
+            Eq_sym(
+              Eq_subst(
+                (p: Pair(Nat, Nat)) => Eq(Option(Nat), scan_accept_at(t, text, n, p), Some(tok)),
+                Eq_sym(
+                  scan_some_inj(
+                    Pair { fst: s3, snd: scan_after(text, i) },
+                    Pair { fst: s2, snd: j },
+                    Eq_subst(
+                      (
+                        z: Nat
+                      ) => Eq(
+                        Option(Pair(Nat, Nat)),
+                        scan_walk(z, t, text, s3, scan_after(text, i), n),
+                        Some(Pair { fst: s2, snd: j })
+                      ),
+                      qm,
+                      Eq_subst(
+                        (
+                          x: Nat
+                        ) => Eq(
+                          Option(Pair(Nat, Nat)),
+                          scan_walk_next(m, t, text, i, n, x),
+                          Some(Pair { fst: s2, snd: j })
+                        ),
+                        qs,
+                        Eq_subst(
+                          (
+                            c: Yn
+                          ) => Eq(
+                            Option(Pair(Nat, Nat)),
+                            scan_walk_in(m, t, text, state, i, n, c),
+                            Some(Pair { fst: s2, snd: j })
+                          ),
+                          q,
+                          w
+                        )
+                      )
+                    )
+                  )
+                ),
+                a
+              )
+            ),
+            scan_find_in_mono(
+              k2,
+              t,
+              text,
+              s3,
+              scan_after(text, i),
+              n,
+              Some(Pair { fst: scan_after(text, i), snd: tok }),
+              j,
+              scan_le_at(
+                t,
+                text,
+                i,
+                n,
+                m,
+                s3,
+                s2,
+                j,
+                qm,
+                Eq_subst(
+                  (
+                    x: Nat
+                  ) => Eq(
+                    Option(Pair(Nat, Nat)),
+                    scan_walk_next(m, t, text, i, n, x),
+                    Some(Pair { fst: s2, snd: j })
+                  ),
+                  qs,
+                  Eq_subst(
+                    (
+                      c: Yn
+                    ) => Eq(
+                      Option(Pair(Nat, Nat)),
+                      scan_walk_in(m, t, text, state, i, n, c),
+                      Some(Pair { fst: s2, snd: j })
+                    ),
+                    q,
+                    w
+                  )
+                )
+              ),
+              scan_le_at(
+                t,
+                text,
+                i,
+                n,
+                m,
+                s3,
+                s2,
+                j,
+                qm,
+                Eq_subst(
+                  (
+                    x: Nat
+                  ) => Eq(
+                    Option(Pair(Nat, Nat)),
+                    scan_walk_next(m, t, text, i, n, x),
+                    Some(Pair { fst: s2, snd: j })
+                  ),
+                  qs,
+                  Eq_subst(
+                    (
+                      c: Yn
+                    ) => Eq(
+                      Option(Pair(Nat, Nat)),
+                      scan_walk_in(m, t, text, state, i, n, c),
+                      Some(Pair { fst: s2, snd: j })
+                    ),
+                    q,
+                    w
+                  )
+                )
+              )
+            )
+          ),
+          (
+            m2: Nat
+          ) => (
+            qm: Eq(Nat, m, succ(m2))
+          ) => scan_find_in_longest(
+            k2,
+            t,
+            text,
+            s3,
+            scan_after(text, i),
+            n,
+            scan_find_upd(
+              best,
+              scan_after(text, i),
+              scan_accept(t, text, s3, scan_after(text, i), n)
+            ),
+            m2,
+            s2,
+            j,
+            tok,
+            Eq_subst((z: Nat) => Eq(Yn, z < succ(k2), yes), qm, lt),
+            Eq_subst(
+              (
+                z: Nat
+              ) => Eq(
+                Option(Pair(Nat, Nat)),
+                scan_walk(z, t, text, s3, scan_after(text, i), n),
+                Some(Pair { fst: s2, snd: j })
+              ),
+              qm,
+              Eq_subst(
+                (
+                  x: Nat
+                ) => Eq(
+                  Option(Pair(Nat, Nat)),
+                  scan_walk_next(m, t, text, i, n, x),
+                  Some(Pair { fst: s2, snd: j })
+                ),
+                qs,
+                Eq_subst(
+                  (
+                    c: Yn
+                  ) => Eq(
+                    Option(Pair(Nat, Nat)),
+                    scan_walk_in(m, t, text, state, i, n, c),
+                    Some(Pair { fst: s2, snd: j })
+                  ),
+                  q,
+                  w
+                )
+              )
+            ),
+            a
+          )
+        )
+      )
+    )
+  }
+}
+
+// ---- what `scan_find_in` gives is a token of a run --------------------------
+
+// From `s` at byte `i`, a run of a character at least reaches the state
+// `s2` at byte `e`, and an accept entry of `s2` for `tok` holds there.
+inductive ScanHit(t: ScanTables, tx: Text, n: Nat, s: Nat, i: Nat, e: Nat, tok: Nat): Prop {
+  scan_hit(
+    m: Nat,
+    s2: Nat,
+    w: Eq(
+      Option(Pair(Nat, Nat)),
+      scan_walk(succ(m), t, tx, s, i, n),
+      Some(Pair { fst: s2, snd: e })
+    ),
+    a: Eq(Option(Nat), scan_accept(t, tx, s2, e, n), Some(tok))
+  ): ScanHit(t, tx, n, s, i, e, tok)
+}
+
+// No result, or a token of a run from `s0` at `i0`.
+fn scan_ok(t: ScanTables, text: Text, n: Nat, s0: Nat, i0: Nat, r: Option(Pair(Nat, Nat))) -> Prop {
+  match r -> Prop {
+    None => True
+    Some(p) => match p -> Prop {
+      Pair { fst: e, snd: tok } => ScanHit(t, text, n, s0, i0, e, tok)
+    }
+  }
+}
+
+fn scan_walk_at(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  n: Nat,
+  p: Pair(Nat, Nat)
+) -> Option(Pair(Nat, Nat)) {
+  match p -> Option(Pair(Nat, Nat)) {
+    Pair { fst: s, snd: i } => scan_walk(m, t, text, s, i, n)
+  }
+}
+
+theorem scan_walk_one(
+  t: ScanTables,
+  text: Text,
+  s: Nat,
+  i: Nat,
+  n: Nat,
+  s2: Nat,
+  q: Eq(Yn, i < n, yes),
+  qs: Eq(Nat, scan_next(t, text, s, i), succ(s2))
+): Eq(
+  Option(Pair(Nat, Nat)),
+  scan_walk(1, t, text, s, i, n),
+  Some(Pair { fst: s2, snd: scan_after(text, i) })
+) {
+  Eq_subst(
+    (
+      c: Yn
+    ) => Eq(
+      Option(Pair(Nat, Nat)),
+      scan_walk_in(0, t, text, s, i, n, c),
+      Some(Pair { fst: s2, snd: scan_after(text, i) })
+    ),
+    Eq_sym(q),
+    Eq_subst(
+      (
+        x: Nat
+      ) => Eq(
+        Option(Pair(Nat, Nat)),
+        scan_walk_next(0, t, text, i, n, x),
+        Some(Pair { fst: s2, snd: scan_after(text, i) })
+      ),
+      Eq_sym(qs),
+      refl()
+    )
+  )
+}
+
+// A run one character longer.
+theorem scan_walk_snoc(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  s0: Nat,
+  i0: Nat,
+  n: Nat,
+  s: Nat,
+  i: Nat,
+  s2: Nat,
+  wm: Eq(Option(Pair(Nat, Nat)), scan_walk(m, t, text, s0, i0, n), Some(Pair { fst: s, snd: i })),
+  q: Eq(Yn, i < n, yes),
+  qs: Eq(Nat, scan_next(t, text, s, i), succ(s2))
+): Eq(
+  Option(Pair(Nat, Nat)),
+  scan_walk(succ(m), t, text, s0, i0, n),
+  Some(Pair { fst: s2, snd: scan_after(text, i) })
+) {
+  match m -> Eq(
+    Option(Pair(Nat, Nat)),
+    scan_walk(succ(m), t, text, s0, i0, n),
+    Some(Pair { fst: s2, snd: scan_after(text, i) })
+  ) {
+    zero => Eq_subst(
+      (
+        p: Pair(Nat, Nat)
+      ) => Eq(
+        Option(Pair(Nat, Nat)),
+        scan_walk_at(1, t, text, n, p),
+        Some(Pair { fst: s2, snd: scan_after(text, i) })
+      ),
+      Eq_sym(scan_some_inj(Pair { fst: s0, snd: i0 }, Pair { fst: s, snd: i }, wm)),
+      scan_walk_one(t, text, s, i, n, s2, q, qs)
+    )
+    succ(
+      m2
+    ) => yn_cases(
+      (
+        c: Yn
+      ) => Eq(
+        Option(Pair(Nat, Nat)),
+        scan_walk_in(succ(m2), t, text, s0, i0, n, c),
+        Some(Pair { fst: s2, snd: scan_after(text, i) })
+      ),
+      i0 < n,
+      (
+        q0: Eq(Yn, i0 < n, no)
+      ) => False_elim(
+        scan_none_ne_some(
+          Pair { fst: s, snd: i },
+          Eq_subst(
+            (
+              c: Yn
+            ) => Eq(
+              Option(Pair(Nat, Nat)),
+              scan_walk_in(m2, t, text, s0, i0, n, c),
+              Some(Pair { fst: s, snd: i })
+            ),
+            q0,
+            wm
+          )
+        )
+      ),
+      (
+        q0: Eq(Yn, i0 < n, yes)
+      ) => scan_nat_cases(
+        (
+          x: Nat
+        ) => Eq(
+          Option(Pair(Nat, Nat)),
+          scan_walk_next(succ(m2), t, text, i0, n, x),
+          Some(Pair { fst: s2, snd: scan_after(text, i) })
+        ),
+        scan_next(t, text, s0, i0),
+        (
+          qz: Eq(Nat, scan_next(t, text, s0, i0), zero)
+        ) => False_elim(
+          scan_none_ne_some(
+            Pair { fst: s, snd: i },
+            Eq_subst(
+              (
+                x: Nat
+              ) => Eq(
+                Option(Pair(Nat, Nat)),
+                scan_walk_next(m2, t, text, i0, n, x),
+                Some(Pair { fst: s, snd: i })
+              ),
+              qz,
+              Eq_subst(
+                (
+                  c: Yn
+                ) => Eq(
+                  Option(Pair(Nat, Nat)),
+                  scan_walk_in(m2, t, text, s0, i0, n, c),
+                  Some(Pair { fst: s, snd: i })
+                ),
+                q0,
+                wm
+              )
+            )
+          )
+        ),
+        (
+          s1: Nat
+        ) => (
+          q1: Eq(Nat, scan_next(t, text, s0, i0), succ(s1))
+        ) => scan_walk_snoc(
+          m2,
+          t,
+          text,
+          s1,
+          scan_after(text, i0),
+          n,
+          s,
+          i,
+          s2,
+          Eq_subst(
+            (
+              x: Nat
+            ) => Eq(
+              Option(Pair(Nat, Nat)),
+              scan_walk_next(m2, t, text, i0, n, x),
+              Some(Pair { fst: s, snd: i })
+            ),
+            q1,
+            Eq_subst(
+              (
+                c: Yn
+              ) => Eq(
+                Option(Pair(Nat, Nat)),
+                scan_walk_in(m2, t, text, s0, i0, n, c),
+                Some(Pair { fst: s, snd: i })
+              ),
+              q0,
+              wm
+            )
+          ),
+          q,
+          qs
+        )
+      )
+    )
+  }
+}
+
+// Started after a run of `m0` characters from `s0` at `i0`, `scan_find_in`
+// gives no token or a token of a run from there.
+theorem scan_find_in_sound(
+  k: Nat,
+  t: ScanTables,
+  text: Text,
+  state: Nat,
+  i: Nat,
+  n: Nat,
+  best: Option(Pair(Nat, Nat)),
+  s0: Nat,
+  i0: Nat,
+  m0: Nat,
+  wm: Eq(
+    Option(Pair(Nat, Nat)),
+    scan_walk(m0, t, text, s0, i0, n),
+    Some(Pair { fst: state, snd: i })
+  ),
+  hb: scan_ok(t, text, n, s0, i0, best)
+): scan_ok(t, text, n, s0, i0, scan_find_in(k, t, text, state, i, n, best)) {
+  match k -> scan_ok(t, text, n, s0, i0, scan_find_in(k, t, text, state, i, n, best)) {
+    zero => hb
+    succ(
+      k2
+    ) => yn_cases(
+      (c: Yn) => scan_ok(t, text, n, s0, i0, scan_find_cmp(k2, t, text, state, i, n, best, c)),
+      i < n,
+      (q: Eq(Yn, i < n, no)) => hb,
+      (
+        q: Eq(Yn, i < n, yes)
+      ) => scan_nat_cases(
+        (x: Nat) => scan_ok(t, text, n, s0, i0, scan_find_next(k2, t, text, i, n, best, x)),
+        scan_next(t, text, state, i),
+        (qz: Eq(Nat, scan_next(t, text, state, i), zero)) => hb,
+        (
+          s2: Nat
+        ) => (
+          qs: Eq(Nat, scan_next(t, text, state, i), succ(s2))
+        ) => scan_option_cases(
+          (
+            o: Option(Nat)
+          ) => scan_ok(
+            t,
+            text,
+            n,
+            s0,
+            i0,
+            scan_find_in(
+              k2,
+              t,
+              text,
+              s2,
+              scan_after(text, i),
+              n,
+              scan_find_upd(best, scan_after(text, i), o)
+            )
+          ),
+          scan_accept(t, text, s2, scan_after(text, i), n),
+          (
+            qa: Eq(Option(Nat), scan_accept(t, text, s2, scan_after(text, i), n), None)
+          ) => scan_find_in_sound(
+            k2,
+            t,
+            text,
+            s2,
+            scan_after(text, i),
+            n,
+            best,
+            s0,
+            i0,
+            succ(m0),
+            scan_walk_snoc(m0, t, text, s0, i0, n, state, i, s2, wm, q, qs),
+            hb
+          ),
+          (
+            tok: Nat
+          ) => (
+            qa: Eq(Option(Nat), scan_accept(t, text, s2, scan_after(text, i), n), Some(tok))
+          ) => scan_find_in_sound(
+            k2,
+            t,
+            text,
+            s2,
+            scan_after(text, i),
+            n,
+            Some(Pair { fst: scan_after(text, i), snd: tok }),
+            s0,
+            i0,
+            succ(m0),
+            scan_walk_snoc(m0, t, text, s0, i0, n, state, i, s2, wm, q, qs),
+            scan_hit(m0, s2, scan_walk_snoc(m0, t, text, s0, i0, n, state, i, s2, wm, q, qs), qa)
+          )
+        )
+      )
+    )
+  }
+}
+
+// ---- a run fits in the text -------------------------------------------------
+
+theorem scan_lt_pred(
+  a: Nat,
+  x: Nat,
+  h: Eq(Yn, nat_lt(succ(a), x), yes)
+): Eq(Yn, nat_lt(a, nat_pred(x)), yes) {
+  match x -> Eq(Yn, nat_lt(a, nat_pred(x)), yes) {
+    zero => False_elim(no_ne_yes(Eq_trans(Eq_sym(nat_lt_zero_no(succ(a))), h)))
+    succ(x2) => h
+  }
+}
+
+// `a + i < n` is `a < n - i`.
+theorem scan_lt_sub(
+  i: Nat,
+  a: Nat,
+  n: Nat,
+  h: Eq(Yn, nat_lt(nat_add(a, i), n), yes)
+): Eq(Yn, nat_lt(a, nat_sub(n, i)), yes) {
+  match i -> Eq(Yn, nat_lt(a, nat_sub(n, i)), yes) {
+    zero => h
+    succ(
+      i2
+    ) => scan_lt_pred(
+      a,
+      nat_sub(n, i2),
+      scan_lt_sub(
+        i2,
+        succ(a),
+        n,
+        Eq_subst((z: Nat) => Eq(Yn, nat_lt(z, n), yes), Eq_sym(nat_add_succ_left(a, i2)), h)
+      )
+    )
+  }
+}
+
+theorem scan_le_add_mono(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  h: Eq(Yn, nat_le(a, b), yes)
+): Eq(Yn, nat_le(nat_add(a, c), nat_add(b, c)), yes) {
+  match c -> Eq(Yn, nat_le(nat_add(a, c), nat_add(b, c)), yes) {
+    zero => h
+    succ(c2) => scan_le_add_mono(a, b, c2, h)
+  }
+}
+
+// A character is a byte at least.
+fn scan_len_3(c: Yn) -> Nat {
+  match c -> Nat {
+    yes => 3
+    no => 4
+  }
+}
+
+fn scan_len_2(first: Nat, c: Yn) -> Nat {
+  match c -> Nat {
+    yes => 2
+    no => scan_len_3(first < 240)
+  }
+}
+
+fn scan_len_1(first: Nat, c: Yn) -> Nat {
+  match c -> Nat {
+    yes => 1
+    no => scan_len_2(first, first < 224)
+  }
+}
+
+theorem scan_len_3_pos(c: Yn): Eq(Yn, nat_lt(0, scan_len_3(c)), yes) {
+  match c -> Eq(Yn, nat_lt(0, scan_len_3(c)), yes) {
+    yes => refl()
+    no => refl()
+  }
+}
+
+theorem scan_len_2_pos(first: Nat, c: Yn): Eq(Yn, nat_lt(0, scan_len_2(first, c)), yes) {
+  match c -> Eq(Yn, nat_lt(0, scan_len_2(first, c)), yes) {
+    yes => refl()
+    no => scan_len_3_pos(first < 240)
+  }
+}
+
+theorem scan_len_1_pos(first: Nat, c: Yn): Eq(Yn, nat_lt(0, scan_len_1(first, c)), yes) {
+  match c -> Eq(Yn, nat_lt(0, scan_len_1(first, c)), yes) {
+    yes => refl()
+    no => scan_len_2_pos(first, first < 224)
+  }
+}
+
+theorem scan_le_add_pos(
+  i: Nat,
+  x: Nat,
+  h: Eq(Yn, nat_lt(0, x), yes)
+): Eq(Yn, nat_le(succ(i), nat_add(i, x)), yes) {
+  match x -> Eq(Yn, nat_le(succ(i), nat_add(i, x)), yes) {
+    zero => False_elim(no_ne_yes(h))
+    succ(p) => scan_le_add(i, p)
+  }
+}
+
+theorem scan_lt_after(text: Text, i: Nat): Eq(Yn, nat_le(succ(i), scan_after(text, i)), yes) {
+  scan_le_add_pos(
+    i,
+    scan_char_length(text_byte_value(text, i)),
+    scan_len_1_pos(text_byte_value(text, i), text_byte_value(text, i) < 128)
+  )
+}
+
+theorem scan_walk_lt(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  s: Nat,
+  i: Nat,
+  n: Nat,
+  r: Pair(Nat, Nat),
+  w: Eq(Option(Pair(Nat, Nat)), scan_walk(succ(m), t, text, s, i, n), Some(r))
+): Eq(Yn, i < n, yes) {
+  yn_cases(
+    (c: Yn) => Eq(Yn, c, yes),
+    i < n,
+    (
+      q: Eq(Yn, i < n, no)
+    ) => False_elim(
+      scan_none_ne_some(
+        r,
+        Eq_subst(
+          (c: Yn) => Eq(Option(Pair(Nat, Nat)), scan_walk_in(m, t, text, s, i, n, c), Some(r)),
+          q,
+          w
+        )
+      )
+    ),
+    (q: Eq(Yn, i < n, yes)) => refl()
+  )
+}
+
+// A run of `m + 1` characters from byte `i` has `i + m < n`.
+theorem scan_walk_bound(
+  m: Nat,
+  t: ScanTables,
+  text: Text,
+  s: Nat,
+  i: Nat,
+  n: Nat,
+  r: Pair(Nat, Nat),
+  w: Eq(Option(Pair(Nat, Nat)), scan_walk(succ(m), t, text, s, i, n), Some(r))
+): Eq(Yn, nat_lt(nat_add(i, m), n), yes) {
+  match m -> Eq(Yn, nat_lt(nat_add(i, m), n), yes) {
+    zero => scan_walk_lt(zero, t, text, s, i, n, r, w)
+    succ(
+      m2
+    ) => scan_nat_cases(
+      (x: Nat) => Eq(Yn, nat_lt(nat_add(i, succ(m2)), n), yes),
+      scan_next(t, text, s, i),
+      (
+        qz: Eq(Nat, scan_next(t, text, s, i), zero)
+      ) => False_elim(
+        scan_none_ne_some(
+          r,
+          Eq_subst(
+            (
+              x: Nat
+            ) => Eq(Option(Pair(Nat, Nat)), scan_walk_next(succ(m2), t, text, i, n, x), Some(r)),
+            qz,
+            Eq_subst(
+              (
+                c: Yn
+              ) => Eq(Option(Pair(Nat, Nat)), scan_walk_in(succ(m2), t, text, s, i, n, c), Some(r)),
+              scan_walk_lt(succ(m2), t, text, s, i, n, r, w),
+              w
+            )
+          )
+        )
+      ),
+      (
+        s1: Nat
+      ) => (
+        q1: Eq(Nat, scan_next(t, text, s, i), succ(s1))
+      ) => nat_le_trans(
+        succ(succ(nat_add(i, m2))),
+        succ(nat_add(scan_after(text, i), m2)),
+        n,
+        Eq_subst(
+          (z: Nat) => Eq(Yn, nat_le(z, nat_add(scan_after(text, i), m2)), yes),
+          nat_add_succ_left(i, m2),
+          scan_le_add_mono(succ(i), scan_after(text, i), m2, scan_lt_after(text, i))
+        ),
+        scan_walk_bound(
+          m2,
+          t,
+          text,
+          s1,
+          scan_after(text, i),
+          n,
+          r,
+          Eq_subst(
+            (
+              x: Nat
+            ) => Eq(Option(Pair(Nat, Nat)), scan_walk_next(succ(m2), t, text, i, n, x), Some(r)),
+            q1,
+            Eq_subst(
+              (
+                c: Yn
+              ) => Eq(Option(Pair(Nat, Nat)), scan_walk_in(succ(m2), t, text, s, i, n, c), Some(r)),
+              scan_walk_lt(succ(m2), t, text, s, i, n, r, w),
+              w
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+// ---- the theorems -----------------------------------------------------------
+
+// The first state of the automaton `dfa`.
+fn scan_start(t: ScanTables, dfa: Nat) -> Nat {
+  scan_number(t.dfa_first, dfa)
+}
+
+// A token `scan_find` gives is a token of a run of the automaton `dfa` from
+// `pos`.
+theorem scan_find_sound(
+  t: ScanTables,
+  text: Text,
+  dfa: Nat,
+  pos: Nat,
+  n: Nat,
+  e: Nat,
+  tok: Nat,
+  h: Eq(Option(Pair(Nat, Nat)), scan_find(t, text, dfa, pos, n), Some(Pair { fst: e, snd: tok }))
+): ScanHit(t, text, n, scan_start(t, dfa), pos, e, tok) {
+  Eq_subst(
+    (r: Option(Pair(Nat, Nat))) => scan_ok(t, text, n, scan_start(t, dfa), pos, r),
+    h,
+    scan_find_in_sound(
+      nat_sub(n, pos),
+      t,
+      text,
+      scan_start(t, dfa),
+      pos,
+      n,
+      None,
+      scan_start(t, dfa),
+      pos,
+      0,
+      refl(),
+      trivial()
+    )
+  )
+}
+
+// A run of `succ(m)` characters from `pos` stays below `n`, and so `m` is below the fuel `n - pos`.
+// It is two steps, each with its own named goal, not one nested call.
+theorem scan_walk_bound_comm(
+  t: ScanTables,
+  text: Text,
+  s: Nat,
+  pos: Nat,
+  n: Nat,
+  m: Nat,
+  r: Pair(Nat, Nat),
+  w: Eq(Option(Pair(Nat, Nat)), scan_walk(succ(m), t, text, s, pos, n), Some(r))
+): Eq(Yn, nat_lt(nat_add(m, pos), n), yes) {
+  Eq_subst(
+    (z: Nat) => Eq(Yn, nat_lt(z, n), yes),
+    nat_add_comm(pos, m),
+    scan_walk_bound(m, t, text, s, pos, n, r, w)
+  )
+}
+
+// Every token of a run of the automaton `dfa` from `pos` ends no later than
+// what `scan_find` gives (so it gives one).
+theorem scan_find_longest(
+  t: ScanTables,
+  text: Text,
+  dfa: Nat,
+  pos: Nat,
+  n: Nat,
+  m: Nat,
+  s2: Nat,
+  j: Nat,
+  tok: Nat,
+  w: Eq(
+    Option(Pair(Nat, Nat)),
+    scan_walk(succ(m), t, text, scan_start(t, dfa), pos, n),
+    Some(Pair { fst: s2, snd: j })
+  ),
+  a: Eq(Option(Nat), scan_accept(t, text, s2, j, n), Some(tok))
+): scan_at_least(j, scan_find(t, text, dfa, pos, n)) {
+  scan_find_in_longest(
+    nat_sub(n, pos),
+    t,
+    text,
+    scan_start(t, dfa),
+    pos,
+    n,
+    None,
+    m,
+    s2,
+    j,
+    tok,
+    scan_lt_sub(
+      pos,
+      m,
+      n,
+      scan_walk_bound_comm(t, text, scan_start(t, dfa), pos, n, m, Pair { fst: s2, snd: j }, w)
+    ),
+    w,
+    a
+  )
+}

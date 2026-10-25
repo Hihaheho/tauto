@@ -259,7 +259,7 @@ fn ordmap_tree_min<K, V>(t: OrdmapTree(K, V)) -> Option(Pair(K, V)) {
   match t -> Option(Pair(K, V)) {
     OrdmapLeaf => None
     OrdmapNode(l, k, v, r, h) => match l -> Option(Pair(K, V)) {
-      OrdmapLeaf => Some(pair(k, v))
+      OrdmapLeaf => Some(Pair { fst: k, snd: v })
       OrdmapNode(ll, lk, lv, lr, lh) => ordmap_tree_min(l)
     }
   }
@@ -280,7 +280,7 @@ fn ordmap_join<K, V>(l: OrdmapTree(K, V), r: OrdmapTree(K, V)) -> OrdmapTree(K, 
   match ordmap_tree_min(r) -> OrdmapTree(K, V) {
     None => l
     Some(least) => match least -> OrdmapTree(K, V) {
-      pair(lk, lv) => ordmap_balance(l, lk, lv, ordmap_tree_remove_min(r))
+      Pair { fst: lk, snd: lv } => ordmap_balance(l, lk, lv, ordmap_tree_remove_min(r))
     }
   }
 }
@@ -313,7 +313,7 @@ fn ordmap_tree_entries<K, V>(t: OrdmapTree(K, V), done: List(Pair(K, V))) -> Lis
       v,
       r,
       h
-    ) => ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, done)))
+    ) => ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, done)))
   }
 }
 
@@ -332,8 +332,8 @@ fn ordmap_tree_floor<K, V>(
     OrdmapLeaf => best
     OrdmapNode(l, nk, nv, r, h) => match cmp(k, nk) -> Option(Pair(K, V)) {
       Less => ordmap_tree_floor(l, k, best, cmp)
-      Equal => Some(pair(nk, nv))
-      Greater => ordmap_tree_floor(r, k, Some(pair(nk, nv)), cmp)
+      Equal => Some(Pair { fst: nk, snd: nv })
+      Greater => ordmap_tree_floor(r, k, Some(Pair { fst: nk, snd: nv }), cmp)
     }
   }
 }
@@ -355,12 +355,12 @@ theorem ordmap_rotate_left_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_rotate_left(l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   match r -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_rotate_left(l, k, v, r), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
   ) {
     OrdmapLeaf => refl()
     OrdmapNode(rl, rk, rv, rr, rh) => refl()
@@ -376,12 +376,12 @@ theorem ordmap_rotate_right_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_rotate_right(l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   match l -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_rotate_right(l, k, v, r), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
   ) {
     OrdmapLeaf => refl()
     OrdmapNode(ll, lk, lv, lr, lh) => refl()
@@ -402,17 +402,29 @@ theorem ordmap_fix_left_by_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_fix_left_by(c, ll, lk, lv, lr, lh, k, v, r), d),
-  ordmap_tree_entries(OrdmapNode(ll, lk, lv, lr, lh), Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(
+    OrdmapNode(ll, lk, lv, lr, lh),
+    Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d))
+  )
 ) {
   match c -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_fix_left_by(c, ll, lk, lv, lr, lh, k, v, r), d),
-    ordmap_tree_entries(OrdmapNode(ll, lk, lv, lr, lh), Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(
+      OrdmapNode(ll, lk, lv, lr, lh),
+      Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d))
+    )
   ) {
     yes => refl()
     no => Eq_trans(
       ordmap_rotate_right_entries(ordmap_rotate_left(ll, lk, lv, lr), k, v, r, d),
-      ordmap_rotate_left_entries(ll, lk, lv, lr, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+      ordmap_rotate_left_entries(
+        ll,
+        lk,
+        lv,
+        lr,
+        Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d))
+      )
     )
   }
 }
@@ -431,18 +443,24 @@ theorem ordmap_fix_right_by_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_fix_right_by(c, l, k, v, rl, rk, rv, rr, rh), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d)))
+  ordmap_tree_entries(
+    l,
+    Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))
+  )
 ) {
   match c -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_fix_right_by(c, l, k, v, rl, rk, rv, rr, rh), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d)))
+    ordmap_tree_entries(
+      l,
+      Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))
+    )
   ) {
     yes => refl()
     no => Eq_trans(
       ordmap_rotate_left_entries(l, k, v, ordmap_rotate_right(rl, rk, rv, rr), d),
       Eq_congr(
-        (x: List(Pair(K, V))) => ordmap_tree_entries(l, Cons(pair(k, v), x)),
+        (x: List(Pair(K, V))) => ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, x)),
         ordmap_rotate_right_entries(rl, rk, rv, rr, d)
       )
     )
@@ -458,12 +476,12 @@ theorem ordmap_fix_left_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_fix_left(l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   match l -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_fix_left(l, k, v, r), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
   ) {
     OrdmapLeaf => refl()
     OrdmapNode(
@@ -496,12 +514,12 @@ theorem ordmap_fix_right_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_fix_right(l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   match r -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_fix_right(l, k, v, r), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
   ) {
     OrdmapLeaf => refl()
     OrdmapNode(
@@ -535,12 +553,12 @@ theorem ordmap_balance_right_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_balance_by(no, right, l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   match right -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_balance_by(no, right, l, k, v, r), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
   ) {
     yes => ordmap_fix_right_entries(l, k, v, r, d)
     no => refl()
@@ -558,12 +576,12 @@ theorem ordmap_balance_by_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_balance_by(left, right, l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   match left -> Eq(
     List(Pair(K, V)),
     ordmap_tree_entries(ordmap_balance_by(left, right, l, k, v, r), d),
-    ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+    ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
   ) {
     yes => ordmap_fix_left_entries(l, k, v, r, d)
     no => ordmap_balance_right_entries(right, l, k, v, r, d)
@@ -579,7 +597,7 @@ theorem ordmap_balance_entries<K: Type, V: Type>(
 ): Eq(
   List(Pair(K, V)),
   ordmap_tree_entries(ordmap_balance(l, k, v, r), d),
-  ordmap_tree_entries(l, Cons(pair(k, v), ordmap_tree_entries(r, d)))
+  ordmap_tree_entries(l, Cons(Pair { fst: k, snd: v }, ordmap_tree_entries(r, d)))
 ) {
   ordmap_balance_by_entries(
     nat_lt(succ(ordmap_tree_height(r)), ordmap_tree_height(l)),

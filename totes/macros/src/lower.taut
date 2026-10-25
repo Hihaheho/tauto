@@ -1,0 +1,920 @@
+// The values of a macro's output as the surface syntax (`Lower` of
+// `crates/tauto/src/macros/syn.rs`): every node gets a span of its own, and
+// every name gets its scopes with the scope `scope` of the expansion flipped. A value that is not what
+// is expected pushes to `errs` (the messages are not compared).
+
+struct Lw { errs: Vec(Text), opened: Vec(LwOpen) }
+
+// An atom `code_view` opened, and the name made for it.
+struct LwOpen { atom: i64, name: Text }
+
+struct LwCtx { scope: i64, atoms: List(LwAtom) }
+
+struct LwAtom { atom: i64, name: Text }
+
+struct LwSp { start: u64, end: u64 }
+
+fn lw_new() -> Lw {
+  Lw { errs: vec_new(), opened: vec_new() }
+}
+
+// An atom `code_view` makes for the binder it opens is at least this.
+fn lw_open_atom() -> i64 {
+  1000000000
+}
+
+fn lw_fail(&mut lw: Lw, why: Text) -> () {
+  vec_push(&mut lw.errs, why)
+}
+
+// ---------------------------------------------------------------- accessors
+
+fn lw_ctor_name(n: Node) -> Text {
+  match n {
+    NCtor(name, fs) => lw_last_segment(name)
+    other => ""
+  }
+}
+
+fn lw_last_segment(name: Text) -> Text ! {Div} {
+  match text_find(name, "::", 0) {
+    Some(i) => lw_last_segment(text_slice_or_empty(name, i + 2, text_len(name)))
+    None => name
+  }
+}
+
+fn lw_nth_field(fs: List(NField), i: u64) -> Option(Node) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => if i == 0 { Some(f.value) } else { lw_nth_field(rest, i - 1) }
+  }
+}
+
+fn lw_field(&mut lw: Lw, n: Node, i: u64) -> Node {
+  match n {
+    NCtor(name, fs) => match lw_nth_field(fs, i) {
+      Some(x) => x
+      None => {
+        lw_fail(&mut lw, "no such field")
+        NList(Nil)
+      }
+    }
+    other => {
+      lw_fail(&mut lw, "not a constructor")
+      NList(Nil)
+    }
+  }
+}
+
+fn lw_find_named(fs: List(NField), k: Text) -> Option(Node) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => match f.label {
+      Some(l) => if l == k { Some(f.value) } else { lw_find_named(rest, k) }
+      None => lw_find_named(rest, k)
+    }
+  }
+}
+
+fn lw_named(&mut lw: Lw, n: Node, k: Text) -> Node {
+  match n {
+    NCtor(name, fs) => match lw_find_named(fs, k) {
+      Some(x) => x
+      None => {
+        lw_fail(&mut lw, "no such field")
+        NList(Nil)
+      }
+    }
+    other => {
+      lw_fail(&mut lw, "not a constructor")
+      NList(Nil)
+    }
+  }
+}
+
+fn lw_list(&mut lw: Lw, n: Node) -> List(Node) {
+  match n {
+    NList(xs) => xs
+    other => {
+      lw_fail(&mut lw, "expected a List")
+      Nil
+    }
+  }
+}
+
+fn lw_text(&mut lw: Lw, n: Node) -> Text {
+  match n {
+    NText(t) => t
+    other => {
+      lw_fail(&mut lw, "expected a Text")
+      ""
+    }
+  }
+}
+
+fn lw_bool(&mut lw: Lw, n: Node) -> Bool {
+  match n {
+    NBool(b) => b
+    other => {
+      lw_fail(&mut lw, "expected a Bool")
+      false
+    }
+  }
+}
+
+fn lw_int(&mut lw: Lw, n: Node) -> i64 {
+  match n {
+    NInt(i) => i
+    other => {
+      lw_fail(&mut lw, "expected an Int")
+      0
+    }
+  }
+}
+
+fn lw_opt(&mut lw: Lw, n: Node) -> Option(Node) {
+  match n {
+    NOpt(o) => o
+    other => {
+      lw_fail(&mut lw, "expected an Option")
+      None
+    }
+  }
+}
+
+fn lw_texts(&mut lw: Lw, n: Node) -> List(Text) {
+  lw_text_list(&mut lw, lw_list_of(n))
+}
+
+fn lw_list_of(n: Node) -> List(Node) {
+  match n {
+    NList(xs) => xs
+    other => Nil
+  }
+}
+
+fn lw_text_list(&mut lw: Lw, xs: List(Node)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let t = lw_text(&mut lw, x)
+      Cons(t, lw_text_list(&mut lw, rest))
+    }
+  }
+}
+
+fn lw_opt_text(&mut lw: Lw, n: Node) -> Option(Text) {
+  match lw_opt(&mut lw, n) {
+    None => None
+    Some(x) => Some(lw_text(&mut lw, x))
+  }
+}
+
+fn lw_opt_texts(&mut lw: Lw, n: Node) -> Option(List(Text)) {
+  match lw_opt(&mut lw, n) {
+    None => None
+    Some(x) => Some(lw_texts(&mut lw, x))
+  }
+}
+
+fn lw_opt_bool(&mut lw: Lw, n: Node) -> Option(Bool) {
+  match lw_opt(&mut lw, n) {
+    None => None
+    Some(x) => Some(lw_bool(&mut lw, x))
+  }
+}
+
+// ---------------------------------------------------------------- names
+
+fn lw_has(xs: List(i64), x: i64) -> Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || lw_has(rest, x)
+  }
+}
+
+fn lw_without(xs: List(i64), x: i64) -> List(i64) {
+  match xs {
+    Nil => Nil
+    Cons(y, rest) => if y == x { lw_without(rest, x) } else { Cons(y, lw_without(rest, x)) }
+  }
+}
+
+fn lw_insert(xs: List(i64), x: i64) -> List(i64) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => if x <= y { Cons(x, xs) } else { Cons(y, lw_insert(rest, x)) }
+  }
+}
+
+fn lw_sorted(xs: List(i64)) -> List(i64) {
+  match xs {
+    Nil => Nil
+    Cons(y, rest) => lw_insert(lw_sorted(rest), y)
+  }
+}
+
+// `scopes` with `s` removed when it is there, added when it is not.
+fn lw_flip(scopes: List(i64), s: i64) -> List(i64) {
+  if lw_has(scopes, s) {
+    lw_sorted(lw_without(scopes, s))
+  } else {
+    lw_sorted(Cons(s, scopes))
+  }
+}
+
+fn lw_ints_text(xs: List(i64)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(text_of_i64(x), lw_ints_text(rest))
+  }
+}
+
+fn lw_dedup(xs: List(i64)) -> List(i64) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(x, lw_dedup(lw_without(rest, x)))
+  }
+}
+
+// `name` with `scopes` (sorted, each once); the name alone when there are none.
+fn lw_mark(name: Text, scopes: List(i64)) -> Text {
+  match scopes {
+    Nil => name
+    other => text_concat_all(
+      Cons(
+        name,
+        Cons(
+          text_code_point(1),
+          Cons(text_join(lw_ints_text(lw_dedup(lw_sorted(scopes))), ","), Nil)
+        )
+      )
+    )
+  }
+}
+
+fn lw_int_list(&mut lw: Lw, xs: List(Node)) -> List(i64) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      NInt(i) => Cons(i, lw_int_list(&mut lw, rest))
+      other => lw_int_list(&mut lw, rest)
+    }
+  }
+}
+
+// A name, marked with the scopes after the flip.
+fn lw_ident(c: LwCtx, &mut lw: Lw, n: Node) -> Text {
+  let name = lw_text(&mut lw, lw_named(&mut lw, n, "name"))
+  let ctx = lw_named(&mut lw, n, "ctx")
+  let scopes = lw_int_list(&mut lw, lw_list(&mut lw, lw_named(&mut lw, ctx, "scopes")))
+  lw_mark(name, lw_flip(scopes, c.scope))
+}
+
+fn lw_opt_ident(c: LwCtx, &mut lw: Lw, n: Node) -> Option(Text) {
+  match lw_opt(&mut lw, n) {
+    None => None
+    Some(x) => Some(lw_ident(c, &mut lw, x))
+  }
+}
+
+fn lw_span_of(&mut lw: Lw, n: Node) -> LwSp {
+  let id = lw_int(&mut lw, lw_named(&mut lw, n, "id"))
+  let at = u64_of_i64(id)
+  LwSp { start: at, end: at + 1 }
+}
+
+fn lw_ident_span(&mut lw: Lw, n: Node) -> LwSp {
+  lw_span_of(&mut lw, lw_named(&mut lw, n, "span"))
+}
+
+fn lw_term(kind: SurfaceKind, sp: LwSp) -> SurfaceTerm {
+  SurfaceTerm { kind: kind, start: sp.start, end: sp.end }
+}
+
+fn lw_sp(&mut lw: Lw, n: Node, i: u64) -> LwSp {
+  lw_span_of(&mut lw, lw_field(&mut lw, n, i))
+}
+
+// ---------------------------------------------------------------- expressions
+
+fn lw_exprs(c: LwCtx, &mut lw: Lw, n: Node) -> List(SurfaceTerm) {
+  lw_expr_list(c, &mut lw, lw_list(&mut lw, n))
+}
+
+fn lw_expr_list(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceTerm) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let t = lw_expr(c, &mut lw, x)
+      Cons(t, lw_expr_list(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_opt_expr(c: LwCtx, &mut lw: Lw, n: Node) -> Option(SurfaceTerm) {
+  match lw_opt(&mut lw, n) {
+    None => None
+    Some(x) => Some(lw_expr(c, &mut lw, x))
+  }
+}
+
+fn lw_atom_name(c: LwCtx, atoms: List(LwAtom), atom: i64) -> Option(Text) {
+  match atoms {
+    Nil => None
+    Cons(a, rest) => if a.atom == atom { Some(a.name) } else { lw_atom_name(c, rest, atom) }
+  }
+}
+
+fn lw_opened_name(&lw: Lw, atom: i64) -> Option(Text) {
+  var i = vec_len(&lw.opened)
+  var out: Option(Text) = None
+  while i > 0 && lw_is_none(out) {
+    i := i - 1
+    let &o = vec_index(&lw.opened, i)
+    if o.atom == atom {
+      out := Some(o.name)
+    }
+  }
+  out
+}
+
+fn lw_is_none(o: Option(Text)) -> Bool {
+  match o {
+    None => true
+    Some(x) => false
+  }
+}
+
+fn lw_pi_params(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceParam) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let name = match lw_opt(&mut lw, lw_named(&mut lw, p, "name")) {
+        None => None
+        Some(id) => Some(lw_ident(c, &mut lw, id))
+      }
+      let ty = lw_expr(c, &mut lw, lw_named(&mut lw, p, "ty"))
+      Cons(SurfaceParam { name: name, ty: ty }, lw_pi_params(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_binders(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(b, rest) => {
+      let t = lw_binder(c, &mut lw, b)
+      Cons(t, lw_binders(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_binder(c: LwCtx, &mut lw: Lw, n: Node) -> Text {
+  let name = lw_ctor_name(n)
+  if name == "BName" {
+    lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+  } else if name == "BAtom" {
+    let atom = lw_int(&mut lw, lw_field(&mut lw, n, 0))
+    if atom >= lw_open_atom() {
+      let made = text_concat_all(Cons("_a", Cons(text_of_i64(atom), Nil)))
+      vec_push(&mut lw.opened, LwOpen { atom: atom, name: made })
+      made
+    } else {
+      match lw_atom_name(c, c.atoms, atom) {
+        Some(t) => t
+        None => {
+          lw_fail(&mut lw, "macro.unknown_atom")
+          ""
+        }
+      }
+    }
+  } else {
+    lw_fail(&mut lw, "expected a SynBinder")
+    ""
+  }
+}
+
+fn lw_record_fields(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceField) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      match p {
+        NPair(k, v) => {
+          let name = lw_text(&mut lw, k)
+          let value = lw_expr(c, &mut lw, v)
+          Cons(SurfaceField { name: name, value: value }, lw_record_fields(c, &mut lw, rest))
+        }
+        other => {
+          lw_fail(&mut lw, "expected a Pair")
+          lw_record_fields(c, &mut lw, rest)
+        }
+      }
+    }
+  }
+}
+
+fn lw_opt_bools(&mut lw: Lw, xs: List(Node)) -> List(Option(Bool)) {
+  match xs {
+    Nil => Nil
+    Cons(b, rest) => {
+      let x = lw_opt_bool(&mut lw, b)
+      Cons(x, lw_opt_bools(&mut lw, rest))
+    }
+  }
+}
+
+fn lw_expr(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceTerm {
+  let ctor = lw_ctor_name(n)
+  if ctor == "ExVar" {
+    let id = lw_field(&mut lw, n, 0)
+    let name = lw_ident(c, &mut lw, id)
+    let sp = lw_ident_span(&mut lw, id)
+    lw_term(SkVar(name), sp)
+  } else if ctor == "ExAtom" {
+    let atom = lw_int(&mut lw, lw_field(&mut lw, n, 0))
+    let name = match lw_opened_name(&lw, atom) {
+      Some(t) => t
+      None => if atom >= lw_open_atom() {
+        lw_fail(&mut lw, "macro.scope_extrusion")
+        ""
+      } else {
+        match lw_atom_name(c, c.atoms, atom) {
+          Some(t) => t
+          None => {
+            lw_fail(&mut lw, "macro.unknown_atom")
+            ""
+          }
+        }
+      }
+    }
+    lw_term(SkVar(name), lw_sp(&mut lw, n, 1))
+  } else if ctor == "ExNat" {
+    let t = lw_text(&mut lw, lw_field(&mut lw, n, 0))
+    lw_term(SkNat(t), lw_sp(&mut lw, n, 1))
+  } else if ctor == "ExText" {
+    let t = lw_text(&mut lw, lw_field(&mut lw, n, 0))
+    lw_term(SkText(t), lw_sp(&mut lw, n, 1))
+  } else if ctor == "ExBool" {
+    let b = lw_bool(&mut lw, lw_field(&mut lw, n, 0))
+    lw_term(SkBool(b), lw_sp(&mut lw, n, 1))
+  } else if ctor == "ExApp" {
+    let f = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let args = lw_exprs(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkApp(f, args), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExPi" {
+    let params = lw_pi_params(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 0)))
+    let result = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    let effects = lw_opt_texts(&mut lw, lw_field(&mut lw, n, 2))
+    lw_term(SkPi(params, result, effects), lw_sp(&mut lw, n, 3))
+  } else if ctor == "ExLam" {
+    let depth = vec_len(&lw.opened)
+    let params = lw_binders(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 0)))
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    vec_truncate(&mut lw.opened, depth)
+    lw_term(SkLam(params, body), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExIf" {
+    let cond = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let a = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    let b = lw_opt_expr(c, &mut lw, lw_field(&mut lw, n, 2))
+    lw_term(SkIf(cond, a, b), lw_sp(&mut lw, n, 3))
+  } else if ctor == "ExField" {
+    let base = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let name = lw_text(&mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkField(base, name), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExBlock" {
+    let stmts = lw_stmts(c, &mut lw, lw_field(&mut lw, n, 0))
+    lw_term(SkBlock(stmts), lw_sp(&mut lw, n, 1))
+  } else if ctor == "ExPerform" {
+    let eff = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let args = lw_exprs(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkPerform(eff, args), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExHandle" {
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let hs = lw_handlers(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 1)))
+    lw_term(SkHandle(body, hs), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExBudget" {
+    let steps = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkBudget(steps, body), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExMatch" {
+    let s = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let r = lw_opt_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    let arms = lw_arms(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 2)))
+    let binder = lw_opt_ident(c, &mut lw, lw_field(&mut lw, n, 3))
+    lw_term(SkMatch(s, r, arms, binder), lw_sp(&mut lw, n, 4))
+  } else if ctor == "ExRecord" {
+    let name = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let fields = lw_record_fields(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 1)))
+    lw_term(SkRecord(name, fields), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExBorrow" {
+    let m = lw_bool(&mut lw, lw_field(&mut lw, n, 0))
+    let inner = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkBorrow(m, inner), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExUnion" {
+    let items = lw_exprs(c, &mut lw, lw_field(&mut lw, n, 0))
+    lw_term(SkUnion(items), lw_sp(&mut lw, n, 1))
+  } else if ctor == "ExTagged" {
+    let tag = lw_text(&mut lw, lw_field(&mut lw, n, 0))
+    let inner = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkTagged(tag, inner), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExExists" {
+    let binder = lw_binder(c, &mut lw, lw_field(&mut lw, n, 0))
+    let domain = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 2))
+    lw_term(SkExists(binder, domain, body), lw_sp(&mut lw, n, 3))
+  } else if ctor == "ExFnKind" {
+    let kind = lw_text(&mut lw, lw_field(&mut lw, n, 0))
+    let ty = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkFnKind(kind, ty), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExBorrowLam" {
+    let borrows = lw_opt_bools(&mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 0)))
+    let lam = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkBorrowLam(borrows, lam), lw_sp(&mut lw, n, 2))
+  } else if ctor == "ExMacroExpr" {
+    let id = lw_field(&mut lw, n, 0)
+    let name = lw_ident(c, &mut lw, id)
+    let sp = lw_ident_span(&mut lw, id)
+    let arg = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    lw_term(SkMacroCall(name, arg), sp)
+  } else if ctor == "ExHole" {
+    let name = lw_text(&mut lw, lw_field(&mut lw, n, 0))
+    lw_term(SkHole(name), lw_sp(&mut lw, n, 1))
+  } else {
+    lw_fail(&mut lw, "not a SynExpr")
+    lw_term(SkOther("?"), LwSp { start: 0, end: 0 })
+  }
+}
+
+// ---------------------------------------------------------------- statements
+
+fn lw_stmts(c: LwCtx, &mut lw: Lw, n: Node) -> List(SurfaceStmt) {
+  lw_stmt_list(c, &mut lw, lw_list(&mut lw, n))
+}
+
+fn lw_stmt_list(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceStmt) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let s = lw_stmt(c, &mut lw, x)
+      Cons(s, lw_stmt_list(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_opt_expr_at(c: LwCtx, &mut lw: Lw, n: Node, i: u64) -> Option(SurfaceTerm) {
+  lw_opt_expr(c, &mut lw, lw_field(&mut lw, n, i))
+}
+
+fn lw_stmt(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceStmt {
+  let ctor = lw_ctor_name(n)
+  if ctor == "StLet" {
+    let name = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let ty = lw_opt_expr_at(c, &mut lw, n, 1)
+    let value = lw_expr(c, &mut lw, lw_field(&mut lw, n, 2))
+    let borrow = lw_bool(&mut lw, lw_field(&mut lw, n, 3))
+    let borrow_mut = lw_bool(&mut lw, lw_field(&mut lw, n, 4))
+    StLet(name, ty, value, borrow, borrow_mut)
+  } else if ctor == "StVar" {
+    let name = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let ty = lw_opt_expr_at(c, &mut lw, n, 1)
+    let value = lw_expr(c, &mut lw, lw_field(&mut lw, n, 2))
+    let borrow = lw_bool(&mut lw, lw_field(&mut lw, n, 3))
+    StVar(name, ty, value, borrow)
+  } else if ctor == "StAssign" {
+    let name = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let value = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    StAssign(name, value)
+  } else if ctor == "StFn" {
+    StFn(lw_fn(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StExpr" {
+    StExpr(lw_expr(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StWhile" {
+    let cond = lw_expr(c, &mut lw, lw_field(&mut lw, n, 0))
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    StWhile(cond, body)
+  } else if ctor == "StReturn" {
+    StReturn(lw_opt_expr_at(c, &mut lw, n, 0))
+  } else if ctor == "StTheorem" {
+    StTheorem(lw_theorem(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StDef" {
+    StDef(lw_theorem(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StStruct" {
+    StStruct(lw_data(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StEnum" {
+    StEnum(lw_data(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StInductive" {
+    StInductive(lw_inductive(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StEffect" {
+    StEffect(lw_effect(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "StMutual" {
+    let items = lw_stmts(c, &mut lw, lw_field(&mut lw, n, 0))
+    let sp = lw_sp(&mut lw, n, 1)
+    StMutual(items, sp.start, sp.end)
+  } else if ctor == "StMacroCall" {
+    lw_fail(&mut lw, "a macro call on a literal is not lowered here")
+    StOther("?", 0, 0)
+  } else {
+    lw_fail(&mut lw, "not a SynStmt")
+    StOther("?", 0, 0)
+  }
+}
+
+fn lw_bounds(&mut lw: Lw, xs: List(Node)) -> List(Option(Text)) {
+  match xs {
+    Nil => Nil
+    Cons(b, rest) => {
+      let x = lw_opt_text(&mut lw, b)
+      Cons(x, lw_bounds(&mut lw, rest))
+    }
+  }
+}
+
+fn lw_idents(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let t = lw_ident(c, &mut lw, p)
+      Cons(t, lw_idents(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_opt_exprs(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(Option(SurfaceTerm)) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let x = lw_opt_expr(c, &mut lw, p)
+      Cons(x, lw_opt_exprs(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_fn(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceFn {
+  let name = lw_ident(c, &mut lw, lw_named(&mut lw, n, "name"))
+  let sp = lw_span_of(&mut lw, lw_named(&mut lw, n, "span"))
+  let generics = lw_texts(&mut lw, lw_named(&mut lw, n, "generics"))
+  let bounds = lw_bounds(&mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "bounds")))
+  let params = lw_idents(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "params")))
+  let borrows = lw_opt_bools(&mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "borrows")))
+  let param_types = lw_opt_exprs(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "param_types")))
+  let result = lw_opt_expr(c, &mut lw, lw_named(&mut lw, n, "result"))
+  let effects = lw_opt_texts(&mut lw, lw_named(&mut lw, n, "effects"))
+  let body = lw_expr(c, &mut lw, lw_named(&mut lw, n, "body"))
+  SurfaceFn {
+    name: name,
+    generics: generics,
+    bounds: bounds,
+    params: params,
+    borrows: borrows,
+    param_types: param_types,
+    result: result,
+    effects: effects,
+    wheres: Nil,
+    start: sp.start,
+    end: sp.end,
+    body: body
+  }
+}
+
+fn lw_theorem_params(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceNamed) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => match p {
+      NPair(k, v) => {
+        let name = lw_ident(c, &mut lw, k)
+        let ty = lw_expr(c, &mut lw, v)
+        Cons(SurfaceNamed { name: name, ty: ty }, lw_theorem_params(c, &mut lw, rest))
+      }
+      other => {
+        lw_fail(&mut lw, "expected a Pair")
+        lw_theorem_params(c, &mut lw, rest)
+      }
+    }
+  }
+}
+
+fn lw_theorem(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceTheorem {
+  let name = lw_ident(c, &mut lw, lw_named(&mut lw, n, "name"))
+  let sp = lw_span_of(&mut lw, lw_named(&mut lw, n, "span"))
+  let implicit = u64_of_i64(lw_int(&mut lw, lw_named(&mut lw, n, "implicit")))
+  let params = lw_theorem_params(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "params")))
+  let ty = lw_expr(c, &mut lw, lw_named(&mut lw, n, "ty"))
+  let body = lw_opt_expr(c, &mut lw, lw_named(&mut lw, n, "body"))
+  SurfaceTheorem {
+    name: name,
+    implicit: implicit,
+    params: params,
+    ty: ty,
+    body: body,
+    start: sp.start,
+    end: sp.end
+  }
+}
+
+fn lw_data_fields(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceDataField) {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => match f {
+      NPair(k, v) => {
+        let key = match lw_opt(&mut lw, k) {
+          None => None
+          Some(x) => Some(lw_ident(c, &mut lw, x))
+        }
+        let ty = lw_expr(c, &mut lw, v)
+        Cons(SurfaceDataField { name: key, ty: ty }, lw_data_fields(c, &mut lw, rest))
+      }
+      other => {
+        lw_fail(&mut lw, "expected a Pair")
+        lw_data_fields(c, &mut lw, rest)
+      }
+    }
+  }
+}
+
+fn lw_data_ctors(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceDataCtor) {
+  match xs {
+    Nil => Nil
+    Cons(k, rest) => {
+      let name = lw_ident(c, &mut lw, lw_named(&mut lw, k, "name"))
+      let fields = lw_data_fields(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, k, "fields")))
+      Cons(SurfaceDataCtor { name: name, fields: fields }, lw_data_ctors(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_data(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceData {
+  let kind = lw_opt_text(&mut lw, lw_named(&mut lw, n, "kind"))
+  let name = lw_ident(c, &mut lw, lw_named(&mut lw, n, "name"))
+  let generics = lw_texts(&mut lw, lw_named(&mut lw, n, "generics"))
+  let sp = lw_span_of(&mut lw, lw_named(&mut lw, n, "span"))
+  let ctors = lw_data_ctors(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "ctors")))
+  SurfaceData {
+    kind: kind,
+    name: name,
+    generics: generics,
+    constructors: ctors,
+    start: sp.start,
+    end: sp.end
+  }
+}
+
+fn lw_ind_ctors(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceCtor) {
+  match xs {
+    Nil => Nil
+    Cons(k, rest) => {
+      let name = lw_ident(c, &mut lw, lw_named(&mut lw, k, "name"))
+      let implicit = u64_of_i64(lw_int(&mut lw, lw_named(&mut lw, k, "implicit")))
+      let params = lw_theorem_params(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, k, "params")))
+      let result = lw_expr(c, &mut lw, lw_named(&mut lw, k, "result"))
+      Cons(
+        SurfaceCtor { name: name, implicit: implicit, params: params, result: result },
+        lw_ind_ctors(c, &mut lw, rest)
+      )
+    }
+  }
+}
+
+fn lw_inductive(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceInductive {
+  let name = lw_ident(c, &mut lw, lw_named(&mut lw, n, "name"))
+  let params = lw_theorem_params(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "params")))
+  let sort = lw_expr(c, &mut lw, lw_named(&mut lw, n, "sort"))
+  let sp = lw_span_of(&mut lw, lw_named(&mut lw, n, "span"))
+  let ctors = lw_ind_ctors(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "ctors")))
+  SurfaceInductive {
+    name: name,
+    params: params,
+    sort: sort,
+    constructors: ctors,
+    start: sp.start,
+    end: sp.end
+  }
+}
+
+fn lw_effect(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceEffect {
+  let name = lw_ident(c, &mut lw, lw_named(&mut lw, n, "name"))
+  let generics = lw_texts(&mut lw, lw_named(&mut lw, n, "generics"))
+  let params = lw_opt_exprs(c, &mut lw, lw_list(&mut lw, lw_named(&mut lw, n, "params")))
+  let result = lw_opt_expr(c, &mut lw, lw_named(&mut lw, n, "result"))
+  let resume = lw_opt_text(&mut lw, lw_named(&mut lw, n, "resume"))
+  let sp = lw_span_of(&mut lw, lw_named(&mut lw, n, "span"))
+  SurfaceEffect {
+    name: name,
+    generics: generics,
+    params: params,
+    result: result,
+    resume: resume,
+    start: sp.start,
+    end: sp.end
+  }
+}
+
+// ---------------------------------------------------------------- patterns
+
+fn lw_patterns(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfacePattern) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let q = lw_pattern(c, &mut lw, p)
+      Cons(q, lw_patterns(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_pattern_fields(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfacePatternField) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => match p {
+      NPair(k, v) => {
+        let name = lw_text(&mut lw, k)
+        let pat = lw_pattern(c, &mut lw, v)
+        Cons(SurfacePatternField { name: name, pattern: pat }, lw_pattern_fields(c, &mut lw, rest))
+      }
+      other => {
+        lw_fail(&mut lw, "expected a Pair")
+        lw_pattern_fields(c, &mut lw, rest)
+      }
+    }
+  }
+}
+
+fn lw_pattern(c: LwCtx, &mut lw: Lw, n: Node) -> SurfacePattern {
+  let ctor = lw_ctor_name(n)
+  if ctor == "PtWild" {
+    PtWild
+  } else if ctor == "PtBind" {
+    PtBind(lw_ident(c, &mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "PtInt" {
+    {
+      let i = lw_int(&mut lw, lw_field(&mut lw, n, 0))
+      if i < 0 {
+        PtInt(true, u64_of_i64(0 - i))
+      } else {
+        PtInt(false, u64_of_i64(i))
+      }
+    }
+  } else if ctor == "PtBool" {
+    PtBool(lw_bool(&mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "PtText" {
+    PtText(lw_text(&mut lw, lw_field(&mut lw, n, 0)))
+  } else if ctor == "PtCtor" {
+    let name = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let args = lw_patterns(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 1)))
+    PtCtor(name, args)
+  } else if ctor == "PtRecord" {
+    let name = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let fields = lw_pattern_fields(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 1)))
+    PtRecord(name, fields)
+  } else {
+    lw_fail(&mut lw, "not a SynPattern")
+    PtWild
+  }
+}
+
+fn lw_arms(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceArm) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let pat = lw_pattern(c, &mut lw, lw_named(&mut lw, a, "pattern"))
+      let guard = lw_opt_expr(c, &mut lw, lw_named(&mut lw, a, "guard"))
+      let goal = lw_opt_expr(c, &mut lw, lw_named(&mut lw, a, "goal"))
+      let body = lw_expr(c, &mut lw, lw_named(&mut lw, a, "body"))
+      Cons(
+        SurfaceArm { pattern: pat, guard: guard, goal: goal, body: body },
+        lw_arms(c, &mut lw, rest)
+      )
+    }
+  }
+}
+
+fn lw_handlers(c: LwCtx, &mut lw: Lw, xs: List(Node)) -> List(SurfaceHandler) {
+  match xs {
+    Nil => Nil
+    Cons(h, rest) => {
+      let x = lw_handler(c, &mut lw, h)
+      Cons(x, lw_handlers(c, &mut lw, rest))
+    }
+  }
+}
+
+fn lw_handler(c: LwCtx, &mut lw: Lw, n: Node) -> SurfaceHandler {
+  let ctor = lw_ctor_name(n)
+  if ctor == "HReturn" {
+    let pat = lw_pattern(c, &mut lw, lw_field(&mut lw, n, 0))
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 1))
+    HdReturn(pat, body)
+  } else if ctor == "HOp" {
+    let eff = lw_ident(c, &mut lw, lw_field(&mut lw, n, 0))
+    let patterns = lw_patterns(c, &mut lw, lw_list(&mut lw, lw_field(&mut lw, n, 1)))
+    let cont = match lw_opt(&mut lw, lw_field(&mut lw, n, 2)) {
+      None => None
+      Some(x) => Some(lw_ident(c, &mut lw, x))
+    }
+    let guard = lw_opt_expr(c, &mut lw, lw_field(&mut lw, n, 3))
+    let body = lw_expr(c, &mut lw, lw_field(&mut lw, n, 4))
+    HdOperation(eff, patterns, cont, guard, body)
+  } else {
+    lw_fail(&mut lw, "not a SynHandler")
+    HdReturn(PtWild, lw_term(SkOther("?"), LwSp { start: 0, end: 0 }))
+  }
+}

@@ -1,0 +1,883 @@
+// The order of a type, with the laws that make it a total order: `compare`
+// is `Equal` just for equal values, `Less` one way is `Greater` the other,
+// and `Less` is transitive. Programs and proofs both read this file: Nib
+// reads past the laws and the theorems, and the kernel checks all of it,
+// the instances' laws included. The instances for the builtin types are in
+// `Classes.taut`; the kernel does not see those types, and their laws are
+// trusted.
+
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> Ordering
+  law equal_iff<a: A, b: A>(): Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(A, a, b))
+  law swap<a: A, b: A>(): Iff(
+    Eq(Ordering, Ord.compare(a, b), Less),
+    Eq(Ordering, Ord.compare(b, a), Greater)
+  )
+  law trans<a: A, b: A, c: A>(
+    h1: Eq(Ordering, Ord.compare(a, b), Less),
+    h2: Eq(Ordering, Ord.compare(b, c), Less)
+  ): Eq(Ordering, Ord.compare(a, c), Less)
+}
+
+// The three answers of a comparison differ from one another.
+
+theorem less_ne_equal(e: Eq(Ordering, Less, Equal)): False {
+  match e -> False {
+  }
+}
+
+theorem less_ne_greater(e: Eq(Ordering, Less, Greater)): False {
+  match e -> False {
+  }
+}
+
+theorem equal_ne_less(e: Eq(Ordering, Equal, Less)): False {
+  match e -> False {
+  }
+}
+
+theorem equal_ne_greater(e: Eq(Ordering, Equal, Greater)): False {
+  match e -> False {
+  }
+}
+
+theorem greater_ne_less(e: Eq(Ordering, Greater, Less)): False {
+  match e -> False {
+  }
+}
+
+theorem greater_ne_equal(e: Eq(Ordering, Greater, Equal)): False {
+  match e -> False {
+  }
+}
+
+// The laws as functions on proofs, for a type with an order.
+
+theorem ord_equal_eq<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Equal)
+): Eq(A, a, b) where Ord(A) {
+  iff_mp(the(Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(A, a, b)), Ord.equal_iff()), e)
+}
+
+theorem ord_eq_equal<A>(
+  a: A,
+  b: A,
+  e: Eq(A, a, b)
+): Eq(Ordering, Ord.compare(a, b), Equal) where Ord(A) {
+  iff_mpr(the(Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(A, a, b)), Ord.equal_iff()), e)
+}
+
+theorem ord_swap_less<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Less)
+): Eq(Ordering, Ord.compare(b, a), Greater) where Ord(A) {
+  iff_mp(
+    the(
+      Iff(Eq(Ordering, Ord.compare(a, b), Less), Eq(Ordering, Ord.compare(b, a), Greater)),
+      Ord.swap()
+    ),
+    e
+  )
+}
+
+theorem ord_swap_greater<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Greater)
+): Eq(Ordering, Ord.compare(b, a), Less) where Ord(A) {
+  iff_mpr(
+    the(
+      Iff(Eq(Ordering, Ord.compare(b, a), Less), Eq(Ordering, Ord.compare(a, b), Greater)),
+      Ord.swap()
+    ),
+    e
+  )
+}
+
+theorem ord_trans<A>(
+  a: A,
+  b: A,
+  c: A,
+  h1: Eq(Ordering, Ord.compare(a, b), Less),
+  h2: Eq(Ordering, Ord.compare(b, c), Less)
+): Eq(Ordering, Ord.compare(a, c), Less) where Ord(A) {
+  Ord.trans(h1, h2)
+}
+
+// `r` when `o` is `Equal`.
+fn ord_then(o: Ordering, r: Ordering) -> Ordering {
+  match o -> Ordering {
+    Less => Less
+    Equal => r
+    Greater => Greater
+  }
+}
+
+theorem ord_then_equal(
+  o: Ordering,
+  r: Ordering,
+  e: Eq(Ordering, ord_then(o, r), Equal)
+): And(Eq(Ordering, o, Equal), Eq(Ordering, r, Equal)) {
+  match o -> And(Eq(Ordering, o, Equal), Eq(Ordering, r, Equal)) {
+    Less => False_elim(less_ne_equal(e))
+    Equal => and_intro(refl(), e)
+    Greater => False_elim(greater_ne_equal(e))
+  }
+}
+
+theorem ord_then_less(
+  o: Ordering,
+  r: Ordering,
+  e: Eq(Ordering, ord_then(o, r), Less)
+): Or(Eq(Ordering, o, Less), And(Eq(Ordering, o, Equal), Eq(Ordering, r, Less))) {
+  match o -> Or(Eq(Ordering, o, Less), And(Eq(Ordering, o, Equal), Eq(Ordering, r, Less))) {
+    Less => or_inl(refl())
+    Equal => or_inr(and_intro(refl(), e))
+    Greater => False_elim(greater_ne_less(e))
+  }
+}
+
+theorem ord_then_greater(
+  o: Ordering,
+  r: Ordering,
+  e: Eq(Ordering, ord_then(o, r), Greater)
+): Or(Eq(Ordering, o, Greater), And(Eq(Ordering, o, Equal), Eq(Ordering, r, Greater))) {
+  match o -> Or(Eq(Ordering, o, Greater), And(Eq(Ordering, o, Equal), Eq(Ordering, r, Greater))) {
+    Less => False_elim(less_ne_greater(e))
+    Equal => or_inr(and_intro(refl(), e))
+    Greater => or_inl(refl())
+  }
+}
+
+theorem ord_then_of_less(
+  o: Ordering,
+  r: Ordering,
+  h: Eq(Ordering, o, Less)
+): Eq(Ordering, ord_then(o, r), Less) {
+  match o -> Eq(Ordering, ord_then(o, r), Less) {
+    Less => refl()
+    Equal => False_elim(equal_ne_less(h))
+    Greater => False_elim(greater_ne_less(h))
+  }
+}
+
+theorem ord_then_of_greater(
+  o: Ordering,
+  r: Ordering,
+  h: Eq(Ordering, o, Greater)
+): Eq(Ordering, ord_then(o, r), Greater) {
+  match o -> Eq(Ordering, ord_then(o, r), Greater) {
+    Less => False_elim(less_ne_greater(h))
+    Equal => False_elim(equal_ne_greater(h))
+    Greater => refl()
+  }
+}
+
+theorem ord_then_of_equal(
+  o: Ordering,
+  r: Ordering,
+  p: Ordering,
+  ho: Eq(Ordering, o, Equal),
+  hr: Eq(Ordering, r, p)
+): Eq(Ordering, ord_then(o, r), p) {
+  match o -> Eq(Ordering, ord_then(o, r), p) {
+    Less => False_elim(less_ne_equal(ho))
+    Equal => hr
+    Greater => False_elim(greater_ne_equal(ho))
+  }
+}
+
+theorem option_some_inj<A: Type>(x: A, y: A, e: Eq(Option(A), Some(x), Some(y))): Eq(A, x, y) {
+  match e -> Eq(A, x, y) {
+    refl => refl
+  }
+}
+
+theorem option_none_ne_some<A: Type>(y: A, e: Eq(Option(A), None, Some(y))): False {
+  match e -> False {
+  }
+}
+
+theorem option_some_ne_none<A: Type>(x: A, e: Eq(Option(A), Some(x), None)): False {
+  match e -> False {
+  }
+}
+
+// `None` first, then `Some` by its content.
+instance<A> Ord(Option(A)) where Ord(A) {
+  fn compare(&a: Option(A), &b: Option(A)) -> Ordering {
+    match a -> Ordering {
+      None => match b -> Ordering {
+        None => Equal
+        Some(y) => Less
+      }
+      Some(x) => match b -> Ordering {
+        None => Greater
+        Some(y) => Ord.compare(&x, &y)
+      }
+    }
+  }
+  law equal_iff<a: Option(
+    A
+  ), b: Option(A)>(): Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(Option(A), a, b)) {
+    match a -> Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(Option(A), a, b)) {
+      None => match b -> Iff(Eq(Ordering, Ord.compare(None, b), Equal), Eq(Option(A), None, b)) {
+        None => iff_intro(
+          (e: Eq(Ordering, Equal, Equal)) => refl,
+          (e: Eq(Option(A), None, None)) => refl
+        )
+        Some(
+          y
+        ) => iff_intro(
+          (e: Eq(Ordering, Less, Equal)) => False_elim(less_ne_equal(e)),
+          (e: Eq(Option(A), None, Some(y))) => False_elim(option_none_ne_some(y, e))
+        )
+      }
+      Some(
+        x
+      ) => match b -> Iff(Eq(Ordering, Ord.compare(Some(x), b), Equal), Eq(Option(A), Some(x), b)) {
+        None => iff_intro(
+          (e: Eq(Ordering, Greater, Equal)) => False_elim(greater_ne_equal(e)),
+          (e: Eq(Option(A), Some(x), None)) => False_elim(option_some_ne_none(x, e))
+        )
+        Some(
+          y
+        ) => iff_intro(
+          (
+            e: Eq(Ordering, Ord.compare(x, y), Equal)
+          ) => Eq_congr(
+            A,
+            Option(A),
+            x,
+            y,
+            (z: A) => Some(z),
+            ord_equal_eq(x, y, the(Eq(Ordering, Ord.compare(x, y), Equal), e))
+          ),
+          (
+            e: Eq(Option(A), Some(x), Some(y))
+          ) => the(
+            Eq(Ordering, Ord.compare(x, y), Equal),
+            ord_eq_equal(x, y, option_some_inj(x, y, e))
+          )
+        )
+      }
+    }
+  }
+  law swap<a: Option(
+    A
+  ), b: Option(
+    A
+  )>(): Iff(Eq(Ordering, Ord.compare(a, b), Less), Eq(Ordering, Ord.compare(b, a), Greater)) {
+    match a -> Iff(Eq(Ordering, Ord.compare(a, b), Less), Eq(Ordering, Ord.compare(b, a), Greater)) {
+      None => match b -> Iff(
+        Eq(Ordering, Ord.compare(None, b), Less),
+        Eq(Ordering, Ord.compare(b, None), Greater)
+      ) {
+        None => iff_intro(
+          (e: Eq(Ordering, Equal, Less)) => False_elim(equal_ne_less(e)),
+          (e: Eq(Ordering, Equal, Greater)) => False_elim(equal_ne_greater(e))
+        )
+        Some(
+          y
+        ) => iff_intro(
+          (e: Eq(Ordering, Less, Less)) => refl,
+          (e: Eq(Ordering, Greater, Greater)) => refl
+        )
+      }
+      Some(
+        x
+      ) => match b -> Iff(
+        Eq(Ordering, Ord.compare(Some(x), b), Less),
+        Eq(Ordering, Ord.compare(b, Some(x)), Greater)
+      ) {
+        None => iff_intro(
+          (e: Eq(Ordering, Greater, Less)) => False_elim(greater_ne_less(e)),
+          (e: Eq(Ordering, Less, Greater)) => False_elim(less_ne_greater(e))
+        )
+        Some(
+          y
+        ) => iff_intro(
+          (
+            e: Eq(Ordering, Ord.compare(x, y), Less)
+          ) => the(Eq(Ordering, Ord.compare(y, x), Greater), ord_swap_less(x, y, e)),
+          (
+            e: Eq(Ordering, Ord.compare(y, x), Greater)
+          ) => the(Eq(Ordering, Ord.compare(x, y), Less), ord_swap_greater(y, x, e))
+        )
+      }
+    }
+  }
+  law trans<a: Option(
+    A
+  ), b: Option(
+    A
+  ), c: Option(
+    A
+  )>(
+    h1: Eq(Ordering, Ord.compare(a, b), Less),
+    h2: Eq(Ordering, Ord.compare(b, c), Less)
+  ): Eq(Ordering, Ord.compare(a, c), Less) {
+    match a -> Eq(Ordering, Ord.compare(a, c), Less) {
+      None => match c -> Eq(Ordering, Ord.compare(None, c), Less) {
+        None => match b -> Eq(Ordering, Equal, Less) {
+          None => match h1 -> Eq(Ordering, Equal, Less) {
+          }
+          Some(y) => match h2 -> Eq(Ordering, Equal, Less) {
+          }
+        }
+        Some(z) => refl
+      }
+      Some(x) => match b -> Eq(Ordering, Ord.compare(Some(x), c), Less) {
+        None => match h1 -> Eq(Ordering, Ord.compare(Some(x), c), Less) {
+        }
+        Some(y) => match c -> Eq(Ordering, Ord.compare(Some(x), c), Less) {
+          None => match h2 -> Eq(Ordering, Greater, Less) {
+          }
+          Some(z) => the(Eq(Ordering, Ord.compare(x, z), Less), ord_trans(x, y, z, h1, h2))
+        }
+      }
+    }
+  }
+}
+
+theorem list_nil_ne_cons<A: Type>(y: A, ys: List(A), e: Eq(List(A), Nil, Cons(y, ys))): False {
+  match e -> False {
+  }
+}
+
+theorem list_cons_ne_nil<A: Type>(x: A, xs: List(A), e: Eq(List(A), Cons(x, xs), Nil)): False {
+  match e -> False {
+  }
+}
+
+theorem list_cons_inj<A: Type>(
+  x: A,
+  y: A,
+  xs: List(A),
+  ys: List(A),
+  e: Eq(List(A), Cons(x, xs), Cons(y, ys))
+): And(Eq(A, x, y), Eq(List(A), xs, ys)) {
+  match e -> And(Eq(A, x, y), Eq(List(A), xs, ys)) {
+    refl => and_intro(refl(), refl())
+  }
+}
+
+theorem list_cons_congr<A: Type>(
+  x: A,
+  y: A,
+  xs: List(A),
+  ys: List(A),
+  hx: Eq(A, x, y),
+  hs: Eq(List(A), xs, ys)
+): Eq(List(A), Cons(x, xs), Cons(y, ys)) {
+  Eq_trans(
+    Eq_congr(A, List(A), x, y, (z: A) => Cons(z, xs), hx),
+    Eq_congr(List(A), List(A), xs, ys, (zs: List(A)) => Cons(y, zs), hs)
+  )
+}
+
+// Element by element; a list that ends first is the smaller.
+instance<A> Ord(List(A)) where Ord(A) {
+  fn compare(&xs: List(A), &ys: List(A)) -> Ordering {
+    match xs -> Ordering {
+      Nil => match ys -> Ordering {
+        Nil => Equal
+        Cons(y, ys2) => Less
+      }
+      Cons(x, xs2) => match ys -> Ordering {
+        Nil => Greater
+        Cons(y, ys2) => ord_then(Ord.compare(&x, &y), Ord.compare(&xs2, &ys2))
+      }
+    }
+  }
+  law equal_iff<a: List(
+    A
+  ), b: List(A)>(): Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(List(A), a, b)) {
+    match a -> Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(List(A), a, b)) {
+      Nil => match b -> Iff(Eq(Ordering, Ord.compare(Nil, b), Equal), Eq(List(A), Nil, b)) {
+        Nil => iff_intro(
+          (e: Eq(Ordering, Equal, Equal)) => refl(),
+          (e: Eq(List(A), Nil, Nil)) => refl()
+        )
+        Cons(
+          y,
+          ys
+        ) => iff_intro(
+          (e: Eq(Ordering, Less, Equal)) => False_elim(less_ne_equal(e)),
+          (e: Eq(List(A), Nil, Cons(y, ys))) => False_elim(list_nil_ne_cons(y, ys, e))
+        )
+      }
+      Cons(
+        x,
+        xs
+      ) => match b -> Iff(
+        Eq(Ordering, Ord.compare(Cons(x, xs), b), Equal),
+        Eq(List(A), Cons(x, xs), b)
+      ) {
+        Nil => iff_intro(
+          (e: Eq(Ordering, Greater, Equal)) => False_elim(greater_ne_equal(e)),
+          (e: Eq(List(A), Cons(x, xs), Nil)) => False_elim(list_cons_ne_nil(x, xs, e))
+        )
+        Cons(
+          y,
+          ys
+        ) => iff_intro(
+          (
+            e: Eq(Ordering, ord_then(Ord.compare(x, y), Ord.compare(xs, ys)), Equal)
+          ) => list_cons_congr(
+            x,
+            y,
+            xs,
+            ys,
+            ord_equal_eq(x, y, and_left(ord_then_equal(Ord.compare(x, y), Ord.compare(xs, ys), e))),
+            iff_mp(
+              Ord.equal_iff(xs, ys),
+              and_right(ord_then_equal(Ord.compare(x, y), Ord.compare(xs, ys), e))
+            )
+          ),
+          (
+            e: Eq(List(A), Cons(x, xs), Cons(y, ys))
+          ) => ord_then_of_equal(
+            Ord.compare(x, y),
+            Ord.compare(xs, ys),
+            Equal,
+            ord_eq_equal(x, y, and_left(list_cons_inj(x, y, xs, ys, e))),
+            iff_mpr(Ord.equal_iff(xs, ys), and_right(list_cons_inj(x, y, xs, ys, e)))
+          )
+        )
+      }
+    }
+  }
+  law swap<a: List(
+    A
+  ), b: List(
+    A
+  )>(): Iff(Eq(Ordering, Ord.compare(a, b), Less), Eq(Ordering, Ord.compare(b, a), Greater)) {
+    match a -> Iff(Eq(Ordering, Ord.compare(a, b), Less), Eq(Ordering, Ord.compare(b, a), Greater)) {
+      Nil => match b -> Iff(
+        Eq(Ordering, Ord.compare(Nil, b), Less),
+        Eq(Ordering, Ord.compare(b, Nil), Greater)
+      ) {
+        Nil => iff_intro(
+          (e: Eq(Ordering, Equal, Less)) => False_elim(equal_ne_less(e)),
+          (e: Eq(Ordering, Equal, Greater)) => False_elim(equal_ne_greater(e))
+        )
+        Cons(
+          y,
+          ys
+        ) => iff_intro(
+          (e: Eq(Ordering, Less, Less)) => refl(),
+          (e: Eq(Ordering, Greater, Greater)) => refl()
+        )
+      }
+      Cons(
+        x,
+        xs
+      ) => match b -> Iff(
+        Eq(Ordering, Ord.compare(Cons(x, xs), b), Less),
+        Eq(Ordering, Ord.compare(b, Cons(x, xs)), Greater)
+      ) {
+        Nil => iff_intro(
+          (e: Eq(Ordering, Greater, Less)) => False_elim(greater_ne_less(e)),
+          (e: Eq(Ordering, Less, Greater)) => False_elim(less_ne_greater(e))
+        )
+        Cons(
+          y,
+          ys
+        ) => iff_intro(
+          (
+            e: Eq(Ordering, ord_then(Ord.compare(x, y), Ord.compare(xs, ys)), Less)
+          ) => or_elim(
+            ord_then_less(Ord.compare(x, y), Ord.compare(xs, ys), e),
+            (
+              h: Eq(Ordering, Ord.compare(x, y), Less)
+            ) => ord_then_of_greater(
+              Ord.compare(y, x),
+              Ord.compare(ys, xs),
+              ord_swap_less(x, y, h)
+            ),
+            (
+              h: And(
+                Eq(Ordering, Ord.compare(x, y), Equal),
+                Eq(Ordering, Ord.compare(xs, ys), Less)
+              )
+            ) => ord_then_of_equal(
+              Ord.compare(y, x),
+              Ord.compare(ys, xs),
+              Greater,
+              ord_eq_equal(y, x, Eq_sym(ord_equal_eq(x, y, and_left(h)))),
+              iff_mp(Ord.swap(xs, ys), and_right(h))
+            )
+          ),
+          (
+            e: Eq(Ordering, ord_then(Ord.compare(y, x), Ord.compare(ys, xs)), Greater)
+          ) => or_elim(
+            ord_then_greater(Ord.compare(y, x), Ord.compare(ys, xs), e),
+            (
+              h: Eq(Ordering, Ord.compare(y, x), Greater)
+            ) => ord_then_of_less(
+              Ord.compare(x, y),
+              Ord.compare(xs, ys),
+              ord_swap_greater(y, x, h)
+            ),
+            (
+              h: And(
+                Eq(Ordering, Ord.compare(y, x), Equal),
+                Eq(Ordering, Ord.compare(ys, xs), Greater)
+              )
+            ) => ord_then_of_equal(
+              Ord.compare(x, y),
+              Ord.compare(xs, ys),
+              Less,
+              ord_eq_equal(x, y, Eq_sym(ord_equal_eq(y, x, and_left(h)))),
+              iff_mpr(Ord.swap(xs, ys), and_right(h))
+            )
+          )
+        )
+      }
+    }
+  }
+  law trans<a: List(
+    A
+  ), b: List(
+    A
+  ), c: List(
+    A
+  )>(
+    h1: Eq(Ordering, Ord.compare(a, b), Less),
+    h2: Eq(Ordering, Ord.compare(b, c), Less)
+  ): Eq(Ordering, Ord.compare(a, c), Less) {
+    match a -> Eq(Ordering, Ord.compare(a, c), Less) {
+      Nil => match c -> Eq(Ordering, Ord.compare(Nil, c), Less) {
+        Nil => match b -> Eq(Ordering, Equal, Less) {
+          Nil => False_elim(equal_ne_less(h1))
+          Cons(y, ys) => False_elim(greater_ne_less(h2))
+        }
+        Cons(z, zs) => refl()
+      }
+      Cons(x, xs) => match b -> Eq(Ordering, Ord.compare(Cons(x, xs), c), Less) {
+        Nil => False_elim(greater_ne_less(h1))
+        Cons(y, ys) => match c -> Eq(Ordering, Ord.compare(Cons(x, xs), c), Less) {
+          Nil => False_elim(greater_ne_less(h2))
+          Cons(
+            z,
+            zs
+          ) => or_elim(
+            ord_then_less(Ord.compare(x, y), Ord.compare(xs, ys), h1),
+            (
+              p1: Eq(Ordering, Ord.compare(x, y), Less)
+            ) => or_elim(
+              ord_then_less(Ord.compare(y, z), Ord.compare(ys, zs), h2),
+              (
+                p2: Eq(Ordering, Ord.compare(y, z), Less)
+              ) => ord_then_of_less(
+                Ord.compare(x, z),
+                Ord.compare(xs, zs),
+                ord_trans(x, y, z, p1, p2)
+              ),
+              (
+                q2: And(
+                  Eq(Ordering, Ord.compare(y, z), Equal),
+                  Eq(Ordering, Ord.compare(ys, zs), Less)
+                )
+              ) => ord_then_of_less(
+                Ord.compare(x, z),
+                Ord.compare(xs, zs),
+                Eq_subst(
+                  A,
+                  y,
+                  z,
+                  (w: A) => Eq(Ordering, Ord.compare(x, w), Less),
+                  ord_equal_eq(y, z, and_left(q2)),
+                  p1
+                )
+              )
+            ),
+            (
+              q1: And(
+                Eq(Ordering, Ord.compare(x, y), Equal),
+                Eq(Ordering, Ord.compare(xs, ys), Less)
+              )
+            ) => or_elim(
+              ord_then_less(Ord.compare(y, z), Ord.compare(ys, zs), h2),
+              (
+                p2: Eq(Ordering, Ord.compare(y, z), Less)
+              ) => ord_then_of_less(
+                Ord.compare(x, z),
+                Ord.compare(xs, zs),
+                Eq_subst(
+                  A,
+                  y,
+                  x,
+                  (w: A) => Eq(Ordering, Ord.compare(w, z), Less),
+                  Eq_sym(ord_equal_eq(x, y, and_left(q1))),
+                  p2
+                )
+              ),
+              (
+                q2: And(
+                  Eq(Ordering, Ord.compare(y, z), Equal),
+                  Eq(Ordering, Ord.compare(ys, zs), Less)
+                )
+              ) => ord_then_of_equal(
+                Ord.compare(x, z),
+                Ord.compare(xs, zs),
+                Less,
+                ord_eq_equal(
+                  x,
+                  z,
+                  Eq_trans(ord_equal_eq(x, y, and_left(q1)), ord_equal_eq(y, z, and_left(q2)))
+                ),
+                Ord.trans(xs, ys, zs, and_right(q1), and_right(q2))
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+}
+
+theorem pair_inj<A: Type, B: Type>(
+  x1: A,
+  y1: B,
+  x2: A,
+  y2: B,
+  e: Eq(Pair(A, B), Pair { fst: x1, snd: y1 }, Pair { fst: x2, snd: y2 })
+): And(Eq(A, x1, x2), Eq(B, y1, y2)) {
+  match e -> And(Eq(A, x1, x2), Eq(B, y1, y2)) {
+    refl => and_intro(refl(), refl())
+  }
+}
+
+theorem pair_congr<A: Type, B: Type>(
+  x1: A,
+  y1: B,
+  x2: A,
+  y2: B,
+  hx: Eq(A, x1, x2),
+  hy: Eq(B, y1, y2)
+): Eq(Pair(A, B), Pair { fst: x1, snd: y1 }, Pair { fst: x2, snd: y2 }) {
+  Eq_trans(
+    Eq_congr(A, Pair(A, B), x1, x2, (z: A) => Pair { fst: z, snd: y1 }, hx),
+    Eq_congr(B, Pair(A, B), y1, y2, (z: B) => Pair { fst: x2, snd: z }, hy)
+  )
+}
+
+// The first components, then the second.
+instance<A, B> Ord(Pair(A, B)) where Ord(A), Ord(B) {
+  fn compare(&p: Pair(A, B), &q: Pair(A, B)) -> Ordering {
+    match p -> Ordering {
+      Pair { fst: x1, snd: y1 } => match q -> Ordering {
+        Pair { fst: x2, snd: y2 } => ord_then(Ord.compare(&x1, &x2), Ord.compare(&y1, &y2))
+      }
+    }
+  }
+  law equal_iff<p: Pair(
+    A,
+    B
+  ), q: Pair(A, B)>(): Iff(Eq(Ordering, Ord.compare(p, q), Equal), Eq(Pair(A, B), p, q)) {
+    match p -> Iff(Eq(Ordering, Ord.compare(p, q), Equal), Eq(Pair(A, B), p, q)) {
+      Pair { fst: x1, snd: y1 } => match q -> Iff(
+        Eq(Ordering, Ord.compare(Pair { fst: x1, snd: y1 }, q), Equal),
+        Eq(Pair(A, B), Pair { fst: x1, snd: y1 }, q)
+      ) {
+        Pair { fst: x2, snd: y2 } => iff_intro(
+          (
+            e: Eq(Ordering, ord_then(Ord.compare(x1, x2), Ord.compare(y1, y2)), Equal)
+          ) => pair_congr(
+            x1,
+            y1,
+            x2,
+            y2,
+            ord_equal_eq(
+              x1,
+              x2,
+              and_left(ord_then_equal(Ord.compare(x1, x2), Ord.compare(y1, y2), e))
+            ),
+            ord_equal_eq(
+              y1,
+              y2,
+              and_right(ord_then_equal(Ord.compare(x1, x2), Ord.compare(y1, y2), e))
+            )
+          ),
+          (
+            e: Eq(Pair(A, B), Pair { fst: x1, snd: y1 }, Pair { fst: x2, snd: y2 })
+          ) => ord_then_of_equal(
+            Ord.compare(x1, x2),
+            Ord.compare(y1, y2),
+            Equal,
+            ord_eq_equal(x1, x2, and_left(pair_inj(x1, y1, x2, y2, e))),
+            ord_eq_equal(y1, y2, and_right(pair_inj(x1, y1, x2, y2, e)))
+          )
+        )
+      }
+    }
+  }
+  law swap<p: Pair(
+    A,
+    B
+  ), q: Pair(
+    A,
+    B
+  )>(): Iff(Eq(Ordering, Ord.compare(p, q), Less), Eq(Ordering, Ord.compare(q, p), Greater)) {
+    match p -> Iff(Eq(Ordering, Ord.compare(p, q), Less), Eq(Ordering, Ord.compare(q, p), Greater)) {
+      Pair { fst: x1, snd: y1 } => match q -> Iff(
+        Eq(Ordering, Ord.compare(Pair { fst: x1, snd: y1 }, q), Less),
+        Eq(Ordering, Ord.compare(q, Pair { fst: x1, snd: y1 }), Greater)
+      ) {
+        Pair { fst: x2, snd: y2 } => iff_intro(
+          (
+            e: Eq(Ordering, ord_then(Ord.compare(x1, x2), Ord.compare(y1, y2)), Less)
+          ) => or_elim(
+            ord_then_less(Ord.compare(x1, x2), Ord.compare(y1, y2), e),
+            (
+              h: Eq(Ordering, Ord.compare(x1, x2), Less)
+            ) => ord_then_of_greater(
+              Ord.compare(x2, x1),
+              Ord.compare(y2, y1),
+              ord_swap_less(x1, x2, h)
+            ),
+            (
+              h: And(
+                Eq(Ordering, Ord.compare(x1, x2), Equal),
+                Eq(Ordering, Ord.compare(y1, y2), Less)
+              )
+            ) => ord_then_of_equal(
+              Ord.compare(x2, x1),
+              Ord.compare(y2, y1),
+              Greater,
+              ord_eq_equal(x2, x1, Eq_sym(ord_equal_eq(x1, x2, and_left(h)))),
+              ord_swap_less(y1, y2, and_right(h))
+            )
+          ),
+          (
+            e: Eq(Ordering, ord_then(Ord.compare(x2, x1), Ord.compare(y2, y1)), Greater)
+          ) => or_elim(
+            ord_then_greater(Ord.compare(x2, x1), Ord.compare(y2, y1), e),
+            (
+              h: Eq(Ordering, Ord.compare(x2, x1), Greater)
+            ) => ord_then_of_less(
+              Ord.compare(x1, x2),
+              Ord.compare(y1, y2),
+              ord_swap_greater(x2, x1, h)
+            ),
+            (
+              h: And(
+                Eq(Ordering, Ord.compare(x2, x1), Equal),
+                Eq(Ordering, Ord.compare(y2, y1), Greater)
+              )
+            ) => ord_then_of_equal(
+              Ord.compare(x1, x2),
+              Ord.compare(y1, y2),
+              Less,
+              ord_eq_equal(x1, x2, Eq_sym(ord_equal_eq(x2, x1, and_left(h)))),
+              ord_swap_greater(y2, y1, and_right(h))
+            )
+          )
+        )
+      }
+    }
+  }
+  law trans<p: Pair(
+    A,
+    B
+  ), q: Pair(
+    A,
+    B
+  ), r: Pair(
+    A,
+    B
+  )>(
+    h1: Eq(Ordering, Ord.compare(p, q), Less),
+    h2: Eq(Ordering, Ord.compare(q, r), Less)
+  ): Eq(Ordering, Ord.compare(p, r), Less) {
+    match p -> Eq(Ordering, Ord.compare(p, r), Less) {
+      Pair { fst: x1, snd: y1 } => match q -> Eq(
+        Ordering,
+        Ord.compare(Pair { fst: x1, snd: y1 }, r),
+        Less
+      ) {
+        Pair { fst: x2, snd: y2 } => match r -> Eq(
+          Ordering,
+          Ord.compare(Pair { fst: x1, snd: y1 }, r),
+          Less
+        ) {
+          Pair { fst: x3, snd: y3 } => or_elim(
+            ord_then_less(Ord.compare(x1, x2), Ord.compare(y1, y2), h1),
+            (
+              p1: Eq(Ordering, Ord.compare(x1, x2), Less)
+            ) => or_elim(
+              ord_then_less(Ord.compare(x2, x3), Ord.compare(y2, y3), h2),
+              (
+                p2: Eq(Ordering, Ord.compare(x2, x3), Less)
+              ) => ord_then_of_less(
+                Ord.compare(x1, x3),
+                Ord.compare(y1, y3),
+                ord_trans(x1, x2, x3, p1, p2)
+              ),
+              (
+                q2: And(
+                  Eq(Ordering, Ord.compare(x2, x3), Equal),
+                  Eq(Ordering, Ord.compare(y2, y3), Less)
+                )
+              ) => ord_then_of_less(
+                Ord.compare(x1, x3),
+                Ord.compare(y1, y3),
+                Eq_subst(
+                  A,
+                  x2,
+                  x3,
+                  (w: A) => Eq(Ordering, Ord.compare(x1, w), Less),
+                  ord_equal_eq(x2, x3, and_left(q2)),
+                  p1
+                )
+              )
+            ),
+            (
+              q1: And(
+                Eq(Ordering, Ord.compare(x1, x2), Equal),
+                Eq(Ordering, Ord.compare(y1, y2), Less)
+              )
+            ) => or_elim(
+              ord_then_less(Ord.compare(x2, x3), Ord.compare(y2, y3), h2),
+              (
+                p2: Eq(Ordering, Ord.compare(x2, x3), Less)
+              ) => ord_then_of_less(
+                Ord.compare(x1, x3),
+                Ord.compare(y1, y3),
+                Eq_subst(
+                  A,
+                  x2,
+                  x1,
+                  (w: A) => Eq(Ordering, Ord.compare(w, x3), Less),
+                  Eq_sym(ord_equal_eq(x1, x2, and_left(q1))),
+                  p2
+                )
+              ),
+              (
+                q2: And(
+                  Eq(Ordering, Ord.compare(x2, x3), Equal),
+                  Eq(Ordering, Ord.compare(y2, y3), Less)
+                )
+              ) => ord_then_of_equal(
+                Ord.compare(x1, x3),
+                Ord.compare(y1, y3),
+                Less,
+                ord_eq_equal(
+                  x1,
+                  x3,
+                  Eq_trans(ord_equal_eq(x1, x2, and_left(q1)), ord_equal_eq(x2, x3, and_left(q2)))
+                ),
+                ord_trans(y1, y2, y3, and_right(q1), and_right(q2))
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+}

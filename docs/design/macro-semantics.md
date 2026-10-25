@@ -344,7 +344,7 @@ tauto への移植で、下の「tauto」と書いた定理はそこでもカー
 - T5 の使用の検査の半分（`lean/Proto/Nib/Lin.lean`）。`Lin` は部分の型付けの導出（`Quiet`、`Firm`、`Held`、`handle` の型付け）を
   引くが、それは `Spot` の導出とは別なので、置き換えの補題はそれぞれの枠を運ぶ必要がある。また埋めた部分の
   `Value`・`Quiet`・`Firm` の条件は行の上界だけからは出ない。型付きマクロの受理は T5 を使わず、宣言全体を検査し直す。
-- 実装の衛生と `resolve` の一致。実装（`crates/tauto/src/macros/scope.rs`）は、名前が持つ印を包含でなく等しさで比べる：
+- 実装の衛生と `resolve` の一致。実装（`crates/tauto-surface/src/macros/scope.rs`）は、名前が持つ印を包含でなく等しさで比べる：
   名前は自分を作った展開のスコープだけを持ち、束縛の形のスコープは歩き方の構造で表す。二つは、参照とその束縛子が
   同じ展開で作られたときに一致し、それは `syn_ident_like` を使わずにマクロが作れるすべての場合である。
   `meta/MacroScope.taut` が示すのは包含の規則の性質（H1〜H3）と、H4 の `fresh_injective`（`n` と `succ(n)` は違う）で、コードの性質ではない。

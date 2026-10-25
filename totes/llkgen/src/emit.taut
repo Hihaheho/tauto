@@ -1,0 +1,178 @@
+// The lines of a table file that the model of a grammar decides, in the
+// format `crates/tauto-syntax/src/tables.rs` reads.
+
+fn em_words(xs: List(Text)) -> Text {
+  text_join(xs, " ")
+}
+
+fn em_nums(xs: List(u64)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(text_of_u64(x), em_nums(rest))
+  }
+}
+
+// `name count words…`.
+fn em_line(name: Text, count: u64, words: List(Text)) -> Text {
+  match words {
+    Nil => text_concat_all(Cons(name, Cons(" ", Cons(text_of_u64(count), Nil))))
+    Cons(
+      w,
+      rest
+    ) => text_concat_all(
+      Cons(name, Cons(" ", Cons(text_of_u64(count), Cons(" ", Cons(em_words(words), Nil)))))
+    )
+  }
+}
+
+fn em_sym_word(s: MSym) -> Text {
+  match s {
+    MN(n) => text_of_u64(n)
+    MT(t, clipped) => text_concat_all(Cons("-", Cons(text_of_u64(t + 1), Nil)))
+  }
+}
+
+fn em_syms(xs: List(MSym)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => Cons(em_sym_word(s), em_syms(rest))
+  }
+}
+
+fn em_prod_words(ps: List(MProd)) -> List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(
+      p,
+      rest
+    ) => Cons(
+      text_of_u64(p.lhs),
+      Cons(
+        text_of_u64(p.attr),
+        Cons(text_of_u64(md_len_syms(p.rhs)), em_cat(em_syms(p.rhs), em_prod_words(rest)))
+      )
+    )
+  }
+}
+
+fn md_len_syms(xs: List(MSym)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + md_len_syms(rest)
+  }
+}
+
+fn em_len_prods(xs: List(MProd)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + em_len_prods(rest)
+  }
+}
+
+fn em_cat(a: List(Text), b: List(Text)) -> List(Text) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, em_cat(rest, b))
+  }
+}
+
+// Production, position and `1` of each terminal that is clipped.
+fn em_clipped(ps: List(MProd), pi: u64) -> List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => em_cat(em_clipped_syms(p.rhs, pi, 0), em_clipped(rest, pi + 1))
+  }
+}
+
+fn em_clipped_syms(xs: List(MSym), pi: u64, pos: u64) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => match s {
+      MT(t, clipped) => if clipped {
+        Cons(text_of_u64(pi), Cons(text_of_u64(pos), Cons("1", em_clipped_syms(rest, pi, pos + 1))))
+      } else {
+        em_clipped_syms(rest, pi, pos + 1)
+      }
+      MN(n) => em_clipped_syms(rest, pi, pos + 1)
+    }
+  }
+}
+
+fn em_skip_words(xs: List(List(u64))) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => Cons(text_of_u64(md_len_u64(s)), em_cat(em_nums(s), em_skip_words(rest)))
+  }
+}
+
+fn md_len_u64(xs: List(u64)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + md_len_u64(rest)
+  }
+}
+
+fn em_title(m: MModel) -> Text {
+  match m.title {
+    Some(t) => text_concat_all(Cons("title ", Cons(t, Nil)))
+    None => "title -"
+  }
+}
+
+fn em_model(m: MModel) -> Text {
+  let production_words = em_prod_words(m.prods)
+  let n_prods = em_len_prods(m.prods)
+  let n_nts = md_len_text(m.nts)
+  let g = lg_grammar_of(production_words_with_count(n_prods, production_words), n_nts, m.start)
+  let run = lg_lookahead(g, 3)
+  let clipped = em_clipped(m.prods, 0)
+  let lines = Cons(
+    em_title(m),
+    Cons(
+      text_concat_all(Cons("max_k ", Cons(text_of_u64(run.max_k), Nil))),
+      Cons(
+        em_line("terminals", md_len_text(m.terminal_names), m.terminal_names),
+        Cons(
+          em_line("non_terminals", n_nts, m.nts),
+          Cons(
+            em_line("nt_kinds", n_nts, em_nums(m.nt_kinds)),
+            Cons(
+              text_concat_all(Cons("start ", Cons(text_of_u64(m.start), Nil))),
+              Cons(
+                em_line("productions", n_prods, production_words),
+                Cons(
+                  em_line("symbol_attrs", u64_div3(md_len_text(clipped)), clipped),
+                  Cons(
+                    text_concat_all(
+                      Cons("lookahead ", Cons(text_of_u64(n_nts), Cons(run.text, Nil)))
+                    ),
+                    Cons(em_line("skip", md_len_scanners(m.skips), em_skip_words(m.skips)), Nil)
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  match run.failed {
+    Some(why) => why
+    None => text_join(lines, text_newline())
+  }
+}
+
+fn u64_div3(n: u64) -> u64 {
+  div(n, 3)
+}
+
+fn md_len_scanners(xs: List(List(u64))) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + md_len_scanners(rest)
+  }
+}
+
+fn production_words_with_count(n: u64, words: List(Text)) -> List(Text) {
+  Cons(text_of_u64(n), words)
+}

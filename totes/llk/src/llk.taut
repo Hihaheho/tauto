@@ -1,0 +1,510 @@
+import "../../../std/Stack.taut"
+import "../../scan/src/scan.taut"
+
+// The LL(k) parser that reads the tables of the LL(k) table generator, in the
+// proof language (`docs/design/self-host.md`). `README.md` says what it does
+// and why.
+
+// A symbol on the parser's stack: a non-terminal to expand, a terminal to
+// match, or the end of a production (which closes its non-terminal).
+inductive LlkSym(): Type {
+  llk_n(non_terminal: Nat): LlkSym
+  llk_t(terminal: Nat): LlkSym
+  llk_e(production: Nat): LlkSym
+}
+
+// A production: its left side, and its symbols in the order the parser
+// pushes them (the one it expands first is pushed last).
+inductive LlkProduction(): Type {
+  llk_production(lhs: Nat, pushes: List(LlkSym)): LlkProduction
+}
+
+// A token the parser reads (one that is not skipped), with the skipped
+// tokens before it.
+inductive LlkTok(): Type {
+  llk_tok(token_type: Nat, start: Nat, end: Nat, trivia: List(ScanToken)): LlkTok
+}
+
+// What a parse gives: the tree, as the calls that build it, in order. The
+// root, the node of the empty name, is non-terminal number `non_terminals`.
+inductive LlkEvent(): Type {
+  llk_open(non_terminal: Nat): LlkEvent
+  llk_close(): LlkEvent
+  llk_token(terminal: Nat, from: Nat, to: Nat): LlkEvent
+}
+
+// Where the first error is (the start of the token the parser could not
+// use, if there is one) and the terminals it would have taken (only when a
+// terminal was to be matched).
+inductive LlkError(): Type {
+  llk_error(at: Option(Nat), expected: List(Nat)): LlkError
+}
+
+// A parse that succeeded has left its events on the stack it was given.
+inductive LlkResult(): Type {
+  llk_parsed(): LlkResult
+  llk_failed(error: LlkError): LlkResult
+}
+
+inductive LlkTables(): Type {
+  llk_tables(
+    start: Nat,
+    max_k: Nat,
+    terminals: Nat,
+    non_terminals: Nat,
+    // The terminals that are skipped in each scanner mode.
+    skip: Array(List(Nat)),
+    // Per non-terminal: its production when no token is read, plus one (0
+    // for None); the tokens its automaton reads; where its states start.
+    prod0: Array(Nat),
+    depth: Array(Nat),
+    first_state: Array(Nat),
+    // (state, terminal): the next state * 1024 + the production + 1, or 0.
+    cells: Array(Nat),
+    productions: Array(LlkProduction)
+  ): LlkTables
+}
+
+// ---- reading the tables ------------------------------------------------------
+
+// The `k` numbers from `at`, put before `done` last first.
+fn llk_numbers_onto(k: Nat, a: Array(Nat), at: Nat, done: List(Nat)) -> List(Nat) {
+  match k -> List(Nat) {
+    zero => done
+    succ(k2) => llk_numbers_onto(k2, a, at + 1, Cons(scan_number(a, at), done))
+  }
+}
+
+// The skipped terminals of `k` modes from `p` (last mode first), and where
+// they end.
+fn llk_skips_in(k: Nat, a: Array(Nat), p: Nat, done: List(List(Nat))) -> Pair(List(List(Nat)), Nat) {
+  match k -> Pair(List(List(Nat)), Nat) {
+    zero => Pair { fst: done, snd: p }
+    succ(
+      k2
+    ) => llk_skips_in(
+      k2,
+      a,
+      p + 1 + scan_number(a, p),
+      Cons(llk_numbers_onto(scan_number(a, p), a, p + 1, Nil), done)
+    )
+  }
+}
+
+// Where the states of `k` automata start (last first), from `states`, and
+// how many states there are.
+fn llk_starts_in(
+  k: Nat,
+  a: Array(Nat),
+  at: Nat,
+  states: Nat,
+  done: List(Nat)
+) -> Pair(List(Nat), Nat) {
+  match k -> Pair(List(Nat), Nat) {
+    zero => Pair { fst: done, snd: states }
+    succ(k2) => llk_starts_in(k2, a, at + 3, states + scan_number(a, at), Cons(states, done))
+  }
+}
+
+// The cells, run by run, until `total` are (last first), and where the runs
+// end. Each run fills one cell at least, so `fuel` is `total`.
+fn llk_cells_in(
+  fuel: Nat,
+  total: Nat,
+  a: Array(Nat),
+  filled: Nat,
+  rp: Nat,
+  done: List(Nat)
+) -> Pair(List(Nat), Nat) {
+  match fuel -> Pair(List(Nat), Nat) {
+    zero => Pair { fst: done, snd: rp }
+    succ(f) => match filled < total -> Pair(List(Nat), Nat) {
+      no => Pair { fst: done, snd: rp }
+      yes => llk_cells_in(
+        f,
+        total,
+        a,
+        filled + scan_number(a, rp),
+        rp + 2,
+        scan_repeat_onto(scan_number(a, rp), scan_number(a, rp + 1), done)
+      )
+    }
+  }
+}
+
+// `k` symbols from `at`, put before `done` last first: the symbols as the
+// parser expands them, the first at the head.
+fn llk_symbols_onto(k: Nat, a: Array(Nat), at: Nat, done: List(LlkSym)) -> List(LlkSym) {
+  match k -> List(LlkSym) {
+    zero => done
+    succ(k2) => llk_symbols_onto(
+      k2,
+      a,
+      at + 2,
+      Cons(
+        match scan_number(a, at) -> LlkSym {
+          zero => llk_n(scan_number(a, at + 1))
+          succ(other) => llk_t(scan_number(a, at + 1))
+        },
+        done
+      )
+    )
+  }
+}
+
+// `k` productions from `pp` (last first), and where they end.
+fn llk_productions_in(
+  k: Nat,
+  a: Array(Nat),
+  pp: Nat,
+  done: List(LlkProduction)
+) -> Pair(List(LlkProduction), Nat) {
+  match k -> Pair(List(LlkProduction), Nat) {
+    zero => Pair { fst: done, snd: pp }
+    succ(
+      k2
+    ) => llk_productions_in(
+      k2,
+      a,
+      pp + 2 + scan_number(a, pp + 1) * 2,
+      Cons(
+        LlkProduction { lhs: scan_number(
+          a,
+          pp
+        ), pushes: list_reverse(llk_symbols_onto(scan_number(a, pp + 1), a, pp + 2, Nil)) },
+        done
+      )
+    )
+  }
+}
+
+fn llk_tables_from(
+  pm: Array(Nat),
+  sk: Array(Nat),
+  lm: Array(Nat),
+  lc: Array(Nat),
+  pr: Array(Nat)
+) -> Option(LlkTables) {
+  let terminals = scan_number(pm, 2)
+  let n_automata = scan_number(lm, 0)
+  let skips = llk_skips_in(scan_number(sk, 0), sk, 1, Nil)
+  let starts = llk_starts_in(n_automata, lm, 3, 0, Nil)
+  let cells = llk_cells_in(starts.snd * terminals, starts.snd * terminals, lc, 0, 0, Nil)
+  let productions = llk_productions_in(scan_number(pr, 0), pr, 1, Nil)
+  match scan_within(
+    4,
+    pm
+  ) && scan_within(
+    skips.snd,
+    sk
+  ) && scan_within(
+    1 + n_automata * 3,
+    lm
+  ) && scan_within(cells.snd, lc) && scan_within(productions.snd, pr) -> Option(LlkTables) {
+    no => None
+    yes => Some(
+      LlkTables {
+        start: scan_number(pm, 1),
+        max_k: scan_number(pm, 0),
+        terminals: terminals,
+        non_terminals: scan_number(pm, 3),
+        skip: array_of_list(list_reverse(skips.fst)),
+        prod0: array_of_list(scan_column(n_automata, lm, 1, 3)),
+        depth: array_of_list(scan_column(n_automata, lm, 2, 3)),
+        first_state: scan_array(starts.fst),
+        cells: scan_array(cells.fst),
+        productions: array_of_list(list_reverse(productions.fst))
+      }
+    )
+  }
+}
+
+// Reads the tables from the texts of `syntax_tables_parser_meta`,
+// `syntax_tables_skip`, `syntax_tables_lookahead_meta`,
+// `syntax_tables_lookahead_cells` and `syntax_tables_productions`. `None` when they are
+// too short for what they say.
+fn llk_tables_read(
+  parser_meta: Text,
+  skip: Text,
+  lookahead_meta: Text,
+  lookahead_cells: Text,
+  productions: Text
+) -> Option(LlkTables) {
+  llk_tables_from(
+    array_of_list(text_number_list(parser_meta)),
+    array_of_list(text_number_list(skip)),
+    array_of_list(text_number_list(lookahead_meta)),
+    array_of_list(text_number_list(lookahead_cells)),
+    array_of_list(text_number_list(productions))
+  )
+}
+
+// ---- the tokens ----------------------------------------------------------------
+
+fn llk_member(xs: List(Nat), x: Nat) -> Yn {
+  match xs -> Yn {
+    Nil => no
+    Cons(y, rest) => match y == x -> Yn {
+      yes => yes
+      no => llk_member(rest, x)
+    }
+  }
+}
+
+// Whether the parser does not read this token: whitespace and comments
+// (terminals 1 to 4), and what the grammar skips in the mode it was cut in.
+fn llk_skipped(&t: LlkTables, token: ScanToken) -> Yn {
+  match 1 <= token.token_type && token.token_type <= 4 -> Yn {
+    yes => yes
+    no => llk_member(array_get_or(t.skip, token.mode, Nil), token.token_type)
+  }
+}
+
+fn llk_tokens_in(
+  rest: List(ScanToken),
+  &t: LlkTables,
+  length: Nat,
+  pending: List(ScanToken),
+  done: List(LlkTok)
+) -> List(LlkTok) {
+  match rest -> List(LlkTok) {
+    Nil => list_reverse(
+      Cons(
+        LlkTok { token_type: 0, start: length, end: length, trivia: Nil },
+        Cons(
+          LlkTok { token_type: 0, start: length, end: length, trivia: list_reverse(pending) },
+          done
+        )
+      )
+    )
+    Cons(token, more) => match llk_skipped(t, token) -> List(LlkTok) {
+      yes => llk_tokens_in(more, t, length, Cons(token, pending), done)
+      no => llk_tokens_in(
+        more,
+        t,
+        length,
+        Nil,
+        Cons(
+          LlkTok { token_type: token.token_type, start: token.start, end: token.end, trivia: list_reverse(
+            pending
+          ) },
+          done
+        )
+      )
+    }
+  }
+}
+
+// The tokens the parser reads, each with the skipped ones before it
+// (`TokenStream`), and at the end two tokens of the end of the input (the
+// skipped ones before the end go with the first). `length` is the length
+// of the input.
+fn llk_tokens(&t: LlkTables, tokens: List(ScanToken), length: Nat) -> List(LlkTok) {
+  llk_tokens_in(tokens, t, length, Nil, Nil)
+}
+
+// The type of the next token, 0 (the end) past the end.
+fn llk_next_type(tokens: List(LlkTok)) -> Nat {
+  match tokens -> Nat {
+    Nil => 0
+    Cons(token, rest) => token.token_type
+  }
+}
+
+fn llk_rest(tokens: List(LlkTok)) -> List(LlkTok) {
+  match tokens -> List(LlkTok) {
+    Nil => Nil
+    Cons(token, rest) => rest
+  }
+}
+
+// ---- predicting a production ---------------------------------------------------
+
+fn llk_last(production: Nat, last: Nat) -> Nat {
+  match production -> Nat {
+    zero => last
+    succ(p) => production
+  }
+}
+
+fn llk_chosen(production: Nat, last: Nat) -> Option(Nat) {
+  match production -> Option(Nat) {
+    succ(p) => Some(p)
+    zero => match last -> Option(Nat) {
+      succ(l) => Some(l)
+      zero => None
+    }
+  }
+}
+
+// `k` more tokens through the automaton from `state`, whose states start at
+// `base`. `production` and `last` are plus one, 0 for None.
+fn llk_predict_in(
+  k: Nat,
+  &t: LlkTables,
+  base: Nat,
+  tokens: List(LlkTok),
+  state: Nat,
+  production: Nat,
+  last: Nat
+) -> Option(Nat) {
+  match k -> Option(Nat) {
+    zero => llk_chosen(production, last)
+    succ(
+      k2
+    ) => match scan_number(
+      t.cells,
+      (base + state) * t.terminals + llk_next_type(tokens)
+    ) -> Option(Nat) {
+      zero => llk_predict_in(k2, t, base, llk_rest(tokens), state, production, last)
+      succ(
+        c
+      ) => llk_predict_in(
+        k2,
+        t,
+        base,
+        llk_rest(tokens),
+        nat_div(succ(c), 1024),
+        nat_mod(succ(c), 1024),
+        llk_last(nat_mod(succ(c), 1024), last)
+      )
+    }
+  }
+}
+
+// The production of a non-terminal for the tokens ahead: from the first state, each of the `k` tokens takes the transition
+// it has, if any; the production is the one of the last state that has one.
+fn llk_predict(&t: LlkTables, non_terminal: Nat, tokens: List(LlkTok)) -> Option(Nat) {
+  llk_predict_in(
+    scan_number(t.depth, non_terminal),
+    t,
+    scan_number(t.first_state, non_terminal),
+    tokens,
+    0,
+    scan_number(t.prod0, non_terminal),
+    0
+  )
+}
+
+// ---- parsing -------------------------------------------------------------------
+
+// The skipped tokens as events, pushed in order.
+fn llk_trivia_onto(trivia: List(ScanToken), &mut events: Stack(LlkEvent)) -> () {
+  match trivia -> () {
+    Nil => ()
+    Cons(token, rest) => {
+      stack_push(&mut events, llk_token(token.token_type, token.start, token.end))
+      llk_trivia_onto(rest, &mut events)
+    }
+  }
+}
+
+// The symbols of a production, pushed in order.
+fn llk_push_symbols(symbols: List(LlkSym), &mut stack: Stack(LlkSym)) -> () {
+  match symbols -> () {
+    Nil => ()
+    Cons(symbol, rest) => {
+      stack_push(&mut stack, symbol)
+      llk_push_symbols(rest, &mut stack)
+    }
+  }
+}
+
+fn llk_failure(tokens: List(LlkTok), expected: List(Nat)) -> LlkResult {
+  match tokens -> LlkResult {
+    Nil => llk_failed(LlkError { at: None, expected: expected })
+    Cons(token, rest) => llk_failed(LlkError { at: Some(token.start), expected: expected })
+  }
+}
+
+// The end of a parse whose stack is done: the input must be at its end.
+fn llk_finish(tokens: List(LlkTok), &mut events: Stack(LlkEvent)) -> LlkResult {
+  match tokens -> LlkResult {
+    Nil => llk_failure(tokens, Nil)
+    Cons(token, rest) => match token.token_type == 0 -> LlkResult {
+      yes => {
+        llk_trivia_onto(token.trivia, &mut events)
+        stack_push(&mut events, llk_close)
+        llk_parsed
+      }
+      no => llk_failure(tokens, Nil)
+    }
+  }
+}
+
+// At most `fuel` steps of the parser. The first error ends it; there is no
+// recovery after an error. The parser is done when nothing
+// is left on the stack, or only the end of the input.
+fn llk_run_in(
+  fuel: Nat,
+  &t: LlkTables,
+  tokens: List(LlkTok),
+  &mut stack: Stack(LlkSym),
+  &mut events: Stack(LlkEvent)
+) -> LlkResult {
+  match fuel -> LlkResult {
+    zero => llk_failed(LlkError { at: None, expected: Nil })
+    succ(f) => match stack_pop(&mut stack) -> LlkResult {
+      None => llk_finish(tokens, &mut events)
+      Some(top) => match top -> LlkResult {
+        llk_t(terminal) => match terminal == 0 && stack_is_empty(&stack) -> LlkResult {
+          yes => llk_finish(tokens, &mut events)
+          no => match tokens -> LlkResult {
+            Nil => llk_failure(tokens, Cons(terminal, Nil))
+            Cons(token, more) => match token.token_type == terminal -> LlkResult {
+              yes => {
+                llk_trivia_onto(token.trivia, &mut events)
+                stack_push(&mut events, llk_token(token.token_type, token.start, token.end))
+                llk_run_in(f, &t, more, &mut stack, &mut events)
+              }
+              no => llk_failure(tokens, Cons(terminal, Nil))
+            }
+          }
+        }
+        llk_n(non_terminal) => match llk_predict(&t, non_terminal, tokens) -> LlkResult {
+          None => llk_failure(tokens, Nil)
+          Some(production) => match array_get(t.productions, production) -> LlkResult {
+            None => llk_failed(LlkError { at: None, expected: Nil })
+            // A production of another non-terminal: the tables are not a
+            // parser (the LL(k) table generator never writes this).
+            Some(found) => match found.lhs == non_terminal -> LlkResult {
+              no => llk_failed(LlkError { at: None, expected: Nil })
+              yes => {
+                stack_push(&mut stack, llk_e(production))
+                llk_push_symbols(found.pushes, &mut stack)
+                stack_push(&mut events, llk_open(found.lhs))
+                llk_run_in(f, &t, tokens, &mut stack, &mut events)
+              }
+            }
+          }
+        }
+        llk_e(production) => {
+          stack_push(&mut events, llk_close)
+          llk_run_in(f, &t, tokens, &mut stack, &mut events)
+        }
+      }
+    }
+  }
+}
+
+// The fuel of a parse: far more than a parse of the grammar takes.
+fn llk_fuel(t: LlkTables, tokens: List(LlkTok)) -> Nat {
+  (list_length(tokens) + 1) * (t.non_terminals + 1) * 16
+}
+
+// Parses the tokens from the start symbol, leaving the events on `events`
+// (the last on top). A step reads a token, or opens or closes a node; the
+// fuel is far more than a parse of the grammar takes, and a parse that runs
+// out of it fails. The fuel is a parameter, so that a proof about the parse does not
+// look inside it; `llk_fuel` is what the caller gives.
+fn llk_parse(
+  fuel: Nat,
+  &t: LlkTables,
+  tokens: List(LlkTok),
+  &mut events: Stack(LlkEvent)
+) -> LlkResult {
+  var stack: Stack(LlkSym) = stack_new()
+  stack_push(&mut stack, llk_n(t.start))
+  stack_push(&mut events, llk_open(t.non_terminals))
+  llk_run_in(fuel, &t, tokens, &mut stack, &mut events)
+}

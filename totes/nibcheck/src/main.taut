@@ -1,0 +1,125 @@
+// With `--rows PRELUDE`, `--types PRELUDE` or `--lin PRELUDE`: prints `== <path>`
+// and the report of the rows (the types, the use check) of each file given after it, or `error` (the
+// differential test's input, `docs/design/self-host.md`). PRELUDE is the file of
+// the standard library.
+
+fn nibcheck_read(
+  &t: SyntaxTables,
+  classes: UnicodeClasses,
+  path: Text,
+  base: u64
+) -> Option(List(SurfaceStmt)) {
+  match os_read_file(path) {
+    Err(e) => None
+    Ok(source) => surface_parse_program(t, classes, source, base)
+  }
+}
+
+fn nibcheck_rows_each(
+  &t: SyntaxTables,
+  classes: UnicodeClasses,
+  prelude: List(SurfaceStmt),
+  paths: List(Text)
+) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match nibcheck_read(t, classes, path, 0) {
+        None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+        Some(program) => os_print(rows_dump(rows_check(prelude, modules_resolve(program).stmts)))
+      }
+      nibcheck_rows_each(t, classes, prelude, rest)
+    }
+  }
+}
+
+fn nibcheck_types_each(
+  &t: SyntaxTables,
+  classes: UnicodeClasses,
+  prelude: List(SurfaceStmt),
+  paths: List(Text)
+) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match nibcheck_read(t, classes, path, 0) {
+        None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+        Some(program) => {
+          let resolved = modules_resolve(program)
+          os_print(types_dump(types_check(prelude, resolved.stmts, resolved.errors)))
+        }
+      }
+      nibcheck_types_each(t, classes, prelude, rest)
+    }
+  }
+}
+
+fn nibcheck_lin_each(
+  &t: SyntaxTables,
+  classes: UnicodeClasses,
+  prelude: List(SurfaceStmt),
+  paths: List(Text)
+) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match nibcheck_read(t, classes, path, 0) {
+        None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+        Some(program) => {
+          let resolved = modules_resolve(program)
+          match lin_run(prelude, resolved.stmts, resolved.errors) {
+            None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+            Some(dump) => os_print(dump)
+          }
+        }
+      }
+      nibcheck_lin_each(t, classes, prelude, rest)
+    }
+  }
+}
+
+match syntax_tables() {
+  None => os_eprint("the tables of the syntax are damaged")
+  Some(t) => match os_args() {
+    Nil => ()
+    Cons(mode, rest) => if mode == "--rows" {
+      match rest {
+        Nil => ()
+        Cons(prelude_path, paths) => {
+          let classes = unicode_classes()
+          match nibcheck_read(t, classes, prelude_path, 2147483648) {
+            None => os_eprint("the prelude does not parse")
+            Some(prelude) => nibcheck_rows_each(t, classes, classes_expand_prelude(prelude), paths)
+          }
+        }
+      }
+    } else if mode == "--types" {
+      match rest {
+        Nil => ()
+        Cons(prelude_path, paths) => {
+          let classes = unicode_classes()
+          match nibcheck_read(t, classes, prelude_path, 2147483648) {
+            None => os_eprint("the prelude does not parse")
+            Some(prelude) => nibcheck_types_each(t, classes, classes_expand_prelude(prelude), paths)
+          }
+        }
+      }
+    } else if mode == "--lin" {
+      match rest {
+        Nil => ()
+        Cons(prelude_path, paths) => {
+          let classes = unicode_classes()
+          match nibcheck_read(t, classes, prelude_path, 2147483648) {
+            None => os_eprint("the prelude does not parse")
+            Some(prelude) => nibcheck_lin_each(t, classes, classes_expand_prelude(prelude), paths)
+          }
+        }
+      }
+    } else {
+      os_eprint("usage: --rows|--types|--lin PRELUDE FILE…")
+    }
+  }
+}

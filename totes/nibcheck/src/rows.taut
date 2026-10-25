@@ -1,0 +1,2109 @@
+import "../../surface/src/surface.taut"
+import "../../ordmap/src/ordmap.taut"
+import "../../text/src/text.taut"
+
+// Effect rows of executable code: which effects a function may perform
+// (`crates/tauto/src/rows.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+// A row is a set of eff names; a name that starts with `|` is a row
+// variable, one that starts with `?` an eff that cannot be followed.
+
+// ---- quantities ------------------------------------------------------------------
+//
+// The quantity of an operation's resume: `Quant`
+// of `crates/tauto/src/types.rs`.
+
+inductive Quant(): Type {
+  // `resume 0`: the arm has no `k`.
+  QuantZero(): Quant
+  // `resume <=1`, the default.
+  QuantAtMostOne(): Quant
+  // `resume 1`.
+  QuantOne(): Quant
+  // `resume ω`.
+  QuantMany(): Quant
+  // `direct`: the arm continues with `k(e)` at the end of every path.
+  QuantDirect(): Quant
+}
+
+fn quant_parse(written: Text) -> Option(Quant) {
+  match written == "0" -> Option(Quant) {
+    yes => Some(QuantZero)
+    no => match written == "<=1" -> Option(Quant) {
+      yes => Some(QuantAtMostOne)
+      no => match written == "1" -> Option(Quant) {
+        yes => Some(QuantOne)
+        no => match written == "\u{3c9}" -> Option(Quant) {
+          yes => Some(QuantMany)
+          no => match written == "direct" -> Option(Quant) {
+            yes => Some(QuantDirect)
+            no => None
+          }
+        }
+      }
+    }
+  }
+}
+
+fn quant_is_direct(q: Quant) -> Yn {
+  match q -> Yn {
+    QuantDirect => yes
+    _ => no
+  }
+}
+
+fn quant_is_many(q: Quant) -> Yn {
+  match q -> Yn {
+    QuantMany => yes
+    _ => no
+  }
+}
+
+fn quant_name(q: Quant) -> Text {
+  match q -> Text {
+    QuantZero => "Zero"
+    QuantAtMostOne => "AtMostOne"
+    QuantOne => "One"
+    QuantMany => "Many"
+    QuantDirect => "Direct"
+  }
+}
+
+// ---- rows ------------------------------------------------------------------------
+
+inductive RowSet(): Type {
+  rowset_mk(names: Ordmap(Text, Yn)): RowSet
+}
+
+fn rowset_empty() -> RowSet {
+  rowset_mk(ordmap_empty())
+}
+
+fn rowset_add(r: RowSet, name: Text) -> RowSet {
+  rowset_mk(ordmap_insert(r.names, name, yes, ordmap_compare_text))
+}
+
+fn rowset_one(name: Text) -> RowSet {
+  rowset_add(rowset_empty(), name)
+}
+
+fn rowset_has(r: RowSet, name: Text) -> Yn {
+  ordmap_contains(r.names, name, ordmap_compare_text)
+}
+
+fn rowset_drop(r: RowSet, name: Text) -> RowSet {
+  rowset_mk(ordmap_remove(r.names, name, ordmap_compare_text))
+}
+
+fn rowset_keys(entries: List(Pair(Text, Yn))) -> List(Text) {
+  match entries -> List(Text) {
+    Nil => Nil
+    Cons(e, rest) => Cons(e.fst, rowset_keys(rest))
+  }
+}
+
+// The names, in order.
+fn rowset_list(r: RowSet) -> List(Text) {
+  rowset_keys(ordmap_entries(r.names))
+}
+
+fn rowset_add_all(names: List(Text), r: RowSet) -> RowSet {
+  match names -> RowSet {
+    Nil => r
+    Cons(n, rest) => rowset_add_all(rest, rowset_add(r, n))
+  }
+}
+
+fn rowset_union(a: RowSet, b: RowSet) -> RowSet {
+  rowset_add_all(rowset_list(b), a)
+}
+
+fn rowset_of(names: List(Text)) -> RowSet {
+  rowset_add_all(names, rowset_empty())
+}
+
+// What calling a local name performs.
+inductive RowLatent(): Type {
+  LatentKnown(row: RowSet): RowLatent
+  LatentUnknown(): RowLatent
+  // The `info` of an `exceeded` arm: `info.more(m)` performs what `k` does,
+  // `info.unbounded()` that and `Div`.
+  LatentInfo(): RowLatent
+}
+
+// A local, the newest first.
+inductive RowLocal(): Type {
+  row_local_mk(name: Text, latent: RowLatent): RowLocal
+}
+
+inductive RowSpan(): Type {
+  row_span_mk(start: Nat, end: Nat): RowSpan
+}
+
+fn rows_compare_span(a: RowSpan, b: RowSpan) -> Ordering {
+  match ordmap_compare_nat(a.start, b.start) -> Ordering {
+    Equal => ordmap_compare_nat(a.end, b.end)
+    Less => Less
+    Greater => Greater
+  }
+}
+
+inductive RowDiagnostic(): Type {
+  row_diagnostic_mk(message: Text, start: Nat, end: Nat): RowDiagnostic
+}
+
+// The functions and the quantities, which the analysis only reads.
+// `externs`: the extern functions the program declares, not the prelude.
+inductive RowEnv(): Type {
+  row_env_mk(
+    fns: Ordmap(Text, SurfaceFn),
+    quants: Ordmap(Text, Quant),
+    externs: Ordmap(Text, Yn)
+  ): RowEnv
+}
+
+// What it finds as it goes: the rows inferred, the functions being
+// followed, the row of each call, the row variables bounded `direct` of the
+// function being followed, and the errors found while following calls, once
+// each.
+inductive RowState(): Type {
+  row_state_mk(
+    memo: Ordmap(Text, RowSet),
+    in_progress: Ordmap(Text, Yn),
+    calls: Ordmap(RowSpan, RowSet),
+    direct_vars: List(Text),
+    found: List(RowDiagnostic)
+  ): RowState
+}
+
+fn rows_empty_state() -> RowState {
+  row_state_mk(ordmap_empty(), ordmap_empty(), ordmap_empty(), Nil, Nil)
+}
+
+fn rows_set_memo(s: RowState, memo: Ordmap(Text, RowSet)) -> RowState {
+  row_state_mk(memo, s.in_progress, s.calls, s.direct_vars, s.found)
+}
+
+fn rows_set_in_progress(s: RowState, in_progress: Ordmap(Text, Yn)) -> RowState {
+  row_state_mk(s.memo, in_progress, s.calls, s.direct_vars, s.found)
+}
+
+fn rows_set_calls(s: RowState, calls: Ordmap(RowSpan, RowSet)) -> RowState {
+  row_state_mk(s.memo, s.in_progress, calls, s.direct_vars, s.found)
+}
+
+fn rows_set_direct(s: RowState, direct_vars: List(Text)) -> RowState {
+  row_state_mk(s.memo, s.in_progress, s.calls, direct_vars, s.found)
+}
+
+fn rows_set_found(s: RowState, found: List(RowDiagnostic)) -> RowState {
+  row_state_mk(s.memo, s.in_progress, s.calls, s.direct_vars, found)
+}
+
+// A row, and the state after it was found.
+inductive RowsOut(): Type {
+  rows_out(row: RowSet, s: RowState): RowsOut
+}
+
+// What a call performs, and the state after it was found.
+inductive LatentOut(): Type {
+  latent_out(latent: RowLatent, s: RowState): LatentOut
+}
+
+// The row a row variable stands for, whether a parameter mentions it, and
+// the state.
+inductive FoundOut(): Type {
+  found_out(row: RowSet, found: Yn, s: RowState): FoundOut
+}
+
+fn rows_effect_of_op(op: Text) -> Text {
+  match op == "exceeded" -> Text {
+    yes => "Exceeded"
+    no => op
+  }
+}
+
+fn rows_unchecked(what: Text) -> Text {
+  text_concat("?", what)
+}
+
+fn rows_quoted(name: Text) -> Text {
+  text_concat_all(Cons("`", Cons(name, Cons("`", Nil))))
+}
+
+fn rows_has_prefix(t: Text, p: Text) -> Yn {
+  text_starts_with(t, p, 0)
+}
+
+fn rows_after_first(t: Text) -> Text {
+  text_slice_or_empty(t, 1, text_len(t))
+}
+
+fn rows_has_text(xs: List(Text), x: Text) -> Yn {
+  match xs -> Yn {
+    Nil => no
+    Cons(y, rest) => match y == x -> Yn {
+      yes => yes
+      no => rows_has_text(rest, x)
+    }
+  }
+}
+
+// ---- the environment -------------------------------------------------------------
+
+fn rows_env_fn(env: RowEnv, name: Text) -> Option(SurfaceFn) {
+  ordmap_get(env.fns, name, ordmap_compare_text)
+}
+
+fn rows_env_has(env: RowEnv, name: Text) -> Yn {
+  ordmap_contains(env.fns, name, ordmap_compare_text)
+}
+
+fn rows_quant_of(env: RowEnv, eff: Text) -> Option(Quant) {
+  ordmap_get(env.quants, eff, ordmap_compare_text)
+}
+
+fn rows_initial_quants() -> Ordmap(Text, Quant) {
+  ordmap_insert(
+    ordmap_insert(
+      ordmap_insert(ordmap_empty(), "show", QuantDirect, ordmap_compare_text),
+      "Exceeded",
+      QuantAtMostOne,
+      ordmap_compare_text
+    ),
+    "Div",
+    QuantZero,
+    ordmap_compare_text
+  )
+}
+
+fn rows_extern_names(fns: List(SurfaceFn), out: Ordmap(Text, Yn)) -> Ordmap(Text, Yn) {
+  match fns -> Ordmap(Text, Yn) {
+    Nil => out
+    Cons(f, rest) => rows_extern_names(rest, ordmap_insert(out, f.name, yes, ordmap_compare_text))
+  }
+}
+
+// The extern functions a program declares.
+fn rows_user_externs(stmts: List(SurfaceStmt), out: Ordmap(Text, Yn)) -> Ordmap(Text, Yn) {
+  match stmts -> Ordmap(Text, Yn) {
+    Nil => out
+    Cons(st, rest) => match st -> Ordmap(Text, Yn) {
+      StExtern(l, fns, a, b) => rows_user_externs(rest, rows_extern_names(fns, out))
+      _ => rows_user_externs(rest, out)
+    }
+  }
+}
+
+fn rows_env_add_fn(env: RowEnv, f: SurfaceFn) -> RowEnv {
+  row_env_mk(ordmap_insert(env.fns, f.name, f, ordmap_compare_text), env.quants, env.externs)
+}
+
+fn rows_env_externs(fns: List(SurfaceFn), env: RowEnv) -> RowEnv {
+  match fns -> RowEnv {
+    Nil => env
+    Cons(f, rest) => rows_env_externs(rest, rows_env_add_fn(env, f))
+  }
+}
+
+fn rows_written_quant(resume: Option(Text)) -> Quant {
+  match resume -> Quant {
+    None => QuantAtMostOne
+    Some(written) => match quant_parse(written) -> Quant {
+      Some(q) => q
+      None => QuantAtMostOne
+    }
+  }
+}
+
+fn rows_env_stmt(s: SurfaceStmt, env: RowEnv) -> RowEnv {
+  match s -> RowEnv {
+    StFn(f) => rows_env_add_fn(env, f)
+    StExtern(language, fns, start, end) => rows_env_externs(fns, env)
+    StEffect(
+      e
+    ) => row_env_mk(
+      env.fns,
+      ordmap_insert(env.quants, e.name, rows_written_quant(e.resume), ordmap_compare_text),
+      env.externs
+    )
+    _ => env
+  }
+}
+
+// The prelude's functions and effects, then the program's: a later
+// declaration of a name hides the earlier one.
+fn rows_env_of(stmts: List(SurfaceStmt), env: RowEnv) -> RowEnv {
+  match stmts -> RowEnv {
+    Nil => env
+    Cons(s, rest) => rows_env_of(rest, rows_env_stmt(s, env))
+  }
+}
+
+// ---- locals ----------------------------------------------------------------------
+
+fn rows_local_find(locals: List(RowLocal), name: Text) -> Option(RowLocal) {
+  match locals -> Option(RowLocal) {
+    Nil => None
+    Cons(l, rest) => match l.name == name -> Option(RowLocal) {
+      yes => Some(l)
+      no => rows_local_find(rest, name)
+    }
+  }
+}
+
+fn rows_local_has(locals: List(RowLocal), name: Text) -> Yn {
+  match rows_local_find(locals, name) -> Yn {
+    Some(l) => yes
+    None => no
+  }
+}
+
+fn rows_push(locals: List(RowLocal), name: Text, latent: RowLatent) -> List(RowLocal) {
+  Cons(row_local_mk(name, latent), locals)
+}
+
+mutual {
+  fn rows_bind_pattern(p: SurfacePattern, locals: List(RowLocal)) -> List(RowLocal) {
+    match p -> List(RowLocal) {
+      PtBind(n) => rows_push(locals, n, LatentUnknown)
+      PtCtor(name, args) => rows_bind_all(args, locals)
+      PtRecord(name, fields) => rows_bind_fields(fields, locals)
+      PtWild => locals
+      PtInt(negative, n) => locals
+      PtBool(b) => locals
+      PtText(t) => locals
+      PtOther(n) => locals
+    }
+  }
+  fn rows_bind_all(patterns: List(SurfacePattern), locals: List(RowLocal)) -> List(RowLocal) {
+    match patterns -> List(RowLocal) {
+      Nil => locals
+      Cons(p, rest) => rows_bind_all(rest, rows_bind_pattern(p, locals))
+    }
+  }
+  fn rows_bind_fields(fields: List(SurfacePatternField), locals: List(RowLocal)) -> List(RowLocal) {
+    match fields -> List(RowLocal) {
+      Nil => locals
+      Cons(f, rest) => rows_bind_fields(rest, rows_bind_field(f, locals))
+    }
+  }
+  fn rows_bind_field(f: SurfacePatternField, locals: List(RowLocal)) -> List(RowLocal) {
+    match f -> List(RowLocal) {
+      surface_pattern_field_mk(name, p) => rows_bind_pattern(p, locals)
+    }
+  }
+}
+
+fn rows_irrefutable(p: SurfacePattern) -> Yn {
+  match p -> Yn {
+    PtWild => yes
+    PtBind(n) => yes
+    _ => no
+  }
+}
+
+fn rows_all_irrefutable(ps: List(SurfacePattern)) -> Yn {
+  match ps -> Yn {
+    Nil => yes
+    Cons(p, rest) => rows_irrefutable(p) && rows_all_irrefutable(rest)
+  }
+}
+
+// ---- types -----------------------------------------------------------------------
+
+// The kind of a function type under the kind or borrow written on it.
+mutual {
+  fn rows_function_kind(t: SurfaceTerm) -> SurfaceKind {
+    match t -> SurfaceKind {
+      surface_term_mk(kind, start, end) => rows_function_kind_of(kind, kind)
+    }
+  }
+  fn rows_function_kind_of(kind: SurfaceKind, whole: SurfaceKind) -> SurfaceKind {
+    match kind -> SurfaceKind {
+      SkFnKind(fk, ty) => rows_function_kind(ty)
+      SkBorrow(mutable, ty) => rows_function_kind(ty)
+      _ => whole
+    }
+  }
+}
+
+fn rows_latent_of_type(ty: Option(SurfaceTerm)) -> RowLatent {
+  match ty -> RowLatent {
+    None => LatentUnknown
+    Some(t) => match rows_function_kind(t) -> RowLatent {
+      SkPi(ps, r, effects) => match effects -> RowLatent {
+        Some(names) => LatentKnown(rowset_of(names))
+        None => LatentKnown(rowset_empty())
+      }
+      _ => LatentUnknown
+    }
+  }
+}
+
+fn rows_params_locals_from(
+  params: List(Text),
+  types: List(Option(SurfaceTerm)),
+  locals: List(RowLocal)
+) -> List(RowLocal) {
+  match params -> List(RowLocal) {
+    Nil => locals
+    Cons(p, rest) => match types -> List(RowLocal) {
+      Nil => locals
+      Cons(
+        t,
+        more
+      ) => rows_params_locals_from(rest, more, rows_push(locals, p, rows_latent_of_type(t)))
+    }
+  }
+}
+
+fn rows_params_locals(params: List(Text), types: List(Option(SurfaceTerm))) -> List(RowLocal) {
+  rows_params_locals_from(params, types, Nil)
+}
+
+fn rows_unknown_all(names: List(Text), locals: List(RowLocal)) -> List(RowLocal) {
+  match names -> List(RowLocal) {
+    Nil => locals
+    Cons(n, rest) => rows_unknown_all(rest, rows_push(locals, n, LatentUnknown))
+  }
+}
+
+// Whether the most recent local of the name is the `info` of an `exceeded` arm.
+fn rows_is_info(locals: List(RowLocal), name: Text) -> Yn {
+  match rows_local_find(locals, name) -> Yn {
+    None => no
+    Some(l) => match l.latent -> Yn {
+      LatentInfo => yes
+      _ => no
+    }
+  }
+}
+
+fn rows_base_is_info(base: SurfaceTerm, locals: List(RowLocal)) -> Yn {
+  match base.kind -> Yn {
+    SkVar(n) => rows_is_info(locals, n)
+    _ => no
+  }
+}
+
+fn rows_is_lambda(t: SurfaceTerm) -> Yn {
+  match t.kind -> Yn {
+    SkLam(ps, b) => yes
+    SkBorrowLam(bs, l) => yes
+    _ => no
+  }
+}
+
+fn rows_bind_operation_one(p: SurfacePattern, eff: Text, locals: List(RowLocal)) -> List(RowLocal) {
+  match p -> List(RowLocal) {
+    PtBind(n) => match eff == "exceeded" -> List(RowLocal) {
+      yes => rows_push(locals, n, LatentInfo)
+      no => match eff == "spawn" -> List(RowLocal) {
+        // The body `spawn` is given is a pure thunk (`std/prelude/Par.taut`).
+        yes => rows_push(locals, n, LatentKnown(rowset_empty()))
+        no => rows_bind_pattern(p, locals)
+      }
+    }
+    PtCtor(name, args) => rows_bind_pattern(p, locals)
+    PtRecord(name, fields) => rows_bind_pattern(p, locals)
+    _ => locals
+  }
+}
+
+fn rows_bind_operation(
+  patterns: List(SurfacePattern),
+  eff: Text,
+  locals: List(RowLocal)
+) -> List(RowLocal) {
+  match patterns -> List(RowLocal) {
+    Nil => locals
+    Cons(p, rest) => rows_bind_operation(rest, eff, rows_bind_operation_one(p, eff, locals))
+  }
+}
+
+// What the body performs, less the effects the handlers answer completely
+// (an irrefutable arm without a guard).
+fn rows_answered(handlers: List(SurfaceHandler), inner: RowSet) -> RowSet {
+  match handlers -> RowSet {
+    Nil => inner
+    Cons(h, rest) => match h -> RowSet {
+      HdOperation(eff, patterns, cont, guard, body) => match guard -> RowSet {
+        None => match rows_all_irrefutable(patterns) -> RowSet {
+          yes => rows_answered(rest, rowset_drop(inner, rows_effect_of_op(eff)))
+          no => rows_answered(rest, inner)
+        }
+        Some(g) => rows_answered(rest, inner)
+      }
+      HdReturn(pattern, body) => rows_answered(rest, inner)
+    }
+  }
+}
+
+// The effects of a row but its variables (`|…`).
+fn rows_not_bars(es: List(Text)) -> List(Text) {
+  match es -> List(Text) {
+    Nil => Nil
+    Cons(e, rest) => match rows_has_prefix(e, "|") -> List(Text) {
+      yes => rows_not_bars(rest)
+      no => Cons(e, rows_not_bars(rest))
+    }
+  }
+}
+
+// The effects written beside `|rvar` in a function type's row, or `None`
+// when there is no type or it is not a function type whose row holds the
+// variable.
+fn rows_named(ty: Option(SurfaceTerm), rvar: Text) -> Option(List(Text)) {
+  match ty -> Option(List(Text)) {
+    None => None
+    Some(t) => match rows_function_kind(t) -> Option(List(Text)) {
+      SkPi(ps, r, effects) => match effects -> Option(List(Text)) {
+        Some(es) => match rows_has_text(es, text_concat("|", rvar)) -> Option(List(Text)) {
+          yes => Some(rows_not_bars(es))
+          no => None
+        }
+        None => None
+      }
+      _ => None
+    }
+  }
+}
+
+fn rows_without(names: List(Text), r: RowSet) -> RowSet {
+  match names -> RowSet {
+    Nil => r
+    Cons(n, rest) => rows_without(rest, rowset_drop(r, n))
+  }
+}
+
+// ---- reports ---------------------------------------------------------------------
+
+fn rows_found_at(found: List(RowDiagnostic), message: Text, start: Nat, end: Nat) -> Yn {
+  match found -> Yn {
+    Nil => no
+    Cons(d, rest) => match d.message == message && d.start == start && d.end == end -> Yn {
+      yes => yes
+      no => rows_found_at(rest, message, start, end)
+    }
+  }
+}
+
+fn rows_report(s: RowState, message: Text, start: Nat, end: Nat) -> RowState {
+  match rows_found_at(s.found, message, start, end) -> RowState {
+    yes => s
+    no => rows_set_found(s, list_append(s.found, Cons(row_diagnostic_mk(message, start, end), Nil)))
+  }
+}
+
+fn rows_record_call(s: RowState, t: SurfaceTerm, row: RowSet) -> RowState {
+  rows_set_calls(s, ordmap_insert(s.calls, row_span_mk(t.start, t.end), row, rows_compare_span))
+}
+
+fn rows_tail_bounds(bounds: List(Option(Text))) -> List(Option(Text)) {
+  match bounds -> List(Option(Text)) {
+    Nil => Nil
+    Cons(b, rest) => rest
+  }
+}
+
+fn rows_first_is_direct(bounds: List(Option(Text))) -> Yn {
+  match bounds -> Yn {
+    Nil => no
+    Cons(b, bs) => match b -> Yn {
+      Some(x) => x == "direct"
+      None => no
+    }
+  }
+}
+
+// The generics bounded `direct`.
+fn rows_direct_generics(generics: List(Text), bounds: List(Option(Text))) -> List(Text) {
+  match generics -> List(Text) {
+    Nil => Nil
+    Cons(g, rest) => match rows_first_is_direct(bounds) -> List(Text) {
+      yes => Cons(g, rows_direct_generics(rest, rows_tail_bounds(bounds)))
+      no => rows_direct_generics(rest, rows_tail_bounds(bounds))
+    }
+  }
+}
+
+// Whether `effect` is a direct operation (or a row variable bounded
+// `direct`, or one that cannot be followed, which is reported already).
+fn rows_is_direct(env: RowEnv, s: RowState, eff: Text) -> Yn {
+  match rows_has_prefix(eff, "|") -> Yn {
+    yes => rows_has_text(s.direct_vars, rows_after_first(eff))
+    no => match rows_has_prefix(eff, "?") -> Yn {
+      yes => yes
+      no => match rows_quant_of(env, eff) -> Yn {
+        Some(q) => quant_is_direct(q)
+        None => no
+      }
+    }
+  }
+}
+
+// The first effect of the row that may suspend.
+fn rows_extern_closure(effects: List(Text), env: RowEnv, s: RowState, t: SurfaceTerm) -> RowState {
+  match effects -> RowState {
+    Nil => s
+    Cons(
+      eff,
+      rest
+    ) => match !rows_is_direct(
+      env,
+      s,
+      eff
+    ) && !rows_has_prefix(eff, "|") && !(eff == "Div") -> RowState {
+      yes => rows_report(
+        s,
+        text_concat_all(
+          Cons(
+            "a closure passed to an extern cannot perform ",
+            Cons(eff, Cons(", which may suspend", Nil))
+          )
+        ),
+        t.start,
+        t.end
+      )
+      no => rows_extern_closure(rest, env, s, t)
+    }
+  }
+}
+
+fn rows_shown(eff: Text) -> Text {
+  match rows_has_prefix(eff, "|") -> Text {
+    yes => rows_after_first(eff)
+    no => eff
+  }
+}
+
+fn rows_direct_arm_one(
+  env: RowEnv,
+  s: RowState,
+  op: Text,
+  eff: Text,
+  body: SurfaceTerm
+) -> RowState {
+  match rows_is_direct(env, s, eff) -> RowState {
+    yes => s
+    no => rows_report(
+      s,
+      text_concat_all(
+        Cons(
+          "the arm of ",
+          Cons(op, Cons(" performs ", Cons(rows_shown(eff), Cons(", which is not direct", Nil))))
+        )
+      ),
+      body.start,
+      body.end
+    )
+  }
+}
+
+// The arm of a direct operation performs direct operations only.
+fn rows_direct_arm(
+  effects: List(Text),
+  env: RowEnv,
+  s: RowState,
+  op: Text,
+  body: SurfaceTerm
+) -> RowState {
+  match effects -> RowState {
+    Nil => s
+    Cons(
+      eff,
+      rest
+    ) => rows_direct_arm(rest, env, rows_direct_arm_one(env, s, op, eff, body), op, body)
+  }
+}
+
+fn rows_bounded_direct_one(
+  env: RowEnv,
+  s: RowState,
+  rvar: Text,
+  eff: Text,
+  t: SurfaceTerm
+) -> RowState {
+  match rows_is_direct(env, s, eff) -> RowState {
+    yes => s
+    no => rows_report(
+      s,
+      text_concat_all(Cons(eff, Cons(" is not direct but ", Cons(rvar, Cons(" is direct", Nil))))),
+      t.start,
+      t.end
+    )
+  }
+}
+
+// `<e: direct>`: what is passed for `e` may only be direct.
+fn rows_bounded_direct(
+  effects: List(Text),
+  env: RowEnv,
+  s: RowState,
+  rvar: Text,
+  t: SurfaceTerm
+) -> RowState {
+  match effects -> RowState {
+    Nil => s
+    Cons(
+      eff,
+      rest
+    ) => rows_bounded_direct(rest, env, rows_bounded_direct_one(env, s, rvar, eff, t), rvar, t)
+  }
+}
+
+fn rows_is_many(env: RowEnv, eff: Text) -> Yn {
+  match rows_quant_of(env, eff) -> Yn {
+    Some(q) => quant_is_many(q)
+    None => no
+  }
+}
+
+fn rows_bounded_effect(env: RowEnv, s: RowState, rvar: Text, eff: Text, t: SurfaceTerm) -> RowState {
+  match rows_is_many(env, eff) -> RowState {
+    no => s
+    yes => rows_report(
+      s,
+      text_concat_all(Cons(eff, Cons(" resumes \u{3c9} but ", Cons(rvar, Cons(" is <=1", Nil))))),
+      t.start,
+      t.end
+    )
+  }
+}
+
+// `<e: <=1>`: what is passed for `e` may not resume more than once.
+fn rows_bounded_effects(
+  effects: List(Text),
+  env: RowEnv,
+  s: RowState,
+  rvar: Text,
+  t: SurfaceTerm
+) -> RowState {
+  match effects -> RowState {
+    Nil => s
+    Cons(
+      eff,
+      rest
+    ) => rows_bounded_effects(rest, env, rows_bounded_effect(env, s, rvar, eff, t), rvar, t)
+  }
+}
+
+// The position of the name among the generics.
+fn rows_position(xs: List(Text), x: Text, at: Nat) -> Option(Nat) {
+  match xs -> Option(Nat) {
+    Nil => None
+    Cons(y, rest) => match y == x -> Option(Nat) {
+      yes => Some(at)
+      no => rows_position(rest, x, at + 1)
+    }
+  }
+}
+
+fn rows_nth_bound(bounds: List(Option(Text)), i: Nat) -> Option(Text) {
+  match bounds -> Option(Text) {
+    Nil => None
+    Cons(b, rest) => match i -> Option(Text) {
+      zero => b
+      succ(j) => rows_nth_bound(rest, j)
+    }
+  }
+}
+
+fn rows_bound_of(callee: SurfaceFn, rvar: Text) -> Option(Text) {
+  match rows_position(callee.generics, rvar, 0) -> Option(Text) {
+    None => None
+    Some(i) => rows_nth_bound(callee.bounds, i)
+  }
+}
+
+fn rows_bound_is(bound: Option(Text), what: Text) -> Yn {
+  match bound -> Yn {
+    Some(b) => b == what
+    None => no
+  }
+}
+
+fn rows_bounded_limited(
+  bound: Option(Text),
+  env: RowEnv,
+  s: RowState,
+  rvar: Text,
+  row: RowSet,
+  t: SurfaceTerm
+) -> RowState {
+  match rows_bound_is(bound, "<=1") -> RowState {
+    yes => rows_bounded_effects(rowset_list(row), env, s, rvar, t)
+    no => s
+  }
+}
+
+fn rows_bounded(
+  env: RowEnv,
+  s: RowState,
+  rvar: Text,
+  callee: SurfaceFn,
+  row: RowSet,
+  t: SurfaceTerm
+) -> RowState {
+  match rows_bound_is(rows_bound_of(callee, rvar), "direct") -> RowState {
+    yes => rows_bounded_limited(
+      rows_bound_of(callee, rvar),
+      env,
+      rows_bounded_direct(rowset_list(row), env, s, rvar, t),
+      rvar,
+      row,
+      t
+    )
+    no => rows_bounded_limited(rows_bound_of(callee, rvar), env, s, rvar, row, t)
+  }
+}
+
+fn rows_instantiated(r: FoundOut, rvar: Text) -> RowsOut {
+  match r.found -> RowsOut {
+    yes => rows_out(r.row, r.s)
+    no => rows_out(
+      rowset_add(r.row, rows_unchecked(text_concat("the row variable ", rows_quoted(rvar)))),
+      r.s
+    )
+  }
+}
+
+fn rows_passed(latent: RowLatent, named: List(Text), rvar: Text) -> RowSet {
+  match latent -> RowSet {
+    LatentKnown(r) => rows_without(named, r)
+    _ => rowset_one(rows_unchecked(text_concat("the function passed for ", rows_quoted(rvar))))
+  }
+}
+
+fn rows_callee_known(latent: RowLatent, n: Text) -> RowSet {
+  match latent -> RowSet {
+    LatentKnown(r) => r
+    _ => rowset_one(rows_unchecked(text_concat("calling ", rows_quoted(n))))
+  }
+}
+
+fn rows_applied_known(latent: RowLatent) -> RowSet {
+  match latent -> RowSet {
+    LatentKnown(r) => r
+    _ => rowset_one(rows_unchecked("an applied function"))
+  }
+}
+
+fn rows_applied_expression() -> RowSet {
+  rowset_one(rows_unchecked("an applied expression"))
+}
+
+fn rows_field_call(base: SurfaceTerm, name: Text, locals: List(RowLocal)) -> RowSet {
+  match rows_base_is_info(base, locals) -> RowSet {
+    yes => match name == "unbounded" -> RowSet {
+      yes => rowset_one("Div")
+      no => rowset_empty()
+    }
+    no => rows_applied_expression()
+  }
+}
+
+fn rows_is_direct_op(env: RowEnv, eff: Text) -> Yn {
+  match rows_quant_of(env, rows_effect_of_op(eff)) -> Yn {
+    Some(q) => quant_is_direct(q)
+    None => no
+  }
+}
+
+fn rows_after_arm(env: RowEnv, s: RowState, eff: Text, arm: RowSet, body: SurfaceTerm) -> RowState {
+  match rows_is_direct_op(env, eff) -> RowState {
+    yes => rows_direct_arm(rowset_list(arm), env, s, eff, body)
+    no => s
+  }
+}
+
+fn rows_with_cont(bound: List(RowLocal), cont: Option(Text)) -> List(RowLocal) {
+  match cont -> List(RowLocal) {
+    // `k` performs what the handle performs, which is accounted for by the
+    // handle's own row.
+    Some(k) => rows_push(bound, k, LatentKnown(rowset_empty()))
+    None => bound
+  }
+}
+
+fn rows_set_add_div(row: RowSet, calls: Yn) -> RowSet {
+  match calls -> RowSet {
+    yes => rowset_add(row, "Div")
+    no => row
+  }
+}
+
+// ---- direct recursion ------------------------------------------------------------
+
+fn rows_is_var(t: SurfaceTerm, name: Text) -> Yn {
+  match t.kind -> Yn {
+    SkVar(n) => n == name
+    _ => no
+  }
+}
+
+// Whether `t` or a subterm, statements included, is a call of `name`.
+mutual {
+  fn rows_term_calls(t: SurfaceTerm, name: Text) -> Yn {
+    match t -> Yn {
+      surface_term_mk(kind, start, end) => rows_kind_calls(kind, name)
+    }
+  }
+  fn rows_kind_calls(k: SurfaceKind, name: Text) -> Yn {
+    match k -> Yn {
+      SkApp(
+        function,
+        arguments
+      ) => rows_is_var(
+        function,
+        name
+      ) || rows_term_calls(function, name) || rows_terms_call(arguments, name)
+      SkLam(params, body) => rows_term_calls(body, name)
+      SkBorrowLam(borrows, lam) => rows_term_calls(lam, name)
+      SkBorrow(mutable, term) => rows_term_calls(term, name)
+      SkRecord(n, fields) => rows_fields_call(fields, name)
+      SkIf(
+        condition,
+        then,
+        otherwise
+      ) => rows_term_calls(
+        condition,
+        name
+      ) || rows_term_calls(then, name) || rows_opt_calls(otherwise, name)
+      SkField(base, n) => rows_term_calls(base, name)
+      SkTagged(tag, term) => rows_term_calls(term, name)
+      SkPerform(eff, args) => rows_terms_call(args, name)
+      SkBudget(steps, body) => rows_term_calls(steps, name) || rows_term_calls(body, name)
+      SkBlock(stmts) => rows_stmts_call(stmts, name)
+      SkHandle(body, handlers) => rows_term_calls(body, name) || rows_handlers_call(handlers, name)
+      SkMatch(
+        scrutinee,
+        result,
+        arms,
+        binder
+      ) => rows_term_calls(scrutinee, name) || rows_arms_call(arms, name)
+      _ => no
+    }
+  }
+  fn rows_terms_call(terms: List(SurfaceTerm), name: Text) -> Yn {
+    match terms -> Yn {
+      Nil => no
+      Cons(t, rest) => rows_term_calls(t, name) || rows_terms_call(rest, name)
+    }
+  }
+  fn rows_opt_calls(t: Option(SurfaceTerm), name: Text) -> Yn {
+    match t -> Yn {
+      Some(x) => rows_term_calls(x, name)
+      None => no
+    }
+  }
+  fn rows_fields_call(fields: List(SurfaceField), name: Text) -> Yn {
+    match fields -> Yn {
+      Nil => no
+      Cons(f, rest) => rows_field_calls(f, name) || rows_fields_call(rest, name)
+    }
+  }
+  fn rows_field_calls(f: SurfaceField, name: Text) -> Yn {
+    match f -> Yn {
+      surface_field_mk(n, value) => rows_term_calls(value, name)
+    }
+  }
+  fn rows_arms_call(arms: List(SurfaceArm), name: Text) -> Yn {
+    match arms -> Yn {
+      Nil => no
+      Cons(a, rest) => rows_arm_calls(a, name) || rows_arms_call(rest, name)
+    }
+  }
+  fn rows_arm_calls(a: SurfaceArm, name: Text) -> Yn {
+    match a -> Yn {
+      surface_arm_mk(pattern, guard, goal, body) => rows_term_calls(body, name)
+    }
+  }
+  fn rows_handlers_call(handlers: List(SurfaceHandler), name: Text) -> Yn {
+    match handlers -> Yn {
+      Nil => no
+      Cons(h, rest) => rows_handler_calls(h, name) || rows_handlers_call(rest, name)
+    }
+  }
+  fn rows_handler_calls(h: SurfaceHandler, name: Text) -> Yn {
+    match h -> Yn {
+      HdReturn(pattern, body) => rows_term_calls(body, name)
+      HdOperation(
+        eff,
+        patterns,
+        cont,
+        guard,
+        body
+      ) => rows_term_calls(body, name) || rows_opt_calls(guard, name)
+    }
+  }
+  fn rows_stmts_call(stmts: List(SurfaceStmt), name: Text) -> Yn {
+    match stmts -> Yn {
+      Nil => no
+      Cons(st, rest) => rows_stmt_calls(st, name) || rows_stmts_call(rest, name)
+    }
+  }
+  fn rows_stmt_calls(st: SurfaceStmt, name: Text) -> Yn {
+    match st -> Yn {
+      StLet(n, ty, value, borrow, bm) => rows_term_calls(value, name)
+      StVar(n, ty, value, vb) => rows_term_calls(value, name)
+      StAssign(n, value) => rows_term_calls(value, name)
+      StExpr(e) => rows_term_calls(e, name)
+      StReturn(v) => rows_opt_calls(v, name)
+      StWhile(condition, body) => rows_term_calls(condition, name) || rows_term_calls(body, name)
+      _ => no
+    }
+  }
+}
+
+// A row found, as what a call of it performs.
+fn rows_known(r: RowsOut) -> LatentOut {
+  latent_out(LatentKnown(r.row), r.s)
+}
+
+fn rows_union3(a: RowSet, b: RowSet, c: RowsOut) -> RowsOut {
+  rows_out(rowset_union(rowset_union(a, b), c.row), c.s)
+}
+
+fn rows_performed(t: SurfaceTerm, own: RowSet, args: RowsOut) -> RowsOut {
+  rows_out(rowset_union(args.row, own), rows_record_call(args.s, t, own))
+}
+
+fn rows_remember(name: Text, row: RowSet, s: RowState) -> RowsOut {
+  rows_out(row, rows_set_memo(s, ordmap_insert(s.memo, name, row, ordmap_compare_text)))
+}
+
+// The row of a followed body: `Div` when it calls itself, kept in `memo`.
+fn rows_followed(name: Text, f: SurfaceFn, outer_direct: List(Text), r: RowsOut) -> RowsOut {
+  rows_remember(
+    name,
+    rows_set_add_div(r.row, rows_term_calls(f.body, name)),
+    rows_set_direct(
+      rows_set_in_progress(r.s, ordmap_remove(r.s.in_progress, name, ordmap_compare_text)),
+      outer_direct
+    )
+  )
+}
+
+fn rows_extern_latent(latent: RowLatent, env: RowEnv, s: RowState, t: SurfaceTerm) -> RowState {
+  match latent -> RowState {
+    LatentKnown(row) => rows_extern_closure(rowset_list(row), env, s, t)
+    _ => s
+  }
+}
+
+// ---- the analysis ----------------------------------------------------------------
+//
+// The analysis follows calls to the bodies of other functions, so its
+// readers share a number of steps; each gives one
+// fewer to what it calls. When the steps run out a reader finds nothing.
+
+mutual {
+  // The row callers see: the written one, else the inferred one.
+  fn rows_fn_row(k: Nat, env: RowEnv, s: RowState, name: Text) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), rows_empty_state())
+      succ(j) => match rows_env_fn(env, name) -> RowsOut {
+        None => rows_out(rowset_empty(), s)
+        Some(f) => match f.effects -> RowsOut {
+          Some(written) => rows_out(rowset_of(written), s)
+          None => rows_inferred_row(j, env, s, name)
+        }
+      }
+    }
+  }
+
+  // What the body performs, whatever the written row says.
+  fn rows_inferred_row(k: Nat, env: RowEnv, s: RowState, name: Text) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match rows_env_fn(env, name) -> RowsOut {
+        None => rows_out(rowset_empty(), s)
+        Some(f) => match ordmap_get(s.memo, name, ordmap_compare_text) -> RowsOut {
+          Some(row) => rows_out(row, s)
+          None => match ordmap_contains(s.in_progress, name, ordmap_compare_text) -> RowsOut {
+            yes => rows_out(rowset_one("Div"), s)
+            no => rows_follow(j, env, s, name, f)
+          }
+        }
+      }
+    }
+  }
+
+  // The body of `f`, followed with `name` in progress.
+  fn rows_follow(k: Nat, env: RowEnv, s: RowState, name: Text, f: SurfaceFn) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(
+        j
+      ) => rows_followed(
+        name,
+        f,
+        s.direct_vars,
+        rows_term_row(
+          j,
+          env,
+          rows_set_direct(
+            rows_set_in_progress(s, ordmap_insert(s.in_progress, name, yes, ordmap_compare_text)),
+            rows_direct_generics(f.generics, f.bounds)
+          ),
+          f.body,
+          rows_params_locals(f.params, f.param_types)
+        )
+      )
+    }
+  }
+
+  // What a call to the value `t` performs, when it can be told.
+  fn rows_latent_of(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    t: SurfaceTerm,
+    locals: List(RowLocal)
+  ) -> LatentOut {
+    match k -> LatentOut {
+      zero => latent_out(LatentUnknown, rows_empty_state())
+      succ(j) => match t.kind -> LatentOut {
+        SkLam(
+          params,
+          body
+        ) => rows_known(rows_term_row(j, env, s, body, rows_unknown_all(params, locals)))
+        // `(&v) => …`, and `&f` lent to a borrowed parameter.
+        SkBorrowLam(borrows, lam) => rows_latent_of(j, env, s, lam, locals)
+        SkBorrow(mutable, term) => rows_latent_of(j, env, s, term, locals)
+        SkVar(n) => match rows_local_find(locals, n) -> LatentOut {
+          Some(l) => latent_out(l.latent, s)
+          None => match rows_env_has(env, n) -> LatentOut {
+            yes => rows_known(rows_fn_row(j, env, s, n))
+            no => latent_out(LatentUnknown, s)
+          }
+        }
+        _ => latent_out(LatentUnknown, s)
+      }
+    }
+  }
+
+  fn rows_terms_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    terms: List(SurfaceTerm),
+    locals: List(RowLocal),
+    row: RowSet
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match terms -> RowsOut {
+        Nil => rows_out(row, s)
+        Cons(a, rest) => {
+          let r = rows_term_row(j, env, s, a, locals)
+          rows_terms_row(j, env, r.s, rest, locals, rowset_union(row, r.row))
+        }
+      }
+    }
+  }
+
+  fn rows_fields_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    fields: List(SurfaceField),
+    locals: List(RowLocal),
+    row: RowSet
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match fields -> RowsOut {
+        Nil => rows_out(row, s)
+        Cons(f, rest) => {
+          let r = rows_term_row(j, env, s, f.value, locals)
+          rows_fields_row(j, env, r.s, rest, locals, rowset_union(row, r.row))
+        }
+      }
+    }
+  }
+
+  fn rows_term_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    t: SurfaceTerm,
+    locals: List(RowLocal)
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match t.kind -> RowsOut {
+        SkPerform(
+          eff,
+          args
+        ) => rows_performed(
+          t,
+          rowset_one(rows_effect_of_op(eff)),
+          rows_terms_row(j, env, s, args, locals, rowset_empty())
+        )
+        SkRecord(name, fields) => rows_fields_row(j, env, s, fields, locals, rowset_empty())
+        SkBorrow(mutable, term) => rows_term_row(j, env, s, term, locals)
+        SkApp(function, arguments) => {
+          // The arguments' rows apart, so that `r.row`, recorded for the call,
+          // is what the call itself performs.
+          let args = rows_terms_row(j, env, s, arguments, locals, rowset_empty())
+          let r = rows_callee_row(j, env, args.s, t, function, arguments, locals)
+          rows_out(rowset_union(r.row, args.row), rows_record_call(r.s, t, r.row))
+        }
+        SkBudget(steps, body) => {
+          let a = rows_term_row(j, env, s, steps, locals)
+          let b = rows_term_row(j, env, a.s, body, locals)
+          rows_out(rowset_add(rowset_union(a.row, rowset_drop(b.row, "Div")), "Exceeded"), b.s)
+        }
+        SkHandle(body, handlers) => {
+          let inner = rows_term_row(j, env, s, body, locals)
+          rows_handlers_row(j, env, inner.s, handlers, locals, rows_answered(handlers, inner.row))
+        }
+        // Making a function performs nothing; its row is latent.
+        SkLam(params, body) => rows_out(rowset_empty(), s)
+        SkBlock(stmts) => rows_stmts_row(j, env, s, stmts, locals, rowset_empty())
+        SkIf(condition, then, otherwise) => {
+          let a = rows_term_row(j, env, s, condition, locals)
+          let b = rows_term_row(j, env, a.s, then, locals)
+          rows_union3(a.row, b.row, rows_opt_row(j, env, b.s, otherwise, locals))
+        }
+        SkField(base, name) => rows_term_row(j, env, s, base, locals)
+        SkTagged(tag, term) => rows_term_row(j, env, s, term, locals)
+        SkMatch(scrutinee, result, arms, binder) => {
+          let a = rows_term_row(j, env, s, scrutinee, locals)
+          rows_arms_row(j, env, a.s, arms, locals, a.row)
+        }
+        _ => rows_out(rowset_empty(), s)
+      }
+    }
+  }
+
+  fn rows_opt_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    t: Option(SurfaceTerm),
+    locals: List(RowLocal)
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match t -> RowsOut {
+        Some(x) => rows_term_row(j, env, s, x, locals)
+        None => rows_out(rowset_empty(), s)
+      }
+    }
+  }
+
+  fn rows_arms_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    arms: List(SurfaceArm),
+    locals: List(RowLocal),
+    row: RowSet
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match arms -> RowsOut {
+        Nil => rows_out(row, s)
+        Cons(arm, rest) => {
+          let g = rows_opt_row(j, env, s, arm.guard, rows_bind_pattern(arm.pattern, locals))
+          let b = rows_term_row(j, env, g.s, arm.body, rows_bind_pattern(arm.pattern, locals))
+          rows_arms_row(j, env, b.s, rest, locals, rowset_union(rowset_union(row, g.row), b.row))
+        }
+      }
+    }
+  }
+
+  fn rows_handlers_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    handlers: List(SurfaceHandler),
+    locals: List(RowLocal),
+    row: RowSet
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match handlers -> RowsOut {
+        Nil => rows_out(row, s)
+        Cons(h, rest) => {
+          let r = rows_handler_row(j, env, s, h, locals)
+          rows_handlers_row(j, env, r.s, rest, locals, rowset_union(row, r.row))
+        }
+      }
+    }
+  }
+
+  fn rows_handler_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    h: SurfaceHandler,
+    locals: List(RowLocal)
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match h -> RowsOut {
+        HdReturn(pattern, body) => rows_term_row(
+          j,
+          env,
+          s,
+          body,
+          rows_bind_pattern(pattern, locals)
+        )
+        HdOperation(eff, patterns, cont, guard, body) => {
+          let g = rows_opt_row(
+            j,
+            env,
+            s,
+            guard,
+            rows_with_cont(rows_bind_operation(patterns, eff, locals), cont)
+          )
+          let b = rows_term_row(
+            j,
+            env,
+            g.s,
+            body,
+            rows_with_cont(rows_bind_operation(patterns, eff, locals), cont)
+          )
+          rows_out(
+            rowset_union(g.row, b.row),
+            rows_after_arm(env, b.s, eff, rowset_union(g.row, b.row), body)
+          )
+        }
+      }
+    }
+  }
+
+  fn rows_stmts_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    stmts: List(SurfaceStmt),
+    locals: List(RowLocal),
+    row: RowSet
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match stmts -> RowsOut {
+        Nil => rows_out(row, s)
+        Cons(st, rest) => match st -> RowsOut {
+          StLet(
+            name,
+            ty,
+            value,
+            borrow,
+            bm
+          ) => rows_bind_stmt(j, env, s, rest, locals, row, name, value)
+          StVar(name, ty, value, vb) => rows_bind_stmt(j, env, s, rest, locals, row, name, value)
+          StAssign(name, value) => {
+            let r = rows_term_row(j, env, s, value, locals)
+            rows_stmts_row(j, env, r.s, rest, locals, rowset_union(row, r.row))
+          }
+          StExpr(e) => {
+            let r = rows_term_row(j, env, s, e, locals)
+            rows_stmts_row(j, env, r.s, rest, locals, rowset_union(row, r.row))
+          }
+          StReturn(v) => {
+            let r = rows_opt_row(j, env, s, v, locals)
+            rows_stmts_row(j, env, r.s, rest, locals, rowset_union(row, r.row))
+          }
+          StWhile(condition, body) => {
+            let a = rows_term_row(j, env, s, condition, locals)
+            let b = rows_term_row(j, env, a.s, body, locals)
+            rows_stmts_row(
+              j,
+              env,
+              b.s,
+              rest,
+              locals,
+              rowset_add(rowset_union(rowset_union(row, a.row), b.row), "Div")
+            )
+          }
+          _ => rows_stmts_row(j, env, s, rest, locals, row)
+        }
+      }
+    }
+  }
+
+  fn rows_bind_stmt(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    rest: List(SurfaceStmt),
+    locals: List(RowLocal),
+    row: RowSet,
+    name: Text,
+    value: SurfaceTerm
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => {
+        let r = rows_term_row(j, env, s, value, locals)
+        let l = rows_bound_latent(j, env, r.s, value, locals)
+        rows_stmts_row(
+          j,
+          env,
+          l.s,
+          rest,
+          rows_push(locals, name, l.latent),
+          rowset_union(row, r.row)
+        )
+      }
+    }
+  }
+
+  // What calling a name bound to `value` performs: a function's row.
+  fn rows_bound_latent(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    value: SurfaceTerm,
+    locals: List(RowLocal)
+  ) -> LatentOut {
+    match k -> LatentOut {
+      zero => latent_out(LatentUnknown, s)
+      succ(j) => match rows_is_lambda(value) -> LatentOut {
+        yes => rows_latent_of(j, env, s, value, locals)
+        no => latent_out(LatentUnknown, s)
+      }
+    }
+  }
+
+  fn rows_callee_row(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    t: SurfaceTerm,
+    function: SurfaceTerm,
+    arguments: List(SurfaceTerm),
+    locals: List(RowLocal)
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match function.kind -> RowsOut {
+        SkVar(n) => match rows_local_has(locals, n) -> RowsOut {
+          yes => {
+            let l = rows_latent_of(j, env, s, function, locals)
+            rows_out(rows_callee_known(l.latent, n), l.s)
+          }
+          no => match rows_env_fn(env, n) -> RowsOut {
+            None => rows_out(rowset_empty(), s)
+            Some(callee) => {
+              let c = rows_externs_checked(j, env, s, n, arguments, locals, t)
+              let r = rows_fn_row(j, env, c, n)
+              rows_callee_effects(
+                j,
+                env,
+                r.s,
+                t,
+                callee,
+                arguments,
+                locals,
+                rowset_list(r.row),
+                rowset_empty()
+              )
+            }
+          }
+        }
+        SkField(base, name) => rows_out(rows_field_call(base, name, locals), s)
+        SkLam(ps, b) => {
+          let l = rows_latent_of(j, env, s, function, locals)
+          rows_out(rows_applied_known(l.latent), l.s)
+        }
+        SkBorrowLam(bs, b) => {
+          let l = rows_latent_of(j, env, s, function, locals)
+          rows_out(rows_applied_known(l.latent), l.s)
+        }
+        _ => rows_out(rows_applied_expression(), s)
+      }
+    }
+  }
+
+  // A closure passed to an extern runs inside a Rust frame, which cannot be
+  // suspended: its row has direct operations only.
+  fn rows_externs_checked(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    n: Text,
+    arguments: List(SurfaceTerm),
+    locals: List(RowLocal),
+    t: SurfaceTerm
+  ) -> RowState {
+    match k -> RowState {
+      zero => rows_empty_state()
+      succ(j) => match ordmap_contains(env.externs, n, ordmap_compare_text) -> RowState {
+        yes => rows_extern_closures(j, env, s, arguments, locals, t)
+        no => s
+      }
+    }
+  }
+
+  fn rows_extern_closures(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    arguments: List(SurfaceTerm),
+    locals: List(RowLocal),
+    t: SurfaceTerm
+  ) -> RowState {
+    match k -> RowState {
+      zero => s
+      succ(j) => match arguments -> RowState {
+        Nil => s
+        Cons(a, rest) => {
+          let l = rows_latent_of(j, env, s, a, locals)
+          rows_extern_closures(j, env, rows_extern_latent(l.latent, env, l.s, t), rest, locals, t)
+        }
+      }
+    }
+  }
+
+  // The effects of the callee's row: a row variable is instantiated, the
+  // others stay.
+  fn rows_callee_effects(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    t: SurfaceTerm,
+    callee: SurfaceFn,
+    arguments: List(SurfaceTerm),
+    locals: List(RowLocal),
+    effects: List(Text),
+    row: RowSet
+  ) -> RowsOut {
+    match k -> RowsOut {
+      zero => rows_out(rowset_empty(), s)
+      succ(j) => match effects -> RowsOut {
+        Nil => rows_out(row, s)
+        Cons(eff, rest) => match rows_has_prefix(eff, "|") -> RowsOut {
+          yes => {
+            let r = rows_instantiated(
+              rows_instantiate(
+                j,
+                env,
+                s,
+                rows_after_first(eff),
+                callee.param_types,
+                arguments,
+                locals,
+                rowset_empty(),
+                no
+              ),
+              rows_after_first(eff)
+            )
+            rows_callee_effects(
+              j,
+              env,
+              rows_bounded(env, r.s, rows_after_first(eff), callee, r.row, t),
+              t,
+              callee,
+              arguments,
+              locals,
+              rest,
+              rowset_union(row, r.row)
+            )
+          }
+          no => rows_callee_effects(
+            j,
+            env,
+            s,
+            t,
+            callee,
+            arguments,
+            locals,
+            rest,
+            rowset_add(row, eff)
+          )
+        }
+      }
+    }
+  }
+
+  // The callee's row variable `rvar`, as the rows of the arguments passed
+  // for the parameters whose type mentions it.
+  fn rows_instantiate(
+    k: Nat,
+    env: RowEnv,
+    s: RowState,
+    rvar: Text,
+    types: List(Option(SurfaceTerm)),
+    arguments: List(SurfaceTerm),
+    locals: List(RowLocal),
+    row: RowSet,
+    found: Yn
+  ) -> FoundOut {
+    match k -> FoundOut {
+      zero => found_out(rowset_empty(), no, rows_empty_state())
+      succ(j) => match types -> FoundOut {
+        Nil => found_out(row, found, s)
+        Cons(ty, more) => match arguments -> FoundOut {
+          Nil => found_out(row, found, s)
+          Cons(arg, others) => match rows_named(ty, rvar) -> FoundOut {
+            None => rows_instantiate(j, env, s, rvar, more, others, locals, row, found)
+            Some(named) => {
+              let l = rows_latent_of(j, env, s, arg, locals)
+              rows_instantiate(
+                j,
+                env,
+                l.s,
+                rvar,
+                more,
+                others,
+                locals,
+                rowset_union(row, rows_passed(l.latent, named, rvar)),
+                yes
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- the report ------------------------------------------------------------------
+//
+// `check_program_rows` of `rows.rs`: the rows of a program's functions and
+// the errors, and the dump of the report the differential test compares.
+
+inductive RowFn(): Type {
+  row_fn_mk(name: Text, row: RowSet): RowFn
+}
+
+inductive RowReport(): Type {
+  row_report_mk(
+    functions: List(RowFn),
+    errors: List(RowDiagnostic),
+    calls: Ordmap(RowSpan, RowSet),
+    quants: Ordmap(Text, Quant)
+  ): RowReport
+}
+
+// The names of the program's own functions.
+fn rows_program_names(stmts: List(SurfaceStmt), done: Ordmap(Text, Yn)) -> Ordmap(Text, Yn) {
+  match stmts -> Ordmap(Text, Yn) {
+    Nil => done
+    Cons(s, rest) => match s -> Ordmap(Text, Yn) {
+      StFn(f) => rows_program_names(rest, ordmap_insert(done, f.name, yes, ordmap_compare_text))
+      _ => rows_program_names(rest, done)
+    }
+  }
+}
+
+inductive RowNamed(): Type {
+  row_named_mk(start: Nat, name: Text): RowNamed
+}
+
+fn rows_start_of(env: RowEnv, name: Text) -> Nat {
+  match rows_env_fn(env, name) -> Nat {
+    Some(f) => f.start
+    None => 0
+  }
+}
+
+fn rows_insert_sorted(xs: List(RowNamed), x: RowNamed) -> List(RowNamed) {
+  match xs -> List(RowNamed) {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => match x.start <= y.start -> List(RowNamed) {
+      yes => Cons(x, xs)
+      no => Cons(y, rows_insert_sorted(rest, x))
+    }
+  }
+}
+
+// The names, by where their functions start.
+fn rows_sort_names(names: List(Text), env: RowEnv, done: List(RowNamed)) -> List(RowNamed) {
+  match names -> List(RowNamed) {
+    Nil => done
+    Cons(
+      n,
+      rest
+    ) => rows_sort_names(
+      rest,
+      env,
+      rows_insert_sorted(done, row_named_mk(rows_start_of(env, n), n))
+    )
+  }
+}
+
+fn rows_show(names: List(Text)) -> Text {
+  text_join(names, ", ")
+}
+
+fn rows_error(message: Text, f: SurfaceFn) -> RowDiagnostic {
+  row_diagnostic_mk(message, f.start, f.end)
+}
+
+fn rows_unwritten(
+  name: Text,
+  f: SurfaceFn,
+  eff: Text,
+  more: List(RowDiagnostic)
+) -> List(RowDiagnostic) {
+  match f.effects -> List(RowDiagnostic) {
+    None => more
+    Some(written) => match rows_has_text(written, eff) -> List(RowDiagnostic) {
+      yes => more
+      no => Cons(
+        rows_error(
+          text_concat_all(
+            Cons(
+              rows_quoted(name),
+              Cons(
+                " may perform ",
+                Cons(
+                  eff,
+                  Cons(
+                    " but its row is {",
+                    Cons(rows_show(rowset_list(rowset_of(written))), Cons("}", Nil))
+                  )
+                )
+              )
+            )
+          ),
+          f
+        ),
+        more
+      )
+    }
+  }
+}
+
+// The errors of one function's inferred row, in the row's order.
+fn rows_fn_errors(inferred: List(Text), name: Text, f: SurfaceFn) -> List(RowDiagnostic) {
+  match inferred -> List(RowDiagnostic) {
+    Nil => Nil
+    Cons(eff, rest) => match rows_has_prefix(eff, "?") -> List(RowDiagnostic) {
+      yes => Cons(
+        rows_error(
+          text_concat_all(
+            Cons(
+              "cannot follow the effects of ",
+              Cons(rows_after_first(eff), Cons(" in ", Cons(rows_quoted(name), Nil)))
+            )
+          ),
+          f
+        ),
+        rows_fn_errors(rest, name, f)
+      )
+      no => rows_unwritten(name, f, eff, rows_fn_errors(rest, name, f))
+    }
+  }
+}
+
+fn rows_errors_of(env: RowEnv, name: Text, inferred: RowSet) -> List(RowDiagnostic) {
+  match rows_env_fn(env, name) -> List(RowDiagnostic) {
+    Some(f) => rows_fn_errors(rowset_list(inferred), name, f)
+    None => Nil
+  }
+}
+
+inductive RowChecked(): Type {
+  row_checked_mk(functions: List(RowFn), errors: List(RowDiagnostic), s: RowState): RowChecked
+}
+
+fn rows_check_fns(
+  names: List(RowNamed),
+  k: Nat,
+  env: RowEnv,
+  s: RowState,
+  functions: List(RowFn),
+  errors: List(RowDiagnostic)
+) -> RowChecked {
+  match names -> RowChecked {
+    Nil => row_checked_mk(list_reverse(functions), errors, s)
+    Cons(n, rest) => {
+      let r = rows_inferred_row(k, env, s, n.name)
+      rows_check_fns(
+        rest,
+        k,
+        env,
+        r.s,
+        Cons(row_fn_mk(n.name, r.row), functions),
+        list_append(errors, rows_errors_of(env, n.name, r.row))
+      )
+    }
+  }
+}
+
+// An extern is the host's: it names no effects of its own.
+fn rows_extern_errors(fns: List(SurfaceFn)) -> List(RowDiagnostic) {
+  match fns -> List(RowDiagnostic) {
+    Nil => Nil
+    Cons(f, rest) => match f.effects -> List(RowDiagnostic) {
+      Some(effects) => match effects -> List(RowDiagnostic) {
+        Nil => rows_extern_errors(rest)
+        Cons(
+          e,
+          es
+        ) => Cons(
+          rows_error("an extern cannot perform effects; wrap it in a tauto function", f),
+          rows_extern_errors(rest)
+        )
+      }
+      None => rows_extern_errors(rest)
+    }
+  }
+}
+
+fn rows_top_effects(effects: List(Text), t: SurfaceTerm) -> List(RowDiagnostic) {
+  match effects -> List(RowDiagnostic) {
+    Nil => Nil
+    Cons(eff, rest) => match eff == "Div" || eff == "show" -> List(RowDiagnostic) {
+      // `Div` is allowed at the top level, and the host answers `show`.
+      yes => rows_top_effects(rest, t)
+      no => match rows_has_prefix(eff, "?") -> List(RowDiagnostic) {
+        yes => Cons(
+          row_diagnostic_mk(
+            text_concat("cannot follow the effects of ", rows_after_first(eff)),
+            t.start,
+            t.end
+          ),
+          rows_top_effects(rest, t)
+        )
+        no => Cons(
+          row_diagnostic_mk(
+            text_concat_all(Cons("unhandled effect ", Cons(eff, Cons(" at the top level", Nil)))),
+            t.start,
+            t.end
+          ),
+          rows_top_effects(rest, t)
+        )
+      }
+    }
+  }
+}
+
+inductive RowTop(): Type {
+  row_top_mk(errors: List(RowDiagnostic), s: RowState): RowTop
+}
+
+fn rows_top_prepend(errors: List(RowDiagnostic), r: RowTop) -> RowTop {
+  row_top_mk(list_append(errors, r.errors), r.s)
+}
+
+// The errors of the top-level statements' rows.
+fn rows_top_errors(stmts: List(SurfaceStmt), k: Nat, env: RowEnv, s: RowState) -> RowTop {
+  match stmts -> RowTop {
+    Nil => row_top_mk(Nil, s)
+    Cons(st, rest) => match st -> RowTop {
+      StLet(name, ty, value, borrow, bm) => {
+        let r = rows_term_row(k, env, s, value, Nil)
+        rows_top_prepend(
+          rows_top_effects(rowset_list(r.row), value),
+          rows_top_errors(rest, k, env, r.s)
+        )
+      }
+      StVar(name, ty, value, vb) => {
+        let r = rows_term_row(k, env, s, value, Nil)
+        rows_top_prepend(
+          rows_top_effects(rowset_list(r.row), value),
+          rows_top_errors(rest, k, env, r.s)
+        )
+      }
+      StExpr(e) => {
+        let r = rows_term_row(k, env, s, e, Nil)
+        rows_top_prepend(
+          rows_top_effects(rowset_list(r.row), e),
+          rows_top_errors(rest, k, env, r.s)
+        )
+      }
+      StExtern(
+        l,
+        fs,
+        a,
+        b
+      ) => rows_top_prepend(rows_extern_errors(fs), rows_top_errors(rest, k, env, s))
+      _ => rows_top_errors(rest, k, env, s)
+    }
+  }
+}
+
+// The steps the analysis may take: sixteen times the places in the
+// functions' text and in the top-level statements, more than any walk
+// takes.
+fn rows_fns_extent(fns: List(Pair(Text, SurfaceFn))) -> Nat {
+  match fns -> Nat {
+    Nil => 0
+    Cons(e, rest) => e.snd.end + 1 + rows_fns_extent(rest)
+  }
+}
+
+fn rows_stmt_extent(st: SurfaceStmt) -> Nat {
+  match st -> Nat {
+    StLet(name, ty, value, borrow, bm) => value.end + 1
+    StVar(name, ty, value, vb) => value.end + 1
+    StExpr(e) => e.end + 1
+    _ => 0
+  }
+}
+
+fn rows_stmts_extent(stmts: List(SurfaceStmt)) -> Nat {
+  match stmts -> Nat {
+    Nil => 0
+    Cons(st, rest) => rows_stmt_extent(st) + rows_stmts_extent(rest)
+  }
+}
+
+fn rows_steps(env: RowEnv, program: List(SurfaceStmt)) -> Nat {
+  16 * (rows_fns_extent(ordmap_entries(env.fns)) + rows_stmts_extent(program) + 1)
+}
+
+fn rows_report_of(env: RowEnv, checked: RowChecked, tops: RowTop) -> RowReport {
+  row_report_mk(
+    checked.functions,
+    list_append(tops.s.found, list_append(checked.errors, tops.errors)),
+    tops.s.calls,
+    env.quants
+  )
+}
+
+fn rows_check_in(env: RowEnv, program: List(SurfaceStmt), checked: RowChecked) -> RowReport {
+  rows_report_of(env, checked, rows_top_errors(program, rows_steps(env, program), env, checked.s))
+}
+
+fn rows_check_env(env: RowEnv, program: List(SurfaceStmt)) -> RowReport {
+  rows_check_in(
+    env,
+    program,
+    rows_check_fns(
+      rows_sort_names(
+        rowset_list(rowset_mk(rows_program_names(program, ordmap_empty()))),
+        env,
+        Nil
+      ),
+      rows_steps(env, program),
+      env,
+      rows_empty_state(),
+      Nil,
+      Nil
+    )
+  )
+}
+
+// The report on the program, with the prelude's declarations before its own.
+fn rows_check(prelude: List(SurfaceStmt), program: List(SurfaceStmt)) -> RowReport {
+  rows_check_env(
+    rows_env_of(
+      program,
+      rows_env_of(
+        prelude,
+        row_env_mk(
+          ordmap_empty(),
+          rows_initial_quants(),
+          rows_user_externs(program, ordmap_empty())
+        )
+      )
+    ),
+    program
+  )
+}
+
+// ---- the dump --------------------------------------------------------------------
+
+fn rows_dump_row(r: RowSet) -> Text {
+  text_concat_all(Cons("{", Cons(rows_show(rowset_list(r)), Cons("}", Nil))))
+}
+
+fn rows_dump_functions(fns: List(RowFn)) -> List(Text) {
+  match fns -> List(Text) {
+    Nil => Nil
+    Cons(
+      f,
+      rest
+    ) => Cons(
+      text_concat_all(
+        Cons(
+          "function ",
+          Cons(f.name, Cons(" ", Cons(rows_dump_row(f.row), Cons(text_newline(), Nil))))
+        )
+      ),
+      rows_dump_functions(rest)
+    )
+  }
+}
+
+fn rows_dump_errors(errors: List(RowDiagnostic)) -> List(Text) {
+  match errors -> List(Text) {
+    Nil => Nil
+    Cons(
+      e,
+      rest
+    ) => Cons(
+      text_concat_all(
+        Cons(
+          "error ",
+          Cons(
+            text_of_nat(e.start),
+            Cons(
+              " ",
+              Cons(text_of_nat(e.end), Cons(" ", Cons(e.message, Cons(text_newline(), Nil))))
+            )
+          )
+        )
+      ),
+      rows_dump_errors(rest)
+    )
+  }
+}
+
+fn rows_dump_calls(calls: List(Pair(RowSpan, RowSet))) -> List(Text) {
+  match calls -> List(Text) {
+    Nil => Nil
+    Cons(
+      c,
+      rest
+    ) => Cons(
+      text_concat_all(
+        Cons(
+          "call ",
+          Cons(
+            text_of_nat(c.fst.start),
+            Cons(
+              " ",
+              Cons(
+                text_of_nat(c.fst.end),
+                Cons(" ", Cons(rows_dump_row(c.snd), Cons(text_newline(), Nil)))
+              )
+            )
+          )
+        )
+      ),
+      rows_dump_calls(rest)
+    )
+  }
+}
+
+fn rows_dump_quants(quants: List(Pair(Text, Quant))) -> List(Text) {
+  match quants -> List(Text) {
+    Nil => Nil
+    Cons(
+      q,
+      rest
+    ) => Cons(
+      text_concat_all(
+        Cons("quant ", Cons(q.fst, Cons(" ", Cons(quant_name(q.snd), Cons(text_newline(), Nil)))))
+      ),
+      rows_dump_quants(rest)
+    )
+  }
+}
+
+fn rows_dump(report: RowReport) -> Text {
+  text_concat_all(
+    list_append(
+      rows_dump_functions(report.functions),
+      list_append(
+        rows_dump_errors(report.errors),
+        list_append(
+          rows_dump_calls(ordmap_entries(report.calls)),
+          rows_dump_quants(ordmap_entries(report.quants))
+        )
+      )
+    )
+  )
+}

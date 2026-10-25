@@ -4,7 +4,7 @@
 
 @ cases.a-syntax-macro-makes-the-theorem-statement
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -54,7 +54,7 @@ trace = ["math", "math", "math"]
 
 @ cases.a-false-equation-is-rejected
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -94,7 +94,7 @@ checks.wrong = "error: type mismatch"
 
 @ cases.a-syntax-error-in-the-literal
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -134,7 +134,7 @@ macro_error = "macro.syntax_error"
 
 @ cases.a-macro-is-not-used-in-its-own-file
 files."main.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -171,7 +171,7 @@ macro_error = "macro.same_file"
 
 @ cases.a-macro-that-reaches-the-os-is-refused
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_os(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
   let _ = os_read_file("/etc/passwd")
@@ -187,7 +187,7 @@ macro_error = "macro.not_allowed_builtin"
 
 @ cases.a-macro-that-never-stops-runs-out-of-its-budget
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn spin(n: i64) -> i64 ! {Div} { spin(n) }
 fn math_bad(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
@@ -208,7 +208,7 @@ macro_error = "macro.budget_exceeded"
 // rules the generator adds (`SumList`), and the parser.
 @ cases.a-syntax-declaration-makes-types-and-a-parser
 files."main.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 ````
 expands = ```nib
@@ -241,7 +241,7 @@ fn math_parse(
 // code of the user, so it may be in the file of the `syntax` declaration.
 @ cases.a-literal-without-a-macro-is-a-value
 files."main.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 let e = math`(1 + 2) + 3 = 6`
 let lhs = match e.sum.term {
@@ -262,7 +262,7 @@ shows = ["lhs = \"paren\"", "equals = \"=\"", "rhs = \"6\""]
 
 @ cases.a-literal-without-a-macro-is-read-when-checked
 files."main.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 let bad = math`1 + = 3`
 ````
@@ -270,7 +270,7 @@ macro_error = "macro.syntax_error: in math: expected Num or LParen or TautoExpr,
 
 @ cases.a-literal-names-its-syntax-outside-a-macro-argument
 files."main.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 let x = `1 + 2 = 3`
 ````
@@ -279,7 +279,7 @@ macro_error = "a syntax literal needs the syntax's name"
 @ cases.an-embedded-expression-is-only-in-a-macro-argument
 unimplemented = "a literal that no macro reads takes $n and ${…} as a SynExpr instead of refusing them"
 files."main.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 let n = 1
 let y = math`$n = 1`
@@ -289,7 +289,7 @@ macro_error = "is written only in a macro argument"
 // A second macro of the same syntax, with another meaning.
 @ cases.two-macros-read-one-syntax
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -376,7 +376,7 @@ shows = ["ok = true", "ng = false"]
 
 @ cases.a-literal-of-another-syntax-is-refused
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -409,7 +409,7 @@ fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
 macro math = math_expand
 ````
 files."swap.nib" = ````nib
-syntax swp = ```par
+syntax swp => struct swp_Pair, fn swp_parse = ```par
 {{par:swap}}```
 ````
 files."main.nib" = ````nib
@@ -424,7 +424,7 @@ macro_error = "macro.syntax_mismatch: macro math reads math, and the literal is 
 @ cases.a-plaintext-literal-is-another-syntax
 unimplemented = "a plaintext literal is refused as no syntax literal at all (macro.argument: macro math takes a syntax literal)"
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
@@ -466,7 +466,7 @@ macro_error = "macro.syntax_mismatch: macro math reads math, and the literal is 
 // literal (`syn_lift_u64`): the one way across the stages.
 @ cases.a-macro-computes-at-compile-time
 files."fib.nib" = ````nib
-syntax fibn = ```par
+syntax fibn => struct fibn_N, fn fibn_parse = ```par
 {{par:fibn}}```
 fn fib(n: u64) -> u64 ! {Div} { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
 
@@ -495,7 +495,7 @@ shows = ["x = 6765"]
 
 @ cases.a-compile-time-computation-runs-out-of-its-budget
 files."fib.nib" = ````nib
-syntax fibn = ```par
+syntax fibn => struct fibn_N, fn fibn_parse = ```par
 {{par:fibn}}```
 fn fib(n: u64) -> u64 ! {Div} { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
 
@@ -520,7 +520,7 @@ macro_error = "macro.budget_exceeded"
 // Through a variable the reach of a function is not followed, so it is refused too.
 @ cases.a-macro-that-reaches-the-os-through-a-variable-is-refused
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn leak(e: math_Eqn) -> SynExpr {
   let f = os_read_file
@@ -539,7 +539,7 @@ macro_error = "macro.unchecked_effect"
 
 @ cases.a-macro-function-may-not-show
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn noisy(e: math_Eqn) -> SynExpr ! {show} {
   perform show("e", 1)
@@ -556,7 +556,7 @@ macro_error = "macro.row: the function of a macro may perform macro_error, macro
 @ cases.a-macro-may-not-produce-an-axiom
 unimplemented = "a quote stmts with axiom is expanded, and the axiom is accepted"
 files."math.nib" = ````nib
-syntax math = ```par
+syntax math => struct math_Eqn, struct math_Paren, struct math_Sum, struct math_Sum_Rep1, enum math_Term, fn math_parse = ```par
 {{par:math}}```
 fn cheat(e: math_Eqn) -> List(SynStmt) { quote stmts { axiom anything(P: Prop): P } }
 macro cheat = cheat
