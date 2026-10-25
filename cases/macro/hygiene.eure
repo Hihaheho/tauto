@@ -1,5 +1,4 @@
-// Hygiene: a name a macro makes does not capture, and is not captured by, a
-// name the user wrote.
+// Hygiene (`docs/design/macro-semantics.md`).
 
 @ cases.a-temporary-of-a-macro-does-not-take-the-users-name
 files."swap.nib" = ````nib
@@ -36,3 +35,79 @@ perform show("tmp", tmp)
 perform show("other", other)
 ```
 trace = ["swap"]
+
+// An explicit capture: the binder `it` borrows the context of the call
+// (`syn_ident_like`), so the user's `${it + 1}` is bound by it. The lint
+// `macro-capture` forbids this in `std/` and `meta/`.
+@ cases.an-anaphoric-name-is-captured-explicitly
+files."aif.nib" = ````nib
+syntax aif = ```par
+{{par:aif}}```
+fn aif_expand(a: aif_Aif) -> SynExpr {
+  let it = syn_ident_like(syn_ident(a.kw_then), "it")
+  let c = a.tauto_expr
+  let t = a.tauto_expr_2
+  let e = a.tauto_expr_3
+  quote {
+    match $c {
+      Some($it) => $t
+      None => $e
+    }
+  }
+}
+macro aif = aif_expand
+````
+files."main.nib" = ````nib
+import "aif.nib"
+fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
+let n = aif!(`${lookup(1)} then ${it + 1} else ${0}`)
+let m = aif!(`${lookup(2)} then ${it + 1} else ${0}`)
+perform show("n", n)
+perform show("m", m)
+````
+expands = ```nib
+fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
+let n = match lookup(1) {
+  Some(it) => it + 1
+  None => 0
+}
+let m = match lookup(2) {
+  Some(it) => it + 1
+  None => 0
+}
+perform show("n", n)
+perform show("m", m)
+```
+shows = ["n = 42", "m = 0"]
+
+// Without `syn_ident_like` the `it` of the `quote` has the macro's scope, and
+// the user's `it` is not bound by it (running it says `it is not defined`).
+@ cases.a-name-of-a-quote-does-not-bind-the-users-name
+files."aif.nib" = ````nib
+syntax aif = ```par
+{{par:aif}}```
+fn aif_expand(a: aif_Aif) -> SynExpr {
+  let c = a.tauto_expr
+  let t = a.tauto_expr_2
+  let e = a.tauto_expr_3
+  quote {
+    match $c {
+      Some(it) => $t
+      None => $e
+    }
+  }
+}
+macro aif = aif_expand
+````
+files."main.nib" = ````nib
+import "aif.nib"
+fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
+let n = aif!(`${lookup(1)} then ${it + 1} else ${0}`)
+````
+expands = ```nib
+fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
+let n = match lookup(1) {
+  Some(it#1) => it + 1
+  None => 0
+}
+```

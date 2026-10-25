@@ -260,3 +260,413 @@ expands = ```nib
 fn moved(t: Ticket) -> u64 { 1 }
 fn not_used(x: u64) -> u64 { 0 }
 ```
+
+// Type preservation is not preservation of meaning: `$c * $c * $c` has the
+// type and the row of `$c`, and runs its effect three times (`unroll` binds
+// it once with `let`).
+@ cases.a-splice-used-three-times-runs-its-effect-three-times
+files."lib.nib" = ````nib
+fn naive(c: Code) -> SynExpr { quote { $c * $c * $c } }
+macro naive = naive
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn two() -> i64 ! {show} {
+  perform show("x", 2)
+  2
+}
+fn cube() -> i64 ! {show} { naive!(two()) }
+perform show("cube", cube())
+````
+expands = ```nib
+fn two() -> i64 ! {show} {
+  perform show("x", 2)
+  2
+}
+fn cube() -> i64 ! {show} { two() * two() * two() }
+perform show("cube", cube())
+```
+shows = ["x = 2", "x = 2", "x = 2", "cube = 8"]
+
+// The row compared is the one of the position (`w * h` has none), not the
+// one written on the function.
+@ cases.a-macro-may-not-add-an-effect-the-function-allows
+files."lib.nib" = ````nib
+fn trace_calls(c: Code) -> SynExpr {
+  quote {
+    let r = $c
+    perform show("value", r)
+    r
+  }
+}
+macro traced = trace_calls
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn area(w: i64, h: i64) -> i64 ! {show} { traced!(w * h) }
+````
+macro_error = "macro.row_grew: the macro added the effect show to the expression"
+
+// `code_type` and `elab_check` read the type; `elab_defeq` compares.
+@ cases.a-macro-branches-on-the-type
+files."lib.nib" = ````nib
+fn is_type(c: Code, t: SynExpr) -> Bool ! {elab} {
+  match elab_check(t, c, None) {
+    Ok(tc) => elab_defeq(code_type(c), tc)
+    Err(d) => false
+  }
+}
+
+fn bump(c: Code) -> SynExpr ! {macro_error, elab} {
+  if is_type(c, quote { Nat }) { quote { succ($c) } } else { code_term(c) }
+}
+macro bump = bump
+````
+files."main.nib" = ````nib
+import "lib.nib"
+theorem n1(n: Nat): Nat { bump!(n) }
+theorem b1(b: Bool): Bool { bump!(b) }
+````
+expands = ```nib
+theorem n1(n: Nat): Nat { succ(n) }
+theorem b1(b: Bool): Bool { b }
+```
+
+@ cases.a-macro-branches-on-a-type-of-the-program
+unimplemented = "elab_check answers only in the kernel's fragment; i32 is not in it, so is_type is false"
+files."lib.nib" = ````nib
+fn is_type(c: Code, t: SynExpr) -> Bool ! {elab} {
+  match elab_check(t, c, None) {
+    Ok(tc) => elab_defeq(code_type(c), tc)
+    Err(d) => false
+  }
+}
+
+fn widen_sum(c: Code) -> SynExpr ! {macro_error, elab} {
+  if is_type(c, quote { i32 }) {
+    quote { i64_of_i32($c) }
+  } else { code_term(c) }
+}
+macro widen_sum = widen_sum
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(a: i32, b: i32) -> u64 {
+  let s = widen_sum!(a + b)
+  1
+}
+````
+macro_error = "macro.type_changed: the macro changed the type of the expression from i32 to i64"
+
+@ cases.a-macro-may-not-change-the-type-of-a-let
+files."lib.nib" = ````nib
+fn to_true(c: Code) -> SynExpr { quote { true } }
+macro tt = to_true
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn g(n: Nat) -> u64 {
+  let b = tt!(n)
+  1
+}
+````
+macro_error = "macro.type_changed: the macro changed the type of the expression from Nat to Bool"
+
+// `plus` recurses on its first argument: `plus(zero, m) ≡ m`, and
+// `plus(n, zero)` does not reduce.
+@ cases.a-definitionally-equal-output-is-accepted-in-a-proof
+files."lib.nib" = ````nib
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+
+theorem plus_n_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
+  match n -> Eq(Nat, plus(n, zero), n) {
+    zero => refl(Nat, zero)
+    succ(k) => Eq_congr(x => succ(x), plus_n_zero(k))
+  }
+}
+
+fn is_const(c: Code, name: Text) -> Bool {
+  match code_view(c) {
+    VConst(n) => n == name
+    _ => false
+  }
+}
+
+fn drop_zero_left(c: Code) -> SynExpr {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro dzl = drop_zero_left
+
+fn drop_zero_right(c: Code) -> SynExpr {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro dzr = drop_zero_right
+
+fn simp_zero(c: Code) -> Proved ! {macro_error, elab} {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") {
+        let mt = code_term(m)
+        Proved { term: mt, proof: quote { plus_n_zero($mt) } }
+      } else { syn_error(code_span(c), "simp_zero: not plus(_, zero)") }
+      _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+    }
+    _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+  }
+}
+macro simp0 = simp_zero
+````
+files."main.nib" = ````nib
+import "lib.nib"
+theorem t1(n: Nat): Eq(Nat, plus(zero, n), n) {
+  refl(Nat, dzl!(plus(zero, n)))
+}
+````
+expands = ```nib
+theorem t1(n: Nat): Eq(Nat, plus(zero, n), n) { refl(Nat, n) }
+```
+checks.t1 = "ok"
+
+// The type of the position is kept (`Nat`), but the type of `refl(…)`
+// depends on the term, and `n` is not `plus(n, zero)` by conversion.
+@ cases.an-output-that-is-not-definitionally-equal-breaks-a-dependent-use
+files."lib.nib" = ````nib
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+
+theorem plus_n_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
+  match n -> Eq(Nat, plus(n, zero), n) {
+    zero => refl(Nat, zero)
+    succ(k) => Eq_congr(x => succ(x), plus_n_zero(k))
+  }
+}
+
+fn is_const(c: Code, name: Text) -> Bool {
+  match code_view(c) {
+    VConst(n) => n == name
+    _ => false
+  }
+}
+
+fn drop_zero_left(c: Code) -> SynExpr {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro dzl = drop_zero_left
+
+fn drop_zero_right(c: Code) -> SynExpr {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro dzr = drop_zero_right
+
+fn simp_zero(c: Code) -> Proved ! {macro_error, elab} {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") {
+        let mt = code_term(m)
+        Proved { term: mt, proof: quote { plus_n_zero($mt) } }
+      } else { syn_error(code_span(c), "simp_zero: not plus(_, zero)") }
+      _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+    }
+    _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+  }
+}
+macro simp0 = simp_zero
+````
+files."main.nib" = ````nib
+import "lib.nib"
+theorem t2(n: Nat): Eq(Nat, plus(n, zero), plus(n, zero)) {
+  refl(Nat, dzr!(plus(n, zero)))
+}
+````
+macro_error = "macro.dependent_use"
+
+// The kernel checks the proof `plus_n_zero(n)`; what follows sees the body
+// after the change (`f(n) ≡ n` by δ).
+@ cases.a-proved-change-is-used-by-what-follows
+files."lib.nib" = ````nib
+fn plus(n: Nat, m: Nat) -> Nat {
+  match n -> Nat {
+    zero => m
+    succ(k) => succ(plus(k, m))
+  }
+}
+
+theorem plus_n_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
+  match n -> Eq(Nat, plus(n, zero), n) {
+    zero => refl(Nat, zero)
+    succ(k) => Eq_congr(x => succ(x), plus_n_zero(k))
+  }
+}
+
+fn is_const(c: Code, name: Text) -> Bool {
+  match code_view(c) {
+    VConst(n) => n == name
+    _ => false
+  }
+}
+
+fn drop_zero_left(c: Code) -> SynExpr {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro dzl = drop_zero_left
+
+fn drop_zero_right(c: Code) -> SynExpr {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
+      _ => code_term(c)
+    }
+    _ => code_term(c)
+  }
+}
+macro dzr = drop_zero_right
+
+fn simp_zero(c: Code) -> Proved ! {macro_error, elab} {
+  match code_view(c) {
+    VApp(f, args) => match args {
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") {
+        let mt = code_term(m)
+        Proved { term: mt, proof: quote { plus_n_zero($mt) } }
+      } else { syn_error(code_span(c), "simp_zero: not plus(_, zero)") }
+      _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+    }
+    _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+  }
+}
+macro simp0 = simp_zero
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(n: Nat) -> Nat { simp0!(plus(n, zero)) }
+theorem f_is_id(n: Nat): Eq(Nat, f(n), n) { refl(Nat, n) }
+````
+expands = ```nib
+fn f(n: Nat) -> Nat { n }
+theorem f_is_id(n: Nat): Eq(Nat, f(n), n) { refl(Nat, n) }
+```
+checks.f_is_id = "ok"
+
+// An affine value may be dropped: the same change that drops a linear value
+// is accepted. When it is dropped is a change of meaning, not checked.
+@ cases.a-macro-may-drop-an-affine-value
+files."lib.nib" = ````nib
+affine struct Ticket {}
+fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
+fn const_fold(c: Code) -> SynExpr { quote { 1 } }
+macro cf = const_fold
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn keep(t: Ticket) -> u64 { cf!(redeem(t)) }
+perform show("keep", keep(Ticket {}))
+````
+expands = ```nib
+fn keep(t: Ticket) -> u64 { 1 }
+perform show("keep", keep(Ticket { }))
+```
+shows = ["keep = 1"]
+
+// Copying a `Code` copies the handle, not the value: splicing a copy value
+// twice is accepted (an affine one is not, above).
+@ cases.a-macro-may-splice-a-copy-value-twice
+files."lib.nib" = ````nib
+fn twice(c: Code) -> SynExpr { quote { $c + $c } }
+macro dup = twice
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn double(x: u64) -> u64 { dup!(x + 1) }
+perform show("double", double(2))
+````
+expands = ```nib
+fn double(x: u64) -> u64 { x + 1 + (x + 1) }
+perform show("double", double(2))
+```
+shows = ["double = 6"]
+
+// Moving a `let` to its use keeps the type and the row, yet the affine `t`
+// is then live across `choose`, which may resume more than once.
+@ cases.a-macro-may-not-move-an-affine-use-across-a-multi-shot-effect
+files."lib.nib" = ````nib
+affine struct Ticket {}
+effect choose: () -> Bool resume ω
+fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
+
+// { let x = e; if c { x } else { d } } as if c { e } else { d }
+fn sink_let(c: Code) -> SynExpr {
+  match code_term(c) {
+    ExBlock(Cons(StLet(x, ty, e, a, b, s), Cons(StExpr(ExIf(cond, ExVar(y), d, sp)), Nil)), bs) => ExIf(cond, e, d, sp)
+    _ => code_term(c)
+  }
+}
+macro sink = sink_let
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn pick(t: Ticket) -> u64 ! {choose} {
+  sink!({
+    let n = redeem(t)
+    if perform choose() { n } else { 0 }
+  })
+}
+````
+macro_error = "macro.ownership_rejected: what the macro made breaks ownership: t is live across choose, which resumes ω"
+
+// A handler the macro wraps around the input resumes `ask` twice; `ask`
+// resumes once, so the path that moves `t` would run twice.
+@ cases.a-macro-may-not-resume-a-one-shot-continuation-twice
+files."lib.nib" = ````nib
+affine struct Ticket {}
+effect ask: () -> Bool resume 1
+fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
+fn guard(c: Code) -> SynExpr {
+  quote { handle { $c } with { ask(), k => k(true) + k(false) } }
+}
+macro guard = guard
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn g(t: Ticket) -> u64 ! {ask} {
+  guard!(if perform ask() { redeem(t) } else { 0 })
+}
+````
+macro_error = "macro.ownership_rejected: what the macro made breaks ownership: k#1 is used after move"

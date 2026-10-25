@@ -10,6 +10,7 @@ fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
     Num(tok) => syn_nat(tok)
     Paren(p) => math_sum(p.sum)
+    Embed(e) => e
   }
 }
 
@@ -38,12 +39,18 @@ macro math = math_expand
 files."main.nib" = ````nib
 import "math.nib"
 theorem one_plus_two(): math!(`1 + 2 = 3`) { refl(Nat, 3) }
+theorem succ_eq(n: Nat): math!(`$n + 1 = $n + 1`) { refl(Nat, n + 1) }
+theorem embed_sum(n: Nat): math!(`$n + (1 + 2) = ${n + 3}`) { refl(Nat, n + 3) }
 ````
 checks.one_plus_two = "ok"
+checks.succ_eq = "ok"
+checks.embed_sum = "ok"
 expands = ```nib
 theorem one_plus_two(): Eq(Nat, 1 + 2, 3) { refl(Nat, 3) }
+theorem succ_eq(n: Nat): Eq(Nat, n + 1, n + 1) { refl(Nat, n + 1) }
+theorem embed_sum(n: Nat): Eq(Nat, n + (1 + 2), n + 3) { refl(Nat, n + 3) }
 ```
-trace = ["math"]
+trace = ["math", "math", "math"]
 
 @ cases.a-false-equation-is-rejected
 files."math.nib" = ````nib
@@ -53,6 +60,7 @@ fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
     Num(tok) => syn_nat(tok)
     Paren(p) => math_sum(p.sum)
+    Embed(e) => e
   }
 }
 
@@ -92,6 +100,7 @@ fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
     Num(tok) => syn_nat(tok)
     Paren(p) => math_sum(p.sum)
+    Embed(e) => e
   }
 }
 
@@ -131,6 +140,7 @@ fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
   match t {
     Num(tok) => syn_nat(tok)
     Paren(p) => math_sum(p.sum)
+    Embed(e) => e
   }
 }
 
@@ -192,3 +202,378 @@ theorem t(): math!(`1 = 1`) { refl(Nat, 1) }
 ````
 macro_error = "macro.budget_exceeded"
 
+
+// What a `syntax` declaration makes: a type for each rule that is not a token
+// (a token is a `SynToken` field, `TautoExpr` a `SynExpr`), none for the
+// rules the generator adds (`SumList`), and the parser.
+@ cases.a-syntax-declaration-makes-types-and-a-parser
+files."main.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+````
+expands = ```nib
+struct math_Eqn {
+  span: SynSpan, sum: math_Sum, equals: SynToken, sum_2: math_Sum
+}
+struct math_Paren {
+  span: SynSpan, l_paren: SynToken, sum: math_Sum, r_paren: SynToken
+}
+struct math_Sum {
+  span: SynSpan, term: math_Term, rep: List(math_Sum_Rep1)
+}
+struct math_Sum_Rep1 {
+  span: SynSpan, plus: SynToken, term: math_Term
+}
+enum math_Term {
+  Num(SynToken)
+  Paren(math_Paren)
+  Embed(SynExpr)
+}
+fn math_parse(
+  t: Text
+) -> Result(
+  math_Eqn,
+  SynDiag
+) { syn_parse("math", "de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791", t) }
+```
+
+// A literal that no macro reads is the value of the typed AST. It runs no
+// code of the user, so it may be in the file of the `syntax` declaration.
+@ cases.a-literal-without-a-macro-is-a-value
+files."main.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+let e = math`(1 + 2) + 3 = 6`
+let lhs = match e.sum.term {
+  Num(tok) => "num"
+  Paren(p) => "paren"
+  Embed(x) => "embed"
+}
+let rhs = match e.sum_2.term {
+  Num(tok) => tok.text
+  Paren(p) => "paren"
+  Embed(x) => "embed"
+}
+perform show("lhs", lhs)
+perform show("equals", e.equals.text)
+perform show("rhs", rhs)
+````
+shows = ["lhs = \"paren\"", "equals = \"=\"", "rhs = \"6\""]
+
+@ cases.a-literal-without-a-macro-is-read-when-checked
+files."main.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+let bad = math`1 + = 3`
+````
+macro_error = "macro.syntax_error: in math: expected Num or LParen or TautoExpr, found Equals"
+
+@ cases.a-literal-names-its-syntax-outside-a-macro-argument
+files."main.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+let x = `1 + 2 = 3`
+````
+macro_error = "a syntax literal needs the syntax's name"
+
+@ cases.an-embedded-expression-is-only-in-a-macro-argument
+unimplemented = "a literal that no macro reads takes $n and ${…} as a SynExpr instead of refusing them"
+files."main.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+let n = 1
+let y = math`$n = 1`
+````
+macro_error = "is written only in a macro argument"
+
+// A second macro of the same syntax, with another meaning.
+@ cases.two-macros-read-one-syntax
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+    Embed(e) => e
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+````
+files."check.nib" = ````nib
+import "math.nib"
+
+fn digits(t: Text, i: u64, acc: u64) -> u64 ! {Div} {
+  match text_byte(t, i) {
+    Some(b) => digits(t, i + 1, acc * 10 + (u64_of_u8(b) - 48))
+    None => acc
+  }
+}
+
+fn math_term_value(t: math_Term, at: SynSpan) -> u64 ! {macro_error, Div} {
+  match t {
+    Num(tok) => digits(tok.text, 0, 0)
+    Paren(p) => math_value(p.sum)
+    Embed(e) => syn_error(at, "math_check: an expression has no value here")
+  }
+}
+
+fn math_rest_value(acc: u64, rest: List(math_Sum_Rep1)) -> u64 ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => math_rest_value(acc + math_term_value(r.term, r.span), more)
+  }
+}
+
+fn math_value(s: math_Sum) -> u64 ! {macro_error, Div} {
+  math_rest_value(math_term_value(s.term, s.span), s.rep)
+}
+
+fn math_check_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  if math_value(e.sum) == math_value(e.sum_2) { quote { true } } else { quote { false } }
+}
+
+macro math_check = math_check_expand
+````
+files."main.nib" = ````nib
+import "check.nib"
+theorem t(): math!(`1 + 2 = 3`) { refl(Nat, 3) }
+let ok = math_check!(`1 + 2 = 3`)
+let ng = math_check!(math`(1 + 2) + 10 = 4`)
+perform show("ok", ok)
+perform show("ng", ng)
+````
+expands = ```nib
+theorem t(): Eq(Nat, 1 + 2, 3) { refl(Nat, 3) }
+let ok = true
+let ng = false
+perform show("ok", ok)
+perform show("ng", ng)
+```
+trace = ["math", "math_check", "math_check"]
+shows = ["ok = true", "ng = false"]
+
+@ cases.a-literal-of-another-syntax-is-refused
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+    Embed(e) => e
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+````
+files."swap.nib" = ````nib
+syntax swp = ```par
+{{par:swap}}```
+````
+files."main.nib" = ````nib
+import "math.nib"
+import "swap.nib"
+theorem t(): math!(swp`a b`) { refl(Nat, 1) }
+````
+macro_error = "macro.syntax_mismatch: macro math reads math, and the literal is swp"
+
+// `plaintext` is a built-in syntax (its value is the `Text`), so a literal of
+// it is refused as another syntax.
+@ cases.a-plaintext-literal-is-another-syntax
+unimplemented = "a plaintext literal is refused as no syntax literal at all (macro.argument: macro math takes a syntax literal)"
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn math_term(t: math_Term) -> SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => syn_nat(tok)
+    Paren(p) => math_sum(p.sum)
+    Embed(e) => e
+  }
+}
+
+fn math_rest(acc: SynExpr, rest: List(math_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t = math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+fn math_sum(s: math_Sum) -> SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+fn math_expand(e: math_Eqn) -> SynExpr ! {macro_error, Div} {
+  let l = math_sum(e.sum)
+  let r = math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+macro math = math_expand
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(plaintext`1 = 1`) { refl(Nat, 1) }
+````
+macro_error = "macro.syntax_mismatch: macro math reads math, and the literal is plaintext"
+
+// The value computed when the macro runs is carried to the output as a
+// literal (`syn_lift_u64`): the one way across the stages.
+@ cases.a-macro-computes-at-compile-time
+files."fib.nib" = ````nib
+syntax fibn = ```par
+{{par:fibn}}```
+fn fib(n: u64) -> u64 ! {Div} { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+
+fn digits(t: Text, i: u64, acc: u64) -> u64 ! {Div} {
+  match text_byte(t, i) {
+    Some(b) => digits(t, i + 1, acc * 10 + (u64_of_u8(b) - 48))
+    None => acc
+  }
+}
+
+fn fib_const(n: fibn_N) -> SynExpr ! {macro_error, Div} {
+  syn_lift_u64(fib(digits(n.digits.text, 0, 0)), n.span)
+}
+macro fib = fib_const
+````
+files."main.nib" = ````nib
+import "fib.nib"
+let x = fib!(`20`)
+perform show("x", x)
+````
+expands = ```nib
+let x = 6765
+perform show("x", x)
+```
+shows = ["x = 6765"]
+
+@ cases.a-compile-time-computation-runs-out-of-its-budget
+files."fib.nib" = ````nib
+syntax fibn = ```par
+{{par:fibn}}```
+fn fib(n: u64) -> u64 ! {Div} { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+
+fn digits(t: Text, i: u64, acc: u64) -> u64 ! {Div} {
+  match text_byte(t, i) {
+    Some(b) => digits(t, i + 1, acc * 10 + (u64_of_u8(b) - 48))
+    None => acc
+  }
+}
+
+fn fib_const(n: fibn_N) -> SynExpr ! {macro_error, Div} {
+  syn_lift_u64(fib(digits(n.digits.text, 0, 0)), n.span)
+}
+macro fib = fib_const
+````
+files."main.nib" = ````nib
+import "fib.nib"
+let x = fib!(`30`)
+````
+macro_error = "macro.budget_exceeded"
+
+// Through a variable the reach of a function is not followed, so it is refused too.
+@ cases.a-macro-that-reaches-the-os-through-a-variable-is-refused
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn leak(e: math_Eqn) -> SynExpr {
+  let f = os_read_file
+  match f("/etc/passwd") {
+    Ok(t) => syn_lift_text(t, e.span)
+    Err(m) => syn_lift_text(m, e.span)
+  }
+}
+macro leak = leak
+````
+files."main.nib" = ````nib
+import "math.nib"
+let x = leak!(`1 = 1`)
+````
+macro_error = "macro.unchecked_effect"
+
+@ cases.a-macro-function-may-not-show
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn noisy(e: math_Eqn) -> SynExpr ! {show} {
+  perform show("e", 1)
+  quote { 0 }
+}
+macro noisy = noisy
+````
+files."main.nib" = ````nib
+import "math.nib"
+let x = noisy!(`1 = 1`)
+````
+macro_error = "macro.row: the function of a macro may perform macro_error, macro_warn, elab and Div, and `noisy` performs show"
+
+@ cases.a-macro-may-not-produce-an-axiom
+unimplemented = "a quote stmts with axiom is expanded, and the axiom is accepted"
+files."math.nib" = ````nib
+syntax math = ```par
+{{par:math}}```
+fn cheat(e: math_Eqn) -> List(SynStmt) { quote stmts { axiom anything(P: Prop): P } }
+macro cheat = cheat
+````
+files."main.nib" = ````nib
+import "math.nib"
+cheat!(`1 = 1`)
+````
+macro_error = "macro.forbidden_output"
+
+@ cases.a-splice-is-only-inside-quote
+files."lib.nib" = ````nib
+fn k(x: SynExpr) -> SynExpr { $x }
+macro k = k
+````
+files."main.nib" = ````nib
+import "lib.nib"
+let y = k!(1)
+````
+macro_error = "$ is written only inside quote"

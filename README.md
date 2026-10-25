@@ -22,6 +22,7 @@ not published yet; what is here is the specification side of the project.
 | `meta/` | Parts of the Lean formalization redone in Tauto: the small core, and a model of the kernel with its confluence, subject reduction and a checker that returns typing derivations |
 | `crates/tauto/src/prelude.taut` | The prelude: the types and theorems every proof may use without declaring them (`Nat`, `Eq`, `And`, `Or`, `Not`, `Iff`, …), with no axioms. With `crates/tauto-parol/tauto.par`, it is one of the two files of the implementation published here |
 | `crates/tauto-parol/tauto.par` | The grammar of Tauto: every form the reader accepts, with the base rules first and tauto's own (dependent types and proofs) after them |
+| `docs/design/` | The design documents: the semantics, ownership, classes, macros and steps, the Lean formalization, and the backends and self-hosting of the implementation (which is not published yet) |
 | `examples/` | Programs and proofs in Tauto |
 | `cases/` | Case files that specify what the implementation answers for an input, for tauto and its Nib part |
 | `Tauto.eure` | The project manifest (not read by any tool yet) |
@@ -177,6 +178,8 @@ written must be readable where it stands.
 | `Proto/Core.lean`, `Renaming.lean`, `ListSet.lean`, `Tags.lean`, `Effects.lean`, `Choice.lean`, `Budget.lean`, `Syntax.lean` | A small non-dependent core with preservation and progress; renaming; finite sets as lists; tags and effect rows as sets; a model of the shared step budget |
 
 ### Building
+
+See [`lean/README.md`](lean/README.md) for the layout of the formalization and [`docs/design/lean.md`](docs/design/lean.md) for what it proves.
 
 The project pins Lean **4.34.1** (`lean/lean-toolchain`). Install the official
 release archive from
