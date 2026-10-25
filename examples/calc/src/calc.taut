@@ -1,0 +1,126 @@
+import "../../compiler/src/compiler.taut"
+import "../../../std/Text.taut"
+
+// `inductive syntax` makes two sets of types from the grammar: the Nib ones (`calc_Expr`, …), which
+// `calc_parse` fills, and the `inductive` ones (`calc_Expr_I`, …), which the kernel sees. `calc_Expr_to_i`
+// turns the first into the second. A token of the second is its text.
+inductive syntax calc = ```par
+%start Expr
+%title "calc"
+%%
+Expr: Prod { Plus Prod };
+Prod: Atom { Star Atom };
+Atom: Num | Paren;
+Paren: LParen Expr RParen;
+Num: /[0-9]+/;
+Plus: '+';
+Star: '*';
+LParen: '(';
+RParen: ')';
+```
+
+// The digits of a token as a number.
+fn calc_digits(bs: List(Nat), acc: Nat) -> Nat {
+  match bs -> Nat {
+    Nil => acc
+    Cons(b, rest) => calc_digits(rest, nat_add(nat_mul(acc, 10), nat_sub(b, 48)))
+  }
+}
+
+fn calc_num(t: Text) -> Nat { calc_digits(text_bytes(t), 0) }
+
+// What the tree says, written on the tree: the sum of the products of the atoms. A repetition
+// (`+ P` or `* A`) is added or multiplied in on the right, so the functions recurse on a field.
+mutual {
+  fn calc_expr_val(e: calc_Expr_I) -> Nat {
+    match e -> Nat {
+      mk_calc_Expr_I(prod, rep) => nat_add(calc_prod_val(prod), calc_sum_val(rep))
+    }
+  }
+  fn calc_sum_val(rep: List(calc_Expr_Rep1_I)) -> Nat {
+    match rep -> Nat {
+      Nil => 0
+      Cons(r, more) => nat_add(calc_plus_val(r), calc_sum_val(more))
+    }
+  }
+  fn calc_plus_val(r: calc_Expr_Rep1_I) -> Nat {
+    match r -> Nat {
+      mk_calc_Expr_Rep1_I(op, prod) => calc_prod_val(prod)
+    }
+  }
+  fn calc_prod_val(p: calc_Prod_I) -> Nat {
+    match p -> Nat {
+      mk_calc_Prod_I(atom, rep) => nat_mul(calc_atom_val(atom), calc_factor_val(rep))
+    }
+  }
+  fn calc_factor_val(rep: List(calc_Prod_Rep1_I)) -> Nat {
+    match rep -> Nat {
+      Nil => 1
+      Cons(r, more) => nat_mul(calc_star_val(r), calc_factor_val(more))
+    }
+  }
+  fn calc_star_val(r: calc_Prod_Rep1_I) -> Nat {
+    match r -> Nat {
+      mk_calc_Prod_Rep1_I(op, atom) => calc_atom_val(atom)
+    }
+  }
+  fn calc_atom_val(a: calc_Atom_I) -> Nat {
+    match a -> Nat {
+      Num_I(t) => calc_num(t)
+      Paren_I(p) => calc_paren_val(p)
+    }
+  }
+  fn calc_paren_val(p: calc_Paren_I) -> Nat {
+    match p -> Nat {
+      mk_calc_Paren_I(l, e, r) => calc_expr_val(e)
+    }
+  }
+}
+
+// The tree as the compiler's `Expr`. `1 + 2` becomes `1 * 1 + (2 * 1 + 0)`: an empty repetition is
+// its unit, `0` for `+` and `1` for `*`.
+mutual {
+  fn calc_expr_lower(e: calc_Expr_I) -> Expr {
+    match e -> Expr {
+      mk_calc_Expr_I(prod, rep) => e_add(calc_prod_lower(prod), calc_sum_lower(rep))
+    }
+  }
+  fn calc_sum_lower(rep: List(calc_Expr_Rep1_I)) -> Expr {
+    match rep -> Expr {
+      Nil => e_lit(0)
+      Cons(r, more) => e_add(calc_plus_lower(r), calc_sum_lower(more))
+    }
+  }
+  fn calc_plus_lower(r: calc_Expr_Rep1_I) -> Expr {
+    match r -> Expr {
+      mk_calc_Expr_Rep1_I(op, prod) => calc_prod_lower(prod)
+    }
+  }
+  fn calc_prod_lower(p: calc_Prod_I) -> Expr {
+    match p -> Expr {
+      mk_calc_Prod_I(atom, rep) => e_mul(calc_atom_lower(atom), calc_factor_lower(rep))
+    }
+  }
+  fn calc_factor_lower(rep: List(calc_Prod_Rep1_I)) -> Expr {
+    match rep -> Expr {
+      Nil => e_lit(1)
+      Cons(r, more) => e_mul(calc_star_lower(r), calc_factor_lower(more))
+    }
+  }
+  fn calc_star_lower(r: calc_Prod_Rep1_I) -> Expr {
+    match r -> Expr {
+      mk_calc_Prod_Rep1_I(op, atom) => calc_atom_lower(atom)
+    }
+  }
+  fn calc_atom_lower(a: calc_Atom_I) -> Expr {
+    match a -> Expr {
+      Num_I(t) => e_lit(calc_num(t))
+      Paren_I(p) => calc_paren_lower(p)
+    }
+  }
+  fn calc_paren_lower(p: calc_Paren_I) -> Expr {
+    match p -> Expr {
+      mk_calc_Paren_I(l, e, r) => calc_expr_lower(e)
+    }
+  }
+}

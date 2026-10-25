@@ -130,3 +130,24 @@ let a = F {}
 let r = run(() => consume(a))
 ```
 lin = "ok"
+
+@ cases.a-type-met-again-at-other-arguments-holds-them
+source = ```nib
+affine struct F {}
+enum W<A> { Leaf(A), Node(W(F)) }
+fn keep(w: W(i64)) -> W(i64) { w }
+let a: W(i64) = Node(Leaf(F {}))
+let b = keep(a)
+let c = keep(a)
+```
+lin = "error: used after move"
+
+@ cases.a-nested-type-of-copies-is-shared
+source = ```nib
+enum N<A> { End, More(A, N(Option(A))) }
+fn keep(n: N(i64)) -> N(i64) { n }
+let a: N(i64) = More(1, End)
+let b = keep(a)
+let c = keep(a)
+```
+lin = "ok"
