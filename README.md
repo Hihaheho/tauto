@@ -108,7 +108,7 @@ Design principles, in short:
   order, divisibility, …) written with a `nat!` syntax macro.
 - `examples/lambda/`: the simply typed lambda calculus: type safety and strong
   normalization, proved without axioms, with an `lc!` macro for its notation.
-- Verified programs that also run, each with a `NOTES.md`:
+- Verified programs:
   - `examples/sort/`: insertion sort for any ordered type.
   - `examples/bst/`: a binary search tree.
   - `examples/compiler/`: arithmetic expressions compiled to a stack machine.

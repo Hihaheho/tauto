@@ -100,7 +100,7 @@ theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
   `nat!` 構文マクロで書いています。
 - `examples/lambda/`：単純型付きラムダ計算の型安全性と強正規化を、公理なしで証明。
   記法は `lc!` マクロで書いています。
-- 実行もできる、検証済みのプログラム（それぞれ `NOTES.md` つき）：
+- 検証済みのプログラム：
   - `examples/sort/`：任意の順序型の挿入ソート。
   - `examples/bst/`：二分探索木。
   - `examples/compiler/`：算術式からスタックマシンへのコンパイラ。
