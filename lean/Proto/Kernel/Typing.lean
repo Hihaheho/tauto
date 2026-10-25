@@ -3,7 +3,7 @@ import Proto.Kernel.Reduction
 /-!
 # Typing of the kernel core
 
-The declarative judgment `Γ ⊢ t : A` of the Rust kernel:
+The declarative judgment `Γ ⊢ t : A` of `crates/tauto/src/check.rs`:
 cumulative sorts `Prop < Type < Type1 < …` (`sort 0 < sort 1 < …`), `Pi`
 with an impredicative `Prop`, conversion by beta and iota, and the generated
 `Nat` eliminator. The kernel decides this judgment bidirectionally; lambdas

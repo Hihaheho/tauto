@@ -4,7 +4,8 @@ import Proto.Nib.Own
 /-!
 # Checks of Nib's typing rules and steps
 
-Small programs the rules must accept or reject, and steps they take.
+Small programs the rules must accept or reject, and steps they take. The
+cases in `cases/` are the model for what to add here.
 -/
 
 namespace Proto.Nib
@@ -1420,11 +1421,11 @@ theorem listSig_halts {t A ρ} (ht : HasType listSig [] [] t A ρ) (htb : t.Basi
     (fun _ _ _ h => by cases h) ht htb hρ
 
 
-/-! ## Ownership (`Own.lean`)
+/-! ## Ownership (`Own.lean`, `docs/design/ownership.md`)
 
 The kinds and resume quantities of `askSig`'s declarations, so T1–T3 are not
 about an empty set of programs, and arms the use check accepts and
-rejects. -/
+rejects (`cases/lin/resume.eure`). -/
 
 /-- `Point` and `Option` are declared `copy` (`Option(T)` joins `T`'s
 kind); `pick` resumes `ω`, `Div` and `Match` never, every other operation at
@@ -1509,7 +1510,7 @@ theorem askSig_unique {t μ' t' X ρ} (h : HasType askSig [] [] t X ρ) (hl : Li
 theorem PatsOk.nil_inv {sg As Δ} (h : PatsOk sg [] As Δ) : Δ = [] := by cases h; rfl
 
 /-- The arm `ask(), k => Point(k(1), k(2))`: `ask` resumes at most once, so
-`k` may be called once. -/
+`k` may be called once (`cases/lin/resume.eure`, `default-is-le-one`). -/
 def twiceK : Tm := .con 0 [] 0 [.app (.var 0) [.int .i64 1], .app (.var 0) [.int .i64 2]]
 
 theorem ask_twice_rejected {S Γ C T ρ} :
@@ -1534,7 +1535,7 @@ theorem ask_twice_rejected {S Γ C T ρ} :
       · cases h
 
 /-- The same arm for `pick`, which resumes `ω`: `k` is a function that may
-be called twice. -/
+be called twice (`cases/lin/resume.eure`, `omega-allows-two-calls`). -/
 def twiceK' : Tm := .con 0 [] 0 [.app (.var 1) [.int .i64 1], .app (.var 1) [.int .i64 2]]
 
 theorem pick_twice_ok :
@@ -1595,7 +1596,8 @@ theorem pick_twice_ok :
 /-! ### A linear value lives across nothing that may not resume
 
 With `Point` declared `linear`, `let h = Point(…); perform ask(); h` is
-rejected: `ask` may not resume, and `h` would be lost. -/
+rejected: `ask` may not resume, and `h` would be lost
+(`cases/lin/resume.eure`, `linear-live-across-le-one`). -/
 
 def askOwnL : OwnSig := { askOwn with dataKind := fun d => if d = 0 then .linear else .copy }
 

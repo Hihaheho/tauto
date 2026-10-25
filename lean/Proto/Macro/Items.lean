@@ -3,9 +3,10 @@ import Proto.Macro.Expand
 /-!
 # Declarations and what expansion may not make
 
-A program is a list of items. Expansion rewrites the bodies and gives them back
-as terms; a term has no item in it, so no expansion can make an `axiom`,
-`extern`, `import`, `syntax` or `macro`.
+`docs/design/macro-semantics.md` (E1, E4). A program is a list of items.
+Expansion rewrites the bodies and gives them back as terms; a term has no item
+in it, so no expansion can make an `axiom`, `extern`, `import`, `syntax` or
+`macro`.
 -/
 
 namespace Proto.Macro

@@ -3,10 +3,10 @@ import Proto.Macro.Scope
 /-!
 # The names the kernel gets
 
-After resolution a binding is named `x` when no scope of an expansion is in its
-scopes, and `x#k` when one is. A written identifier cannot contain `#`, so a
-made name (`KName.made`) is never a written one; here that is the difference of
-the constructors.
+`docs/design/macro-semantics.md` After resolution a binding is named
+`x` when no scope of an expansion is in its scopes, and `x#k` when one is. A
+written identifier cannot contain `#`, so a made name (`KName.made`) is never a
+written one; here that is the difference of the constructors.
 -/
 
 namespace Proto.Macro

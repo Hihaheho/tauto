@@ -3,13 +3,14 @@ import Proto.Nib.Duplicate
 /-!
 # Freeing at the end of a block
 
-A `let` of an owned value ends its scope with a free. The model has no new step
-for that: a free is a move out of the owner's place whose value is dropped, and
-a move is what T4 already covers: the cell goes into the ghost set of cells
-moved out of, which no later step touches (`borrow_safety`), and which is moved
-out of only while nothing borrows it. So what is left to show is that the block
-with its free at the end passes the use and borrow checks exactly when the body
-leaves no borrow of the owner behind, which is `scoped_lin` and `scoped_blin`.
+`docs/design/ownership.md`「ブロックの終わりの解放（`Free.lean`）」. A `let` of an owned value ends its scope
+with a free. The model has no new step for that: a free is a move out of the
+owner's place whose value is dropped, and a move is what T4 already
+covers: the cell goes into the ghost set of cells moved out of, which no
+later step touches (`borrow_safety`), and which is moved out of only while
+nothing borrows it. So what is left to show is that the block with its free
+at the end passes the use and borrow checks exactly when the body leaves no
+borrow of the owner behind, which is `scoped_lin` and `scoped_blin`.
 
 `Tm.scoped A R init body` is `{ var x = init; body }` with the free of `x`
 after `body`, whose value has the type `R`:

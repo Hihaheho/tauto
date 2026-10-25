@@ -228,8 +228,8 @@ mutual
     /-- Run time: the arms `clauses` tried in order for `perform e(vs)`,
     with `k` its continuation. -/
     | select (e : Eff) (vs : List Tm) (k : Tm) (clauses : List Clause)
-    /-- `&x`: a shared borrow of the place `t`. The use check lets it name a
-    variable or a place, and only where an argument goes. -/
+    /-- `&x`: a shared borrow of the place `t` (`docs/design/ownership.md`「借用（`Borrow.lean`、`BorrowStep.lean`、`BorrowSafety.lean`）」). The use check lets it name a variable or a place, and only
+    where an argument goes. -/
     | brw (t : Tm)
     /-- `&mut x` -/
     | mbrw (t : Tm)
@@ -507,7 +507,7 @@ inductive ViewBody (sg : Sig) : Nat → List Ty → Ty → Tm → Prop where
 parameter is a borrow or a `bool`, the result is a borrow, and the body
 picks one of the parameters (`ViewBody`). So the result is one of the
 borrowed arguments, which the signature alone says (it is derived from
-them). -/
+them, `docs/design/rust-backend.md`). -/
 def ViewDecl (sg : Sig) (d : Nat) (ps : List Ty) (B : Ty) : Prop :=
   (∀ p ∈ ps, ViewParam p) ∧ B.IsBrw ∧ ∃ b, sg.defs d = some (.fn ps B [], .lam ps b) ∧ ViewBody sg d ps B b
 

@@ -3,9 +3,10 @@ import Proto.Macro.Scope
 /-!
 # Macro syntax: the small part of the terms that has binders
 
-Application, abstraction, a variable, an atom of a `Code`, and a call of a
-syntax macro; the rest of the surface syntax is binding-free as far as expansion
-is concerned, or one more binder of the kinds here.
+`docs/design/macro-semantics.md`. Application, abstraction, a
+variable, an atom of a `Code`, and a call of a syntax macro; the rest of the
+surface syntax is binding-free as far as expansion is concerned, or one more
+binder of the kinds here.
 -/
 
 namespace Proto.Macro

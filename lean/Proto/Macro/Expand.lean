@@ -3,9 +3,9 @@ import Proto.Macro.Stx
 /-!
 # Expansion with a fuel
 
-The macro functions are an arbitrary function `μ` from the macro and the text to
-a term (its parse and its body together); the host's fuel is the natural number,
-spent by each call.
+`docs/design/macro-semantics.md` The macro functions are an arbitrary
+function `μ` from the macro and the text to a term (its parse and its
+body together); the host's fuel is the natural number, spent by each call.
 -/
 
 namespace Proto.Macro

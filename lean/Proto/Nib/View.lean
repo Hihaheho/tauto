@@ -3,7 +3,8 @@ import Proto.Nib.Free
 /-!
 # Calls that return a view
 
-A function whose result is a view of its
+`docs/design/ownership.md`「view（`View.lean`、`ViewExample.lean`）」 and
+`docs/design/rust-backend.md`「view 型」. A function whose result is a view of its
 borrowed arguments (`&T -> &U`, `&mut T -> &mut U`) is modelled by the
 prims `reborrow` and `reborrowMut`: the call returns the borrow it was
 given. The result is itself a borrow, so it is no `Bare` term; and the

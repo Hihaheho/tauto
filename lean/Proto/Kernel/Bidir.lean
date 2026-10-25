@@ -3,7 +3,7 @@ import Proto.Kernel.Safety
 /-!
 # The bidirectional checker, as a relation, and its soundness
 
-The Rust kernel is bidirectional: `infer` synthesizes a type,
+The Rust kernel (`crates/tauto/src/check.rs`) is bidirectional: `infer` synthesizes a type,
 `check` pushes an expected type in (a λ has no domain, so it can only be checked),
 `whnf` computes weak-head normal forms, `conv` compares weak-head normal forms
 structurally, and `subtype` adds sort cumulativity and Π covariance on top.

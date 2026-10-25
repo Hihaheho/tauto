@@ -3,14 +3,17 @@ import Proto.Macro.Stx
 /-!
 # From a value to syntax
 
-A macro's result is a value of the syntax types (`Val`); `lower` reads it as a
-term. Both have the same constructors, so `lower` is a renaming of constructors:
-it changes no identifier, no atom and no position of a binder.
+`docs/design/macro-semantics.md` (`Stx.lean`: "`lower` keeps the
+binding structure"). A macro's result is a value of the syntax types
+(`Val`); `lower` reads it as a term. Both have the same constructors, so
+`lower` is a renaming of constructors: it changes no identifier, no atom and
+no position of a binder.
 -/
 
 namespace Proto.Macro
 
-/-- A syntax value: what a macro function builds (the `Syn*` data). -/
+/-- A syntax value: what a macro function builds (the `Syn*` data of
+`std/prelude/Macro.taut`). -/
 inductive Val where
   | ident (i : Ident)
   | atom (n : Nat)
