@@ -295,6 +295,8 @@ KwDef: <INITIAL, InParen, InBrace>'def' ;
 KwImport: <INITIAL, InParen, InBrace>'import' ;
 KwMutual: <INITIAL, InParen, InBrace>'mutual' ;
 KwAxiom: <INITIAL, InParen, InBrace>'axiom' ;
+// `inductive syntax name = …`: contextual, so `inductive` stays the keyword of `inductive T(…)` (before it, so it wins).
+KwInductiveSyntax: <INITIAL, InBrace>/inductive/ ?= /[ \t]+syntax[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
 KwInductive: <INITIAL, InParen, InBrace>'inductive' ;
 KwForall: <INITIAL, InParen, InBrace>/∀|forall/ ;
 KwExists: <INITIAL, InParen, InBrace>/∃|exists/ ;
@@ -442,10 +444,10 @@ MacroBlock4: MacroBlockStart4 { MacroChunk | MacroTicks3 } MacroBlockEnd4 ;
 MacroBlock5: MacroBlockStart5 { MacroChunk | MacroTicks4 } MacroBlockEnd5 ;
 MacroBlock6: MacroBlockStart6 { MacroChunk | MacroTicks5 } MacroBlockEnd6 ;
 
-// `syntax math = ```par … ``` `: a syntax's grammar, in a block named `par`
+// `syntax math = ```par … ``` `, or `inductive syntax math = …` (which also makes the proof side's `inductive` types): a syntax's grammar, in a block named `par`
 // (the reader checks the name). Contextual, so `syntax` stays a name elsewhere.
 KwSyntax: <INITIAL, InBrace>/syntax/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
-SyntaxDecl: KwSyntax Ident Eq MacroBlock ;
+SyntaxDecl: [KwInductiveSyntax] KwSyntax Ident Eq MacroBlock ;
 // `macro math = math_expand`: registers a function as a macro.
 KwMacro: <INITIAL, InBrace>/macro/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
 MacroDecl: KwMacro Ident Eq Ident ;

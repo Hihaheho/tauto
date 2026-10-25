@@ -13,7 +13,8 @@ A small-step semantics for the core of `Typing.lean`, and its safety:
 * `type_safety` puts the two together for any number of steps.
 * `budget_bounded`: a budget under way stops within its count.
 
-A state is a term and the cells' values (`μ`).
+The semantics (`Step`) follows `docs/design/semantics.md`. A state is a term and the
+cells' values (`μ`).
 
 * Call by value, left to right. A call of a `lam` substitutes its arguments.
   A generic function used at types and rows is its body with those types and

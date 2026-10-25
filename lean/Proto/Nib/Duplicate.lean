@@ -3,11 +3,12 @@ import Proto.Nib.BorrowSafety
 /-!
 # The suspended state of an operation that resumes `ω` can be copied
 
-What lives across an operation that resumes `ω` is duplicable, and the borrows
-among it are `&`, never `&mut`. T5 (`captured_noOwned`) says the continuation
-holds nothing owned. Here the values the frames hold to the left of the hole,
-the ones a copy of the continuation would copy, are `Held`: of a duplicable type
-that is not a mutable borrow, so none of them is an `&mut p` (`Held.not_mbrw`).
+`docs/design/ownership.md`「継続の複製（`Duplicate.lean`）」: what lives across an operation that resumes `ω` is
+duplicable, and the borrows among it are `&`, never `&mut`. T5
+(`captured_noOwned`) says the continuation holds nothing owned. Here the
+values the frames hold to the left of the hole, the ones a copy of the
+continuation would copy, are `Held`: of a duplicable type that is not a
+mutable borrow, so none of them is an `&mut p` (`Held.not_mbrw`).
 -/
 
 namespace Proto.Nib

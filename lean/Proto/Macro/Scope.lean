@@ -1,7 +1,8 @@
 /-!
 # Macro hygiene: scope sets and name resolution
 
-A finite set of scopes is a `List Nat` read up to membership.
+`docs/design/macro-semantics.md` A finite set of scopes is a `List Nat`
+read up to membership.
 -/
 
 namespace Proto.Macro
@@ -49,7 +50,7 @@ inductive Res where
   | ambiguous
   | unbound
 
-/-- `resolve(x^S, ρ)`. -/
+/-- `resolve(x^S, ρ)` of the semantics. -/
 def resolve (x : Ident) (ρ : List Bind) : Res :=
   match maximals (cand x ρ) with
   | [] => .unbound

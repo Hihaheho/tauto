@@ -3,12 +3,12 @@ import Proto.Kernel.Typing
 /-!
 # Putting a term in a hole (the kernel's half of T5)
 
-T5. A declaration with a hole is a term `c` in which the hole is the variable
-`0` of the context `A :: Γ`; putting `e'` in the hole is `inst c e'`. If `c`
-checks with the hole as a variable of type `A`, and `e'` has type `A`, then
-`inst c e'` checks, with the type `inst B e'`; when the type `B` of `c` does not
-mention the hole (`B = lift B₀`: the context does not depend on what is in the
-hole), the type is `B₀`, unchanged.
+`docs/design/macro-semantics.md`, T5. A declaration with a hole is a term
+`c` in which the hole is the variable `0` of the context `A :: Γ`; putting `e'`
+in the hole is `inst c e'`. If `c` checks with the hole as a variable of type
+`A`, and `e'` has type `A`, then `inst c e'` checks, with the type `inst B e'`;
+when the type `B` of `c` does not mention the hole (`B = lift B₀`: the context
+does not depend on what is in the hole), the type is `B₀`, unchanged.
 
 This is the substitution lemma of the kernel, read as a statement about holes.
 The half of T5 for executable code (`Proto/Nib/Typing.lean` and `Lin.lean`) is

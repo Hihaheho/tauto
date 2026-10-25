@@ -3,11 +3,11 @@ import Proto.Nib.Typing
 /-!
 # A place in a typing derivation, and what may fill it
 
-The typing half of T5 (`Plug.lean`), for executable code. `Spot D e Γ' B σ fill`
-says: the derivation `D` of a term `t` has a node `Γ' ⊢ e : B ! σ`, and `t =
-fill e`. It is the position `⊢ C[e] ok`, `Γ ⊢ e : A ! ε` of T5 as a place in the
-derivation, so that nothing has to be said about which of the (many) derivations
-of a term is meant.
+`docs/design/macro-semantics.md`, T5, for executable code, the typing
+half. `Spot D e Γ' B σ fill` says: the derivation `D` of a term `t` has a node
+`Γ' ⊢ e : B ! σ`, and `t = fill e`. It is the position `⊢ C[e] ok`,
+`Γ ⊢ e : A ! ε` of T5 as a place in the derivation, so that nothing has to be
+said about which of the (many) derivations of a term is meant.
 
 `Spot.replace` is T5's typing half: a term `e'` of the same type at a row
 inside the node's row can be put in the place, and the whole is typed as

@@ -3,20 +3,21 @@ import Proto.Renaming
 /-!
 # A small proved core: substitution, preservation, progress
 
-The non-dependent fragment of the Rust kernel with de Bruijn variables:
-functions, `Bool`, and `Nat` with its eliminator at a constant motive (`Nat_rec`
-where the motive does not mention the major premise). The two `natRec` reduction
-rules are the iota rules the kernel generates for `zero` and `succ`, with the
-induction hypothesis `natRec A z s n`.
+The non-dependent fragment of the Rust kernel (`crates/tauto/src/check.rs`)
+with de Bruijn variables: functions, `Bool`, and `Nat` with its eliminator at
+a constant motive (`Nat_rec` of `check/inductive.rs` where the motive does not
+mention the major premise). The two `natRec` reduction rules are the iota
+rules the kernel generates for `zero` and `succ`, with the induction
+hypothesis `natRec A z s n`.
 
 Proved here, without `sorry`: renaming and substitution preserve typing,
 preservation, and progress for closed terms (a closed well-typed term is a
 value or steps). Call-by-value, so `beta` needs a value argument.
 
-Not covered: dependent types and conversion, the indexed eliminators, effects
-and handlers (`Nib/Typing.lean` and `Nib/Safety.lean` type and run them,
-without dependent types), and termination. Preservation and progress do not
-give termination.
+Not covered (each is its own step): dependent types and conversion, the
+indexed eliminators, effects and handlers (`Nib/Typing.lean` and
+`Nib/Safety.lean` type and run them, without dependent types), and
+termination. Preservation and progress do not give termination.
 -/
 
 namespace Proto.Core

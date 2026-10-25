@@ -3,14 +3,14 @@ import Proto.Renaming
 /-!
 # A model of the kernel: terms, renaming and substitution
 
-The dependent core of the Rust kernel, with de Bruijn variables.
+The dependent core of `crates/tauto/src/check.rs`, with de Bruijn variables.
 
 * Sorts are `sort 0` (`Prop`), `sort 1` (`Type`), `sort 2` (`Type1`), ...
 * `pi A B` is the dependent function type, `lam b` an unannotated function
   (the kernel checks lambdas against an expected `Pi`, it never infers a
   domain), `app f a` an application.
 * `nat`, `zero`, `succ` and `natRec P z s n` are one generated inductive type
-  and its dependent eliminator (`Nat_rec`/`Nat_ind`).
+  and its dependent eliminator (`Nat_rec`/`Nat_ind` of `check/inductive.rs`).
   The motive `P` is a function, so the four arguments of `natRec` all live in
   the same context.
 -/

@@ -1,10 +1,11 @@
 /-!
 # `Code` and the acceptance of a typed macro
 
-The checker is abstract: a judgment `Derivable` over a frozen environment is all
-that is used of it. `Code` is the judgments it derives (C1); a macro's output is
-accepted when the whole declaration with the output in place is checked again,
-and T1, T2 and T4 follow from what that checking says.
+`docs/design/macro-semantics.md` The checker is abstract: a judgment
+`Derivable` over a frozen environment is all that is used of it. `Code` is the
+judgments it derives (C1); a macro's output is accepted when the whole
+declaration with the output in place is checked again, and T1, T2 and T4
+follow from what that checking says.
 -/
 
 namespace Proto.Macro.Typed

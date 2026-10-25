@@ -1,7 +1,7 @@
 import Proto.Nib.Kind
 
 /-!
-# The use check
+# The use check (`docs/design/ownership.md`「種・再開量・トークン・CFL（`Kind.lean`、`Lin.lean`、`Own.lean`）」)
 
 `Lin os sg S Γ C t` says that `t` uses what it owns as its kinds allow. It
 is a separate judgment beside `HasType`: the typing is not changed, and the
