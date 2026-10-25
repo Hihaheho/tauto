@@ -61,7 +61,15 @@ Stmts: { Sep } [ Stmt StmtsTail ] ;
 StmtsTail: [ Sep { Sep } [ Stmt StmtsTail ] ] ;
 Sep: Nl | Semi ;
 
-Stmt: OtherStmt ;
+Stmt: [ Attribute ] OtherStmt ;
+// `#[mode!(infer(in, in, out)) => fn infer, theorem infer_sound]` before a declaration: the macro is given the
+// declaration and makes the statements that replace it; what follows `=>` is the complete list (kind and
+// name) of the declarations it makes besides the one it was given.
+Attribute: AttrOpen MacroCall [ FatArrow Generated { Comma Generated } ] AttrClose Nl ;
+Generated: GeneratedKind Ident ;
+GeneratedKind: KwFn | KwTheorem | KwDef | KwInductive | KwStruct | KwEnum ;
+AttrOpen: <INITIAL, InBrace>/#\[/ ;
+AttrClose: <INITIAL, InBrace, InParen>/\]/ ;
 OtherStmt: LetDecl | VarDecl | FnDecl | StructDecl | EnumDecl | EffectDecl
     | LabelDecl | BrandDecl | TheoremDecl | AxiomDecl | InductiveDecl | DefDecl | ImportDecl | MutualDecl | ReturnStmt | BreakStmt | ContinueStmt | WhileStmt
     | ExternDecl | ClassDecl | InstanceDecl | ModuleDecl | SyntaxDecl | MacroDecl | ExprStmt ;

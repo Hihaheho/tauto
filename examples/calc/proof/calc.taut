@@ -1,0 +1,116 @@
+import "../src/calc.taut"
+import "../../compiler/proof/compiler.taut"
+
+// What the reader does, proved. No program imports this file; `tauto check` checks it.
+// The tree is the `inductive` one `inductive syntax calc` makes (`calc_Expr_I`); `calc_Expr_to_i` turns
+// what `calc_parse` read into it, and that step is the one thing here that is not proved.
+
+// The `Expr` the tree is lowered to evaluates to the value the tree says.
+mutual {
+  theorem lower_expr_ok(e: calc_Expr_I): Eq(Nat, eval_expr(calc_expr_lower(e)), calc_expr_val(e)) {
+    match e -> Eq(Nat, eval_expr(calc_expr_lower(e)), calc_expr_val(e)) {
+      mk_calc_Expr_I(
+        prod,
+        rep
+      ) => Eq_trans(
+        Eq_congr((x: Nat) => nat_add(x, eval_expr(calc_sum_lower(rep))), lower_prod_ok(prod)),
+        Eq_congr((x: Nat) => nat_add(calc_prod_val(prod), x), lower_sum_ok(rep))
+      )
+    }
+  }
+  theorem lower_sum_ok(
+    rep: List(calc_Expr_Rep1_I)
+  ): Eq(Nat, eval_expr(calc_sum_lower(rep)), calc_sum_val(rep)) {
+    match rep -> Eq(Nat, eval_expr(calc_sum_lower(rep)), calc_sum_val(rep)) {
+      Nil => refl()
+      Cons(
+        r,
+        more
+      ) => Eq_trans(
+        Eq_congr((x: Nat) => nat_add(x, eval_expr(calc_sum_lower(more))), lower_plus_ok(r)),
+        Eq_congr((x: Nat) => nat_add(calc_plus_val(r), x), lower_sum_ok(more))
+      )
+    }
+  }
+  theorem lower_plus_ok(
+    r: calc_Expr_Rep1_I
+  ): Eq(Nat, eval_expr(calc_plus_lower(r)), calc_plus_val(r)) {
+    match r -> Eq(Nat, eval_expr(calc_plus_lower(r)), calc_plus_val(r)) {
+      mk_calc_Expr_Rep1_I(op, prod) => lower_prod_ok(prod)
+    }
+  }
+  theorem lower_prod_ok(p: calc_Prod_I): Eq(Nat, eval_expr(calc_prod_lower(p)), calc_prod_val(p)) {
+    match p -> Eq(Nat, eval_expr(calc_prod_lower(p)), calc_prod_val(p)) {
+      mk_calc_Prod_I(
+        atom,
+        rep
+      ) => Eq_trans(
+        Eq_congr((x: Nat) => nat_mul(x, eval_expr(calc_factor_lower(rep))), lower_atom_ok(atom)),
+        Eq_congr((x: Nat) => nat_mul(calc_atom_val(atom), x), lower_factor_ok(rep))
+      )
+    }
+  }
+  theorem lower_factor_ok(
+    rep: List(calc_Prod_Rep1_I)
+  ): Eq(Nat, eval_expr(calc_factor_lower(rep)), calc_factor_val(rep)) {
+    match rep -> Eq(Nat, eval_expr(calc_factor_lower(rep)), calc_factor_val(rep)) {
+      Nil => refl()
+      Cons(
+        r,
+        more
+      ) => Eq_trans(
+        Eq_congr((x: Nat) => nat_mul(x, eval_expr(calc_factor_lower(more))), lower_star_ok(r)),
+        Eq_congr((x: Nat) => nat_mul(calc_star_val(r), x), lower_factor_ok(more))
+      )
+    }
+  }
+  theorem lower_star_ok(
+    r: calc_Prod_Rep1_I
+  ): Eq(Nat, eval_expr(calc_star_lower(r)), calc_star_val(r)) {
+    match r -> Eq(Nat, eval_expr(calc_star_lower(r)), calc_star_val(r)) {
+      mk_calc_Prod_Rep1_I(op, atom) => lower_atom_ok(atom)
+    }
+  }
+  theorem lower_atom_ok(a: calc_Atom_I): Eq(Nat, eval_expr(calc_atom_lower(a)), calc_atom_val(a)) {
+    match a -> Eq(Nat, eval_expr(calc_atom_lower(a)), calc_atom_val(a)) {
+      Num_I(t) => refl()
+      Paren_I(p) => lower_paren_ok(p)
+    }
+  }
+  theorem lower_paren_ok(
+    p: calc_Paren_I
+  ): Eq(Nat, eval_expr(calc_paren_lower(p)), calc_paren_val(p)) {
+    match p -> Eq(Nat, eval_expr(calc_paren_lower(p)), calc_paren_val(p)) {
+      mk_calc_Paren_I(l, e, r) => lower_expr_ok(e)
+    }
+  }
+}
+
+// What a text says is what the stack machine leaves: for every tree the reader can make, the compiled
+// code never underflows and leaves the value of the tree.
+theorem calc_run_correct(
+  e: calc_Expr_I
+): Eq(
+  Option(List(Nat)),
+  run_code(compile_expr(calc_expr_lower(e)), Nil),
+  Some(Cons(calc_expr_val(e), Nil))
+) {
+  Eq_trans(
+    compile_correct(calc_expr_lower(e)),
+    Eq_congr((x: Nat) => Some(Cons(x, Nil)), lower_expr_ok(e))
+  )
+}
+
+// With constant folding in between, as the program runs it.
+theorem calc_run_folded_correct(
+  e: calc_Expr_I
+): Eq(
+  Option(List(Nat)),
+  run_code(compile_expr(fold_expr(calc_expr_lower(e))), Nil),
+  Some(Cons(calc_expr_val(e), Nil))
+) {
+  Eq_trans(
+    optimized_compile_correct(calc_expr_lower(e)),
+    Eq_congr((x: Nat) => Some(Cons(x, Nil)), lower_expr_ok(e))
+  )
+}

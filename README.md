@@ -161,6 +161,8 @@ written must be readable where it stands.
   - `examples/sort/`: insertion sort for any ordered type.
   - `examples/bst/`: a binary search tree.
   - `examples/compiler/`: arithmetic expressions compiled to a stack machine.
+  - `examples/calc/`: a calculator whose grammar also makes the proof side's types, proved to
+    leave the value of what it reads on the stack machine.
   - `examples/regex/`: a matcher by derivatives that decides its language.
   - `examples/wf/`: functions by well-founded recursion.
 - `examples/rust/`: Tauto programs that call Rust crates through generated

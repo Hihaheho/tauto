@@ -10,7 +10,7 @@
 
 ```text
 crates/tauto-parol         tauto.par（呼び出しのトークンと、syntax・macro・NAME!(…)・quote の構文を含む）とその表
-crates/tauto-grammar       文法の表のデータ型、表の読み込み、字句の駆動部、LL(k) の駆動部、型付き AST の汎用の木
+crates/tauto-syntax       文法の表のデータ型、表の読み込み、字句の駆動部、LL(k) の駆動部、型付き AST の汎用の木
                            依存：なし（std だけ）
 totes/llkgen               （Nib）文法の文字列から表を作る。コミットした参照の表と一字一句同じ
 crates/tauto               macros/：構文の値、衛生、展開、下ろし、由来、登録、Code、型付きマクロの変換、ステップ
@@ -22,16 +22,16 @@ meta/MacroScope.taut      同上（Scope.lean の tauto への移植）
 cases/macro/               受け入れのケース（.eure）
 ```
 
-依存の向き：`tauto` → `tauto-grammar`、`tauto` → `tauto-parol`。`tauto-grammar` は std の外のクレートに依存しない。
+依存の向き：`tauto` → `tauto-syntax`、`tauto` → `tauto-parol`。`tauto-syntax` は std の外のクレートに依存しない。
 
 ## 表の生成器（根拠）
 
 - `tauto.par` の構文解析器を作る道具は `tools/tauto-parol-gen` にだけある。道具の依存は多い（CLI、乱数、並列、生成器の道具など）ので、
   道具はワークスペースの外に自分の `Cargo.lock` を持ち、その依存はルートの `Cargo.lock` と tauto の本体の供給網に入らない。
 - 利用者の `syntax` の表は `totes/llkgen`（Nib）が作るので、表を作るのに道具は要らない。
-  `crates/tauto-selfhost/tests/llkgen.rs` が、コミットした参照の表（`crates/tauto-grammar/tests/data`、
+  `crates/tauto-selfhost/tests/llkgen.rs` が、コミットした参照の表（`crates/tauto-syntax/tests/data`、
   `crates/tauto/tests/syntax_fixtures/.tauto-syntax`、`examples/*/.tauto-syntax`）について、`totes/llkgen` の出力が一字一句同じであることを確かめる。
-- 実行部は自前（「`crates/tauto-grammar`」）。実行時に読んだ表をそのまま駆動部に渡せるように、表は実行時に作る値で持つ（`&'static` の定数にしない）。
+- 実行部は自前（「`crates/tauto-syntax`」）。実行時に読んだ表をそのまま駆動部に渡せるように、表は実行時に作る値で持つ（`&'static` の定数にしない）。
 
 ## モジュールと API
 
@@ -137,7 +137,7 @@ schema <N> { 型の宣言（`macro.md`「型付き AST の生成規則」）：<
 - `generator` の行は、表を作った生成器と表の書き方を決める版。`totes/llkgen` は、参照の表に書かれた版の書き方（状態の番号の付け方まで）に一致するように書いてある。
 - 文字クラスは区間の列（全コードポイントを走査しなくてよい）。字句の先読みは DFA を `lookahead_dfas` に番号で書く。
 
-### `crates/tauto-grammar`
+### `crates/tauto-syntax`
 
 依存なし。駆動部は `self-host.md` の `totes/scan`・`totes/llk` と **同じ振る舞い** にし、差分試験する。
 

@@ -20,10 +20,11 @@ This document says which module proves what, and what is still open.
   generated eliminators, the universe rules). By Gödel's second theorem a
   theory cannot prove its own consistency, so the model of the kernel is
   proved in Lean, in a stronger setting.
-* **The Rust implementation** (that `check.rs` implements that model) is
-  trusted; only tests relate them. Every declaration is checked twice in
-  Rust: by the named checker and by `check/core.rs`, which shares no code
-  with it beyond the surface syntax and reads names by their binders.
+* **The Rust implementation** (that `check/core.rs` implements that model)
+  is trusted; only tests relate them. Every declaration is checked by
+  `check/core.rs`, which reads names by their binders. The named checker
+  (`check.rs`) elaborates the surface syntax into the terms it checks, and
+  asks it every question of typing, reduction and conversion on the way.
 * Statements about tauto's *object* languages are proved in tauto as well
   (`std/` and `meta/`, checked by tauto's own kernel, axiom-free, enforced by
   `crates/tauto/tests/tauto_lib.rs`; see "Ported to tauto"). No axiom may be

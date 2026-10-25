@@ -143,6 +143,7 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
   - `examples/sort/`：任意の順序型の挿入ソート。
   - `examples/bst/`：二分探索木。
   - `examples/compiler/`：算術式からスタックマシンへのコンパイラ。
+  - `examples/calc/`：文法から証明側の型も作る電卓。読んだ式をスタックマシンで計算すると、その式の値が残ることを証明。
   - `examples/regex/`：微分による、言語を判定するマッチャ。
   - `examples/wf/`：整礎再帰による関数。
 - `examples/rust/`：生成したバインディングを通じて Rust のクレートを呼ぶ Tauto のプログラムと、
