@@ -1,0 +1,954 @@
+// The DFA of a scanner mode: the NFA on the disjoint classes, subset
+// construction, and partition refinement. The order of the states in the end
+// is the one the partition has, so it does not depend on the order the
+// subsets were found in.
+
+// A transition on the class `cc`.
+struct SdTr { cc: u64, to: u64 }
+
+// A state: transitions sorted by class, and the patterns it accepts
+// (sorted by priority, then terminal).
+struct SdSt { trans: List(SdTr), acc: List(SPat) }
+
+// ---------------------------------------------------------------- leaves
+
+fn sd_has_leaf(leaves: List(RHir), h: RHir) -> Bool {
+  match leaves {
+    Nil => false
+    Cons(l, rest) => rx_eq(l, h) || sd_has_leaf(rest, h)
+  }
+}
+
+// The leaves of the transitions of the NFA and of the NFAs of the lookaheads
+// of its patterns, once each, added to the leaves given.
+fn sd_leaves(a: Nfa, found: List(RHir)) -> List(RHir) {
+  var out = found
+  var states = a.states
+  var running = true
+  while running {
+    match states {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        var ts = s.trans
+        var walking = true
+        while walking {
+          match ts {
+            Nil => {
+              walking := false
+            }
+            Cons(t, others) => {
+              if t.kind == 1 && !sd_has_leaf(out, t.leaf) {
+                out := Cons(t.leaf, out)
+              }
+              ts := others
+            }
+          }
+        }
+        match s.acc {
+          Some(p) => if p.la_kind > 0 {
+            out := sd_leaves(nf_lookahead(p), out)
+          }
+          None => ()
+        }
+        states := more
+      }
+    }
+  }
+  out
+}
+
+fn sd_ids_of(leaves: List(RHir), ids: List(List(u64)), h: RHir) -> List(u64) {
+  match leaves {
+    Nil => Nil
+    Cons(l, rest) => match ids {
+      Nil => Nil
+      Cons(i, others) => if rx_eq(l, h) { i } else { sd_ids_of(rest, others, h) }
+    }
+  }
+}
+
+fn sd_convert_trans(ts: List(NTr), cc: CcOut) -> List(NTr) {
+  var out: List(NTr) = Nil
+  var rest = ts
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(t, more) => {
+        if t.kind == 1 {
+          var ids = sd_ids_of(cc.leaves, cc.ids, t.leaf)
+          var walking = true
+          while walking {
+            match ids {
+              Nil => {
+                walking := false
+              }
+              Cons(i, others) => {
+                out := Cons(NTr { kind: 2, leaf: RhEmpty, cc: i, target: t.target }, out)
+                ids := others
+              }
+            }
+          }
+        } else {
+          out := Cons(t, out)
+        }
+        rest := more
+      }
+    }
+  }
+  nf_rev_trans(out)
+}
+
+fn nf_rev_trans(xs: List(NTr)) -> List(NTr) {
+  var out: List(NTr) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The NFA with its transitions on the disjoint classes of `cc`.
+fn sd_convert(a: Nfa, cc: CcOut) -> Nfa {
+  var out: List(NSt) = Nil
+  var rest = a.states
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        out := Cons(NSt { trans: sd_convert_trans(s.trans, cc), acc: s.acc }, out)
+        rest := more
+      }
+    }
+  }
+  var fwd: List(NSt) = Nil
+  var back = out
+  var walking = true
+  while walking {
+    match back {
+      Nil => {
+        walking := false
+      }
+      Cons(s, more) => {
+        fwd := Cons(s, fwd)
+        back := more
+      }
+    }
+  }
+  Nfa { states: fwd, n: a.n, start: a.start, end: a.end }
+}
+
+// ---------------------------------------------------------------- the patterns accepted
+
+fn sd_before(a: SPat, b: SPat) -> Bool {
+  a.priority < b.priority || (a.priority == b.priority && a.terminal < b.terminal)
+}
+
+fn sd_same_pat(a: SPat, b: SPat) -> Bool {
+  a.priority == b.priority && a.terminal == b.terminal && a.pattern == b.pattern
+}
+
+fn sd_insert_pat(xs: List(SPat), p: SPat) -> List(SPat) {
+  match xs {
+    Nil => Cons(p, Nil)
+    Cons(x, rest) => if sd_same_pat(x, p) {
+      xs
+    } else if sd_before(p, x) {
+      Cons(p, xs)
+    } else {
+      Cons(x, sd_insert_pat(rest, p))
+    }
+  }
+}
+
+// Up to and with the first pattern that has no lookahead.
+fn sd_truncate(xs: List(SPat)) -> List(SPat) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if x.la_kind == 0 { Cons(x, Nil) } else { Cons(x, sd_truncate(rest)) }
+  }
+}
+
+// What a state accepts with pattern `p` added.
+fn sd_add_pat(xs: List(SPat), p: SPat) -> List(SPat) {
+  sd_truncate(sd_insert_pat(xs, p))
+}
+
+// ---------------------------------------------------------------- subset construction
+
+fn sd_nst_get(&v: Vec(NSt), i: u64) -> NSt {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_list_get(&v: Vec(List(u64)), i: u64) -> List(u64) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_bool_get(&v: Vec(Bool), i: u64) -> Bool {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_bool_set(&mut v: Vec(Bool), i: u64) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := true
+    }
+    None => ()
+  }
+}
+
+fn sd_vec_of_states(xs: List(NSt)) -> Vec(NSt) {
+  var out: Vec(NSt) = vec_new()
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        vec_push(&mut out, x)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The states reached from `s` by empty transitions, sorted.
+fn sd_closure(&states: Vec(NSt), s: u64, n: u64) -> List(u64) {
+  var seen: Vec(Bool) = vec_new()
+  var i: u64 = 0
+  while i < n {
+    vec_push(&mut seen, false)
+    i := i + 1
+  }
+  var stack: List(u64) = Cons(s, Nil)
+  sd_bool_set(&mut seen, s)
+  while true_stack(stack) {
+    match stack {
+      Nil => ()
+      Cons(x, rest) => {
+        stack := rest
+        var ts = sd_nst_get(&states, x).trans
+        var walking = true
+        while walking {
+          match ts {
+            Nil => {
+              walking := false
+            }
+            Cons(t, more) => {
+              if t.kind == 0 && !sd_bool_get(&seen, t.target) {
+                sd_bool_set(&mut seen, t.target)
+                stack := Cons(t.target, stack)
+              }
+              ts := more
+            }
+          }
+        }
+      }
+    }
+  }
+  var out: List(u64) = Nil
+  var k = n
+  while k > 0 {
+    k := k - 1
+    if sd_bool_get(&seen, k) {
+      out := Cons(k, out)
+    }
+  }
+  out
+}
+
+fn true_stack(s: List(u64)) -> Bool {
+  match s {
+    Nil => false
+    Cons(x, rest) => true
+  }
+}
+
+// The pairs of a class and a target, packed, of the non-epsilon transitions
+// of the states of a subset.
+fn sd_moves(&states: Vec(NSt), subset: List(u64)) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = subset
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        var ts = sd_nst_get(&states, s).trans
+        var walking = true
+        while walking {
+          match ts {
+            Nil => {
+              walking := false
+            }
+            Cons(t, others) => {
+              if t.kind == 2 {
+                out := Cons(t.cc * 4294967296 + t.target, out)
+              }
+              ts := others
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  lg_sort_keep(out)
+}
+
+fn sd_concat_ids(a: List(u64), b: List(u64)) -> List(u64) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, sd_concat_ids(rest, b))
+  }
+}
+
+// The accepted patterns of a subset.
+fn sd_accepts(&states: Vec(NSt), subset: List(u64)) -> List(SPat) {
+  var out: List(SPat) = Nil
+  var rest = subset
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        match sd_nst_get(&states, s).acc {
+          Some(p) => {
+            out := sd_add_pat(out, p)
+          }
+          None => ()
+        }
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn sd_closure_get(&v: Vec(List(u64)), i: u64) -> List(u64) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_trans_get(&v: Vec(List(SdTr)), i: u64) -> List(SdTr) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_rev_trs(xs: List(SdTr)) -> List(SdTr) {
+  var out: List(SdTr) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn sd_rev_sts(xs: List(SdSt)) -> List(SdSt) {
+  var out: List(SdSt) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The subset construction: the DFA before it is made minimal.
+fn sd_subset(a: Nfa) -> List(SdSt) {
+  let states = sd_vec_of_states(a.states)
+  var closures: Vec(List(u64)) = vec_new()
+  var i: u64 = 0
+  while i < a.n {
+    vec_push(&mut closures, sd_closure(&states, i, a.n))
+    i := i + 1
+  }
+  var subsets: Vec(List(u64)) = vec_new()
+  var trans: Vec(List(SdTr)) = vec_new()
+  var ids = hashmap_new()
+  let first = sd_closure_get(&closures, a.start)
+  vec_push(&mut subsets, first)
+  hashmap_insert(&mut ids, cc_key(first), 0)
+  var q: u64 = 0
+  while q < vec_len(&subsets) {
+    let subset = sd_list_get(&subsets, q)
+    var moves = sd_moves(&states, subset)
+    var out: List(SdTr) = Nil
+    while sd_some(moves) {
+      match moves {
+        Nil => ()
+        Cons(m, rest) => {
+          let cc = div(m, 4294967296)
+          var combined: List(u64) = Nil
+          var more = moves
+          var grouping = true
+          while grouping {
+            match more {
+              Nil => {
+                grouping := false
+              }
+              Cons(x, others) => if div(x, 4294967296) == cc {
+                combined := sd_concat_ids(sd_closure_get(&closures, mod(x, 4294967296)), combined)
+                more := others
+              } else {
+                grouping := false
+              }
+            }
+          }
+          moves := more
+          let target = cc_unique(combined)
+          let key = cc_key(target)
+          var found: Option(u64) = None
+          match hashmap_get(&ids, key) {
+            Some(g) => {
+              found := Some(g + 0)
+            }
+            None => ()
+          }
+          let to = match found {
+            Some(g) => g
+            None => {
+              let g = vec_len(&subsets)
+              vec_push(&mut subsets, target)
+              hashmap_insert(&mut ids, key, g)
+              g
+            }
+          }
+          out := Cons(SdTr { cc: cc, to: to }, out)
+        }
+      }
+    }
+    vec_push(&mut trans, sd_rev_trs(out))
+    q := q + 1
+  }
+  var result: List(SdSt) = Nil
+  var k: u64 = 0
+  while k < vec_len(&subsets) {
+    result := Cons(
+      SdSt { trans: sd_trans_get(&trans, k), acc: sd_accepts(&states, sd_list_get(&subsets, k)) },
+      result
+    )
+    k := k + 1
+  }
+  sd_rev_sts(result)
+}
+
+fn sd_some(xs: List(u64)) -> Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => true
+  }
+}
+
+// ---------------------------------------------------------------- the minimal DFA
+
+fn sd_hex(n: u64) -> Text {
+  if n < 16 {
+    text_slice_or_empty("0123456789abcdef", n, n + 1)
+  } else {
+    text_concat_all(Cons(sd_hex(div(n, 16)), Cons(sd_hex(mod(n, 16)), Nil)))
+  }
+}
+
+// `{:?}` of a string: quoted, with the escapes Rust writes.
+fn sd_debug_text(t: Text) -> Text {
+  var b = buf_new()
+  buf_push(&mut b, &"\"")
+  var at: u64 = 0
+  while at < text_len(t) {
+    match text_decode(t, at) {
+      Some(d) => {
+        let c = d.fst
+        if c == 34 {
+          buf_push(&mut b, &"\\\"")
+        } else if c == 92 {
+          buf_push(&mut b, &"\\\\")
+        } else if c == 10 {
+          buf_push(&mut b, &"\\n")
+        } else if c == 13 {
+          buf_push(&mut b, &"\\r")
+        } else if c == 9 {
+          buf_push(&mut b, &"\\t")
+        } else if c == 0 {
+          buf_push(&mut b, &"\\0")
+        } else if c < 32 || c == 127 || (c >= 128 && c < 160) {
+          buf_push(&mut b, &text_concat_all(Cons("\\u{", Cons(sd_hex(c), Cons("}", Nil)))))
+        } else {
+          buf_push(&mut b, &text_slice_or_empty(t, at, at + d.snd))
+        }
+        at := at + d.snd
+      }
+      None => {
+        at := at + 1
+      }
+    }
+  }
+  buf_push(&mut b, &"\"")
+  text_of(b)
+}
+
+// A pattern written out with all its fields: the text of what a state
+// accepts, by which `sd_minimize` groups and orders the accepting states.
+fn sd_debug_pat(p: SPat) -> Text {
+  text_concat_all(
+    Cons(
+      "Pattern { pattern: ",
+      Cons(
+        sd_debug_text(p.pattern),
+        Cons(
+          ", terminal_type: TerminalID(",
+          Cons(
+            text_of_u64(p.terminal),
+            Cons(
+              "), priority: ",
+              Cons(
+                text_of_u64(p.priority),
+                Cons(
+                  ", lookahead: ",
+                  Cons(
+                    if p.la_kind == 0 {
+                      "None"
+                    } else if p.la_kind == 1 {
+                      "Positive"
+                    } else {
+                      "Negative"
+                    },
+                    Cons(" }", Nil)
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+fn sd_debug_pats(xs: List(SPat)) -> Text {
+  var b = buf_new()
+  buf_push(&mut b, &"[")
+  var first = true
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        if !first {
+          buf_push(&mut b, &", ")
+        }
+        first := false
+        buf_push(&mut b, &sd_debug_pat(p))
+        rest := more
+      }
+    }
+  }
+  buf_push(&mut b, &"]")
+  text_of(b)
+}
+
+fn sd_insert_text(xs: List(Text), t: Text) -> List(Text) ! {Div} {
+  match xs {
+    Nil => Cons(t, Nil)
+    Cons(
+      x,
+      rest
+    ) => if text_compare(t, x) < 0 { Cons(t, xs) } else { Cons(x, sd_insert_text(rest, t)) }
+  }
+}
+
+fn sd_acc_get(&v: Vec(SdSt), i: u64) -> SdSt {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_nat_get(&v: Vec(u64), i: u64) -> u64 {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sd_nat_set(&mut v: Vec(u64), i: u64, x: u64) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := x
+    }
+    None => ()
+  }
+}
+
+// A state with the signature it has among the groups of a partition.
+struct SdSig { sig: List(u64), state: u64 }
+
+// -1, 0 or 1 as `a` is before, the same as, or after `b` (`Vec` order).
+fn sd_cmp_sig(a: List(u64), b: List(u64)) -> i64 {
+  match a {
+    Nil => match b {
+      Nil => 0
+      Cons(y, ys) => -1
+    }
+    Cons(x, xs) => match b {
+      Nil => 1
+      Cons(y, ys) => if x < y { -1 } else if x > y { 1 } else { sd_cmp_sig(xs, ys) }
+    }
+  }
+}
+
+fn sd_sig_less(a: SdSig, b: SdSig) -> Bool {
+  let c = sd_cmp_sig(a.sig, b.sig)
+  c < 0 || (c == 0 && a.state < b.state)
+}
+
+fn sd_insert_sig(xs: List(SdSig), x: SdSig) -> List(SdSig) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => if sd_sig_less(x, y) { Cons(x, xs) } else { Cons(y, sd_insert_sig(rest, x)) }
+  }
+}
+
+fn sd_signature(&states: Vec(SdSt), &gid: Vec(u64), s: u64) -> List(u64) {
+  var out: List(u64) = Nil
+  var ts = sd_acc_get(&states, s).trans
+  var running = true
+  while running {
+    match ts {
+      Nil => {
+        running := false
+      }
+      Cons(t, more) => {
+        out := Cons(sd_nat_get(&gid, t.to), Cons(t.cc, out))
+        ts := more
+      }
+    }
+  }
+  text_u64_reverse(out)
+}
+
+fn sd_groups_get(&v: Vec(List(u64)), i: u64) -> List(u64) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+// The minimal DFA by partition refinement.
+fn sd_minimize(dfa: List(SdSt)) -> List(SdSt) {
+  var states: Vec(SdSt) = vec_new()
+  var rest0 = dfa
+  var run0 = true
+  while run0 {
+    match rest0 {
+      Nil => {
+        run0 := false
+      }
+      Cons(s, more) => {
+        vec_push(&mut states, s)
+        rest0 := more
+      }
+    }
+  }
+  let n = vec_len(&states)
+  // The initial partition: the states that accept nothing, then the ones that
+  // accept the same, by the text of what they accept.
+  var keys: Vec(Text) = vec_new()
+  var names = hashmap_new()
+  var sorted: List(Text) = Nil
+  var i: u64 = 0
+  while i < n {
+    let acc = sd_acc_get(&states, i).acc
+    match acc {
+      Nil => {
+        vec_push(&mut keys, "")
+      }
+      Cons(p, more) => {
+        let k = sd_debug_pats(acc)
+        vec_push(&mut keys, k)
+        var known = false
+        match hashmap_get(&names, k) {
+          Some(x) => {
+            known := true
+          }
+          None => ()
+        }
+        if !known {
+          hashmap_insert(&mut names, k, 0)
+          sorted := sd_insert_text(sorted, k)
+        }
+      }
+    }
+    i := i + 1
+  }
+  var index = hashmap_new()
+  var next: u64 = 1
+  var ks = sorted
+  var run1 = true
+  while run1 {
+    match ks {
+      Nil => {
+        run1 := false
+      }
+      Cons(k, more) => {
+        hashmap_insert(&mut index, k, next)
+        next := next + 1
+        ks := more
+      }
+    }
+  }
+  var gid: Vec(u64) = vec_new()
+  var groups: Vec(List(u64)) = vec_new()
+  var g: u64 = 0
+  while g < next {
+    vec_push(&mut groups, Nil)
+    g := g + 1
+  }
+  var j: u64 = 0
+  while j < n {
+    var id: u64 = 0
+    let k = sd_keys_get(&keys, j)
+    if text_len(k) > 0 {
+      match hashmap_get(&index, k) {
+        Some(x) => {
+          id := x + 0
+        }
+        None => ()
+      }
+    }
+    vec_push(&mut gid, id)
+    j := j + 1
+  }
+  // The states of a group in ascending order: fill from the last.
+  var m = n
+  while m > 0 {
+    m := m - 1
+    let id = sd_nat_get(&gid, m)
+    let old = sd_groups_get(&groups, id)
+    match vec_get_mut(&mut groups, id) {
+      Some(slot) => {
+        slot := Cons(m, old)
+      }
+      None => ()
+    }
+  }
+  var count = vec_len(&groups)
+  var changed = true
+  while changed {
+    var next_groups: Vec(List(u64)) = vec_new()
+    var next_gid: Vec(u64) = vec_new()
+    var z: u64 = 0
+    while z < n {
+      vec_push(&mut next_gid, 0)
+      z := z + 1
+    }
+    var gi: u64 = 0
+    while gi < vec_len(&groups) {
+      let members = sd_groups_get(&groups, gi)
+      match members {
+        Nil => ()
+        Cons(only, others) => match others {
+          Nil => {
+            let id = vec_len(&next_groups)
+            vec_push(&mut next_groups, members)
+            sd_nat_set(&mut next_gid, only, id)
+          }
+          more => {
+            var sigs: List(SdSig) = Nil
+            var ms = members
+            var walking = true
+            while walking {
+              match ms {
+                Nil => {
+                  walking := false
+                }
+                Cons(s, tail) => {
+                  sigs := sd_insert_sig(
+                    sigs,
+                    SdSig { sig: sd_signature(&states, &gid, s), state: s }
+                  )
+                  ms := tail
+                }
+              }
+            }
+            // Split the sorted states where the signature changes.
+            var current: List(u64) = Nil
+            var current_sig: List(u64) = Nil
+            var started = false
+            var ss = sigs
+            var splitting = true
+            while splitting {
+              match ss {
+                Nil => {
+                  splitting := false
+                }
+                Cons(x, tail) => {
+                  if started && sd_cmp_sig(x.sig, current_sig) != 0 {
+                    let id = vec_len(&next_groups)
+                    var ids = current
+                    var filling = true
+                    while filling {
+                      match ids {
+                        Nil => {
+                          filling := false
+                        }
+                        Cons(s, more2) => {
+                          sd_nat_set(&mut next_gid, s, id)
+                          ids := more2
+                        }
+                      }
+                    }
+                    vec_push(&mut next_groups, text_u64_reverse(current))
+                    current := Nil
+                  }
+                  current := Cons(x.state, current)
+                  current_sig := x.sig
+                  started := true
+                  ss := tail
+                }
+              }
+            }
+            if started {
+              let id = vec_len(&next_groups)
+              var ids = current
+              var filling = true
+              while filling {
+                match ids {
+                  Nil => {
+                    filling := false
+                  }
+                  Cons(s, more2) => {
+                    sd_nat_set(&mut next_gid, s, id)
+                    ids := more2
+                  }
+                }
+              }
+              vec_push(&mut next_groups, text_u64_reverse(current))
+            }
+          }
+        }
+      }
+      gi := gi + 1
+    }
+    let next_count = vec_len(&next_groups)
+    changed := next_count != count
+    count := next_count
+    groups := next_groups
+    gid := next_gid
+  }
+  // The group of the start state comes first; the minimal states are the groups.
+  let start_group = sd_nat_get(&gid, 0)
+  var order: List(u64) = Nil
+  var q = vec_len(&groups)
+  while q > 0 {
+    q := q - 1
+    if q != start_group {
+      order := Cons(q, order)
+    }
+  }
+  order := Cons(start_group, order)
+  var renumber: Vec(u64) = vec_new()
+  var r: u64 = 0
+  while r < vec_len(&groups) {
+    vec_push(&mut renumber, 0)
+    r := r + 1
+  }
+  var place: u64 = 0
+  var os = order
+  var run2 = true
+  while run2 {
+    match os {
+      Nil => {
+        run2 := false
+      }
+      Cons(gi, more) => {
+        sd_nat_set(&mut renumber, gi, place)
+        place := place + 1
+        os := more
+      }
+    }
+  }
+  var out: List(SdSt) = Nil
+  var os2 = order
+  var run3 = true
+  while run3 {
+    match os2 {
+      Nil => {
+        run3 := false
+      }
+      Cons(gi, more) => {
+        match sd_groups_get(&groups, gi) {
+          Nil => ()
+          Cons(rep, tail) => {
+            let st = sd_acc_get(&states, rep)
+            var ts: List(SdTr) = Nil
+            var walking = st.trans
+            var run4 = true
+            while run4 {
+              match walking {
+                Nil => {
+                  run4 := false
+                }
+                Cons(t, rest) => {
+                  ts := Cons(
+                    SdTr { cc: t.cc, to: sd_nat_get(&renumber, sd_nat_get(&gid, t.to)) },
+                    ts
+                  )
+                  walking := rest
+                }
+              }
+            }
+            out := Cons(SdSt { trans: sd_rev_trs(ts), acc: st.acc }, out)
+          }
+        }
+        os2 := more
+      }
+    }
+  }
+  sd_rev_sts(out)
+}
+
+fn sd_keys_get(&v: Vec(Text), i: u64) -> Text {
+  let &x = vec_index(&v, i)
+  x
+}

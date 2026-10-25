@@ -1,0 +1,292 @@
+// `macro FILE…`: prints `== FILE` and the dump of each program after
+// `rs_resolve`, with `__m` as the separator between a name and its scopes
+// (the differential test's input, `crates/tauto-selfhost/tests/macro.rs`), or
+// `error` when the file is not a program.
+
+// The names that a declaration of the program makes a constructor.
+fn mc_ctors(xs: List(SurfaceStmt)) -> List(Text) ! {Div} {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => mc_append(mc_ctors_of(s), mc_ctors(rest))
+  }
+}
+
+fn mc_append(a: List(Text), b: List(Text)) -> List(Text) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, mc_append(rest, b))
+  }
+}
+
+fn mc_data_names(cs: List(SurfaceDataCtor)) -> List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.name, mc_data_names(rest))
+  }
+}
+
+fn mc_ind_names(cs: List(SurfaceCtor)) -> List(Text) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.name, mc_ind_names(rest))
+  }
+}
+
+fn mc_ctors_of(s: SurfaceStmt) -> List(Text) {
+  match s {
+    StStruct(d) => mc_data_names(d.constructors)
+    StEnum(d) => mc_data_names(d.constructors)
+    StInductive(d) => mc_ind_names(d.constructors)
+    StMutual(items, a, b) => mc_ctors(items)
+    StModule(name, items, a, b) => mc_ctors(items)
+    other => Nil
+  }
+}
+
+fn mc_each(&t: SyntaxTables, classes: UnicodeClasses, paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+          Some(stmts) => os_print(surface_dump(rs_resolve(stmts, mc_ctors(stmts), "__m")))
+          None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+        }
+      }
+      mc_each(t, classes, rest)
+    }
+  }
+}
+
+// The spans given out, `id:start:end` each.
+fn mc_issued(&xs: Vec(LfIss)) -> Text {
+  var out = "spans"
+  var i: u64 = 0
+  while i < vec_len(&xs) {
+    let &x = vec_index(&xs, i)
+    out := text_concat_all(
+      Cons(
+        out,
+        Cons(
+          " ",
+          Cons(
+            text_of_u64(x.id),
+            Cons(":", Cons(text_of_u64(x.start), Cons(":", Cons(text_of_u64(x.end), Nil))))
+          )
+        )
+      )
+    )
+    i := i + 1
+  }
+  text_concat_all(Cons(out, Cons(text_newline(), Nil)))
+}
+
+// For each statement of the program: `ok` and the value `Lift` makes of it
+// with the scopes 3 and 7, `skip` when it holds a macro call on a literal, or
+// `err`.
+fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), tabled: Bool) -> () {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      var errs: LfSt = lf_st_new(tabled)
+      let node = lf_stmt(
+        LfCtx { scopes: Cons(3, Cons(7, Nil)), in_quote: false, atoms: atoms, reflip: None },
+        &mut errs,
+        s
+      )
+      var bad = false
+      var lit = false
+      var i: u64 = 0
+      while i < vec_len(&errs.errs) {
+        let &e = vec_index(&errs.errs, i)
+        if e == "lit" {
+          lit := true
+        } else {
+          bad := true
+        }
+        i := i + 1
+      }
+      if bad {
+        os_print("err\n")
+      } else if lit {
+        os_print("skip\n")
+      } else if lower {
+        // The value written as the surface syntax again, the scope 5 flipped.
+        var lw = lw_new()
+        let out = lw_stmt(LwCtx { scope: 5, atoms: Nil }, &mut lw, node)
+        if vec_len(&lw.errs) > 0 {
+          os_print("err\n")
+        } else {
+          os_print(
+            text_concat_all(
+              Cons("ok", Cons(text_newline(), Cons(surface_dump(Cons(out, Nil)), Nil)))
+            )
+          )
+        }
+      } else {
+        os_print(text_concat_all(Cons("ok ", Cons(nd_show(node), Cons(text_newline(), Nil)))))
+        if tabled {
+          os_print(mc_issued(&errs.issued))
+        }
+      }
+      mc_lift_stmts(rest, lower, atoms, tabled)
+    }
+  }
+}
+
+fn mc_lift_each(
+  &t: SyntaxTables,
+  classes: UnicodeClasses,
+  paths: List(Text),
+  lower: Bool,
+  atoms: List(LfAtom),
+  tabled: Bool
+) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+          Some(stmts) => mc_lift_stmts(stmts, lower, atoms, tabled)
+          None => os_print("error\n")
+        }
+      }
+      mc_lift_each(t, classes, rest, lower, atoms, tabled)
+    }
+  }
+}
+
+// The term a `quote` of the program makes (`stmts` for a `quote stmts`).
+fn mc_quote_each(&t: SyntaxTables, classes: UnicodeClasses, stmts: Bool, paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+          Some(body) => {
+            var errs: LfSt = lf_st_new(false)
+            let term = lf_desugar(&mut errs, stmts, body, LfSp { start: 0, end: text_len(source) })
+            if vec_len(&errs.errs) > 0 {
+              os_print("err\n")
+            } else {
+              os_print(surface_dump(Cons(StExpr(term), Nil)))
+            }
+          }
+          None => os_print("error\n")
+        }
+      }
+      mc_quote_each(t, classes, stmts, rest)
+    }
+  }
+}
+
+// Each statement lifted with the scopes 3 and 7, lowered with the scope 5, and
+// read again with that scope flipped back (`syn_expand`): the value of that.
+fn mc_reflip_stmts(xs: List(SurfaceStmt)) -> () {
+  match xs {
+    Nil => ()
+    Cons(s, rest) => {
+      var errs: LfSt = lf_st_new(false)
+      let node = lf_stmt(
+        LfCtx { scopes: Cons(3, Cons(7, Nil)), in_quote: false, atoms: Nil, reflip: None },
+        &mut errs,
+        s
+      )
+      var bad = false
+      var lit = false
+      var i: u64 = 0
+      while i < vec_len(&errs.errs) {
+        let &e = vec_index(&errs.errs, i)
+        if e == "lit" {
+          lit := true
+        } else {
+          bad := true
+        }
+        i := i + 1
+      }
+      if bad {
+        os_print("err\n")
+      } else if lit {
+        os_print("skip\n")
+      } else {
+        var lw = lw_new()
+        let out = lw_stmt(LwCtx { scope: 5, atoms: Nil }, &mut lw, node)
+        if vec_len(&lw.errs) > 0 {
+          os_print("err\n")
+        } else {
+          var errs2: LfSt = lf_st_new(false)
+          let again = lf_stmt(
+            LfCtx { scopes: Nil, in_quote: false, atoms: Nil, reflip: Some(5) },
+            &mut errs2,
+            out
+          )
+          if vec_len(&errs2.errs) > 0 {
+            os_print("err\n")
+          } else {
+            os_print(text_concat_all(Cons("ok ", Cons(nd_show(again), Cons(text_newline(), Nil)))))
+          }
+        }
+      }
+      mc_reflip_stmts(rest)
+    }
+  }
+}
+
+fn mc_reflip_each(&t: SyntaxTables, classes: UnicodeClasses, paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => match surface_parse_program(t, classes, source, 0) {
+          Some(stmts) => mc_reflip_stmts(stmts)
+          None => os_print("error\n")
+        }
+      }
+      mc_reflip_each(t, classes, rest)
+    }
+  }
+}
+
+// The variables the test makes atoms of.
+fn mc_atoms() -> List(LfAtom) {
+  Cons(
+    LfAtom { name: "x", id: 11 },
+    Cons(
+      LfAtom { name: "a", id: 12 },
+      Cons(LfAtom { name: "n", id: 13 }, Cons(LfAtom { name: "f", id: 14 }, Nil))
+    )
+  )
+}
+
+match syntax_tables() {
+  None => os_eprint("the tables of the syntax are damaged")
+  Some(t) => match os_args() {
+    Cons("--lift", paths) => mc_lift_each(t, unicode_classes(), paths, false, Nil, false)
+    Cons("--lower", paths) => mc_lift_each(t, unicode_classes(), paths, true, Nil, false)
+    Cons(
+      "--lift-atoms",
+      paths
+    ) => mc_lift_each(t, unicode_classes(), paths, false, mc_atoms(), false)
+    Cons("--reflip", paths) => mc_reflip_each(t, unicode_classes(), paths)
+    Cons("--lift-spans", paths) => mc_lift_each(t, unicode_classes(), paths, false, Nil, true)
+    Cons("--quote", paths) => mc_quote_each(t, unicode_classes(), false, paths)
+    Cons("--quote-stmts", paths) => mc_quote_each(t, unicode_classes(), true, paths)
+    paths => mc_each(t, unicode_classes(), paths)
+  }
+}

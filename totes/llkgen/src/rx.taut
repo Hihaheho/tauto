@@ -1,0 +1,1295 @@
+// The regular expressions of the scanner of a grammar, read into a tree
+// (`RHir`): the subset the grammars of `syntax` use, with the simplifications
+// of alternations, concatenations, classes and repetitions below, since the
+// scanner tables depend on what a leaf of the expression (a character or a
+// class) is. The trees of the corpus `crates/tauto-selfhost/tests/data/regexes.txt`
+// are checked in the tests.
+
+// A range of code points, both ends in.
+struct RRange { lo: u64, hi: u64 }
+
+enum RHir {
+  RhEmpty
+  // The characters, merged: `ab`.
+  RhLit(List(u64))
+  // A class; none at all when it is empty, which never matches.
+  RhClass(List(RRange))
+  RhConcat(List(RHir))
+  RhAlt(List(RHir))
+  // The minimum, the maximum (greedy).
+  RhRep(RHir, u64, Option(u64))
+  RhCap(RHir)
+}
+
+// ---------------------------------------------------------------- ranges
+
+fn rx_inc(c: u64) -> u64 {
+  if c == 55295 { 57344 } else { c + 1 }
+}
+
+fn rx_dec(c: u64) -> u64 {
+  if c == 57344 { 55295 } else { c - 1 }
+}
+
+fn rx_max_char() -> u64 {
+  1114111
+}
+
+fn rx_range_less(a: RRange, b: RRange) -> Bool {
+  a.lo < b.lo || (a.lo == b.lo && a.hi < b.hi)
+}
+
+fn rx_insert_range(xs: List(RRange), r: RRange) -> List(RRange) {
+  match xs {
+    Nil => Cons(r, Nil)
+    Cons(
+      x,
+      rest
+    ) => if rx_range_less(r, x) { Cons(r, xs) } else { Cons(x, rx_insert_range(rest, r)) }
+  }
+}
+
+fn rx_sort_ranges(xs: List(RRange)) -> List(RRange) {
+  var out: List(RRange) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := rx_insert_range(out, x)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn rx_rev_ranges(xs: List(RRange)) -> List(RRange) {
+  var out: List(RRange) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// Sorted, and ranges that touch or overlap made one.
+fn rx_canon(xs: List(RRange)) -> List(RRange) {
+  var out: List(RRange) = Nil
+  var rest = rx_sort_ranges(xs)
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        match out {
+          Nil => {
+            out := Cons(x, Nil)
+          }
+          Cons(last, before) => {
+            // `max(lower) <= min(upper) + 1`: they touch or overlap.
+            let lo = if last.lo > x.lo { last.lo } else { x.lo }
+            let hi = if last.hi < x.hi { last.hi } else { x.hi }
+            if lo <= hi + 1 {
+              out := Cons(
+                RRange { lo: if last.lo < x.lo { last.lo } else { x.lo }, hi: if last.hi > x.hi { last.hi } else { x.hi } },
+                before
+              )
+            } else {
+              out := Cons(x, out)
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  rx_rev_ranges(out)
+}
+
+fn rx_union(a: List(RRange), b: List(RRange)) -> List(RRange) {
+  rx_canon(rx_append_ranges(a, b))
+}
+
+fn rx_append_ranges(a: List(RRange), b: List(RRange)) -> List(RRange) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, rx_append_ranges(rest, b))
+  }
+}
+
+// The complement of a canonical set among the code points.
+fn rx_negate(xs: List(RRange)) -> List(RRange) {
+  match xs {
+    Nil => Cons(RRange { lo: 0, hi: rx_max_char() }, Nil)
+    Cons(first, rest) => {
+      var out: List(RRange) = Nil
+      if first.lo > 0 {
+        out := Cons(RRange { lo: 0, hi: rx_dec(first.lo) }, out)
+      }
+      var prev = first
+      var more = rest
+      var running = true
+      while running {
+        match more {
+          Nil => {
+            running := false
+          }
+          Cons(r, others) => {
+            out := Cons(RRange { lo: rx_inc(prev.hi), hi: rx_dec(r.lo) }, out)
+            prev := r
+            more := others
+          }
+        }
+      }
+      if prev.hi < rx_max_char() {
+        out := Cons(RRange { lo: rx_inc(prev.hi), hi: rx_max_char() }, out)
+      }
+      rx_rev_ranges(out)
+    }
+  }
+}
+
+fn rx_intersect(a: List(RRange), b: List(RRange)) -> List(RRange) {
+  var out: List(RRange) = Nil
+  var xs = a
+  var running = true
+  while running {
+    match xs {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        var ys = b
+        var walking = true
+        while walking {
+          match ys {
+            Nil => {
+              walking := false
+            }
+            Cons(y, others) => {
+              let lo = if x.lo > y.lo { x.lo } else { y.lo }
+              let hi = if x.hi < y.hi { x.hi } else { y.hi }
+              if lo <= hi {
+                out := Cons(RRange { lo: lo, hi: hi }, out)
+              }
+              ys := others
+            }
+          }
+        }
+        xs := more
+      }
+    }
+  }
+  rx_canon(out)
+}
+
+// What of `x` is left when `y` is taken off.
+fn rx_sub_range(x: RRange, y: RRange) -> List(RRange) {
+  if y.hi < x.lo || x.hi < y.lo {
+    Cons(x, Nil)
+  } else {
+    var out: List(RRange) = Nil
+    if x.lo < y.lo {
+      out := Cons(RRange { lo: x.lo, hi: rx_dec(y.lo) }, out)
+    }
+    if y.hi < x.hi {
+      out := Cons(RRange { lo: rx_inc(y.hi), hi: x.hi }, out)
+    }
+    rx_rev_ranges(out)
+  }
+}
+
+fn rx_sub_ranges(xs: List(RRange), y: RRange) -> List(RRange) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => rx_append_ranges(rx_sub_range(x, y), rx_sub_ranges(rest, y))
+  }
+}
+
+fn rx_difference(a: List(RRange), b: List(RRange)) -> List(RRange) {
+  match b {
+    Nil => a
+    Cons(y, rest) => rx_difference(rx_sub_ranges(a, y), rest)
+  }
+}
+
+fn rx_symmetric(a: List(RRange), b: List(RRange)) -> List(RRange) {
+  rx_union(rx_difference(a, b), rx_difference(b, a))
+}
+
+// The ranges that the table of a class holds (pairs of numbers).
+fn rx_table_ranges(t: Text) -> List(RRange) {
+  var out: List(RRange) = Nil
+  var words = text_split(t, " ")
+  var running = true
+  while running {
+    match words {
+      Cons(a, Cons(b, rest)) => {
+        out := Cons(RRange { lo: rx_nat(a), hi: rx_nat(b) }, out)
+        words := rest
+      }
+      other => {
+        running := false
+      }
+    }
+  }
+  rx_rev_ranges(out)
+}
+
+fn rx_nat(t: Text) -> u64 {
+  match text_parse_u64(t) {
+    Some(n) => n
+    None => 0
+  }
+}
+
+// ---------------------------------------------------------------- the HIR
+
+fn rx_class_literal(rs: List(RRange)) -> Option(u64) {
+  match rs {
+    Cons(r, Nil) => if r.lo == r.hi { Some(r.lo) } else { None }
+    other => None
+  }
+}
+
+// A class: one character is a literal.
+fn rx_class(rs: List(RRange)) -> RHir {
+  match rx_class_literal(rs) {
+    Some(c) => RhLit(Cons(c, Nil))
+    None => RhClass(rs)
+  }
+}
+
+fn rx_append_chars(a: List(u64), b: List(u64)) -> List(u64) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, rx_append_chars(rest, b))
+  }
+}
+
+fn rx_lit(cs: List(u64)) -> RHir {
+  match cs {
+    Nil => RhEmpty
+    other => RhLit(cs)
+  }
+}
+
+// A concatenation: concatenations are flattened one level, literals next to
+// each other are one, empty ones are left out.
+fn rx_concat(subs: List(RHir)) -> RHir {
+  var new: List(RHir) = Nil
+  var prior: Option(List(u64)) = None
+  var rest = subs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(sub, more) => {
+        match sub {
+          RhLit(cs) => {
+            prior := Some(match prior {
+              None => cs
+              Some(p) => rx_append_chars(p, cs)
+            })
+          }
+          RhConcat(subs2) => {
+            var inner = subs2
+            var walking = true
+            while walking {
+              match inner {
+                Nil => {
+                  walking := false
+                }
+                Cons(s2, others) => {
+                  match s2 {
+                    RhLit(cs) => {
+                      prior := Some(match prior {
+                        None => cs
+                        Some(p) => rx_append_chars(p, cs)
+                      })
+                    }
+                    other => {
+                      match prior {
+                        Some(p) => {
+                          new := Cons(rx_lit(p), new)
+                        }
+                        None => ()
+                      }
+                      prior := None
+                      new := Cons(other, new)
+                    }
+                  }
+                  inner := others
+                }
+              }
+            }
+          }
+          RhEmpty => ()
+          other => {
+            match prior {
+              Some(p) => {
+                new := Cons(rx_lit(p), new)
+              }
+              None => ()
+            }
+            prior := None
+            new := Cons(other, new)
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  match prior {
+    Some(p) => {
+      new := Cons(rx_lit(p), new)
+    }
+    None => ()
+  }
+  match rx_rev_hirs(new) {
+    Nil => RhEmpty
+    Cons(x, Nil) => x
+    all => RhConcat(all)
+  }
+}
+
+fn rx_rev_hirs(xs: List(RHir)) -> List(RHir) {
+  var out: List(RHir) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn rx_append_hirs(a: List(RHir), b: List(RHir)) -> List(RHir) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, rx_append_hirs(rest, b))
+  }
+}
+
+fn rx_eq_list(a: List(RHir), b: List(RHir)) -> Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(y, ys) => false
+    }
+    Cons(x, xs) => match b {
+      Nil => false
+      Cons(y, ys) => rx_eq(x, y) && rx_eq_list(xs, ys)
+    }
+  }
+}
+
+fn rx_eq_chars(a: List(u64), b: List(u64)) -> Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(y, ys) => false
+    }
+    Cons(x, xs) => match b {
+      Nil => false
+      Cons(y, ys) => x == y && rx_eq_chars(xs, ys)
+    }
+  }
+}
+
+fn rx_eq_ranges(a: List(RRange), b: List(RRange)) -> Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(y, ys) => false
+    }
+    Cons(x, xs) => match b {
+      Nil => false
+      Cons(y, ys) => x.lo == y.lo && x.hi == y.hi && rx_eq_ranges(xs, ys)
+    }
+  }
+}
+
+fn rx_eq_max(a: Option(u64), b: Option(u64)) -> Bool {
+  match a {
+    None => match b {
+      None => true
+      Some(y) => false
+    }
+    Some(x) => match b {
+      None => false
+      Some(y) => x == y
+    }
+  }
+}
+
+fn rx_eq(a: RHir, b: RHir) -> Bool {
+  match a {
+    RhEmpty => match b {
+      RhEmpty => true
+      other => false
+    }
+    RhLit(x) => match b {
+      RhLit(y) => rx_eq_chars(x, y)
+      other => false
+    }
+    RhClass(x) => match b {
+      RhClass(y) => rx_eq_ranges(x, y)
+      other => false
+    }
+    RhConcat(x) => match b {
+      RhConcat(y) => rx_eq_list(x, y)
+      other => false
+    }
+    RhAlt(x) => match b {
+      RhAlt(y) => rx_eq_list(x, y)
+      other => false
+    }
+    RhRep(x, lo, hi) => match b {
+      RhRep(y, lo2, hi2) => lo == lo2 && rx_eq_max(hi, hi2) && rx_eq(x, y)
+      other => false
+    }
+    RhCap(x) => match b {
+      RhCap(y) => rx_eq(x, y)
+      other => false
+    }
+  }
+}
+
+fn rx_len_list(xs: List(RHir)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + rx_len_list(rest)
+  }
+}
+
+fn rx_nth(xs: List(RHir), i: u64) -> RHir {
+  match xs {
+    Nil => RhEmpty
+    Cons(x, rest) => if i == 0 { x } else { rx_nth(rest, i - 1) }
+  }
+}
+
+fn rx_drop(xs: List(RHir), n: u64) -> List(RHir) {
+  if n == 0 {
+    xs
+  } else {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => rx_drop(rest, n - 1)
+    }
+  }
+}
+
+fn rx_take(xs: List(RHir), n: u64) -> List(RHir) {
+  if n == 0 {
+    Nil
+  } else {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(x, rx_take(rest, n - 1))
+    }
+  }
+}
+
+// The elements of the first concatenation that every alternative starts with.
+fn rx_common_len(first: List(RHir), others: List(RHir)) -> Option(u64) {
+  var len = rx_len_list(first)
+  var rest = others
+  var ok = true
+  while ok && len > 0 {
+    match rest {
+      Nil => {
+        ok := false
+      }
+      Cons(h, more) => {
+        match h {
+          RhConcat(xs) => {
+            var same: u64 = 0
+            var a = first
+            var b = xs
+            var walking = true
+            while walking && same < len {
+              match a {
+                Cons(x, ax) => match b {
+                  Cons(y, by) => if rx_eq(x, y) {
+                    same := same + 1
+                    a := ax
+                    b := by
+                  } else {
+                    walking := false
+                  }
+                  Nil => {
+                    walking := false
+                  }
+                }
+                Nil => {
+                  walking := false
+                }
+              }
+            }
+            len := same
+          }
+          other => {
+            ok := false
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  if ok && len > 0 { Some(len) } else { None }
+}
+
+// The prefix all of `hirs` start with lifted out, if they are all
+// concatenations with one.
+fn rx_lift(hirs: List(RHir)) -> Option(RHir) {
+  match hirs {
+    Cons(h0, others) => match h0 {
+      RhConcat(first) => match rx_common_len(first, others) {
+        None => None
+        Some(len) => {
+          var suffixes: List(RHir) = Nil
+          var rest = hirs
+          var running = true
+          while running {
+            match rest {
+              Nil => {
+                running := false
+              }
+              Cons(h, more) => {
+                match h {
+                  RhConcat(xs) => {
+                    suffixes := Cons(rx_concat(rx_drop(xs, len)), suffixes)
+                  }
+                  other => ()
+                }
+                rest := more
+              }
+            }
+          }
+          Some(
+            rx_concat(
+              rx_append_hirs(rx_take(first, len), Cons(rx_alternation(rx_rev_hirs(suffixes)), Nil))
+            )
+          )
+        }
+      }
+      other => None
+    }
+    Nil => None
+  }
+}
+
+fn rx_all_singletons(xs: List(RHir)) -> Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => match x {
+      RhLit(Cons(c, Nil)) => rx_all_singletons(rest)
+      other => false
+    }
+  }
+}
+
+fn rx_singleton_ranges(xs: List(RHir)) -> List(RRange) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      RhLit(Cons(c, Nil)) => Cons(RRange { lo: c, hi: c }, rx_singleton_ranges(rest))
+      other => rx_singleton_ranges(rest)
+    }
+  }
+}
+
+fn rx_all_classes(xs: List(RHir)) -> Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => match x {
+      RhClass(rs) => rx_all_classes(rest)
+      other => false
+    }
+  }
+}
+
+fn rx_class_ranges_union(xs: List(RHir)) -> List(RRange) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match x {
+      RhClass(rs) => rx_union(rs, rx_class_ranges_union(rest))
+      other => rx_class_ranges_union(rest)
+    }
+  }
+}
+
+// An alternation: flattened; characters alone, or classes alone, become
+// one class; a prefix all the alternatives start with is lifted out.
+fn rx_alternation(subs: List(RHir)) -> RHir {
+  var new: List(RHir) = Nil
+  var rest = subs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(sub, more) => {
+        match sub {
+          RhAlt(subs2) => {
+            new := rx_rev_append(subs2, new)
+          }
+          other => {
+            new := Cons(other, new)
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  let all = rx_rev_hirs(new)
+  match all {
+    Nil => RhClass(Nil)
+    Cons(x, Nil) => x
+    other => if rx_all_singletons(all) {
+      rx_class(rx_canon(rx_singleton_ranges(all)))
+    } else if rx_all_classes(all) {
+      rx_class(rx_class_ranges_union(all))
+    } else {
+      match rx_lift(all) {
+        Some(h) => h
+        None => RhAlt(all)
+      }
+    }
+  }
+}
+
+// `xs` reversed on to `acc`.
+fn rx_rev_append(xs: List(RHir), acc: List(RHir)) -> List(RHir) {
+  match xs {
+    Nil => acc
+    Cons(x, rest) => rx_rev_append(rest, Cons(x, acc))
+  }
+}
+
+fn rx_cannot_match_more(h: RHir) -> Bool {
+  match h {
+    RhEmpty => true
+    RhCap(x) => rx_cannot_match_more(x)
+    RhConcat(xs) => rx_all_empty(xs)
+    RhAlt(xs) => rx_all_empty(xs)
+    other => false
+  }
+}
+
+fn rx_all_empty(xs: List(RHir)) -> Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => rx_cannot_match_more(x) && rx_all_empty(rest)
+  }
+}
+
+// A repetition: one of an expression that cannot match more than the empty
+// text is at most once; `{0,0}` is the empty expression and `{1,1}` the
+// expression itself.
+fn rx_repetition(sub: RHir, min0: u64, max0: Option(u64)) -> RHir {
+  var min = min0
+  var max = max0
+  if rx_cannot_match_more(sub) {
+    if min > 1 {
+      min := 1
+    }
+    max := Some(match max {
+      None => 1
+      Some(n) => if n < 1 { n } else { 1 }
+    })
+  }
+  if min == 0 && rx_eq_max(max, Some(0)) {
+    RhEmpty
+  } else if min == 1 && rx_eq_max(max, Some(1)) {
+    sub
+  } else {
+    RhRep(sub, min, max)
+  }
+}
+
+// ---------------------------------------------------------------- the parser
+
+// The expression read so far and where the next character is.
+struct RPos { hir: RHir, at: u64 }
+
+// A set of code points read so far and where the next character is.
+struct RSet { rs: List(RRange), at: u64 }
+
+// What follows a backslash: one character, or a set of them.
+struct REsc { single: Bool, ch: u64, rs: List(RRange), at: u64 }
+
+fn rx_die(why: Text) -> Never {
+  par_die(text_concat_all(Cons("a regular expression: ", Cons(why, Nil))))
+}
+
+fn rx_end() -> u64 {
+  1114112
+}
+
+fn rx_peek(cs: Array(u64), i: u64) -> u64 {
+  match array_get(cs, i) {
+    Some(c) => c
+    None => rx_end()
+  }
+}
+
+fn rx_code_points(p: Text) -> Array(u64) {
+  var out: List(u64) = Nil
+  var at: u64 = 0
+  while at < text_len(p) {
+    match text_decode(p, at) {
+      Some(d) => {
+        out := Cons(d.fst, out)
+        at := at + d.snd
+      }
+      None => rx_die("not UTF-8")
+    }
+  }
+  array_of_list(text_u64_reverse(out))
+}
+
+fn text_u64_reverse(xs: List(u64)) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn rx_is_digit(c: u64) -> Bool {
+  c >= 48 && c <= 57
+}
+
+fn rx_hex_value(c: u64) -> Option(u64) {
+  if c >= 48 && c <= 57 {
+    Some(c - 48)
+  } else if c >= 65 && c <= 70 {
+    Some(c - 55)
+  } else if c >= 97 && c <= 102 {
+    Some(c - 87)
+  } else {
+    None
+  }
+}
+
+fn rx_is_alnum(c: u64) -> Bool {
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+// A character code in `{…}` or of a fixed number of digits, from `at`.
+struct RNum { value: u64, at: u64 }
+
+fn rx_hex_digits(cs: Array(u64), i: u64, count: u64) -> RNum {
+  var v: u64 = 0
+  var at = i
+  var n: u64 = 0
+  while n < count {
+    match rx_hex_value(rx_peek(cs, at)) {
+      Some(d) => {
+        v := v * 16 + d
+      }
+      None => rx_die("a hexadecimal digit is missing")
+    }
+    at := at + 1
+    n := n + 1
+  }
+  RNum { value: v, at: at }
+}
+
+fn rx_hex_braced(cs: Array(u64), i: u64) -> RNum {
+  var v: u64 = 0
+  var at = i + 1
+  var n: u64 = 0
+  var running = true
+  while running {
+    let c = rx_peek(cs, at)
+    if c == 125 {
+      running := false
+    } else {
+      match rx_hex_value(c) {
+        Some(d) => {
+          v := v * 16 + d
+        }
+        None => rx_die("a hexadecimal digit is missing")
+      }
+      n := n + 1
+      at := at + 1
+    }
+  }
+  if n == 0 || n > 8 || v > 1114111 || (v >= 55296 && v <= 57343) {
+    rx_die("not a character code")
+  } else {
+    RNum { value: v, at: at + 1 }
+  }
+}
+
+fn rx_single(ch: u64, at: u64) -> REsc {
+  REsc { single: true, ch: ch, rs: Nil, at: at }
+}
+
+fn rx_set_esc(rs: List(RRange), at: u64) -> REsc {
+  REsc { single: false, ch: 0, rs: rs, at: at }
+}
+
+// `\p{L}` and `\p{N}`; the name is at `i` (after `p` or `P`).
+fn rx_property(cs: Array(u64), i: u64, negated: Bool) -> REsc {
+  var name: List(u64) = Nil
+  var at = i
+  if rx_peek(cs, i) == 123 {
+    at := i + 1
+    while rx_peek(cs, at) != 125 {
+      if rx_peek(cs, at) == rx_end() {
+        rx_die("an unfinished property")
+      }
+      name := Cons(rx_peek(cs, at), name)
+      at := at + 1
+    }
+    at := at + 1
+  } else {
+    name := Cons(rx_peek(cs, i), Nil)
+    at := i + 1
+  }
+  let n = rx_text_of(text_u64_reverse(name))
+  let rs = if n == "L" || n == "Letter" {
+    rx_table_ranges(rx_table_letter())
+  } else if n == "N" || n == "Number" {
+    rx_table_ranges(rx_table_number())
+  } else {
+    rx_die(text_concat_all(Cons("the property ", Cons(n, Cons(" is not supported", Nil)))))
+  }
+  rx_set_esc(if negated { rx_negate(rs) } else { rs }, at)
+}
+
+fn rx_text_of(cps: List(u64)) -> Text {
+  var b = buf_new()
+  var rest = cps
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(c, more) => {
+        match text_of_code_point(u32_of_u64(c)) {
+          Some(t) => {
+            buf_push(&mut b, &t)
+          }
+          None => ()
+        }
+        rest := more
+      }
+    }
+  }
+  text_of(b)
+}
+
+// What follows the backslash at `i - 1`.
+fn rx_escape(cs: Array(u64), i: u64) -> REsc {
+  let c = rx_peek(cs, i)
+  if c == 110 {
+    rx_single(10, i + 1)
+  } else if c == 114 {
+    rx_single(13, i + 1)
+  } else if c == 116 {
+    rx_single(9, i + 1)
+  } else if c == 102 {
+    rx_single(12, i + 1)
+  } else if c == 118 {
+    rx_single(11, i + 1)
+  } else if c == 97 {
+    rx_single(7, i + 1)
+  } else if c == 120 {
+    if rx_peek(cs, i + 1) == 123 {
+      let r = rx_hex_braced(cs, i + 1)
+      rx_single(r.value, r.at)
+    } else {
+      let r = rx_hex_digits(cs, i + 1, 2)
+      rx_single(r.value, r.at)
+    }
+  } else if c == 117 {
+    if rx_peek(cs, i + 1) == 123 {
+      let r = rx_hex_braced(cs, i + 1)
+      rx_single(r.value, r.at)
+    } else {
+      let r = rx_hex_digits(cs, i + 1, 4)
+      rx_single(r.value, r.at)
+    }
+  } else if c == 85 {
+    if rx_peek(cs, i + 1) == 123 {
+      let r = rx_hex_braced(cs, i + 1)
+      rx_single(r.value, r.at)
+    } else {
+      let r = rx_hex_digits(cs, i + 1, 8)
+      rx_single(r.value, r.at)
+    }
+  } else if c == 115 {
+    rx_set_esc(rx_table_ranges(rx_table_space()), i + 1)
+  } else if c == 112 {
+    rx_property(cs, i + 1, false)
+  } else if c == 80 {
+    rx_property(cs, i + 1, true)
+  } else if c < 128 && !rx_is_alnum(c) {
+    rx_single(c, i + 1)
+  } else {
+    rx_die("an escape that is not supported")
+  }
+}
+
+// Where an operator of a class (`--`, `&&`, `~~`) is.
+fn rx_class_op(cs: Array(u64), i: u64) -> Bool {
+  let c = rx_peek(cs, i)
+  (c == 45 || c == 38 || c == 126) && rx_peek(cs, i + 1) == c
+}
+
+// The items of a class up to `]` or an operator.
+fn rx_class_run(cs: Array(u64), i: u64, first0: Bool) -> RSet {
+  var acc: List(RRange) = Nil
+  var at = i
+  var first = first0
+  var running = true
+  while running {
+    let c = rx_peek(cs, at)
+    if c == rx_end() {
+      rx_die("an unfinished class")
+    } else if c == 93 && !first {
+      running := false
+    } else if rx_class_op(cs, at) && !first {
+      running := false
+    } else if c == 91 {
+      if rx_peek(cs, at + 1) == 58 {
+        rx_die("an ASCII class is not supported")
+      }
+      let inner = rx_bracket(cs, at + 1)
+      acc := rx_append_ranges(inner.rs, acc)
+      at := inner.at
+      first := false
+    } else {
+      // A character, a set, or the start of a range.
+      var lo: u64 = c
+      var is_set = false
+      var next = at + 1
+      if c == 92 {
+        let e = rx_escape(cs, at + 1)
+        next := e.at
+        if e.single {
+          lo := e.ch
+        } else {
+          is_set := true
+          acc := rx_append_ranges(e.rs, acc)
+        }
+      }
+      if !is_set {
+        if rx_peek(cs, next) == 45 && rx_peek(cs, next + 1) != 45 && rx_peek(cs, next + 1) != 93 {
+          var hi: u64 = rx_peek(cs, next + 1)
+          var after = next + 2
+          if hi == 92 {
+            let e = rx_escape(cs, next + 2)
+            if !e.single {
+              rx_die("a range ends with a set")
+            }
+            hi := e.ch
+            after := e.at
+          }
+          if hi < lo {
+            rx_die("a range is backwards")
+          }
+          acc := Cons(RRange { lo: lo, hi: hi }, acc)
+          next := after
+        } else {
+          acc := Cons(RRange { lo: lo, hi: lo }, acc)
+        }
+      }
+      at := next
+      first := false
+    }
+  }
+  RSet { rs: rx_canon(acc), at: at }
+}
+
+// The class after `[`: items, then operators with their right sides, and `]`.
+fn rx_bracket(cs: Array(u64), i: u64) -> RSet {
+  var negated = false
+  var at = i
+  if rx_peek(cs, at) == 94 {
+    negated := true
+    at := at + 1
+  }
+  let r0 = rx_class_run(cs, at, true)
+  var acc = r0.rs
+  at := r0.at
+  while rx_class_op(cs, at) {
+    let op = rx_peek(cs, at)
+    let r = rx_class_run(cs, at + 2, false)
+    acc := if op == 45 {
+      rx_difference(acc, r.rs)
+    } else if op == 38 {
+      rx_intersect(acc, r.rs)
+    } else {
+      rx_symmetric(acc, r.rs)
+    }
+    at := r.at
+  }
+  if rx_peek(cs, at) != 93 {
+    rx_die("an unfinished class")
+  }
+  RSet { rs: if negated { rx_negate(acc) } else { acc }, at: at + 1 }
+}
+
+fn rx_dot() -> RHir {
+  rx_class(Cons(RRange { lo: 0, hi: 9 }, Cons(RRange { lo: 11, hi: rx_max_char() }, Nil)))
+}
+
+fn rx_atom(cs: Array(u64), i: u64) -> RPos {
+  let c = rx_peek(cs, i)
+  if c == 40 {
+    var capture = true
+    var at = i + 1
+    if rx_peek(cs, at) == 63 {
+      if rx_peek(cs, at + 1) == 58 {
+        capture := false
+        at := at + 2
+      } else {
+        rx_die("a group with flags is not supported")
+      }
+    }
+    let inner = rx_alt(cs, at)
+    if rx_peek(cs, inner.at) != 41 {
+      rx_die("an unclosed group")
+    }
+    RPos { hir: if capture { RhCap(inner.hir) } else { inner.hir }, at: inner.at + 1 }
+  } else if c == 91 {
+    let r = rx_bracket(cs, i + 1)
+    RPos { hir: rx_class(r.rs), at: r.at }
+  } else if c == 46 {
+    RPos { hir: rx_dot(), at: i + 1 }
+  } else if c == 92 {
+    let e = rx_escape(cs, i + 1)
+    if e.single {
+      RPos { hir: RhLit(Cons(e.ch, Nil)), at: e.at }
+    } else {
+      RPos { hir: rx_class(e.rs), at: e.at }
+    }
+  } else if c == 94 || c == 36 {
+    rx_die("an anchor is not supported")
+  } else if c == 42 || c == 43 || c == 63 {
+    rx_die("a repetition has nothing to repeat")
+  } else {
+    RPos { hir: RhLit(Cons(c, Nil)), at: i + 1 }
+  }
+}
+
+fn rx_number(cs: Array(u64), i: u64) -> RNum {
+  var v: u64 = 0
+  var at = i
+  if !rx_is_digit(rx_peek(cs, at)) {
+    rx_die("a count is missing")
+  }
+  while rx_is_digit(rx_peek(cs, at)) {
+    v := v * 10 + (rx_peek(cs, at) - 48)
+    at := at + 1
+  }
+  RNum { value: v, at: at }
+}
+
+fn rx_rep(cs: Array(u64), i: u64) -> RPos {
+  let a = rx_atom(cs, i)
+  var h = a.hir
+  var at = a.at
+  var running = true
+  while running {
+    let c = rx_peek(cs, at)
+    var min: u64 = 0
+    var max: Option(u64) = None
+    var is_rep = true
+    if c == 42 {
+      at := at + 1
+    } else if c == 43 {
+      min := 1
+      at := at + 1
+    } else if c == 63 {
+      max := Some(1)
+      at := at + 1
+    } else if c == 123 {
+      let lo = rx_number(cs, at + 1)
+      min := lo.value
+      if rx_peek(cs, lo.at) == 125 {
+        max := Some(lo.value)
+        at := lo.at + 1
+      } else if rx_peek(cs, lo.at) == 44 {
+        if rx_peek(cs, lo.at + 1) == 125 {
+          at := lo.at + 2
+        } else {
+          let hi = rx_number(cs, lo.at + 1)
+          if rx_peek(cs, hi.at) != 125 {
+            rx_die("an unclosed count")
+          }
+          if hi.value < lo.value {
+            rx_die("a count is backwards")
+          }
+          max := Some(hi.value)
+          at := hi.at + 1
+        }
+      } else {
+        rx_die("an unclosed count")
+      }
+    } else {
+      is_rep := false
+    }
+    if is_rep {
+      if rx_peek(cs, at) == 63 {
+        rx_die("a non-greedy repetition is not supported")
+      }
+      h := rx_repetition(h, min, max)
+    } else {
+      running := false
+    }
+  }
+  RPos { hir: h, at: at }
+}
+
+fn rx_cat(cs: Array(u64), i: u64) -> RPos {
+  var items: List(RHir) = Nil
+  var at = i
+  var running = true
+  while running {
+    let c = rx_peek(cs, at)
+    if c == rx_end() || c == 124 || c == 41 {
+      running := false
+    } else {
+      let r = rx_rep(cs, at)
+      items := Cons(r.hir, items)
+      at := r.at
+    }
+  }
+  RPos { hir: rx_concat(rx_rev_hirs(items)), at: at }
+}
+
+fn rx_alt(cs: Array(u64), i: u64) -> RPos {
+  var alts: List(RHir) = Nil
+  var at = i
+  var running = true
+  while running {
+    let r = rx_cat(cs, at)
+    alts := Cons(r.hir, alts)
+    at := r.at
+    if rx_peek(cs, at) == 124 {
+      at := at + 1
+    } else {
+      running := false
+    }
+  }
+  RPos { hir: rx_alternation(rx_rev_hirs(alts)), at: at }
+}
+
+// The tree of the regular expression of a pattern.
+fn rx_parse(p: Text) -> RHir {
+  let cs = rx_code_points(p)
+  let r = rx_alt(cs, 0)
+  if r.at != array_len(cs) {
+    rx_die("an unbalanced )")
+  }
+  r.hir
+}
+
+// ---------------------------------------------------------------- showing
+
+fn rx_show_chars(cs: List(u64)) -> Text {
+  match cs {
+    Nil => ""
+    Cons(c, rest) => match rest {
+      Nil => text_of_u64(c)
+      more => text_concat_all(Cons(text_of_u64(c), Cons(" ", Cons(rx_show_chars(rest), Nil))))
+    }
+  }
+}
+
+fn rx_show_ranges(rs: List(RRange)) -> Text {
+  match rs {
+    Nil => ""
+    Cons(r, rest) => {
+      let one = text_concat_all(Cons(text_of_u64(r.lo), Cons("-", Cons(text_of_u64(r.hi), Nil))))
+      match rest {
+        Nil => one
+        more => text_concat_all(Cons(one, Cons(" ", Cons(rx_show_ranges(rest), Nil))))
+      }
+    }
+  }
+}
+
+fn rx_show_list(xs: List(RHir)) -> Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => match rest {
+      Nil => rx_show(x)
+      more => text_concat_all(Cons(rx_show(x), Cons(",", Cons(rx_show_list(rest), Nil))))
+    }
+  }
+}
+
+// One line that tells the expression apart from any other.
+fn rx_show(h: RHir) -> Text {
+  match h {
+    RhEmpty => "E"
+    RhLit(cs) => text_concat_all(Cons("L[", Cons(rx_show_chars(cs), Cons("]", Nil))))
+    RhClass(rs) => text_concat_all(Cons("C[", Cons(rx_show_ranges(rs), Cons("]", Nil))))
+    RhConcat(xs) => text_concat_all(Cons("S(", Cons(rx_show_list(xs), Cons(")", Nil))))
+    RhAlt(xs) => text_concat_all(Cons("A(", Cons(rx_show_list(xs), Cons(")", Nil))))
+    RhCap(x) => text_concat_all(Cons("P(", Cons(rx_show(x), Cons(")", Nil))))
+    RhRep(x, min, max) => text_concat_all(
+      Cons(
+        "R{",
+        Cons(
+          text_of_u64(min),
+          Cons(
+            ",",
+            Cons(
+              match max {
+                None => "-"
+                Some(n) => text_of_u64(n)
+              },
+              Cons("}(", Cons(rx_show(x), Cons(")", Nil)))
+            )
+          )
+        )
+      )
+    )
+  }
+}

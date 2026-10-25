@@ -1,0 +1,320 @@
+// The NFA of a scanner mode, built from the expressions of its patterns. The
+// numbers of its states decide nothing in the end (`sd_minimize` orders the
+// states of the DFA by its partition).
+
+// A pattern of a mode: the expression, the terminal it makes, its priority
+// (the place in the mode) and the lookahead, if any (`la_kind` 1 positive, 2
+// negative; the expression is `la`).
+struct SPat { pattern: Text, terminal: u64, priority: u64, la_kind: u64, la: Text }
+
+// A transition: `kind` 0 is an epsilon transition, 1 one on a leaf of the
+// expression (a character or a class), 2 one on a disjoint class `cc`.
+struct NTr { kind: u64, leaf: RHir, cc: u64, target: u64 }
+
+struct NSt { trans: List(NTr), acc: Option(SPat) }
+
+// The states are numbered as they are in the list.
+struct Nfa { states: List(NSt), n: u64, start: u64, end: u64 }
+
+fn nf_epsilon(target: u64) -> NTr {
+  NTr { kind: 0, leaf: RhEmpty, cc: 0, target: target }
+}
+
+fn nf_new() -> Nfa {
+  Nfa { states: Cons(NSt { trans: Nil, acc: None }, Nil), n: 1, start: 0, end: 0 }
+}
+
+fn nf_snoc_tr(xs: List(NTr), x: NTr) -> List(NTr) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, nf_snoc_tr(rest, x))
+  }
+}
+
+fn nf_snoc_state(xs: List(NSt), x: NSt) -> List(NSt) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, nf_snoc_state(rest, x))
+  }
+}
+
+fn nf_append_states(a: List(NSt), b: List(NSt)) -> List(NSt) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, nf_append_states(rest, b))
+  }
+}
+
+// The transition added at the end of the transitions of the state `k`.
+fn nf_add_tr(xs: List(NSt), k: u64, tr: NTr) -> List(NSt) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => if k == 0 {
+      Cons(NSt { trans: nf_snoc_tr(s.trans, tr), acc: s.acc }, rest)
+    } else {
+      Cons(s, nf_add_tr(rest, k - 1, tr))
+    }
+  }
+}
+
+fn nf_set_acc(xs: List(NSt), k: u64, p: SPat) -> List(NSt) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => if k == 0 {
+      Cons(NSt { trans: s.trans, acc: Some(p) }, rest)
+    } else {
+      Cons(s, nf_set_acc(rest, k - 1, p))
+    }
+  }
+}
+
+fn nf_shift_trans(ts: List(NTr), off: u64) -> List(NTr) {
+  match ts {
+    Nil => Nil
+    Cons(
+      t,
+      rest
+    ) => Cons(
+      NTr { kind: t.kind, leaf: t.leaf, cc: t.cc, target: t.target + off },
+      nf_shift_trans(rest, off)
+    )
+  }
+}
+
+fn nf_shift_states(ss: List(NSt), off: u64) -> List(NSt) {
+  match ss {
+    Nil => Nil
+    Cons(
+      s,
+      rest
+    ) => Cons(NSt { trans: nf_shift_trans(s.trans, off), acc: s.acc }, nf_shift_states(rest, off))
+  }
+}
+
+fn nf_shift(a: Nfa, off: u64) -> Nfa {
+  Nfa { states: nf_shift_states(a.states, off), n: a.n, start: a.start + off, end: a.end + off }
+}
+
+fn nf_is_empty(a: Nfa) -> Bool {
+  a.start == 0 && a.end == 0 && a.n == 1 && match a.states {
+    Cons(s, rest) => match s.trans {
+      Nil => true
+      other => false
+    }
+    Nil => false
+  }
+}
+
+fn nf_new_state(a: Nfa) -> Nfa {
+  Nfa {
+    states: nf_snoc_state(a.states, NSt { trans: Nil, acc: None })
+    n: a.n + 1
+    start: a.start
+    end: a.end
+  }
+}
+
+fn nf_with_start(a: Nfa, start: u64) -> Nfa {
+  Nfa { states: a.states, n: a.n, start: start, end: a.end }
+}
+
+fn nf_with_end(a: Nfa, end: u64) -> Nfa {
+  Nfa { states: a.states, n: a.n, start: a.start, end: end }
+}
+
+fn nf_with_eps(a: Nfa, from: u64, to: u64) -> Nfa {
+  Nfa { states: nf_add_tr(a.states, from, nf_epsilon(to)), n: a.n, start: a.start, end: a.end }
+}
+
+// `a` followed by `b`.
+fn nf_concat(a: Nfa, b: Nfa) -> Nfa {
+  if nf_is_empty(a) {
+    Nfa { states: b.states, n: b.n, start: b.start, end: b.end }
+  } else {
+    let b2 = nf_shift(b, a.n)
+    let joined = Nfa {
+      states: nf_append_states(a.states, b2.states)
+      n: a.n + b2.n
+      start: a.start
+      end: a.end
+    }
+    nf_with_end(nf_with_eps(joined, a.end, b2.start), b2.end)
+  }
+}
+
+// `a` or `b`.
+fn nf_alt(a: Nfa, b: Nfa) -> Nfa {
+  if nf_is_empty(a) {
+    Nfa { states: b.states, n: b.n, start: b.start, end: b.end }
+  } else {
+    let b2 = nf_shift(b, a.n)
+    let joined = Nfa {
+      states: nf_append_states(a.states, b2.states)
+      n: a.n + b2.n
+      start: a.start
+      end: a.end
+    }
+    let s = joined.n
+    let with_start = nf_with_eps(nf_with_eps(nf_new_state(joined), s, a.start), s, b2.start)
+    let e = with_start.n
+    let with_end = nf_with_eps(nf_with_eps(nf_new_state(with_start), a.end, e), b2.end, e)
+    nf_with_end(nf_with_start(with_end, s), e)
+  }
+}
+
+// `a` once or not at all.
+fn nf_zero_or_one(a: Nfa) -> Nfa {
+  let s = a.n
+  let b = nf_with_eps(nf_with_eps(nf_new_state(a), s, a.start), s, a.end)
+  nf_with_start(b, s)
+}
+
+// `a` any number of times.
+fn nf_zero_or_more(a: Nfa) -> Nfa {
+  let s = a.n
+  let b = nf_with_eps(nf_with_eps(nf_new_state(a), s, a.start), s, a.end)
+  let e = b.n
+  let c = nf_with_eps(nf_with_eps(nf_new_state(b), a.end, e), a.end, a.start)
+  nf_with_end(nf_with_start(c, s), e)
+}
+
+fn nf_leaf_tr(leaf: RHir, target: u64) -> NTr {
+  NTr { kind: 1, leaf: leaf, cc: 0, target: target }
+}
+
+// The NFA of an expression.
+fn nf_of_hir(h: RHir) -> Nfa {
+  match h {
+    RhEmpty => nf_new()
+    RhLit(cs) => {
+      var a = nf_new()
+      var from: u64 = 0
+      var rest = cs
+      var running = true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(c, more) => {
+            let to = a.n
+            a := nf_with_end(nf_new_state(a), to)
+            a := Nfa {
+              states: nf_add_tr(a.states, from, nf_leaf_tr(RhLit(Cons(c, Nil)), to))
+              n: a.n
+              start: a.start
+              end: a.end
+            }
+            from := to
+            rest := more
+          }
+        }
+      }
+      nf_with_end(a, from)
+    }
+    RhClass(rs) => {
+      let a = nf_with_end(nf_new_state(nf_new()), 1)
+      Nfa {
+        states: nf_add_tr(a.states, 0, nf_leaf_tr(h, 1))
+        n: a.n
+        start: a.start
+        end: a.end
+      }
+    }
+    RhCap(x) => nf_of_hir(x)
+    RhConcat(xs) => {
+      var a = nf_new()
+      var rest = xs
+      var running = true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(x, more) => {
+            a := nf_concat(a, nf_of_hir(x))
+            rest := more
+          }
+        }
+      }
+      a
+    }
+    RhAlt(xs) => {
+      var a = nf_new()
+      var rest = xs
+      var running = true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(x, more) => {
+            a := nf_alt(a, nf_of_hir(x))
+            rest := more
+          }
+        }
+      }
+      a
+    }
+    RhRep(sub, min, max) => {
+      let inner = nf_of_hir(sub)
+      var a = nf_new()
+      var i: u64 = 0
+      while i < min {
+        a := nf_concat(a, inner)
+        i := i + 1
+      }
+      match max {
+        Some(m) => {
+          let optional = nf_zero_or_one(inner)
+          var j = min
+          while j < m {
+            a := nf_concat(a, optional)
+            j := j + 1
+          }
+        }
+        None => {
+          a := nf_concat(a, nf_zero_or_more(inner))
+        }
+      }
+      a
+    }
+  }
+}
+
+// The NFA of a pattern: it accepts at its end state.
+fn nf_build(p: SPat) -> Nfa {
+  let a = nf_of_hir(rx_parse(p.pattern))
+  Nfa { states: nf_set_acc(a.states, a.end, p), n: a.n, start: a.start, end: a.end }
+}
+
+// The NFA of the patterns of a mode: the priority of a pattern is its place.
+fn nf_of_patterns(ps: List(SPat)) -> Nfa {
+  var a = nf_new()
+  var i: u64 = 0
+  var rest = ps
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        a := nf_alt(
+          a,
+          nf_build(
+            SPat { pattern: p.pattern, terminal: p.terminal, priority: i, la_kind: p.la_kind, la: p.la }
+          )
+        )
+        i := i + 1
+        rest := more
+      }
+    }
+  }
+  a
+}
+
+// The NFA of the lookahead of a pattern.
+fn nf_lookahead(p: SPat) -> Nfa {
+  nf_build(SPat { pattern: p.la, terminal: 4294967295, priority: 0, la_kind: 0, la: "" })
+}

@@ -1,0 +1,852 @@
+import "ty.taut"
+import "../../../std/MapText.taut"
+
+// `ty_eq` says two types are the same only when they are (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」, the types
+// layer): `ty_compare` is `Equal` only on Equal types.
+
+theorem ty_then_equal(
+  a: Ordering,
+  b: Ordering,
+  e: Eq(Ordering, ty_then(a, b), Equal)
+): And(Eq(Ordering, a, Equal), Eq(Ordering, b, Equal)) {
+  match a -> And(Eq(Ordering, a, Equal), Eq(Ordering, b, Equal)) {
+    Less => False_elim(less_ne_equal(e))
+    Equal => and_intro(refl(), e)
+    Greater => False_elim(greater_ne_equal(e))
+  }
+}
+
+theorem ty_nat_ne(x: Nat, y: Nat, e: Eq(Nat, x, y), h: Eq(Yn, nat_eq(x, y), no)): False {
+  no_ne_yes(
+    Eq_trans(Eq_sym(Eq_subst((z: Nat) => Eq(Yn, nat_eq(x, z), no), Eq_sym(e), h)), nat_eq_refl(x))
+  )
+}
+
+theorem width_rank_inj(
+  a: Width,
+  b: Width,
+  e: Eq(Nat, width_rank(a), width_rank(b))
+): Eq(Width, a, b) {
+  match a -> Eq(Width, a, b) {
+    Width32 => match b -> Eq(Width, Width32, b) {
+      Width32 => refl()
+      Width64 => False_elim(ty_nat_ne(0, 1, e, refl()))
+      WidthU8 => False_elim(ty_nat_ne(0, 2, e, refl()))
+      WidthU32 => False_elim(ty_nat_ne(0, 3, e, refl()))
+      WidthU64 => False_elim(ty_nat_ne(0, 4, e, refl()))
+    }
+    Width64 => match b -> Eq(Width, Width64, b) {
+      Width32 => False_elim(ty_nat_ne(1, 0, e, refl()))
+      Width64 => refl()
+      WidthU8 => False_elim(ty_nat_ne(1, 2, e, refl()))
+      WidthU32 => False_elim(ty_nat_ne(1, 3, e, refl()))
+      WidthU64 => False_elim(ty_nat_ne(1, 4, e, refl()))
+    }
+    WidthU8 => match b -> Eq(Width, WidthU8, b) {
+      Width32 => False_elim(ty_nat_ne(2, 0, e, refl()))
+      Width64 => False_elim(ty_nat_ne(2, 1, e, refl()))
+      WidthU8 => refl()
+      WidthU32 => False_elim(ty_nat_ne(2, 3, e, refl()))
+      WidthU64 => False_elim(ty_nat_ne(2, 4, e, refl()))
+    }
+    WidthU32 => match b -> Eq(Width, WidthU32, b) {
+      Width32 => False_elim(ty_nat_ne(3, 0, e, refl()))
+      Width64 => False_elim(ty_nat_ne(3, 1, e, refl()))
+      WidthU8 => False_elim(ty_nat_ne(3, 2, e, refl()))
+      WidthU32 => refl()
+      WidthU64 => False_elim(ty_nat_ne(3, 4, e, refl()))
+    }
+    WidthU64 => match b -> Eq(Width, WidthU64, b) {
+      Width32 => False_elim(ty_nat_ne(4, 0, e, refl()))
+      Width64 => False_elim(ty_nat_ne(4, 1, e, refl()))
+      WidthU8 => False_elim(ty_nat_ne(4, 2, e, refl()))
+      WidthU32 => False_elim(ty_nat_ne(4, 3, e, refl()))
+      WidthU64 => refl()
+    }
+  }
+}
+theorem kind_rank_inj(a: Kind, b: Kind, e: Eq(Nat, kind_rank(a), kind_rank(b))): Eq(Kind, a, b) {
+  match a -> Eq(Kind, a, b) {
+    KindCopy => match b -> Eq(Kind, KindCopy, b) {
+      KindCopy => refl()
+      KindShared => False_elim(ty_nat_ne(0, 1, e, refl()))
+      KindAffine => False_elim(ty_nat_ne(0, 2, e, refl()))
+      KindLinear => False_elim(ty_nat_ne(0, 3, e, refl()))
+    }
+    KindShared => match b -> Eq(Kind, KindShared, b) {
+      KindCopy => False_elim(ty_nat_ne(1, 0, e, refl()))
+      KindShared => refl()
+      KindAffine => False_elim(ty_nat_ne(1, 2, e, refl()))
+      KindLinear => False_elim(ty_nat_ne(1, 3, e, refl()))
+    }
+    KindAffine => match b -> Eq(Kind, KindAffine, b) {
+      KindCopy => False_elim(ty_nat_ne(2, 0, e, refl()))
+      KindShared => False_elim(ty_nat_ne(2, 1, e, refl()))
+      KindAffine => refl()
+      KindLinear => False_elim(ty_nat_ne(2, 3, e, refl()))
+    }
+    KindLinear => match b -> Eq(Kind, KindLinear, b) {
+      KindCopy => False_elim(ty_nat_ne(3, 0, e, refl()))
+      KindShared => False_elim(ty_nat_ne(3, 1, e, refl()))
+      KindAffine => False_elim(ty_nat_ne(3, 2, e, refl()))
+      KindLinear => refl()
+    }
+  }
+}
+theorem yn_rank_inj(a: Yn, b: Yn, e: Eq(Nat, yn_rank(a), yn_rank(b))): Eq(Yn, a, b) {
+  match a -> Eq(Yn, a, b) {
+    no => match b -> Eq(Yn, no, b) {
+      no => refl()
+      yes => False_elim(ty_nat_ne(0, 1, e, refl()))
+    }
+    yes => match b -> Eq(Yn, yes, b) {
+      no => False_elim(ty_nat_ne(1, 0, e, refl()))
+      yes => refl()
+    }
+  }
+}
+theorem cmp_text_list_eq(
+  a: List(Text),
+  b: List(Text),
+  e: Eq(Ordering, cmp_text_list(a, b), Equal)
+): Eq(List(Text), a, b) {
+  match a -> Eq(List(Text), a, b) {
+    Nil => match b -> Eq(List(Text), Nil, b) {
+      Nil => refl()
+      Cons(y, ys) => False_elim(less_ne_equal(e))
+    }
+    Cons(x, xs) => match b -> Eq(List(Text), Cons(x, xs), b) {
+      Nil => False_elim(greater_ne_equal(e))
+      Cons(
+        y,
+        ys
+      ) => Eq_trans(
+        Eq_congr(
+          (z: Text) => Cons(z, xs),
+          ordmap_compare_text_eq(
+            x,
+            y,
+            and_left(ty_then_equal(ordmap_compare_text(x, y), cmp_text_list(xs, ys), e))
+          )
+        ),
+        Eq_congr(
+          (z: List(Text)) => Cons(y, z),
+          cmp_text_list_eq(
+            xs,
+            ys,
+            and_right(ty_then_equal(ordmap_compare_text(x, y), cmp_text_list(xs, ys), e))
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem cmp_generics_eq(
+  a: List(Pair(Text, Kind)),
+  b: List(Pair(Text, Kind)),
+  e: Eq(Ordering, cmp_generics(a, b), Equal)
+): Eq(List(Pair(Text, Kind)), a, b) {
+  match a -> Eq(List(Pair(Text, Kind)), a, b) {
+    Nil => match b -> Eq(List(Pair(Text, Kind)), Nil, b) {
+      Nil => refl()
+      Cons(y, ys) => False_elim(less_ne_equal(e))
+    }
+    Cons(x, xs) => match b -> Eq(List(Pair(Text, Kind)), Cons(x, xs), b) {
+      Nil => False_elim(greater_ne_equal(e))
+      Cons(y, ys) => match x -> Eq(List(Pair(Text, Kind)), Cons(x, xs), Cons(y, ys)) {
+        Pair { fst: xn, snd: xk } => match y -> Eq(
+          List(Pair(Text, Kind)),
+          Cons(Pair { fst: xn, snd: xk }, xs),
+          Cons(y, ys)
+        ) {
+          Pair { fst: yn, snd: yk } => Eq_trans(
+            Eq_congr(
+              (z: Text) => Cons(Pair { fst: z, snd: xk }, xs),
+              ordmap_compare_text_eq(
+                xn,
+                yn,
+                and_left(
+                  ty_then_equal(
+                    ordmap_compare_text(xn, yn),
+                    ordmap_compare_nat(kind_rank(xk), kind_rank(yk)),
+                    and_left(
+                      ty_then_equal(
+                        ty_then(
+                          ordmap_compare_text(xn, yn),
+                          ordmap_compare_nat(kind_rank(xk), kind_rank(yk))
+                        ),
+                        cmp_generics(xs, ys),
+                        e
+                      )
+                    )
+                  )
+                )
+              )
+            ),
+            Eq_trans(
+              Eq_congr(
+                (z: Kind) => Cons(Pair { fst: yn, snd: z }, xs),
+                kind_rank_inj(
+                  xk,
+                  yk,
+                  ordmap_compare_nat_eq(
+                    kind_rank(xk),
+                    kind_rank(yk),
+                    and_right(
+                      ty_then_equal(
+                        ordmap_compare_text(xn, yn),
+                        ordmap_compare_nat(kind_rank(xk), kind_rank(yk)),
+                        and_left(
+                          ty_then_equal(
+                            ty_then(
+                              ordmap_compare_text(xn, yn),
+                              ordmap_compare_nat(kind_rank(xk), kind_rank(yk))
+                            ),
+                            cmp_generics(xs, ys),
+                            e
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              ),
+              Eq_congr(
+                (z: List(Pair(Text, Kind))) => Cons(Pair { fst: yn, snd: yk }, z),
+                cmp_generics_eq(
+                  xs,
+                  ys,
+                  and_right(
+                    ty_then_equal(
+                      ty_then(
+                        ordmap_compare_text(xn, yn),
+                        ordmap_compare_nat(kind_rank(xk), kind_rank(yk))
+                      ),
+                      cmp_generics(xs, ys),
+                      e
+                    )
+                  )
+                )
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  theorem ty_compare_list_eq(
+    a: List(Ty),
+    b: List(Ty),
+    e: Eq(Ordering, ty_compare_list(a, b), Equal)
+  ): Eq(List(Ty), a, b) {
+    match a -> Eq(List(Ty), a, b) {
+      Nil => match b -> Eq(List(Ty), Nil, b) {
+        Nil => refl()
+        Cons(y, ys) => False_elim(less_ne_equal(e))
+      }
+      Cons(x, xs) => match b -> Eq(List(Ty), Cons(x, xs), b) {
+        Nil => False_elim(greater_ne_equal(e))
+        Cons(
+          y,
+          ys
+        ) => Eq_trans(
+          Eq_congr(
+            (z: Ty) => Cons(z, xs),
+            ty_compare_eq(
+              x,
+              y,
+              and_left(ty_then_equal(ty_compare(x, y), ty_compare_list(xs, ys), e))
+            )
+          ),
+          Eq_congr(
+            (z: List(Ty)) => Cons(y, z),
+            ty_compare_list_eq(
+              xs,
+              ys,
+              and_right(ty_then_equal(ty_compare(x, y), ty_compare_list(xs, ys), e))
+            )
+          )
+        )
+      }
+    }
+  }
+
+  theorem ty_compare_eq(a: Ty, b: Ty, e: Eq(Ordering, ty_compare(a, b), Equal)): Eq(Ty, a, b) {
+    match a -> Eq(Ty, a, b) {
+      TyInt(wa) => match b -> Eq(Ty, TyInt(wa), b) {
+        TyInt(
+          wb
+        ) => Eq_congr(
+          (z: Width) => TyInt(z),
+          width_rank_inj(wa, wb, ordmap_compare_nat_eq(width_rank(wa), width_rank(wb), e))
+        )
+        TyBool => False_elim(less_ne_equal(e))
+        TyText => False_elim(less_ne_equal(e))
+        TyUnit => False_elim(less_ne_equal(e))
+        TyNever => False_elim(less_ne_equal(e))
+        TyDecimal => False_elim(less_ne_equal(e))
+        TyFloat => False_elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyBool => match b -> Eq(Ty, TyBool, b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => refl()
+        TyText => False_elim(less_ne_equal(e))
+        TyUnit => False_elim(less_ne_equal(e))
+        TyNever => False_elim(less_ne_equal(e))
+        TyDecimal => False_elim(less_ne_equal(e))
+        TyFloat => False_elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyText => match b -> Eq(Ty, TyText, b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => refl()
+        TyUnit => False_elim(less_ne_equal(e))
+        TyNever => False_elim(less_ne_equal(e))
+        TyDecimal => False_elim(less_ne_equal(e))
+        TyFloat => False_elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyUnit => match b -> Eq(Ty, TyUnit, b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => refl()
+        TyNever => False_elim(less_ne_equal(e))
+        TyDecimal => False_elim(less_ne_equal(e))
+        TyFloat => False_elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyNever => match b -> Eq(Ty, TyNever, b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => refl()
+        TyDecimal => False_elim(less_ne_equal(e))
+        TyFloat => False_elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyDecimal => match b -> Eq(Ty, TyDecimal, b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => refl()
+        TyFloat => False_elim(less_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyFloat => match b -> Eq(Ty, TyFloat, b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => refl()
+        TyFn(pb, rb, kb) => False_elim(less_ne_equal(e))
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyFn(pa, ra, ka) => match b -> Eq(Ty, TyFn(pa, ra, ka), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(
+          pb,
+          rb,
+          kb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: List(Ty)) => TyFn(z, ra, ka),
+            ty_compare_list_eq(
+              pa,
+              pb,
+              and_left(
+                ty_then_equal(
+                  ty_compare_list(pa, pb),
+                  ty_then(ty_compare(ra, rb), ordmap_compare_nat(kind_rank(ka), kind_rank(kb))),
+                  e
+                )
+              )
+            )
+          ),
+          Eq_trans(
+            Eq_congr(
+              (z: Ty) => TyFn(pb, z, ka),
+              ty_compare_eq(
+                ra,
+                rb,
+                and_left(
+                  ty_then_equal(
+                    ty_compare(ra, rb),
+                    ordmap_compare_nat(kind_rank(ka), kind_rank(kb)),
+                    and_right(
+                      ty_then_equal(
+                        ty_compare_list(pa, pb),
+                        ty_then(
+                          ty_compare(ra, rb),
+                          ordmap_compare_nat(kind_rank(ka), kind_rank(kb))
+                        ),
+                        e
+                      )
+                    )
+                  )
+                )
+              )
+            ),
+            Eq_congr(
+              (z: Kind) => TyFn(pb, rb, z),
+              kind_rank_inj(
+                ka,
+                kb,
+                ordmap_compare_nat_eq(
+                  kind_rank(ka),
+                  kind_rank(kb),
+                  and_right(
+                    ty_then_equal(
+                      ty_compare(ra, rb),
+                      ordmap_compare_nat(kind_rank(ka), kind_rank(kb)),
+                      and_right(
+                        ty_then_equal(
+                          ty_compare_list(pa, pb),
+                          ty_then(
+                            ty_compare(ra, rb),
+                            ordmap_compare_nat(kind_rank(ka), kind_rank(kb))
+                          ),
+                          e
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+        TyUnion(xb) => False_elim(less_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyUnion(xa) => match b -> Eq(Ty, TyUnion(xa), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => Eq_congr((z: List(Ty)) => TyUnion(z), ty_compare_list_eq(xa, xb, e))
+        TyTagged(tb, xb) => False_elim(less_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyTagged(ta, xa) => match b -> Eq(Ty, TyTagged(ta, xa), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(
+          tb,
+          xb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: List(Text)) => TyTagged(z, xa),
+            cmp_text_list_eq(
+              ta,
+              tb,
+              and_left(ty_then_equal(cmp_text_list(ta, tb), ty_compare(xa, xb), e))
+            )
+          ),
+          Eq_congr(
+            (z: Ty) => TyTagged(tb, z),
+            ty_compare_eq(
+              xa,
+              xb,
+              and_right(ty_then_equal(cmp_text_list(ta, tb), ty_compare(xa, xb), e))
+            )
+          )
+        )
+        TyNamed(nb, xb) => False_elim(less_ne_equal(e))
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyNamed(na, xa) => match b -> Eq(Ty, TyNamed(na, xa), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(
+          nb,
+          xb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: Text) => TyNamed(z, xa),
+            ordmap_compare_text_eq(
+              na,
+              nb,
+              and_left(ty_then_equal(ordmap_compare_text(na, nb), ty_compare_list(xa, xb), e))
+            )
+          ),
+          Eq_congr(
+            (z: List(Ty)) => TyNamed(nb, z),
+            ty_compare_list_eq(
+              xa,
+              xb,
+              and_right(ty_then_equal(ordmap_compare_text(na, nb), ty_compare_list(xa, xb), e))
+            )
+          )
+        )
+        TyParam(nb, kb) => False_elim(less_ne_equal(e))
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyParam(na, ka) => match b -> Eq(Ty, TyParam(na, ka), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(greater_ne_equal(e))
+        TyParam(
+          nb,
+          kb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: Text) => TyParam(z, ka),
+            ordmap_compare_text_eq(
+              na,
+              nb,
+              and_left(
+                ty_then_equal(
+                  ordmap_compare_text(na, nb),
+                  ordmap_compare_nat(kind_rank(ka), kind_rank(kb)),
+                  e
+                )
+              )
+            )
+          ),
+          Eq_congr(
+            (z: Kind) => TyParam(nb, z),
+            kind_rank_inj(
+              ka,
+              kb,
+              ordmap_compare_nat_eq(
+                kind_rank(ka),
+                kind_rank(kb),
+                and_right(
+                  ty_then_equal(
+                    ordmap_compare_text(na, nb),
+                    ordmap_compare_nat(kind_rank(ka), kind_rank(kb)),
+                    e
+                  )
+                )
+              )
+            )
+          )
+        )
+        TyInfo(xb) => False_elim(less_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyInfo(xa) => match b -> Eq(Ty, TyInfo(xa), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(greater_ne_equal(e))
+        TyParam(nb, kb) => False_elim(greater_ne_equal(e))
+        TyInfo(xb) => Eq_congr((z: Ty) => TyInfo(z), ty_compare_eq(xa, xb, e))
+        TyBorrow(xb, mb) => False_elim(less_ne_equal(e))
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyBorrow(xa, ma) => match b -> Eq(Ty, TyBorrow(xa, ma), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(greater_ne_equal(e))
+        TyParam(nb, kb) => False_elim(greater_ne_equal(e))
+        TyInfo(xb) => False_elim(greater_ne_equal(e))
+        TyBorrow(
+          xb,
+          mb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: Ty) => TyBorrow(z, ma),
+            ty_compare_eq(
+              xa,
+              xb,
+              and_left(
+                ty_then_equal(ty_compare(xa, xb), ordmap_compare_nat(yn_rank(ma), yn_rank(mb)), e)
+              )
+            )
+          ),
+          Eq_congr(
+            (z: Yn) => TyBorrow(xb, z),
+            yn_rank_inj(
+              ma,
+              mb,
+              ordmap_compare_nat_eq(
+                yn_rank(ma),
+                yn_rank(mb),
+                and_right(
+                  ty_then_equal(ty_compare(xa, xb), ordmap_compare_nat(yn_rank(ma), yn_rank(mb)), e)
+                )
+              )
+            )
+          )
+        )
+        TyVar(vb) => False_elim(less_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyVar(va) => match b -> Eq(Ty, TyVar(va), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(greater_ne_equal(e))
+        TyParam(nb, kb) => False_elim(greater_ne_equal(e))
+        TyInfo(xb) => False_elim(greater_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(greater_ne_equal(e))
+        TyVar(vb) => Eq_congr((z: Nat) => TyVar(z), ordmap_compare_nat_eq(va, vb, e))
+        TyPoly(gb, xb) => False_elim(less_ne_equal(e))
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyPoly(ga, xa) => match b -> Eq(Ty, TyPoly(ga, xa), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(greater_ne_equal(e))
+        TyParam(nb, kb) => False_elim(greater_ne_equal(e))
+        TyInfo(xb) => False_elim(greater_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(greater_ne_equal(e))
+        TyVar(vb) => False_elim(greater_ne_equal(e))
+        TyPoly(
+          gb,
+          xb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: List(Pair(Text, Kind))) => TyPoly(z, xa),
+            cmp_generics_eq(
+              ga,
+              gb,
+              and_left(ty_then_equal(cmp_generics(ga, gb), ty_compare(xa, xb), e))
+            )
+          ),
+          Eq_congr(
+            (z: Ty) => TyPoly(gb, z),
+            ty_compare_eq(
+              xa,
+              xb,
+              and_right(ty_then_equal(cmp_generics(ga, gb), ty_compare(xa, xb), e))
+            )
+          )
+        )
+        TyApp(hb, xb) => False_elim(less_ne_equal(e))
+      }
+      TyApp(ha, xa) => match b -> Eq(Ty, TyApp(ha, xa), b) {
+        TyInt(wb) => False_elim(greater_ne_equal(e))
+        TyBool => False_elim(greater_ne_equal(e))
+        TyText => False_elim(greater_ne_equal(e))
+        TyUnit => False_elim(greater_ne_equal(e))
+        TyNever => False_elim(greater_ne_equal(e))
+        TyDecimal => False_elim(greater_ne_equal(e))
+        TyFloat => False_elim(greater_ne_equal(e))
+        TyFn(pb, rb, kb) => False_elim(greater_ne_equal(e))
+        TyUnion(xb) => False_elim(greater_ne_equal(e))
+        TyTagged(tb, xb) => False_elim(greater_ne_equal(e))
+        TyNamed(nb, xb) => False_elim(greater_ne_equal(e))
+        TyParam(nb, kb) => False_elim(greater_ne_equal(e))
+        TyInfo(xb) => False_elim(greater_ne_equal(e))
+        TyBorrow(xb, mb) => False_elim(greater_ne_equal(e))
+        TyVar(vb) => False_elim(greater_ne_equal(e))
+        TyPoly(gb, xb) => False_elim(greater_ne_equal(e))
+        TyApp(
+          hb,
+          xb
+        ) => Eq_trans(
+          Eq_congr(
+            (z: Ty) => TyApp(z, xa),
+            ty_compare_eq(
+              ha,
+              hb,
+              and_left(ty_then_equal(ty_compare(ha, hb), ty_compare(xa, xb), e))
+            )
+          ),
+          Eq_congr(
+            (z: Ty) => TyApp(hb, z),
+            ty_compare_eq(
+              xa,
+              xb,
+              and_right(ty_then_equal(ty_compare(ha, hb), ty_compare(xa, xb), e))
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+// The step of `ty_eq` on the comparison.
+fn ty_eq_step(o: Ordering) -> Yn {
+  match o -> Yn {
+    Equal => yes
+    _ => no
+  }
+}
+
+// `ty_eq` is `yes` only on Equal types.
+theorem ty_eq_sound(a: Ty, b: Ty, e: Eq(Yn, ty_eq(a, b), yes)): Eq(Ty, a, b) {
+  ty_compare_eq(
+    a,
+    b,
+    ordering_cases(
+      (o: Ordering) => Eq(Ordering, o, Equal),
+      ty_compare(a, b),
+      (
+        q: Eq(Ordering, ty_compare(a, b), Less)
+      ) => False_elim(no_ne_yes(Eq_subst((o: Ordering) => Eq(Yn, ty_eq_step(o), yes), q, e))),
+      (q: Eq(Ordering, ty_compare(a, b), Equal)) => refl(),
+      (
+        q: Eq(Ordering, ty_compare(a, b), Greater)
+      ) => False_elim(no_ne_yes(Eq_subst((o: Ordering) => Eq(Yn, ty_eq_step(o), yes), q, e)))
+    )
+  )
+}

@@ -1,0 +1,29 @@
+fn show_stack(r: Option(List(u64))) -> () {
+  match r {
+    None => os_print("stack underflow\n")
+    Some(st) => match st {
+      Nil => os_print("empty\n")
+      Cons(top, rest) => {
+        os_print(text_of_u64(top))
+        os_print("\n")
+      }
+    }
+  }
+}
+
+fn calc_main(src: Text) -> () ! {Div} {
+  os_print(src)
+  os_print(" => ")
+  match calc_parse(src) {
+    Err(d) => {
+      os_print("error: ")
+      os_print(d.message)
+      os_print("\n")
+    }
+    Ok(t) => show_stack(run_code(compile_expr(fold_expr(calc_expr_lower(calc_Expr_to_i(t)))), Nil))
+  }
+}
+
+calc_main("(2 + 3) * (4 + 5)")
+calc_main("1 + 2 * 3")
+calc_main("2 + * 3")

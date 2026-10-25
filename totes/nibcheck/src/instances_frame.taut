@@ -1,0 +1,3377 @@
+import "classes_frame.taut"
+
+// Instance declaration checks preserve the data environment.
+
+fn inf_class(i: SurfaceInstance) -> Text { i.class }
+
+fn inf_generics(i: SurfaceInstance) -> List(Text) { i.generics }
+
+fn inf_wheres(i: SurfaceInstance) -> List(SurfaceConstraint) { i.wheres }
+
+fn inf_laws(i: SurfaceInstance) -> List(SurfaceLaw) { i.laws }
+
+fn inf_methods(i: SurfaceInstance) -> List(SurfaceFn) { i.methods }
+
+fn inf_head(i: SurfaceInstance) -> SurfaceTerm { i.head }
+
+fn inf_span(i: SurfaceInstance) -> TySpan { span_at(i.start, i.end) }
+
+fn inf_law_duplicate(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  bad: Yn
+) -> Mut1(Unit, Checker) {
+  match bad -> Mut1(Unit, Checker) {
+    yes => frame_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
+      ck_error(
+        c,
+        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        cf_law_span(l)
+      )
+    )
+    no => ck_rewrap1(ck_instance_laws(rest, Cons(cf_law_name(l), seen), c, i, decl))
+  }
+}
+
+theorem inf_law_duplicate_frame(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  bad: Yn,
+  ih: ∀ ns: List(
+    Text
+  ). ∀ next: Checker. CkReadFrame(next, ck_instance_laws(rest, ns, next, i, decl))
+): CkReadFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
+  match bad -> CkReadFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
+    yes => frame_bind_ok(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
+      ck_error(
+        c,
+        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        cf_law_span(l)
+      ),
+      ck_error_frame(
+        c,
+        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        cf_law_span(l)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_laws(rest, seen, c1, i, decl), ih(seen, c1))
+    )
+    no => frame_rewrap(
+      c,
+      ck_instance_laws(rest, Cons(cf_law_name(l), seen), c, i, decl),
+      ih(Cons(cf_law_name(l), seen), c)
+    )
+  }
+}
+
+fn inf_law_missing(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  bad: Yn
+) -> Mut1(Unit, Checker) {
+  match bad -> Mut1(Unit, Checker) {
+    yes => frame_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
+      ck_error(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l))
+    )
+    no => inf_law_duplicate(l, rest, seen, c, i, decl, text_list_has(seen, cf_law_name(l)))
+  }
+}
+
+theorem inf_law_missing_frame(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  bad: Yn,
+  ih: ∀ ns: List(
+    Text
+  ). ∀ next: Checker. CkReadFrame(next, ck_instance_laws(rest, ns, next, i, decl))
+): CkReadFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
+  match bad -> CkReadFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
+    yes => frame_bind_ok(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
+      ck_error(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l)),
+      ck_error_frame(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l)),
+      ignored => c1 => frame_rewrap(c1, ck_instance_laws(rest, seen, c1, i, decl), ih(seen, c1))
+    )
+    no => inf_law_duplicate_frame(
+      l,
+      rest,
+      seen,
+      c,
+      i,
+      decl,
+      text_list_has(seen, cf_law_name(l)),
+      ih
+    )
+  }
+}
+
+theorem inf_laws_unf(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): Eq(
+  Mut1(Unit, Checker),
+  ck_instance_laws(Cons(l, rest), seen, c, i, decl),
+  inf_law_missing(l, rest, seen, c, i, decl, yn_not(law_named(cf_class_laws(decl), cf_law_name(l))))
+) { refl() }
+
+theorem ck_instance_laws_frame(
+  ls: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): CkReadFrame(c, ck_instance_laws(ls, seen, c, i, decl)) {
+  match ls -> CkReadFrame(c, ck_instance_laws(ls, seen, c, i, decl)) {
+    Nil => refl()
+    Cons(
+      l,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_laws_unf(l, rest, seen, c, i, decl)),
+      inf_law_missing_frame(
+        l,
+        rest,
+        seen,
+        c,
+        i,
+        decl,
+        yn_not(law_named(cf_class_laws(decl), cf_law_name(l))),
+        ns => next => ck_instance_laws_frame(rest, ns, next, i, decl)
+      )
+    )
+  }
+}
+
+fn inf_extra_cons(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_extra(rest, c1, i, decl)),
+    frame_error_if(
+      c,
+      cat3(inf_class(i), " has no method ", signature_name(m)),
+      cf_method_span(m),
+      yn_not(method_names_have(cf_class_methods(decl), signature_name(m)))
+    )
+  )
+}
+
+theorem inf_extra_cons_frame(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_instance_extra(rest, next, i, decl))
+): CkReadFrame(c, inf_extra_cons(m, rest, c, i, decl)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_extra(rest, c1, i, decl)),
+    frame_error_if(
+      c,
+      cat3(inf_class(i), " has no method ", signature_name(m)),
+      cf_method_span(m),
+      yn_not(method_names_have(cf_class_methods(decl), signature_name(m)))
+    ),
+    frame_error_if_ok(
+      c,
+      cat3(inf_class(i), " has no method ", signature_name(m)),
+      cf_method_span(m),
+      yn_not(method_names_have(cf_class_methods(decl), signature_name(m)))
+    ),
+    ignored => c1 => frame_rewrap(c1, ck_instance_extra(rest, c1, i, decl), ih(c1))
+  )
+}
+
+theorem inf_extra_unf(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): Eq(
+  Mut1(Unit, Checker),
+  ck_instance_extra(Cons(m, rest), c, i, decl),
+  inf_extra_cons(m, rest, c, i, decl)
+) { refl() }
+
+theorem ck_instance_extra_frame(
+  ms: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): CkReadFrame(c, ck_instance_extra(ms, c, i, decl)) {
+  match ms -> CkReadFrame(c, ck_instance_extra(ms, c, i, decl)) {
+    Nil => refl()
+    Cons(
+      m,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_extra_unf(m, rest, c, i, decl)),
+      inf_extra_cons_frame(
+        m,
+        rest,
+        c,
+        i,
+        decl,
+        next => ck_instance_extra_frame(rest, next, i, decl)
+      )
+    )
+  }
+}
+
+fn inf_want(
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  expected: SurfaceFn,
+  param: Text
+) -> SurfaceFn { SurfaceFn {
+    name: got.name,
+    generics: list_append(i.generics, expected.generics),
+    bounds: list_append(
+      opts_resize(list_len(i.generics), i.bounds),
+      opts_resize(list_len(expected.generics), expected.bounds)
+    ),
+    params: expected.params,
+    borrows: expected.borrows,
+    param_types: opt_terms_replace(expected.param_types, param, i.head),
+    result: opt_term_replace(expected.result, param, i.head),
+    effects: expected.effects,
+    wheres: i.wheres,
+    start: expected.start,
+    end: expected.end,
+    body: expected.body
+  } }
+
+fn inf_wanted_params(wanted: Scheme) -> List(Ty) { match wanted.ty -> List(Ty) {
+    TyFn(ps, r, k) => ps
+    TyInt(w) => Nil
+    TyBool => Nil
+    TyText => Nil
+    TyUnit => Nil
+    TyNever => Nil
+    TyDecimal => Nil
+    TyFloat => Nil
+    TyUnion(members) => Nil
+    TyTagged(tags, inner) => Nil
+    TyNamed(name, args) => Nil
+    TyParam(name, bound) => Nil
+    TyInfo(inner) => Nil
+    TyBorrow(inner, mutable) => Nil
+    TyVar(v) => Nil
+    TyPoly(generics, inner) => Nil
+    TyApp(head, arg) => Nil
+  } }
+
+fn inf_signature_diff(
+  wanted: Scheme,
+  scheme: Scheme,
+  got: SurfaceFn,
+  want: SurfaceFn
+) -> Yn { yn_or(yn_not(ty_eq(wanted.ty, scheme.ty)), yn_not(borrows_eq(got.borrows, want.borrows))) }
+fn inf_signature_message(
+  c: Checker,
+  i: SurfaceInstance,
+  expected: SurfaceFn,
+  head: Text,
+  want: SurfaceFn,
+  wanted: Scheme
+) -> Text {
+  cat5(
+    i.class,
+    ".",
+    expected.name,
+    cat3(" of ", head, " takes "),
+    text_join(shown_params(want.params, want.borrows, inf_wanted_params(wanted), c), ", ")
+  )
+}
+
+fn inf_same(
+  c: Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  head: Text,
+  want: SurfaceFn
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Scheme,
+    Unit,
+    (
+      wanted: Scheme,
+      c1: Checker
+    ) => frame_error_if(
+      c1,
+      inf_signature_message(c1, i, expected, head, want, wanted),
+      cf_method_span(got),
+      inf_signature_diff(wanted, scheme, got, want)
+    ),
+    ck_signature(c, want)
+  )
+}
+
+theorem inf_same_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  head: Text,
+  want: SurfaceFn
+): CkReadFrame(c, inf_same(c, i, got, scheme, expected, head, want)) {
+  frame_bind_ok(
+    Scheme,
+    Unit,
+    c,
+    (
+      wanted: Scheme,
+      c1: Checker
+    ) => frame_error_if(
+      c1,
+      inf_signature_message(c1, i, expected, head, want, wanted),
+      cf_method_span(got),
+      inf_signature_diff(wanted, scheme, got, want)
+    ),
+    ck_signature(c, want),
+    ck_signature_frame(c, want),
+    wanted => c1 => frame_error_if_ok(
+      c1,
+      inf_signature_message(c1, i, expected, head, want, wanted),
+      cf_method_span(got),
+      inf_signature_diff(wanted, scheme, got, want)
+    )
+  )
+}
+
+theorem inf_same_unf(
+  c: Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  param: Text,
+  head: Text
+): Eq(
+  Mut1(Unit, Checker),
+  ck_same_signature(c, i, got, scheme, expected, param, head),
+  inf_same(c, i, got, scheme, expected, head, inf_want(i, got, expected, param))
+) { refl() }
+
+theorem ck_same_signature_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  param: Text,
+  head: Text
+): CkReadFrame(
+  c,
+  ck_same_signature(c, i, got, scheme, expected, param, head)
+) { Eq_subst(
+  (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+  Eq_sym(inf_same_unf(c, i, got, scheme, expected, param, head)),
+  inf_same_frame(c, i, got, scheme, expected, head, inf_want(i, got, expected, param))
+) }
+
+fn inf_method_fn(i: SurfaceInstance, ctor: Text, m: SurfaceFn) -> SurfaceFn { SurfaceFn {
+    name: instance_fn(i.class, m.name, ctor),
+    generics: list_append(i.generics, m.generics),
+    bounds: list_append(
+      opts_resize(list_len(i.generics), i.bounds),
+      opts_resize(list_len(m.generics), m.bounds)
+    ),
+    params: m.params,
+    borrows: m.borrows,
+    param_types: m.param_types,
+    result: m.result,
+    effects: m.effects,
+    wheres: i.wheres,
+    start: m.start,
+    end: m.end,
+    body: m.body
+  } }
+
+fn inf_method_found(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn),
+  made: SurfaceFn
+) -> Mut1(List(SurfaceFn), Checker) {
+  frame_bind(
+    Scheme,
+    List(SurfaceFn),
+    (
+      scheme: Scheme,
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => ck_rewrap1(
+        ck_instance_methods(
+          rest,
+          cf_store_state(c2, made, scheme),
+          i,
+          decl,
+          ctor,
+          shown,
+          Cons(made, out)
+        )
+      ),
+      ck_same_signature(c1, i, made, scheme, e, cf_class_param(decl), shown)
+    ),
+    ck_signature(c, made)
+  )
+}
+
+theorem inf_method_found_frame(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn),
+  made: SurfaceFn,
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkReadFrame(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
+): CkReadFrame(c, inf_method_found(e, rest, c, i, decl, ctor, shown, out, made)) {
+  frame_bind_ok(
+    Scheme,
+    List(SurfaceFn),
+    c,
+    (
+      scheme: Scheme,
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => ck_rewrap1(
+        ck_instance_methods(
+          rest,
+          cf_store_state(c2, made, scheme),
+          i,
+          decl,
+          ctor,
+          shown,
+          Cons(made, out)
+        )
+      ),
+      ck_same_signature(c1, i, made, scheme, e, cf_class_param(decl), shown)
+    ),
+    ck_signature(c, made),
+    ck_signature_frame(c, made),
+    scheme => c1 => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c1,
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => ck_rewrap1(
+        ck_instance_methods(
+          rest,
+          cf_store_state(c2, made, scheme),
+          i,
+          decl,
+          ctor,
+          shown,
+          Cons(made, out)
+        )
+      ),
+      ck_same_signature(c1, i, made, scheme, e, cf_class_param(decl), shown),
+      ck_same_signature_frame(c1, i, made, scheme, e, cf_class_param(decl), shown),
+      ignored => c2 => frame_changed(
+        c2,
+        cf_store_state(c2, made, scheme),
+        ck_rewrap1(
+          ck_instance_methods(
+            rest,
+            cf_store_state(c2, made, scheme),
+            i,
+            decl,
+            ctor,
+            shown,
+            Cons(made, out)
+          )
+        ),
+        cf_store_state_same(c2, made, scheme),
+        frame_rewrap(
+          cf_store_state(c2, made, scheme),
+          ck_instance_methods(
+            rest,
+            cf_store_state(c2, made, scheme),
+            i,
+            decl,
+            ctor,
+            shown,
+            Cons(made, out)
+          ),
+          ih(cf_store_state(c2, made, scheme), Cons(made, out))
+        )
+      )
+    )
+  )
+}
+
+fn inf_method_get(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn),
+  o: Option(SurfaceFn)
+) -> Mut1(List(SurfaceFn), Checker) {
+  match o -> Mut1(List(SurfaceFn), Checker) {
+    None => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (
+        ignored: Unit,
+        c1: Checker
+      ) => ck_rewrap1(ck_instance_methods(rest, c1, i, decl, ctor, shown, out)),
+      ck_error(
+        c,
+        cat5(
+          "the instance ",
+          inf_class(i),
+          cat3("(", shown, ")"),
+          " does not define ",
+          signature_name(e)
+        ),
+        inf_span(i)
+      )
+    )
+    Some(m) => inf_method_found(e, rest, c, i, decl, ctor, shown, out, inf_method_fn(i, ctor, m))
+  }
+}
+
+theorem inf_method_get_frame(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn),
+  o: Option(SurfaceFn),
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkReadFrame(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
+): CkReadFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
+  match o -> CkReadFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
+    None => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (
+        ignored: Unit,
+        c1: Checker
+      ) => ck_rewrap1(ck_instance_methods(rest, c1, i, decl, ctor, shown, out)),
+      ck_error(
+        c,
+        cat5(
+          "the instance ",
+          inf_class(i),
+          cat3("(", shown, ")"),
+          " does not define ",
+          signature_name(e)
+        ),
+        inf_span(i)
+      ),
+      ck_error_frame(
+        c,
+        cat5(
+          "the instance ",
+          inf_class(i),
+          cat3("(", shown, ")"),
+          " does not define ",
+          signature_name(e)
+        ),
+        inf_span(i)
+      ),
+      ignored => c1 => frame_rewrap(
+        c1,
+        ck_instance_methods(rest, c1, i, decl, ctor, shown, out),
+        ih(c1, out)
+      )
+    )
+    Some(
+      m
+    ) => inf_method_found_frame(
+      e,
+      rest,
+      c,
+      i,
+      decl,
+      ctor,
+      shown,
+      out,
+      inf_method_fn(i, ctor, m),
+      ih
+    )
+  }
+}
+
+theorem inf_methods_unf(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_instance_methods(Cons(e, rest), c, i, decl, ctor, shown, out),
+  inf_method_get(
+    e,
+    rest,
+    c,
+    i,
+    decl,
+    ctor,
+    shown,
+    out,
+    method_named(inf_methods(i), signature_name(e))
+  )
+) { refl() }
+
+theorem ck_instance_methods_frame(
+  expected: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn)
+): CkReadFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
+  match expected -> CkReadFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
+    Nil => refl()
+    Cons(
+      e,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_methods_unf(e, rest, c, i, decl, ctor, shown, out)),
+      inf_method_get_frame(
+        e,
+        rest,
+        c,
+        i,
+        decl,
+        ctor,
+        shown,
+        out,
+        method_named(inf_methods(i), signature_name(e)),
+        next => fs => ck_instance_methods_frame(rest, next, i, decl, ctor, shown, fs)
+      )
+    )
+  }
+}
+
+fn inf_preds_dup(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Yn
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match dup -> Mut1(List(Pair(Text, Text)), Checker) {
+    yes => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(
+        c,
+        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        signature_constraint_span(w)
+      )
+    )
+    no => ck_rewrap1(
+      ck_instance_preds(
+        rest,
+        c,
+        gs,
+        Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds)
+      )
+    )
+  }
+}
+
+theorem inf_preds_dup_frame(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Yn,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
+): CkReadFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
+  match dup -> CkReadFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
+    yes => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(
+        c,
+        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        signature_constraint_span(w)
+      ),
+      ck_error_frame(
+        c,
+        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    no => frame_rewrap(
+      c,
+      ck_instance_preds(
+        rest,
+        c,
+        gs,
+        Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds)
+      ),
+      ih(c, Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds))
+    )
+  }
+}
+
+fn inf_preds_has(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  has: Yn
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match has -> Mut1(List(Pair(Text, Text)), Checker) {
+    yes => inf_preds_dup(
+      w,
+      rest,
+      c,
+      gs,
+      preds,
+      g,
+      preds_have(preds, signature_constraint_class(w), g)
+    )
+    no => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+  }
+}
+
+theorem inf_preds_has_frame(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  has: Yn,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
+): CkReadFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
+  match has -> CkReadFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
+    yes => inf_preds_dup_frame(
+      w,
+      rest,
+      c,
+      gs,
+      preds,
+      g,
+      preds_have(preds, signature_constraint_class(w), g),
+      ih
+    )
+    no => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+  }
+}
+
+fn inf_preds_kind(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  k: SurfaceKind
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match k -> Mut1(List(Pair(Text, Text)), Checker) {
+    SkVar(g) => inf_preds_has(w, rest, c, gs, preds, g, text_list_has(gs, g))
+    SkNat(
+      digits
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkText(
+      value
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkBool(
+      value
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkApp(
+      head,
+      args
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkPi(
+      params,
+      result,
+      effects
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkExists(
+      binder,
+      domain,
+      body
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkLam(
+      params,
+      body
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkUnion(
+      parts
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkTagged(
+      tag,
+      value
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkIf(
+      cond,
+      then,
+      otherwise
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkField(
+      value,
+      name
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkBlock(
+      stmts
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkPerform(
+      op,
+      args
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkHandle(
+      body,
+      handlers
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkBudget(
+      amount,
+      body
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkMatch(
+      scrutinee,
+      motive,
+      arms,
+      binder
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkHole(
+      name
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkRecord(
+      name,
+      fields
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkBorrow(
+      mutable,
+      value
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkFnKind(
+      kind,
+      ty
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkBorrowLam(
+      borrows,
+      lam
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkOther(
+      what
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkMacroCall(
+      name,
+      arg
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkQuote(
+      stmts_form,
+      stmts
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkSplice(
+      value
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkSyntaxLit(
+      name,
+      body
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+    SkStep(
+      tactic,
+      arg,
+      call_start,
+      call_end,
+      before,
+      arms
+    ) => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
+    )
+  }
+}
+
+theorem inf_preds_kind_frame(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  k: SurfaceKind,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
+): CkReadFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
+  match k -> CkReadFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
+    SkVar(g) => inf_preds_has_frame(w, rest, c, gs, preds, g, text_list_has(gs, g), ih)
+    SkNat(
+      digits
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkText(
+      value
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBool(
+      value
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkApp(
+      head,
+      args
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkPi(
+      params,
+      result,
+      effects
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkExists(
+      binder,
+      domain,
+      body
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkLam(
+      params,
+      body
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkUnion(
+      parts
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkTagged(
+      tag,
+      value
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkIf(
+      cond,
+      then,
+      otherwise
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkField(
+      value,
+      name
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBlock(
+      stmts
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkPerform(
+      op,
+      args
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkHandle(
+      body,
+      handlers
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBudget(
+      amount,
+      body
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkMatch(
+      scrutinee,
+      motive,
+      arms,
+      binder
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkHole(
+      name
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkRecord(
+      name,
+      fields
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBorrow(
+      mutable,
+      value
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkFnKind(
+      kind,
+      ty
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBorrowLam(
+      borrows,
+      lam
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkOther(
+      what
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkMacroCall(
+      name,
+      arg
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkQuote(
+      stmts_form,
+      stmts
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkSplice(
+      value
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkSyntaxLit(
+      name,
+      body
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkStep(
+      tactic,
+      arg,
+      call_start,
+      call_end,
+      before,
+      arms
+    ) => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      ck_error_frame(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+  }
+}
+
+fn inf_pred_kind(w: SurfaceConstraint) -> SurfaceKind { w.ty.kind }
+
+fn inf_preds_missing(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  missing: Yn
+) -> Mut1(List(Pair(Text, Text)), Checker) {
+  match missing -> Mut1(List(Pair(Text, Text)), Checker) {
+    yes => frame_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(
+        c,
+        cat2(signature_constraint_class(w), " is not a class"),
+        signature_constraint_span(w)
+      )
+    )
+    no => inf_preds_kind(w, rest, c, gs, preds, inf_pred_kind(w))
+  }
+}
+
+theorem inf_preds_missing_frame(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  missing: Yn,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
+): CkReadFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
+  match missing -> CkReadFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
+    yes => frame_bind_ok(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(
+        c,
+        cat2(signature_constraint_class(w), " is not a class"),
+        signature_constraint_span(w)
+      ),
+      ck_error_frame(
+        c,
+        cat2(signature_constraint_class(w), " is not a class"),
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    no => inf_preds_kind_frame(w, rest, c, gs, preds, inf_pred_kind(w), ih)
+  }
+}
+
+theorem inf_preds_unf(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text))
+): Eq(
+  Mut1(List(Pair(Text, Text)), Checker),
+  ck_instance_preds(Cons(w, rest), c, gs, preds),
+  inf_preds_missing(w, rest, c, gs, preds, signature_class_missing(c, w))
+) { refl() }
+
+theorem ck_instance_preds_frame(
+  ws: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text))
+): CkReadFrame(c, ck_instance_preds(ws, c, gs, preds)) {
+  match ws -> CkReadFrame(c, ck_instance_preds(ws, c, gs, preds)) {
+    Nil => refl()
+    Cons(
+      w,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(Pair(Text, Text)), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_preds_unf(w, rest, c, gs, preds)),
+      inf_preds_missing_frame(
+        w,
+        rest,
+        c,
+        gs,
+        preds,
+        signature_class_missing(c, w),
+        next => ps => ck_instance_preds_frame(rest, next, gs, ps)
+      )
+    )
+  }
+}
+
+fn inf_info_decl(info: ClassInfo) -> SurfaceClass { info.decl }
+fn inf_duplicate(
+  c: Checker,
+  i: SurfaceInstance,
+  ctor: Text
+) -> Yn { ordmap_contains(c.instances, instance_key(i.class, ctor), ordmap_compare_text) }
+fn inf_store(
+  &mut c: Checker,
+  i: SurfaceInstance,
+  ctor: Text,
+  g: SigGenerics,
+  head: Ty,
+  preds: List(Pair(Text, Text)),
+  made: List(SurfaceFn)
+) -> List(SurfaceFn) {
+  set_to(
+    &mut c.instances,
+    ordmap_insert(
+      c.instances,
+      instance_key(i.class, ctor),
+      InstanceInfo { generics: g.generics, head: head, preds: preds },
+      ordmap_compare_text
+    )
+  )
+  made
+}
+theorem inf_store_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  ctor: Text,
+  g: SigGenerics,
+  head: Ty,
+  preds: List(Pair(Text, Text)),
+  made: List(SurfaceFn)
+): CkReadFrame(c, inf_store(c, i, ctor, g, head, preds, made)) { refl() }
+
+fn inf_rest_duplicate(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text,
+  bad: Yn
+) -> Mut1(List(SurfaceFn), Checker) {
+  match bad -> Mut1(List(SurfaceFn), Checker) {
+    yes => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i))
+    )
+    no => frame_bind(
+      List(Pair(Text, Text)),
+      List(SurfaceFn),
+      (
+        preds: List(Pair(Text, Text)),
+        c1: Checker
+      ) => frame_bind(
+        Unit,
+        List(SurfaceFn),
+        (
+          ignored1: Unit,
+          c2: Checker
+        ) => frame_bind(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          (
+            made: List(SurfaceFn),
+            c3: Checker
+          ) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          )
+        ),
+        ck_instance_laws(inf_laws(i), Nil, c1, i, inf_info_decl(info))
+      ),
+      ck_instance_preds(inf_wheres(i), c, inf_generics(i), Nil)
+    )
+  }
+}
+
+theorem inf_rest_duplicate_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text,
+  bad: Yn
+): CkReadFrame(
+  c,
+  inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+) {
+  match bad -> CkReadFrame(
+    c,
+    inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+  ) {
+    yes => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i)),
+      ck_error_frame(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i)),
+      ignored => c1 => refl()
+    )
+    no => frame_bind_ok(
+      List(Pair(Text, Text)),
+      List(SurfaceFn),
+      c,
+      (
+        preds: List(Pair(Text, Text)),
+        c1: Checker
+      ) => frame_bind(
+        Unit,
+        List(SurfaceFn),
+        (
+          ignored1: Unit,
+          c2: Checker
+        ) => frame_bind(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          (
+            made: List(SurfaceFn),
+            c3: Checker
+          ) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          )
+        ),
+        ck_instance_laws(inf_laws(i), Nil, c1, i, inf_info_decl(info))
+      ),
+      ck_instance_preds(inf_wheres(i), c, inf_generics(i), Nil),
+      ck_instance_preds_frame(inf_wheres(i), c, inf_generics(i), Nil),
+      preds => c1 => frame_bind_ok(
+        Unit,
+        List(SurfaceFn),
+        c1,
+        (
+          ignored1: Unit,
+          c2: Checker
+        ) => frame_bind(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          (
+            made: List(SurfaceFn),
+            c3: Checker
+          ) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          )
+        ),
+        ck_instance_laws(inf_laws(i), Nil, c1, i, inf_info_decl(info)),
+        ck_instance_laws_frame(inf_laws(i), Nil, c1, i, inf_info_decl(info)),
+        ignored1 => c2 => frame_bind_ok(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          c2,
+          (
+            made: List(SurfaceFn),
+            c3: Checker
+          ) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          ),
+          ck_instance_methods_frame(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          ),
+          made => c3 => frame_bind_ok(
+            Unit,
+            List(SurfaceFn),
+            c3,
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info)),
+            ck_instance_extra_frame(inf_methods(i), c3, i, inf_info_decl(info)),
+            ignored2 => c4 => inf_store_frame(c4, i, ctor, g, head, preds, made)
+          )
+        )
+      )
+    )
+  }
+}
+
+fn inf_rest_orphan(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text,
+  bad: Yn
+) -> Mut1(List(SurfaceFn), Checker) {
+  match bad -> Mut1(List(SurfaceFn), Checker) {
+    yes => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(
+        c,
+        cat5(
+          inf_class(i),
+          cat3("(", ctor, ")"),
+          " must be in the tote of ",
+          inf_class(i),
+          cat2(" or of ", ctor)
+        ),
+        inf_span(i)
+      )
+    )
+    no => inf_rest_duplicate(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      g,
+      head,
+      ctor,
+      shown,
+      inf_duplicate(c, i, ctor)
+    )
+  }
+}
+
+theorem inf_rest_orphan_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text,
+  bad: Yn
+): CkReadFrame(
+  c,
+  inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+) {
+  match bad -> CkReadFrame(
+    c,
+    inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+  ) {
+    yes => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(
+        c,
+        cat5(
+          inf_class(i),
+          cat3("(", ctor, ")"),
+          " must be in the tote of ",
+          inf_class(i),
+          cat2(" or of ", ctor)
+        ),
+        inf_span(i)
+      ),
+      ck_error_frame(
+        c,
+        cat5(
+          inf_class(i),
+          cat3("(", ctor, ")"),
+          " must be in the tote of ",
+          inf_class(i),
+          cat2(" or of ", ctor)
+        ),
+        inf_span(i)
+      ),
+      ignored => c1 => refl()
+    )
+    no => inf_rest_duplicate_frame(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      g,
+      head,
+      ctor,
+      shown,
+      inf_duplicate(c, i, ctor)
+    )
+  }
+}
+
+theorem inf_rest_unf(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instance_rest(c, i, info, own_classes, own_types, out, g, head, ctor, shown),
+  inf_rest_orphan(
+    c,
+    i,
+    info,
+    own_classes,
+    own_types,
+    out,
+    g,
+    head,
+    ctor,
+    shown,
+    yn_and(yn_not(text_list_has(own_classes, inf_class(i))), yn_not(text_list_has(own_types, ctor)))
+  )
+) { refl() }
+
+theorem ck_declare_instance_rest_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text
+): CkReadFrame(
+  c,
+  ck_declare_instance_rest(c, i, info, own_classes, own_types, out, g, head, ctor, shown)
+) { Eq_subst(
+  (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+  Eq_sym(inf_rest_unf(c, i, info, own_classes, own_types, out, g, head, ctor, shown)),
+  inf_rest_orphan_frame(
+    c,
+    i,
+    info,
+    own_classes,
+    own_types,
+    out,
+    g,
+    head,
+    ctor,
+    shown,
+    yn_and(yn_not(text_list_has(own_classes, inf_class(i))), yn_not(text_list_has(own_types, ctor)))
+  )
+) }
+
+fn inf_head_span(i: SurfaceInstance) -> TySpan { span_at(i.head.start, i.head.end) }
+fn inf_gens(
+  i: SurfaceInstance
+) -> SigGenerics { instance_generics(
+  i.generics,
+  i.bounds,
+  SigGenerics { generics: Nil, map: ordmap_empty(), ctors: Nil }
+) }
+fn inf_message_text(m: Pair(Text, TySpan)) -> Text { m.fst }
+fn inf_message_span(m: Pair(Text, TySpan)) -> TySpan { m.snd }
+
+fn inf_head_message(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  head: Ty,
+  ctor: Text,
+  message: Option(Pair(Text, TySpan))
+) -> Mut1(List(SurfaceFn), Checker) {
+  match message -> Mut1(List(SurfaceFn), Checker) {
+    None => ck_rewrap1(
+      ck_declare_instance_rest(
+        c,
+        i,
+        info,
+        own_classes,
+        own_types,
+        out,
+        inf_gens(i),
+        head,
+        ctor,
+        ty_show(ck_shown(c, head))
+      )
+    )
+    Some(
+      m
+    ) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, inf_message_text(m), inf_message_span(m))
+    )
+  }
+}
+
+theorem inf_head_message_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  head: Ty,
+  ctor: Text,
+  message: Option(Pair(Text, TySpan))
+): CkReadFrame(c, inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)) {
+  match message -> CkReadFrame(
+    c,
+    inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)
+  ) {
+    None => frame_rewrap(
+      c,
+      ck_declare_instance_rest(
+        c,
+        i,
+        info,
+        own_classes,
+        own_types,
+        out,
+        inf_gens(i),
+        head,
+        ctor,
+        ty_show(ck_shown(c, head))
+      ),
+      ck_declare_instance_rest_frame(
+        c,
+        i,
+        info,
+        own_classes,
+        own_types,
+        out,
+        inf_gens(i),
+        head,
+        ctor,
+        ty_show(ck_shown(c, head))
+      )
+    )
+    Some(
+      m
+    ) => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, inf_message_text(m), inf_message_span(m)),
+      ck_error_frame(c, inf_message_text(m), inf_message_span(m)),
+      ignored => c1 => refl()
+    )
+  }
+}
+
+fn inf_head_ctor(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  head: Ty,
+  found: Option(Text)
+) -> Mut1(List(SurfaceFn), Checker) {
+  match found -> Mut1(List(SurfaceFn), Checker) {
+    None => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i))
+    )
+    Some(
+      ctor
+    ) => inf_head_message(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      head,
+      ctor,
+      ck_instance_head_message(c, i, info, head, ctor)
+    )
+  }
+}
+
+theorem inf_head_ctor_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  head: Ty,
+  found: Option(Text)
+): CkReadFrame(c, inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)) {
+  match found -> CkReadFrame(
+    c,
+    inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)
+  ) {
+    None => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ck_error_frame(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ignored => c1 => refl()
+    )
+    Some(
+      ctor
+    ) => inf_head_message_frame(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      head,
+      ctor,
+      ck_instance_head_message(c, i, info, head, ctor)
+    )
+  }
+}
+
+fn inf_head_missing(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  missing: Option(Text)
+) -> Mut1(List(SurfaceFn), Checker) {
+  match missing -> Mut1(List(SurfaceFn), Checker) {
+    Some(
+      name
+    ) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(name, " does not appear in the head"), inf_head_span(i))
+    )
+    None => frame_bind(
+      Ty,
+      List(SurfaceFn),
+      (
+        head: Ty,
+        c1: Checker
+      ) => inf_head_ctor(
+        frame_set_constructor_position(c1, no),
+        i,
+        info,
+        own_classes,
+        own_types,
+        out,
+        head,
+        ty_constructor(head)
+      ),
+      ck_written(frame_set_constructor_position(c, yes), inf_head(i), signature_map(inf_gens(i)))
+    )
+  }
+}
+
+theorem inf_head_missing_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  missing: Option(Text)
+): CkReadFrame(c, inf_head_missing(c, i, info, own_classes, own_types, out, missing)) {
+  match missing -> CkReadFrame(
+    c,
+    inf_head_missing(c, i, info, own_classes, own_types, out, missing)
+  ) {
+    Some(
+      name
+    ) => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(name, " does not appear in the head"), inf_head_span(i)),
+      ck_error_frame(c, cat2(name, " does not appear in the head"), inf_head_span(i)),
+      ignored => c1 => refl()
+    )
+    None => frame_changed(
+      c,
+      frame_set_constructor_position(c, yes),
+      frame_bind(
+        Ty,
+        List(SurfaceFn),
+        (
+          head: Ty,
+          c1: Checker
+        ) => inf_head_ctor(
+          frame_set_constructor_position(c1, no),
+          i,
+          info,
+          own_classes,
+          own_types,
+          out,
+          head,
+          ty_constructor(head)
+        ),
+        ck_written(frame_set_constructor_position(c, yes), inf_head(i), signature_map(inf_gens(i)))
+      ),
+      frame_set_constructor_position_same(c, yes),
+      frame_bind_ok(
+        Ty,
+        List(SurfaceFn),
+        frame_set_constructor_position(c, yes),
+        (
+          head: Ty,
+          c1: Checker
+        ) => inf_head_ctor(
+          frame_set_constructor_position(c1, no),
+          i,
+          info,
+          own_classes,
+          own_types,
+          out,
+          head,
+          ty_constructor(head)
+        ),
+        ck_written(frame_set_constructor_position(c, yes), inf_head(i), signature_map(inf_gens(i))),
+        ck_written_frame(
+          frame_set_constructor_position(c, yes),
+          inf_head(i),
+          signature_map(inf_gens(i))
+        ),
+        head => c1 => frame_changed(
+          c1,
+          frame_set_constructor_position(c1, no),
+          inf_head_ctor(
+            frame_set_constructor_position(c1, no),
+            i,
+            info,
+            own_classes,
+            own_types,
+            out,
+            head,
+            ty_constructor(head)
+          ),
+          frame_set_constructor_position_same(c1, no),
+          inf_head_ctor_frame(
+            frame_set_constructor_position(c1, no),
+            i,
+            info,
+            own_classes,
+            own_types,
+            out,
+            head,
+            ty_constructor(head)
+          )
+        )
+      )
+    )
+  }
+}
+
+fn inf_head_shape(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  bad: Yn
+) -> Mut1(List(SurfaceFn), Checker) {
+  match bad -> Mut1(List(SurfaceFn), Checker) {
+    yes => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i))
+    )
+    no => inf_head_missing(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      generic_not_in_head(inf_generics(i), inf_head(i))
+    )
+  }
+}
+
+theorem inf_head_shape_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  bad: Yn
+): CkReadFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
+  match bad -> CkReadFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
+    yes => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ck_error_frame(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ignored => c1 => refl()
+    )
+    no => inf_head_missing_frame(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      generic_not_in_head(inf_generics(i), inf_head(i))
+    )
+  }
+}
+
+theorem inf_at_unf(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instance_at(c, i, info, own_classes, own_types, out),
+  inf_head_shape(
+    c,
+    i,
+    info,
+    own_classes,
+    own_types,
+    out,
+    yn_not(head_shape_ok(inf_head(i), inf_generics(i)))
+  )
+) { refl() }
+
+theorem ck_declare_instance_at_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): CkReadFrame(
+  c,
+  ck_declare_instance_at(c, i, info, own_classes, own_types, out)
+) { Eq_subst(
+  (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+  Eq_sym(inf_at_unf(c, i, info, own_classes, own_types, out)),
+  inf_head_shape_frame(
+    c,
+    i,
+    info,
+    own_classes,
+    own_types,
+    out,
+    yn_not(head_shape_ok(inf_head(i), inf_generics(i)))
+  )
+) }
+
+fn inf_class_get(
+  c: Checker,
+  i: SurfaceInstance
+) -> Option(ClassInfo) { ordmap_get(c.classes, i.class, ordmap_compare_text) }
+
+fn inf_class_lookup(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  o: Option(ClassInfo)
+) -> Mut1(List(SurfaceFn), Checker) {
+  match o -> Mut1(List(SurfaceFn), Checker) {
+    None => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(inf_class(i), " is not a class"), inf_span(i))
+    )
+    Some(info) => ck_rewrap1(ck_declare_instance_at(c, i, info, own_classes, own_types, out))
+  }
+}
+
+theorem inf_class_lookup_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  o: Option(ClassInfo)
+): CkReadFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
+  match o -> CkReadFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
+    None => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(inf_class(i), " is not a class"), inf_span(i)),
+      ck_error_frame(c, cat2(inf_class(i), " is not a class"), inf_span(i)),
+      ignored => c1 => refl()
+    )
+    Some(
+      info
+    ) => frame_rewrap(
+      c,
+      ck_declare_instance_at(c, i, info, own_classes, own_types, out),
+      ck_declare_instance_at_frame(c, i, info, own_classes, own_types, out)
+    )
+  }
+}
+
+fn inf_class_structural(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  structural: Yn
+) -> Mut1(List(SurfaceFn), Checker) {
+  match structural -> Mut1(List(SurfaceFn), Checker) {
+    yes => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(inf_class(i), " is structural and has no instances to write"), inf_span(i))
+    )
+    no => inf_class_lookup(c, i, own_classes, own_types, out, inf_class_get(c, i))
+  }
+}
+
+theorem inf_class_structural_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  structural: Yn
+): CkReadFrame(c, inf_class_structural(c, i, own_classes, own_types, out, structural)) {
+  match structural -> CkReadFrame(
+    c,
+    inf_class_structural(c, i, own_classes, own_types, out, structural)
+  ) {
+    yes => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(inf_class(i), " is structural and has no instances to write"), inf_span(i)),
+      ck_error_frame(
+        c,
+        cat2(inf_class(i), " is structural and has no instances to write"),
+        inf_span(i)
+      ),
+      ignored => c1 => refl()
+    )
+    no => inf_class_lookup_frame(c, i, own_classes, own_types, out, inf_class_get(c, i))
+  }
+}
+
+theorem inf_declare_unf(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instance(c, i, own_classes, own_types, out),
+  inf_class_structural(c, i, own_classes, own_types, out, class_is_structural(inf_class(i)))
+) { refl() }
+
+theorem ck_declare_instance_frame(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): CkReadFrame(
+  c,
+  ck_declare_instance(c, i, own_classes, own_types, out)
+) { Eq_subst(
+  (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+  Eq_sym(inf_declare_unf(c, i, own_classes, own_types, out)),
+  inf_class_structural_frame(c, i, own_classes, own_types, out, class_is_structural(inf_class(i)))
+) }
+
+fn inf_list_cons(
+  i: SurfaceInstance,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+) -> Mut1(List(SurfaceFn), Checker) {
+  frame_bind(
+    List(SurfaceFn),
+    List(SurfaceFn),
+    (
+      made: List(SurfaceFn),
+      c1: Checker
+    ) => ck_rewrap1(ck_declare_instances(rest, c1, own_classes, own_types, made)),
+    ck_declare_instance(c, i, own_classes, own_types, out)
+  )
+}
+
+theorem inf_list_cons_frame(
+  i: SurfaceInstance,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkReadFrame(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
+): CkReadFrame(c, inf_list_cons(i, rest, c, own_classes, own_types, out)) {
+  frame_bind_ok(
+    List(SurfaceFn),
+    List(SurfaceFn),
+    c,
+    (
+      made: List(SurfaceFn),
+      c1: Checker
+    ) => ck_rewrap1(ck_declare_instances(rest, c1, own_classes, own_types, made)),
+    ck_declare_instance(c, i, own_classes, own_types, out),
+    ck_declare_instance_frame(c, i, own_classes, own_types, out),
+    made => c1 => frame_rewrap(
+      c1,
+      ck_declare_instances(rest, c1, own_classes, own_types, made),
+      ih(c1, made)
+    )
+  )
+}
+
+theorem inf_list_StLet_unf(
+  name: Text,
+  ty: Option(SurfaceTerm),
+  value: SurfaceTerm,
+  borrow: Yn,
+  mutable: Yn,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(
+    Cons(StLet(name, ty, value, borrow, mutable), rest),
+    c,
+    own_classes,
+    own_types,
+    out
+  ),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StVar_unf(
+  name: Text,
+  ty: Option(SurfaceTerm),
+  value: SurfaceTerm,
+  borrow: Yn,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StVar(name, ty, value, borrow), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StModule_unf(
+  name: Text,
+  stmts: List(SurfaceStmt),
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(
+    Cons(StModule(name, stmts, start, end), rest),
+    c,
+    own_classes,
+    own_types,
+    out
+  ),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StAssign_unf(
+  name: Text,
+  value: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StAssign(name, value), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StFn_unf(
+  f: SurfaceFn,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StFn(f), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StTheorem_unf(
+  t: SurfaceTheorem,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StTheorem(t), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StDef_unf(
+  t: SurfaceTheorem,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StDef(t), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StMutual_unf(
+  stmts: List(SurfaceStmt),
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StMutual(stmts, start, end), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StImport_unf(
+  path: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StImport(path, start, end), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StInductive_unf(
+  i: SurfaceInductive,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StInductive(i), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StEffect_unf(
+  e: SurfaceEffect,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StEffect(e), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StStruct_unf(
+  d: SurfaceData,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StStruct(d), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StEnum_unf(
+  d: SurfaceData,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StEnum(d), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StExtern_unf(
+  abi: Text,
+  fns: List(SurfaceFn),
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StExtern(abi, fns, start, end), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StClass_unf(
+  cl: SurfaceClass,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StClass(cl), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StInstance_unf(
+  i: SurfaceInstance,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StInstance(i), rest), c, own_classes, own_types, out),
+  inf_list_cons(i, rest, c, own_classes, own_types, out)
+) { refl() }
+
+theorem inf_list_StWhile_unf(
+  cond: SurfaceTerm,
+  body: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StWhile(cond, body), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StReturn_unf(
+  value: Option(SurfaceTerm),
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StReturn(value), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StExpr_unf(
+  value: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StExpr(value), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StOther_unf(
+  what: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(Cons(StOther(what, start, end), rest), c, own_classes, own_types, out),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StMacro_unf(
+  name: Text,
+  function: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(
+    Cons(StMacro(name, function, start, end), rest),
+    c,
+    own_classes,
+    own_types,
+    out
+  ),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_StSyntax_unf(
+  name: Text,
+  grammar: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_instances(
+    Cons(StSyntax(name, grammar, start, end), rest),
+    c,
+    own_classes,
+    own_types,
+    out
+  ),
+  ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out))
+) { refl() }
+
+theorem inf_list_step(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkReadFrame(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
+): CkReadFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
+  match s -> CkReadFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
+    StLet(
+      name,
+      ty,
+      value,
+      borrow,
+      mutable
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(
+        inf_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_classes, own_types, out)
+      ),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StVar(
+      name,
+      ty,
+      value,
+      borrow
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StVar_unf(name, ty, value, borrow, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StModule(
+      name,
+      stmts,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StModule_unf(name, stmts, start, end, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StAssign(
+      name,
+      value
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StAssign_unf(name, value, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StFn(
+      f
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StFn_unf(f, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StTheorem(
+      t
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StTheorem_unf(t, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StDef(
+      t
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StDef_unf(t, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StMutual(
+      stmts,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StMutual_unf(stmts, start, end, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StImport(
+      path,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StImport_unf(path, start, end, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StInductive(
+      i
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StInductive_unf(i, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StEffect(
+      e
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StEffect_unf(e, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StStruct(
+      d
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StStruct_unf(d, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StEnum(
+      d
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StEnum_unf(d, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StExtern(
+      abi,
+      fns,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StExtern_unf(abi, fns, start, end, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StClass(
+      cl
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StClass_unf(cl, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StInstance(
+      i
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StInstance_unf(i, rest, c, own_classes, own_types, out)),
+      inf_list_cons_frame(i, rest, c, own_classes, own_types, out, ih)
+    )
+    StWhile(
+      cond,
+      body
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StWhile_unf(cond, body, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StReturn(
+      value
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StReturn_unf(value, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StExpr(
+      value
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StExpr_unf(value, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StOther(
+      what,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(inf_list_StOther_unf(what, start, end, rest, c, own_classes, own_types, out)),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StMacro(
+      name,
+      function,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(
+        inf_list_StMacro_unf(name, function, start, end, rest, c, own_classes, own_types, out)
+      ),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StSyntax(
+      name,
+      grammar,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+      Eq_sym(
+        inf_list_StSyntax_unf(name, grammar, start, end, rest, c, own_classes, own_types, out)
+      ),
+      frame_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+  }
+}
+
+theorem ck_declare_instances_frame(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): CkReadFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
+  match ss -> CkReadFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
+    Nil => refl()
+    Cons(
+      s,
+      rest
+    ) => inf_list_step(
+      s,
+      rest,
+      c,
+      own_classes,
+      own_types,
+      out,
+      next => fs => ck_declare_instances_frame(rest, next, own_classes, own_types, fs)
+    )
+  }
+}
+
+fn inf_declare_classes(c: Checker, program: List(SurfaceStmt)) -> Mut1(List(SurfaceFn), Checker) {
+  frame_bind(
+    List(SurfaceClass),
+    List(SurfaceFn),
+    (
+      declared: List(SurfaceClass),
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => frame_bind(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        (fs: List(SurfaceFn), c3: Checker) => mut1(list_reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        )
+      ),
+      ck_declare_methods(declared, c1)
+    ),
+    ck_declare_class_list(program, c, stmts_type_names(program))
+  )
+}
+
+theorem inf_declare_classes_frame(
+  c: Checker,
+  program: List(SurfaceStmt)
+): CkReadFrame(c, inf_declare_classes(c, program)) {
+  frame_bind_ok(
+    List(SurfaceClass),
+    List(SurfaceFn),
+    c,
+    (
+      declared: List(SurfaceClass),
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => frame_bind(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        (fs: List(SurfaceFn), c3: Checker) => mut1(list_reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        )
+      ),
+      ck_declare_methods(declared, c1)
+    ),
+    ck_declare_class_list(program, c, stmts_type_names(program)),
+    ck_declare_class_list_frame(program, c, stmts_type_names(program)),
+    declared => c1 => frame_bind_ok(
+      Unit,
+      List(SurfaceFn),
+      c1,
+      (
+        ignored: Unit,
+        c2: Checker
+      ) => frame_bind(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        (fs: List(SurfaceFn), c3: Checker) => mut1(list_reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        )
+      ),
+      ck_declare_methods(declared, c1),
+      ck_declare_methods_frame(declared, c1),
+      ignored => c2 => frame_bind_ok(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        c2,
+        (fs: List(SurfaceFn), c3: Checker) => mut1(list_reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        ),
+        ck_declare_instances_frame(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        ),
+        fs => c3 => refl()
+      )
+    )
+  )
+}
+
+theorem inf_classes_unf(
+  c: Checker,
+  program: List(SurfaceStmt)
+): Eq(
+  Mut1(List(SurfaceFn), Checker),
+  ck_declare_classes(c, program),
+  inf_declare_classes(c, program)
+) { refl() }
+
+theorem ck_declare_classes_frame(
+  c: Checker,
+  program: List(SurfaceStmt)
+): CkReadFrame(
+  c,
+  ck_declare_classes(c, program)
+) { Eq_subst(
+  (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
+  Eq_sym(inf_classes_unf(c, program)),
+  inf_declare_classes_frame(c, program)
+) }

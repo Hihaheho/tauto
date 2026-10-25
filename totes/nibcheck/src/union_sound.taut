@@ -1,0 +1,610 @@
+import "ty_eq.taut"
+import "../../../std/Row.taut"
+
+// `ty_union` keeps exactly the leaves of what it joins
+// (`docs/design/self-host.md`「層 1：合併とタグ（`src/union_sound.taut`）」):
+// read as a set, the members of `ty_union(ts)` are the leaves of `ts`, and
+// each member is a leaf (not a union, not `Never`).
+
+// A leaf is any type but a union or `Never`.
+fn ty_plain(t: Ty) -> Yn {
+  match t -> Yn {
+    TyUnion(ts) => no
+    TyNever => no
+    _ => yes
+  }
+}
+
+def Plain(t: Ty): Prop := Eq(Yn, ty_plain(t), yes)
+
+// `t` is a leaf of the list: one of its members, or a leaf of a union in it.
+inductive Leaves(t: Ty): (List(Ty)) -> Prop {
+  lv_here(rest: List(Ty), p: Plain(t)): Leaves(t, Cons(t, rest))
+  lv_in(ys: List(Ty), rest: List(Ty), l: Leaves(t, ys)): Leaves(t, Cons(TyUnion(ys), rest))
+  lv_there(y: Ty, rest: List(Ty), l: Leaves(t, rest)): Leaves(t, Cons(y, rest))
+}
+
+// The members of a type read as a union: a union's own list, none for
+// `Never`, the type itself otherwise.
+fn ty_members(u: Ty) -> List(Ty) {
+  match u -> List(Ty) {
+    TyUnion(ys) => ys
+    TyNever => Nil
+    _ => Cons(u, Nil)
+  }
+}
+
+def AllPlain(ms: List(Ty)): Prop := ∀ z: Ty. (Mem(Ty, z, ms)) -> Plain(z)
+
+theorem mem_cons_inv<A: Type, e: A>(
+  h: A,
+  t: List(A),
+  m: Mem(A, e, Cons(h, t))
+): Or(Eq(A, e, h), Mem(A, e, t)) {
+  match m -> Or(Eq(A, e, h), Mem(A, e, t)) {
+    mem_here(t2) => or_inl(refl())
+    mem_there(b, t2, m2) => or_inr(m2)
+  }
+}
+
+theorem mem_of_eq<A: Type>(e: A, h: A, t: List(A), q: Eq(A, e, h)): Mem(A, e, Cons(h, t)) {
+  Eq_subst((z: A) => Mem(A, z, Cons(h, t)), Eq_sym(q), mem_here(A, h, t))
+}
+
+// ----- members_insert -----
+
+fn ins_k(t: Ty, m: Ty, rest: List(Ty), o: Ordering) -> List(Ty) {
+  match o -> List(Ty) {
+    Less => Cons(t, Cons(m, rest))
+    Equal => Cons(m, rest)
+    Greater => Cons(m, members_insert(rest, t))
+  }
+}
+
+theorem ins_unf(
+  t: Ty,
+  m: Ty,
+  rest: List(Ty)
+): Eq(List(Ty), members_insert(Cons(m, rest), t), ins_k(t, m, rest, ty_compare(t, m))) {
+  refl()
+}
+
+theorem insk_mem(
+  o: Ordering,
+  e: Ty,
+  t: Ty,
+  h: Ty,
+  rest: List(Ty),
+  ih: (Mem(Ty, e, members_insert(rest, t))) -> Or(Eq(Ty, e, t), Mem(Ty, e, rest)),
+  m: Mem(Ty, e, ins_k(t, h, rest, o))
+): Or(Eq(Ty, e, t), Mem(Ty, e, Cons(h, rest))) {
+  match o -> Or(Eq(Ty, e, t), Mem(Ty, e, Cons(h, rest))) {
+    Less => mem_cons_inv(t, Cons(h, rest), m)
+    Equal => or_inr(m)
+    Greater => or_elim(
+      mem_cons_inv(h, members_insert(rest, t), m),
+      q => or_inr(mem_of_eq(e, h, rest, q)),
+      k => or_elim(ih(k), q => or_inl(q), k2 => or_inr(mem_there(Ty, e, h, rest, k2)))
+    )
+  }
+}
+
+// A member after inserting `t` is `t` or was there before.
+theorem insert_mem(
+  e: Ty,
+  ms: List(Ty),
+  t: Ty,
+  m: Mem(Ty, e, members_insert(ms, t))
+): Or(Eq(Ty, e, t), Mem(Ty, e, ms)) {
+  match ms -> Or(Eq(Ty, e, t), Mem(Ty, e, ms)) {
+    Nil => or_elim(
+      mem_cons_inv(t, Nil(Ty), m),
+      q => or_inl(q),
+      k => Mem_nil(Or(Eq(Ty, e, t), Mem(Ty, e, Nil(Ty))), k)
+    )
+    Cons(
+      h,
+      rest
+    ) => insk_mem(
+      ty_compare(t, h),
+      e,
+      t,
+      h,
+      rest,
+      k => insert_mem(e, rest, t, k),
+      Eq_subst((z: List(Ty)) => Mem(Ty, e, z), ins_unf(t, h, rest), m)
+    )
+  }
+}
+
+theorem insk_has(
+  o: Ordering,
+  t: Ty,
+  h: Ty,
+  rest: List(Ty),
+  eo: Eq(Ordering, ty_compare(t, h), o),
+  ih: Mem(Ty, t, members_insert(rest, t))
+): Mem(Ty, t, ins_k(t, h, rest, o)) {
+  match o -> Mem(Ty, t, ins_k(t, h, rest, o)) {
+    Less => mem_here(Ty, t, Cons(h, rest))
+    Equal => mem_of_eq(t, h, rest, ty_compare_eq(t, h, eo))
+    Greater => mem_there(Ty, t, h, members_insert(rest, t), ih)
+  }
+}
+
+// `t` is a member after inserting it.
+theorem insert_has(t: Ty, ms: List(Ty)): Mem(Ty, t, members_insert(ms, t)) {
+  match ms -> Mem(Ty, t, members_insert(ms, t)) {
+    Nil => mem_here(Ty, t, Nil(Ty))
+    Cons(
+      h,
+      rest
+    ) => Eq_subst(
+      (z: List(Ty)) => Mem(Ty, t, z),
+      Eq_sym(ins_unf(t, h, rest)),
+      insk_has(ty_compare(t, h), t, h, rest, refl(), insert_has(t, rest))
+    )
+  }
+}
+
+theorem insk_keep(
+  o: Ordering,
+  e: Ty,
+  t: Ty,
+  h: Ty,
+  rest: List(Ty),
+  ih: (Mem(Ty, e, rest)) -> Mem(Ty, e, members_insert(rest, t)),
+  m: Mem(Ty, e, Cons(h, rest))
+): Mem(Ty, e, ins_k(t, h, rest, o)) {
+  match o -> Mem(Ty, e, ins_k(t, h, rest, o)) {
+    Less => mem_there(Ty, e, t, Cons(h, rest), m)
+    Equal => m
+    Greater => or_elim(
+      mem_cons_inv(h, rest, m),
+      q => mem_of_eq(e, h, members_insert(rest, t), q),
+      k => mem_there(Ty, e, h, members_insert(rest, t), ih(k))
+    )
+  }
+}
+
+// Inserting keeps what was there.
+theorem insert_keep(
+  e: Ty,
+  ms: List(Ty),
+  t: Ty,
+  m: Mem(Ty, e, ms)
+): Mem(Ty, e, members_insert(ms, t)) {
+  match ms -> Mem(Ty, e, members_insert(ms, t)) {
+    Nil => Mem_nil(Mem(Ty, e, members_insert(Nil(Ty), t)), m)
+    Cons(
+      h,
+      rest
+    ) => Eq_subst(
+      (z: List(Ty)) => Mem(Ty, e, z),
+      Eq_sym(ins_unf(t, h, rest)),
+      insk_keep(ty_compare(t, h), e, t, h, rest, k => insert_keep(e, rest, t, k), m)
+    )
+  }
+}
+
+// ----- members_add -----
+
+theorem leaf_of_eq(
+  e: Ty,
+  w: Ty,
+  rest: List(Ty),
+  q: Eq(Ty, e, w),
+  p: Plain(w)
+): Leaves(e, Cons(w, rest)) {
+  Eq_subst((z: Ty) => Leaves(z, Cons(w, rest)), Eq_sym(q), lv_here(w, rest, p))
+}
+
+mutual {
+  // A member after adding `ts` is a leaf of `ts` or was there before.
+  theorem add_mem(
+    e: Ty,
+    ts: List(Ty),
+    ms: List(Ty),
+    m: Mem(Ty, e, members_add(ts, ms))
+  ): Or(Leaves(e, ts), Mem(Ty, e, ms)) {
+    match ts -> Or(Leaves(e, ts), Mem(Ty, e, ms)) {
+      Nil => or_inr(m)
+      Cons(
+        x,
+        rest
+      ) => or_elim(
+        add_mem(e, rest, members_add_one(x, x, ms), m),
+        l => or_inl(lv_there(e, x, rest, l)),
+        k => one_mem(e, x, x, refl(), rest, ms, k)
+      )
+    }
+  }
+
+  theorem one_mem(
+    e: Ty,
+    x: Ty,
+    w: Ty,
+    ew: Eq(Ty, x, w),
+    rest: List(Ty),
+    ms: List(Ty),
+    k: Mem(Ty, e, members_add_one(x, w, ms))
+  ): Or(Leaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
+    match x -> Or(Leaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
+      TyUnion(
+        inner
+      ) => or_elim(
+        add_mem(e, inner, ms, k),
+        l => or_inl(lv_in(e, inner, rest, l)),
+        m2 => or_inr(m2)
+      )
+      TyNever => or_inr(k)
+      _ => or_elim(
+        insert_mem(e, ms, w, k),
+        q => or_inl(
+          Eq_subst(
+            (z: Ty) => Leaves(e, Cons(z, rest)),
+            Eq_sym(ew),
+            leaf_of_eq(e, w, rest, q, Eq_subst((z: Ty) => Plain(z), ew, refl()))
+          )
+        ),
+        m2 => or_inr(m2)
+      )
+    }
+  }
+}
+
+mutual {
+  // Adding keeps what was there.
+  theorem add_keep(
+    e: Ty,
+    ts: List(Ty),
+    ms: List(Ty),
+    m: Mem(Ty, e, ms)
+  ): Mem(Ty, e, members_add(ts, ms)) {
+    match ts -> Mem(Ty, e, members_add(ts, ms)) {
+      Nil => m
+      Cons(x, rest) => add_keep(e, rest, members_add_one(x, x, ms), one_keep(e, x, x, ms, m))
+    }
+  }
+
+  theorem one_keep(
+    e: Ty,
+    x: Ty,
+    w: Ty,
+    ms: List(Ty),
+    m: Mem(Ty, e, ms)
+  ): Mem(Ty, e, members_add_one(x, w, ms)) {
+    match x -> Mem(Ty, e, members_add_one(x, w, ms)) {
+      TyUnion(inner) => add_keep(e, inner, ms, m)
+      TyNever => m
+      _ => insert_keep(e, ms, w, m)
+    }
+  }
+}
+
+// A leaf added on its own is a member.
+theorem one_has(x: Ty, w: Ty, ms: List(Ty), p: Plain(x)): Mem(Ty, w, members_add_one(x, w, ms)) {
+  match x -> Mem(Ty, w, members_add_one(x, w, ms)) {
+    TyUnion(inner) => False_elim(no_ne_yes(p))
+    TyNever => False_elim(no_ne_yes(p))
+    _ => insert_has(w, ms)
+  }
+}
+
+// Every leaf of `ts` is a member after adding `ts`.
+theorem add_has<e: Ty, ts: List(
+  Ty
+)>(l: Leaves(e, ts), ms: List(Ty)): Mem(Ty, e, members_add(ts, ms)) {
+  match l -> Mem(Ty, e, members_add(ts, ms)) {
+    lv_here(rest, p) => add_keep(e, rest, members_add_one(e, e, ms), one_has(e, e, ms, p))
+    lv_in(ys, rest, l2) => add_keep(e, rest, members_add(ys, ms), add_has(l2, ms))
+    lv_there(y, rest, l2) => add_has(l2, members_add_one(y, y, ms))
+  }
+}
+
+theorem leaves_plain(e: Ty, ts: List(Ty), l: Leaves(e, ts)): Plain(e) {
+  match l -> Plain(e) {
+    lv_here(rest, p) => p
+    lv_in(ys, rest, l2) => leaves_plain(e, ys, l2)
+    lv_there(y, rest, l2) => leaves_plain(e, rest, l2)
+  }
+}
+
+// ----- ty_union -----
+
+theorem added_plain(ts: List(Ty)): AllPlain(members_add(ts, Nil(Ty))) {
+  z => m => or_elim(
+    add_mem(z, ts, Nil(Ty), m),
+    l => leaves_plain(z, ts, l),
+    k => Mem_nil(Plain(z), k)
+  )
+}
+
+theorem plain_members(x: Ty, p: Plain(x)): Eq(List(Ty), ty_members(x), Cons(x, Nil(Ty))) {
+  match x -> Eq(List(Ty), ty_members(x), Cons(x, Nil(Ty))) {
+    TyUnion(ys) => False_elim(no_ne_yes(p))
+    TyNever => False_elim(no_ne_yes(p))
+    _ => refl()
+  }
+}
+
+// Wrapping leaves as one type and reading them back gives the same list.
+theorem members_of(ms: List(Ty), ap: AllPlain(ms)): Eq(List(Ty), ty_members(ty_union_of(ms)), ms) {
+  match ms -> Eq(List(Ty), ty_members(ty_union_of(ms)), ms) {
+    Nil => refl()
+    Cons(
+      only,
+      rest
+    ) => match rest -> Eq(List(Ty), ty_members(ty_union_of(Cons(only, rest))), Cons(only, rest)) {
+      Nil => plain_members(only, ap(only, mem_here(Ty, only, Nil(Ty))))
+      Cons(second, more) => refl()
+    }
+  }
+}
+
+theorem union_members(
+  ts: List(Ty)
+): Eq(List(Ty), ty_members(ty_union(ts)), members_add(ts, Nil(Ty))) {
+  members_of(members_add(ts, Nil(Ty)), added_plain(ts))
+}
+
+// The members of `ty_union(ts)` are leaves of `ts`, and leaves themselves.
+theorem union_mem(
+  e: Ty,
+  ts: List(Ty),
+  m: Mem(Ty, e, ty_members(ty_union(ts)))
+): And(Leaves(e, ts), Plain(e)) {
+  or_elim(
+    add_mem(e, ts, Nil(Ty), Eq_subst((z: List(Ty)) => Mem(Ty, e, z), union_members(ts), m)),
+    l => and_intro(l, leaves_plain(e, ts, l)),
+    k => Mem_nil(And(Leaves(e, ts), Plain(e)), k)
+  )
+}
+
+// Every leaf of `ts` is a member of `ty_union(ts)`.
+theorem union_has(e: Ty, ts: List(Ty), l: Leaves(e, ts)): Mem(Ty, e, ty_members(ty_union(ts))) {
+  Eq_subst((z: List(Ty)) => Mem(Ty, e, z), Eq_sym(union_members(ts)), add_has(l, Nil(Ty)))
+}
+
+// ----- tags -----
+
+// The same steps for a set of tags.
+
+fn tins_k(tag: Text, t: Text, rest: List(Text), o: Ordering) -> List(Text) {
+  match o -> List(Text) {
+    Less => Cons(tag, Cons(t, rest))
+    Equal => Cons(t, rest)
+    Greater => Cons(t, tags_insert(rest, tag))
+  }
+}
+
+theorem tins_unf(
+  tag: Text,
+  t: Text,
+  rest: List(Text)
+): Eq(
+  List(Text),
+  tags_insert(Cons(t, rest), tag),
+  tins_k(tag, t, rest, ordmap_compare_text(tag, t))
+) {
+  refl()
+}
+
+theorem tinsk_mem(
+  o: Ordering,
+  e: Text,
+  g: Text,
+  h: Text,
+  rest: List(Text),
+  ih: (Mem(Text, e, tags_insert(rest, g))) -> Or(Eq(Text, e, g), Mem(Text, e, rest)),
+  m: Mem(Text, e, tins_k(g, h, rest, o))
+): Or(Eq(Text, e, g), Mem(Text, e, Cons(h, rest))) {
+  match o -> Or(Eq(Text, e, g), Mem(Text, e, Cons(h, rest))) {
+    Less => mem_cons_inv(g, Cons(h, rest), m)
+    Equal => or_inr(m)
+    Greater => or_elim(
+      mem_cons_inv(h, tags_insert(rest, g), m),
+      q => or_inr(mem_of_eq(e, h, rest, q)),
+      k => or_elim(ih(k), q => or_inl(q), k2 => or_inr(mem_there(Text, e, h, rest, k2)))
+    )
+  }
+}
+
+theorem tags_insert_mem(
+  e: Text,
+  ts: List(Text),
+  g: Text,
+  m: Mem(Text, e, tags_insert(ts, g))
+): Or(Eq(Text, e, g), Mem(Text, e, ts)) {
+  match ts -> Or(Eq(Text, e, g), Mem(Text, e, ts)) {
+    Nil => or_elim(
+      mem_cons_inv(g, Nil(Text), m),
+      q => or_inl(q),
+      k => Mem_nil(Or(Eq(Text, e, g), Mem(Text, e, Nil(Text))), k)
+    )
+    Cons(
+      h,
+      rest
+    ) => tinsk_mem(
+      ordmap_compare_text(g, h),
+      e,
+      g,
+      h,
+      rest,
+      k => tags_insert_mem(e, rest, g, k),
+      Eq_subst((z: List(Text)) => Mem(Text, e, z), tins_unf(g, h, rest), m)
+    )
+  }
+}
+
+theorem tinsk_has(
+  o: Ordering,
+  g: Text,
+  h: Text,
+  rest: List(Text),
+  eo: Eq(Ordering, ordmap_compare_text(g, h), o),
+  ih: Mem(Text, g, tags_insert(rest, g))
+): Mem(Text, g, tins_k(g, h, rest, o)) {
+  match o -> Mem(Text, g, tins_k(g, h, rest, o)) {
+    Less => mem_here(Text, g, Cons(h, rest))
+    Equal => mem_of_eq(g, h, rest, ordmap_compare_text_eq(g, h, eo))
+    Greater => mem_there(Text, g, h, tags_insert(rest, g), ih)
+  }
+}
+
+theorem tags_insert_has(g: Text, ts: List(Text)): Mem(Text, g, tags_insert(ts, g)) {
+  match ts -> Mem(Text, g, tags_insert(ts, g)) {
+    Nil => mem_here(Text, g, Nil(Text))
+    Cons(
+      h,
+      rest
+    ) => Eq_subst(
+      (z: List(Text)) => Mem(Text, g, z),
+      Eq_sym(tins_unf(g, h, rest)),
+      tinsk_has(ordmap_compare_text(g, h), g, h, rest, refl(), tags_insert_has(g, rest))
+    )
+  }
+}
+
+theorem tinsk_keep(
+  o: Ordering,
+  e: Text,
+  g: Text,
+  h: Text,
+  rest: List(Text),
+  ih: (Mem(Text, e, rest)) -> Mem(Text, e, tags_insert(rest, g)),
+  m: Mem(Text, e, Cons(h, rest))
+): Mem(Text, e, tins_k(g, h, rest, o)) {
+  match o -> Mem(Text, e, tins_k(g, h, rest, o)) {
+    Less => mem_there(Text, e, g, Cons(h, rest), m)
+    Equal => m
+    Greater => or_elim(
+      mem_cons_inv(h, rest, m),
+      q => mem_of_eq(e, h, tags_insert(rest, g), q),
+      k => mem_there(Text, e, h, tags_insert(rest, g), ih(k))
+    )
+  }
+}
+
+theorem tags_insert_keep(
+  e: Text,
+  ts: List(Text),
+  g: Text,
+  m: Mem(Text, e, ts)
+): Mem(Text, e, tags_insert(ts, g)) {
+  match ts -> Mem(Text, e, tags_insert(ts, g)) {
+    Nil => Mem_nil(Mem(Text, e, tags_insert(Nil(Text), g)), m)
+    Cons(
+      h,
+      rest
+    ) => Eq_subst(
+      (z: List(Text)) => Mem(Text, e, z),
+      Eq_sym(tins_unf(g, h, rest)),
+      tinsk_keep(ordmap_compare_text(g, h), e, g, h, rest, k => tags_insert_keep(e, rest, g, k), m)
+    )
+  }
+}
+
+// A tag of `tags_union_into(b, a)` is in `b` or in `a`.
+theorem tags_into_mem(
+  e: Text,
+  b: List(Text),
+  a: List(Text),
+  m: Mem(Text, e, tags_union_into(b, a))
+): Or(Mem(Text, e, b), Mem(Text, e, a)) {
+  match b -> Or(Mem(Text, e, b), Mem(Text, e, a)) {
+    Nil => or_inr(m)
+    Cons(
+      t,
+      rest
+    ) => or_elim(
+      tags_into_mem(e, rest, tags_insert(a, t), m),
+      k => or_inl(mem_there(Text, e, t, rest, k)),
+      k => or_elim(
+        tags_insert_mem(e, a, t, k),
+        q => or_inl(mem_of_eq(e, t, rest, q)),
+        k2 => or_inr(k2)
+      )
+    )
+  }
+}
+
+theorem tags_into_keep(
+  e: Text,
+  b: List(Text),
+  a: List(Text),
+  m: Mem(Text, e, a)
+): Mem(Text, e, tags_union_into(b, a)) {
+  match b -> Mem(Text, e, tags_union_into(b, a)) {
+    Nil => m
+    Cons(t, rest) => tags_into_keep(e, rest, tags_insert(a, t), tags_insert_keep(e, a, t, m))
+  }
+}
+
+theorem tags_into_has<e: Text, b: List(
+  Text
+)>(m: Mem(Text, e, b), a: List(Text)): Mem(Text, e, tags_union_into(b, a)) {
+  match m -> Mem(Text, e, tags_union_into(b, a)) {
+    mem_here(rest) => tags_into_keep(e, rest, tags_insert(a, e), tags_insert_has(e, a))
+    mem_there(t, rest, m2) => tags_into_has(m2, tags_insert(a, t))
+  }
+}
+
+// The tags of `tags_union(a, b)` are those of `a` and those of `b`.
+theorem tags_union_mem(
+  e: Text,
+  a: List(Text),
+  b: List(Text),
+  m: Mem(Text, e, tags_union(a, b))
+): Or(Mem(Text, e, a), Mem(Text, e, b)) {
+  or_elim(tags_into_mem(e, b, a, m), k => or_inr(k), k => or_inl(k))
+}
+
+theorem tags_union_left(
+  e: Text,
+  a: List(Text),
+  b: List(Text),
+  m: Mem(Text, e, a)
+): Mem(Text, e, tags_union(a, b)) {
+  tags_into_keep(e, b, a, m)
+}
+
+theorem tags_union_right(
+  e: Text,
+  a: List(Text),
+  b: List(Text),
+  m: Mem(Text, e, b)
+): Mem(Text, e, tags_union(a, b)) {
+  tags_into_has(m, a)
+}
+
+// The tags on a type, and the type under them.
+fn ty_tags(t: Ty) -> List(Text) {
+  match t -> List(Text) {
+    TyTagged(tags, x) => tags
+    _ => Nil
+  }
+}
+
+fn ty_untagged(t: Ty) -> Ty {
+  match t -> Ty {
+    TyTagged(tags, x) => x
+    _ => t
+  }
+}
+
+// Tagging a type merges the new tags with the type's own, around what is
+// under them.
+theorem tagged_shape(
+  tags: List(Text),
+  t: Ty
+): Eq(Ty, ty_tagged(tags, t), ty_tagged_with(tags_union(tags, ty_tags(t)), ty_untagged(t))) {
+  match t -> Eq(
+    Ty,
+    ty_tagged(tags, t),
+    ty_tagged_with(tags_union(tags, ty_tags(t)), ty_untagged(t))
+  ) {
+    TyTagged(inner, x) => refl()
+    _ => refl()
+  }
+}

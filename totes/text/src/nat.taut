@@ -1,0 +1,864 @@
+import "../../../std/Nat.taut"
+
+// The arithmetic the UTF-8 proofs (`utf8.taut`) stand on: the laws of
+// `nat_add` and `nat_mul` beyond those of `std/Nat.taut`, an order with a witness (`NatLe`), and what
+// `nat_div` and `nat_mod` are: the one quotient and remainder, and a
+// quotient of a quotient is a quotient by the product.
+//
+// This file is not part of the tote's program: `tauto check` checks it.
+
+// `Eq_subst` for a property of a `Yn` that matches on it.
+theorem yn_rewrite(P: (Yn) -> Prop, a: Yn, b: Yn, e: Eq(Yn, a, b), h: P(a)): P(b) {
+  Eq_subst(P, e, h)
+}
+
+// ---- addition and multiplication --------------------------------------------
+
+theorem nat_add_right_swap(
+  a: Nat,
+  b: Nat,
+  c: Nat
+): Eq(Nat, nat_add(nat_add(a, b), c), nat_add(nat_add(a, c), b)) {
+  Eq_trans(
+    nat_add_assoc(a, b, c),
+    Eq_trans(
+      Eq_congr((z: Nat) => nat_add(a, z), nat_add_comm(b, c)),
+      Eq_sym(nat_add_assoc(a, c, b))
+    )
+  )
+}
+
+theorem nat_add_swap4(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  d: Nat
+): Eq(Nat, nat_add(nat_add(a, b), nat_add(c, d)), nat_add(nat_add(a, c), nat_add(b, d))) {
+  Eq_trans(
+    Eq_sym(nat_add_assoc(nat_add(a, b), c, d)),
+    Eq_trans(
+      Eq_congr((z: Nat) => nat_add(z, d), nat_add_right_swap(a, b, c)),
+      nat_add_assoc(nat_add(a, c), b, d)
+    )
+  )
+}
+
+theorem nat_mul_distr(
+  a: Nat,
+  b: Nat,
+  c: Nat
+): Eq(Nat, nat_mul(a, nat_add(b, c)), nat_add(nat_mul(a, b), nat_mul(a, c))) {
+  nat_mul_add_distrib(a, b, c)
+}
+
+// ---- order ------------------------------------------------------------------
+
+// `a` is at most `b`: `b` is `a` and `d` more.
+inductive NatLe(a: Nat, b: Nat): Prop {
+  nat_le_by(d: Nat, e: Eq(Nat, b, nat_add(a, d))): NatLe(a, b)
+}
+
+theorem natle_refl(a: Nat): NatLe(a, a) {
+  nat_le_by(0, refl())
+}
+
+theorem natle_trans(a: Nat, b: Nat, c: Nat, h1: NatLe(a, b), h2: NatLe(b, c)): NatLe(a, c) {
+  match h1 -> NatLe(a, c) {
+    nat_le_by(d1, e1) => match h2 -> NatLe(a, c) {
+      nat_le_by(
+        d2,
+        e2
+      ) => nat_le_by(
+        nat_add(d1, d2),
+        Eq_trans(e2, Eq_trans(Eq_congr((z: Nat) => nat_add(z, d2), e1), nat_add_assoc(a, d1, d2)))
+      )
+    }
+  }
+}
+
+theorem nat_le_add_left(a: Nat, d: Nat): NatLe(a, nat_add(d, a)) {
+  nat_le_by(d, nat_add_comm(d, a))
+}
+
+theorem nat_le_add_mono(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  d: Nat,
+  h1: NatLe(a, b),
+  h2: NatLe(c, d)
+): NatLe(nat_add(a, c), nat_add(b, d)) {
+  match h1 -> NatLe(nat_add(a, c), nat_add(b, d)) {
+    nat_le_by(x, e1) => match h2 -> NatLe(nat_add(a, c), nat_add(b, d)) {
+      nat_le_by(
+        y,
+        e2
+      ) => nat_le_by(
+        nat_add(x, y),
+        Eq_trans(
+          Eq_trans(
+            Eq_congr((z: Nat) => nat_add(z, d), e1),
+            Eq_congr((z: Nat) => nat_add(nat_add(a, x), z), e2)
+          ),
+          nat_add_swap4(a, x, c, y)
+        )
+      )
+    }
+  }
+}
+
+theorem nat_le_mul_mono(
+  b: Nat,
+  x: Nat,
+  y: Nat,
+  h: NatLe(x, y)
+): NatLe(nat_mul(b, x), nat_mul(b, y)) {
+  match h -> NatLe(nat_mul(b, x), nat_mul(b, y)) {
+    nat_le_by(
+      d,
+      e
+    ) => nat_le_by(
+      nat_mul(b, d),
+      Eq_trans(Eq_congr((z: Nat) => nat_mul(b, z), e), nat_mul_distr(b, x, d))
+    )
+  }
+}
+
+theorem nat_lt_zero_right(n: Nat): Eq(Yn, nat_lt(n, 0), no) {
+  match n -> Eq(Yn, nat_lt(n, 0), no) {
+    zero => refl()
+    succ(k) => refl()
+  }
+}
+
+theorem nat_le_of_lt_step(a: Nat, b: Nat, h: NatLe(succ(a), b)): NatLe(succ(succ(a)), succ(b)) {
+  match h -> NatLe(succ(succ(a)), succ(b)) {
+    nat_le_by(
+      d,
+      e
+    ) => nat_le_by(d, Eq_trans(Eq_congr(succ, e), Eq_sym(nat_add_succ_left(succ(a), d))))
+  }
+}
+
+theorem nat_le_of_lt(a: Nat, b: Nat, h: Eq(Yn, nat_lt(a, b), yes)): NatLe(succ(a), b) {
+  match a -> NatLe(succ(a), b) {
+    zero => match b -> NatLe(succ(zero), b) {
+      zero => False_elim(no_ne_yes(h))
+      succ(
+        b2
+      ) => nat_le_by(
+        b2,
+        Eq_sym(Eq_trans(nat_add_succ_left(zero, b2), Eq_congr(succ, nat_add_zero_left(b2))))
+      )
+    }
+    succ(a2) => match b -> NatLe(succ(succ(a2)), b) {
+      zero => False_elim(no_ne_yes(h))
+      succ(b2) => nat_le_of_lt_step(a2, b2, nat_le_of_lt(a2, b2, h))
+    }
+  }
+}
+
+theorem nat_lt_add_succ(a: Nat, d: Nat): Eq(Yn, nat_lt(a, nat_add(succ(a), d)), yes) {
+  match a -> Eq(Yn, nat_lt(a, nat_add(succ(a), d)), yes) {
+    zero => Eq_subst(
+      (z: Nat) => Eq(Yn, nat_lt(zero, z), yes),
+      Eq_sym(nat_add_succ_left(zero, d)),
+      refl()
+    )
+    succ(
+      a2
+    ) => Eq_subst(
+      (z: Nat) => Eq(Yn, nat_lt(succ(a2), z), yes),
+      Eq_sym(nat_add_succ_left(succ(a2), d)),
+      nat_lt_add_succ(a2, d)
+    )
+  }
+}
+
+theorem nat_lt_of_le(a: Nat, b: Nat, h: NatLe(succ(a), b)): Eq(Yn, nat_lt(a, b), yes) {
+  match h -> Eq(Yn, nat_lt(a, b), yes) {
+    nat_le_by(
+      d,
+      e
+    ) => Eq_subst((z: Nat) => Eq(Yn, nat_lt(a, z), yes), Eq_sym(e), nat_lt_add_succ(a, d))
+  }
+}
+
+theorem nat_lt_add_no(a: Nat, d: Nat): Eq(Yn, nat_lt(nat_add(a, d), a), no) {
+  match a -> Eq(Yn, nat_lt(nat_add(a, d), a), no) {
+    zero => nat_lt_zero_right(nat_add(zero, d))
+    succ(
+      a2
+    ) => Eq_subst(
+      (z: Nat) => Eq(Yn, nat_lt(z, succ(a2)), no),
+      Eq_sym(nat_add_succ_left(a2, d)),
+      nat_lt_add_no(a2, d)
+    )
+  }
+}
+
+theorem nat_le_not_lt(a: Nat, b: Nat, h: NatLe(a, b)): Eq(Yn, nat_lt(b, a), no) {
+  match h -> Eq(Yn, nat_lt(b, a), no) {
+    nat_le_by(d, e) => Eq_subst(
+      (z: Nat) => Eq(Yn, nat_lt(z, a), no),
+      Eq_sym(e),
+      nat_lt_add_no(a, d)
+    )
+  }
+}
+
+theorem nat_not_lt_le_step(b: Nat, a: Nat, h: NatLe(b, a)): NatLe(succ(b), succ(a)) {
+  match h -> NatLe(succ(b), succ(a)) {
+    nat_le_by(d, e) => nat_le_by(d, Eq_trans(Eq_congr(succ, e), Eq_sym(nat_add_succ_left(b, d))))
+  }
+}
+
+theorem nat_not_lt_le(a: Nat, b: Nat, h: Eq(Yn, nat_lt(a, b), no)): NatLe(b, a) {
+  match a -> NatLe(b, a) {
+    zero => match b -> NatLe(b, zero) {
+      zero => natle_refl(zero)
+      succ(b2) => False_elim(yes_ne_no(h))
+    }
+    succ(a2) => match b -> NatLe(b, succ(a2)) {
+      zero => nat_le_by(succ(a2), Eq_sym(nat_add_zero_left(succ(a2))))
+      succ(b2) => nat_not_lt_le_step(b2, a2, nat_not_lt_le(a2, b2, h))
+    }
+  }
+}
+
+theorem nat_lt_ne(x: Nat, b: Nat, h: Eq(Yn, nat_lt(x, b), yes)): Eq(Yn, nat_eq(x, b), no) {
+  match x -> Eq(Yn, nat_eq(x, b), no) {
+    zero => match b -> Eq(Yn, nat_eq(zero, b), no) {
+      zero => False_elim(no_ne_yes(h))
+      succ(b2) => refl()
+    }
+    succ(x2) => match b -> Eq(Yn, nat_eq(succ(x2), b), no) {
+      zero => refl()
+      succ(b2) => nat_lt_ne(x2, b2, h)
+    }
+  }
+}
+
+theorem nat_lt_succ_of_ne(
+  r: Nat,
+  b: Nat,
+  h: Eq(Yn, nat_lt(r, b), yes),
+  hn: Eq(Yn, nat_eq(succ(r), b), no)
+): Eq(Yn, nat_lt(succ(r), b), yes) {
+  match r -> Eq(Yn, nat_lt(succ(r), b), yes) {
+    zero => match b -> Eq(Yn, nat_lt(succ(zero), b), yes) {
+      zero => False_elim(no_ne_yes(h))
+      succ(b2) => match b2 -> Eq(Yn, nat_lt(succ(zero), succ(b2)), yes) {
+        zero => False_elim(yes_ne_no(hn))
+        succ(b3) => refl()
+      }
+    }
+    succ(r2) => match b -> Eq(Yn, nat_lt(succ(succ(r2)), b), yes) {
+      zero => False_elim(no_ne_yes(h))
+      succ(b2) => nat_lt_succ_of_ne(r2, b2, h, hn)
+    }
+  }
+}
+
+theorem nat_lt_add_weaken(
+  a: Nat,
+  c: Nat,
+  b: Nat,
+  h: Eq(Yn, nat_lt(nat_add(a, c), b), yes)
+): Eq(Yn, nat_lt(a, b), yes) {
+  nat_lt_of_le(
+    a,
+    b,
+    natle_trans(
+      succ(a),
+      succ(nat_add(a, c)),
+      b,
+      nat_le_by(c, Eq_sym(nat_add_succ_left(a, c))),
+      nat_le_of_lt(nat_add(a, c), b, h)
+    )
+  )
+}
+
+theorem nat_eq_add_succ(x: Nat, d: Nat): Eq(Yn, nat_eq(x, nat_add(x, succ(d))), no) {
+  match x -> Eq(Yn, nat_eq(x, nat_add(x, succ(d))), no) {
+    zero => refl()
+    succ(
+      x2
+    ) => Eq_subst(
+      (z: Nat) => Eq(Yn, nat_eq(x2, z), no),
+      Eq_sym(nat_add_succ_left(x2, d)),
+      nat_eq_add_succ(x2, d)
+    )
+  }
+}
+
+// ---- division ---------------------------------------------------------------
+
+fn nat_pair_fst(p: Pair(Nat, Nat)) -> Nat {
+  match p -> Nat {
+    Pair { fst: q, snd: r } => q
+  }
+}
+
+fn nat_pair_snd(p: Pair(Nat, Nat)) -> Nat {
+  match p -> Nat {
+    Pair { fst: q, snd: r } => r
+  }
+}
+
+// `p` is a quotient and remainder of `n` by `b`.
+fn nat_qr_ok(p: Pair(Nat, Nat), b: Nat, n: Nat) -> Prop {
+  match p -> Prop {
+    Pair { fst: q, snd: r } => And(Eq(Nat, nat_add(r, nat_mul(b, q)), n), Eq(Yn, nat_lt(r, b), yes))
+  }
+}
+
+theorem nat_qr_ok_eq(
+  p: Pair(Nat, Nat),
+  b: Nat,
+  n: Nat,
+  h: nat_qr_ok(p, b, n)
+): Eq(Nat, nat_add(nat_pair_snd(p), nat_mul(b, nat_pair_fst(p))), n) {
+  match p -> Eq(Nat, nat_add(nat_pair_snd(p), nat_mul(b, nat_pair_fst(p))), n) {
+    Pair { fst: q, snd: r } => and_left(h)
+  }
+}
+
+theorem nat_qr_ok_lt(
+  p: Pair(Nat, Nat),
+  b: Nat,
+  n: Nat,
+  h: nat_qr_ok(p, b, n)
+): Eq(Yn, nat_lt(nat_pair_snd(p), b), yes) {
+  match p -> Eq(Yn, nat_lt(nat_pair_snd(p), b), yes) {
+    Pair { fst: q, snd: r } => and_right(h)
+  }
+}
+
+// The remainder reaches `b`: one more in the quotient.
+theorem nat_divmod_ok_carry(
+  a2: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  eb: Eq(Nat, succ(r), b),
+  ih: nat_qr_ok(
+    nat_divmod(a2, b, succ(q), zero),
+    b,
+    nat_add(a2, nat_add(zero, nat_mul(b, succ(q))))
+  )
+): nat_qr_ok(nat_divmod(a2, b, succ(q), zero), b, nat_add(succ(a2), nat_add(r, nat_mul(b, q)))) {
+  Eq_subst(
+    (z: Nat) => nat_qr_ok(nat_divmod(a2, b, succ(q), zero), b, z),
+    Eq_trans(
+      Eq_congr(
+        (z: Nat) => nat_add(a2, z),
+        Eq_trans(
+          Eq_trans(nat_add_zero_left(nat_mul(b, succ(q))), nat_mul_succ_right(b, q)),
+          Eq_trans(
+            Eq_congr((z: Nat) => nat_add(nat_mul(b, q), z), Eq_sym(eb)),
+            Eq_congr(succ, nat_add_comm(nat_mul(b, q), r))
+          )
+        )
+      ),
+      Eq_sym(nat_add_succ_left(a2, nat_add(r, nat_mul(b, q))))
+    ),
+    ih
+  )
+}
+
+// One more step of the running quotient `q` and remainder `r` keeps
+// `n` = `r` + `b` * `q`.
+theorem nat_divmod_ok(
+  a: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  h: Eq(Yn, nat_lt(r, b), yes)
+): nat_qr_ok(nat_divmod(a, b, q, r), b, nat_add(a, nat_add(r, nat_mul(b, q)))) {
+  match a -> nat_qr_ok(nat_divmod(a, b, q, r), b, nat_add(a, nat_add(r, nat_mul(b, q)))) {
+    zero => and_intro(Eq_sym(nat_add_zero_left(nat_add(r, nat_mul(b, q)))), h)
+    succ(a2) => yn_cases(
+      (p: Yn) => nat_qr_ok(
+        match p -> Pair(Nat, Nat) {
+          no => nat_divmod(a2, b, q, succ(r))
+          yes => nat_divmod(a2, b, succ(q), zero)
+        },
+        b,
+        nat_add(succ(a2), nat_add(r, nat_mul(b, q)))
+      ),
+      nat_eq(succ(r), b),
+      (hn: Eq(Yn, nat_eq(succ(r), b), no)) => Eq_subst(
+        (z: Nat) => nat_qr_ok(nat_divmod(a2, b, q, succ(r)), b, z),
+        Eq_trans(
+          Eq_congr((z: Nat) => nat_add(a2, z), nat_add_succ_left(r, nat_mul(b, q))),
+          Eq_sym(nat_add_succ_left(a2, nat_add(r, nat_mul(b, q))))
+        ),
+        nat_divmod_ok(a2, b, q, succ(r), nat_lt_succ_of_ne(r, b, h, hn))
+      ),
+      (hy: Eq(Yn, nat_eq(succ(r), b), yes)) => nat_divmod_ok_carry(
+        a2,
+        b,
+        q,
+        r,
+        nat_eq_sound(succ(r), b, hy),
+        nat_divmod_ok(
+          a2,
+          b,
+          succ(q),
+          zero,
+          Eq_subst((z: Nat) => Eq(Yn, nat_lt(zero, z), yes), nat_eq_sound(succ(r), b, hy), refl())
+        )
+      )
+    )
+  }
+}
+
+// The running sum of a division from zero is the dividend.
+theorem nat_divmod_start(a: Nat, b: Nat): Eq(Nat, nat_add(a, nat_add(0, nat_mul(b, 0))), a) {
+  Eq_congr((z: Nat) => nat_add(a, z), nat_mul_zero_right(b))
+}
+
+theorem nat_div_mod(
+  a: Nat,
+  b: Nat,
+  hb: Eq(Yn, nat_lt(0, b), yes)
+): Eq(Nat, nat_add(nat_mod(a, b), nat_mul(b, nat_div(a, b))), a) {
+  nat_qr_ok_eq(
+    nat_divmod(a, b, 0, 0),
+    b,
+    a,
+    Eq_subst(
+      (z: Nat) => nat_qr_ok(nat_divmod(a, b, 0, 0), b, z),
+      nat_divmod_start(a, b),
+      nat_divmod_ok(a, b, 0, 0, hb)
+    )
+  )
+}
+
+theorem nat_mod_lt(
+  a: Nat,
+  b: Nat,
+  hb: Eq(Yn, nat_lt(0, b), yes)
+): Eq(Yn, nat_lt(nat_mod(a, b), b), yes) {
+  nat_qr_ok_lt(
+    nat_divmod(a, b, 0, 0),
+    b,
+    a,
+    Eq_subst(
+      (z: Nat) => nat_qr_ok(nat_divmod(a, b, 0, 0), b, z),
+      nat_divmod_start(a, b),
+      nat_divmod_ok(a, b, 0, 0, hb)
+    )
+  )
+}
+
+// `n` = `div` * `b` + `mod`, the other way round.
+theorem nat_div_mod_r(
+  n: Nat,
+  b: Nat,
+  hb: Eq(Yn, nat_lt(0, b), yes)
+): Eq(Nat, nat_add(nat_mul(nat_div(n, b), b), nat_mod(n, b)), n) {
+  Eq_trans(
+    Eq_congr((z: Nat) => nat_add(z, nat_mod(n, b)), nat_mul_comm(nat_div(n, b), b)),
+    Eq_trans(nat_add_comm(nat_mul(b, nat_div(n, b)), nat_mod(n, b)), nat_div_mod(n, b, hb))
+  )
+}
+
+fn nat_divmod_then(p: Pair(Nat, Nat), x: Nat, b: Nat) -> Pair(Nat, Nat) {
+  match p -> Pair(Nat, Nat) {
+    Pair { fst: q, snd: r } => nat_divmod(x, b, q, r)
+  }
+}
+
+// Dividing `x + y` takes the `y` steps, then the `x` steps.
+theorem nat_divmod_add(
+  x: Nat,
+  y: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat
+): Eq(
+  Pair(Nat, Nat),
+  nat_divmod(nat_add(x, y), b, q, r),
+  nat_divmod_then(nat_divmod(y, b, q, r), x, b)
+) {
+  match y -> Eq(
+    Pair(Nat, Nat),
+    nat_divmod(nat_add(x, y), b, q, r),
+    nat_divmod_then(nat_divmod(y, b, q, r), x, b)
+  ) {
+    zero => refl()
+    succ(y2) => yn_cases(
+      (p: Yn) => Eq(
+        Pair(Nat, Nat),
+        match p -> Pair(Nat, Nat) {
+          no => nat_divmod(nat_add(x, y2), b, q, succ(r))
+          yes => nat_divmod(nat_add(x, y2), b, succ(q), zero)
+        },
+        nat_divmod_then(
+          match p -> Pair(Nat, Nat) {
+            no => nat_divmod(y2, b, q, succ(r))
+            yes => nat_divmod(y2, b, succ(q), zero)
+          },
+          x,
+          b
+        )
+      ),
+      nat_eq(succ(r), b),
+      (hn: Eq(Yn, nat_eq(succ(r), b), no)) => nat_divmod_add(x, y2, b, q, succ(r)),
+      (hy: Eq(Yn, nat_eq(succ(r), b), yes)) => nat_divmod_add(x, y2, b, succ(q), zero)
+    )
+  }
+}
+
+theorem nat_divmod_small_step(
+  k2: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  h: Eq(Yn, nat_lt(nat_add(succ(r), k2), b), yes),
+  ih: Eq(Pair(Nat, Nat), nat_divmod(k2, b, q, succ(r)), Pair { fst: q, snd: nat_add(succ(r), k2) })
+): Eq(Pair(Nat, Nat), nat_divmod(succ(k2), b, q, r), Pair { fst: q, snd: succ(nat_add(r, k2)) }) {
+  yn_rewrite(
+    (z: Yn) => Eq(
+      Pair(Nat, Nat),
+      match z -> Pair(Nat, Nat) {
+        no => nat_divmod(k2, b, q, succ(r))
+        yes => nat_divmod(k2, b, succ(q), zero)
+      },
+      Pair { fst: q, snd: succ(nat_add(r, k2)) }
+    ),
+    no,
+    nat_eq(succ(r), b),
+    Eq_sym(nat_lt_ne(succ(r), b, nat_lt_add_weaken(succ(r), k2, b, h))),
+    Eq_trans(
+      ih,
+      Eq_congr((z: Nat) => Pair { fst: q, snd: z }, nat_add_succ_left(r, k2))
+    )
+  )
+}
+
+// Steps that leave the remainder below `b` only add to it.
+theorem nat_divmod_small(
+  k: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  h: Eq(Yn, nat_lt(nat_add(r, k), b), yes)
+): Eq(Pair(Nat, Nat), nat_divmod(k, b, q, r), Pair { fst: q, snd: nat_add(r, k) }) {
+  match k -> Eq(Pair(Nat, Nat), nat_divmod(k, b, q, r), Pair { fst: q, snd: nat_add(r, k) }) {
+    zero => refl()
+    succ(
+      k2
+    ) => nat_divmod_small_step(
+      k2,
+      b,
+      q,
+      r,
+      Eq_subst((z: Nat) => Eq(Yn, nat_lt(z, b), yes), Eq_sym(nat_add_succ_left(r, k2)), h),
+      nat_divmod_small(
+        k2,
+        b,
+        q,
+        succ(r),
+        Eq_subst((z: Nat) => Eq(Yn, nat_lt(z, b), yes), Eq_sym(nat_add_succ_left(r, k2)), h)
+      )
+    )
+  }
+}
+
+theorem nat_divmod_full_step(
+  k2: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  e: Eq(Nat, nat_add(succ(r), succ(k2)), b),
+  ih: Eq(Pair(Nat, Nat), nat_divmod(succ(k2), b, q, succ(r)), Pair { fst: succ(q), snd: zero })
+): Eq(Pair(Nat, Nat), nat_divmod(succ(succ(k2)), b, q, r), Pair { fst: succ(q), snd: zero }) {
+  yn_rewrite(
+    (z: Yn) => Eq(
+      Pair(Nat, Nat),
+      match z -> Pair(Nat, Nat) {
+        no => nat_divmod(succ(k2), b, q, succ(r))
+        yes => nat_divmod(succ(k2), b, succ(q), zero)
+      },
+      Pair { fst: succ(q), snd: zero }
+    ),
+    no,
+    nat_eq(succ(r), b),
+    Eq_sym(Eq_subst((z: Nat) => Eq(Yn, nat_eq(succ(r), z), no), e, nat_eq_add_succ(succ(r), k2))),
+    ih
+  )
+}
+
+// Steps that bring the remainder to `b`: one more in the quotient.
+theorem nat_divmod_full(
+  k: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  e: Eq(Nat, nat_add(r, succ(k)), b)
+): Eq(Pair(Nat, Nat), nat_divmod(succ(k), b, q, r), Pair { fst: succ(q), snd: zero }) {
+  match k -> Eq(Pair(Nat, Nat), nat_divmod(succ(k), b, q, r), Pair { fst: succ(q), snd: zero }) {
+    zero => yn_rewrite(
+      (z: Yn) => Eq(
+        Pair(Nat, Nat),
+        match z -> Pair(Nat, Nat) {
+          no => nat_divmod(zero, b, q, succ(r))
+          yes => nat_divmod(zero, b, succ(q), zero)
+        },
+        Pair { fst: succ(q), snd: zero }
+      ),
+      yes,
+      nat_eq(succ(r), b),
+      Eq_sym(Eq_subst((z: Nat) => Eq(Yn, nat_eq(succ(r), z), yes), e, nat_eq_refl(succ(r)))),
+      refl()
+    )
+    succ(
+      k2
+    ) => nat_divmod_full_step(
+      k2,
+      b,
+      q,
+      r,
+      Eq_trans(Eq_congr(succ, nat_add_succ_left(r, k2)), e),
+      nat_divmod_full(k2, b, q, succ(r), Eq_trans(Eq_congr(succ, nat_add_succ_left(r, k2)), e))
+    )
+  }
+}
+
+// `nat_divmod` of `b` * `k` by `b` (`b` = `succ(b2)`), from the quotient `q`,
+// gives the quotient `q + k` and nothing remains.
+theorem nat_divmod_mul(
+  k: Nat,
+  b2: Nat,
+  q: Nat
+): Eq(
+  Pair(Nat, Nat),
+  nat_divmod(nat_mul(succ(b2), k), succ(b2), q, zero),
+  Pair { fst: nat_add(q, k), snd: zero }
+) {
+  match k -> Eq(
+    Pair(Nat, Nat),
+    nat_divmod(nat_mul(succ(b2), k), succ(b2), q, zero),
+    Pair { fst: nat_add(q, k), snd: zero }
+  ) {
+    zero => Eq_subst(
+      (
+        z: Nat
+      ) => Eq(
+        Pair(Nat, Nat),
+        nat_divmod(z, succ(b2), q, zero),
+        Pair { fst: nat_add(q, zero), snd: zero }
+      ),
+      Eq_sym(nat_mul_zero_right(succ(b2))),
+      refl()
+    )
+    succ(
+      k2
+    ) => Eq_trans(
+      Eq_congr((z: Nat) => nat_divmod(z, succ(b2), q, zero), nat_mul_succ_right(succ(b2), k2)),
+      Eq_trans(
+        nat_divmod_add(nat_mul(succ(b2), k2), succ(b2), succ(b2), q, zero),
+        Eq_trans(
+          Eq_congr(
+            (p: Pair(Nat, Nat)) => nat_divmod_then(p, nat_mul(succ(b2), k2), succ(b2)),
+            nat_divmod_full(b2, succ(b2), q, zero, nat_add_zero_left(succ(b2)))
+          ),
+          Eq_trans(
+            nat_divmod_mul(k2, b2, succ(q)),
+            Eq_congr((z: Nat) => Pair { fst: z, snd: zero }, nat_add_succ_left(q, k2))
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem nat_divmod_unique(
+  q: Nat,
+  r: Nat,
+  b2: Nat,
+  h: Eq(Yn, nat_lt(r, succ(b2)), yes)
+): Eq(
+  Pair(Nat, Nat),
+  nat_divmod(nat_add(r, nat_mul(succ(b2), q)), succ(b2), 0, 0),
+  Pair { fst: q, snd: r }
+) {
+  Eq_trans(
+    nat_divmod_add(r, nat_mul(succ(b2), q), succ(b2), 0, 0),
+    Eq_trans(
+      Eq_congr((p: Pair(Nat, Nat)) => nat_divmod_then(p, r, succ(b2)), nat_divmod_mul(q, b2, 0)),
+      Eq_trans(
+        nat_divmod_small(
+          r,
+          succ(b2),
+          nat_add(0, q),
+          0,
+          Eq_subst((z: Nat) => Eq(Yn, nat_lt(z, succ(b2)), yes), Eq_sym(nat_add_zero_left(r)), h)
+        ),
+        Eq_trans(
+          Eq_congr((z: Nat) => Pair { fst: z, snd: nat_add(0, r) }, nat_add_zero_left(q)),
+          Eq_congr((z: Nat) => Pair { fst: q, snd: z }, nat_add_zero_left(r))
+        )
+      )
+    )
+  )
+}
+
+// The quotient is the one `q` with `a` = `r` + `b` * `q` and `r` < `b`.
+theorem nat_div_unique(
+  a: Nat,
+  b: Nat,
+  q: Nat,
+  r: Nat,
+  e: Eq(Nat, a, nat_add(r, nat_mul(b, q))),
+  h: Eq(Yn, nat_lt(r, b), yes)
+): Eq(Nat, nat_div(a, b), q) {
+  match b -> Eq(Nat, nat_div(a, b), q) {
+    zero => False_elim(no_ne_yes(Eq_trans(Eq_sym(nat_lt_zero_right(r)), h)))
+    succ(
+      b2
+    ) => Eq_congr(
+      nat_pair_fst,
+      Eq_trans(
+        Eq_congr((z: Nat) => nat_divmod(z, succ(b2), 0, 0), e),
+        nat_divmod_unique(q, r, b2, h)
+      )
+    )
+  }
+}
+
+// Below `b` * `k`, the quotient by `b` is below `k`.
+theorem nat_div_lt(
+  a: Nat,
+  b: Nat,
+  k: Nat,
+  hb: Eq(Yn, nat_lt(0, b), yes),
+  h: Eq(Yn, nat_lt(a, nat_mul(b, k)), yes)
+): Eq(Yn, nat_lt(nat_div(a, b), k), yes) {
+  yn_cases(
+    (p: Yn) => Eq(Yn, p, yes),
+    nat_lt(nat_div(a, b), k),
+    (
+      hn: Eq(Yn, nat_lt(nat_div(a, b), k), no)
+    ) => False_elim(
+      no_ne_yes(
+        Eq_trans(
+          Eq_sym(
+            nat_le_not_lt(
+              nat_mul(b, k),
+              a,
+              natle_trans(
+                nat_mul(b, k),
+                nat_mul(b, nat_div(a, b)),
+                a,
+                nat_le_mul_mono(b, k, nat_div(a, b), nat_not_lt_le(nat_div(a, b), k, hn)),
+                Eq_subst(
+                  (z: Nat) => NatLe(nat_mul(b, nat_div(a, b)), z),
+                  nat_div_mod(a, b, hb),
+                  nat_le_add_left(nat_mul(b, nat_div(a, b)), nat_mod(a, b))
+                )
+              )
+            )
+          ),
+          h
+        )
+      )
+    ),
+    (hy: Eq(Yn, nat_lt(nat_div(a, b), k), yes)) => refl()
+  )
+}
+
+// A remainder by `b` and `b` times a remainder by `k` stay below `b` * `k`.
+theorem nat_pack_lt(
+  r0: Nat,
+  r1: Nat,
+  b: Nat,
+  k: Nat,
+  h0: Eq(Yn, nat_lt(r0, b), yes),
+  h1: Eq(Yn, nat_lt(r1, k), yes)
+): Eq(Yn, nat_lt(nat_add(r0, nat_mul(b, r1)), nat_mul(b, k)), yes) {
+  nat_lt_of_le(
+    nat_add(r0, nat_mul(b, r1)),
+    nat_mul(b, k),
+    natle_trans(
+      succ(nat_add(r0, nat_mul(b, r1))),
+      nat_mul(b, succ(r1)),
+      nat_mul(b, k),
+      Eq_subst(
+        (z: Nat) => NatLe(succ(nat_add(r0, nat_mul(b, r1))), z),
+        Eq_sym(nat_mul_succ_right(b, r1)),
+        Eq_subst(
+          (z: Nat) => NatLe(succ(nat_add(r0, nat_mul(b, r1))), z),
+          nat_add_comm(b, nat_mul(b, r1)),
+          Eq_subst(
+            (z: Nat) => NatLe(z, nat_add(b, nat_mul(b, r1))),
+            nat_add_succ_left(r0, nat_mul(b, r1)),
+            nat_le_add_mono(
+              succ(r0),
+              b,
+              nat_mul(b, r1),
+              nat_mul(b, r1),
+              nat_le_of_lt(r0, b, h0),
+              natle_refl(nat_mul(b, r1))
+            )
+          )
+        )
+      ),
+      nat_le_mul_mono(b, succ(r1), k, nat_le_of_lt(r1, k, h1))
+    )
+  )
+}
+
+// A quotient of a quotient is the quotient by the product.
+theorem nat_div_div(
+  a: Nat,
+  b: Nat,
+  k: Nat,
+  hb: Eq(Yn, nat_lt(0, b), yes),
+  hk: Eq(Yn, nat_lt(0, k), yes)
+): Eq(Nat, nat_div(nat_div(a, b), k), nat_div(a, nat_mul(b, k))) {
+  Eq_sym(
+    nat_div_unique(
+      a,
+      nat_mul(b, k),
+      nat_div(nat_div(a, b), k),
+      nat_add(nat_mod(a, b), nat_mul(b, nat_mod(nat_div(a, b), k))),
+      Eq_trans(
+        Eq_sym(nat_div_mod(a, b, hb)),
+        Eq_trans(
+          Eq_congr(
+            (z: Nat) => nat_add(nat_mod(a, b), z),
+            Eq_trans(
+              Eq_congr((z: Nat) => nat_mul(b, z), Eq_sym(nat_div_mod(nat_div(a, b), k, hk))),
+              Eq_trans(
+                nat_mul_distr(b, nat_mod(nat_div(a, b), k), nat_mul(k, nat_div(nat_div(a, b), k))),
+                Eq_congr(
+                  (z: Nat) => nat_add(nat_mul(b, nat_mod(nat_div(a, b), k)), z),
+                  Eq_sym(nat_mul_assoc(b, k, nat_div(nat_div(a, b), k)))
+                )
+              )
+            )
+          ),
+          Eq_sym(
+            nat_add_assoc(
+              nat_mod(a, b),
+              nat_mul(b, nat_mod(nat_div(a, b), k)),
+              nat_mul(nat_mul(b, k), nat_div(nat_div(a, b), k))
+            )
+          )
+        )
+      ),
+      nat_pack_lt(
+        nat_mod(a, b),
+        nat_mod(nat_div(a, b), k),
+        b,
+        k,
+        nat_mod_lt(a, b, hb),
+        nat_mod_lt(nat_div(a, b), k, hk)
+      )
+    )
+  )
+}

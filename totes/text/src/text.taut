@@ -1,0 +1,425 @@
+import "../../../std/Text.taut"
+
+// Text tools (`docs/design/self-host.md`) in the proof language
+// (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」). Positions are UTF-8 bytes, as in `std/Text.taut`.
+// A loop over positions recurses on the number of positions left, so it is
+// structural.
+
+fn text_newline() -> Text {
+  "\n"
+}
+
+fn text_quote() -> Text {
+  "\""
+}
+
+fn text_backslash() -> Text {
+  "\\"
+}
+
+// One character by its code point; "" for a number that is not a character.
+fn text_code_point(c: Nat) -> Text {
+  text_of_code_point(c)
+}
+
+fn text_list_reverse_onto<A>(xs: List(A), done: List(A)) -> List(A) {
+  list_reverse_onto(xs, done)
+}
+
+fn text_list_reverse<A>(xs: List(A)) -> List(A) {
+  list_reverse(xs)
+}
+
+// The parts with `sep` between each two.
+fn text_join_parts(parts: List(Text), sep: Text) -> List(Text) {
+  match parts -> List(Text) {
+    Nil => Nil
+    Cons(part, rest) => match rest -> List(Text) {
+      Nil => Cons(part, Nil)
+      Cons(next, more) => Cons(part, Cons(sep, text_join_parts(rest, sep)))
+    }
+  }
+}
+
+fn text_join(parts: List(Text), sep: Text) -> Text {
+  text_concat_all(text_join_parts(parts, sep))
+}
+
+// Whether `prefix` is in `t` from byte `at`.
+fn text_starts_with(t: Text, prefix: Text, at: Nat) -> Yn {
+  match text_slice(t, at, nat_add(at, text_len(prefix))) -> Yn {
+    None => no
+    Some(part) => text_eq(part, prefix)
+  }
+}
+
+// The first of the `k` positions from `at` where `needle` is.
+fn text_find_in(k: Nat, t: Text, needle: Text, at: Nat) -> Option(Nat) {
+  match k -> Option(Nat) {
+    zero => None
+    succ(k2) => match text_starts_with(t, needle, at) -> Option(Nat) {
+      yes => Some(at)
+      no => text_find_in(k2, t, needle, succ(at))
+    }
+  }
+}
+
+// The positions `at` to `last`.
+fn text_find_from(t: Text, needle: Text, at: Nat, last: Nat) -> Option(Nat) {
+  text_find_in(nat_sub(succ(last), at), t, needle, at)
+}
+
+// The first byte position of `needle` in `t` that is `from` or after.
+fn text_find(t: Text, needle: Text, from: Nat) -> Option(Nat) {
+  match yn_or(
+    nat_lt(text_len(t), text_len(needle)),
+    nat_lt(nat_sub(text_len(t), text_len(needle)), from)
+  ) -> Option(Nat) {
+    yes => None
+    no => text_find_from(t, needle, from, nat_sub(text_len(t), text_len(needle)))
+  }
+}
+
+// The parts from byte `start`, last first, onto `done`; at most `k` more
+// cuts.
+fn text_split_in(k: Nat, t: Text, sep: Text, start: Nat, done: List(Text)) -> List(Text) {
+  match k -> List(Text) {
+    zero => Cons(text_slice_or_empty(t, start, text_len(t)), done)
+    succ(k2) => match text_find(t, sep, start) -> List(Text) {
+      None => Cons(text_slice_or_empty(t, start, text_len(t)), done)
+      Some(
+        at
+      ) => text_split_in(
+        k2,
+        t,
+        sep,
+        nat_add(at, text_len(sep)),
+        Cons(text_slice_or_empty(t, start, at), done)
+      )
+    }
+  }
+}
+
+// The parts from byte `start`, last first, onto `done`. Every cut moves
+// past a non-empty `sep`, so there are at most as many as bytes.
+fn text_split_from(t: Text, sep: Text, start: Nat, done: List(Text)) -> List(Text) {
+  text_split_in(text_len(t), t, sep, start, done)
+}
+
+// The parts of `t` between the occurrences of `sep`, which is not empty (an
+// empty `sep` leaves `t` whole).
+fn text_split(t: Text, sep: Text) -> List(Text) {
+  match nat_eq(text_len(sep), 0) -> List(Text) {
+    yes => Cons(t, Nil)
+    no => list_reverse(text_split_from(t, sep, 0, Nil))
+  }
+}
+
+// The lines of `t`, cut at "\n"; a "\r" stays on its line.
+fn text_lines(t: Text) -> List(Text) {
+  text_split(t, "\n")
+}
+
+fn text_repeat_parts(t: Text, n: Nat) -> List(Text) {
+  match n -> List(Text) {
+    zero => Nil
+    succ(k) => Cons(t, text_repeat_parts(t, k))
+  }
+}
+
+fn text_repeat(t: Text, n: Nat) -> Text {
+  text_concat_all(text_repeat_parts(t, n))
+}
+
+// A code point from the payload bits of its bytes, the first one's `lead`.
+// The 64 comes second in each product: `nat_mul` reduces by its first
+// argument, so a proof over an unknown `lead` does not unfold it.
+fn text_decode_with(lead: Nat, length: Nat, b1: Nat, b2: Nat, b3: Nat) -> Option(Pair(Nat, Nat)) {
+  match nat_eq(length, 2) -> Option(Pair(Nat, Nat)) {
+    yes => Some(Pair { fst: nat_add(nat_mul(lead, 64), b1), snd: length })
+    no => match nat_eq(length, 3) -> Option(Pair(Nat, Nat)) {
+      yes => Some(
+        Pair { fst: nat_add(nat_mul(nat_add(nat_mul(lead, 64), b1), 64), b2), snd: length }
+      )
+      no => Some(
+        Pair { fst: nat_add(
+          nat_mul(nat_add(nat_mul(nat_add(nat_mul(lead, 64), b1), 64), b2), 64),
+          b3
+        ), snd: length }
+      )
+    }
+  }
+}
+
+// A first byte from 224 on: three bytes below 240, four from 240.
+fn text_decode_from_224(t: Text, i: Nat, first: Nat) -> Option(Pair(Nat, Nat)) {
+  match nat_lt(first, 240) -> Option(Pair(Nat, Nat)) {
+    yes => text_decode_with(
+      nat_sub(first, 224),
+      3,
+      nat_sub(text_byte_value(t, succ(i)), 128),
+      nat_sub(text_byte_value(t, nat_add(i, 2)), 128),
+      0
+    )
+    no => text_decode_with(
+      nat_sub(first, 240),
+      4,
+      nat_sub(text_byte_value(t, succ(i)), 128),
+      nat_sub(text_byte_value(t, nat_add(i, 2)), 128),
+      nat_sub(text_byte_value(t, nat_add(i, 3)), 128)
+    )
+  }
+}
+
+// A first byte from 192 on: two bytes below 224.
+fn text_decode_from_192(t: Text, i: Nat, first: Nat) -> Option(Pair(Nat, Nat)) {
+  match nat_lt(first, 224) -> Option(Pair(Nat, Nat)) {
+    yes => text_decode_with(nat_sub(first, 192), 2, nat_sub(text_byte_value(t, succ(i)), 128), 0, 0)
+    no => text_decode_from_224(t, i, first)
+  }
+}
+
+// A first byte from 128 on: below 192 it continues a character.
+fn text_decode_from_128(t: Text, i: Nat, first: Nat) -> Option(Pair(Nat, Nat)) {
+  match nat_lt(first, 192) -> Option(Pair(Nat, Nat)) {
+    yes => None
+    no => text_decode_from_192(t, i, first)
+  }
+}
+
+// The character whose first byte, at `i`, is `first`. Each step is a
+// function of its own, so a proof can take the steps one at a time
+// (`proof/utf8.taut`).
+fn text_decode_first(t: Text, i: Nat, first: Nat) -> Option(Pair(Nat, Nat)) {
+  match nat_lt(first, 128) -> Option(Pair(Nat, Nat)) {
+    yes => Some(Pair { fst: first, snd: 1 })
+    no => text_decode_from_128(t, i, first)
+  }
+}
+
+// The character at byte `i`: its code point and its length in bytes. `None`
+// when `i` is past the end or inside a character.
+fn text_decode(t: Text, i: Nat) -> Option(Pair(Nat, Nat)) {
+  match text_byte(t, i) -> Option(Pair(Nat, Nat)) {
+    None => None
+    Some(first) => text_decode_first(t, i, first)
+  }
+}
+
+// The characters among the `k` bytes from `i`, added to `count`.
+fn text_char_count_in(k: Nat, t: Text, i: Nat, count: Nat) -> Nat {
+  match k -> Nat {
+    zero => count
+    succ(
+      k2
+    ) => match yn_and(
+      nat_le(128, text_byte_value(t, i)),
+      nat_lt(text_byte_value(t, i), 192)
+    ) -> Nat {
+      // A byte `10xxxxxx` continues a character; the others start one.
+      yes => text_char_count_in(k2, t, succ(i), count)
+      no => text_char_count_in(k2, t, succ(i), succ(count))
+    }
+  }
+}
+
+fn text_char_count_from(t: Text, i: Nat, n: Nat, count: Nat) -> Nat {
+  text_char_count_in(nat_sub(n, i), t, i, count)
+}
+
+fn text_char_count(t: Text) -> Nat {
+  text_char_count_in(text_len(t), t, 0, 0)
+}
+
+// The value of a decimal digit's byte.
+fn text_digit(b: Nat) -> Option(Nat) {
+  match yn_and(nat_le(48, b), nat_le(b, 57)) -> Option(Nat) {
+    yes => Some(nat_sub(b, 48))
+    no => None
+  }
+}
+
+// The digits among the `k` bytes from `at`, added onto `acc`, while `acc`
+// stays within 2^63 - 1 (the evaluator keeps a `u64` in an `i64`).
+fn text_parse_nat_in(k: Nat, t: Text, at: Nat, acc: Nat) -> Option(Nat) {
+  match k -> Option(Nat) {
+    zero => Some(acc)
+    succ(k2) => match text_digit(text_byte_value(t, at)) -> Option(Nat) {
+      None => None
+      Some(d) => match nat_lt(nat_div(nat_sub(9223372036854775807, d), 10), acc) -> Option(Nat) {
+        yes => None
+        no => text_parse_nat_in(k2, t, succ(at), nat_add(nat_mul(acc, 10), d))
+      }
+    }
+  }
+}
+
+// Digits with an optional `+`. A number from 2^63 on is `None`.
+fn text_parse_u64(t: Text) -> Option(Nat) {
+  match nat_eq(text_len(t), 0) -> Option(Nat) {
+    yes => None
+    no => match nat_eq(text_byte_value(t, 0), 45) -> Option(Nat) {
+      yes => None
+      no => match nat_eq(text_byte_value(t, 0), 43) -> Option(Nat) {
+        yes => match nat_eq(text_len(t), 1) -> Option(Nat) {
+          yes => None
+          no => text_parse_nat_in(nat_sub(text_len(t), 1), t, 1, 0)
+        }
+        no => text_parse_nat_in(text_len(t), t, 0, 0)
+      }
+    }
+  }
+}
+
+// The numbers among the `k` bytes from `at`: runs of digits, in order.
+// `current` is the run being read when `inside` is `yes`.
+fn text_numbers_in(
+  k: Nat,
+  t: Text,
+  at: Nat,
+  current: Nat,
+  inside: Yn,
+  done: List(Nat)
+) -> List(Nat) {
+  match k -> List(Nat) {
+    zero => match inside -> List(Nat) {
+      yes => list_reverse(Cons(current, done))
+      no => list_reverse(done)
+    }
+    succ(k2) => match text_digit(text_byte_value(t, at)) -> List(Nat) {
+      Some(d) => text_numbers_in(k2, t, succ(at), current * 10 + d, yes, done)
+      None => match inside -> List(Nat) {
+        yes => text_numbers_in(k2, t, succ(at), 0, no, Cons(current, done))
+        no => text_numbers_in(k2, t, succ(at), 0, no, done)
+      }
+    }
+  }
+}
+
+// Every number written in decimal in `t`, in order: `"3 14,15"` holds 3,
+// 14 and 15.
+fn text_number_list(t: Text) -> List(Nat) {
+  text_numbers_in(text_len(t), t, 0, 0, no, Nil)
+}
+
+// ---- what the proofs say ----------------------------------------------------
+
+theorem text_split_example(): Eq(List(Text), text_split("a,b", ","), Cons("a", Cons("b", Nil))) {
+  refl()
+}
+
+theorem text_find_example(): Eq(Option(Nat), text_find("abcab", "ab", 1), Some(3)) {
+  refl()
+}
+
+theorem text_number_list_example(): Eq(
+  List(Nat),
+  text_number_list("3 14,15"),
+  Cons(3, Cons(14, Cons(15, Nil)))
+) {
+  refl()
+}
+
+// The rest of the file: writing into a `Buf`, numbers with a sign (`i64`),
+// and a `Vec` of numbers. Nothing is proved about them
+// (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」 says what is).
+
+fn text_push_all(&mut b: Buf, parts: List(Text)) -> () {
+  match parts {
+    Nil => ()
+    Cons(part, rest) => {
+      buf_push(&mut b, &part)
+      text_push_all(&mut b, rest)
+    }
+  }
+}
+
+fn text_push_joined(&mut b: Buf, parts: List(Text), sep: Text) -> () {
+  match parts {
+    Nil => ()
+    Cons(part, rest) => {
+      buf_push(&mut b, &part)
+      match rest {
+        Nil => ()
+        Cons(next, more) => {
+          buf_push(&mut b, &sep)
+          text_push_joined(&mut b, rest, sep)
+        }
+      }
+    }
+  }
+}
+
+fn text_parse_up(t: Text, at: u64, n: u64, acc: i64) -> Option(i64) {
+  if at >= n {
+    Some(acc)
+  } else {
+    match text_digit(text_byte_value(t, at)) {
+      None => None
+      Some(digit) => {
+        let d = i64_of_u64(digit)
+        if acc > div(9223372036854775807 - d, 10) {
+          None
+        } else {
+          text_parse_up(t, at + 1, n, acc * 10 + d)
+        }
+      }
+    }
+  }
+}
+
+fn text_parse_down(t: Text, at: u64, n: u64, acc: i64) -> Option(i64) {
+  if at >= n {
+    Some(acc)
+  } else {
+    match text_digit(text_byte_value(t, at)) {
+      None => None
+      Some(digit) => {
+        let d = i64_of_u64(digit)
+        if acc < div(0 - 9223372036854775807 - 1 + d, 10) {
+          None
+        } else {
+          text_parse_down(t, at + 1, n, acc * 10 - d)
+        }
+      }
+    }
+  }
+}
+
+fn text_parse_i64(t: Text) -> Option(i64) {
+  let n = text_len(t)
+  let first = text_byte_value(t, 0)
+  if n == 0 {
+    None
+  } else if first == 45 {
+    if n == 1 { None } else { text_parse_down(t, 1, n, 0) }
+  } else if first == 43 {
+    if n == 1 { None } else { text_parse_up(t, 1, n, 0) }
+  } else {
+    text_parse_up(t, 0, n, 0)
+  }
+}
+
+fn text_numbers(t: Text) -> Vec(u64) {
+  var out = vec_new()
+  let n = text_len(t)
+  var i: u64 = 0
+  var current: u64 = 0
+  var inside = false
+  while i < n {
+    let b = text_byte_value(t, i)
+    if b >= 48 && b <= 57 {
+      current := current * 10 + (b - 48)
+      inside := true
+    } else if inside {
+      vec_push(&mut out, current)
+      current := 0
+      inside := false
+    }
+    i := i + 1
+  }
+  if inside {
+    vec_push(&mut out, current)
+  }
+  out
+}

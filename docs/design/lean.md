@@ -16,7 +16,7 @@ This document says which module proves what, and what is still open.
 ## Trust and what stays in Lean
 
 * **Consistency and normalization of tauto itself** (the kernel in
-  `crates/tauto/src/check.rs`: strong normalization, the soundness of the
+  `crates/tauto-kernel/src/check.rs`: strong normalization, the soundness of the
   generated eliminators, the universe rules). By Gödel's second theorem a
   theory cannot prove its own consistency, so the model of the kernel is
   proved in Lean, in a stronger setting.
@@ -206,7 +206,7 @@ inside Lean), and adding `typed_sn` as a tauto axiom is excluded.
 
 ## The bidirectional checker
 
-The checker of `crates/tauto/src/check.rs` and `meta/Kernel.taut` (`tc`) is modelled as
+The checker of `crates/tauto-kernel/src/check.rs` and `meta/Kernel.taut` (`tc`) is modelled as
 inductive relations (`WhnfOf`, `ConvA`, `SubA`, `Bi inf|chk`), one constructor per case
 (`Bidir.lean`, `WhNorm.lean`, `ConvComplete.lean`, `BidirComplete.lean`).
 
@@ -282,5 +282,5 @@ both halves of the substitution lemma T5), their tauto port
 * The natRec motive differs between the three checkers (see "The bidirectional
   checker").
 * For macros: the use-check half of T5, and that the implementation's hygiene
-  (`crates/tauto/src/macros/scope.rs`) agrees with the inclusion rule
+  (`crates/tauto-surface/src/macros/scope.rs`) agrees with the inclusion rule
   ([`macro-semantics.md`](macro-semantics.md)「Lean のモジュールと証明義務」).

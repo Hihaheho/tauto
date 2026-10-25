@@ -1,0 +1,318 @@
+// The disjoint character classes of a scanner: the leaves of all the
+// expressions (a character or a class) cut the code points into elementary
+// intervals, and the intervals that the same leaves hold are one class. The
+// cuts are the ones the scanner tables have (checked against the reference
+// tables): a boundary after a range that ends before the surrogates, or at the end,
+// is the greatest character, and the interval before the first code point
+// after the surrogates is one character long.
+
+// The ranges that a leaf holds.
+fn cc_ranges(h: RHir) -> List(RRange) {
+  match h {
+    RhLit(cs) => match cs {
+      Cons(c, rest) => Cons(RRange { lo: c, hi: c }, Nil)
+      Nil => Nil
+    }
+    RhClass(rs) => rs
+    other => Nil
+  }
+}
+
+// `char::from_u32(c + 1).unwrap_or(char::MAX)`.
+fn cc_next(c: u64) -> u64 {
+  let n = c + 1
+  if n > 1114111 || (n >= 55296 && n <= 57343) { 1114111 } else { n }
+}
+
+fn cc_boundaries_of(leaves: List(RHir)) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = leaves
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(h, more) => {
+        var rs = cc_ranges(h)
+        var walking = true
+        while walking {
+          match rs {
+            Nil => {
+              walking := false
+            }
+            Cons(r, others) => {
+              out := Cons(cc_next(r.hi), Cons(r.lo, out))
+              rs := others
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// Sorted, once each.
+fn cc_unique(xs: List(u64)) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = lg_sort_keep(xs)
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        match out {
+          Cons(y, before) => if y != x {
+            out := Cons(x, out)
+          }
+          Nil => {
+            out := Cons(x, Nil)
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  text_u64_reverse(out)
+}
+
+// The elementary intervals between the boundaries that some leaf holds, before
+// the ones that no leaf holds are dropped.
+fn cc_cut(bs: List(u64)) -> List(RRange) {
+  var out: List(RRange) = Nil
+  var rest = bs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(start, more) => match more {
+        Nil => {
+          running := false
+        }
+        Cons(next, others) => {
+          let e = next - 1
+          if e >= 55296 && e <= 57343 {
+            out := Cons(RRange { lo: start, hi: start }, out)
+          } else if start <= e {
+            out := Cons(RRange { lo: start, hi: e }, out)
+          }
+          rest := more
+        }
+      }
+    }
+  }
+  rx_rev_ranges(out)
+}
+
+fn cc_members_get(&v: Vec(List(u64)), i: u64) -> List(u64) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn cc_members_add(&mut v: Vec(List(u64)), i: u64, c: u64) -> () {
+  let cur = cc_members_get(&v, i)
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := Cons(c, cur)
+    }
+    None => ()
+  }
+}
+
+fn cc_range_get(&v: Vec(RRange), i: u64) -> RRange {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn cc_groups_get(&v: Vec(List(RRange)), i: u64) -> List(RRange) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+// What the classes come to: the leaves in the order given, for each the
+// disjoint classes it is made of, and for each class its intervals.
+struct CcOut { leaves: List(RHir), ids: List(List(u64)), groups: List(List(RRange)) }
+
+fn cc_key(ms: List(u64)) -> Text {
+  var b = buf_new()
+  var rest = ms
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(m, more) => {
+        buf_push(&mut b, &text_of_u64(m))
+        buf_push(&mut b, &",")
+        rest := more
+      }
+    }
+  }
+  text_of(b)
+}
+
+// The disjoint classes of the leaves.
+fn cc_make(leaves: List(RHir)) -> CcOut {
+  let cuts = cc_cut(cc_unique(cc_boundaries_of(leaves)))
+  var intervals: Vec(RRange) = vec_new()
+  var members: Vec(List(u64)) = vec_new()
+  var walk = cuts
+  var going = true
+  while going {
+    match walk {
+      Nil => {
+        going := false
+      }
+      Cons(r, more) => {
+        vec_push(&mut intervals, r)
+        vec_push(&mut members, Nil)
+        walk := more
+      }
+    }
+  }
+  let m = vec_len(&intervals)
+  var c: u64 = 0
+  var ls = leaves
+  var running = true
+  while running {
+    match ls {
+      Nil => {
+        running := false
+      }
+      Cons(leaf, more) => {
+        var rs = cc_ranges(leaf)
+        var i: u64 = 0
+        while i < m {
+          let iv = cc_range_get(&intervals, i)
+          var skipping = true
+          while skipping {
+            match rs {
+              Cons(r, others) => if r.hi < iv.lo {
+                rs := others
+              } else {
+                skipping := false
+              }
+              Nil => {
+                skipping := false
+              }
+            }
+          }
+          match rs {
+            Cons(r, others) => if r.lo <= iv.lo && iv.hi <= r.hi {
+              cc_members_add(&mut members, i, c)
+            }
+            Nil => ()
+          }
+          i := i + 1
+        }
+        c := c + 1
+        ls := more
+      }
+    }
+  }
+  // The groups, in the order their first interval comes.
+  var group_of = hashmap_new()
+  var groups: Vec(List(RRange)) = vec_new()
+  var group_members: Vec(List(u64)) = vec_new()
+  var i: u64 = 0
+  while i < m {
+    let ms = text_u64_reverse(cc_members_get(&members, i))
+    match ms {
+      Nil => ()
+      Cons(first, rest) => {
+        let key = cc_key(ms)
+        let iv = cc_range_get(&intervals, i)
+        var found: Option(u64) = None
+        match hashmap_get(&group_of, key) {
+          Some(g) => {
+            found := Some(g + 0)
+          }
+          None => ()
+        }
+        match found {
+          Some(g) => {
+            let old = cc_groups_get(&groups, g)
+            match vec_get_mut(&mut groups, g) {
+              Some(slot) => {
+                slot := Cons(iv, old)
+              }
+              None => ()
+            }
+          }
+          None => {
+            let g = vec_len(&groups)
+            hashmap_insert(&mut group_of, key, g)
+            vec_push(&mut groups, Cons(iv, Nil))
+            vec_push(&mut group_members, ms)
+          }
+        }
+      }
+    }
+    i := i + 1
+  }
+  // For each leaf, the groups it is in.
+  let ng = vec_len(&groups)
+  var ids_rev: List(List(u64)) = Nil
+  var c2: u64 = 0
+  var ls2 = leaves
+  var running2 = true
+  while running2 {
+    match ls2 {
+      Nil => {
+        running2 := false
+      }
+      Cons(leaf, more) => {
+        var mine: List(u64) = Nil
+        var g: u64 = 0
+        while g < ng {
+          if cc_has(cc_members_get(&group_members, g), c2) {
+            mine := Cons(g, mine)
+          }
+          g := g + 1
+        }
+        ids_rev := Cons(text_u64_reverse(mine), ids_rev)
+        c2 := c2 + 1
+        ls2 := more
+      }
+    }
+  }
+  var out_groups: List(List(RRange)) = Nil
+  var g2: u64 = ng
+  while g2 > 0 {
+    g2 := g2 - 1
+    out_groups := Cons(rx_rev_ranges(cc_groups_get(&groups, g2)), out_groups)
+  }
+  CcOut { leaves: leaves, ids: cc_rev_lists(ids_rev), groups: out_groups }
+}
+
+fn cc_has(xs: List(u64), x: u64) -> Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || cc_has(rest, x)
+  }
+}
+
+fn cc_rev_lists(xs: List(List(u64))) -> List(List(u64)) {
+  var out: List(List(u64)) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}

@@ -1,0 +1,713 @@
+// The types of a syntax: from the
+// shape the grammar's author wrote, which non-terminals have a struct, an
+// enum or only a token, and for each production the type and the
+// constructor its parse builds.
+
+enum FTy {
+  FTok
+  // A tauto expression written in the text.
+  FExpr
+  FNamed(Text)
+  FList(FTy)
+  FOpt(FTy)
+}
+
+struct SField { name: Text, ty: FTy }
+
+enum SPay {
+  PayRecord(List(SField))
+  PaySingle(FTy)
+}
+
+struct SCtor { name: Text, prod: u64, pay: SPay }
+
+enum STy {
+  TyStruct(Text, u64, List(SField))
+  TyEnum(Text, List(SCtor))
+}
+
+// The type a production builds (-1 for none) and its constructor in it.
+struct SPt { ty: i64, ctor: u64 }
+
+// A generated non-terminal's type, once made.
+struct SMade { nt: u64, ty: FTy }
+
+// The numbers handed out for an owner and a kind.
+struct SCnt { owner: u64, kind: Text, n: u64 }
+
+struct SGr {
+  prods: Array(MProd)
+  nts: Array(Text)
+  kinds: Array(u64)
+  terms: Array(Text)
+  start: u64
+}
+
+struct SCx {
+  types: Vec(STy)
+  ptype: Vec(SPt)
+  made: Vec(SMade)
+  counters: Vec(SCnt)
+}
+
+fn sg_prod(g: SGr, p: u64) -> MProd {
+  match array_get(g.prods, p) {
+    Some(x) => x
+    None => par_die("a production is lost")
+  }
+}
+
+fn sg_nt(g: SGr, n: u64) -> Text {
+  match array_get(g.nts, n) {
+    Some(x) => x
+    None => par_die("a non-terminal is lost")
+  }
+}
+
+fn sg_kind(g: SGr, n: u64) -> u64 {
+  match array_get(g.kinds, n) {
+    Some(x) => x
+    None => par_die("a non-terminal is lost")
+  }
+}
+
+fn sg_term(g: SGr, t: u64) -> Text {
+  match array_get(g.terms, t) {
+    Some(x) => x
+    None => par_die("a terminal is lost")
+  }
+}
+
+fn sg_prods_of(g: SGr, n: u64) -> List(u64) {
+  var out: List(u64) = Nil
+  var p = array_len(g.prods)
+  while p > 0 {
+    p := p - 1
+    if sg_prod(g, p).lhs == n {
+      out := Cons(p, out)
+    }
+  }
+  out
+}
+
+fn sg_snake(name: Text) -> Text {
+  var b = buf_new()
+  var at: u64 = 0
+  var i: u64 = 0
+  var last_underscore = false
+  while at < text_len(name) {
+    let c = text_byte_value(name, at)
+    if c >= 65 && c <= 90 {
+      if i > 0 && !last_underscore {
+        buf_push(&mut b, &"_")
+      }
+      buf_push(&mut b, &text_slice_or_empty(name, at, at + 1))
+      last_underscore := false
+    } else {
+      buf_push(&mut b, &text_slice_or_empty(name, at, at + 1))
+      last_underscore := c == 95
+    }
+    at := at + 1
+    i := i + 1
+  }
+  text_lower_ascii(text_of(b))
+}
+
+// The upper-case letters of `name` made lower case.
+fn text_lower_ascii(t: Text) -> Text {
+  var b = buf_new()
+  var at: u64 = 0
+  while at < text_len(t) {
+    let c = text_byte_value(t, at)
+    if c >= 65 && c <= 90 {
+      match text_of_code_point(u32_of_u64(c + 32)) {
+        Some(x) => {
+          buf_push(&mut b, &x)
+        }
+        None => ()
+      }
+    } else {
+      buf_push(&mut b, &text_slice_or_empty(t, at, at + 1))
+    }
+    at := at + 1
+  }
+  text_of(b)
+}
+
+fn sg_types_get(&v: Vec(STy), i: u64) -> STy {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sg_set_type(&mut v: Vec(STy), i: u64, x: STy) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := x
+    }
+    None => ()
+  }
+}
+
+fn sg_set_pt(&mut v: Vec(SPt), p: u64, ty: i64, ctor: u64) -> () {
+  match vec_get_mut(&mut v, p) {
+    Some(slot) => {
+      slot := SPt { ty: ty, ctor: ctor }
+    }
+    None => ()
+  }
+}
+
+fn sg_made_find(&v: Vec(SMade), nt: u64) -> Option(FTy) {
+  var i: u64 = 0
+  var found: Option(FTy) = None
+  while i < vec_len(&v) {
+    let &e = vec_index(&v, i)
+    if e.nt == nt {
+      found := Some(e.ty)
+    }
+    i := i + 1
+  }
+  found
+}
+
+// A fresh name for a type made inside `owner`: the owner's name, `_`, `kind`
+// and the next number for that owner and kind.
+fn sg_numbered(g: SGr, &mut cx: SCx, owner: u64, kind: Text) -> Text {
+  var n: u64 = 1
+  var i: u64 = 0
+  var seen = false
+  while i < vec_len(&cx.counters) {
+    let &e = vec_index(&cx.counters, i)
+    if e.owner == owner && e.kind == kind {
+      n := e.n + 1
+      seen := true
+      match vec_get_mut(&mut cx.counters, i) {
+        Some(slot) => {
+          slot := SCnt { owner: owner, kind: kind, n: n }
+        }
+        None => ()
+      }
+    }
+    i := i + 1
+  }
+  if !seen {
+    vec_push(&mut cx.counters, SCnt { owner: owner, kind: kind, n: 1 })
+  }
+  text_concat_all(Cons(sg_nt(g, owner), Cons("_", Cons(kind, Cons(text_of_u64(n), Nil)))))
+}
+
+fn sg_is_expr(g: SGr, m: u64) -> Bool {
+  sg_nt(g, m) == "TautoExpr"
+}
+
+// The type of a token non-terminal: an expression if it is `TautoExpr` or
+// only that, else a token.
+fn sg_token_ty(g: SGr, n: u64) -> FTy {
+  var alias = false
+  match sg_prods_of(g, n) {
+    Cons(p, rest) => match sg_prod(g, p).rhs {
+      Cons(s, Nil) => match s {
+        MN(k) => {
+          alias := sg_is_expr(g, k)
+        }
+        MT(t, c) => ()
+      }
+      other => ()
+    }
+    Nil => ()
+  }
+  if sg_is_expr(g, n) || alias { FExpr } else { FTok }
+}
+
+fn sg_sym_name(g: SGr, s: MSym) -> Text {
+  match s {
+    MT(t, clipped) => sg_term(g, t)
+    MN(m) => {
+      let k = sg_kind(g, m)
+      if k == 2 {
+        "Rep"
+      } else if k == 3 {
+        "Opt"
+      } else if k == 4 {
+        "Group"
+      } else {
+        sg_nt(g, m)
+      }
+    }
+  }
+}
+
+fn sg_snoc_field(xs: List(SField), x: SField) -> List(SField) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, sg_snoc_field(rest, x))
+  }
+}
+
+fn sg_all_digits(t: Text) -> Bool {
+  var ok = text_len(t) > 0
+  var i: u64 = 0
+  while i < text_len(t) {
+    let c = text_byte_value(t, i)
+    if c < 48 || c > 57 {
+      ok := false
+    }
+    i := i + 1
+  }
+  ok
+}
+
+// A field name is `base` or `base_` and a number.
+fn sg_name_matches(f: Text, base: Text) -> Bool {
+  if f == base {
+    true
+  } else {
+    let prefix = text_concat_all(Cons(base, Cons("_", Nil)))
+    text_len(
+      f
+    ) > text_len(
+      prefix
+    ) && text_slice_or_empty(
+      f,
+      0,
+      text_len(prefix)
+    ) == prefix && sg_all_digits(text_slice_or_empty(f, text_len(prefix), text_len(f)))
+  }
+}
+
+fn sg_count_matching(xs: List(SField), base: Text) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(
+      x,
+      rest
+    ) => (if sg_name_matches(x.name, base) { 1 } else { 0 }) + sg_count_matching(rest, base)
+  }
+}
+
+// The production of a repetition or option that has the items, and its right side without the repetition's own tail.
+struct SItems { prod: u64, rhs: List(MSym) }
+
+fn sg_drop_last(xs: List(MSym)) -> List(MSym) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => match rest {
+      Nil => Nil
+      more => Cons(x, sg_drop_last(rest))
+    }
+  }
+}
+
+fn sg_items(g: SGr, m: u64) -> SItems {
+  var found: Option(u64) = None
+  var ps = sg_prods_of(g, m)
+  var running = true
+  while running {
+    match ps {
+      Nil => {
+        running := false
+      }
+      Cons(p, rest) => {
+        let a = sg_prod(g, p).attr
+        if a == 2 || a == 3 {
+          found := Some(p)
+          running := false
+        }
+        ps := rest
+      }
+    }
+  }
+  match found {
+    Some(p) => {
+      let prod = sg_prod(g, p)
+      SItems { prod: p, rhs: if prod.attr == 2 { sg_drop_last(prod.rhs) } else { prod.rhs } }
+    }
+    None => par_die("a repetition or option has no production with items")
+  }
+}
+
+// The name of a field of a repetition or option: the snake-case name of the
+// one terminal or struct or token non-terminal it holds, else `fallback`.
+fn sg_inner_name(g: SGr, m: u64, fallback: Text) -> Text {
+  let items = sg_items(g, m)
+  match items.rhs {
+    Cons(s, Nil) => match s {
+      MT(t, c) => sg_snake(sg_term(g, t))
+      MN(k) => if sg_kind(g, k) == 0 || sg_kind(g, k) == 1 {
+        sg_snake(sg_nt(g, k))
+      } else {
+        fallback
+      }
+    }
+    other => fallback
+  }
+}
+
+fn sg_ctor_named(xs: List(SCtor), name: Text) -> Bool {
+  match xs {
+    Nil => false
+    Cons(c, rest) => c.name == name || sg_ctor_named(rest, name)
+  }
+}
+
+fn sg_snoc_ctor(xs: List(SCtor), x: SCtor) -> List(SCtor) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, sg_snoc_ctor(rest, x))
+  }
+}
+
+// The fields of a right side: a clipped terminal has none; a name used twice
+// gets `_2`, `_3`, ….
+fn sg_fields(g: SGr, &mut cx: SCx, owner: u64, rhs: List(MSym)) -> List(SField) {
+  var out: List(SField) = Nil
+  var rest = rhs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        var skip = false
+        var base = ""
+        var ty = FTok
+        match s {
+          MT(t, clipped) => if clipped {
+            skip := true
+          } else {
+            base := sg_snake(sg_term(g, t))
+          }
+          MN(m) => {
+            let k = sg_kind(g, m)
+            if k == 1 {
+              base := sg_snake(sg_nt(g, m))
+              ty := sg_token_ty(g, m)
+            } else if k == 0 {
+              base := sg_snake(sg_nt(g, m))
+              ty := FNamed(sg_nt(g, m))
+            } else if k == 4 {
+              base := "group"
+              ty := sg_generated(g, &mut cx, owner, m)
+            } else if k == 2 {
+              base := sg_inner_name(g, m, "rep")
+              ty := FList(sg_generated(g, &mut cx, owner, m))
+            } else {
+              base := sg_inner_name(g, m, "opt")
+              ty := FOpt(sg_generated(g, &mut cx, owner, m))
+            }
+          }
+        }
+        if !skip {
+          let n = sg_count_matching(out, base)
+          let name = if n == 0 {
+            base
+          } else {
+            text_concat_all(Cons(base, Cons("_", Cons(text_of_u64(n + 1), Nil))))
+          }
+          out := sg_snoc_field(out, SField { name: name, ty: ty })
+        }
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The type of the element of a repetition or option, or of a group.
+fn sg_generated(g: SGr, &mut cx: SCx, owner: u64, m: u64) -> FTy {
+  match sg_made_find(&cx.made, m) {
+    Some(t) => t
+    None => {
+      let t = if sg_kind(g, m) == 4 {
+        let name = sg_numbered(g, &mut cx, owner, "Group")
+        let idx = sg_alternatives(g, &mut cx, owner, name, sg_prods_of(g, m))
+        FNamed(name)
+      } else {
+        let items = sg_items(g, m)
+        match items.rhs {
+          Cons(s, Nil) => match s {
+            MT(t, clipped) => if clipped {
+              sg_generated_struct(g, &mut cx, owner, m, items)
+            } else {
+              FTok
+            }
+            MN(k) => {
+              let kk = sg_kind(g, k)
+              if kk == 1 {
+                sg_token_ty(g, k)
+              } else if kk == 0 {
+                FNamed(sg_nt(g, k))
+              } else if kk == 2 {
+                FList(sg_generated(g, &mut cx, owner, k))
+              } else if kk == 3 {
+                FOpt(sg_generated(g, &mut cx, owner, k))
+              } else {
+                sg_generated(g, &mut cx, owner, k)
+              }
+            }
+          }
+          other => sg_generated_struct(g, &mut cx, owner, m, items)
+        }
+      }
+      vec_push(&mut cx.made, SMade { nt: m, ty: t })
+      t
+    }
+  }
+}
+
+fn sg_generated_struct(g: SGr, &mut cx: SCx, owner: u64, m: u64, items: SItems) -> FTy {
+  let name = sg_numbered(g, &mut cx, owner, if sg_kind(g, m) == 2 { "Rep" } else { "Opt" })
+  let idx = vec_len(&cx.types)
+  vec_push(&mut cx.types, TyStruct(name, items.prod, Nil))
+  let fields = sg_fields(g, &mut cx, owner, items.rhs)
+  sg_set_type(&mut cx.types, idx, TyStruct(name, items.prod, fields))
+  sg_set_pt(&mut cx.ptype, items.prod, i64_of_u64(idx), 0)
+  FNamed(name)
+}
+
+// The type of a non-terminal: a struct for one production, an enum for several.
+fn sg_alternatives(g: SGr, &mut cx: SCx, owner: u64, name: Text, prods: List(u64)) -> u64 {
+  let idx = vec_len(&cx.types)
+  match prods {
+    Cons(p0, Nil) => {
+      vec_push(&mut cx.types, TyStruct(name, p0, Nil))
+      let fields = sg_fields(g, &mut cx, owner, sg_prod(g, p0).rhs)
+      sg_set_type(&mut cx.types, idx, TyStruct(name, p0, fields))
+      sg_set_pt(&mut cx.ptype, p0, i64_of_u64(idx), 0)
+    }
+    other => {
+      vec_push(&mut cx.types, TyEnum(name, Nil))
+      var ctors: List(SCtor) = Nil
+      var i: u64 = 0
+      var rest = prods
+      var running = true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(p, more) => {
+            let rhs = sg_prod(g, p).rhs
+            var cname = ""
+            var pay = PaySingle(FTok)
+            var single = false
+            match rhs {
+              Cons(s, Nil) => match s {
+                MN(m) => if sg_kind(g, m) == 0 || sg_kind(g, m) == 1 {
+                  single := true
+                  cname := sg_nt(g, m)
+                  pay := PaySingle(
+                    if sg_kind(g, m) == 1 { sg_token_ty(g, m) } else { FNamed(sg_nt(g, m)) }
+                  )
+                }
+                MT(t, c) => ()
+              }
+              others => ()
+            }
+            if !single {
+              var joined = ""
+              var syms = rhs
+              var walking = true
+              while walking {
+                match syms {
+                  Nil => {
+                    walking := false
+                  }
+                  Cons(s, tail) => {
+                    joined := text_concat_all(Cons(joined, Cons(sg_sym_name(g, s), Nil)))
+                    syms := tail
+                  }
+                }
+              }
+              cname := if text_len(joined) == 0 { "Empty" } else { joined }
+              pay := PayRecord(sg_fields(g, &mut cx, owner, rhs))
+            }
+            if sg_ctor_named(ctors, cname) {
+              cname := text_concat_all(Cons(cname, Cons(text_of_u64(i + 1), Nil)))
+            }
+            ctors := sg_snoc_ctor(ctors, SCtor { name: cname, prod: p, pay: pay })
+            sg_set_pt(&mut cx.ptype, p, i64_of_u64(idx), i)
+            i := i + 1
+            rest := more
+          }
+        }
+      }
+      sg_set_type(&mut cx.types, idx, TyEnum(name, ctors))
+    }
+  }
+  idx
+}
+
+// The type of a non-terminal that has one of its own (a struct non-terminal,
+// or a start symbol that is a token).
+fn sg_declared(g: SGr, &mut cx: SCx, n: u64) -> () {
+  let name = sg_nt(g, n)
+  let prods = sg_prods_of(g, n)
+  if sg_kind(g, n) == 1 {
+    // The start symbol is a token: the input type needs a struct (token).
+    match prods {
+      Cons(p0, rest) => {
+        let idx = vec_len(&cx.types)
+        vec_push(&mut cx.types, TyStruct(name, p0, Cons(SField { name: "token", ty: FTok }, Nil)))
+        sg_set_pt(&mut cx.ptype, p0, i64_of_u64(idx), 0)
+      }
+      Nil => par_die("a token has no production")
+    }
+  } else {
+    let idx = sg_alternatives(g, &mut cx, n, name, prods)
+    ()
+  }
+}
+
+// What `sg_build` makes: the types and, for each production, its type
+// and constructor.
+struct SSchema { types: Vec(STy), ptype: Vec(SPt) }
+
+fn sg_build(m: MModel) -> SSchema {
+  let g = SGr {
+    prods: array_of_list(m.prods)
+    nts: array_of_list(m.nts)
+    kinds: array_of_list(m.nt_kinds)
+    terms: array_of_list(m.terminal_names)
+    start: m.start
+  }
+  var cx = SCx { types: vec_new(), ptype: vec_new(), made: vec_new(), counters: vec_new() }
+  var p: u64 = 0
+  while p < array_len(g.prods) {
+    vec_push(&mut cx.ptype, SPt { ty: -1, ctor: 0 })
+    p := p + 1
+  }
+  var n: u64 = 0
+  while n < array_len(g.nts) {
+    let k = sg_kind(g, n)
+    if k == 0 || (k == 1 && n == g.start) {
+      sg_declared(g, &mut cx, n)
+    }
+    n := n + 1
+  }
+  match cx {
+    SCx { types: ts, ptype: pt, made: md, counters: cn } => SSchema { types: ts, ptype: pt }
+  }
+}
+
+// ---------------------------------------------------------------- the lines
+
+fn sg_pt_get(&v: Vec(SPt), i: u64) -> SPt {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn sg_prod_types_line(&s: SSchema) -> Text {
+  var words: List(Text) = Nil
+  var i = vec_len(&s.ptype)
+  while i > 0 {
+    i := i - 1
+    let e = sg_pt_get(&s.ptype, i)
+    words := Cons(text_of_i64(e.ty), Cons(text_of_u64(e.ctor), words))
+  }
+  em_line("prod_types", vec_len(&s.ptype), words)
+}
+
+fn sg_push_fty(&mut b: Buf, t: FTy) -> () {
+  match t {
+    FTok => buf_push(&mut b, &" K")
+    FExpr => buf_push(&mut b, &" E")
+    FNamed(n) => {
+      buf_push(&mut b, &" N ")
+      buf_push(&mut b, &n)
+    }
+    FList(x) => {
+      buf_push(&mut b, &" L")
+      sg_push_fty(&mut b, x)
+    }
+    FOpt(x) => {
+      buf_push(&mut b, &" O")
+      sg_push_fty(&mut b, x)
+    }
+  }
+}
+
+fn sg_len_fields(xs: List(SField)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sg_len_fields(rest)
+  }
+}
+
+fn sg_len_ctors(xs: List(SCtor)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sg_len_ctors(rest)
+  }
+}
+
+fn sg_push_record(&mut b: Buf, fields: List(SField)) -> () {
+  buf_push(&mut b, &" ")
+  buf_push(&mut b, &text_of_u64(sg_len_fields(fields)))
+  var rest = fields
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(f, more) => {
+        buf_push(&mut b, &" ")
+        buf_push(&mut b, &f.name)
+        sg_push_fty(&mut b, f.ty)
+        rest := more
+      }
+    }
+  }
+}
+
+fn sg_schema_line(&s: SSchema) -> Text {
+  var b = buf_new()
+  var i: u64 = 0
+  while i < vec_len(&s.types) {
+    match sg_types_get(&s.types, i) {
+      TyStruct(name, prod, fields) => {
+        buf_push(&mut b, &" S ")
+        buf_push(&mut b, &name)
+        buf_push(&mut b, &" ")
+        buf_push(&mut b, &text_of_u64(prod))
+        sg_push_record(&mut b, fields)
+      }
+      TyEnum(name, ctors) => {
+        buf_push(&mut b, &" E ")
+        buf_push(&mut b, &name)
+        buf_push(&mut b, &" ")
+        buf_push(&mut b, &text_of_u64(sg_len_ctors(ctors)))
+        var rest = ctors
+        var running = true
+        while running {
+          match rest {
+            Nil => {
+              running := false
+            }
+            Cons(c, more) => {
+              buf_push(&mut b, &" ")
+              buf_push(&mut b, &c.name)
+              buf_push(&mut b, &" ")
+              buf_push(&mut b, &text_of_u64(c.prod))
+              match c.pay {
+                PayRecord(fields) => {
+                  buf_push(&mut b, &" R")
+                  sg_push_record(&mut b, fields)
+                }
+                PaySingle(t) => {
+                  buf_push(&mut b, &" P")
+                  sg_push_fty(&mut b, t)
+                }
+              }
+              rest := more
+            }
+          }
+        }
+      }
+    }
+    i := i + 1
+  }
+  text_concat_all(Cons("schema ", Cons(text_of_u64(vec_len(&s.types)), Cons(text_of_buf(b), Nil))))
+}

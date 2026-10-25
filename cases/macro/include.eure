@@ -1,0 +1,125 @@
+// `include_text!("path")`: the reader replaces the call, where it is written,
+// by a `Text` literal holding the file's bytes. The path is relative to the
+// file that writes the call and stays inside its tote (the nearest directory
+// above it with a `Tauto.eure`; a file outside any tote, inside its own
+// directory). A `{{bytes:ff}}` in a text is that byte.
+
+@ cases.a-file-of-the-same-directory-is-read-as-a-text
+files."main.nib" = ````nib
+fn greeting() -> Text { include_text!("data/greeting.txt") }
+let g = greeting()
+perform show("g", g)
+````
+files."data/greeting.txt" = "hello \"world\"\n"
+expands = ```nib
+fn greeting() -> Text { "hello \"world\"\n" }
+let g = greeting()
+perform show("g", g)
+```
+shows = ["g = \"hello \\\"world\\\"\\n\""]
+
+@ cases.a-file-of-the-tote-is-read-from-a-file-below-it
+files."Tauto.eure" = ```eure
+package {
+  name = "t"
+  version = "0.1.0"
+  sources = ["src"]
+}
+```
+files."src/main.nib" = ````nib
+let rows = concat("", include_text!("../data/rows.txt"))
+perform show("rows", rows)
+````
+files."data/rows.txt" = "1 2 3"
+entry = "src/main.nib"
+expands = ```nib
+let rows = concat("", "1 2 3")
+perform show("rows", rows)
+```
+shows = ["rows = \"1 2 3\""]
+
+@ cases.a-proof-sees-only-the-literal
+files."main.nib" = ````nib
+theorem same(): Eq(Text, include_text!("a.txt"), include_text!("./a.txt")) { refl() }
+````
+files."a.txt" = "a"
+expands = ```nib
+theorem same(): Eq(Text, "a", "a") { refl() }
+```
+
+@ cases.an-absolute-path-is-refused
+files."main.nib" = ````nib
+let t = include_text!("/etc/hosts")
+````
+macro_error = "include.absolute"
+
+@ cases.a-path-out-of-the-directory-is-refused
+files."main.nib" = ````nib
+let t = include_text!("../outside.txt")
+````
+macro_error = "include.outside"
+
+@ cases.a-path-out-of-the-tote-is-refused
+files."tote/Tauto.eure" = ```eure
+package {
+  name = "t"
+  version = "0.1.0"
+  sources = ["src"]
+}
+```
+files."tote/src/main.nib" = ````nib
+let t = include_text!("../../secret.txt")
+````
+files."secret.txt" = "no"
+entry = "tote/src/main.nib"
+macro_error = "include.outside"
+
+@ cases.a-missing-file-is-refused
+files."main.nib" = ````nib
+let t = include_text!("missing.txt")
+````
+macro_error = "include.read"
+
+@ cases.a-file-that-is-not-utf-8-is-refused
+files."main.nib" = ````nib
+let t = include_text!("latin1.txt")
+````
+files."latin1.txt" = "caf{{bytes:e9}}"
+macro_error = "include.not_utf8"
+
+@ cases.the-argument-is-a-text-literal
+files."main.nib" = ````nib
+let p = "a.txt"
+let t = include_text!(p)
+````
+files."a.txt" = "a"
+macro_error = "include.argument"
+
+@ cases.a-macro-cannot-take-the-name
+files."lib.nib" = ````nib
+fn ident(e: SynExpr) -> SynExpr { e }
+macro include_text = ident
+````
+files."main.nib" = ````nib
+import "lib.nib"
+let t = 1
+````
+macro_error = "macro.reserved"
+
+// A macro cannot read a file: a call it makes is not read.
+@ cases.a-call-a-macro-makes-is-refused
+files."lib.nib" = ````nib
+fn reads(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+  match syn_ident_of(e) {
+    Some(id) => ExMacroExpr(syn_ident_like(id, "include_text"), ExText("a.txt", id.span), id.span)
+    None => e
+  }
+}
+macro reads = reads
+````
+files."main.nib" = ````nib
+import "lib.nib"
+let t = reads!(x)
+````
+files."a.txt" = "a"
+macro_error = "macro.include_text"

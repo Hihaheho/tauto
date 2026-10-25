@@ -1,0 +1,297 @@
+import "rules_ty.taut"
+
+// The unifier of `src/checker.taut` against the rules of `rules_ty.taut`
+// (`docs/design/self-host.md`「層 2：`ck_unify`（`src/unify_sound.taut`）」).
+
+// ----- resolving -----
+
+// The arm of `ty_resolve_in` for `TyVar(i)`, with what `s` has for `i`.
+fn ty_resolve_var(j: Nat, s: Ordmap(Nat, Ty), i: Nat, o: Option(Ty)) -> Ty {
+  match o -> Ty {
+    Some(x) => ty_resolve_in(j, s, x)
+    None => TyVar(i)
+  }
+}
+
+theorem ty_option_cases<A: Type>(
+  P: (Option(A)) -> Prop,
+  o: Option(A),
+  a: (Eq(Option(A), o, None)) -> P(None),
+  b: ∀ x: A. (Eq(Option(A), o, Some(x))) -> P(Some(x))
+): P(o) {
+  match o -> P(o) {
+    None => a(refl())
+    Some(x) => b(x, refl())
+  }
+}
+
+theorem tyeq_list_refl(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ts: List(Ty)
+): TyEqList(s, ok, ts, ts) {
+  match ts -> TyEqList(s, ok, ts, ts) {
+    Nil => tyeq_nil()
+    Cons(t, rest) => tyeq_cons(tyeq_refl(t), tyeq_list_refl(s, ok, rest))
+  }
+}
+
+// A type is the same type as itself resolved.
+def ResolveEqAt(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+): Prop := ∀ t: Ty. TyEq(s, ok, t, ty_resolve_in(k, s, t))
+
+def ResolveListEqAt(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+): Prop := ∀ ts: List(Ty). TyEqList(s, ok, ts, ty_resolve_list_in(k, s, ts))
+
+theorem ty_resolve_list_step(
+  j: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ht: ResolveEqAt(j, s, ok),
+  hl: ResolveListEqAt(j, s, ok),
+  ts: List(Ty)
+): TyEqList(s, ok, ts, ty_resolve_list_in(succ(j), s, ts)) {
+  match ts -> TyEqList(s, ok, ts, ty_resolve_list_in(succ(j), s, ts)) {
+    Nil => tyeq_nil()
+    Cons(t, rest) => tyeq_cons(ht(t), hl(rest))
+  }
+}
+
+theorem ty_resolve_step(
+  j: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ht: ResolveEqAt(j, s, ok),
+  hl: ResolveListEqAt(j, s, ok),
+  t: Ty
+): TyEq(s, ok, t, ty_resolve_in(succ(j), s, t)) {
+  match t -> TyEq(s, ok, t, ty_resolve_in(succ(j), s, t)) {
+    TyVar(
+      i
+    ) => ty_option_cases(
+      (o: Option(Ty)) => TyEq(s, ok, TyVar(i), ty_resolve_var(j, s, i, o)),
+      ordmap_get(s, i, ordmap_compare_nat),
+      (e: Eq(Option(Ty), ordmap_get(s, i, ordmap_compare_nat), None)) => tyeq_refl(TyVar(i)),
+      (
+        x: Ty,
+        e: Eq(Option(Ty), ordmap_get(s, i, ordmap_compare_nat), Some(x))
+      ) => tyeq_trans(tyeq_var(i, e), ht(x))
+    )
+    TyFn(ps, r, fk) => tyeq_fn(hl(ps), ht(r), kind_same_refl(fk))
+    TyUnion(ts) => tyeq_trans(tyeq_union(hl(ts)), tyeq_union_norm(ty_resolve_list_in(j, s, ts)))
+    TyTagged(
+      tags,
+      x
+    ) => tyeq_trans(tyeq_tagged(tags, ht(x)), tyeq_tagged_norm(tags, ty_resolve_in(j, s, x)))
+    TyNamed(n, args) => tyeq_named(n, hl(args))
+    TyInfo(x) => tyeq_info(ht(x))
+    TyBorrow(x, m) => tyeq_borrow(m, ht(x))
+    TyInt(w) => tyeq_refl(TyInt(w))
+    TyBool => tyeq_refl(TyBool)
+    TyText => tyeq_refl(TyText)
+    TyUnit => tyeq_refl(TyUnit)
+    TyNever => tyeq_refl(TyNever)
+    TyDecimal => tyeq_refl(TyDecimal)
+    TyFloat => tyeq_refl(TyFloat)
+    TyParam(n, pk) => tyeq_refl(TyParam(n, pk))
+    TyPoly(gs, x) => tyeq_poly_body(gs, ht(x))
+    TyApp(
+      h,
+      x
+    ) => tyeq_trans(
+      tyeq_app(ht(h), ht(x)),
+      tyeq_app_norm(ty_resolve_in(j, s, h), ty_resolve_in(j, s, x))
+    )
+  }
+}
+
+theorem ty_resolve_at(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+): And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) {
+  match k -> And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) {
+    zero => and_intro((t: Ty) => tyeq_refl(t), (ts: List(Ty)) => tyeq_list_refl(s, ok, ts))
+    succ(
+      j
+    ) => and_intro(
+      (
+        t: Ty
+      ) => ty_resolve_step(
+        j,
+        s,
+        ok,
+        and_left(ty_resolve_at(j, s, ok)),
+        and_right(ty_resolve_at(j, s, ok)),
+        t
+      ),
+      (
+        ts: List(Ty)
+      ) => ty_resolve_list_step(
+        j,
+        s,
+        ok,
+        and_left(ty_resolve_at(j, s, ok)),
+        and_right(ty_resolve_at(j, s, ok)),
+        ts
+      )
+    )
+  }
+}
+
+theorem ty_resolve_eq(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  t: Ty
+): TyEq(s, ok, t, ty_resolve_in(k, s, t)) {
+  and_left(ty_resolve_at(k, s, ok))(t)
+}
+
+theorem ty_resolve_list_eq(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ts: List(Ty)
+): TyEqList(s, ok, ts, ty_resolve_list_in(k, s, ts)) {
+  and_right(ty_resolve_at(k, s, ok))(ts)
+}
+
+// ----- a larger substitution -----
+
+// What is the same type under `s` is under a substitution that binds more,
+// and with more uses of rigid types allowed.
+def OkExt(
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+): Prop := ∀ gs: List(
+  Pair(Text, Kind)
+). ∀ r: Ordmap(Text, Ty). ∀ a: Ty. ∀ b: Ty. (ok(gs, r, a, b)) -> ok2(gs, r, a, b)
+
+mutual {
+  theorem tyeq_list_move(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    s2: Ordmap(Nat, Ty),
+    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    hs: SubstExt(s, s2),
+    hk: OkExt(ok, ok2),
+    xs: List(Ty),
+    ys: List(Ty),
+    h: TyEqList(s, ok, xs, ys)
+  ): TyEqList(s2, ok2, xs, ys) {
+    match h -> TyEqList(s2, ok2, xs, ys) {
+      tyeq_nil() => tyeq_nil()
+      tyeq_cons(
+        x,
+        y,
+        xs1,
+        ys1,
+        h1,
+        h2
+      ) => tyeq_cons(
+        tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1),
+        tyeq_list_move(s, ok, s2, ok2, hs, hk, xs1, ys1, h2)
+      )
+    }
+  }
+
+  theorem tyeq_move(
+    s: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    s2: Ordmap(Nat, Ty),
+    ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+    hs: SubstExt(s, s2),
+    hk: OkExt(ok, ok2),
+    a: Ty,
+    b: Ty,
+    h: TyEq(s, ok, a, b)
+  ): TyEq(s2, ok2, a, b) {
+    match h -> TyEq(s2, ok2, a, b) {
+      tyeq_refl(a1) => tyeq_refl(a1)
+      tyeq_sym(a1, b1, h1) => tyeq_sym(tyeq_move(s, ok, s2, ok2, hs, hk, a1, b1, h1))
+      tyeq_trans(
+        a1,
+        b1,
+        c1,
+        h1,
+        h2
+      ) => tyeq_trans(
+        tyeq_move(s, ok, s2, ok2, hs, hk, a1, b1, h1),
+        tyeq_move(s, ok, s2, ok2, hs, hk, b1, c1, h2)
+      )
+      tyeq_var(t1, i, e) => tyeq_var(i, hs(i, t1, e))
+      tyeq_fn(
+        ps,
+        qs,
+        r,
+        r2,
+        k,
+        k2,
+        hp,
+        hr,
+        hks
+      ) => tyeq_fn(
+        tyeq_list_move(s, ok, s2, ok2, hs, hk, ps, qs, hp),
+        tyeq_move(s, ok, s2, ok2, hs, hk, r, r2, hr),
+        hks
+      )
+      tyeq_union(xs, ys, h1) => tyeq_union(tyeq_list_move(s, ok, s2, ok2, hs, hk, xs, ys, h1))
+      tyeq_union_norm(xs) => tyeq_union_norm(xs)
+      tyeq_tagged(x, y, tags, h1) => tyeq_tagged(tags, tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1))
+      tyeq_tagged_norm(tags, x) => tyeq_tagged_norm(tags, x)
+      tyeq_named(xs, ys, n, h1) => tyeq_named(n, tyeq_list_move(s, ok, s2, ok2, hs, hk, xs, ys, h1))
+      tyeq_info(x, y, h1) => tyeq_info(tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1))
+      tyeq_borrow(x, y, m, h1) => tyeq_borrow(m, tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1))
+      tyeq_app(
+        h1,
+        h2,
+        x1,
+        x2,
+        hh,
+        hx
+      ) => tyeq_app(
+        tyeq_move(s, ok, s2, ok2, hs, hk, h1, h2, hh),
+        tyeq_move(s, ok, s2, ok2, hs, hk, x1, x2, hx)
+      )
+      tyeq_app_norm(f, x) => tyeq_app_norm(f, x)
+      tyeq_poly_body(x, y, gs, h1) => tyeq_poly_body(
+        gs,
+        tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1)
+      )
+      tyeq_poly(
+        ta,
+        tb,
+        ga,
+        gb,
+        rigid,
+        hq,
+        hr,
+        h1
+      ) => tyeq_poly(
+        ga,
+        gb,
+        rigid,
+        hq,
+        hk(ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb), hr),
+        tyeq_move(
+          s,
+          ok,
+          s2,
+          ok2,
+          hs,
+          hk,
+          ty_substitute(ta, rigid),
+          ty_substitute(tb, ty_poly_map(gb, ga, rigid)),
+          h1
+        )
+      )
+    }
+  }
+}

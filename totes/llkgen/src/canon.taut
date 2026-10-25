@@ -1,0 +1,646 @@
+// Taking the EBNF out of a grammar. The order of the productions and the
+// names of the ones made here are the ones the reference tables have, and the
+// output is checked against them.
+
+// ---------------------------------------------------------------- names
+
+fn cn_has(names: List(Text), n: Text) -> Bool {
+  match names {
+    Nil => false
+    Cons(x, rest) => if x == n { true } else { cn_has(rest, n) }
+  }
+}
+
+fn cn_digit(b: u64) -> Bool {
+  b >= 48 && b <= 57
+}
+
+// Where the digits that end `t` start (`text_len(t)` when it ends in none).
+fn cn_digits_from(t: Text) -> u64 {
+  var at = text_len(t)
+  while at > 0 && cn_digit(text_byte_value(t, at - 1)) {
+    at := at - 1
+  }
+  at
+}
+
+fn cn_number(t: Text) -> u64 {
+  var n: u64 = 0
+  var at: u64 = 0
+  while at < text_len(t) {
+    n := n * 10 + (text_byte_value(t, at) - 48)
+    at := at + 1
+  }
+  n
+}
+
+// A fresh name: `preferred`, or the first of its prefix and a number that
+// no name in `used` has.
+fn cn_name(used: List(Text), preferred: Text) -> Text {
+  if !cn_has(used, preferred) {
+    preferred
+  } else {
+    let from = cn_digits_from(preferred)
+    let digits = text_slice_or_empty(preferred, from, text_len(preferred))
+    let prefix = text_slice_or_empty(preferred, 0, from)
+    var num: u64 = if text_len(digits) == 0 { 0 } else { cn_number(digits) }
+    var name = text_concat_all(Cons(prefix, Cons(text_of_u64(num), Nil)))
+    while cn_has(used, name) {
+      num := num + 1
+      name := text_concat_all(Cons(prefix, Cons(text_of_u64(num), Nil)))
+    }
+    name
+  }
+}
+
+// The names in use: the left sides and the names written as a factor of an
+// alternative (not inside a group).
+fn cn_variables(prods: List(PProd)) -> List(Text) {
+  var out: List(Text) = Nil
+  var rest = prods
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        out := Cons(p.lhs, out)
+        var alts = p.alts
+        var walking = true
+        while walking {
+          match alts {
+            Nil => {
+              walking := false
+            }
+            Cons(alt, others) => {
+              var fs = alt.factors
+              var inner = true
+              while inner {
+                match fs {
+                  Nil => {
+                    inner := false
+                  }
+                  Cons(f, fmore) => {
+                    match f {
+                      PNt(n) => {
+                        out := Cons(n, out)
+                      }
+                      PGroup(x) => ()
+                      PRepeat(x) => ()
+                      POptional(x) => ()
+                      PTermF(x) => ()
+                    }
+                    fs := fmore
+                  }
+                }
+              }
+              alts := others
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------- options
+
+// Whether a name ends in `Opt` and digits.
+fn cn_ends_opt(t: Text) -> Bool {
+  let from = cn_digits_from(t)
+  from >= 3 && text_slice_or_empty(t, from - 3, from) == "Opt"
+}
+
+// An optional found and taken out: the alternatives with it replaced by the
+// name, the name and what was inside.
+struct CnFound { alts: List(PAlt), name: Text, inner: List(PAlt) }
+
+fn cn_extract_alts(alts: List(PAlt), nt: Text, used: List(Text)) -> Option(CnFound) {
+  match alts {
+    Nil => None
+    Cons(alt, rest) => match cn_extract_factors(alt.factors, nt, used) {
+      Some(
+        found
+      ) => Some(
+        CnFound { alts: Cons(
+          PAlt { factors: found.alts_factors, attr: alt.attr },
+          rest
+        ), name: found.name, inner: found.inner }
+      )
+      None => match cn_extract_alts(rest, nt, used) {
+        Some(f2) => Some(CnFound { alts: Cons(alt, f2.alts), name: f2.name, inner: f2.inner })
+        None => None
+      }
+    }
+  }
+}
+
+struct CnFoundF { alts_factors: List(PFactor), name: Text, inner: List(PAlt) }
+
+fn cn_extract_factors(fs: List(PFactor), nt: Text, used: List(Text)) -> Option(CnFoundF) {
+  match fs {
+    Nil => None
+    Cons(f, rest) => {
+      let hit: Option(Pair(PFactor, Pair(Text, List(PAlt)))) = match f {
+        PGroup(alts) => match cn_extract_alts(alts, nt, used) {
+          Some(
+            found
+          ) => Some(
+            Pair { fst: PGroup(found.alts), snd: Pair { fst: found.name, snd: found.inner } }
+          )
+          None => None
+        }
+        PRepeat(alts) => match cn_extract_alts(alts, nt, used) {
+          Some(
+            found
+          ) => Some(
+            Pair { fst: PRepeat(found.alts), snd: Pair { fst: found.name, snd: found.inner } }
+          )
+          None => None
+        }
+        POptional(alts) => {
+          let preferred = if cn_ends_opt(nt) {
+            nt
+          } else {
+            text_concat_all(Cons(nt, Cons("Opt", Nil)))
+          }
+          let name = cn_name(used, preferred)
+          Some(Pair { fst: PNt(name), snd: Pair { fst: name, snd: alts } })
+        }
+        PTermF(x) => None
+        PNt(x) => None
+      }
+      match hit {
+        Some(
+          h
+        ) => Some(CnFoundF { alts_factors: Cons(h.fst, rest), name: h.snd.fst, inner: h.snd.snd })
+        None => match cn_extract_factors(rest, nt, used) {
+          Some(
+            f2
+          ) => Some(
+            CnFoundF { alts_factors: Cons(f, f2.alts_factors), name: f2.name, inner: f2.inner }
+          )
+          None => None
+        }
+      }
+    }
+  }
+}
+
+// Every optional becomes a non-terminal of its own, right
+// after the production it was in.
+fn cn_extract_options(prods: List(PProd)) -> List(PProd) {
+  var cur = prods
+  var running = true
+  while running {
+    let used = cn_variables(cur)
+    var before: List(PProd) = Nil
+    var rest = cur
+    var found = false
+    var walking = true
+    while walking {
+      match rest {
+        Nil => {
+          walking := false
+        }
+        Cons(p, more) => match cn_extract_alts(p.alts, p.lhs, used) {
+          Some(f) => {
+            let changed = PProd { lhs: p.lhs, alts: f.alts }
+            let some = PProd { lhs: f.name, alts: Cons(
+              PAlt { factors: Cons(PGroup(f.inner), Nil), attr: 3 },
+              Nil
+            ) }
+            let none = PProd { lhs: f.name, alts: Cons(PAlt { factors: Nil, attr: 4 }, Nil) }
+            cur := cn_rev_prods_onto(before, Cons(changed, Cons(some, Cons(none, more))))
+            found := true
+            walking := false
+          }
+          None => {
+            before := Cons(p, before)
+            rest := more
+          }
+        }
+      }
+    }
+    if !found {
+      running := false
+    }
+  }
+  cur
+}
+
+// The reverse of `rev`, then `tail`.
+fn cn_rev_prods_onto(rev: List(PProd), tail: List(PProd)) -> List(PProd) {
+  var out = tail
+  var rest = rev
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------- the rest
+
+fn cn_is_repeat(f: PFactor) -> Bool {
+  match f {
+    PRepeat(x) => true
+    PGroup(x) => false
+    POptional(x) => false
+    PTermF(x) => false
+    PNt(x) => false
+  }
+}
+
+fn cn_is_group(f: PFactor) -> Bool {
+  match f {
+    PGroup(x) => true
+    PRepeat(x) => false
+    POptional(x) => false
+    PTermF(x) => false
+    PNt(x) => false
+  }
+}
+
+fn cn_is_optional(f: PFactor) -> Bool {
+  match f {
+    POptional(x) => true
+    PGroup(x) => false
+    PRepeat(x) => false
+    PTermF(x) => false
+    PNt(x) => false
+  }
+}
+
+fn cn_has_kind(fs: List(PFactor), kind: u64) -> Bool {
+  match fs {
+    Nil => false
+    Cons(
+      f,
+      rest
+    ) => if (
+      kind == 0 && cn_is_repeat(f)
+    ) || (kind == 1 && cn_is_group(f)) || (kind == 2 && cn_is_optional(f)) {
+      true
+    } else {
+      cn_has_kind(rest, kind)
+    }
+  }
+}
+
+// The place of the first alternative of the production that has a factor of
+// the kind (0 repetition, 1 group, 2 optional) written directly in it.
+fn cn_alt_with(alts: List(PAlt), kind: u64, at: u64) -> Option(u64) {
+  match alts {
+    Nil => None
+    Cons(alt, rest) => if cn_has_kind(alt.factors, kind) { Some(at) } else {
+      cn_alt_with(rest, kind, at + 1)
+    }
+  }
+}
+
+// The place of the first production with such an alternative.
+fn cn_prod_with(prods: List(PProd), kind: u64, at: u64) -> Option(u64) {
+  match prods {
+    Nil => None
+    Cons(p, rest) => match cn_alt_with(p.alts, kind, 0) {
+      Some(x) => Some(at)
+      None => cn_prod_with(rest, kind, at + 1)
+    }
+  }
+}
+
+fn cn_nth_prod(prods: List(PProd), i: u64) -> PProd {
+  match prods {
+    Nil => PProd { lhs: "", alts: Nil }
+    Cons(p, rest) => if i == 0 { p } else { cn_nth_prod(rest, i - 1) }
+  }
+}
+
+fn cn_nth_alt(alts: List(PAlt), i: u64) -> PAlt {
+  match alts {
+    Nil => PAlt { factors: Nil, attr: 0 }
+    Cons(a, rest) => if i == 0 { a } else { cn_nth_alt(rest, i - 1) }
+  }
+}
+
+// `prods` with the one at `i` replaced by `by`.
+fn cn_splice(prods: List(PProd), i: u64, by: List(PProd)) -> List(PProd) {
+  match prods {
+    Nil => Nil
+    Cons(p, rest) => if i == 0 { cn_append_prods(by, rest) } else {
+      Cons(p, cn_splice(rest, i - 1, by))
+    }
+  }
+}
+
+fn cn_append_prods(xs: List(PProd), ys: List(PProd)) -> List(PProd) {
+  cn_rev_prods_onto(cn_rev_prods_onto(xs, Nil), ys)
+}
+
+// The place of the first factor of the kind.
+fn cn_factor_with(fs: List(PFactor), kind: u64, at: u64) -> u64 {
+  match fs {
+    Nil => at
+    Cons(
+      f,
+      rest
+    ) => if (
+      kind == 0 && cn_is_repeat(f)
+    ) || (kind == 1 && cn_is_group(f)) || (kind == 2 && cn_is_optional(f)) {
+      at
+    } else {
+      cn_factor_with(rest, kind, at + 1)
+    }
+  }
+}
+
+fn cn_nth_factor(fs: List(PFactor), i: u64) -> PFactor {
+  match fs {
+    Nil => PNt("")
+    Cons(f, rest) => if i == 0 { f } else { cn_nth_factor(rest, i - 1) }
+  }
+}
+
+// The factors with the one at `i` replaced by `by`.
+fn cn_replace_factor(fs: List(PFactor), i: u64, by: List(PFactor)) -> List(PFactor) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => if i == 0 { cn_append_factors(by, rest) } else {
+      Cons(f, cn_replace_factor(rest, i - 1, by))
+    }
+  }
+}
+
+fn cn_append_factors(xs: List(PFactor), ys: List(PFactor)) -> List(PFactor) {
+  pf_reverse_onto(pf_reverse(xs), ys)
+}
+
+fn pf_reverse_onto(rev: List(PFactor), tail: List(PFactor)) -> List(PFactor) {
+  var out = tail
+  var rest = rev
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The alternatives with the one at `i` replaced.
+fn cn_replace_alt(alts: List(PAlt), i: u64, by: PAlt) -> List(PAlt) {
+  match alts {
+    Nil => Nil
+    Cons(a, rest) => if i == 0 { Cons(by, rest) } else { Cons(a, cn_replace_alt(rest, i - 1, by)) }
+  }
+}
+
+fn cn_inner(f: PFactor) -> List(PAlt) {
+  match f {
+    PGroup(x) => x
+    PRepeat(x) => x
+    POptional(x) => x
+    PTermF(t) => Nil
+    PNt(n) => Nil
+  }
+}
+
+fn cn_count_alts(alts: List(PAlt)) -> u64 {
+  match alts {
+    Nil => 0
+    Cons(a, rest) => 1 + cn_count_alts(rest)
+  }
+}
+
+// One production for each alternative.
+fn cn_separate(prods: List(PProd)) -> List(PProd) {
+  var out: List(PProd) = Nil
+  var rest = prods
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        var alts = p.alts
+        var walking = true
+        while walking {
+          match alts {
+            Nil => {
+              walking := false
+            }
+            Cons(a, others) => {
+              out := Cons(PProd { lhs: p.lhs, alts: Cons(a, Nil) }, out)
+              alts := others
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  cn_rev_prods_onto(out, Nil)
+}
+
+// The repetitions taken out, one at a time until none is left.
+fn cn_eliminate_repetitions(prods: List(PProd)) -> List(PProd) {
+  var cur = prods
+  var running = true
+  while running {
+    match cn_prod_with(cur, 0, 0) {
+      None => {
+        running := false
+      }
+      Some(i) => {
+        let p = cn_nth_prod(cur, i)
+        let ai = match cn_alt_with(p.alts, 0, 0) {
+          Some(x) => x
+          None => 0
+        }
+        let alt = cn_nth_alt(p.alts, ai)
+        let fi = cn_factor_with(alt.factors, 0, 0)
+        let repeat = cn_inner(cn_nth_factor(alt.factors, fi))
+        let name = cn_name(cn_variables(cur), text_concat_all(Cons(p.lhs, Cons("List", Nil))))
+        let production1 = PProd { lhs: p.lhs, alts: cn_replace_alt(
+          p.alts,
+          ai,
+          PAlt { factors: cn_replace_factor(alt.factors, fi, Cons(PNt(name), Nil)), attr: alt.attr }
+        ) }
+        let second = if cn_count_alts(repeat) == 1 {
+          PAlt { factors: cn_append_factors(
+            cn_nth_alt(repeat, 0).factors,
+            Cons(PNt(name), Nil)
+          ), attr: 2 }
+        } else {
+          PAlt { factors: Cons(PGroup(repeat), Cons(PNt(name), Nil)), attr: 2 }
+        }
+        let production2 = PProd { lhs: name, alts: Cons(second, Nil) }
+        let production2a = PProd { lhs: name, alts: Cons(PAlt { factors: Nil, attr: 1 }, Nil) }
+        cur := cn_splice(cur, i, Cons(production1, Cons(production2, Cons(production2a, Nil))))
+      }
+    }
+  }
+  cur
+}
+
+// The optionals taken out: none is left after `cn_extract_options`.
+fn cn_eliminate_options(prods: List(PProd)) -> List(PProd) {
+  match cn_prod_with(prods, 2, 0) {
+    None => prods
+    Some(i) => par_die("an optional is left after they were taken out")
+  }
+}
+
+// The groups taken out, one at a time until none is left.
+fn cn_eliminate_groups(prods: List(PProd)) -> List(PProd) {
+  var cur = prods
+  var running = true
+  while running {
+    match cn_prod_with(cur, 1, 0) {
+      None => {
+        running := false
+      }
+      Some(i) => {
+        let p = cn_nth_prod(cur, i)
+        let ai = match cn_alt_with(p.alts, 1, 0) {
+          Some(x) => x
+          None => 0
+        }
+        let alt = cn_nth_alt(p.alts, ai)
+        let fi = cn_factor_with(alt.factors, 1, 0)
+        let group = cn_inner(cn_nth_factor(alt.factors, fi))
+        if cn_count_alts(group) == 1 {
+          let production1 = PProd { lhs: p.lhs, alts: cn_replace_alt(
+            p.alts,
+            ai,
+            PAlt { factors: cn_replace_factor(
+              alt.factors,
+              fi,
+              cn_nth_alt(group, 0).factors
+            ), attr: alt.attr }
+          ) }
+          cur := cn_splice(cur, i, Cons(production1, Nil))
+        } else {
+          let name = cn_name(cn_variables(cur), text_concat_all(Cons(p.lhs, Cons("Group", Nil))))
+          let production1 = PProd { lhs: p.lhs, alts: cn_replace_alt(
+            p.alts,
+            ai,
+            PAlt { factors: cn_replace_factor(
+              alt.factors,
+              fi,
+              Cons(PNt(name), Nil)
+            ), attr: alt.attr }
+          ) }
+          let production2 = PProd { lhs: name, alts: group }
+          cur := cn_splice(cur, i, Cons(production1, Cons(production2, Nil)))
+        }
+      }
+    }
+  }
+  cur
+}
+
+fn cn_prods_eq(a: List(PProd), b: List(PProd)) -> Bool {
+  // Productions are compared by their printed form.
+  cn_show(a) == cn_show(b)
+}
+
+fn cn_show(prods: List(PProd)) -> Text {
+  var b = buf_new()
+  var rest = prods
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        buf_push(&mut b, &p.lhs)
+        buf_push(&mut b, &":")
+        cn_show_alts(&mut b, p.alts)
+        buf_push(&mut b, &";")
+        rest := more
+      }
+    }
+  }
+  text_of(b)
+}
+
+fn cn_show_alts(&mut b: Buf, alts: List(PAlt)) -> () {
+  match alts {
+    Nil => ()
+    Cons(a, rest) => {
+      buf_push(&mut b, &text_of_u64(a.attr))
+      var fs = a.factors
+      var running = true
+      while running {
+        match fs {
+          Nil => {
+            running := false
+          }
+          Cons(f, more) => {
+            buf_push(&mut b, &" ")
+            match f {
+              PNt(n) => buf_push(&mut b, &n)
+              PTermF(t) => buf_push(&mut b, &t.text)
+              PGroup(x) => {
+                buf_push(&mut b, &"(")
+                cn_show_alts(&mut b, x)
+                buf_push(&mut b, &")")
+              }
+              PRepeat(x) => {
+                buf_push(&mut b, &"{")
+                cn_show_alts(&mut b, x)
+                buf_push(&mut b, &"}")
+              }
+              POptional(x) => {
+                buf_push(&mut b, &"[")
+                cn_show_alts(&mut b, x)
+                buf_push(&mut b, &"]")
+              }
+            }
+            fs := more
+          }
+        }
+      }
+      buf_push(&mut b, &"|")
+      cn_show_alts(&mut b, rest)
+    }
+  }
+}
+
+// The whole of it: productions with one alternative and no EBNF.
+fn cn_transform(prods: List(PProd)) -> List(PProd) {
+  var cur = cn_extract_options(prods)
+  var running = true
+  while running {
+    let before = cn_show(cur)
+    let after = cn_eliminate_groups(
+      cn_eliminate_options(cn_eliminate_repetitions(cn_separate(cur)))
+    )
+    if cn_show(after) == before {
+      running := false
+    }
+    cur := after
+  }
+  cur
+}

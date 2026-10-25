@@ -1,0 +1,433 @@
+import "nat.taut"
+import "text.taut"
+
+// Decoding undoes encoding (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」): for every character `c`
+// (below 0x110000 and not a surrogate), `text_decode` reads `c` back from
+// the first byte of `text_of_code_point(c)`, with the whole encoding as its
+// length.
+//
+// This file is not part of the tote's program: `tauto check` checks it.
+
+// `c` is a character: below 0x110000 and not a surrogate.
+fn text_is_char(c: Nat) -> Yn {
+  yn_and(nat_lt(c, 1114112), yn_not(yn_and(nat_le(55296, c), nat_lt(c, 57344))))
+}
+
+// `t` decodes, from its first byte, to `c` and all of `t`.
+fn utf8_round(t: Text, c: Nat) -> Prop {
+  Eq(Option(Pair(Nat, Nat)), text_decode(t, 0), Some(Pair { fst: c, snd: text_len(t) }))
+}
+
+// ---- the steps of `text_of_code_point` ------------------------------------
+//
+// `text_of_code_point` (`std/Text.taut`) in pieces, one function a step:
+// each is what the encoder computes once the tests before it have failed, so
+// `text_of_code_point(c)` is `text(Cons(c, Nil))` or `text_utf8_from_128(c)`
+// by computation alone.
+
+// The UTF-8 encoding of a number from 65536 on: four bytes below 0x110000.
+fn text_utf8_from_65536(c: Nat) -> Text {
+  match nat_lt(c, 1114112) -> Text {
+    yes => text(
+      Cons(
+        nat_add(nat_div(c, 262144), 240),
+        Cons(
+          nat_add(nat_mod(nat_div(c, 4096), 64), 128),
+          Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+        )
+      )
+    )
+    no => text(Nil)
+  }
+}
+
+// From 2048 on, past the surrogates: three bytes below 65536.
+fn text_utf8_past_surrogates(c: Nat) -> Text {
+  match nat_lt(c, 65536) -> Text {
+    yes => text(
+      Cons(
+        nat_add(nat_div(c, 4096), 224),
+        Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+      )
+    )
+    no => text_utf8_from_65536(c)
+  }
+}
+
+// From 2048 on: nothing for a surrogate.
+fn text_utf8_from_2048(c: Nat) -> Text {
+  match yn_and(nat_le(55296, c), nat_lt(c, 57344)) -> Text {
+    yes => text(Nil)
+    no => text_utf8_past_surrogates(c)
+  }
+}
+
+// From 128 on: two bytes below 2048.
+fn text_utf8_from_128(c: Nat) -> Text {
+  match nat_lt(c, 2048) -> Text {
+    yes => text(Cons(nat_add(nat_div(c, 64), 192), Cons(nat_add(nat_mod(c, 64), 128), Nil)))
+    no => text_utf8_from_2048(c)
+  }
+}
+
+// The last digit in base 64 and the digits before it make `n` again, when
+// `m` is the digits before it.
+theorem utf8_digits(
+  n: Nat,
+  m: Nat,
+  e: Eq(Nat, nat_div(n, 64), m)
+): Eq(Nat, nat_add(nat_mul(m, 64), nat_mod(n, 64)), n) {
+  Eq_subst(
+    (z: Nat) => Eq(Nat, nat_add(nat_mul(z, 64), nat_mod(n, 64)), n),
+    e,
+    nat_div_mod_r(n, 64, refl())
+  )
+}
+
+theorem utf8_div_64_64(c: Nat): Eq(Nat, nat_div(nat_div(c, 64), 64), nat_div(c, 4096)) {
+  nat_div_div(c, 64, 64, refl(), refl())
+}
+
+theorem utf8_div_4096_64(c: Nat): Eq(Nat, nat_div(nat_div(c, 4096), 64), nat_div(c, 262144)) {
+  nat_div_div(c, 4096, 64, refl(), refl())
+}
+
+// ---- one length at a time ---------------------------------------------------
+
+theorem utf8_round_1(c: Nat, h: Eq(Yn, nat_lt(c, 128), yes)): utf8_round(text(Cons(c, Nil)), c) {
+  yn_rewrite(
+    (z: Yn) => Eq(
+      Option(Pair(Nat, Nat)),
+      match z -> Option(Pair(Nat, Nat)) {
+        yes => Some(Pair { fst: c, snd: 1 })
+        no => text_decode_from_128(text(Cons(c, Nil)), 0, c)
+      },
+      Some(Pair { fst: c, snd: 1 })
+    ),
+    yes,
+    nat_lt(c, 128),
+    Eq_sym(h),
+    refl()
+  )
+}
+
+theorem utf8_round_2(
+  c: Nat,
+  h: Eq(Yn, nat_lt(c, 2048), yes)
+): utf8_round(text(Cons(nat_add(nat_div(c, 64), 192), Cons(nat_add(nat_mod(c, 64), 128), Nil))), c) {
+  yn_rewrite(
+    (z: Yn) => Eq(
+      Option(Pair(Nat, Nat)),
+      match z -> Option(Pair(Nat, Nat)) {
+        yes => None
+        no => text_decode_from_192(
+          text(Cons(nat_add(nat_div(c, 64), 192), Cons(nat_add(nat_mod(c, 64), 128), Nil))),
+          0,
+          nat_add(nat_div(c, 64), 192)
+        )
+      },
+      Some(Pair { fst: c, snd: 2 })
+    ),
+    no,
+    nat_lt(nat_div(c, 64), 0),
+    Eq_sym(nat_lt_zero_right(nat_div(c, 64))),
+    yn_rewrite(
+      (z: Yn) => Eq(
+        Option(Pair(Nat, Nat)),
+        match z -> Option(Pair(Nat, Nat)) {
+          yes => text_decode_with(nat_div(c, 64), 2, nat_mod(c, 64), 0, 0)
+          no => text_decode_from_224(
+            text(Cons(nat_add(nat_div(c, 64), 192), Cons(nat_add(nat_mod(c, 64), 128), Nil))),
+            0,
+            nat_add(nat_div(c, 64), 192)
+          )
+        },
+        Some(Pair { fst: c, snd: 2 })
+      ),
+      yes,
+      nat_lt(nat_div(c, 64), 32),
+      Eq_sym(nat_div_lt(c, 64, 32, refl(), h)),
+      Eq_congr((z: Nat) => Some(Pair { fst: z, snd: 2 }), utf8_digits(c, nat_div(c, 64), refl()))
+    )
+  )
+}
+
+theorem utf8_round_3(
+  c: Nat,
+  h: Eq(Yn, nat_lt(c, 65536), yes)
+): utf8_round(
+  text(
+    Cons(
+      nat_add(nat_div(c, 4096), 224),
+      Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+    )
+  ),
+  c
+) {
+  yn_rewrite(
+    (z: Yn) => Eq(
+      Option(Pair(Nat, Nat)),
+      match z -> Option(Pair(Nat, Nat)) {
+        yes => text_decode_with(
+          nat_sub(nat_add(nat_div(c, 4096), 224), 192),
+          2,
+          nat_mod(nat_div(c, 64), 64),
+          0,
+          0
+        )
+        no => text_decode_from_224(
+          text(
+            Cons(
+              nat_add(nat_div(c, 4096), 224),
+              Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+            )
+          ),
+          0,
+          nat_add(nat_div(c, 4096), 224)
+        )
+      },
+      Some(Pair { fst: c, snd: 3 })
+    ),
+    no,
+    nat_lt(nat_div(c, 4096), 0),
+    Eq_sym(nat_lt_zero_right(nat_div(c, 4096))),
+    yn_rewrite(
+      (z: Yn) => Eq(
+        Option(Pair(Nat, Nat)),
+        match z -> Option(Pair(Nat, Nat)) {
+          yes => text_decode_with(nat_div(c, 4096), 3, nat_mod(nat_div(c, 64), 64), nat_mod(c, 64), 0)
+          no => text_decode_with(
+            nat_sub(nat_add(nat_div(c, 4096), 224), 240),
+            4,
+            nat_mod(nat_div(c, 64), 64),
+            nat_mod(c, 64),
+            0
+          )
+        },
+        Some(Pair { fst: c, snd: 3 })
+      ),
+      yes,
+      nat_lt(nat_div(c, 4096), 16),
+      Eq_sym(nat_div_lt(c, 4096, 16, refl(), h)),
+      Eq_congr(
+        (z: Nat) => Some(Pair { fst: z, snd: 3 }),
+        Eq_trans(
+          Eq_congr(
+            (z: Nat) => nat_add(nat_mul(z, 64), nat_mod(c, 64)),
+            utf8_digits(nat_div(c, 64), nat_div(c, 4096), utf8_div_64_64(c))
+          ),
+          utf8_digits(c, nat_div(c, 64), refl())
+        )
+      )
+    )
+  )
+}
+
+theorem utf8_round_4(
+  c: Nat
+): utf8_round(
+  text(
+    Cons(
+      nat_add(nat_div(c, 262144), 240),
+      Cons(
+        nat_add(nat_mod(nat_div(c, 4096), 64), 128),
+        Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+      )
+    )
+  ),
+  c
+) {
+  yn_rewrite(
+    (z: Yn) => Eq(
+      Option(Pair(Nat, Nat)),
+      match z -> Option(Pair(Nat, Nat)) {
+        yes => text_decode_with(
+          nat_sub(nat_add(nat_div(c, 262144), 240), 224),
+          3,
+          nat_mod(nat_div(c, 4096), 64),
+          nat_mod(nat_div(c, 64), 64),
+          0
+        )
+        no => text_decode_with(
+          nat_div(c, 262144),
+          4,
+          nat_mod(nat_div(c, 4096), 64),
+          nat_mod(nat_div(c, 64), 64),
+          nat_mod(c, 64)
+        )
+      },
+      Some(Pair { fst: c, snd: 4 })
+    ),
+    no,
+    nat_lt(nat_div(c, 262144), 0),
+    Eq_sym(nat_lt_zero_right(nat_div(c, 262144))),
+    Eq_congr(
+      (z: Nat) => Some(Pair { fst: z, snd: 4 }),
+      Eq_trans(
+        Eq_congr(
+          (z: Nat) => nat_add(nat_mul(nat_add(nat_mul(z, 64), nat_mod(nat_div(c, 64), 64)), 64), nat_mod(c, 64)),
+          utf8_digits(nat_div(c, 4096), nat_div(c, 262144), utf8_div_4096_64(c))
+        ),
+        Eq_trans(
+          Eq_congr(
+            (z: Nat) => nat_add(nat_mul(z, 64), nat_mod(c, 64)),
+            utf8_digits(nat_div(c, 64), nat_div(c, 4096), utf8_div_64_64(c))
+          ),
+          utf8_digits(c, nat_div(c, 64), refl())
+        )
+      )
+    )
+  )
+}
+
+// ---- the encoder's steps ----------------------------------------------------
+
+theorem utf8_round_from_65536(
+  c: Nat,
+  hmax: Eq(Yn, nat_lt(c, 1114112), yes)
+): utf8_round(text_utf8_from_65536(c), c) {
+  yn_rewrite(
+    (z: Yn) => utf8_round(
+      match z -> Text {
+        yes => text(
+          Cons(
+            nat_add(nat_div(c, 262144), 240),
+            Cons(
+              nat_add(nat_mod(nat_div(c, 4096), 64), 128),
+              Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+            )
+          )
+        )
+        no => text(Nil)
+      },
+      c
+    ),
+    yes,
+    nat_lt(c, 1114112),
+    Eq_sym(hmax),
+    utf8_round_4(c)
+  )
+}
+
+theorem utf8_round_past_surrogates(
+  c: Nat,
+  hmax: Eq(Yn, nat_lt(c, 1114112), yes)
+): utf8_round(text_utf8_past_surrogates(c), c) {
+  yn_cases(
+    (z: Yn) => utf8_round(
+      match z -> Text {
+        yes => text(
+          Cons(
+            nat_add(nat_div(c, 4096), 224),
+            Cons(nat_add(nat_mod(nat_div(c, 64), 64), 128), Cons(nat_add(nat_mod(c, 64), 128), Nil))
+          )
+        )
+        no => text_utf8_from_65536(c)
+      },
+      c
+    ),
+    nat_lt(c, 65536),
+    (hn: Eq(Yn, nat_lt(c, 65536), no)) => utf8_round_from_65536(c, hmax),
+    (hy: Eq(Yn, nat_lt(c, 65536), yes)) => utf8_round_3(c, hy)
+  )
+}
+
+theorem utf8_round_from_2048(
+  c: Nat,
+  hmax: Eq(Yn, nat_lt(c, 1114112), yes),
+  hs: Eq(Yn, yn_and(nat_le(55296, c), nat_lt(c, 57344)), no)
+): utf8_round(text_utf8_from_2048(c), c) {
+  yn_rewrite(
+    (z: Yn) => utf8_round(
+      match z -> Text {
+        yes => text(Nil)
+        no => text_utf8_past_surrogates(c)
+      },
+      c
+    ),
+    no,
+    yn_and(nat_le(55296, c), nat_lt(c, 57344)),
+    Eq_sym(hs),
+    utf8_round_past_surrogates(c, hmax)
+  )
+}
+
+theorem utf8_round_from_128(
+  c: Nat,
+  hmax: Eq(Yn, nat_lt(c, 1114112), yes),
+  hs: Eq(Yn, yn_and(nat_le(55296, c), nat_lt(c, 57344)), no)
+): utf8_round(text_utf8_from_128(c), c) {
+  yn_cases(
+    (z: Yn) => utf8_round(
+      match z -> Text {
+        yes => text(Cons(nat_add(nat_div(c, 64), 192), Cons(nat_add(nat_mod(c, 64), 128), Nil)))
+        no => text_utf8_from_2048(c)
+      },
+      c
+    ),
+    nat_lt(c, 2048),
+    (hn: Eq(Yn, nat_lt(c, 2048), no)) => utf8_round_from_2048(c, hmax, hs),
+    (hy: Eq(Yn, nat_lt(c, 2048), yes)) => utf8_round_2(c, hy)
+  )
+}
+
+theorem yn_and_left(a: Yn, b: Yn, h: Eq(Yn, yn_and(a, b), yes)): Eq(Yn, a, yes) {
+  match a -> Eq(Yn, a, yes) {
+    no => False_elim(no_ne_yes(h))
+    yes => refl()
+  }
+}
+
+theorem yn_and_right(a: Yn, b: Yn, h: Eq(Yn, yn_and(a, b), yes)): Eq(Yn, b, yes) {
+  match a -> Eq(Yn, b, yes) {
+    no => False_elim(no_ne_yes(h))
+    yes => h
+  }
+}
+
+theorem yn_not_yes(a: Yn, h: Eq(Yn, yn_not(a), yes)): Eq(Yn, a, no) {
+  match a -> Eq(Yn, a, no) {
+    no => refl()
+    yes => False_elim(no_ne_yes(h))
+  }
+}
+
+// ---- the theorem ------------------------------------------------------------
+
+// Every character's encoding decodes to it, and is read whole.
+theorem text_decode_of_code_point(
+  c: Nat,
+  h: Eq(Yn, text_is_char(c), yes)
+): Eq(
+  Option(Pair(Nat, Nat)),
+  text_decode(text_of_code_point(c), 0),
+  Some(Pair { fst: c, snd: text_len(text_of_code_point(c)) })
+) {
+  yn_cases(
+    (z: Yn) => utf8_round(
+      match z -> Text {
+        yes => text(Cons(c, Nil))
+        no => text_utf8_from_128(c)
+      },
+      c
+    ),
+    nat_lt(c, 128),
+    (hn: Eq(Yn, nat_lt(c, 128), no)) => utf8_round_from_128(
+      c,
+      yn_and_left(nat_lt(c, 1114112), yn_not(yn_and(nat_le(55296, c), nat_lt(c, 57344))), h),
+      yn_not_yes(
+        yn_and(nat_le(55296, c), nat_lt(c, 57344)),
+        yn_and_right(nat_lt(c, 1114112), yn_not(yn_and(nat_le(55296, c), nat_lt(c, 57344))), h)
+      )
+    ),
+    (hy: Eq(Yn, nat_lt(c, 128), yes)) => utf8_round_1(c, hy)
+  )
+}
+
+theorem utf8_round_example(): Eq(
+  Option(Pair(Nat, Nat)),
+  text_decode(text_of_code_point(233), 0),
+  Some(Pair { fst: 233, snd: 2 })
+) {
+  text_decode_of_code_point(233, refl())
+}

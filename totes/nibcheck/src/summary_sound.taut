@@ -1,0 +1,1627 @@
+import "kind_sound.taut"
+
+// Summary construction preserves the declared floor and keeps holds inside
+// the declaration's generics.
+
+theorem summary_within_mem<g: Text, xs: List(
+  Text
+)>(m: Mem(Text, g, xs), ys: List(Text), h: Eq(Yn, texts_within(xs, ys), yes)): Mem(Text, g, ys) {
+  match m -> Mem(Text, g, ys) {
+    mem_here(
+      t
+    ) => lht_sound(ys, g, and_left(yn_and_split(list_has_text(ys, g), texts_within(t, ys), h)))
+    mem_there(
+      b,
+      t,
+      mr
+    ) => summary_within_mem(
+      mr,
+      ys,
+      and_right(yn_and_split(list_has_text(ys, b), texts_within(t, ys), h))
+    )
+  }
+}
+
+theorem summary_within_sound(
+  xs: List(Text),
+  ys: List(Text),
+  h: Eq(Yn, texts_within(xs, ys), yes),
+  g: Text,
+  m: Mem(Text, g, xs)
+): Mem(Text, g, ys) {
+  summary_within_mem(m, ys, h)
+}
+
+theorem summary_ha_k(
+  holds: List(Text),
+  n: Text,
+  gs: List(Text),
+  b: Yn,
+  sub: Sub(Text, holds, gs),
+  hn: Mem(Text, n, gs)
+): Sub(Text, ha_k(holds, n, b), gs) {
+  match b -> Sub(Text, ha_k(holds, n, b), gs) {
+    yes => sub
+    no => g => m => match m -> Mem(Text, g, gs) {
+      mem_here(t) => hn
+      mem_there(x, t, mr) => sub(g, mr)
+    }
+  }
+}
+
+theorem summary_ha(
+  holds: List(Text),
+  n: Text,
+  gs: List(Text),
+  sub: Sub(Text, holds, gs),
+  hn: Mem(Text, n, gs)
+): Sub(Text, holds_add(holds, n), gs) {
+  Eq_subst(
+    (z: List(Text)) => Sub(Text, z, gs),
+    Eq_sym(ha_unf(holds, n)),
+    summary_ha_k(holds, n, gs, list_has_text(holds, n), sub, hn)
+  )
+}
+
+theorem summary_param(
+  n: Text,
+  pk: Kind,
+  gs: List(Text),
+  holds: List(Text),
+  b: Yn,
+  eb: Eq(Yn, list_has_text(gs, n), b),
+  sub: Sub(Text, holds, gs)
+): Sub(Text, psnd(fkp_k(n, pk, holds, b)), gs) {
+  match b -> Sub(Text, psnd(fkp_k(n, pk, holds, b)), gs) {
+    yes => summary_ha(holds, n, gs, sub, lht_sound(gs, n, eb))
+    no => sub
+  }
+}
+
+theorem summary_decl(
+  d: Datas,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  o: Option(Data),
+  sub: Sub(Text, holds, gs),
+  ih: ∀ data: Data. Sub(
+    Text,
+    psnd(
+      field_kind_list(
+        d,
+        args,
+        no,
+        generics_picked(dgen(data), dholds(data)),
+        gs,
+        Pair { fst: dbase(data), snd: holds }
+      )
+    ),
+    gs
+  )
+): Sub(Text, psnd(fkd_k(d, args, gs, holds, o)), gs) {
+  match o -> Sub(Text, psnd(fkd_k(d, args, gs, holds, o)), gs) {
+    None => sub
+    Some(data) => ih(data)
+  }
+}
+
+theorem summary_named(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  b: Yn,
+  eb: Eq(Yn, yn_and(ty_no_args(args), list_has_text(gs, n)), b),
+  sub: Sub(Text, holds, gs),
+  ih: Sub(Text, psnd(fkd_k(d, args, gs, holds, datas_decl(d, n))), gs)
+): Sub(Text, psnd(fkn_k(d, n, args, gs, holds, b)), gs) {
+  match b -> Sub(Text, psnd(fkn_k(d, n, args, gs, holds, b)), gs) {
+    yes => summary_ha(
+      holds,
+      n,
+      gs,
+      sub,
+      lht_sound(gs, n, and_right(yn_and_split(ty_no_args(args), list_has_text(gs, n), eb)))
+    )
+    no => ih
+  }
+}
+
+theorem summary_pick(
+  d: Datas,
+  t: Ty,
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  p: Yn,
+  sub: Sub(Text, psnd(acc), gs),
+  ih: Sub(Text, psnd(field_kind(d, t, gs, psnd(acc))), gs)
+): Sub(Text, psnd(fkl_pick(d, t, gs, acc, p)), gs) {
+  match p -> Sub(Text, psnd(fkl_pick(d, t, gs, acc, p)), gs) {
+    yes => ih
+    no => sub
+  }
+}
+
+theorem summary_list_k(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  go: Yn,
+  sub: Sub(Text, psnd(acc), gs),
+  iht: Sub(Text, psnd(field_kind(d, t, gs, psnd(acc))), gs),
+  ihr: ∀ a: Pair(
+    Kind,
+    List(Text)
+  ). (
+    Sub(Text, psnd(a), gs)
+  ) -> Sub(Text, psnd(field_kind_list(d, rest, every, picks_tail(picks), gs, a)), gs)
+): Sub(Text, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), gs) {
+  match go -> Sub(Text, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), gs) {
+    no => sub
+    yes => ihr(
+      fkl_pick(d, t, gs, acc, picks_head(every, picks)),
+      summary_pick(d, t, gs, acc, picks_head(every, picks), sub, iht)
+    )
+  }
+}
+
+mutual {
+  theorem summary_field_list(
+    d: Datas,
+    ts: List(Ty),
+    every: Yn,
+    picks: List(Yn),
+    gs: List(Text),
+    acc: Pair(Kind, List(Text)),
+    sub: Sub(Text, psnd(acc), gs)
+  ): Sub(Text, psnd(field_kind_list(d, ts, every, picks, gs, acc)), gs) {
+    match ts -> Sub(Text, psnd(field_kind_list(d, ts, every, picks, gs, acc)), gs) {
+      Nil => sub
+      Cons(
+        t,
+        rest
+      ) => Eq_subst(
+        (z: Pair(Kind, List(Text))) => Sub(Text, psnd(z), gs),
+        Eq_sym(fkl_unf(d, t, rest, every, picks, gs, acc)),
+        summary_list_k(
+          d,
+          t,
+          rest,
+          every,
+          picks,
+          gs,
+          acc,
+          yn_or(every, yn_not(nat_eq(list_len(picks), 0))),
+          sub,
+          summary_field(d, t, gs, psnd(acc), sub),
+          a => sa => summary_field_list(d, rest, every, picks_tail(picks), gs, a, sa)
+        )
+      )
+    }
+  }
+
+  theorem summary_field(
+    d: Datas,
+    t: Ty,
+    gs: List(Text),
+    holds: List(Text),
+    sub: Sub(Text, holds, gs)
+  ): Sub(Text, psnd(field_kind(d, t, gs, holds)), gs) {
+    match t -> Sub(Text, psnd(field_kind(d, t, gs, holds)), gs) {
+      TyInt(w) => sub
+      TyBool => sub
+      TyText => sub
+      TyUnit => sub
+      TyNever => sub
+      TyDecimal => sub
+      TyFloat => sub
+      TyFn(ps, r, k) => sub
+      TyUnion(
+        ts
+      ) => summary_field_list(d, ts, yes, Nil(Yn), gs, Pair { fst: KindCopy, snd: holds }, sub)
+      TyTagged(tags, x) => summary_field(d, x, gs, holds, sub)
+      TyNamed(
+        n,
+        args
+      ) => Eq_subst(
+        (z: Pair(Kind, List(Text))) => Sub(Text, psnd(z), gs),
+        Eq_sym(fk_named_unf(d, n, args, gs, holds)),
+        summary_named(
+          d,
+          n,
+          args,
+          gs,
+          holds,
+          yn_and(ty_no_args(args), list_has_text(gs, n)),
+          refl(),
+          sub,
+          summary_decl(
+            d,
+            args,
+            gs,
+            holds,
+            datas_decl(d, n),
+            sub,
+            data => summary_field_list(
+              d,
+              args,
+              no,
+              generics_picked(dgen(data), dholds(data)),
+              gs,
+              Pair { fst: dbase(data), snd: holds },
+              sub
+            )
+          )
+        )
+      )
+      TyParam(
+        n,
+        pk
+      ) => Eq_subst(
+        (z: Pair(Kind, List(Text))) => Sub(Text, psnd(z), gs),
+        Eq_sym(fk_param_unf(d, n, pk, gs, holds)),
+        summary_param(n, pk, gs, holds, list_has_text(gs, n), refl(), sub)
+      )
+      TyInfo(x) => sub
+      TyBorrow(x, mu) => summary_field(d, x, gs, holds, sub)
+      TyVar(v) => sub
+      TyApp(
+        h,
+        x
+      ) => summary_field(
+        d,
+        x,
+        gs,
+        psnd(field_kind(d, h, gs, holds)),
+        summary_field(d, h, gs, holds, sub)
+      )
+      TyPoly(ps, x) => sub
+    }
+  }
+}
+
+theorem summary_fields(
+  d: Datas,
+  fs: List(DataField),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  sub: Sub(Text, psnd(acc), gs)
+): Sub(Text, psnd(fields_kind(d, fs, gs, acc)), gs) {
+  match fs -> Sub(Text, psnd(fields_kind(d, fs, gs, acc)), gs) {
+    Nil => sub
+    Cons(
+      f,
+      rest
+    ) => summary_fields(
+      d,
+      rest,
+      gs,
+      kind_pair_join(acc, field_kind(d, fty(f), gs, psnd(acc))),
+      summary_field(d, fty(f), gs, psnd(acc), sub)
+    )
+  }
+}
+
+theorem summary_ctors(
+  d: Datas,
+  cs: List(DataCtor),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  sub: Sub(Text, psnd(acc), gs)
+): Sub(Text, psnd(ctors_kind(d, cs, gs, acc)), gs) {
+  match cs -> Sub(Text, psnd(ctors_kind(d, cs, gs, acc)), gs) {
+    Nil => sub
+    Cons(
+      c,
+      rest
+    ) => summary_ctors(
+      d,
+      rest,
+      gs,
+      fields_kind(d, cfields(c), gs, acc),
+      summary_fields(d, cfields(c), gs, acc, sub)
+    )
+  }
+}
+
+// The floor conditions do not depend on other declarations.
+def SummaryFloor(
+  data: Data
+): Prop := And(KLe(data_declared_kind(data), dbase(data)), And(RecOk(data), UnmentionedOk(data)))
+
+fn summary_unmentioned_k(data: Data, g: Text, rest: List(Text), b: Yn) -> List(Text) {
+  match b -> List(Text) {
+    yes => generics_unmentioned(data, rest)
+    no => Cons(g, generics_unmentioned(data, rest))
+  }
+}
+
+theorem summary_unmentioned_unf(
+  data: Data,
+  g: Text,
+  rest: List(Text)
+): Eq(
+  List(Text),
+  generics_unmentioned(data, Cons(g, rest)),
+  summary_unmentioned_k(data, g, rest, data_mentions(data, g))
+) { refl() }
+
+theorem summary_unmentioned_head(
+  data: Data,
+  g: Text,
+  rest: List(Text),
+  b: Yn,
+  e: Eq(Yn, b, no)
+): Mem(Text, g, summary_unmentioned_k(data, g, rest, b)) {
+  match b -> Mem(Text, g, summary_unmentioned_k(data, g, rest, b)) {
+    yes => False_elim(yes_ne_no(e))
+    no => mem_here(Text, g, generics_unmentioned(data, rest))
+  }
+}
+
+theorem summary_unmentioned_tail(
+  data: Data,
+  x: Text,
+  rest: List(Text),
+  b: Yn,
+  g: Text,
+  m: Mem(Text, g, generics_unmentioned(data, rest))
+): Mem(Text, g, summary_unmentioned_k(data, x, rest, b)) {
+  match b -> Mem(Text, g, summary_unmentioned_k(data, x, rest, b)) {
+    yes => m
+    no => mem_there(Text, g, x, generics_unmentioned(data, rest), m)
+  }
+}
+
+theorem summary_unmentioned(
+  data: Data,
+  gs: List(Text),
+  g: Text,
+  m: Mem(Text, g, gs),
+  e: Eq(Yn, data_mentions(data, g), no)
+): Mem(Text, g, generics_unmentioned(data, gs)) {
+  match gs -> Mem(Text, g, generics_unmentioned(data, gs)) {
+    Nil => Mem_nil(Mem(Text, g, generics_unmentioned(data, Nil(Text))), m)
+    Cons(x, rest) => match m -> Mem(Text, g, generics_unmentioned(data, Cons(x, rest))) {
+      mem_here(
+        t
+      ) => Eq_subst(
+        (z: List(Text)) => Mem(Text, x, z),
+        Eq_sym(summary_unmentioned_unf(data, x, rest)),
+        summary_unmentioned_head(data, x, rest, data_mentions(data, x), e)
+      )
+      mem_there(
+        y,
+        t,
+        mr
+      ) => Eq_subst(
+        (z: List(Text)) => Mem(Text, g, z),
+        Eq_sym(summary_unmentioned_unf(data, x, rest)),
+        summary_unmentioned_tail(
+          data,
+          x,
+          rest,
+          data_mentions(data, x),
+          g,
+          summary_unmentioned(data, rest, g, mr, e)
+        )
+      )
+    }
+  }
+}
+
+theorem summary_least(data: Data): SummaryFloor(data_least(data)) {
+  match data -> SummaryFloor(data_least(data)) {
+    data_mk(
+      n,
+      declared,
+      gs,
+      cs,
+      st,
+      rec,
+      base,
+      holds,
+      builtin,
+      view
+    ) => match rec -> SummaryFloor(
+      data_least(data_mk(n, declared, gs, cs, st, rec, base, holds, builtin, view))
+    ) {
+      yes => and_intro(
+        kle_join_l(
+          data_declared_kind(data_mk(n, declared, gs, cs, st, yes, base, holds, builtin, view)),
+          KindShared
+        ),
+        and_intro(
+          e => kle_join_r(
+            data_declared_kind(data_mk(n, declared, gs, cs, st, yes, base, holds, builtin, view)),
+            KindShared
+          ),
+          g => m => e => summary_unmentioned(
+            data_mk(n, declared, gs, cs, st, yes, base, holds, builtin, view),
+            gs,
+            g,
+            m,
+            e
+          )
+        )
+      )
+      no => and_intro(
+        kle_refl(
+          data_declared_kind(data_mk(n, declared, gs, cs, st, no, base, holds, builtin, view))
+        ),
+        and_intro(
+          e => False_elim(no_ne_yes(e)),
+          g => m => e => summary_unmentioned(
+            data_mk(n, declared, gs, cs, st, no, base, holds, builtin, view),
+            gs,
+            g,
+            m,
+            e
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem summary_floor_grow(
+  data: Data,
+  base: Kind,
+  holds: List(Text),
+  floor: SummaryFloor(data),
+  kb: KLe(dbase(data), base),
+  hs: Sub(Text, dholds(data), holds)
+): SummaryFloor(data_with_summary(data, base, holds)) {
+  match data -> SummaryFloor(data_with_summary(data, base, holds)) {
+    data_mk(
+      n,
+      declared,
+      gs,
+      cs,
+      st,
+      rec,
+      old,
+      oldholds,
+      builtin,
+      view
+    ) => and_intro(
+      kle_trans(
+        data_declared_kind(data_mk(n, declared, gs, cs, st, rec, old, oldholds, builtin, view)),
+        old,
+        base,
+        and_left(floor),
+        kb
+      ),
+      and_intro(
+        e => kle_trans(KindShared, old, base, and_left(and_right(floor))(e), kb),
+        g => m => e => hs(g, and_right(and_right(floor))(g, m, e))
+      )
+    )
+  }
+}
+
+// Even when fuel runs out, every field is bounded by the top summary.
+theorem summary_top(d: Datas, data: Data): DataOk(d, data_top(data)) {
+  match data -> DataOk(d, data_top(data)) {
+    data_mk(
+      n,
+      declared,
+      gs,
+      cs,
+      st,
+      rec,
+      base,
+      holds,
+      builtin,
+      view
+    ) => and_intro(
+      kle_linear(pfst(ctors_kind(d, cs, gs, Pair { fst: KindLinear, snd: gs }))),
+      and_intro(
+        summary_ctors(d, cs, gs, Pair { fst: KindLinear, snd: gs }, Sub_refl(gs)),
+        and_intro(
+          kle_linear(
+            data_declared_kind(data_mk(n, declared, gs, cs, st, rec, base, holds, builtin, view))
+          ),
+          and_intro(e => kle_linear(KindShared), g => m => e => m)
+        )
+      )
+    )
+  }
+}
+
+def SummaryStable(
+  d: Datas,
+  data: Data
+): Prop := And(
+  KLe(
+    pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+    dbase(data)
+  ),
+  HoldsOk(d, data)
+)
+
+fn summary_update(d: Datas, n: Text, data: Data) -> Datas {
+  let r = ctors_kind(d, data.constructors, data.generics, Pair { fst: data.base, snd: data.holds })
+  datas_with_decls(
+    d,
+    ordmap_insert(
+      d.decls,
+      n,
+      data_with_summary(data, kind_join(data.base, r.fst), r.snd),
+      ordmap_compare_text
+    )
+  )
+}
+
+fn summary_test(d: Datas, data: Data) -> Yn {
+  let r = ctors_kind(d, data.constructors, data.generics, Pair { fst: data.base, snd: data.holds })
+  yn_and(kind_eq(kind_join(data.base, r.fst), data.base), texts_within(r.snd, data.holds))
+}
+
+theorem summary_test_sound(
+  d: Datas,
+  data: Data,
+  h: Eq(Yn, summary_test(d, data), yes)
+): SummaryStable(d, data) {
+  let r: Pair(
+    Kind,
+    List(Text)
+  ) = ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })
+  let eqbase: Eq(
+    Kind,
+    kind_join(dbase(data), pfst(r)),
+    dbase(data)
+  ) = kind_rank_inj(
+    kind_join(dbase(data), pfst(r)),
+    dbase(data),
+    nat_eq_sound(
+      kind_rank(kind_join(dbase(data), pfst(r))),
+      kind_rank(dbase(data)),
+      and_left(
+        yn_and_split(
+          kind_eq(kind_join(dbase(data), pfst(r)), dbase(data)),
+          texts_within(psnd(r), dholds(data)),
+          h
+        )
+      )
+    )
+  )
+  and_intro(
+    Eq_subst((z: Kind) => KLe(pfst(r), z), eqbase, kle_join_r(dbase(data), pfst(r))),
+    g => m => summary_within_sound(
+      psnd(r),
+      dholds(data),
+      and_right(
+        yn_and_split(
+          kind_eq(kind_join(dbase(data), pfst(r)), dbase(data)),
+          texts_within(psnd(r), dholds(data)),
+          h
+        )
+      ),
+      g,
+      m
+    )
+  )
+}
+
+theorem summary_update_floor(
+  d: Datas,
+  data: Data,
+  floor: SummaryFloor(data)
+): SummaryFloor(
+  data_with_summary(
+    data,
+    kind_join(
+      dbase(data),
+      pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) }))
+    ),
+    psnd(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) }))
+  )
+) {
+  summary_floor_grow(
+    data,
+    kind_join(
+      dbase(data),
+      pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) }))
+    ),
+    psnd(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+    floor,
+    kle_join_l(
+      dbase(data),
+      pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) }))
+    ),
+    g => m => ctors_grow(
+      d,
+      dctors(data),
+      dgen(data),
+      Pair { fst: dbase(data), snd: dholds(data) },
+      g,
+      m
+    )
+  )
+}
+
+fn summary_round_test(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  data: Data,
+  b: Yn
+) -> Pair(Datas, Yn) {
+  match b -> Pair(Datas, Yn) {
+    yes => datas_round(rest, d, grew)
+    no => datas_round(rest, summary_update(d, n, data), yes)
+  }
+}
+
+fn summary_round_decl(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  o: Option(Data)
+) -> Pair(Datas, Yn) {
+  match o -> Pair(Datas, Yn) {
+    None => datas_round(rest, d, grew)
+    Some(data) => summary_round_test(rest, d, grew, n, data, summary_test(d, data))
+  }
+}
+
+fn summary_key(e: Pair(Text, Data)) -> Text { e.fst }
+fn summary_result(r: Pair(Datas, Yn)) -> Datas { r.fst }
+fn summary_grew(r: Pair(Datas, Yn)) -> Yn { r.snd }
+
+theorem summary_round_unf(
+  e: Pair(Text, Data),
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn
+): Eq(
+  Pair(Datas, Yn),
+  datas_round(Cons(e, rest), d, grew),
+  summary_round_decl(rest, d, grew, summary_key(e), datas_decl(d, summary_key(e)))
+) { refl() }
+
+// A round can never clear an earlier growth flag.
+def SummaryFlag(
+  grew: Yn,
+  r: Pair(Datas, Yn)
+): Prop := (Eq(Yn, summary_grew(r), no)) -> Eq(Yn, grew, no)
+
+theorem summary_flag_test(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  data: Data,
+  b: Yn,
+  ih: ∀ dd: Datas. ∀ gg: Yn. SummaryFlag(gg, datas_round(rest, dd, gg))
+): SummaryFlag(grew, summary_round_test(rest, d, grew, n, data, b)) {
+  match b -> SummaryFlag(grew, summary_round_test(rest, d, grew, n, data, b)) {
+    yes => ih(d, grew)
+    no => h => False_elim(yes_ne_no(ih(summary_update(d, n, data), yes, h)))
+  }
+}
+
+theorem summary_flag_decl(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  o: Option(Data),
+  ih: ∀ dd: Datas. ∀ gg: Yn. SummaryFlag(gg, datas_round(rest, dd, gg))
+): SummaryFlag(grew, summary_round_decl(rest, d, grew, n, o)) {
+  match o -> SummaryFlag(grew, summary_round_decl(rest, d, grew, n, o)) {
+    None => ih(d, grew)
+    Some(data) => summary_flag_test(rest, d, grew, n, data, summary_test(d, data), ih)
+  }
+}
+
+theorem summary_round_flag(
+  es: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  h: Eq(Yn, summary_grew(datas_round(es, d, grew)), no)
+): Eq(Yn, grew, no) {
+  match es -> Eq(Yn, grew, no) {
+    Nil => h
+    Cons(
+      e,
+      rest
+    ) => Eq_subst(
+      (z: Pair(Datas, Yn)) => SummaryFlag(grew, z),
+      Eq_sym(summary_round_unf(e, rest, d, grew)),
+      summary_flag_decl(
+        rest,
+        d,
+        grew,
+        summary_key(e),
+        datas_decl(d, summary_key(e)),
+        dd => gg => hh => summary_round_flag(rest, dd, gg, hh)
+      )
+    )(h)
+  }
+}
+
+def SummaryUnchanged(
+  d: Datas,
+  r: Pair(Datas, Yn)
+): Prop := (Eq(Yn, summary_grew(r), no)) -> Eq(Datas, summary_result(r), d)
+
+theorem summary_unchanged_test(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  data: Data,
+  b: Yn,
+  ih: SummaryUnchanged(d, datas_round(rest, d, grew))
+): SummaryUnchanged(d, summary_round_test(rest, d, grew, n, data, b)) {
+  match b -> SummaryUnchanged(d, summary_round_test(rest, d, grew, n, data, b)) {
+    yes => ih
+    no => h => False_elim(yes_ne_no(summary_round_flag(rest, summary_update(d, n, data), yes, h)))
+  }
+}
+
+theorem summary_unchanged_decl(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  o: Option(Data),
+  ih: SummaryUnchanged(d, datas_round(rest, d, grew))
+): SummaryUnchanged(d, summary_round_decl(rest, d, grew, n, o)) {
+  match o -> SummaryUnchanged(d, summary_round_decl(rest, d, grew, n, o)) {
+    None => ih
+    Some(data) => summary_unchanged_test(rest, d, grew, n, data, summary_test(d, data), ih)
+  }
+}
+
+theorem summary_round_unchanged(
+  es: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  h: Eq(Yn, summary_grew(datas_round(es, d, grew)), no)
+): Eq(Datas, summary_result(datas_round(es, d, grew)), d) {
+  match es -> Eq(Datas, summary_result(datas_round(es, d, grew)), d) {
+    Nil => refl()
+    Cons(
+      e,
+      rest
+    ) => Eq_subst(
+      (z: Pair(Datas, Yn)) => SummaryUnchanged(d, z),
+      Eq_sym(summary_round_unf(e, rest, d, grew)),
+      summary_unchanged_decl(
+        rest,
+        d,
+        grew,
+        summary_key(e),
+        datas_decl(d, summary_key(e)),
+        hh => summary_round_unchanged(rest, d, grew, hh)
+      )
+    )(h)
+  }
+}
+
+def SummaryVisited(
+  es: List(Pair(Text, Data)),
+  d: Datas
+): Prop := ∀ e: Pair(
+  Text,
+  Data
+). ∀ data: Data. (
+  Mem(Pair(Text, Data), e, es)
+) -> (Eq(Option(Data), datas_decl(d, summary_key(e)), Some(data))) -> SummaryStable(d, data)
+
+def SummaryQuiet(
+  es: List(Pair(Text, Data)),
+  d: Datas,
+  r: Pair(Datas, Yn)
+): Prop := (Eq(Yn, summary_grew(r), no)) -> SummaryVisited(es, d)
+
+theorem summary_visited_cons<e: Pair(
+  Text,
+  Data
+), es: List(
+  Pair(Text, Data)
+), item: Pair(
+  Text,
+  Data
+)>(
+  m: Mem(Pair(Text, Data), item, Cons(e, es)),
+  d: Datas,
+  data: Data,
+  hd: Eq(Option(Data), datas_decl(d, summary_key(item)), Some(data)),
+  head: ∀ v: Data. (Eq(Option(Data), datas_decl(d, summary_key(e)), Some(v))) -> SummaryStable(
+    d,
+    v
+  ),
+  tail: SummaryVisited(es, d)
+): SummaryStable(d, data) {
+  match m -> SummaryStable(d, data) {
+    mem_here(t) => head(data, hd)
+    mem_there(b, t, mr) => tail(item, data, mr, hd)
+  }
+}
+
+fn summary_some_default(a: Data, o: Option(Data)) -> Data {
+  match o -> Data {
+    None => a
+    Some(v) => v
+  }
+}
+fn summary_is_some(o: Option(Data)) -> Yn {
+  match o -> Yn {
+    None => no
+    Some(v) => yes
+  }
+}
+theorem summary_some_inj(a: Data, b: Data, h: Eq(Option(Data), Some(a), Some(b))): Eq(Data, a, b) {
+  Eq_congr((o: Option(Data)) => summary_some_default(a, o), h)
+}
+theorem summary_none_some(data: Data, h: Eq(Option(Data), None(Data), Some(data))): False {
+  no_ne_yes(Eq_congr(summary_is_some, h))
+}
+
+theorem summary_quiet_test(
+  e: Pair(Text, Data),
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  data: Data,
+  hd: Eq(Option(Data), datas_decl(d, summary_key(e)), Some(data)),
+  b: Yn,
+  eb: Eq(Yn, summary_test(d, data), b),
+  ih: SummaryQuiet(rest, d, datas_round(rest, d, grew))
+): SummaryQuiet(Cons(e, rest), d, summary_round_test(rest, d, grew, summary_key(e), data, b)) {
+  match b -> SummaryQuiet(
+    Cons(e, rest),
+    d,
+    summary_round_test(rest, d, grew, summary_key(e), data, b)
+  ) {
+    yes => h => item => v => m => hv => summary_visited_cons(
+      m,
+      d,
+      v,
+      hv,
+      vv => hh => Eq_subst(
+        (z: Data) => SummaryStable(d, z),
+        summary_some_inj(data, vv, Eq_trans(Eq_sym(hd), hh)),
+        summary_test_sound(d, data, eb)
+      ),
+      ih(h)
+    )
+    no => h => False_elim(
+      yes_ne_no(summary_round_flag(rest, summary_update(d, summary_key(e), data), yes, h))
+    )
+  }
+}
+
+theorem summary_quiet_decl(
+  e: Pair(Text, Data),
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  o: Option(Data),
+  eo: Eq(Option(Data), datas_decl(d, summary_key(e)), o),
+  ih: SummaryQuiet(rest, d, datas_round(rest, d, grew))
+): SummaryQuiet(Cons(e, rest), d, summary_round_decl(rest, d, grew, summary_key(e), o)) {
+  match o -> SummaryQuiet(Cons(e, rest), d, summary_round_decl(rest, d, grew, summary_key(e), o)) {
+    None => h => item => v => m => hv => summary_visited_cons(
+      m,
+      d,
+      v,
+      hv,
+      vv => hh => False_elim(summary_none_some(vv, Eq_trans(Eq_sym(eo), hh))),
+      ih(h)
+    )
+    Some(data) => summary_quiet_test(e, rest, d, grew, data, eo, summary_test(d, data), refl(), ih)
+  }
+}
+
+theorem summary_round_quiet(
+  es: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  h: Eq(Yn, summary_grew(datas_round(es, d, grew)), no)
+): SummaryVisited(es, d) {
+  match es -> SummaryVisited(es, d) {
+    Nil => item => data => m => hd => Mem_nil(SummaryStable(d, data), m)
+    Cons(
+      e,
+      rest
+    ) => Eq_subst(
+      (z: Pair(Datas, Yn)) => SummaryQuiet(Cons(e, rest), d, z),
+      Eq_sym(summary_round_unf(e, rest, d, grew)),
+      summary_quiet_decl(
+        e,
+        rest,
+        d,
+        grew,
+        datas_decl(d, summary_key(e)),
+        refl(),
+        hh => summary_round_quiet(rest, d, grew, hh)
+      )
+    )(h)
+  }
+}
+
+// A lookup's key occurs in the map's enumeration, which is the worklist.
+inductive SummaryKey(n: Text): (List(Pair(Text, Data))) -> Prop {
+  summary_key_here(
+    v: Data,
+    rest: List(Pair(Text, Data))
+  ): SummaryKey(n, Cons(Pair { fst: n, snd: v }, rest))
+  summary_key_there(
+    e: Pair(Text, Data),
+    rest: List(Pair(Text, Data)),
+    h: SummaryKey(n, rest)
+  ): SummaryKey(n, Cons(e, rest))
+}
+
+fn summary_decls(d: Datas) -> Ordmap(Text, Data) { d.decls }
+
+def SummaryOrdered(d: Datas): Prop := ordmap_ordered(summary_decls(d), ordmap_compare_text)
+def SummaryAll(
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop
+): Prop := ∀ n: Text. ∀ v: Data. (
+  Eq(Option(Data), ordmap_get(m, n, ordmap_compare_text), Some(v))
+) -> p(v)
+def SummaryPending(
+  es: List(Pair(Text, Data)),
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop
+): Prop := ∀ n: Text. ∀ v: Data. (
+  Eq(Option(Data), ordmap_get(m, n, ordmap_compare_text), Some(v))
+) -> Or(p(v), SummaryKey(n, es))
+
+theorem summary_key_skip<n: Text, e: Pair(
+  Text,
+  Data
+), rest: List(
+  Pair(Text, Data)
+)>(
+  h: SummaryKey(n, Cons(e, rest)),
+  ne: (Eq(Text, n, summary_key(e))) -> False
+): SummaryKey(n, rest) {
+  match h -> SummaryKey(n, rest) {
+    summary_key_here(v, tail) => False_elim(ne(refl()))
+    summary_key_there(item, tail, ht) => ht
+  }
+}
+
+theorem summary_key_visit<n: Text, es: List(
+  Pair(Text, Data)
+)>(
+  h: SummaryKey(n, es),
+  d: Datas,
+  data: Data,
+  hd: Eq(Option(Data), datas_decl(d, n), Some(data)),
+  visited: SummaryVisited(es, d)
+): SummaryStable(d, data) {
+  match h -> SummaryStable(d, data) {
+    summary_key_here(
+      v,
+      rest
+    ) => visited(
+      Pair { fst: n, snd: v },
+      data,
+      mem_here(Pair(Text, Data), Pair { fst: n, snd: v }, rest),
+      hd
+    )
+    summary_key_there(
+      e,
+      rest,
+      ht
+    ) => summary_key_visit(
+      ht,
+      d,
+      data,
+      hd,
+      item => val => m => hv => visited(
+        item,
+        val,
+        mem_there(Pair(Text, Data), item, e, rest, m),
+        hv
+      )
+    )
+  }
+}
+
+fn summary_list_get_k(rest: List(Pair(Text, Data)), n: Text, v: Data, o: Ordering) -> Option(Data) {
+  match o -> Option(Data) {
+    Equal => Some(v)
+    Less => ordmap_list_get(rest, n, ordmap_compare_text)
+    Greater => ordmap_list_get(rest, n, ordmap_compare_text)
+  }
+}
+
+theorem summary_list_get_unf(
+  k: Text,
+  v: Data,
+  rest: List(Pair(Text, Data)),
+  n: Text
+): Eq(
+  Option(Data),
+  ordmap_list_get(Cons(Pair { fst: k, snd: v }, rest), n, ordmap_compare_text),
+  summary_list_get_k(rest, n, v, ordmap_compare_text(n, k))
+) { refl() }
+
+def SummaryGetKey(
+  es: List(Pair(Text, Data)),
+  n: Text,
+  o: Option(Data)
+): Prop := ∀ v: Data. (Eq(Option(Data), o, Some(v))) -> SummaryKey(n, es)
+
+theorem summary_list_key_k(
+  k: Text,
+  v: Data,
+  rest: List(Pair(Text, Data)),
+  n: Text,
+  o: Ordering,
+  eo: Eq(Ordering, ordmap_compare_text(n, k), o),
+  ih: SummaryGetKey(rest, n, ordmap_list_get(rest, n, ordmap_compare_text))
+): SummaryGetKey(Cons(Pair { fst: k, snd: v }, rest), n, summary_list_get_k(rest, n, v, o)) {
+  match o -> SummaryGetKey(
+    Cons(Pair { fst: k, snd: v }, rest),
+    n,
+    summary_list_get_k(rest, n, v, o)
+  ) {
+    Equal => val => h => Eq_subst(
+      (z: Text) => SummaryKey(n, Cons(Pair { fst: z, snd: v }, rest)),
+      ordmap_compare_text_eq(n, k, eo),
+      summary_key_here(n, v, rest)
+    )
+    Less => val => h => summary_key_there(n, Pair { fst: k, snd: v }, rest, ih(val, h))
+    Greater => val => h => summary_key_there(n, Pair { fst: k, snd: v }, rest, ih(val, h))
+  }
+}
+
+theorem summary_list_key(
+  es: List(Pair(Text, Data)),
+  n: Text,
+  v: Data,
+  h: Eq(Option(Data), ordmap_list_get(es, n, ordmap_compare_text), Some(v))
+): SummaryKey(n, es) {
+  match es -> SummaryKey(n, es) {
+    Nil => False_elim(summary_none_some(v, h))
+    Cons(e, rest) => match e -> SummaryKey(n, Cons(e, rest)) {
+      Pair { fst: k, snd: val } => Eq_subst(
+        (z: Option(Data)) => SummaryGetKey(Cons(Pair { fst: k, snd: val }, rest), n, z),
+        Eq_sym(summary_list_get_unf(k, val, rest, n)),
+        summary_list_key_k(
+          k,
+          val,
+          rest,
+          n,
+          ordmap_compare_text(n, k),
+          refl(),
+          vv => hh => summary_list_key(rest, n, vv, hh)
+        )
+      )(v, h)
+    }
+  }
+}
+
+theorem summary_map_key(
+  m: Ordmap(Text, Data),
+  n: Text,
+  v: Data,
+  om: ordmap_ordered(m, ordmap_compare_text),
+  h: Eq(Option(Data), ordmap_get(m, n, ordmap_compare_text), Some(v))
+): SummaryKey(n, ordmap_entries(m)) {
+  summary_list_key(
+    ordmap_entries(m),
+    n,
+    v,
+    Eq_trans(
+      Eq_sym(
+        ordmap_tree_get_entries(
+          ordmap_compare_text,
+          ordmap_compare_text_law(),
+          ordmap_tree(m),
+          n,
+          om
+        )
+      ),
+      h
+    )
+  )
+}
+
+theorem summary_pending_other(
+  es: List(Pair(Text, Data)),
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop,
+  k: Text,
+  old: Data,
+  v: Data,
+  om: ordmap_ordered(m, ordmap_compare_text),
+  pending: SummaryPending(Cons(Pair { fst: k, snd: old }, es), m, p),
+  n: Text,
+  val: Data,
+  o: Ordering,
+  ne: (Eq(Ordering, o, Equal)) -> False,
+  eo: Eq(Ordering, ordmap_compare_text(n, k), o),
+  h: Eq(
+    Option(Data),
+    ordmap_get(ordmap_insert(m, k, v, ordmap_compare_text), n, ordmap_compare_text),
+    Some(val)
+  )
+): Or(p(val), SummaryKey(n, es)) {
+  or_elim(
+    pending(
+      n,
+      val,
+      Eq_trans(
+        Eq_sym(
+          ordmap_get_insert_other(
+            ordmap_compare_text,
+            ordmap_compare_text_law(),
+            m,
+            k,
+            v,
+            n,
+            o,
+            ne,
+            eo,
+            om
+          )
+        ),
+        h
+      )
+    ),
+    hp => or_inl(hp),
+    hk => or_inr(
+      summary_key_skip(
+        hk,
+        eq => ne(
+          Eq_trans(
+            Eq_sym(eo),
+            Eq_trans(
+              Eq_congr((z: Text) => ordmap_compare_text(z, k), eq),
+              ordmap_law_same(ordmap_compare_text, ordmap_compare_text_law(), k)
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+theorem summary_pending_insert_k(
+  es: List(Pair(Text, Data)),
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop,
+  k: Text,
+  old: Data,
+  v: Data,
+  om: ordmap_ordered(m, ordmap_compare_text),
+  pending: SummaryPending(Cons(Pair { fst: k, snd: old }, es), m, p),
+  pv: p(v),
+  n: Text,
+  val: Data,
+  o: Ordering,
+  eo: Eq(Ordering, ordmap_compare_text(n, k), o),
+  h: Eq(
+    Option(Data),
+    ordmap_get(ordmap_insert(m, k, v, ordmap_compare_text), n, ordmap_compare_text),
+    Some(val)
+  )
+): Or(p(val), SummaryKey(n, es)) {
+  match o -> Or(p(val), SummaryKey(n, es)) {
+    Equal => or_inl(
+      Eq_subst(
+        p,
+        summary_some_inj(
+          v,
+          val,
+          Eq_trans(
+            Eq_sym(ordmap_text_get_insert_same(m, k, v, om)),
+            Eq_subst(
+              (
+                z: Text
+              ) => Eq(
+                Option(Data),
+                ordmap_get(ordmap_insert(m, k, v, ordmap_compare_text), z, ordmap_compare_text),
+                Some(val)
+              ),
+              ordmap_compare_text_eq(n, k, eo),
+              h
+            )
+          )
+        ),
+        pv
+      )
+    )
+    Less => summary_pending_other(
+      es,
+      m,
+      p,
+      k,
+      old,
+      v,
+      om,
+      pending,
+      n,
+      val,
+      Less,
+      q => less_ne_equal(q),
+      eo,
+      h
+    )
+    Greater => summary_pending_other(
+      es,
+      m,
+      p,
+      k,
+      old,
+      v,
+      om,
+      pending,
+      n,
+      val,
+      Greater,
+      q => greater_ne_equal(q),
+      eo,
+      h
+    )
+  }
+}
+
+theorem summary_key_nil(n: Text, p: Prop, h: SummaryKey(n, Nil(Pair(Text, Data)))): p {
+  match h -> p {
+  }
+}
+
+theorem summary_map_all(
+  es: List(Pair(Text, Data)),
+  f: (Data) -> Data,
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop,
+  good: ∀ v: Data. p(f(v)),
+  om: ordmap_ordered(m, ordmap_compare_text),
+  pending: SummaryPending(es, m, p)
+): And(
+  ordmap_ordered(datas_map_decls(es, f, m), ordmap_compare_text),
+  SummaryAll(datas_map_decls(es, f, m), p)
+) {
+  match es -> And(
+    ordmap_ordered(datas_map_decls(es, f, m), ordmap_compare_text),
+    SummaryAll(datas_map_decls(es, f, m), p)
+  ) {
+    Nil => and_intro(
+      om,
+      n => v => h => or_elim(pending(n, v, h), pv => pv, hk => summary_key_nil(n, p(v), hk))
+    )
+    Cons(
+      e,
+      rest
+    ) => match e -> And(
+      ordmap_ordered(datas_map_decls(Cons(e, rest), f, m), ordmap_compare_text),
+      SummaryAll(datas_map_decls(Cons(e, rest), f, m), p)
+    ) {
+      Pair { fst: k, snd: old } => summary_map_all(
+        rest,
+        f,
+        ordmap_insert(m, k, f(old), ordmap_compare_text),
+        p,
+        good,
+        ordmap_insert_ordered(ordmap_compare_text, ordmap_compare_text_law(), m, k, f(old), om),
+        n => v => h => summary_pending_insert_k(
+          rest,
+          m,
+          p,
+          k,
+          old,
+          f(old),
+          om,
+          pending,
+          good(old),
+          n,
+          v,
+          ordmap_compare_text(n, k),
+          refl(),
+          h
+        )
+      )
+    }
+  }
+}
+
+theorem summary_map_decls_all(
+  f: (Data) -> Data,
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop,
+  good: ∀ v: Data. p(f(v)),
+  om: ordmap_ordered(m, ordmap_compare_text)
+): And(
+  ordmap_ordered(datas_map_decls(ordmap_entries(m), f, m), ordmap_compare_text),
+  SummaryAll(datas_map_decls(ordmap_entries(m), f, m), p)
+) {
+  summary_map_all(
+    ordmap_entries(m),
+    f,
+    m,
+    p,
+    good,
+    om,
+    n => v => h => or_inr(summary_map_key(m, n, v, om, h))
+  )
+}
+
+def SummaryReady(
+  d: Datas
+): Prop := And(SummaryOrdered(d), SummaryAll(summary_decls(d), SummaryFloor))
+
+theorem summary_insert_all(
+  m: Ordmap(Text, Data),
+  p: (Data) -> Prop,
+  k: Text,
+  v: Data,
+  om: ordmap_ordered(m, ordmap_compare_text),
+  all: SummaryAll(m, p),
+  pv: p(v)
+): SummaryAll(ordmap_insert(m, k, v, ordmap_compare_text), p) {
+  n => val => h => or_elim(
+    summary_pending_insert_k(
+      Nil(Pair(Text, Data)),
+      m,
+      p,
+      k,
+      v,
+      v,
+      om,
+      nn => vv => hh => or_inl(all(nn, vv, hh)),
+      pv,
+      n,
+      val,
+      ordmap_compare_text(n, k),
+      refl(),
+      h
+    ),
+    hv => hv,
+    hk => summary_key_nil(n, p(val), hk)
+  )
+}
+
+theorem summary_update_ready(
+  d: Datas,
+  n: Text,
+  data: Data,
+  ready: SummaryReady(d),
+  hd: Eq(Option(Data), datas_decl(d, n), Some(data))
+): SummaryReady(summary_update(d, n, data)) {
+  let r: Pair(
+    Kind,
+    List(Text)
+  ) = ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })
+  let next: Data = data_with_summary(data, kind_join(dbase(data), pfst(r)), psnd(r))
+  and_intro(
+    ordmap_insert_ordered(
+      ordmap_compare_text,
+      ordmap_compare_text_law(),
+      summary_decls(d),
+      n,
+      next,
+      and_left(ready)
+    ),
+    summary_insert_all(
+      summary_decls(d),
+      SummaryFloor,
+      n,
+      next,
+      and_left(ready),
+      and_right(ready),
+      summary_update_floor(d, data, and_right(ready)(n, data, hd))
+    )
+  )
+}
+
+theorem summary_ready_test(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  data: Data,
+  b: Yn,
+  ready: SummaryReady(d),
+  hd: Eq(Option(Data), datas_decl(d, n), Some(data)),
+  ih: ∀ dd: Datas. ∀ gg: Yn. (
+    SummaryReady(dd)
+  ) -> SummaryReady(summary_result(datas_round(rest, dd, gg)))
+): SummaryReady(summary_result(summary_round_test(rest, d, grew, n, data, b))) {
+  match b -> SummaryReady(summary_result(summary_round_test(rest, d, grew, n, data, b))) {
+    yes => ih(d, grew, ready)
+    no => ih(summary_update(d, n, data), yes, summary_update_ready(d, n, data, ready, hd))
+  }
+}
+
+theorem summary_ready_decl(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  n: Text,
+  o: Option(Data),
+  ready: SummaryReady(d),
+  eo: Eq(Option(Data), datas_decl(d, n), o),
+  ih: ∀ dd: Datas. ∀ gg: Yn. (
+    SummaryReady(dd)
+  ) -> SummaryReady(summary_result(datas_round(rest, dd, gg)))
+): SummaryReady(summary_result(summary_round_decl(rest, d, grew, n, o))) {
+  match o -> SummaryReady(summary_result(summary_round_decl(rest, d, grew, n, o))) {
+    None => ih(d, grew, ready)
+    Some(data) => summary_ready_test(rest, d, grew, n, data, summary_test(d, data), ready, eo, ih)
+  }
+}
+
+theorem summary_round_ready(
+  es: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Yn,
+  ready: SummaryReady(d)
+): SummaryReady(summary_result(datas_round(es, d, grew))) {
+  match es -> SummaryReady(summary_result(datas_round(es, d, grew))) {
+    Nil => ready
+    Cons(
+      e,
+      rest
+    ) => Eq_subst(
+      (z: Pair(Datas, Yn)) => SummaryReady(summary_result(z)),
+      Eq_sym(summary_round_unf(e, rest, d, grew)),
+      summary_ready_decl(
+        rest,
+        d,
+        grew,
+        summary_key(e),
+        datas_decl(d, summary_key(e)),
+        ready,
+        refl(),
+        dd => gg => rr => summary_round_ready(rest, dd, gg, rr)
+      )
+    )
+  }
+}
+
+theorem summary_stopped(
+  d: Datas,
+  ready: SummaryReady(d),
+  h: Eq(Yn, summary_grew(datas_round(ordmap_entries(summary_decls(d)), d, no)), no)
+): SummaryOk(summary_result(datas_round(ordmap_entries(summary_decls(d)), d, no))) {
+  let stable: SummaryVisited(
+    ordmap_entries(summary_decls(d)),
+    d
+  ) = summary_round_quiet(ordmap_entries(summary_decls(d)), d, no, h)
+  let ok: SummaryOk(d) = n => data => hd => {
+    let sd: SummaryStable(
+      d,
+      data
+    ) = summary_key_visit(
+      summary_map_key(summary_decls(d), n, data, and_left(ready), hd),
+      d,
+      data,
+      hd,
+      stable
+    )
+    and_intro(and_left(sd), and_intro(and_right(sd), and_right(ready)(n, data, hd)))
+  }
+  Eq_subst(
+    SummaryOk,
+    Eq_sym(summary_round_unchanged(ordmap_entries(summary_decls(d)), d, no, h)),
+    ok
+  )
+}
+
+fn summary_initial(d: Datas) -> Datas {
+  datas_with_decls(d, datas_map_decls(ordmap_entries(d.decls), data_least, d.decls))
+}
+
+fn summary_exhausted(d: Datas) -> Datas {
+  datas_with_decls(d, datas_map_decls(ordmap_entries(d.decls), data_top, d.decls))
+}
+
+theorem summary_initial_ready(
+  d: Datas,
+  ordered: SummaryOrdered(d)
+): SummaryReady(summary_initial(d)) {
+  summary_map_decls_all(
+    data_least,
+    summary_decls(d),
+    SummaryFloor,
+    data => summary_least(data),
+    ordered
+  )
+}
+
+theorem summary_exhausted_ok(
+  d: Datas,
+  ordered: SummaryOrdered(d)
+): SummaryOk(summary_exhausted(d)) {
+  and_right(
+    summary_map_decls_all(
+      data_top,
+      summary_decls(d),
+      data => DataOk(summary_exhausted(d), data),
+      data => summary_top(summary_exhausted(d), data),
+      ordered
+    )
+  )
+}
+
+fn summary_rounds_choice(j: Nat, d: Datas, b: Yn) -> Datas {
+  match b -> Datas {
+    yes => datas_rounds(j, d)
+    no => d
+  }
+}
+
+theorem summary_rounds_unf(
+  j: Nat,
+  d: Datas
+): Eq(
+  Datas,
+  datas_rounds(succ(j), d),
+  summary_rounds_choice(
+    j,
+    summary_result(datas_round(ordmap_entries(summary_decls(d)), d, no)),
+    summary_grew(datas_round(ordmap_entries(summary_decls(d)), d, no))
+  )
+) { refl() }
+
+theorem summary_choice_ok(
+  j: Nat,
+  d: Datas,
+  b: Yn,
+  stopped: (Eq(Yn, b, no)) -> SummaryOk(d),
+  next: SummaryOk(datas_rounds(j, d))
+): SummaryOk(summary_rounds_choice(j, d, b)) {
+  match b -> SummaryOk(summary_rounds_choice(j, d, b)) {
+    yes => next
+    no => stopped(refl())
+  }
+}
+
+theorem datas_rounds_summary_ok(
+  k: Nat,
+  d: Datas,
+  ready: SummaryReady(d)
+): SummaryOk(datas_rounds(k, d)) {
+  match k -> SummaryOk(datas_rounds(k, d)) {
+    zero => summary_exhausted_ok(d, and_left(ready))
+    succ(
+      j
+    ) => Eq_subst(
+      SummaryOk,
+      Eq_sym(summary_rounds_unf(j, d)),
+      summary_choice_ok(
+        j,
+        summary_result(datas_round(ordmap_entries(summary_decls(d)), d, no)),
+        summary_grew(datas_round(ordmap_entries(summary_decls(d)), d, no)),
+        h => summary_stopped(d, ready, h),
+        datas_rounds_summary_ok(
+          j,
+          summary_result(datas_round(ordmap_entries(summary_decls(d)), d, no)),
+          summary_round_ready(ordmap_entries(summary_decls(d)), d, no, ready)
+        )
+      )
+    )
+  }
+}
+
+fn summary_steps(d: Datas) -> Nat { d.steps }
+
+// The input declaration map is ordered; its summaries may be arbitrary.
+theorem datas_summarize_summary_ok(
+  d: Datas,
+  ordered: SummaryOrdered(d)
+): SummaryOk(datas_summarize(d)) {
+  datas_rounds_summary_ok(summary_steps(d), summary_initial(d), summary_initial_ready(d, ordered))
+}

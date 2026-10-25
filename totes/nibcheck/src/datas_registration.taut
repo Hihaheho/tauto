@@ -1,0 +1,1377 @@
+import "datas_frame.taut"
+import "types_run.taut"
+
+fn registration_field_ty(f: SurfaceDataField) -> SurfaceTerm { f.ty }
+fn registration_field_name(f: SurfaceDataField) -> Option(Text) { f.name }
+fn registration_ctor_fields(k: SurfaceDataCtor) -> List(SurfaceDataField) { k.fields }
+fn registration_ctor_name(k: SurfaceDataCtor) -> Text { k.name }
+fn registration_name(d: SurfaceData) -> Text { d.name }
+fn registration_generics(d: SurfaceData) -> List(Text) { d.generics }
+fn registration_ctors(d: SurfaceData) -> List(SurfaceDataCtor) { d.constructors }
+fn registration_span(d: SurfaceData) -> TySpan { TySpan { start: d.start, end: d.end } }
+
+fn registration_fields_cons(
+  field: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+) -> Mut1(List(DataField), Checker) {
+  frame_bind(
+    Unit,
+    List(DataField),
+    (
+      ignored: Unit,
+      c1: Checker
+    ) => frame_bind(
+      Ty,
+      List(DataField),
+      (
+        ty: Ty,
+        c2: Checker
+      ) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (
+          tail: List(DataField),
+          c3: Checker
+        ) => mut1(Cons(data_field_mk(registration_field_name(field), ty), tail), c3),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics)
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    )
+  )
+}
+
+theorem registration_fields_cons_ok(
+  field: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_data_fields(rest, next, generics))
+): CkReadFrame(c, registration_fields_cons(field, rest, c, generics)) {
+  frame_bind_ok(
+    Unit,
+    List(DataField),
+    c,
+    (
+      ignored: Unit,
+      c1: Checker
+    ) => frame_bind(
+      Ty,
+      List(DataField),
+      (
+        ty: Ty,
+        c2: Checker
+      ) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (
+          tail: List(DataField),
+          c3: Checker
+        ) => mut1(Cons(data_field_mk(registration_field_name(field), ty), tail), c3),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics)
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    ),
+    frame_error_if_ok(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    ),
+    ignored => c1 => frame_bind_ok(
+      Ty,
+      List(DataField),
+      c1,
+      (
+        ty: Ty,
+        c2: Checker
+      ) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (
+          tail: List(DataField),
+          c3: Checker
+        ) => mut1(Cons(data_field_mk(registration_field_name(field), ty), tail), c3),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics),
+      ck_written_frame(c1, registration_field_ty(field), generics),
+      ty => c2 => frame_bind_ok(
+        List(DataField),
+        List(DataField),
+        c2,
+        (
+          tail: List(DataField),
+          c3: Checker
+        ) => mut1(Cons(data_field_mk(registration_field_name(field), ty), tail), c3),
+        ck_data_fields(rest, c2, generics),
+        ih(c2),
+        tail => c3 => refl()
+      )
+    )
+  )
+}
+
+theorem registration_fields_unf(
+  field: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): Eq(
+  Mut1(List(DataField), Checker),
+  ck_data_fields(Cons(field, rest), c, generics),
+  registration_fields_cons(field, rest, c, generics)
+) { refl() }
+
+theorem ck_data_fields_frame(
+  fs: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_data_fields(fs, c, generics)) {
+  match fs -> CkReadFrame(c, ck_data_fields(fs, c, generics)) {
+    Nil => refl()
+    Cons(
+      field,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(DataField), Checker)) => CkReadFrame(c, z),
+      Eq_sym(registration_fields_unf(field, rest, c, generics)),
+      registration_fields_cons_ok(
+        field,
+        rest,
+        c,
+        generics,
+        next => ck_data_fields_frame(rest, next, generics)
+      )
+    )
+  }
+}
+
+fn registration_ctors_cons(
+  ctor: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+) -> Mut1(List(DataCtor), Checker) {
+  frame_bind(
+    List(DataField),
+    List(DataCtor),
+    (
+      fields: List(DataField),
+      c1: Checker
+    ) => frame_bind(
+      List(DataCtor),
+      List(DataCtor),
+      (
+        tail: List(DataCtor),
+        c2: Checker
+      ) => mut1(Cons(data_ctor_mk(registration_ctor_name(ctor), fields), tail), c2),
+      ck_data_ctors(rest, c1, generics)
+    ),
+    ck_data_fields(registration_ctor_fields(ctor), c, generics)
+  )
+}
+
+theorem registration_ctors_cons_ok(
+  ctor: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_data_ctors(rest, next, generics))
+): CkReadFrame(c, registration_ctors_cons(ctor, rest, c, generics)) {
+  frame_bind_ok(
+    List(DataField),
+    List(DataCtor),
+    c,
+    (
+      fields: List(DataField),
+      c1: Checker
+    ) => frame_bind(
+      List(DataCtor),
+      List(DataCtor),
+      (
+        tail: List(DataCtor),
+        c2: Checker
+      ) => mut1(Cons(data_ctor_mk(registration_ctor_name(ctor), fields), tail), c2),
+      ck_data_ctors(rest, c1, generics)
+    ),
+    ck_data_fields(registration_ctor_fields(ctor), c, generics),
+    ck_data_fields_frame(registration_ctor_fields(ctor), c, generics),
+    fields => c1 => frame_bind_ok(
+      List(DataCtor),
+      List(DataCtor),
+      c1,
+      (
+        tail: List(DataCtor),
+        c2: Checker
+      ) => mut1(Cons(data_ctor_mk(registration_ctor_name(ctor), fields), tail), c2),
+      ck_data_ctors(rest, c1, generics),
+      ih(c1),
+      tail => c2 => refl()
+    )
+  )
+}
+
+theorem registration_ctors_unf(
+  ctor: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): Eq(
+  Mut1(List(DataCtor), Checker),
+  ck_data_ctors(Cons(ctor, rest), c, generics),
+  registration_ctors_cons(ctor, rest, c, generics)
+) { refl() }
+
+theorem ck_data_ctors_frame(
+  cs: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_data_ctors(cs, c, generics)) {
+  match cs -> CkReadFrame(c, ck_data_ctors(cs, c, generics)) {
+    Nil => refl()
+    Cons(
+      ctor,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(DataCtor), Checker)) => CkReadFrame(c, z),
+      Eq_sym(registration_ctors_unf(ctor, rest, c, generics)),
+      registration_ctors_cons_ok(
+        ctor,
+        rest,
+        c,
+        generics,
+        next => ck_data_ctors_frame(rest, next, generics)
+      )
+    )
+  }
+}
+
+// Constructor registration changes only the constructor index, not declarations.
+fn registration_ctor_state(
+  c: Checker,
+  ctor: DataCtor,
+  dname: Text,
+  is_struct: Yn,
+  i: Nat
+) -> Checker {
+  let m = ordmap_insert(c.datas.ctors, ctor.name, Pair { fst: dname, snd: i }, ordmap_compare_text)
+  let m2 = match is_struct -> Ordmap(Text, Pair(Text, Nat)) {
+    yes => m
+    no => ordmap_insert(
+      m,
+      cat3(dname, "::", ctor.name),
+      Pair { fst: dname, snd: i },
+      ordmap_compare_text
+    )
+  }
+  summary_replace(c, Datas { decls: c.datas.decls, ctors: m2, steps: c.datas.steps })
+}
+
+def CkDeclsFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := Eq(
+  Ordmap(Text, Data),
+  summary_decls(ck_datas_of(ck_st(m))),
+  summary_decls(ck_datas_of(c))
+)
+
+theorem registration_ctor_state_decls(
+  c: Checker,
+  ctor: DataCtor,
+  dname: Text,
+  is_struct: Yn,
+  i: Nat
+): Eq(
+  Ordmap(Text, Data),
+  summary_decls(ck_datas_of(registration_ctor_state(c, ctor, dname, is_struct, i))),
+  summary_decls(ck_datas_of(c))
+) { refl() }
+
+theorem registration_register_unf(
+  ctor: DataCtor,
+  rest: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  is_struct: Yn,
+  i: Nat
+): Eq(
+  Mut1(Unit, Checker),
+  ck_register_ctors(Cons(ctor, rest), c, dname, is_struct, i),
+  ck_rewrap1(
+    ck_register_ctors(
+      rest,
+      registration_ctor_state(c, ctor, dname, is_struct, i),
+      dname,
+      is_struct,
+      i + 1
+    )
+  )
+) { refl() }
+
+theorem ck_register_ctors_decls(
+  cs: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  is_struct: Yn,
+  i: Nat
+): CkDeclsFrame(c, ck_register_ctors(cs, c, dname, is_struct, i)) {
+  match cs -> CkDeclsFrame(c, ck_register_ctors(cs, c, dname, is_struct, i)) {
+    Nil => refl()
+    Cons(
+      ctor,
+      rest
+    ) => Eq_trans(
+      Eq_congr(
+        (z: Mut1(Unit, Checker)) => summary_decls(ck_datas_of(ck_st(z))),
+        Eq_trans(
+          registration_register_unf(ctor, rest, c, dname, is_struct, i),
+          ck_rewrap1_id(
+            ck_register_ctors(
+              rest,
+              registration_ctor_state(c, ctor, dname, is_struct, i),
+              dname,
+              is_struct,
+              i + 1
+            )
+          )
+        )
+      ),
+      Eq_trans(
+        ck_register_ctors_decls(
+          rest,
+          registration_ctor_state(c, ctor, dname, is_struct, i),
+          dname,
+          is_struct,
+          i + 1
+        ),
+        registration_ctor_state_decls(c, ctor, dname, is_struct, i)
+      )
+    )
+  }
+}
+
+def CkDatasOrdered(c: Checker): Prop := SummaryOrdered(ck_datas_of(c))
+
+theorem ck_register_ctors_ordered(
+  cs: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  is_struct: Yn,
+  i: Nat,
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(ck_register_ctors(cs, c, dname, is_struct, i))) {
+  Eq_subst(
+    (m: Ordmap(Text, Data)) => ordmap_ordered(m, ordmap_compare_text),
+    Eq_sym(ck_register_ctors_decls(cs, c, dname, is_struct, i)),
+    ordered
+  )
+}
+
+theorem registration_bind_ordered<A: Type, B: Type>(
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: CkDatasOrdered(ck_st(m)),
+  hk: ∀ v: A. ∀ next: Checker. (CkDatasOrdered(next)) -> CkDatasOrdered(ck_st(k(v, next)))
+): CkDatasOrdered(ck_st(frame_bind(k, m))) {
+  match m -> CkDatasOrdered(ck_st(frame_bind(k, m))) {
+    mut1(v, next) => hk(v, next, hm)
+  }
+}
+
+fn registration_insert(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn,
+  constructors: List(DataCtor)
+) -> Mut1(Unit, Checker) {
+  let decl = Data { name: d.name, declared: data_declared(
+    d
+  ), generics: d.generics, constructors: constructors, is_struct: is_struct, recursive: no, base: KindLinear, holds: d.generics, builtin: builtin, view: surface_data_is_view(
+    d
+  ) }
+  mut1(
+    star(),
+    summary_replace(
+      c,
+      datas_with_decls(c.datas, ordmap_insert(c.datas.decls, d.name, decl, ordmap_compare_text))
+    )
+  )
+}
+fn registration_data(
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn,
+  constructors: List(DataCtor)
+) -> Data {
+  Data { name: d.name, declared: data_declared(
+    d
+  ), generics: d.generics, constructors: constructors, is_struct: is_struct, recursive: no, base: KindLinear, holds: d.generics, builtin: builtin, view: surface_data_is_view(
+    d
+  ) }
+}
+
+theorem registration_insert_ordered(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn,
+  constructors: List(DataCtor),
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(registration_insert(c, d, is_struct, builtin, constructors))) {
+  ordmap_insert_ordered(
+    ordmap_compare_text,
+    ordmap_compare_text_law(),
+    summary_decls(ck_datas_of(c)),
+    registration_name(d),
+    registration_data(d, is_struct, builtin, constructors),
+    ordered
+  )
+}
+
+fn registration_declare(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (
+      ignored: Unit,
+      c1: Checker
+    ) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (
+        constructors: List(DataCtor),
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Unit,
+        (
+          ignored2: Unit,
+          c3: Checker
+        ) => registration_insert(c3, d, is_struct, builtin, constructors),
+        ck_register_ctors(constructors, c2, registration_name(d), is_struct, 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, ordmap_empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      yn_and(
+        surface_data_is_view(d),
+        yn_or(yn_not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    )
+  )
+}
+
+theorem registration_declare_ordered(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn,
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(registration_declare(c, d, is_struct, builtin))) {
+  registration_bind_ordered(
+    Unit,
+    Unit,
+    (
+      ignored: Unit,
+      c1: Checker
+    ) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (
+        constructors: List(DataCtor),
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Unit,
+        (
+          ignored2: Unit,
+          c3: Checker
+        ) => registration_insert(c3, d, is_struct, builtin, constructors),
+        ck_register_ctors(constructors, c2, registration_name(d), is_struct, 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, ordmap_empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      yn_and(
+        surface_data_is_view(d),
+        yn_or(yn_not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    frame_ordered(
+      c,
+      frame_error_if(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        yn_and(
+          surface_data_is_view(d),
+          yn_or(yn_not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      frame_error_if_ok(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        yn_and(
+          surface_data_is_view(d),
+          yn_or(yn_not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      ordered
+    ),
+    ignored => c1 => o1 => registration_bind_ordered(
+      List(DataCtor),
+      Unit,
+      (
+        constructors: List(DataCtor),
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Unit,
+        (
+          ignored2: Unit,
+          c3: Checker
+        ) => registration_insert(c3, d, is_struct, builtin, constructors),
+        ck_register_ctors(constructors, c2, registration_name(d), is_struct, 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, ordmap_empty())
+      ),
+      frame_ordered(
+        c1,
+        ck_data_ctors(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, ordmap_empty())
+        ),
+        ck_data_ctors_frame(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, ordmap_empty())
+        ),
+        o1
+      ),
+      constructors => c2 => o2 => registration_bind_ordered(
+        Unit,
+        Unit,
+        (
+          ignored2: Unit,
+          c3: Checker
+        ) => registration_insert(c3, d, is_struct, builtin, constructors),
+        ck_register_ctors(constructors, c2, registration_name(d), is_struct, 0),
+        ck_register_ctors_ordered(constructors, c2, registration_name(d), is_struct, 0, o2),
+        ignored2 => c3 => o3 => registration_insert_ordered(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors,
+          o3
+        )
+      )
+    )
+  )
+}
+
+theorem registration_declare_unf(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn
+): Eq(
+  Mut1(Unit, Checker),
+  ck_declare_data(c, d, is_struct, builtin),
+  registration_declare(c, d, is_struct, builtin)
+) { refl() }
+
+theorem ck_declare_data_ordered(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Yn,
+  builtin: Yn,
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(ck_declare_data(c, d, is_struct, builtin))) {
+  Eq_subst(
+    (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+    Eq_sym(registration_declare_unf(c, d, is_struct, builtin)),
+    registration_declare_ordered(c, d, is_struct, builtin, ordered)
+  )
+}
+
+fn registration_effect_span(e: SurfaceEffect) -> TySpan { TySpan { start: e.start, end: e.end } }
+fn registration_effect_name(e: SurfaceEffect) -> Text { e.name }
+fn registration_effect_params(e: SurfaceEffect) -> List(Option(SurfaceTerm)) { e.params }
+fn registration_effect_result(e: SurfaceEffect) -> Option(SurfaceTerm) { e.result }
+fn registration_effect_resume(e: SurfaceEffect) -> Option(Text) { e.resume }
+fn registration_effect_generics(e: SurfaceEffect) -> List(Text) { e.generics }
+
+theorem ck_effect_param_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  p: Option(SurfaceTerm),
+  generics: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_effect_param(c, e, p, generics)) {
+  match p -> CkReadFrame(c, ck_effect_param(c, e, p, generics)) {
+    None => refl()
+    Some(x) => frame_rewrap(c, ck_written(c, x, generics), ck_written_frame(c, x, generics))
+  }
+}
+
+fn registration_effect_params_cons(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+) -> Mut1(List(Ty), Checker) {
+  frame_bind(
+    Ty,
+    List(Ty),
+    (
+      head: Ty,
+      c1: Checker
+    ) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics)
+    ),
+    ck_effect_param(c, e, p, generics)
+  )
+}
+
+theorem registration_effect_params_cons_ok(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_effect_params(rest, next, e, generics))
+): CkReadFrame(c, registration_effect_params_cons(p, rest, c, e, generics)) {
+  frame_bind_ok(
+    Ty,
+    List(Ty),
+    c,
+    (
+      head: Ty,
+      c1: Checker
+    ) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics)
+    ),
+    ck_effect_param(c, e, p, generics),
+    ck_effect_param_frame(c, e, p, generics),
+    head => c1 => frame_bind_ok(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics),
+      ih(c1),
+      tail => c2 => refl()
+    )
+  )
+}
+
+theorem registration_effect_params_unf(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): Eq(
+  Mut1(List(Ty), Checker),
+  ck_effect_params(Cons(p, rest), c, e, generics),
+  registration_effect_params_cons(p, rest, c, e, generics)
+) { refl() }
+
+theorem ck_effect_params_frame(
+  ps: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_effect_params(ps, c, e, generics)) {
+  match ps -> CkReadFrame(c, ck_effect_params(ps, c, e, generics)) {
+    Nil => refl()
+    Cons(
+      p,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
+      Eq_sym(registration_effect_params_unf(p, rest, c, e, generics)),
+      registration_effect_params_cons_ok(
+        p,
+        rest,
+        c,
+        e,
+        generics,
+        next => ck_effect_params_frame(rest, next, e, generics)
+      )
+    )
+  }
+}
+
+fn registration_quant_parsed(
+  c: Checker,
+  e: SurfaceEffect,
+  q: Text,
+  o: Option(Quant)
+) -> Mut1(Quant, Checker) {
+  match o -> Mut1(Quant, Checker) {
+    Some(x) => mut1(x, c)
+    None => frame_return(
+      QuantAtMostOne,
+      ck_error(c, cat3("`resume ", q, "`: write 0, <=1, 1 or ω"), registration_effect_span(e))
+    )
+  }
+}
+fn registration_quant_resume(
+  c: Checker,
+  e: SurfaceEffect,
+  resume: Option(Text)
+) -> Mut1(Quant, Checker) {
+  match resume -> Mut1(Quant, Checker) {
+    None => mut1(QuantAtMostOne, c)
+    Some(q) => registration_quant_parsed(c, e, q, quant_parse(q))
+  }
+}
+theorem registration_quant_unf(
+  c: Checker,
+  e: SurfaceEffect
+): Eq(
+  Mut1(Quant, Checker),
+  ck_effect_quant(c, e),
+  registration_quant_resume(c, e, registration_effect_resume(e))
+) { refl() }
+theorem registration_quant_parsed_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  q: Text,
+  o: Option(Quant)
+): CkReadFrame(c, registration_quant_parsed(c, e, q, o)) {
+  match o -> CkReadFrame(c, registration_quant_parsed(c, e, q, o)) {
+    Some(x) => refl()
+    None => refl()
+  }
+}
+theorem registration_quant_resume_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  resume: Option(Text)
+): CkReadFrame(c, registration_quant_resume(c, e, resume)) {
+  match resume -> CkReadFrame(c, registration_quant_resume(c, e, resume)) {
+    None => refl()
+    Some(q) => registration_quant_parsed_frame(c, e, q, quant_parse(q))
+  }
+}
+theorem ck_effect_quant_frame(c: Checker, e: SurfaceEffect): CkReadFrame(c, ck_effect_quant(c, e)) {
+  Eq_subst(
+    (z: Mut1(Quant, Checker)) => CkReadFrame(c, z),
+    Eq_sym(registration_quant_unf(c, e)),
+    registration_quant_resume_frame(c, e, registration_effect_resume(e))
+  )
+}
+
+fn registration_effect_result_k(
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  o: Option(SurfaceTerm)
+) -> Mut1(Ty, Checker) {
+  match o -> Mut1(Ty, Checker) {
+    None => mut1(TyUnit, c)
+    Some(r) => ck_rewrap1(ck_written(c, r, generics))
+  }
+}
+theorem registration_effect_result_unf(
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): Eq(
+  Mut1(Ty, Checker),
+  ck_effect_result(c, e, generics),
+  registration_effect_result_k(c, generics, registration_effect_result(e))
+) { refl() }
+theorem registration_effect_result_frame(
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  o: Option(SurfaceTerm)
+): CkReadFrame(c, registration_effect_result_k(c, generics, o)) {
+  match o -> CkReadFrame(c, registration_effect_result_k(c, generics, o)) {
+    None => refl()
+    Some(r) => frame_rewrap(c, ck_written(c, r, generics), ck_written_frame(c, r, generics))
+  }
+}
+theorem ck_effect_result_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_effect_result(c, e, generics)) {
+  Eq_subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq_sym(registration_effect_result_unf(c, e, generics)),
+    registration_effect_result_frame(c, generics, registration_effect_result(e))
+  )
+}
+
+fn registration_effect_store(
+  &mut c: Checker,
+  e: SurfaceEffect,
+  params: List(Ty),
+  result: Ty,
+  quant: Quant
+) -> () {
+  set_to(&mut c.quants, ordmap_insert(c.quants, e.name, quant, ordmap_compare_text))
+  set_to(
+    &mut c.effects,
+    ordmap_insert(
+      c.effects,
+      e.name,
+      EffectSig { generics: e.generics, params: params, result: result },
+      ordmap_compare_text
+    )
+  )
+}
+theorem registration_effect_store_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  params: List(Ty),
+  result: Ty,
+  quant: Quant
+): CkReadFrame(c, registration_effect_store(c, e, params, result, quant)) { refl() }
+
+fn registration_effect_declare(c: Checker, e: SurfaceEffect) -> Mut1(Unit, Checker) {
+  frame_bind(
+    List(Ty),
+    Unit,
+    (
+      params: List(Ty),
+      c1: Checker
+    ) => frame_bind(
+      Ty,
+      Unit,
+      (
+        result: Ty,
+        c2: Checker
+      ) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), ordmap_empty()))
+    ),
+    ck_effect_params(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), ordmap_empty())
+    )
+  )
+}
+
+theorem registration_effect_declare_frame(
+  c: Checker,
+  e: SurfaceEffect
+): CkReadFrame(c, registration_effect_declare(c, e)) {
+  frame_bind_ok(
+    List(Ty),
+    Unit,
+    c,
+    (
+      params: List(Ty),
+      c1: Checker
+    ) => frame_bind(
+      Ty,
+      Unit,
+      (
+        result: Ty,
+        c2: Checker
+      ) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), ordmap_empty()))
+    ),
+    ck_effect_params(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), ordmap_empty())
+    ),
+    ck_effect_params_frame(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), ordmap_empty())
+    ),
+    params => c1 => frame_bind_ok(
+      Ty,
+      Unit,
+      c1,
+      (
+        result: Ty,
+        c2: Checker
+      ) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), ordmap_empty())),
+      ck_effect_result_frame(
+        c1,
+        e,
+        ck_named_generics(registration_effect_generics(e), ordmap_empty())
+      ),
+      result => c2 => frame_bind_ok(
+        Quant,
+        Unit,
+        c2,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e),
+        ck_effect_quant_frame(c2, e),
+        quant => c3 => registration_effect_store_frame(c3, e, params, result, quant)
+      )
+    )
+  )
+}
+
+theorem registration_effect_declare_unf(
+  c: Checker,
+  e: SurfaceEffect
+): Eq(Mut1(Unit, Checker), ck_declare_effect(c, e), registration_effect_declare(c, e)) { refl() }
+theorem ck_declare_effect_frame(
+  c: Checker,
+  e: SurfaceEffect
+): CkReadFrame(c, ck_declare_effect(c, e)) {
+  Eq_subst(
+    (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+    Eq_sym(registration_effect_declare_unf(c, e)),
+    registration_effect_declare_frame(c, e)
+  )
+}
+
+theorem registration_rewrap_ordered<A: Type>(
+  m: Mut1(A, Checker),
+  h: CkDatasOrdered(ck_st(m))
+): CkDatasOrdered(ck_st(ck_rewrap1(m))) {
+  Eq_subst((z: Mut1(A, Checker)) => CkDatasOrdered(ck_st(z)), Eq_sym(ck_rewrap1_id(m)), h)
+}
+fn registration_if(c: Checker, m: Mut1(Unit, Checker), take: Yn) -> Mut1(Unit, Checker) {
+  match take -> Mut1(Unit, Checker) {
+    yes => ck_rewrap1(m)
+    no => mut1(star(), c)
+  }
+}
+theorem registration_if_ordered(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  take: Yn,
+  ordered: CkDatasOrdered(c),
+  hm: CkDatasOrdered(ck_st(m))
+): CkDatasOrdered(ck_st(registration_if(c, m, take))) {
+  match take -> CkDatasOrdered(ck_st(registration_if(c, m, take))) {
+    yes => registration_rewrap_ordered(m, hm)
+    no => ordered
+  }
+}
+
+theorem registration_program_StStruct_unf(
+  d: SurfaceData,
+  c: Checker
+): Eq(
+  Mut1(Unit, Checker),
+  ck_program_data_one(c, StStruct(d)),
+  ck_rewrap1(ck_declare_data(c, d, yes, no))
+) { refl() }
+
+theorem registration_program_StEnum_unf(
+  d: SurfaceData,
+  c: Checker
+): Eq(
+  Mut1(Unit, Checker),
+  ck_program_data_one(c, StEnum(d)),
+  ck_rewrap1(ck_declare_data(c, d, no, no))
+) { refl() }
+
+theorem ck_program_data_one_ordered(
+  c: Checker,
+  s: SurfaceStmt,
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(ck_program_data_one(c, s))) {
+  match s -> CkDatasOrdered(ck_st(ck_program_data_one(c, s))) {
+    StLet(name, ty, value, borrow, mutable) => ordered
+    StVar(name, ty, value, borrow) => ordered
+    StModule(name, stmts, start, end) => ordered
+    StAssign(name, value) => ordered
+    StFn(f) => ordered
+    StTheorem(t) => ordered
+    StDef(t) => ordered
+    StMutual(stmts, start, end) => ordered
+    StImport(path, start, end) => ordered
+    StInductive(i) => ordered
+    StEffect(e) => ordered
+    StStruct(
+      d
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_program_StStruct_unf(d, c)),
+      registration_rewrap_ordered(
+        ck_declare_data(c, d, yes, no),
+        ck_declare_data_ordered(c, d, yes, no, ordered)
+      )
+    )
+    StEnum(
+      d
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_program_StEnum_unf(d, c)),
+      registration_rewrap_ordered(
+        ck_declare_data(c, d, no, no),
+        ck_declare_data_ordered(c, d, no, no, ordered)
+      )
+    )
+    StExtern(abi, fns, start, end) => ordered
+    StClass(cls) => ordered
+    StInstance(i) => ordered
+    StWhile(cond, body) => ordered
+    StReturn(value) => ordered
+    StExpr(value) => ordered
+    StOther(what, start, end) => ordered
+    StMacro(name, function, start, end) => ordered
+    StSyntax(name, grammar, start, end) => ordered
+  }
+}
+
+theorem registration_program_unf(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker
+): Eq(
+  Mut1(Unit, Checker),
+  ck_program_data(Cons(s, rest), c),
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+    ck_program_data_one(c, s)
+  )
+) { refl() }
+
+theorem ck_program_data_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(ck_program_data(ss, c))) {
+  match ss -> CkDatasOrdered(ck_st(ck_program_data(ss, c))) {
+    Nil => ordered
+    Cons(
+      s,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_program_unf(s, rest, c)),
+      registration_bind_ordered(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s),
+        ck_program_data_one_ordered(c, s, ordered),
+        ignored => next => hn => registration_rewrap_ordered(
+          ck_program_data(rest, next),
+          ck_program_data_ordered(rest, next, hn)
+        )
+      )
+    )
+  }
+}
+
+theorem registration_prelude_StEffect_unf(
+  e: SurfaceEffect,
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_data_one(c, StEffect(e), own),
+  registration_if(
+    c,
+    ck_declare_effect(c, e),
+    yn_not(types_is_own(own, registration_effect_name(e)))
+  )
+) { refl() }
+
+theorem registration_prelude_StStruct_unf(
+  d: SurfaceData,
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_data_one(c, StStruct(d), own),
+  registration_if(
+    c,
+    ck_declare_data(c, d, yes, data_is_opaque(registration_ctors(d))),
+    yn_not(types_is_own(own, registration_name(d)))
+  )
+) { refl() }
+
+theorem registration_prelude_StEnum_unf(
+  d: SurfaceData,
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_data_one(c, StEnum(d), own),
+  registration_if(c, ck_declare_data(c, d, no, no), yn_not(types_is_own(own, registration_name(d))))
+) { refl() }
+
+theorem ck_prelude_data_one_ordered(
+  c: Checker,
+  s: SurfaceStmt,
+  own: Ordmap(Text, Yn),
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
+  match s -> CkDatasOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
+    StLet(name, ty, value, borrow, mutable) => ordered
+    StVar(name, ty, value, borrow) => ordered
+    StModule(name, stmts, start, end) => ordered
+    StAssign(name, value) => ordered
+    StFn(f) => ordered
+    StTheorem(t) => ordered
+    StDef(t) => ordered
+    StMutual(stmts, start, end) => ordered
+    StImport(path, start, end) => ordered
+    StInductive(i) => ordered
+    StEffect(
+      e
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_prelude_StEffect_unf(e, c, own)),
+      registration_if_ordered(
+        c,
+        ck_declare_effect(c, e),
+        yn_not(types_is_own(own, registration_effect_name(e))),
+        ordered,
+        frame_ordered(c, ck_declare_effect(c, e), ck_declare_effect_frame(c, e), ordered)
+      )
+    )
+    StStruct(
+      d
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_prelude_StStruct_unf(d, c, own)),
+      registration_if_ordered(
+        c,
+        ck_declare_data(c, d, yes, data_is_opaque(registration_ctors(d))),
+        yn_not(types_is_own(own, registration_name(d))),
+        ordered,
+        ck_declare_data_ordered(c, d, yes, data_is_opaque(registration_ctors(d)), ordered)
+      )
+    )
+    StEnum(
+      d
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_prelude_StEnum_unf(d, c, own)),
+      registration_if_ordered(
+        c,
+        ck_declare_data(c, d, no, no),
+        yn_not(types_is_own(own, registration_name(d))),
+        ordered,
+        ck_declare_data_ordered(c, d, no, no, ordered)
+      )
+    )
+    StExtern(abi, fns, start, end) => ordered
+    StClass(cls) => ordered
+    StInstance(i) => ordered
+    StWhile(cond, body) => ordered
+    StReturn(value) => ordered
+    StExpr(value) => ordered
+    StOther(what, start, end) => ordered
+    StMacro(name, function, start, end) => ordered
+    StSyntax(name, grammar, start, end) => ordered
+  }
+}
+
+theorem registration_prelude_unf(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prelude_data(Cons(s, rest), c, own),
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
+    ck_prelude_data_one(c, s, own)
+  )
+) { refl() }
+
+theorem ck_prelude_data_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Yn),
+  ordered: CkDatasOrdered(c)
+): CkDatasOrdered(ck_st(ck_prelude_data(ss, c, own))) {
+  match ss -> CkDatasOrdered(ck_st(ck_prelude_data(ss, c, own))) {
+    Nil => ordered
+    Cons(
+      s,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
+      Eq_sym(registration_prelude_unf(s, rest, c, own)),
+      registration_bind_ordered(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
+        ck_prelude_data_one(c, s, own),
+        ck_prelude_data_one_ordered(c, s, own, ordered),
+        ignored => next => hn => registration_rewrap_ordered(
+          ck_prelude_data(rest, next, own),
+          ck_prelude_data_ordered(rest, next, own, hn)
+        )
+      )
+    )
+  }
+}
+
+theorem checker_new_datas_ordered(steps: Nat): CkDatasOrdered(checker_new(steps)) { trivial() }
+
+fn registration_finish_after(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+) -> Mut1(Unit, Checker) {
+  match m -> Mut1(Unit, Checker) {
+    mut1(ignored, next) => ck_rewrap1(ck_finish_datas(next, program))
+  }
+}
+fn registration_program_after(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+) -> Mut1(Unit, Checker) {
+  match m -> Mut1(Unit, Checker) {
+    mut1(ignored, next) => registration_finish_after(program, ck_program_data(program, next))
+  }
+}
+
+theorem registration_prepare_unf(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn)
+): Eq(
+  Mut1(Unit, Checker),
+  ck_prepare_datas(c, prelude, program, own),
+  registration_program_after(program, ck_prelude_data(prelude, c, own))
+) { refl() }
+
+theorem registration_finish_after_ok(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m))
+): CkSummaryOk(ck_st(registration_finish_after(program, m))) {
+  match m -> CkSummaryOk(ck_st(registration_finish_after(program, m))) {
+    mut1(
+      ignored,
+      next
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkSummaryOk(ck_st(z)),
+      Eq_sym(ck_rewrap1_id(ck_finish_datas(next, program))),
+      ck_finish_datas_summary_ok(next, program, ordered)
+    )
+  }
+}
+theorem registration_program_after_ok(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m))
+): CkSummaryOk(ck_st(registration_program_after(program, m))) {
+  match m -> CkSummaryOk(ck_st(registration_program_after(program, m))) {
+    mut1(
+      ignored,
+      next
+    ) => registration_finish_after_ok(
+      program,
+      ck_program_data(program, next),
+      ck_program_data_ordered(program, next, ordered)
+    )
+  }
+}
+
+// All declaration entries, including prelude entries, satisfy the summary equations.
+theorem ck_prepare_datas_summary_ok(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Yn),
+  ordered: CkDatasOrdered(c)
+): CkSummaryOk(ck_st(ck_prepare_datas(c, prelude, program, own))) {
+  Eq_subst(
+    (z: Mut1(Unit, Checker)) => CkSummaryOk(ck_st(z)),
+    Eq_sym(registration_prepare_unf(c, prelude, program, own)),
+    registration_program_after_ok(
+      program,
+      ck_prelude_data(prelude, c, own),
+      ck_prelude_data_ordered(prelude, c, own, ordered)
+    )
+  )
+}
+
+theorem ck_prepare_new_summary_ok(
+  steps: Nat,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): CkSummaryOk(
+  ck_st(ck_prepare_datas(checker_new(steps), prelude, program, types_own(program, ordmap_empty())))
+) {
+  ck_prepare_datas_summary_ok(
+    checker_new(steps),
+    prelude,
+    program,
+    types_own(program, ordmap_empty()),
+    checker_new_datas_ordered(steps)
+  )
+}

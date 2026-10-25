@@ -1,0 +1,671 @@
+import "Std.taut"
+
+// `#[mode!(spec(…)) => inductive R, fn f]` on an `inductive` relation: a function that
+// computes the one position marked `out` from the others, with the proof that it is
+// right. The rules are read as a program: the constructor at the `rec` position picks the
+// rule, each premise is a call, and what the premises answer is the rule's conclusion.
+//
+// The spec (`docs/design/macro.md`「`mode!`（`std/Mode.taut`）：規則を関数にする属性マクロ」):
+// - `in(x)`: a position the function takes, named `x`; a variable in each rule's conclusion.
+// - `rec(t)`: the position the function takes first and splits on; a constructor in each
+//   rule's conclusion, so one rule is one arm.
+// - `out(A)`: the one position the function computes.
+// - `name(f)`: the name of the function.
+// - `result(Res, ok, bad)`: the type of the answer, `ok(out, proof of the relation)` or `bad()`.
+// - `via(Rel, f, found, none)`: a premise of the relation `Rel` is answered by calling `f`,
+//   which gives `found(x, h)` or `none`.
+// - `eq(T, dec, same, diff)`: an output that is already bound is compared by `dec`, which
+//   gives `same(e)` with the equation or `diff`.
+
+// One element of the spec: `in(G)`, `result(Inferred, inferred, not_inferred)`, …
+struct SpecItem { head: SynIdent, args: List(SynIdent) }
+
+// What the spec says, with the names this macro writes.
+struct Gen {
+  rel: SynIdent
+  roles: List(Pair(Text, SynIdent))
+  res: SynIdent
+  ok: SynIdent
+  bad: SynIdent
+  fname: SynIdent
+  items: List(SpecItem)
+  at: SynSpan
+}
+
+// The arguments of a relation, split by the role of their position.
+struct Split { rec: Option(SynExpr), ins: List(SynExpr), out: Option(SynExpr) }
+
+// A name the macro makes: it is the macro's own, and the caller cannot see it.
+fn mo_name(at: SynSpan, name: Text) -> SynIdent {
+  SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: at }
+}
+
+// A name of the macro's own file, which resolves there (a constructor, `Type`).
+fn mo_quoted(e: SynExpr, at: SynSpan) -> SynIdent {
+  match syn_ident_of(e) {
+    Some(i) => i
+    None => mo_name(at, "?")
+  }
+}
+
+fn mo_args(es: List(SynExpr), at: SynSpan) -> List(SynIdent) ! {macro_error, Div} {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match syn_ident_of(e) {
+      Some(i) => Cons(i, mo_args(rest, at))
+      None => syn_error(at, "mode: a name is expected")
+    }
+  }
+}
+
+fn mo_items_of(es: List(SynExpr), at: SynSpan) -> List(SpecItem) ! {macro_error, Div} {
+  match es {
+    Nil => Nil
+    Cons(x, rest) => match syn_app_parts(x) {
+      Some(p) => match syn_ident_of(p.fst) {
+        Some(h) => Cons(SpecItem { head: h, args: mo_args(p.snd, at) }, mo_items_of(rest, at))
+        None => syn_error(at, "mode: an element of the spec is `name(…)`")
+      }
+      None => syn_error(at, "mode: an element of the spec is `name(…)`")
+    }
+  }
+}
+
+fn mo_items(e: SynExpr, at: SynSpan) -> List(SpecItem) ! {macro_error, Div} {
+  match syn_app_parts(e) {
+    Some(p) => mo_items_of(p.snd, at)
+    None => syn_error(at, "mode: the argument is `spec(…)`")
+  }
+}
+
+fn mo_named(items: List(SpecItem), name: Text) -> List(SpecItem) {
+  match items {
+    Nil => Nil
+    Cons(i, rest) => if i.head.name == name {
+      Cons(i, mo_named(rest, name))
+    } else {
+      mo_named(rest, name)
+    }
+  }
+}
+
+fn mo_one(items: List(SpecItem), name: Text, at: SynSpan) -> SpecItem ! {macro_error, Div} {
+  match mo_named(items, name) {
+    Cons(i, rest) => match rest {
+      Nil => i
+      Cons(_, _) => syn_error(at, concat("mode: more than one ", name))
+    }
+    Nil => syn_error(at, concat("mode: ", concat(name, " is missing from the spec")))
+  }
+}
+
+fn mo_arg(i: SpecItem, k: u64, at: SynSpan) -> SynIdent ! {macro_error, Div} {
+  match i.args {
+    Nil => syn_error(at, concat("mode: too few names in ", i.head.name))
+    Cons(
+      a,
+      rest
+    ) => if k == 0 { a } else { mo_arg(SpecItem { head: i.head, args: rest }, k - 1, at) }
+  }
+}
+
+fn mo_roles(items: List(SpecItem), at: SynSpan) -> List(Pair(Text, SynIdent)) ! {macro_error, Div} {
+  match items {
+    Nil => Nil
+    Cons(i, rest) => {
+      let tail = mo_roles(rest, at)
+      if i.head.name == "in" || i.head.name == "rec" || i.head.name == "out" {
+        Cons(Pair { fst: i.head.name, snd: mo_arg(i, 0, at) }, tail)
+      } else {
+        tail
+      }
+    }
+  }
+}
+
+fn mo_split(
+  roles: List(Pair(Text, SynIdent)),
+  args: List(SynExpr),
+  at: SynSpan
+) -> Split ! {macro_error, Div} {
+  match roles {
+    Nil => Split { rec: None, ins: Nil, out: None }
+    Cons(r, rr) => match args {
+      Nil => syn_error(at, "mode: a rule has too few arguments")
+      Cons(a, ar) => {
+        let s = mo_split(rr, ar, at)
+        if r.fst == "in" {
+          Split { rec: s.rec, ins: Cons(a, s.ins), out: s.out }
+        } else {
+          if r.fst == "rec" {
+            Split { rec: Some(a), ins: s.ins, out: s.out }
+          } else {
+            Split { rec: s.rec, ins: s.ins, out: Some(a) }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn mo_need(o: Option(SynExpr), at: SynSpan) -> SynExpr ! {macro_error, Div} {
+  match o {
+    Some(e) => e
+    None => syn_error(at, "mode: the spec needs one rec and one out")
+  }
+}
+
+// The sort `(A) -> (B) -> Prop`, as the types of its positions.
+fn mo_sort_tys(sort: SynExpr) -> List(SynExpr) {
+  match syn_pi_parts(sort) {
+    Some(p) => syn_append(mo_param_tys(p.fst), mo_sort_tys(p.snd))
+    None => Nil
+  }
+}
+
+fn mo_param_tys(ps: List(SynParam)) -> List(SynExpr) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.ty, mo_param_tys(rest))
+  }
+}
+
+fn mo_bound(bound: List(Text), n: Text) -> Bool {
+  match bound {
+    Nil => false
+    Cons(b, rest) => if b == n { true } else { mo_bound(rest, n) }
+  }
+}
+
+fn mo_arm(p: SynPattern, body: SynExpr) -> SynArm {
+  SynArm { pattern: p, guard: None, goal: None, body: body }
+}
+
+fn mo_call(f: SynIdent, args: List(SynExpr), at: SynSpan) -> SynExpr { ExApp(ExVar(f), args, at) }
+
+fn mo_match(scrut: SynExpr, motive: SynExpr, arms: List(SynArm), at: SynSpan) -> SynExpr {
+  ExMatch(scrut, Some(motive), arms, None, at)
+}
+
+fn mo_vars(is: List(SynIdent)) -> List(SynExpr) {
+  match is {
+    Nil => Nil
+    Cons(i, rest) => Cons(ExVar(i), mo_vars(rest))
+  }
+}
+
+fn mo_pats(is: List(SynIdent)) -> List(SynPattern) {
+  match is {
+    Nil => Nil
+    Cons(i, rest) => Cons(PtBind(i), mo_pats(rest))
+  }
+}
+
+// The arms of the answer of a call: `ok(x, h) => found`, `bad => bad()`.
+fn mo_answer(g: Gen, x: SynIdent, h: SynIdent, found: SynExpr) -> List(SynArm) {
+  Cons(
+    mo_arm(PtCtor(g.ok, Cons(PtBind(x), Cons(PtBind(h), Nil))), found),
+    Cons(mo_arm(PtBind(g.bad), mo_call(g.bad, Nil, g.at)), Nil)
+  )
+}
+
+// The names `x, y` of the arguments of a constructor `c(x, y)` in a premise, each of
+// which must be a name.
+fn mo_pattern_vars(es: List(SynExpr), at: SynSpan) -> List(SynIdent) ! {macro_error, Div} {
+  mo_args(es, at)
+}
+
+fn mo_names(is: List(SynIdent)) -> List(Text) {
+  match is {
+    Nil => Nil
+    Cons(i, rest) => Cons(i.name, mo_names(rest))
+  }
+}
+
+// The premises of a rule, one after the other, then the answer `ok(out, rule(proofs))`.
+fn mo_premises(
+  g: Gen,
+  ps: List(Pair(SynIdent, SynExpr)),
+  bound: List(Text),
+  motive: SynExpr,
+  out: SynExpr,
+  rule: SynIdent,
+  proofs: List(SynExpr)
+) -> SynExpr ! {macro_error, Div} {
+  match ps {
+    Nil => mo_call(g.ok, Cons(out, Cons(mo_call(rule, proofs, g.at), Nil)), g.at)
+    Cons(p, rest) => {
+      let h = p.fst
+      let more = Cons(ExVar(h), Nil)
+      match syn_app_parts(p.snd) {
+        None => syn_error(g.at, "mode: a premise is a relation applied to arguments")
+        Some(pp) => match syn_ident_of(pp.fst) {
+          Some(name) => if name.name == g.rel.name {
+            mo_recursive(g, h, pp.snd, rest, bound, motive, out, rule, syn_append(proofs, more))
+          } else {
+            mo_via(g, h, name, pp.snd, rest, bound, motive, out, rule, syn_append(proofs, more))
+          }
+          None => syn_error(g.at, "mode: a premise is a relation applied to arguments")
+        }
+      }
+    }
+  }
+}
+
+// A premise that is a rule of another relation, answered by the function the spec names.
+fn mo_via(
+  g: Gen,
+  h: SynIdent,
+  name: SynIdent,
+  args: List(SynExpr),
+  rest: List(Pair(SynIdent, SynExpr)),
+  bound: List(Text),
+  motive: SynExpr,
+  out: SynExpr,
+  rule: SynIdent,
+  proofs: List(SynExpr)
+) -> SynExpr ! {macro_error, Div} {
+  let v = mo_via_item(mo_named(g.items, "via"), name, g.at)
+  let f = mo_arg(v, 1, g.at)
+  let found = mo_arg(v, 2, g.at)
+  let none = mo_arg(v, 3, g.at)
+  let init = mo_init(args)
+  let o = mo_last(args, g.at)
+  match syn_ident_of(o) {
+    Some(x) => {
+      let body = mo_premises(g, rest, Cons(x.name, bound), motive, out, rule, proofs)
+      mo_match(
+        mo_call(f, init, g.at),
+        motive,
+        Cons(
+          mo_arm(PtCtor(found, Cons(PtBind(x), Cons(PtBind(h), Nil))), body),
+          Cons(mo_arm(PtBind(none), mo_call(g.bad, Nil, g.at)), Nil)
+        ),
+        g.at
+      )
+    }
+    None => syn_error(g.at, "mode: the output of a via premise is a name")
+  }
+}
+
+fn mo_via_item(vs: List(SpecItem), name: SynIdent, at: SynSpan) -> SpecItem ! {macro_error, Div} {
+  match vs {
+    Nil => syn_error(at, concat("mode: no via(…) for the premise ", name.name))
+    Cons(v, rest) => if mo_arg(
+      v,
+      0,
+      at
+    ).name == name.name { v } else { mo_via_item(rest, name, at) }
+  }
+}
+
+fn mo_init(es: List(SynExpr)) -> List(SynExpr) {
+  match es {
+    Nil => Nil
+    Cons(e, rest) => match rest {
+      Nil => Nil
+      Cons(_, _) => Cons(e, mo_init(rest))
+    }
+  }
+}
+
+fn mo_last(es: List(SynExpr), at: SynSpan) -> SynExpr ! {macro_error, Div} {
+  match es {
+    Nil => syn_error(at, "mode: a premise without arguments")
+    Cons(e, rest) => match rest {
+      Nil => e
+      Cons(_, _) => mo_last(rest, at)
+    }
+  }
+}
+
+// A premise that is a rule of the relation itself: a call of the function being made.
+fn mo_recursive(
+  g: Gen,
+  h: SynIdent,
+  args: List(SynExpr),
+  rest: List(Pair(SynIdent, SynExpr)),
+  bound: List(Text),
+  motive: SynExpr,
+  out: SynExpr,
+  rule: SynIdent,
+  proofs: List(SynExpr)
+) -> SynExpr ! {macro_error, Div} {
+  let s = mo_split(g.roles, args, g.at)
+  let x = mo_need(s.rec, g.at)
+  let o = mo_need(s.out, g.at)
+  let call = mo_call(g.fname, Cons(x, s.ins), g.at)
+  match syn_ident_of(o) {
+    Some(v) => if mo_bound(bound, v.name) {
+      mo_equal(g, h, v, call, rest, bound, motive, out, rule, proofs)
+    } else {
+      mo_fresh(
+        mo_premises(g, rest, Cons(v.name, bound), motive, out, rule, proofs),
+        g,
+        call,
+        v,
+        h,
+        motive
+      )
+    }
+    None => match syn_app_parts(o) {
+      Some(q) => mo_shape(g, h, args, q.fst, q.snd, call, rest, bound, motive, out, rule, proofs)
+      None => syn_error(
+        g.at,
+        "mode: the output of a premise is a name or a constructor applied to names"
+      )
+    }
+  }
+}
+
+fn mo_fresh(
+  body: SynExpr,
+  g: Gen,
+  call: SynExpr,
+  v: SynIdent,
+  h: SynIdent,
+  motive: SynExpr
+) -> SynExpr {
+  mo_match(call, motive, mo_answer(g, v, h, body), g.at)
+}
+
+// The output is already known: ask the equality function, and rewrite by it.
+fn mo_equal(
+  g: Gen,
+  h: SynIdent,
+  v: SynIdent,
+  call: SynExpr,
+  rest: List(Pair(SynIdent, SynExpr)),
+  bound: List(Text),
+  motive: SynExpr,
+  out: SynExpr,
+  rule: SynIdent,
+  proofs: List(SynExpr)
+) -> SynExpr ! {macro_error, Div} {
+  let q = mo_one(g.items, "eq", g.at)
+  let dec = mo_arg(q, 1, g.at)
+  let same = mo_arg(q, 2, g.at)
+  let diff = mo_arg(q, 3, g.at)
+  let got = mo_name(g.at, concat(h.name, "_got"))
+  let e = mo_name(g.at, concat(h.name, "_eq"))
+  let body = mo_premises(g, rest, bound, motive, out, rule, proofs)
+  let rewrite = mo_match(
+    ExVar(e),
+    motive,
+    Cons(mo_arm(PtCtor(mo_quoted(quote { refl }, g.at), Nil), body), Nil),
+    g.at
+  )
+  let decide = mo_match(
+    mo_call(dec, Cons(ExVar(v), Cons(ExVar(got), Nil)), g.at),
+    motive,
+    Cons(
+      mo_arm(PtCtor(same, Cons(PtBind(e), Nil)), rewrite),
+      Cons(mo_arm(PtBind(diff), mo_call(g.bad, Nil, g.at)), Nil)
+    ),
+    g.at
+  )
+  mo_match(call, motive, mo_answer(g, got, h, decide), g.at)
+}
+
+// The output is a constructor applied to new names: match on the answer, and carry the
+// proof across the match as an argument of the arms (the type of the proof mentions it).
+fn mo_shape(
+  g: Gen,
+  h: SynIdent,
+  args: List(SynExpr),
+  c: SynExpr,
+  vs: List(SynExpr),
+  call: SynExpr,
+  rest: List(Pair(SynIdent, SynExpr)),
+  bound: List(Text),
+  motive: SynExpr,
+  out: SynExpr,
+  rule: SynIdent,
+  proofs: List(SynExpr)
+) -> SynExpr ! {macro_error, Div} {
+  match syn_ident_of(c) {
+    Some(cn) => {
+      let names = mo_pattern_vars(vs, g.at)
+      let t = mo_name(g.at, concat(h.name, "_out"))
+      let premise = mo_app_out(g, args, ExVar(t))
+      let arrow = ExPi(Cons(SynParam { name: None, ty: premise }, Nil), motive, None, g.at)
+      let body = mo_premises(g, rest, syn_append(mo_names(names), bound), motive, out, rule, proofs)
+      let lam = ExLam(Cons(BName(h, None), Nil), body, g.at)
+      let refuse = ExLam(Cons(BName(h, None), Nil), mo_call(g.bad, Nil, g.at), g.at)
+      let inner = mo_match(
+        ExVar(t),
+        arrow,
+        Cons(mo_arm(PtCtor(cn, mo_pats(names)), lam), Cons(mo_arm(PtWild, refuse), Nil)),
+        g.at
+      )
+      let applied = ExApp(inner, Cons(ExVar(h), Nil), g.at)
+      mo_match(call, motive, mo_answer(g, t, h, applied), g.at)
+    }
+    None => syn_error(
+      g.at,
+      "mode: the output of a premise is a name or a constructor applied to names"
+    )
+  }
+}
+
+// The premise with its output replaced.
+fn mo_app_out(g: Gen, args: List(SynExpr), o: SynExpr) -> SynExpr {
+  ExApp(ExVar(g.rel), mo_replace_out(g.roles, args, o), g.at)
+}
+
+fn mo_replace_out(
+  roles: List(Pair(Text, SynIdent)),
+  args: List(SynExpr),
+  o: SynExpr
+) -> List(SynExpr) {
+  match roles {
+    Nil => args
+    Cons(r, rr) => match args {
+      Nil => Nil
+      Cons(a, ar) => Cons(if r.fst == "out" { o } else { a }, mo_replace_out(rr, ar, o))
+    }
+  }
+}
+
+fn mo_drop<T>(n: u64, l: List(T)) -> List(T) {
+  if n == 0 {
+    l
+  } else {
+    match l {
+      Nil => Nil
+      Cons(_, rest) => mo_drop(n - 1, rest)
+    }
+  }
+}
+
+// The names of the positions with this role, each with its type, in order.
+fn mo_with(
+  roles: List(Pair(Text, SynIdent)),
+  tys: List(SynExpr),
+  want: Text
+) -> List(Pair(SynIdent, SynExpr)) {
+  match roles {
+    Nil => Nil
+    Cons(r, rr) => match tys {
+      Nil => Nil
+      Cons(t, tr) => if r.fst == want {
+        Cons(Pair { fst: r.snd, snd: t }, mo_with(rr, tr, want))
+      } else {
+        mo_with(rr, tr, want)
+      }
+    }
+  }
+}
+
+fn mo_first_names(ps: List(Pair(SynIdent, SynExpr))) -> List(SynIdent) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.fst, mo_first_names(rest))
+  }
+}
+
+fn mo_role_names(roles: List(Pair(Text, SynIdent)), want: Text) -> List(SynIdent) {
+  match roles {
+    Nil => Nil
+    Cons(
+      r,
+      rr
+    ) => if r.fst == want { Cons(r.snd, mo_role_names(rr, want)) } else { mo_role_names(rr, want) }
+  }
+}
+
+fn mo_same_names(a: List(SynIdent), b: List(SynIdent)) -> Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(_, _) => false
+    }
+    Cons(x, xr) => match b {
+      Nil => false
+      Cons(y, yr) => x.name == y.name && mo_same_names(xr, yr)
+    }
+  }
+}
+
+fn mo_pattern(r: SynExpr, at: SynSpan) -> SynPattern ! {macro_error, Div} {
+  match syn_ident_of(r) {
+    Some(cn) => PtBind(cn)
+    None => match syn_app_parts(r) {
+      Some(q) => match syn_ident_of(q.fst) {
+        Some(cn) => PtCtor(cn, mo_pats(mo_args(q.snd, at)))
+        None => syn_error(at, "mode: the rec position of a rule is a constructor applied to names")
+      }
+      None => syn_error(at, "mode: the rec position of a rule is a constructor applied to names")
+    }
+  }
+}
+
+fn mo_pattern_names(r: SynExpr, at: SynSpan) -> List(Text) ! {macro_error, Div} {
+  match syn_app_parts(r) {
+    Some(q) => mo_names(mo_args(q.snd, at))
+    None => Nil
+  }
+}
+
+// A rule of the relation, as the arm of the constructor at its rec position.
+fn mo_rule(g: Gen, c: SynIndCtor) -> SynArm ! {macro_error, Div} {
+  match syn_app_parts(c.result) {
+    None => syn_error(g.at, "mode: a rule ends in the relation applied to arguments")
+    Some(pp) => {
+      let s = mo_split(g.roles, pp.snd, g.at)
+      let r = mo_need(s.rec, g.at)
+      let out = mo_need(s.out, g.at)
+      let ins = mo_args(s.ins, g.at)
+      if mo_same_names(ins, mo_role_names(g.roles, "in")) {
+        let motive = ExApp(ExVar(g.res), Cons(r, s.ins), g.at)
+        let bound = syn_append(mo_names(ins), mo_pattern_names(r, g.at))
+        let body = mo_premises(g, mo_drop(c.implicit, c.params), bound, motive, out, c.name, Nil)
+        mo_arm(mo_pattern(r, g.at), body)
+      } else {
+        syn_error(
+          g.at,
+          concat(
+            "mode: name the input variables of the rule ",
+            concat(c.name.name, " as the spec does")
+          )
+        )
+      }
+    }
+  }
+}
+
+fn mo_rules(g: Gen, cs: List(SynIndCtor)) -> List(SynArm) ! {macro_error, Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(mo_rule(g, c), mo_rules(g, rest))
+  }
+}
+
+fn mo_types(ps: List(Pair(SynIdent, SynExpr))) -> List(Option(SynExpr)) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(Some(p.snd), mo_types(rest))
+  }
+}
+
+fn mo_nones(ps: List(Pair(SynIdent, SynExpr))) -> List(Option(Bool)) {
+  match ps {
+    Nil => Nil
+    Cons(_, rest) => Cons(None, mo_nones(rest))
+  }
+}
+
+fn mo_make(e: SynExpr, d: SynInductive) -> List(SynStmt) ! {macro_error, Div} {
+  let at = d.span
+  let items = mo_items(e, at)
+  let roles = mo_roles(items, at)
+  let result = mo_one(items, "result", at)
+  let g = Gen {
+    rel: d.name
+    roles: roles
+    res: mo_arg(result, 0, at)
+    ok: mo_arg(result, 1, at)
+    bad: mo_arg(result, 2, at)
+    fname: mo_arg(mo_one(items, "name", at), 0, at)
+    items: items
+    at: at
+  }
+  let tys = mo_sort_tys(d.sort)
+  let params = syn_append(mo_with(roles, tys, "rec"), mo_with(roles, tys, "in"))
+  let out = mo_with(roles, tys, "out")
+  let outp = match out {
+    Cons(o, _) => o
+    Nil => syn_error(at, "mode: the spec needs an out")
+  }
+  let all = mo_all_names(roles)
+  let answer = ExApp(ExVar(g.res), mo_vars(mo_first_names(params)), at)
+  let proof = mo_name(at, "h")
+  let ok = SynIndCtor {
+    name: g.ok
+    implicit: 0
+    params: Cons(outp, Cons(Pair { fst: proof, snd: ExApp(ExVar(d.name), all, at) }, Nil))
+    result: answer
+  }
+  let bad = SynIndCtor { name: g.bad, implicit: 0, params: Nil, result: answer }
+  let res = SynInductive {
+    name: g.res
+    params: params
+    sort: ExVar(mo_quoted(quote { Type }, at))
+    ctors: Cons(ok, Cons(bad, Nil))
+    span: at
+  }
+  let recname = match mo_role_names(roles, "rec") {
+    Cons(r, _) => r
+    Nil => syn_error(at, "mode: the spec needs a rec")
+  }
+  let body = mo_match(ExVar(recname), answer, mo_rules(g, d.ctors), at)
+  let f = SynFn {
+    name: g.fname
+    generics: Nil
+    bounds: Nil
+    params: mo_first_names(params)
+    borrows: mo_nones(params)
+    param_types: mo_types(params)
+    result: Some(answer)
+    effects: None
+    body: body
+    span: at
+  }
+  Cons(StInductive(d), Cons(StInductive(res), Cons(StFn(f), Nil)))
+}
+
+fn mo_all_names(roles: List(Pair(Text, SynIdent))) -> List(SynExpr) {
+  match roles {
+    Nil => Nil
+    Cons(r, rr) => Cons(ExVar(r.snd), mo_all_names(rr))
+  }
+}
+
+fn mode(e: SynExpr, s: SynStmt) -> List(SynStmt) ! {macro_error, Div} {
+  match syn_inductive_of(s) {
+    Some(d) => mo_make(e, d)
+    None => syn_error(SynSpan { id: 0 }, "mode! goes on an inductive relation")
+  }
+}
+
+macro mode = mode

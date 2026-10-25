@@ -11,7 +11,7 @@ fn id_nat(n: Nat) -> Nat {
 }
 
 // `n / 2`: the recursion skips two.
-fn half(n: Nat) -> Nat decreasing_by measure(id_nat) {
+fn half(n: Nat) -> Nat decreasing_by measure(id_nat) => theorem half_eq {
   match n -> Nat {
     zero => zero
     succ(m) => match m -> Nat {
@@ -22,7 +22,9 @@ fn half(n: Nat) -> Nat decreasing_by measure(id_nat) {
 }
 
 // The sums of the neighbours, two by two: `[a, b, c, d, e]` is `[a + b, c + d, e]`.
-fn pair_up(l: List(Nat)) -> List(Nat) decreasing_by measure(l => list_length(l)) {
+fn pair_up(
+  l: List(Nat)
+) -> List(Nat) decreasing_by measure(l => list_length(l)) => theorem pair_up_eq {
   match l -> List(Nat) {
     Nil => Nil
     Cons(x, rest) => match rest -> List(Nat) {
@@ -33,7 +35,7 @@ fn pair_up(l: List(Nat)) -> List(Nat) decreasing_by measure(l => list_length(l))
 }
 
 // The first parameter decreases in the call and `acc`, the one after it, grows.
-fn count_up(n: Nat, acc: Nat) -> Nat decreasing_by measure(id_nat) {
+fn count_up(n: Nat, acc: Nat) -> Nat decreasing_by measure(id_nat) => theorem count_up_eq {
   match n -> Nat {
     zero => acc
     succ(m) => count_up(m, succ(acc), nat_le_refl(m))

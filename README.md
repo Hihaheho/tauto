@@ -12,17 +12,19 @@ Tauto without dependent types and proofs.
 
 ## What this preview contains
 
-This is an early, partial release. The implementation (written in Rust) is
-not published yet; what is here is the specification side of the project.
+This is an early, partial release. The implementation written in Rust is not
+published yet; what is here is the specification side of the project, and the
+parts of the toolchain written in Tauto itself.
 
 | Path | Contents |
 | --- | --- |
 | `lean/` | The Lean 4 formalization: the reference semantics and the proofs about it |
-| `std/` | The standard library, written and proved in Tauto |
+| `std/` | The standard library, written and proved in Tauto. `std/prelude/` is the part every program sees without an import: the data (`Option`, `List`, `Pair`, `Ordering`, `Result`), the class `Ord` with its laws, effects, and the host functions as `extern` declarations |
 | `meta/` | Parts of the Lean formalization redone in Tauto: the small core, and a model of the kernel with its confluence, subject reduction and a checker that returns typing derivations |
-| `crates/tauto/src/prelude.taut` | The prelude: the types and theorems every proof may use without declaring them (`Nat`, `Eq`, `And`, `Or`, `Not`, `Iff`, …), with no axioms. With `crates/tauto-parol/tauto.par`, it is one of the two files of the implementation published here |
+| `crates/tauto-kernel/src/prelude.taut` | The kernel's prelude: the types and theorems every proof may use without declaring them (`Nat`, `Eq`, `And`, `Or`, `Not`, `Iff`, …), with no axioms. With `crates/tauto-parol/tauto.par`, it is one of the two files of the Rust implementation published here |
 | `crates/tauto-parol/tauto.par` | The grammar of Tauto: every form the reader accepts, with the base rules first and tauto's own (dependent types and proofs) after them |
 | `docs/design/` | The design documents: the semantics, ownership, classes, macros and steps, the Lean formalization, and the backends and self-hosting of the implementation (which is not published yet) |
+| `totes/` | Parts of the toolchain written in Tauto: the checker of programs (`nibcheck`), the reader of Tauto's syntax (`scan`, `llk`, `syntax`, `surface`), the table generator of syntax literals (`llkgen`), the formatter, macro hygiene, text and an ordered map, with proofs of what they do. Each is checked against the Rust implementation on the same inputs |
 | `examples/` | Programs and proofs in Tauto |
 | `cases/` | Case files that specify what the implementation answers for an input, for tauto and its Nib part |
 | `Tauto.eure` | The project manifest (not read by any tool yet) |

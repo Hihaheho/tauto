@@ -1,0 +1,77 @@
+// Parallel primitives. A task is started by performing `spawn` and its result
+// is taken by `task_join`;
+// where its body runs is up to the handler of `spawn`.
+
+// What a task will return: the value, or the task still running. The host
+// that runs the bodies in parallel makes it the second.
+affine struct Pending<A> { holds: () -> A }
+
+extern {
+  fn pending_ready<A>(v: A) -> Pending(A)
+  fn pending_take<A>(p: Pending(A)) -> A
+}
+
+// A started task. Linear, so a task is joined or detached, never dropped.
+linear struct Task<A> { result: Pending(A) }
+
+effect spawn<A>: (f: () -> A ! {}) -> Task(A) resume 1
+
+fn task_join<A>(t: Task(A)) -> A {
+  match t {
+    Task { result } => pending_take(result)
+  }
+}
+
+fn task_detach<A>(t: Task(A)) -> () {
+  match t {
+    Task { result } => ()
+  }
+}
+
+// The handler that runs each spawned body to its end at the `spawn`.
+fn run_eager<A, e>(&body: () -> A ! {spawn | e}) -> A ! {|e} {
+  handle { body() } with {
+    spawn(f), k => k(Task { result: pending_ready(f()) })
+    return v => v
+  }
+}
+
+// Two bodies at once: both are started before either is joined.
+fn par<A, B>(f: () -> A, g: () -> B) -> Pair(A, B) ! {spawn} {
+  let a = perform spawn(f)
+  let b = perform spawn(g)
+  Pair { fst: task_join(a), snd: task_join(b) }
+}
+
+// A cell any number of closures and tasks share. A `Ref` is a plain slot; a
+// `Mutex` hands its content to one task at a time; an `Atomic` is a
+// number tasks update without a lock. `ref_get` copies the value and leaves
+// it in the cell, so it asks `A: shared`; `ref_set` moves `v` in and drops
+// the value it replaces, which any `A` but a linear one allows.
+shared struct Ref<A> {}
+// The content is reached only through `mutex_with`, so a `Mutex` is shared
+// whatever it holds; the field only says the type mentions `A`.
+shared struct Mutex<A> { holds: () -> A }
+shared struct Atomic {}
+
+extern {
+  fn ref_new<A>(v: A) -> Ref(A)
+  fn ref_get<A: shared>(r: Ref(A)) -> A
+  fn ref_set<A>(r: Ref(A), v: A) -> ()
+  fn mutex_new<A>(v: A) -> Mutex(A)
+  fn mutex_take<A>(m: Mutex(A)) -> A
+  fn mutex_put<A>(m: Mutex(A), v: A) -> ()
+  fn atomic_new(n: u64) -> Atomic
+  fn atomic_load(a: Atomic) -> u64
+  fn atomic_store(a: Atomic, n: u64) -> ()
+  fn atomic_fetch_add(a: Atomic, n: u64) -> u64
+}
+
+// Runs `f` on the mutex's value; no other task sees it in between, as `f`
+// performs no effect.
+fn mutex_with<A, R>(m: Mutex(A), &f: (&mut x: A) -> R) -> R {
+  var v = mutex_take(m)
+  let r = f(&mut v)
+  mutex_put(m, v)
+  r
+}

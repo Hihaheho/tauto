@@ -13,13 +13,6 @@ inductive Yn(): Type {
   yes(): Yn
 }
 
-// The answer of a comparison.
-inductive Ordering(): Type {
-  Less(): Ordering
-  Equal(): Ordering
-  Greater(): Ordering
-}
-
 fn yn_and(a: Yn, b: Yn) -> Yn {
   match a -> Yn {
     no => no
@@ -127,7 +120,7 @@ fn nat_min(a: Nat, b: Nat) -> Nat {
 // reduction stays linear.)
 fn nat_divmod(a: Nat, b: Nat, q: Nat, r: Nat) -> Pair(Nat, Nat) {
   match a -> Pair(Nat, Nat) {
-    zero => pair(q, r)
+    zero => Pair { fst: q, snd: r }
     succ(a2) => match nat_eq(succ(r), b) -> Pair(Nat, Nat) {
       no => nat_divmod(a2, b, q, succ(r))
       yes => nat_divmod(a2, b, succ(q), zero)
@@ -138,14 +131,14 @@ fn nat_divmod(a: Nat, b: Nat, q: Nat, r: Nat) -> Pair(Nat, Nat) {
 // `a div b`, rounded down; 0 when `b` is 0.
 fn nat_div(a: Nat, b: Nat) -> Nat {
   match nat_divmod(a, b, zero, zero) -> Nat {
-    pair(q, r) => q
+    Pair { fst: q, snd: r } => q
   }
 }
 
 // `a mod b`; `a` when `b` is 0.
 fn nat_mod(a: Nat, b: Nat) -> Nat {
   match nat_divmod(a, b, zero, zero) -> Nat {
-    pair(q, r) => r
+    Pair { fst: q, snd: r } => r
   }
 }
 
@@ -269,36 +262,6 @@ theorem yn_cases(
   match o -> P(o) {
     no => a(refl())
     yes => b(refl())
-  }
-}
-
-theorem less_ne_equal(e: Eq(Ordering, Less, Equal)): False {
-  match e -> False {
-  }
-}
-
-theorem less_ne_greater(e: Eq(Ordering, Less, Greater)): False {
-  match e -> False {
-  }
-}
-
-theorem equal_ne_less(e: Eq(Ordering, Equal, Less)): False {
-  match e -> False {
-  }
-}
-
-theorem equal_ne_greater(e: Eq(Ordering, Equal, Greater)): False {
-  match e -> False {
-  }
-}
-
-theorem greater_ne_less(e: Eq(Ordering, Greater, Less)): False {
-  match e -> False {
-  }
-}
-
-theorem greater_ne_equal(e: Eq(Ordering, Greater, Equal)): False {
-  match e -> False {
   }
 }
 

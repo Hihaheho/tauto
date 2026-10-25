@@ -1,0 +1,3269 @@
+import "union_sound.taut"
+import "datas.taut"
+
+// The kinds `datas_kind` gives are sound (`docs/design/self-host.md`
+// 「層 3：種（`src/kind_sound.taut`）」): once the declarations are summarized,
+// the kind of `D(args)` is at least the kind of each of its fields at `args`,
+// of `declared(D)`, of `floor(D)` and of each argument no field mentions. These are the equations
+// of `kind(T)` in `docs/design/ownership.md` as inequalities, so the kinds are
+// above their least solution, the kinds the document means.
+
+// ----- the order of kinds -----
+
+def KLe(a: Kind, b: Kind): Prop := Eq(Kind, kind_join(a, b), b)
+
+theorem kind_ne(
+  a: Kind,
+  b: Kind,
+  e: Eq(Kind, a, b),
+  h: Eq(Yn, nat_eq(kind_rank(a), kind_rank(b)), no)
+): False {
+  ty_nat_ne(kind_rank(a), kind_rank(b), Eq_congr(kind_rank, e), h)
+}
+
+theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): KLe(a, c) {
+  match a -> (KLe(a, b)) -> (KLe(b, c)) -> KLe(a, c) {
+    KindCopy => match b -> (KLe(KindCopy, b)) -> (KLe(b, c)) -> KLe(KindCopy, c) {
+      KindCopy => match c -> (KLe(KindCopy, KindCopy)) -> (KLe(KindCopy, c)) -> KLe(KindCopy, c) {
+        KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => refl()
+        KindShared => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindShared)) => refl()
+        KindAffine => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindLinear)) => refl()
+      }
+      KindShared => match c -> (
+        KLe(KindCopy, KindShared)
+      ) -> (KLe(KindShared, c)) -> KLe(KindCopy, c) {
+        KindCopy => (
+          x: KLe(KindCopy, KindShared)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, y, refl()))
+        KindShared => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindShared)) => refl()
+        KindAffine => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindLinear)) => refl()
+      }
+      KindAffine => match c -> (
+        KLe(KindCopy, KindAffine)
+      ) -> (KLe(KindAffine, c)) -> KLe(KindCopy, c) {
+        KindCopy => (
+          x: KLe(KindCopy, KindAffine)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindCopy, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, y, refl()))
+        KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindCopy, KindLinear)
+      ) -> (KLe(KindLinear, c)) -> KLe(KindCopy, c) {
+        KindCopy => (
+          x: KLe(KindCopy, KindLinear)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindCopy, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, y, refl()))
+        KindAffine => (
+          x: KLe(KindCopy, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+    KindShared => match b -> (KLe(KindShared, b)) -> (KLe(b, c)) -> KLe(KindShared, c) {
+      KindCopy => match c -> (
+        KLe(KindShared, KindCopy)
+      ) -> (KLe(KindCopy, c)) -> KLe(KindShared, c) {
+        KindCopy => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindCopy, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindCopy, KindShared)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindAffine => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindCopy, KindAffine)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindLinear => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindCopy, KindLinear)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+      }
+      KindShared => match c -> (
+        KLe(KindShared, KindShared)
+      ) -> (KLe(KindShared, c)) -> KLe(KindShared, c) {
+        KindCopy => (
+          x: KLe(KindShared, KindShared)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, y, refl()))
+        KindShared => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindShared)) => refl()
+        KindAffine => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindLinear)) => refl()
+      }
+      KindAffine => match c -> (
+        KLe(KindShared, KindAffine)
+      ) -> (KLe(KindAffine, c)) -> KLe(KindShared, c) {
+        KindCopy => (
+          x: KLe(KindShared, KindAffine)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindShared, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, y, refl()))
+        KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindShared, KindLinear)
+      ) -> (KLe(KindLinear, c)) -> KLe(KindShared, c) {
+        KindCopy => (
+          x: KLe(KindShared, KindLinear)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindShared, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, y, refl()))
+        KindAffine => (
+          x: KLe(KindShared, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+    KindAffine => match b -> (KLe(KindAffine, b)) -> (KLe(b, c)) -> KLe(KindAffine, c) {
+      KindCopy => match c -> (
+        KLe(KindAffine, KindCopy)
+      ) -> (KLe(KindCopy, c)) -> KLe(KindAffine, c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindCopy, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindCopy, KindShared)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindAffine => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindCopy, KindAffine)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindLinear => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindCopy, KindLinear)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+      }
+      KindShared => match c -> (
+        KLe(KindAffine, KindShared)
+      ) -> (KLe(KindShared, c)) -> KLe(KindAffine, c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindShared)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(
+          kind_ne(KindAffine, KindShared, x, refl())
+        )
+        KindShared => (
+          x: KLe(KindAffine, KindShared)
+        ) => (
+          y: KLe(KindShared, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, x, refl()))
+        KindAffine => (
+          x: KLe(KindAffine, KindShared)
+        ) => (
+          y: KLe(KindShared, KindAffine)
+        ) => False_elim(kind_ne(KindAffine, KindShared, x, refl()))
+        KindLinear => (
+          x: KLe(KindAffine, KindShared)
+        ) => (
+          y: KLe(KindShared, KindLinear)
+        ) => False_elim(kind_ne(KindAffine, KindShared, x, refl()))
+      }
+      KindAffine => match c -> (
+        KLe(KindAffine, KindAffine)
+      ) -> (KLe(KindAffine, c)) -> KLe(KindAffine, c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindAffine)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, y, refl()))
+        KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindAffine, KindLinear)
+      ) -> (KLe(KindLinear, c)) -> KLe(KindAffine, c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindLinear)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, y, refl()))
+        KindAffine => (
+          x: KLe(KindAffine, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+    KindLinear => match b -> (KLe(KindLinear, b)) -> (KLe(b, c)) -> KLe(KindLinear, c) {
+      KindCopy => match c -> (
+        KLe(KindLinear, KindCopy)
+      ) -> (KLe(KindCopy, c)) -> KLe(KindLinear, c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindCopy, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindCopy, KindShared)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindCopy, KindAffine)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindLinear => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindCopy, KindLinear)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+      }
+      KindShared => match c -> (
+        KLe(KindLinear, KindShared)
+      ) -> (KLe(KindShared, c)) -> KLe(KindLinear, c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindShared)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(
+          kind_ne(KindLinear, KindShared, x, refl())
+        )
+        KindShared => (
+          x: KLe(KindLinear, KindShared)
+        ) => (
+          y: KLe(KindShared, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, x, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindShared)
+        ) => (
+          y: KLe(KindShared, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindShared, x, refl()))
+        KindLinear => (
+          x: KLe(KindLinear, KindShared)
+        ) => (
+          y: KLe(KindShared, KindLinear)
+        ) => False_elim(kind_ne(KindLinear, KindShared, x, refl()))
+      }
+      KindAffine => match c -> (
+        KLe(KindLinear, KindAffine)
+      ) -> (KLe(KindAffine, c)) -> KLe(KindLinear, c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(
+          kind_ne(KindLinear, KindAffine, x, refl())
+        )
+        KindShared => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, x, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, x, refl()))
+        KindLinear => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindLinear)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, x, refl()))
+      }
+      KindLinear => match c -> (
+        KLe(KindLinear, KindLinear)
+      ) -> (KLe(KindLinear, c)) -> KLe(KindLinear, c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindLinear)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindLinear, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, y, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindLinear)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+  }(h1, h2)
+}
+
+theorem kle_lub(a: Kind, b: Kind, c: Kind, h1: KLe(a, c), h2: KLe(b, c)): KLe(kind_join(a, b), c) {
+  match a -> (KLe(a, c)) -> (KLe(b, c)) -> KLe(kind_join(a, b), c) {
+    KindCopy => match b -> (KLe(KindCopy, c)) -> (KLe(b, c)) -> KLe(kind_join(KindCopy, b), c) {
+      KindCopy => match c -> (
+        KLe(KindCopy, c)
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindCopy, KindCopy), c) {
+        KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => refl()
+        KindShared => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindCopy, KindShared)) => refl()
+        KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => refl()
+      }
+      KindShared => match c -> (
+        KLe(KindCopy, c)
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindCopy, KindShared), c) {
+        KindCopy => (
+          x: KLe(KindCopy, KindCopy)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, y, refl()))
+        KindShared => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindShared)) => refl()
+        KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindShared, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindShared, KindLinear)) => refl()
+      }
+      KindAffine => match c -> (
+        KLe(KindCopy, c)
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindCopy, KindAffine), c) {
+        KindCopy => (
+          x: KLe(KindCopy, KindCopy)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindCopy, KindShared)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, y, refl()))
+        KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindCopy, c)
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindCopy, KindLinear), c) {
+        KindCopy => (
+          x: KLe(KindCopy, KindCopy)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, y, refl()))
+        KindShared => (
+          x: KLe(KindCopy, KindShared)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, y, refl()))
+        KindAffine => (
+          x: KLe(KindCopy, KindAffine)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+    KindShared => match b -> (
+      KLe(KindShared, c)
+    ) -> (KLe(b, c)) -> KLe(kind_join(KindShared, b), c) {
+      KindCopy => match c -> (
+        KLe(KindShared, c)
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindShared, KindCopy), c) {
+        KindCopy => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindCopy, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindShared => (x: KLe(KindShared, KindShared)) => (y: KLe(KindCopy, KindShared)) => refl()
+        KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => refl()
+      }
+      KindShared => match c -> (
+        KLe(KindShared, c)
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindShared, KindShared), c) {
+        KindCopy => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindShared => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindShared)) => refl()
+        KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindShared, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindShared, KindLinear)) => refl()
+      }
+      KindAffine => match c -> (
+        KLe(KindShared, c)
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindShared, KindAffine), c) {
+        KindCopy => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindShared, KindShared)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, y, refl()))
+        KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindShared, c)
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindShared, KindLinear), c) {
+        KindCopy => (
+          x: KLe(KindShared, KindCopy)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindShared, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindShared, KindShared)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, y, refl()))
+        KindAffine => (
+          x: KLe(KindShared, KindAffine)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+    KindAffine => match b -> (
+      KLe(KindAffine, c)
+    ) -> (KLe(b, c)) -> KLe(kind_join(KindAffine, b), c) {
+      KindCopy => match c -> (
+        KLe(KindAffine, c)
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindAffine, KindCopy), c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindCopy, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindShared)
+        ) => (y: KLe(KindCopy, KindShared)) => False_elim(
+          kind_ne(KindAffine, KindShared, x, refl())
+        )
+        KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => refl()
+      }
+      KindShared => match c -> (
+        KLe(KindAffine, c)
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindAffine, KindShared), c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindShared)
+        ) => (
+          y: KLe(KindShared, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, x, refl()))
+        KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindShared, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindShared, KindLinear)) => refl()
+      }
+      KindAffine => match c -> (
+        KLe(KindAffine, c)
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindAffine, KindAffine), c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindShared)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, x, refl()))
+        KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => refl()
+        KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindAffine, c)
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindAffine, KindLinear), c) {
+        KindCopy => (
+          x: KLe(KindAffine, KindCopy)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindAffine, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindAffine, KindShared)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindAffine, KindShared, x, refl()))
+        KindAffine => (
+          x: KLe(KindAffine, KindAffine)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, y, refl()))
+        KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+    KindLinear => match b -> (
+      KLe(KindLinear, c)
+    ) -> (KLe(b, c)) -> KLe(kind_join(KindLinear, b), c) {
+      KindCopy => match c -> (
+        KLe(KindLinear, c)
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindLinear, KindCopy), c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindCopy, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindLinear, KindShared)
+        ) => (y: KLe(KindCopy, KindShared)) => False_elim(
+          kind_ne(KindLinear, KindShared, x, refl())
+        )
+        KindAffine => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (y: KLe(KindCopy, KindAffine)) => False_elim(
+          kind_ne(KindLinear, KindAffine, x, refl())
+        )
+        KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => refl()
+      }
+      KindShared => match c -> (
+        KLe(KindLinear, c)
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindLinear, KindShared), c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindShared, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindLinear, KindShared)
+        ) => (
+          y: KLe(KindShared, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, x, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (
+          y: KLe(KindShared, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, x, refl()))
+        KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindShared, KindLinear)) => refl()
+      }
+      KindAffine => match c -> (
+        KLe(KindLinear, c)
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindLinear, KindAffine), c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindAffine, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindLinear, KindShared)
+        ) => (
+          y: KLe(KindAffine, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, x, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (
+          y: KLe(KindAffine, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, x, refl()))
+        KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => refl()
+      }
+      KindLinear => match c -> (
+        KLe(KindLinear, c)
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindLinear, KindLinear), c) {
+        KindCopy => (
+          x: KLe(KindLinear, KindCopy)
+        ) => (y: KLe(KindLinear, KindCopy)) => False_elim(kind_ne(KindLinear, KindCopy, x, refl()))
+        KindShared => (
+          x: KLe(KindLinear, KindShared)
+        ) => (
+          y: KLe(KindLinear, KindShared)
+        ) => False_elim(kind_ne(KindLinear, KindShared, x, refl()))
+        KindAffine => (
+          x: KLe(KindLinear, KindAffine)
+        ) => (
+          y: KLe(KindLinear, KindAffine)
+        ) => False_elim(kind_ne(KindLinear, KindAffine, x, refl()))
+        KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => refl()
+      }
+    }
+  }(h1, h2)
+}
+
+theorem kle_join_l(a: Kind, b: Kind): KLe(a, kind_join(a, b)) {
+  match a -> KLe(a, kind_join(a, b)) {
+    KindCopy => match b -> KLe(KindCopy, kind_join(KindCopy, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+    KindShared => match b -> KLe(KindShared, kind_join(KindShared, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+    KindAffine => match b -> KLe(KindAffine, kind_join(KindAffine, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+    KindLinear => match b -> KLe(KindLinear, kind_join(KindLinear, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+  }
+}
+
+theorem kle_join_r(a: Kind, b: Kind): KLe(b, kind_join(a, b)) {
+  match a -> KLe(b, kind_join(a, b)) {
+    KindCopy => match b -> KLe(b, kind_join(KindCopy, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+    KindShared => match b -> KLe(b, kind_join(KindShared, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+    KindAffine => match b -> KLe(b, kind_join(KindAffine, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+    KindLinear => match b -> KLe(b, kind_join(KindLinear, b)) {
+      KindCopy => refl()
+      KindShared => refl()
+      KindAffine => refl()
+      KindLinear => refl()
+    }
+  }
+}
+
+theorem kle_refl(a: Kind): KLe(a, a) {
+  match a -> KLe(a, a) {
+    KindCopy => refl()
+    KindShared => refl()
+    KindAffine => refl()
+    KindLinear => refl()
+  }
+}
+
+theorem kle_linear(a: Kind): KLe(a, KindLinear) {
+  match a -> KLe(a, KindLinear) {
+    KindCopy => refl()
+    KindShared => refl()
+    KindAffine => refl()
+    KindLinear => refl()
+  }
+}
+
+theorem kle_copy(a: Kind): KLe(KindCopy, a) {
+  match a -> KLe(KindCopy, a) {
+    KindCopy => refl()
+    KindShared => refl()
+    KindAffine => refl()
+    KindLinear => refl()
+  }
+}
+
+// ----- the kind of a list -----
+
+fn dkl_pick(d: Datas, t: Ty, acc: Kind, p: Yn) -> Kind {
+  match p -> Kind {
+    yes => kind_join(acc, datas_kind(d, t))
+    no => acc
+  }
+}
+
+fn dkl_k(d: Datas, t: Ty, rest: List(Ty), every: Yn, picks: List(Yn), acc: Kind, go: Yn) -> Kind {
+  match go -> Kind {
+    no => acc
+    yes => datas_kind_list(
+      d,
+      rest,
+      every,
+      picks_tail(picks),
+      dkl_pick(d, t, acc, picks_head(every, picks))
+    )
+  }
+}
+
+theorem dkl_unf(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  acc: Kind
+): Eq(
+  Kind,
+  datas_kind_list(d, Cons(t, rest), every, picks, acc),
+  dkl_k(d, t, rest, every, picks, acc, yn_or(every, yn_not(nat_eq(list_len(picks), 0))))
+) {
+  refl()
+}
+
+fn kn_k(d: Datas, n: Text, args: List(Ty), o: Option(Data)) -> Kind {
+  match o -> Kind {
+    None => KindShared
+    Some(data) => datas_kind_list(
+      d,
+      args,
+      no,
+      generics_picked(data.generics, data.holds),
+      data.base
+    )
+  }
+}
+
+theorem kind_named_unf(
+  d: Datas,
+  n: Text,
+  args: List(Ty)
+): Eq(Kind, datas_kind(d, TyNamed(n, args)), kn_k(d, n, args, datas_decl(d, n))) {
+  refl()
+}
+
+fn lht_k(y: Text, x: Text, rest: List(Text), b: Yn) -> Yn {
+  yn_or(b, list_has_text(rest, x))
+}
+
+theorem lht_unf(
+  y: Text,
+  x: Text,
+  rest: List(Text)
+): Eq(Yn, list_has_text(Cons(y, rest), x), lht_k(y, x, rest, text_eq(y, x))) {
+  refl()
+}
+
+theorem pick_ge(d: Datas, t: Ty, acc: Kind, p: Yn): KLe(acc, dkl_pick(d, t, acc, p)) {
+  match p -> KLe(acc, dkl_pick(d, t, acc, p)) {
+    yes => kle_join_l(acc, datas_kind(d, t))
+    no => kle_refl(acc)
+  }
+}
+
+theorem pick_le(
+  d: Datas,
+  t: Ty,
+  acc: Kind,
+  p: Yn,
+  k: Kind,
+  ha: KLe(acc, k),
+  ht: KLe(datas_kind(d, t), k)
+): KLe(dkl_pick(d, t, acc, p), k) {
+  match p -> KLe(dkl_pick(d, t, acc, p), k) {
+    yes => kle_lub(acc, datas_kind(d, t), k, ha, ht)
+    no => ha
+  }
+}
+
+theorem dklk_ge(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  acc: Kind,
+  go: Yn,
+  ih: ∀ a: Kind. KLe(a, datas_kind_list(d, rest, every, picks_tail(picks), a))
+): KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) {
+  match go -> KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) {
+    no => kle_refl(acc)
+    yes => kle_trans(
+      acc,
+      dkl_pick(d, t, acc, picks_head(every, picks)),
+      datas_kind_list(
+        d,
+        rest,
+        every,
+        picks_tail(picks),
+        dkl_pick(d, t, acc, picks_head(every, picks))
+      ),
+      pick_ge(d, t, acc, picks_head(every, picks)),
+      ih(dkl_pick(d, t, acc, picks_head(every, picks)))
+    )
+  }
+}
+
+// The kind of a list is at least where it starts.
+theorem dkl_ge_acc(
+  d: Datas,
+  ts: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  acc: Kind
+): KLe(acc, datas_kind_list(d, ts, every, picks, acc)) {
+  match ts -> KLe(acc, datas_kind_list(d, ts, every, picks, acc)) {
+    Nil => kle_refl(acc)
+    Cons(
+      t,
+      rest
+    ) => Eq_subst(
+      (z: Kind) => KLe(acc, z),
+      Eq_sym(dkl_unf(d, t, rest, every, picks, acc)),
+      dklk_ge(
+        d,
+        t,
+        rest,
+        every,
+        picks,
+        acc,
+        yn_or(every, yn_not(nat_eq(list_len(picks), 0))),
+        a => dkl_ge_acc(d, rest, every, picks_tail(picks), a)
+      )
+    )
+  }
+}
+
+theorem dklk_append(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  b: Ty,
+  picks: List(Yn),
+  acc: Kind,
+  k: Kind,
+  go: Yn,
+  h1: KLe(dkl_k(d, t, rest, no, picks, acc, go), k),
+  ih: ∀ a: Kind. (
+    KLe(datas_kind_list(d, rest, no, picks_tail(picks), a), k)
+  ) -> KLe(datas_kind_list(d, list_append(rest, Cons(b, Nil(Ty))), no, picks_tail(picks), a), k)
+): KLe(dkl_k(d, t, list_append(rest, Cons(b, Nil(Ty))), no, picks, acc, go), k) {
+  match go -> (
+    KLe(dkl_k(d, t, rest, no, picks, acc, go), k)
+  ) -> KLe(dkl_k(d, t, list_append(rest, Cons(b, Nil(Ty))), no, picks, acc, go), k) {
+    no => (h: KLe(acc, k)) => h
+    yes => (
+      h: KLe(
+        datas_kind_list(d, rest, no, picks_tail(picks), dkl_pick(d, t, acc, picks_head(no, picks))),
+        k
+      )
+    ) => ih(dkl_pick(d, t, acc, picks_head(no, picks)), h)
+  }(h1)
+}
+
+theorem dklk_one(
+  d: Datas,
+  b: Ty,
+  picks: List(Yn),
+  acc: Kind,
+  k: Kind,
+  go: Yn,
+  ha: KLe(acc, k),
+  hb: KLe(datas_kind(d, b), k)
+): KLe(dkl_k(d, b, Nil(Ty), no, picks, acc, go), k) {
+  match go -> KLe(dkl_k(d, b, Nil(Ty), no, picks, acc, go), k) {
+    no => ha
+    yes => pick_le(d, b, acc, picks_head(no, picks), k, ha, hb)
+  }
+}
+
+// One more argument at the end adds at most its kind.
+theorem dkl_append(
+  d: Datas,
+  xs: List(Ty),
+  b: Ty,
+  picks: List(Yn),
+  acc: Kind,
+  k: Kind,
+  h1: KLe(datas_kind_list(d, xs, no, picks, acc), k),
+  hb: KLe(datas_kind(d, b), k)
+): KLe(datas_kind_list(d, list_append(xs, Cons(b, Nil(Ty))), no, picks, acc), k) {
+  match xs -> KLe(datas_kind_list(d, list_append(xs, Cons(b, Nil(Ty))), no, picks, acc), k) {
+    Nil => Eq_subst(
+      (z: Kind) => KLe(z, k),
+      Eq_sym(dkl_unf(d, b, Nil(Ty), no, picks, acc)),
+      dklk_one(d, b, picks, acc, k, yn_or(no, yn_not(nat_eq(list_len(picks), 0))), h1, hb)
+    )
+    Cons(
+      t,
+      rest
+    ) => Eq_subst(
+      (z: Kind) => KLe(z, k),
+      Eq_sym(dkl_unf(d, t, list_append(rest, Cons(b, Nil(Ty))), no, picks, acc)),
+      dklk_append(
+        d,
+        t,
+        rest,
+        b,
+        picks,
+        acc,
+        k,
+        yn_or(no, yn_not(nat_eq(list_len(picks), 0))),
+        Eq_subst((z: Kind) => KLe(z, k), dkl_unf(d, t, rest, no, picks, acc), h1),
+        a => ha => dkl_append(d, rest, b, picks_tail(picks), a, k, ha, hb)
+      )
+    )
+  }
+}
+
+// Every one counted and the start below `j`: the kind of the list is too.
+theorem dkl_le_all(
+  d: Datas,
+  ts: List(Ty),
+  acc: Kind,
+  j: Kind,
+  ha: KLe(acc, j),
+  h: ∀ m: Ty. (Mem(Ty, m, ts)) -> KLe(datas_kind(d, m), j)
+): KLe(datas_kind_list(d, ts, yes, Nil(Yn), acc), j) {
+  match ts -> KLe(datas_kind_list(d, ts, yes, Nil(Yn), acc), j) {
+    Nil => ha
+    Cons(
+      t,
+      rest
+    ) => dkl_le_all(
+      d,
+      rest,
+      kind_join(acc, datas_kind(d, t)),
+      j,
+      kle_lub(acc, datas_kind(d, t), j, ha, h(t, mem_here(Ty, t, rest))),
+      m => mm => h(m, mem_there(Ty, m, t, rest, mm))
+    )
+  }
+}
+
+// A leaf of the list is below the kind of the list.
+theorem leaf_le<e: Ty, ys: List(
+  Ty
+)>(
+  l: Leaves(e, ys),
+  d: Datas,
+  acc: Kind
+): KLe(datas_kind(d, e), datas_kind_list(d, ys, yes, Nil(Yn), acc)) {
+  match l -> KLe(datas_kind(d, e), datas_kind_list(d, ys, yes, Nil(Yn), acc)) {
+    lv_here(
+      rest,
+      p
+    ) => kle_trans(
+      datas_kind(d, e),
+      kind_join(acc, datas_kind(d, e)),
+      datas_kind_list(d, rest, yes, Nil(Yn), kind_join(acc, datas_kind(d, e))),
+      kle_join_r(acc, datas_kind(d, e)),
+      dkl_ge_acc(d, rest, yes, Nil(Yn), kind_join(acc, datas_kind(d, e)))
+    )
+    lv_in(
+      ys2,
+      rest,
+      l2
+    ) => kle_trans(
+      datas_kind(d, e),
+      datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy),
+      datas_kind_list(
+        d,
+        rest,
+        yes,
+        Nil(Yn),
+        kind_join(acc, datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy))
+      ),
+      leaf_le(l2, d, KindCopy),
+      kle_trans(
+        datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy),
+        kind_join(acc, datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy)),
+        datas_kind_list(
+          d,
+          rest,
+          yes,
+          Nil(Yn),
+          kind_join(acc, datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy))
+        ),
+        kle_join_r(acc, datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy)),
+        dkl_ge_acc(
+          d,
+          rest,
+          yes,
+          Nil(Yn),
+          kind_join(acc, datas_kind_list(d, ys2, yes, Nil(Yn), KindCopy))
+        )
+      )
+    )
+    lv_there(y, rest, l2) => leaf_le(l2, d, kind_join(acc, datas_kind(d, y)))
+  }
+}
+
+theorem kind_members_at(
+  d: Datas,
+  u1: Ty,
+  u: Ty,
+  eu: Eq(Ty, u1, u),
+  j: Kind,
+  h: ∀ m: Ty. (Mem(Ty, m, ty_members(u))) -> KLe(datas_kind(d, m), j)
+): KLe(datas_kind(d, u), j) {
+  match u -> KLe(datas_kind(d, u), j) {
+    TyUnion(zs) => dkl_le_all(d, zs, KindCopy, j, kle_copy(j), h)
+    TyNever => kle_copy(j)
+    _ => Eq_subst(
+      (z: Ty) => KLe(datas_kind(d, z), j),
+      eu,
+      h(u1, Eq_subst((z: Ty) => Mem(Ty, u1, Cons(z, Nil(Ty))), eu, mem_here(Ty, u1, Nil(Ty))))
+    )
+  }
+}
+
+// The union of `ys` is below what each of `ys` is below.
+theorem union_le(
+  d: Datas,
+  ys: List(Ty),
+  k: Kind,
+  hk: KLe(datas_kind_list(d, ys, yes, Nil(Yn), KindCopy), k)
+): KLe(datas_kind(d, ty_union(ys)), k) {
+  kind_members_at(
+    d,
+    ty_union(ys),
+    ty_union(ys),
+    refl(),
+    k,
+    m => mm => kle_trans(
+      datas_kind(d, m),
+      datas_kind_list(d, ys, yes, Nil(Yn), KindCopy),
+      k,
+      leaf_le(and_left(union_mem(m, ys, mm)), d, KindCopy),
+      hk
+    )
+  )
+}
+
+theorem kind_tagged_with(
+  d: Datas,
+  l: List(Text),
+  z: Ty
+): Eq(Kind, datas_kind(d, ty_tagged_with(l, z)), datas_kind(d, z)) {
+  match l -> Eq(Kind, datas_kind(d, ty_tagged_with(l, z)), datas_kind(d, z)) {
+    Nil => refl()
+    Cons(tg, rest) => refl()
+  }
+}
+
+theorem kind_untagged(d: Datas, y: Ty): Eq(Kind, datas_kind(d, ty_untagged(y)), datas_kind(d, y)) {
+  match y -> Eq(Kind, datas_kind(d, ty_untagged(y)), datas_kind(d, y)) {
+    TyTagged(tags, x) => refl()
+    _ => refl()
+  }
+}
+
+// Tags do not change a kind.
+theorem kind_tagged(
+  d: Datas,
+  tags: List(Text),
+  y: Ty
+): Eq(Kind, datas_kind(d, ty_tagged(tags, y)), datas_kind(d, y)) {
+  Eq_trans(
+    Eq_congr((z: Ty) => datas_kind(d, z), tagged_shape(tags, y)),
+    Eq_trans(kind_tagged_with(d, tags_union(tags, ty_tags(y)), ty_untagged(y)), kind_untagged(d, y))
+  )
+}
+
+theorem apply_named(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  b: Ty,
+  o: Option(Data),
+  k: Kind,
+  ha: KLe(kn_k(d, n, args, o), k),
+  hb: KLe(datas_kind(d, b), k)
+): KLe(kn_k(d, n, list_append(args, Cons(b, Nil(Ty))), o), k) {
+  match o -> (
+    KLe(kn_k(d, n, args, o), k)
+  ) -> KLe(kn_k(d, n, list_append(args, Cons(b, Nil(Ty))), o), k) {
+    None => (h: KLe(KindShared, k)) => h
+    Some(
+      data
+    ) => (
+      h: KLe(datas_kind_list(d, args, no, generics_picked(data.generics, data.holds), data.base), k)
+    ) => dkl_append(d, args, b, generics_picked(data.generics, data.holds), data.base, k, h, hb)
+  }(ha)
+}
+
+// `F(X)` is below what `F` and `X` are below.
+theorem apply_le(
+  d: Datas,
+  a: Ty,
+  b: Ty,
+  k: Kind,
+  ha: KLe(datas_kind(d, a), k),
+  hb: KLe(datas_kind(d, b), k)
+): KLe(datas_kind(d, ty_apply(a, b)), k) {
+  match a -> (KLe(datas_kind(d, a), k)) -> KLe(datas_kind(d, ty_apply(a, b)), k) {
+    TyNamed(
+      n,
+      args
+    ) => (
+      h: KLe(datas_kind(d, TyNamed(n, args)), k)
+    ) => Eq_subst(
+      (z: Kind) => KLe(z, k),
+      Eq_sym(kind_named_unf(d, n, list_append(args, Cons(b, Nil(Ty))))),
+      apply_named(
+        d,
+        n,
+        args,
+        b,
+        datas_decl(d, n),
+        k,
+        Eq_subst((z: Kind) => KLe(z, k), kind_named_unf(d, n, args), h),
+        hb
+      )
+    )
+    TyParam(n, pk) => (h: KLe(pk, k)) => h
+    _ => (h: KLe(datas_kind(d, a), k)) => kle_copy(k)
+  }(ha)
+}
+
+// ----- text membership -----
+
+fn te_k(o: Ordering) -> Yn {
+  match o -> Yn {
+    Less => no
+    Equal => yes
+    Greater => no
+  }
+}
+
+theorem te_unf(a: Text, b: Text): Eq(Yn, text_eq(a, b), te_k(text_compare(a, b))) {
+  refl()
+}
+
+theorem text_eq_refl(x: Text): Eq(Yn, text_eq(x, x), yes) {
+  Eq_subst((z: Ordering) => Eq(Yn, te_k(z), yes), Eq_sym(ordmap_compare_text_same(x)), refl())
+}
+
+theorem te_sound(
+  a: Text,
+  b: Text,
+  o: Ordering,
+  eo: Eq(Ordering, text_compare(a, b), o),
+  e: Eq(Yn, te_k(o), yes)
+): Eq(Text, a, b) {
+  match o -> (Eq(Ordering, text_compare(a, b), o)) -> (Eq(Yn, te_k(o), yes)) -> Eq(Text, a, b) {
+    Less => (
+      x: Eq(Ordering, text_compare(a, b), Less)
+    ) => (y: Eq(Yn, no, yes)) => False_elim(no_ne_yes(y))
+    Equal => (
+      x: Eq(Ordering, text_compare(a, b), Equal)
+    ) => (y: Eq(Yn, yes, yes)) => ordmap_compare_text_eq(a, b, x)
+    Greater => (
+      x: Eq(Ordering, text_compare(a, b), Greater)
+    ) => (y: Eq(Yn, no, yes)) => False_elim(no_ne_yes(y))
+  }(eo, e)
+}
+
+theorem text_eq_yes(a: Text, b: Text, e: Eq(Yn, text_eq(a, b), yes)): Eq(Text, a, b) {
+  te_sound(a, b, text_compare(a, b), refl(), e)
+}
+
+theorem kyn_or_yes(
+  x: Yn,
+  y: Yn,
+  p: Prop,
+  e: Eq(Yn, yn_or(x, y), yes),
+  f1: (Eq(Yn, x, yes)) -> p,
+  f2: (Eq(Yn, y, yes)) -> p
+): p {
+  match x -> (Eq(Yn, yn_or(x, y), yes)) -> ((Eq(Yn, x, yes)) -> p) -> p {
+    yes => (e2: Eq(Yn, yes, yes)) => (g: (Eq(Yn, yes, yes)) -> p) => g(refl())
+    no => (e2: Eq(Yn, y, yes)) => (g: (Eq(Yn, no, yes)) -> p) => f2(e2)
+  }(e, f1)
+}
+
+theorem yn_or_right(x: Yn, y: Yn, e: Eq(Yn, y, yes)): Eq(Yn, yn_or(x, y), yes) {
+  match x -> Eq(Yn, yn_or(x, y), yes) {
+    yes => refl()
+    no => e
+  }
+}
+
+theorem lht_sound(xs: List(Text), x: Text, e: Eq(Yn, list_has_text(xs, x), yes)): Mem(Text, x, xs) {
+  match xs -> Mem(Text, x, xs) {
+    Nil => False_elim(no_ne_yes(e))
+    Cons(
+      y,
+      rest
+    ) => kyn_or_yes(
+      text_eq(y, x),
+      list_has_text(rest, x),
+      Mem(Text, x, Cons(y, rest)),
+      Eq_subst((z: Yn) => Eq(Yn, z, yes), lht_unf(y, x, rest), e),
+      q => mem_of_eq(x, y, rest, Eq_sym(text_eq_yes(y, x, q))),
+      q => mem_there(Text, x, y, rest, lht_sound(rest, x, q))
+    )
+  }
+}
+
+theorem lht_complete<x: Text, xs: List(
+  Text
+)>(m: Mem(Text, x, xs)): Eq(Yn, list_has_text(xs, x), yes) {
+  match m -> Eq(Yn, list_has_text(xs, x), yes) {
+    mem_here(
+      t
+    ) => Eq_subst(
+      (z: Yn) => Eq(Yn, yn_or(z, list_has_text(t, x)), yes),
+      Eq_sym(text_eq_refl(x)),
+      refl()
+    )
+    mem_there(b, t, m2) => yn_or_right(text_eq(b, x), list_has_text(t, x), lht_complete(m2))
+  }
+}
+
+// ----- the kind of a field, at arguments -----
+
+fn ha_k(holds: List(Text), n: Text, b: Yn) -> List(Text) {
+  match b -> List(Text) {
+    yes => holds
+    no => Cons(n, holds)
+  }
+}
+
+theorem ha_unf(
+  holds: List(Text),
+  n: Text
+): Eq(List(Text), holds_add(holds, n), ha_k(holds, n, list_has_text(holds, n))) {
+  refl()
+}
+
+theorem hak_has(
+  holds: List(Text),
+  n: Text,
+  b: Yn,
+  eb: Eq(Yn, list_has_text(holds, n), b)
+): Mem(Text, n, ha_k(holds, n, b)) {
+  match b -> Mem(Text, n, ha_k(holds, n, b)) {
+    yes => lht_sound(holds, n, eb)
+    no => mem_here(Text, n, holds)
+  }
+}
+
+theorem ha_has(holds: List(Text), n: Text): Mem(Text, n, holds_add(holds, n)) {
+  Eq_subst(
+    (z: List(Text)) => Mem(Text, n, z),
+    Eq_sym(ha_unf(holds, n)),
+    hak_has(holds, n, list_has_text(holds, n), refl())
+  )
+}
+
+theorem hak_keep(
+  holds: List(Text),
+  n: Text,
+  b: Yn,
+  g: Text,
+  m: Mem(Text, g, holds)
+): Mem(Text, g, ha_k(holds, n, b)) {
+  match b -> Mem(Text, g, ha_k(holds, n, b)) {
+    yes => m
+    no => mem_there(Text, g, n, holds, m)
+  }
+}
+
+theorem ha_keep(
+  holds: List(Text),
+  n: Text,
+  g: Text,
+  m: Mem(Text, g, holds)
+): Mem(Text, g, holds_add(holds, n)) {
+  Eq_subst(
+    (z: List(Text)) => Mem(Text, g, z),
+    Eq_sym(ha_unf(holds, n)),
+    hak_keep(holds, n, list_has_text(holds, n), g, m)
+  )
+}
+
+fn fkp_k(n: Text, pk: Kind, holds: List(Text), b: Yn) -> Pair(Kind, List(Text)) {
+  match b -> Pair(Kind, List(Text)) {
+    yes => Pair { fst: KindCopy, snd: holds_add(holds, n) }
+    no => Pair { fst: pk, snd: holds }
+  }
+}
+
+theorem fk_param_unf(
+  d: Datas,
+  n: Text,
+  pk: Kind,
+  gs: List(Text),
+  holds: List(Text)
+): Eq(
+  Pair(Kind, List(Text)),
+  field_kind(d, TyParam(n, pk), gs, holds),
+  fkp_k(n, pk, holds, list_has_text(gs, n))
+) {
+  refl()
+}
+
+fn fkd_k(
+  d: Datas,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  o: Option(Data)
+) -> Pair(Kind, List(Text)) {
+  match o -> Pair(Kind, List(Text)) {
+    None => Pair { fst: KindShared, snd: holds }
+    Some(
+      data
+    ) => field_kind_list(
+      d,
+      args,
+      no,
+      generics_picked(data.generics, data.holds),
+      gs,
+      Pair { fst: data.base, snd: holds }
+    )
+  }
+}
+
+fn fkn_k(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  b: Yn
+) -> Pair(Kind, List(Text)) {
+  match b -> Pair(Kind, List(Text)) {
+    yes => Pair { fst: KindCopy, snd: holds_add(holds, n) }
+    no => fkd_k(d, args, gs, holds, datas_decl(d, n))
+  }
+}
+
+theorem fk_named_unf(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text)
+): Eq(
+  Pair(Kind, List(Text)),
+  field_kind(d, TyNamed(n, args), gs, holds),
+  fkn_k(d, n, args, gs, holds, yn_and(ty_no_args(args), list_has_text(gs, n)))
+) {
+  refl()
+}
+
+fn fkl_pick(
+  d: Datas,
+  t: Ty,
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  p: Yn
+) -> Pair(Kind, List(Text)) {
+  match p -> Pair(Kind, List(Text)) {
+    yes => kind_pair_join(acc, field_kind(d, t, gs, acc.snd))
+    no => acc
+  }
+}
+
+fn fkl_k(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  go: Yn
+) -> Pair(Kind, List(Text)) {
+  match go -> Pair(Kind, List(Text)) {
+    no => acc
+    yes => field_kind_list(
+      d,
+      rest,
+      every,
+      picks_tail(picks),
+      gs,
+      fkl_pick(d, t, gs, acc, picks_head(every, picks))
+    )
+  }
+}
+
+theorem fkl_unf(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text))
+): Eq(
+  Pair(Kind, List(Text)),
+  field_kind_list(d, Cons(t, rest), every, picks, gs, acc),
+  fkl_k(d, t, rest, every, picks, gs, acc, yn_or(every, yn_not(nat_eq(list_len(picks), 0))))
+) {
+  refl()
+}
+
+fn pfst(p: Pair(Kind, List(Text))) -> Kind {
+  p.fst
+}
+
+fn psnd(p: Pair(Kind, List(Text))) -> List(Text) {
+  p.snd
+}
+
+fn dgen(data: Data) -> List(Text) {
+  data.generics
+}
+
+fn dholds(data: Data) -> List(Text) {
+  data.holds
+}
+
+fn dbase(data: Data) -> Kind {
+  data.base
+}
+
+// ----- what a field holds only grows -----
+
+theorem fkp_grow(
+  n: Text,
+  pk: Kind,
+  holds: List(Text),
+  b: Yn,
+  g: Text,
+  m: Mem(Text, g, holds)
+): Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) {
+  match b -> Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) {
+    yes => ha_keep(holds, n, g, m)
+    no => m
+  }
+}
+
+theorem fkd_grow(
+  d: Datas,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  o: Option(Data),
+  g: Text,
+  m: Mem(Text, g, holds),
+  ih: ∀ data: Data. Mem(
+    Text,
+    g,
+    psnd(
+      field_kind_list(
+        d,
+        args,
+        no,
+        generics_picked(dgen(data), dholds(data)),
+        gs,
+        Pair { fst: dbase(data), snd: holds }
+      )
+    )
+  )
+): Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) {
+  match o -> Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) {
+    None => m
+    Some(data) => ih(data)
+  }
+}
+
+theorem fkn_grow(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  b: Yn,
+  g: Text,
+  m: Mem(Text, g, holds),
+  ih: Mem(Text, g, psnd(fkd_k(d, args, gs, holds, datas_decl(d, n))))
+): Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) {
+  match b -> Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) {
+    yes => ha_keep(holds, n, g, m)
+    no => ih
+  }
+}
+
+theorem fklp_grow(
+  d: Datas,
+  t: Ty,
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  p: Yn,
+  g: Text,
+  m: Mem(Text, g, psnd(acc)),
+  iht: Mem(Text, g, psnd(field_kind(d, t, gs, psnd(acc))))
+): Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) {
+  match p -> Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) {
+    yes => iht
+    no => m
+  }
+}
+
+theorem fklk_grow(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  go: Yn,
+  g: Text,
+  m: Mem(Text, g, psnd(acc)),
+  iht: Mem(Text, g, psnd(field_kind(d, t, gs, psnd(acc)))),
+  ihr: ∀ a: Pair(
+    Kind,
+    List(Text)
+  ). (
+    Mem(Text, g, psnd(a))
+  ) -> Mem(Text, g, psnd(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
+): Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
+  match go -> Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
+    no => m
+    yes => ihr(
+      fkl_pick(d, t, gs, acc, picks_head(every, picks)),
+      fklp_grow(d, t, gs, acc, picks_head(every, picks), g, m, iht)
+    )
+  }
+}
+
+mutual {
+  theorem fkl_grow(
+    d: Datas,
+    ts: List(Ty),
+    every: Yn,
+    picks: List(Yn),
+    gs: List(Text),
+    acc: Pair(Kind, List(Text)),
+    g: Text,
+    m: Mem(Text, g, psnd(acc))
+  ): Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) {
+    match ts -> Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) {
+      Nil => m
+      Cons(
+        t,
+        rest
+      ) => Eq_subst(
+        (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
+        Eq_sym(fkl_unf(d, t, rest, every, picks, gs, acc)),
+        fklk_grow(
+          d,
+          t,
+          rest,
+          every,
+          picks,
+          gs,
+          acc,
+          yn_or(every, yn_not(nat_eq(list_len(picks), 0))),
+          g,
+          m,
+          fk_grow(d, t, gs, psnd(acc), g, m),
+          a => ma => fkl_grow(d, rest, every, picks_tail(picks), gs, a, g, ma)
+        )
+      )
+    }
+  }
+
+  // What a field holds only grows.
+  theorem fk_grow(
+    d: Datas,
+    t: Ty,
+    gs: List(Text),
+    holds: List(Text),
+    g: Text,
+    m: Mem(Text, g, holds)
+  ): Mem(Text, g, psnd(field_kind(d, t, gs, holds))) {
+    match t -> Mem(Text, g, psnd(field_kind(d, t, gs, holds))) {
+      TyInt(w) => m
+      TyBool => m
+      TyText => m
+      TyUnit => m
+      TyNever => m
+      TyDecimal => m
+      TyFloat => m
+      TyFn(ps, r, k) => m
+      TyUnion(ts) => fkl_grow(d, ts, yes, Nil(Yn), gs, Pair { fst: KindCopy, snd: holds }, g, m)
+      TyTagged(tags, x) => fk_grow(d, x, gs, holds, g, m)
+      TyNamed(
+        n,
+        args
+      ) => Eq_subst(
+        (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
+        Eq_sym(fk_named_unf(d, n, args, gs, holds)),
+        fkn_grow(
+          d,
+          n,
+          args,
+          gs,
+          holds,
+          yn_and(ty_no_args(args), list_has_text(gs, n)),
+          g,
+          m,
+          fkd_grow(
+            d,
+            args,
+            gs,
+            holds,
+            datas_decl(d, n),
+            g,
+            m,
+            data => fkl_grow(
+              d,
+              args,
+              no,
+              generics_picked(dgen(data), dholds(data)),
+              gs,
+              Pair { fst: dbase(data), snd: holds },
+              g,
+              m
+            )
+          )
+        )
+      )
+      TyParam(
+        n,
+        pk
+      ) => Eq_subst(
+        (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
+        Eq_sym(fk_param_unf(d, n, pk, gs, holds)),
+        fkp_grow(n, pk, holds, list_has_text(gs, n), g, m)
+      )
+      TyInfo(x) => m
+      TyBorrow(x, mu) => fk_grow(d, x, gs, holds, g, m)
+      TyVar(v) => m
+      TyApp(
+        h,
+        x
+      ) => fk_grow(d, x, gs, psnd(field_kind(d, h, gs, holds)), g, fk_grow(d, h, gs, holds, g, m))
+      TyPoly(ps, x) => m
+    }
+  }
+}
+
+theorem fklp_fst(
+  d: Datas,
+  t: Ty,
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  p: Yn
+): KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) {
+  match p -> KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) {
+    yes => kle_join_l(pfst(acc), pfst(field_kind(d, t, gs, psnd(acc))))
+    no => kle_refl(pfst(acc))
+  }
+}
+
+theorem fklk_fst(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  go: Yn,
+  ihr: ∀ a: Pair(
+    Kind,
+    List(Text)
+  ). KLe(pfst(a), pfst(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
+): KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
+  match go -> KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
+    no => kle_refl(pfst(acc))
+    yes => kle_trans(
+      pfst(acc),
+      pfst(fkl_pick(d, t, gs, acc, picks_head(every, picks))),
+      pfst(
+        field_kind_list(
+          d,
+          rest,
+          every,
+          picks_tail(picks),
+          gs,
+          fkl_pick(d, t, gs, acc, picks_head(every, picks))
+        )
+      ),
+      fklp_fst(d, t, gs, acc, picks_head(every, picks)),
+      ihr(fkl_pick(d, t, gs, acc, picks_head(every, picks)))
+    )
+  }
+}
+
+// The kind of a list of fields is at least where it starts.
+theorem fkl_fst(
+  d: Datas,
+  ts: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text))
+): KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) {
+  match ts -> KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) {
+    Nil => kle_refl(pfst(acc))
+    Cons(
+      t,
+      rest
+    ) => Eq_subst(
+      (z: Pair(Kind, List(Text))) => KLe(pfst(acc), pfst(z)),
+      Eq_sym(fkl_unf(d, t, rest, every, picks, gs, acc)),
+      fklk_fst(
+        d,
+        t,
+        rest,
+        every,
+        picks,
+        gs,
+        acc,
+        yn_or(every, yn_not(nat_eq(list_len(picks), 0))),
+        a => fkl_fst(d, rest, every, picks_tail(picks), gs, a)
+      )
+    )
+  }
+}
+
+// ----- the kind of a field at arguments is below what `field_kind` says -----
+
+// `map` gives a type for each generic in `gs`, and only for those.
+def MapKeys(
+  map: Ordmap(Text, Ty),
+  gs: List(Text)
+): Prop := ∀ n: Text. ∀ x: Ty. (
+  Eq(Option(Ty), ordmap_get(map, n, ordmap_compare_text), Some(x))
+) -> Mem(Text, n, gs)
+
+def MapCover(
+  map: Ordmap(Text, Ty),
+  gs: List(Text)
+): Prop := ∀ n: Text. (
+  Mem(Text, n, gs)
+) -> (Eq(Option(Ty), ordmap_get(map, n, ordmap_compare_text), None(Ty))) -> False
+
+// The arguments for the generics in `hs` are below `k`.
+def Env(
+  d: Datas,
+  map: Ordmap(Text, Ty),
+  hs: List(Text),
+  k: Kind
+): Prop := ∀ n: Text. ∀ x: Ty. (
+  Mem(Text, n, hs)
+) -> (Eq(Option(Ty), ordmap_get(map, n, ordmap_compare_text), Some(x))) -> KLe(datas_kind(d, x), k)
+
+theorem env_sub(
+  d: Datas,
+  map: Ordmap(Text, Ty),
+  hs: List(Text),
+  hs2: List(Text),
+  k: Kind,
+  he: Env(d, map, hs2, k),
+  sub: ∀ g: Text. (Mem(Text, g, hs)) -> Mem(Text, g, hs2)
+): Env(d, map, hs, k) {
+  n => x => m => e => he(n, x, sub(n, m), e)
+}
+
+theorem split_l(a: Kind, b: Kind, k: Kind, h: KLe(kind_join(a, b), k)): KLe(a, k) {
+  kle_trans(a, kind_join(a, b), k, kle_join_l(a, b), h)
+}
+
+theorem split_r(a: Kind, b: Kind, k: Kind, h: KLe(kind_join(a, b), k)): KLe(b, k) {
+  kle_trans(b, kind_join(a, b), k, kle_join_r(a, b), h)
+}
+
+fn sn_k(t: Ty, o: Option(Ty)) -> Ty {
+  match o -> Ty {
+    Some(x) => x
+    None => t
+  }
+}
+
+theorem sn_unf(
+  n: Text,
+  map: Ordmap(Text, Ty),
+  t: Ty
+): Eq(Ty, ty_substitute_name(n, map, t), sn_k(t, ordmap_get(map, n, ordmap_compare_text))) {
+  refl()
+}
+
+theorem fk_param_ok(
+  d: Datas,
+  n: Text,
+  pk: Kind,
+  gs: List(Text),
+  holds: List(Text),
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  mk: MapKeys(map, gs),
+  mc: MapCover(map, gs),
+  b: Yn,
+  eb: Eq(Yn, list_has_text(gs, n), b),
+  o: Option(Ty),
+  eo: Eq(Option(Ty), ordmap_get(map, n, ordmap_compare_text), o),
+  hk: KLe(pfst(fkp_k(n, pk, holds, b)), k),
+  he: Env(d, map, psnd(fkp_k(n, pk, holds, b)), k)
+): KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
+  match b -> KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
+    yes => match o -> KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
+      Some(x) => he(n, x, ha_has(holds, n), eo)
+      None => False_elim(mc(n, lht_sound(gs, n, eb), eo))
+    }
+    no => match o -> KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
+      None => hk
+      Some(x) => False_elim(no_ne_yes(Eq_trans(Eq_sym(eb), lht_complete(mk(n, x, eo)))))
+    }
+  }
+}
+
+theorem fk_nil_decl(
+  d: Datas,
+  n: Text,
+  gs: List(Text),
+  holds: List(Text),
+  o: Option(Data),
+  k: Kind,
+  hk: KLe(pfst(fkd_k(d, Nil(Ty), gs, holds, o)), k)
+): KLe(kn_k(d, n, Nil(Ty), o), k) {
+  match o -> KLe(kn_k(d, n, Nil(Ty), o), k) {
+    None => hk
+    Some(data) => hk
+  }
+}
+
+theorem fk_name_ok(
+  d: Datas,
+  n: Text,
+  gs: List(Text),
+  holds: List(Text),
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  mk: MapKeys(map, gs),
+  mc: MapCover(map, gs),
+  c: Yn,
+  ec: Eq(Yn, list_has_text(gs, n), c),
+  o: Option(Ty),
+  eo: Eq(Option(Ty), ordmap_get(map, n, ordmap_compare_text), o),
+  hk: KLe(pfst(fkn_k(d, n, Nil(Ty), gs, holds, c)), k),
+  he: Env(d, map, psnd(fkn_k(d, n, Nil(Ty), gs, holds, c)), k)
+): KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
+  match c -> KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
+    yes => match o -> KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
+      Some(x) => he(n, x, ha_has(holds, n), eo)
+      None => False_elim(mc(n, lht_sound(gs, n, ec), eo))
+    }
+    no => match o -> KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
+      None => Eq_subst(
+        (z: Kind) => KLe(z, k),
+        Eq_sym(kind_named_unf(d, n, Nil(Ty))),
+        fk_nil_decl(d, n, gs, holds, datas_decl(d, n), k, hk)
+      )
+      Some(x) => False_elim(no_ne_yes(Eq_trans(Eq_sym(ec), lht_complete(mk(n, x, eo)))))
+    }
+  }
+}
+
+theorem fk_cons_ok(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  o: Option(Data),
+  hk: KLe(pfst(fkd_k(d, args, gs, holds, o)), k),
+  he: Env(d, map, psnd(fkd_k(d, args, gs, holds, o)), k),
+  ih: ∀ data: Data. (
+    KLe(dbase(data), k)
+  ) -> (
+    KLe(
+      pfst(
+        field_kind_list(
+          d,
+          args,
+          no,
+          generics_picked(dgen(data), dholds(data)),
+          gs,
+          Pair { fst: dbase(data), snd: holds }
+        )
+      ),
+      k
+    )
+  ) -> (
+    Env(
+      d,
+      map,
+      psnd(
+        field_kind_list(
+          d,
+          args,
+          no,
+          generics_picked(dgen(data), dholds(data)),
+          gs,
+          Pair { fst: dbase(data), snd: holds }
+        )
+      ),
+      k
+    )
+  ) -> KLe(
+    datas_kind_list(
+      d,
+      ty_map_list(args, map),
+      no,
+      generics_picked(dgen(data), dholds(data)),
+      dbase(data)
+    ),
+    k
+  )
+): KLe(kn_k(d, n, ty_map_list(args, map), o), k) {
+  match o -> KLe(kn_k(d, n, ty_map_list(args, map), o), k) {
+    None => hk
+    Some(
+      data
+    ) => ih(
+      data,
+      kle_trans(
+        dbase(data),
+        pfst(
+          field_kind_list(
+            d,
+            args,
+            no,
+            generics_picked(dgen(data), dholds(data)),
+            gs,
+            Pair { fst: dbase(data), snd: holds }
+          )
+        ),
+        k,
+        fkl_fst(
+          d,
+          args,
+          no,
+          generics_picked(dgen(data), dholds(data)),
+          gs,
+          Pair { fst: dbase(data), snd: holds }
+        ),
+        hk
+      ),
+      hk,
+      he
+    )
+  }
+}
+
+fn sub_named_k(n: Text, args: List(Ty), map: Ordmap(Text, Ty), b: Yn) -> Ty {
+  match b -> Ty {
+    yes => ty_substitute_name(n, map, TyNamed(n, Nil(Ty)))
+    no => TyNamed(n, ty_map_list(args, map))
+  }
+}
+
+theorem sub_named_unf(
+  n: Text,
+  args: List(Ty),
+  map: Ordmap(Text, Ty)
+): Eq(Ty, ty_substitute(TyNamed(n, args), map), sub_named_k(n, args, map, ty_no_args(args))) {
+  refl()
+}
+
+theorem no_args_nil(args: List(Ty), e: Eq(Yn, ty_no_args(args), yes)): Eq(List(Ty), args, Nil(Ty)) {
+  match args -> Eq(List(Ty), args, Nil(Ty)) {
+    Nil => refl()
+    Cons(a, more) => False_elim(no_ne_yes(e))
+  }
+}
+
+theorem fk_named_ok(
+  d: Datas,
+  n: Text,
+  args: List(Ty),
+  gs: List(Text),
+  holds: List(Text),
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  mk: MapKeys(map, gs),
+  mc: MapCover(map, gs),
+  na: Yn,
+  ena: Eq(Yn, ty_no_args(args), na),
+  hk: KLe(pfst(fkn_k(d, n, args, gs, holds, yn_and(na, list_has_text(gs, n)))), k),
+  he: Env(d, map, psnd(fkn_k(d, n, args, gs, holds, yn_and(na, list_has_text(gs, n)))), k),
+  ih: ∀ data: Data. (
+    KLe(dbase(data), k)
+  ) -> (
+    KLe(
+      pfst(
+        field_kind_list(
+          d,
+          args,
+          no,
+          generics_picked(dgen(data), dholds(data)),
+          gs,
+          Pair { fst: dbase(data), snd: holds }
+        )
+      ),
+      k
+    )
+  ) -> (
+    Env(
+      d,
+      map,
+      psnd(
+        field_kind_list(
+          d,
+          args,
+          no,
+          generics_picked(dgen(data), dholds(data)),
+          gs,
+          Pair { fst: dbase(data), snd: holds }
+        )
+      ),
+      k
+    )
+  ) -> KLe(
+    datas_kind_list(
+      d,
+      ty_map_list(args, map),
+      no,
+      generics_picked(dgen(data), dholds(data)),
+      dbase(data)
+    ),
+    k
+  )
+): KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) {
+  match na -> KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) {
+    yes => Eq_subst(
+      (z: Ty) => KLe(datas_kind(d, z), k),
+      Eq_sym(sn_unf(n, map, TyNamed(n, Nil(Ty)))),
+      fk_name_ok(
+        d,
+        n,
+        gs,
+        holds,
+        map,
+        k,
+        mk,
+        mc,
+        list_has_text(gs, n),
+        refl(),
+        ordmap_get(map, n, ordmap_compare_text),
+        refl(),
+        Eq_subst(
+          (z: List(Ty)) => KLe(pfst(fkn_k(d, n, z, gs, holds, list_has_text(gs, n))), k),
+          no_args_nil(args, ena),
+          hk
+        ),
+        Eq_subst(
+          (z: List(Ty)) => Env(d, map, psnd(fkn_k(d, n, z, gs, holds, list_has_text(gs, n))), k),
+          no_args_nil(args, ena),
+          he
+        )
+      )
+    )
+    no => Eq_subst(
+      (z: Kind) => KLe(z, k),
+      Eq_sym(kind_named_unf(d, n, ty_map_list(args, map))),
+      fk_cons_ok(d, n, args, gs, holds, map, k, datas_decl(d, n), hk, he, ih)
+    )
+  }
+}
+
+theorem fklp_ok(
+  d: Datas,
+  t: Ty,
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  kacc: Kind,
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  p: Yn,
+  sigt: Ty,
+  hacc: KLe(kacc, k),
+  iht: (
+    KLe(pfst(field_kind(d, t, gs, psnd(acc))), k)
+  ) -> (Env(d, map, psnd(field_kind(d, t, gs, psnd(acc))), k)) -> KLe(datas_kind(d, sigt), k),
+  hk: KLe(pfst(fkl_pick(d, t, gs, acc, p)), k),
+  he: Env(d, map, psnd(fkl_pick(d, t, gs, acc, p)), k)
+): KLe(dkl_pick(d, sigt, kacc, p), k) {
+  match p -> KLe(dkl_pick(d, sigt, kacc, p), k) {
+    yes => kle_lub(
+      kacc,
+      datas_kind(d, sigt),
+      k,
+      hacc,
+      iht(split_r(pfst(acc), pfst(field_kind(d, t, gs, psnd(acc))), k, hk), he)
+    )
+    no => hacc
+  }
+}
+
+theorem fklk_ok(
+  d: Datas,
+  t: Ty,
+  rest: List(Ty),
+  every: Yn,
+  picks: List(Yn),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  kacc: Kind,
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  go: Yn,
+  sigt: Ty,
+  sigrest: List(Ty),
+  hacc: KLe(kacc, k),
+  iht: (
+    KLe(pfst(field_kind(d, t, gs, psnd(acc))), k)
+  ) -> (Env(d, map, psnd(field_kind(d, t, gs, psnd(acc))), k)) -> KLe(datas_kind(d, sigt), k),
+  ihr: ∀ a: Pair(
+    Kind,
+    List(Text)
+  ). ∀ ka: Kind. (
+    KLe(ka, k)
+  ) -> (
+    KLe(pfst(field_kind_list(d, rest, every, picks_tail(picks), gs, a)), k)
+  ) -> (
+    Env(d, map, psnd(field_kind_list(d, rest, every, picks_tail(picks), gs, a)), k)
+  ) -> KLe(datas_kind_list(d, sigrest, every, picks_tail(picks), ka), k),
+  hk: KLe(pfst(fkl_k(d, t, rest, every, picks, gs, acc, go)), k),
+  he: Env(d, map, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), k)
+): KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) {
+  match go -> KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) {
+    no => hacc
+    yes => ihr(
+      fkl_pick(d, t, gs, acc, picks_head(every, picks)),
+      dkl_pick(d, sigt, kacc, picks_head(every, picks)),
+      fklp_ok(
+        d,
+        t,
+        gs,
+        acc,
+        kacc,
+        map,
+        k,
+        picks_head(every, picks),
+        sigt,
+        hacc,
+        iht,
+        kle_trans(
+          pfst(fkl_pick(d, t, gs, acc, picks_head(every, picks))),
+          pfst(
+            field_kind_list(
+              d,
+              rest,
+              every,
+              picks_tail(picks),
+              gs,
+              fkl_pick(d, t, gs, acc, picks_head(every, picks))
+            )
+          ),
+          k,
+          fkl_fst(
+            d,
+            rest,
+            every,
+            picks_tail(picks),
+            gs,
+            fkl_pick(d, t, gs, acc, picks_head(every, picks))
+          ),
+          hk
+        ),
+        env_sub(
+          d,
+          map,
+          psnd(fkl_pick(d, t, gs, acc, picks_head(every, picks))),
+          psnd(
+            field_kind_list(
+              d,
+              rest,
+              every,
+              picks_tail(picks),
+              gs,
+              fkl_pick(d, t, gs, acc, picks_head(every, picks))
+            )
+          ),
+          k,
+          he,
+          g => mg => fkl_grow(
+            d,
+            rest,
+            every,
+            picks_tail(picks),
+            gs,
+            fkl_pick(d, t, gs, acc, picks_head(every, picks)),
+            g,
+            mg
+          )
+        )
+      ),
+      hk,
+      he
+    )
+  }
+}
+
+mutual {
+  theorem fkl_sound(
+    d: Datas,
+    ts: List(Ty),
+    every: Yn,
+    picks: List(Yn),
+    gs: List(Text),
+    acc: Pair(Kind, List(Text)),
+    kacc: Kind,
+    map: Ordmap(Text, Ty),
+    k: Kind,
+    mk: MapKeys(map, gs),
+    mc: MapCover(map, gs),
+    hacc: KLe(kacc, k),
+    hk: KLe(pfst(field_kind_list(d, ts, every, picks, gs, acc)), k),
+    he: Env(d, map, psnd(field_kind_list(d, ts, every, picks, gs, acc)), k)
+  ): KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) {
+    match ts -> KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) {
+      Nil => hacc
+      Cons(
+        t,
+        rest
+      ) => Eq_subst(
+        (z: Kind) => KLe(z, k),
+        Eq_sym(dkl_unf(d, ty_substitute(t, map), ty_map_list(rest, map), every, picks, kacc)),
+        fklk_ok(
+          d,
+          t,
+          rest,
+          every,
+          picks,
+          gs,
+          acc,
+          kacc,
+          map,
+          k,
+          yn_or(every, yn_not(nat_eq(list_len(picks), 0))),
+          ty_substitute(t, map),
+          ty_map_list(rest, map),
+          hacc,
+          h1 => h2 => fk_sound(d, t, gs, psnd(acc), map, k, mk, mc, h1, h2),
+          a => ka => h1 => h2 => h3 => fkl_sound(
+            d,
+            rest,
+            every,
+            picks_tail(picks),
+            gs,
+            a,
+            ka,
+            map,
+            k,
+            mk,
+            mc,
+            h1,
+            h2,
+            h3
+          ),
+          Eq_subst(
+            (z: Pair(Kind, List(Text))) => KLe(pfst(z), k),
+            fkl_unf(d, t, rest, every, picks, gs, acc),
+            hk
+          ),
+          Eq_subst(
+            (z: Pair(Kind, List(Text))) => Env(d, map, psnd(z), k),
+            fkl_unf(d, t, rest, every, picks, gs, acc),
+            he
+          )
+        )
+      )
+    }
+  }
+
+  // The kind of `t` at the arguments `map` gives is below `k` when what
+  // `field_kind` says of `t` is: its kind and each argument it holds.
+  theorem fk_sound(
+    d: Datas,
+    t: Ty,
+    gs: List(Text),
+    holds: List(Text),
+    map: Ordmap(Text, Ty),
+    k: Kind,
+    mk: MapKeys(map, gs),
+    mc: MapCover(map, gs),
+    hk: KLe(pfst(field_kind(d, t, gs, holds)), k),
+    he: Env(d, map, psnd(field_kind(d, t, gs, holds)), k)
+  ): KLe(datas_kind(d, ty_substitute(t, map)), k) {
+    match t -> KLe(datas_kind(d, ty_substitute(t, map)), k) {
+      TyInt(w) => hk
+      TyBool => hk
+      TyText => hk
+      TyUnit => hk
+      TyNever => hk
+      TyDecimal => hk
+      TyFloat => hk
+      TyFn(ps, r, fk) => hk
+      TyUnion(
+        ts
+      ) => union_le(
+        d,
+        ty_map_list(ts, map),
+        k,
+        fkl_sound(
+          d,
+          ts,
+          yes,
+          Nil(Yn),
+          gs,
+          Pair { fst: KindCopy, snd: holds },
+          KindCopy,
+          map,
+          k,
+          mk,
+          mc,
+          kle_copy(k),
+          hk,
+          he
+        )
+      )
+      TyTagged(
+        tags,
+        x
+      ) => Eq_subst(
+        (z: Kind) => KLe(z, k),
+        Eq_sym(kind_tagged(d, tags, ty_substitute(x, map))),
+        fk_sound(d, x, gs, holds, map, k, mk, mc, hk, he)
+      )
+      TyNamed(
+        n,
+        args
+      ) => Eq_subst(
+        (z: Ty) => KLe(datas_kind(d, z), k),
+        Eq_sym(sub_named_unf(n, args, map)),
+        fk_named_ok(
+          d,
+          n,
+          args,
+          gs,
+          holds,
+          map,
+          k,
+          mk,
+          mc,
+          ty_no_args(args),
+          refl(),
+          Eq_subst(
+            (z: Pair(Kind, List(Text))) => KLe(pfst(z), k),
+            fk_named_unf(d, n, args, gs, holds),
+            hk
+          ),
+          Eq_subst(
+            (z: Pair(Kind, List(Text))) => Env(d, map, psnd(z), k),
+            fk_named_unf(d, n, args, gs, holds),
+            he
+          ),
+          data => hb => h2 => h3 => fkl_sound(
+            d,
+            args,
+            no,
+            generics_picked(dgen(data), dholds(data)),
+            gs,
+            Pair { fst: dbase(data), snd: holds },
+            dbase(data),
+            map,
+            k,
+            mk,
+            mc,
+            hb,
+            h2,
+            h3
+          )
+        )
+      )
+      TyParam(
+        n,
+        pk
+      ) => Eq_subst(
+        (z: Ty) => KLe(datas_kind(d, z), k),
+        Eq_sym(sn_unf(n, map, TyParam(n, pk))),
+        fk_param_ok(
+          d,
+          n,
+          pk,
+          gs,
+          holds,
+          map,
+          k,
+          mk,
+          mc,
+          list_has_text(gs, n),
+          refl(),
+          ordmap_get(map, n, ordmap_compare_text),
+          refl(),
+          Eq_subst(
+            (z: Pair(Kind, List(Text))) => KLe(pfst(z), k),
+            fk_param_unf(d, n, pk, gs, holds),
+            hk
+          ),
+          Eq_subst(
+            (z: Pair(Kind, List(Text))) => Env(d, map, psnd(z), k),
+            fk_param_unf(d, n, pk, gs, holds),
+            he
+          )
+        )
+      )
+      TyInfo(x) => hk
+      TyBorrow(x, mu) => fk_sound(d, x, gs, holds, map, k, mk, mc, hk, he)
+      TyVar(v) => hk
+      TyApp(
+        h,
+        x
+      ) => apply_le(
+        d,
+        ty_substitute(h, map),
+        ty_substitute(x, map),
+        k,
+        fk_sound(
+          d,
+          h,
+          gs,
+          holds,
+          map,
+          k,
+          mk,
+          mc,
+          split_l(
+            pfst(field_kind(d, h, gs, holds)),
+            pfst(field_kind(d, x, gs, psnd(field_kind(d, h, gs, holds)))),
+            k,
+            hk
+          ),
+          env_sub(
+            d,
+            map,
+            psnd(field_kind(d, h, gs, holds)),
+            psnd(field_kind(d, x, gs, psnd(field_kind(d, h, gs, holds)))),
+            k,
+            he,
+            g => mg => fk_grow(d, x, gs, psnd(field_kind(d, h, gs, holds)), g, mg)
+          )
+        ),
+        fk_sound(
+          d,
+          x,
+          gs,
+          psnd(field_kind(d, h, gs, holds)),
+          map,
+          k,
+          mk,
+          mc,
+          split_r(
+            pfst(field_kind(d, h, gs, holds)),
+            pfst(field_kind(d, x, gs, psnd(field_kind(d, h, gs, holds)))),
+            k,
+            hk
+          ),
+          he
+        )
+      )
+      TyPoly(ps, x) => hk
+    }
+  }
+}
+
+// ----- the fields of a declaration -----
+
+fn fty(f: DataField) -> Ty {
+  f.ty
+}
+
+fn cfields(c: DataCtor) -> List(DataField) {
+  c.fields
+}
+
+fn dctors(data: Data) -> List(DataCtor) {
+  data.constructors
+}
+
+theorem fields_fst(
+  d: Datas,
+  fs: List(DataField),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text))
+): KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) {
+  match fs -> KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) {
+    Nil => kle_refl(pfst(acc))
+    Cons(
+      f,
+      rest
+    ) => kle_trans(
+      pfst(acc),
+      pfst(kind_pair_join(acc, field_kind(d, fty(f), gs, psnd(acc)))),
+      pfst(fields_kind(d, rest, gs, kind_pair_join(acc, field_kind(d, fty(f), gs, psnd(acc))))),
+      kle_join_l(pfst(acc), pfst(field_kind(d, fty(f), gs, psnd(acc)))),
+      fields_fst(d, rest, gs, kind_pair_join(acc, field_kind(d, fty(f), gs, psnd(acc))))
+    )
+  }
+}
+
+theorem fields_grow(
+  d: Datas,
+  fs: List(DataField),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  g: Text,
+  m: Mem(Text, g, psnd(acc))
+): Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) {
+  match fs -> Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) {
+    Nil => m
+    Cons(
+      f,
+      rest
+    ) => fields_grow(
+      d,
+      rest,
+      gs,
+      kind_pair_join(acc, field_kind(d, fty(f), gs, psnd(acc))),
+      g,
+      fk_grow(d, fty(f), gs, psnd(acc), g, m)
+    )
+  }
+}
+
+theorem ctors_fst(
+  d: Datas,
+  cs: List(DataCtor),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text))
+): KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) {
+  match cs -> KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) {
+    Nil => kle_refl(pfst(acc))
+    Cons(
+      c,
+      rest
+    ) => kle_trans(
+      pfst(acc),
+      pfst(fields_kind(d, cfields(c), gs, acc)),
+      pfst(ctors_kind(d, rest, gs, fields_kind(d, cfields(c), gs, acc))),
+      fields_fst(d, cfields(c), gs, acc),
+      ctors_fst(d, rest, gs, fields_kind(d, cfields(c), gs, acc))
+    )
+  }
+}
+
+theorem ctors_grow(
+  d: Datas,
+  cs: List(DataCtor),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  g: Text,
+  m: Mem(Text, g, psnd(acc))
+): Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) {
+  match cs -> Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) {
+    Nil => m
+    Cons(
+      c,
+      rest
+    ) => ctors_grow(
+      d,
+      rest,
+      gs,
+      fields_kind(d, cfields(c), gs, acc),
+      g,
+      fields_grow(d, cfields(c), gs, acc, g, m)
+    )
+  }
+}
+
+// Each field of `fs` at the arguments is below `k` when what `fields_kind`
+// says is.
+theorem fields_ok(
+  d: Datas,
+  fs: List(DataField),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  mk: MapKeys(map, gs),
+  mc: MapCover(map, gs),
+  hk: KLe(pfst(fields_kind(d, fs, gs, acc)), k),
+  he: Env(d, map, psnd(fields_kind(d, fs, gs, acc)), k),
+  f: DataField,
+  mf: Mem(DataField, f, fs)
+): KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
+  match fs -> KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
+    Nil => Mem_nil(KLe(datas_kind(d, ty_substitute(fty(f), map)), k), mf)
+    Cons(
+      f0,
+      rest
+    ) => or_elim(
+      mem_cons_inv(f0, rest, mf),
+      q => Eq_subst(
+        (z: DataField) => KLe(datas_kind(d, ty_substitute(fty(z), map)), k),
+        Eq_sym(q),
+        fk_sound(
+          d,
+          fty(f0),
+          gs,
+          psnd(acc),
+          map,
+          k,
+          mk,
+          mc,
+          split_r(
+            pfst(acc),
+            pfst(field_kind(d, fty(f0), gs, psnd(acc))),
+            k,
+            kle_trans(
+              pfst(kind_pair_join(acc, field_kind(d, fty(f0), gs, psnd(acc)))),
+              pfst(
+                fields_kind(d, rest, gs, kind_pair_join(acc, field_kind(d, fty(f0), gs, psnd(acc))))
+              ),
+              k,
+              fields_fst(d, rest, gs, kind_pair_join(acc, field_kind(d, fty(f0), gs, psnd(acc)))),
+              hk
+            )
+          ),
+          env_sub(
+            d,
+            map,
+            psnd(field_kind(d, fty(f0), gs, psnd(acc))),
+            psnd(
+              fields_kind(d, rest, gs, kind_pair_join(acc, field_kind(d, fty(f0), gs, psnd(acc))))
+            ),
+            k,
+            he,
+            g => mg => fields_grow(
+              d,
+              rest,
+              gs,
+              kind_pair_join(acc, field_kind(d, fty(f0), gs, psnd(acc))),
+              g,
+              mg
+            )
+          )
+        )
+      ),
+      r => fields_ok(
+        d,
+        rest,
+        gs,
+        kind_pair_join(acc, field_kind(d, fty(f0), gs, psnd(acc))),
+        map,
+        k,
+        mk,
+        mc,
+        hk,
+        he,
+        f,
+        r
+      )
+    )
+  }
+}
+
+theorem ctors_ok(
+  d: Datas,
+  cs: List(DataCtor),
+  gs: List(Text),
+  acc: Pair(Kind, List(Text)),
+  map: Ordmap(Text, Ty),
+  k: Kind,
+  mk: MapKeys(map, gs),
+  mc: MapCover(map, gs),
+  hk: KLe(pfst(ctors_kind(d, cs, gs, acc)), k),
+  he: Env(d, map, psnd(ctors_kind(d, cs, gs, acc)), k),
+  c: DataCtor,
+  mcs: Mem(DataCtor, c, cs),
+  f: DataField,
+  mf: Mem(DataField, f, cfields(c))
+): KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
+  match cs -> KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
+    Nil => Mem_nil(KLe(datas_kind(d, ty_substitute(fty(f), map)), k), mcs)
+    Cons(
+      c0,
+      rest
+    ) => or_elim(
+      mem_cons_inv(c0, rest, mcs),
+      q => fields_ok(
+        d,
+        cfields(c0),
+        gs,
+        acc,
+        map,
+        k,
+        mk,
+        mc,
+        kle_trans(
+          pfst(fields_kind(d, cfields(c0), gs, acc)),
+          pfst(ctors_kind(d, rest, gs, fields_kind(d, cfields(c0), gs, acc))),
+          k,
+          ctors_fst(d, rest, gs, fields_kind(d, cfields(c0), gs, acc)),
+          hk
+        ),
+        env_sub(
+          d,
+          map,
+          psnd(fields_kind(d, cfields(c0), gs, acc)),
+          psnd(ctors_kind(d, rest, gs, fields_kind(d, cfields(c0), gs, acc))),
+          k,
+          he,
+          g => mg => ctors_grow(d, rest, gs, fields_kind(d, cfields(c0), gs, acc), g, mg)
+        ),
+        f,
+        Eq_subst((z: DataCtor) => Mem(DataField, f, cfields(z)), q, mf)
+      ),
+      r => ctors_ok(
+        d,
+        rest,
+        gs,
+        fields_kind(d, cfields(c0), gs, acc),
+        map,
+        k,
+        mk,
+        mc,
+        hk,
+        he,
+        c,
+        r,
+        f,
+        mf
+      )
+    )
+  }
+}
+
+// ----- the arguments of an instance -----
+
+fn opt_is_some(o: Option(Ty)) -> Yn {
+  match o -> Yn {
+    Some(x) => yes
+    None => no
+  }
+}
+
+theorem some_inj(x: Ty, y: Ty, e: Eq(Option(Ty), Some(x), Some(y))): Eq(Ty, x, y) {
+  Eq_congr((z: Option(Ty)) => sn_k(x, z), e)
+}
+
+theorem none_ne_some(x: Ty, e: Eq(Option(Ty), None(Ty), Some(x))): False {
+  no_ne_yes(Eq_congr(opt_is_some, e))
+}
+
+// Looking up `n` after inserting `g`: what was inserted, at `g`, or what was
+// there before.
+theorem get_insert_k(
+  m: Ordmap(Text, Ty),
+  g: Text,
+  a: Ty,
+  n: Text,
+  om: ordmap_ordered(m, ordmap_compare_text),
+  o: Ordering,
+  eo: Eq(Ordering, ordmap_compare_text(n, g), o)
+): Or(
+  And(
+    Eq(Text, n, g),
+    Eq(
+      Option(Ty),
+      ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), n, ordmap_compare_text),
+      Some(a)
+    )
+  ),
+  Eq(
+    Option(Ty),
+    ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), n, ordmap_compare_text),
+    ordmap_get(m, n, ordmap_compare_text)
+  )
+) {
+  match o -> (
+    Eq(Ordering, ordmap_compare_text(n, g), o)
+  ) -> Or(
+    And(
+      Eq(Text, n, g),
+      Eq(
+        Option(Ty),
+        ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), n, ordmap_compare_text),
+        Some(a)
+      )
+    ),
+    Eq(
+      Option(Ty),
+      ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), n, ordmap_compare_text),
+      ordmap_get(m, n, ordmap_compare_text)
+    )
+  ) {
+    Equal => (
+      e: Eq(Ordering, ordmap_compare_text(n, g), Equal)
+    ) => or_inl(
+      and_intro(
+        ordmap_compare_text_eq(n, g, e),
+        Eq_subst(
+          (
+            z: Text
+          ) => Eq(
+            Option(Ty),
+            ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), z, ordmap_compare_text),
+            Some(a)
+          ),
+          Eq_sym(ordmap_compare_text_eq(n, g, e)),
+          ordmap_text_get_insert_same(m, g, a, om)
+        )
+      )
+    )
+    Less => (
+      e: Eq(Ordering, ordmap_compare_text(n, g), Less)
+    ) => or_inr(
+      ordmap_get_insert_other(
+        ordmap_compare_text,
+        ordmap_compare_text_law(),
+        m,
+        g,
+        a,
+        n,
+        Less,
+        (q: Eq(Ordering, Less, Equal)) => less_ne_equal(q),
+        e,
+        om
+      )
+    )
+    Greater => (
+      e: Eq(Ordering, ordmap_compare_text(n, g), Greater)
+    ) => or_inr(
+      ordmap_get_insert_other(
+        ordmap_compare_text,
+        ordmap_compare_text_law(),
+        m,
+        g,
+        a,
+        n,
+        Greater,
+        (q: Eq(Ordering, Greater, Equal)) => greater_ne_equal(q),
+        e,
+        om
+      )
+    )
+  }(eo)
+}
+
+theorem get_insert(
+  m: Ordmap(Text, Ty),
+  g: Text,
+  a: Ty,
+  n: Text,
+  om: ordmap_ordered(m, ordmap_compare_text)
+): Or(
+  And(
+    Eq(Text, n, g),
+    Eq(
+      Option(Ty),
+      ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), n, ordmap_compare_text),
+      Some(a)
+    )
+  ),
+  Eq(
+    Option(Ty),
+    ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), n, ordmap_compare_text),
+    ordmap_get(m, n, ordmap_compare_text)
+  )
+) {
+  get_insert_k(m, g, a, n, om, ordmap_compare_text(n, g), refl())
+}
+
+// The keys of an instance are generics.
+theorem inst_keys(
+  gs: List(Text),
+  args: List(Ty),
+  m: Ordmap(Text, Ty),
+  all: List(Text),
+  om: ordmap_ordered(m, ordmap_compare_text),
+  hm: MapKeys(m, all),
+  sub: ∀ g: Text. (Mem(Text, g, gs)) -> Mem(Text, g, all)
+): MapKeys(data_instance_from(gs, args, m), all) {
+  match gs -> MapKeys(data_instance_from(gs, args, m), all) {
+    Nil => hm
+    Cons(g, rest) => match args -> MapKeys(data_instance_from(Cons(g, rest), args, m), all) {
+      Nil => hm
+      Cons(
+        a,
+        more
+      ) => inst_keys(
+        rest,
+        more,
+        ordmap_insert(m, g, a, ordmap_compare_text),
+        all,
+        ordmap_insert_ordered(ordmap_compare_text, ordmap_compare_text_law(), m, g, a, om),
+        n => x => e => or_elim(
+          get_insert(m, g, a, n, om),
+          q => Eq_subst(
+            (z: Text) => Mem(Text, z, all),
+            Eq_sym(and_left(q)),
+            sub(g, mem_here(Text, g, rest))
+          ),
+          q => hm(n, x, Eq_trans(Eq_sym(q), e))
+        ),
+        h => mh => sub(h, mem_there(Text, h, g, rest, mh))
+      )
+    }
+  }
+}
+
+// Every generic has an argument.
+fn args_cover(gs: List(Text), args: List(Ty)) -> Yn {
+  match gs -> Yn {
+    Nil => yes
+    Cons(g, rest) => match args -> Yn {
+      Nil => no
+      Cons(a, more) => args_cover(rest, more)
+    }
+  }
+}
+
+def CoverOr(
+  map: Ordmap(Text, Ty),
+  gs: List(Text),
+  cov: List(Text)
+): Prop := ∀ n: Text. (
+  Or(Mem(Text, n, gs), Mem(Text, n, cov))
+) -> (Eq(Option(Ty), ordmap_get(map, n, ordmap_compare_text), None(Ty))) -> False
+
+theorem inst_cover_at(
+  gs: List(Text),
+  args: List(Ty),
+  m: Ordmap(Text, Ty),
+  cov: List(Text),
+  om: ordmap_ordered(m, ordmap_compare_text),
+  hm: MapCover(m, cov),
+  ha: Eq(Yn, args_cover(gs, args), yes),
+  n: Text,
+  o: Or(Mem(Text, n, gs), Mem(Text, n, cov)),
+  e: Eq(Option(Ty), ordmap_get(data_instance_from(gs, args, m), n, ordmap_compare_text), None(Ty))
+): False {
+  match gs -> False {
+    Nil => or_elim(o, mn => Mem_nil(False, mn), mn => hm(n, mn, e))
+    Cons(g, rest) => match args -> False {
+      Nil => no_ne_yes(ha)
+      Cons(
+        a,
+        more
+      ) => inst_cover_at(
+        rest,
+        more,
+        ordmap_insert(m, g, a, ordmap_compare_text),
+        Cons(g, cov),
+        ordmap_insert_ordered(ordmap_compare_text, ordmap_compare_text_law(), m, g, a, om),
+        n2 => mn => e2 => or_elim(
+          get_insert(m, g, a, n2, om),
+          q => none_ne_some(a, Eq_trans(Eq_sym(e2), and_right(q))),
+          q => or_elim(
+            mem_cons_inv(g, cov, mn),
+            q2 => none_ne_some(
+              a,
+              Eq_trans(
+                Eq_sym(e2),
+                Eq_subst(
+                  (
+                    z: Text
+                  ) => Eq(
+                    Option(Ty),
+                    ordmap_get(ordmap_insert(m, g, a, ordmap_compare_text), z, ordmap_compare_text),
+                    Some(a)
+                  ),
+                  Eq_sym(q2),
+                  ordmap_text_get_insert_same(m, g, a, om)
+                )
+              )
+            ),
+            q2 => hm(n2, q2, Eq_trans(Eq_sym(q), e2))
+          )
+        ),
+        ha,
+        n,
+        or_elim(
+          o,
+          mn => or_elim(
+            mem_cons_inv(g, rest, mn),
+            q => or_inr(mem_of_eq(n, g, cov, q)),
+            q => or_inl(q)
+          ),
+          mn => or_inr(mem_there(Text, n, g, cov, mn))
+        ),
+        e
+      )
+    }
+  }
+}
+
+// The argument an instance gives a held generic is below the kind of the
+// instance.
+theorem inst_env_at(
+  d: Datas,
+  gs: List(Text),
+  args: List(Ty),
+  m: Ordmap(Text, Ty),
+  hs: List(Text),
+  acc: Kind,
+  om: ordmap_ordered(m, ordmap_compare_text),
+  hm: ∀ n: Text. ∀ x: Ty. (
+    Mem(Text, n, hs)
+  ) -> (
+    Eq(Option(Ty), ordmap_get(m, n, ordmap_compare_text), Some(x))
+  ) -> KLe(datas_kind(d, x), datas_kind_list(d, args, no, generics_picked(gs, hs), acc)),
+  n: Text,
+  x: Ty,
+  mn: Mem(Text, n, hs),
+  e: Eq(Option(Ty), ordmap_get(data_instance_from(gs, args, m), n, ordmap_compare_text), Some(x))
+): KLe(datas_kind(d, x), datas_kind_list(d, args, no, generics_picked(gs, hs), acc)) {
+  match gs -> KLe(datas_kind(d, x), datas_kind_list(d, args, no, generics_picked(gs, hs), acc)) {
+    Nil => hm(n, x, mn, e)
+    Cons(
+      g,
+      rest
+    ) => match args -> KLe(
+      datas_kind(d, x),
+      datas_kind_list(d, args, no, generics_picked(Cons(g, rest), hs), acc)
+    ) {
+      Nil => hm(n, x, mn, e)
+      Cons(
+        a,
+        more
+      ) => inst_env_at(
+        d,
+        rest,
+        more,
+        ordmap_insert(m, g, a, ordmap_compare_text),
+        hs,
+        dkl_pick(d, a, acc, list_has_text(hs, g)),
+        ordmap_insert_ordered(ordmap_compare_text, ordmap_compare_text_law(), m, g, a, om),
+        n2 => x2 => mn2 => e2 => or_elim(
+          get_insert(m, g, a, n2, om),
+          q => Eq_subst(
+            (
+              z: Ty
+            ) => KLe(
+              datas_kind(d, z),
+              datas_kind_list(
+                d,
+                more,
+                no,
+                generics_picked(rest, hs),
+                dkl_pick(d, a, acc, list_has_text(hs, g))
+              )
+            ),
+            Eq_sym(some_inj(x2, a, Eq_trans(Eq_sym(e2), and_right(q)))),
+            Eq_subst(
+              (
+                z: Yn
+              ) => KLe(
+                datas_kind(d, a),
+                datas_kind_list(d, more, no, generics_picked(rest, hs), dkl_pick(d, a, acc, z))
+              ),
+              Eq_sym(lht_complete(Eq_subst((z: Text) => Mem(Text, z, hs), and_left(q), mn2))),
+              kle_trans(
+                datas_kind(d, a),
+                kind_join(acc, datas_kind(d, a)),
+                datas_kind_list(
+                  d,
+                  more,
+                  no,
+                  generics_picked(rest, hs),
+                  kind_join(acc, datas_kind(d, a))
+                ),
+                kle_join_r(acc, datas_kind(d, a)),
+                dkl_ge_acc(d, more, no, generics_picked(rest, hs), kind_join(acc, datas_kind(d, a)))
+              )
+            )
+          ),
+          q => hm(n2, x2, mn2, Eq_trans(Eq_sym(q), e2))
+        ),
+        n,
+        x,
+        mn,
+        e
+      )
+    }
+  }
+}
+
+// ----- the kind of a declared type -----
+
+fn drec(data: Data) -> Yn {
+  data.recursive
+}
+
+def HoldsOk(
+  d: Datas,
+  data: Data
+): Prop := ∀ g: Text. (
+  Mem(
+    Text,
+    g,
+    psnd(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) }))
+  )
+) -> Mem(Text, g, dholds(data))
+
+def RecOk(data: Data): Prop := (Eq(Yn, drec(data), yes)) -> KLe(KindShared, dbase(data))
+
+def UnmentionedOk(
+  data: Data
+): Prop := ∀ g: Text. (
+  Mem(Text, g, dgen(data))
+) -> (Eq(Yn, data_mentions(data, g), no)) -> Mem(Text, g, dholds(data))
+
+// The summary of `data` is a solution: its fields add nothing, and it starts
+// from the least summary.
+def DataOk(
+  d: Datas,
+  data: Data
+): Prop := And(
+  KLe(
+    pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+    dbase(data)
+  ),
+  And(
+    HoldsOk(d, data),
+    And(KLe(data_declared_kind(data), dbase(data)), And(RecOk(data), UnmentionedOk(data)))
+  )
+)
+
+def SummaryOk(
+  d: Datas
+): Prop := ∀ n: Text. ∀ data: Data. (
+  Eq(Option(Data), datas_decl(d, n), Some(data))
+) -> DataOk(d, data)
+
+fn inst_bound(d: Datas, data: Data, args: List(Ty)) -> Kind {
+  datas_kind_list(d, args, no, generics_picked(dgen(data), dholds(data)), dbase(data))
+}
+
+theorem kind_inst_eq(
+  d: Datas,
+  n: Text,
+  data: Data,
+  args: List(Ty),
+  ed: Eq(Option(Data), datas_decl(d, n), Some(data))
+): Eq(Kind, datas_kind(d, TyNamed(n, args)), inst_bound(d, data, args)) {
+  Eq_trans(kind_named_unf(d, n, args), Eq_congr((o: Option(Data)) => kn_k(d, n, args, o), ed))
+}
+
+theorem empty_keys(all: List(Text)): MapKeys(ordmap_empty(), all) {
+  n => x => e => False_elim(none_ne_some(x, e))
+}
+
+theorem inst_map_keys(data: Data, args: List(Ty)): MapKeys(data_instance(data, args), dgen(data)) {
+  inst_keys(
+    dgen(data),
+    args,
+    ordmap_empty(),
+    dgen(data),
+    ordmap_empty_ordered(ordmap_compare_text),
+    empty_keys(dgen(data)),
+    g => m => m
+  )
+}
+
+theorem inst_map_cover(
+  data: Data,
+  args: List(Ty),
+  ha: Eq(Yn, args_cover(dgen(data), args), yes)
+): MapCover(data_instance(data, args), dgen(data)) {
+  n => mn => e => inst_cover_at(
+    dgen(data),
+    args,
+    ordmap_empty(),
+    Nil(Text),
+    ordmap_empty_ordered(ordmap_compare_text),
+    n2 => m2 => e2 => Mem_nil(False, m2),
+    ha,
+    n,
+    or_inl(mn),
+    e
+  )
+}
+
+theorem inst_map_env(
+  d: Datas,
+  data: Data,
+  args: List(Ty)
+): Env(d, data_instance(data, args), dholds(data), inst_bound(d, data, args)) {
+  n => x => mn => e => inst_env_at(
+    d,
+    dgen(data),
+    args,
+    ordmap_empty(),
+    dholds(data),
+    dbase(data),
+    ordmap_empty_ordered(ordmap_compare_text),
+    n2 => x2 => mn2 => e2 => False_elim(none_ne_some(x2, e2)),
+    n,
+    x,
+    mn,
+    e
+  )
+}
+
+// Each field of `D` at `args` is below the kind of `D(args)`.
+theorem kind_field_le(
+  d: Datas,
+  ok: SummaryOk(d),
+  n: Text,
+  data: Data,
+  args: List(Ty),
+  ed: Eq(Option(Data), datas_decl(d, n), Some(data)),
+  ha: Eq(Yn, args_cover(dgen(data), args), yes),
+  c: DataCtor,
+  mcs: Mem(DataCtor, c, dctors(data)),
+  f: DataField,
+  mf: Mem(DataField, f, cfields(c))
+): KLe(
+  datas_kind(d, ty_substitute(fty(f), data_instance(data, args))),
+  datas_kind(d, TyNamed(n, args))
+) {
+  Eq_subst(
+    (z: Kind) => KLe(datas_kind(d, ty_substitute(fty(f), data_instance(data, args))), z),
+    Eq_sym(kind_inst_eq(d, n, data, args, ed)),
+    ctors_ok(
+      d,
+      dctors(data),
+      dgen(data),
+      Pair { fst: dbase(data), snd: dholds(data) },
+      data_instance(data, args),
+      inst_bound(d, data, args),
+      inst_map_keys(data, args),
+      inst_map_cover(data, args, ha),
+      kle_trans(
+        pfst(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+        dbase(data),
+        inst_bound(d, data, args),
+        and_left(ok(n, data, ed)),
+        dkl_ge_acc(d, args, no, generics_picked(dgen(data), dholds(data)), dbase(data))
+      ),
+      env_sub(
+        d,
+        data_instance(data, args),
+        psnd(ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })),
+        dholds(data),
+        inst_bound(d, data, args),
+        inst_map_env(d, data, args),
+        and_left(and_right(ok(n, data, ed)))
+      ),
+      c,
+      mcs,
+      f,
+      mf
+    )
+  )
+}
+
+// The declared kind is below the kind of `D(args)`.
+theorem kind_declared_le(
+  d: Datas,
+  ok: SummaryOk(d),
+  n: Text,
+  data: Data,
+  args: List(Ty),
+  ed: Eq(Option(Data), datas_decl(d, n), Some(data))
+): KLe(data_declared_kind(data), datas_kind(d, TyNamed(n, args))) {
+  Eq_subst(
+    (z: Kind) => KLe(data_declared_kind(data), z),
+    Eq_sym(kind_inst_eq(d, n, data, args, ed)),
+    kle_trans(
+      data_declared_kind(data),
+      dbase(data),
+      inst_bound(d, data, args),
+      and_left(and_right(and_right(ok(n, data, ed)))),
+      dkl_ge_acc(d, args, no, generics_picked(dgen(data), dholds(data)), dbase(data))
+    )
+  )
+}
+
+// A recursive type is at least shared.
+theorem kind_recursive_le(
+  d: Datas,
+  ok: SummaryOk(d),
+  n: Text,
+  data: Data,
+  args: List(Ty),
+  ed: Eq(Option(Data), datas_decl(d, n), Some(data)),
+  er: Eq(Yn, drec(data), yes)
+): KLe(KindShared, datas_kind(d, TyNamed(n, args))) {
+  Eq_subst(
+    (z: Kind) => KLe(KindShared, z),
+    Eq_sym(kind_inst_eq(d, n, data, args, ed)),
+    kle_trans(
+      KindShared,
+      dbase(data),
+      inst_bound(d, data, args),
+      and_left(and_right(and_right(and_right(ok(n, data, ed)))))(er),
+      dkl_ge_acc(d, args, no, generics_picked(dgen(data), dholds(data)), dbase(data))
+    )
+  )
+}
+
+// The argument for a generic no field mentions is below the kind of
+// `D(args)`: `Vec(A)` holds its `A`s.
+theorem kind_unmentioned_le(
+  d: Datas,
+  ok: SummaryOk(d),
+  n: Text,
+  data: Data,
+  args: List(Ty),
+  ed: Eq(Option(Data), datas_decl(d, n), Some(data)),
+  g: Text,
+  mg: Mem(Text, g, dgen(data)),
+  un: Eq(Yn, data_mentions(data, g), no),
+  x: Ty,
+  e: Eq(Option(Ty), ordmap_get(data_instance(data, args), g, ordmap_compare_text), Some(x))
+): KLe(datas_kind(d, x), datas_kind(d, TyNamed(n, args))) {
+  Eq_subst(
+    (z: Kind) => KLe(datas_kind(d, x), z),
+    Eq_sym(kind_inst_eq(d, n, data, args, ed)),
+    inst_map_env(
+      d,
+      data,
+      args
+    )(g, x, and_right(and_right(and_right(and_right(ok(n, data, ed)))))(g, mg, un), e)
+  )
+}

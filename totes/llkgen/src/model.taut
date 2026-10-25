@@ -1,0 +1,822 @@
+// The model of a grammar: the terminals in the order they are
+// written, the non-terminals sorted, the productions with their numbers.
+
+// A symbol of a production.
+enum MSym {
+  MN(u64)
+  MT(u64, Bool)
+}
+
+struct MProd { lhs: u64, attr: u64, rhs: List(MSym) }
+
+struct MModel {
+  title: Option(Text)
+  // Names of all the terminals, the five built in first and `Error` last.
+  terminal_names: List(Text)
+  // The terminals written in the grammar (the number of the first is 5).
+  terms: List(PTerm)
+  nts: List(Text)
+  nt_kinds: List(u64)
+  start: u64
+  prods: List(MProd)
+  scanners: List(PScanner)
+  // For each scanner, the terminals it skips.
+  skips: List(List(u64))
+  // For each scanner, what it does on a terminal, sorted by the terminal.
+  ttrans: List(List(MTrans))
+}
+
+// On the terminal `tok`: `kind` 0 enter, 1 push or 2 pop the scanner `target`.
+struct MTrans { tok: u64, kind: u64, target: u64 }
+
+// ---------------------------------------------------------------- lists
+
+fn md_rev_text(xs: List(Text)) -> List(Text) {
+  text_list_reverse(xs)
+}
+
+fn md_len_text(xs: List(Text)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + md_len_text(rest)
+  }
+}
+
+// Inserts `n` into a sorted list of names, once.
+fn md_insert(names: List(Text), n: Text) -> List(Text) ! {Div} {
+  match names {
+    Nil => Cons(n, Nil)
+    Cons(x, rest) => {
+      let c = text_compare(n, x)
+      if c == 0 {
+        names
+      } else if c < 0 {
+        Cons(n, names)
+      } else {
+        Cons(x, md_insert(rest, n))
+      }
+    }
+  }
+}
+
+fn md_index_text(names: List(Text), n: Text, at: u64) -> u64 {
+  match names {
+    Nil => par_die(text_concat_all(Cons("a name is not in the grammar: ", Cons(n, Nil))))
+    Cons(x, rest) => if x == n { at } else { md_index_text(rest, n, at + 1) }
+  }
+}
+
+// ---------------------------------------------------------------- terminals
+
+// Whether two terminals are the same one: the same text, read the same way
+// (`"…"` and `/…/` alike), and the same lookahead.
+fn md_same_term(a: PTerm, b: PTerm) -> Bool {
+  a.text == b.text && ((a.kind == 2) == (b.kind == 2)) && md_same_la(a.la, b.la)
+}
+
+fn md_same_la(a: Option(PLa), b: Option(PLa)) -> Bool {
+  match a {
+    None => match b {
+      None => true
+      Some(y) => false
+    }
+    Some(x) => match b {
+      None => false
+      Some(y) => x.positive == y.positive && x.text == y.text && x.kind == y.kind
+    }
+  }
+}
+
+fn md_term_index(terms: List(PTerm), t: PTerm, at: u64) -> Option(u64) {
+  match terms {
+    Nil => None
+    Cons(x, rest) => if md_same_term(x, t) { Some(at) } else { md_term_index(rest, t, at + 1) }
+  }
+}
+
+fn md_rev_terms(xs: List(PTerm)) -> List(PTerm) {
+  var out: List(PTerm) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The terminals of the productions in the order they are written, each once,
+// with the scanners it is read in united.
+fn md_terms_of(prods: List(PProd)) -> List(PTerm) {
+  var out: List(PTerm) = Nil
+  var rest = prods
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        match p.alts {
+          Nil => ()
+          Cons(alt, others) => {
+            var fs = alt.factors
+            var walking = true
+            while walking {
+              match fs {
+                Nil => {
+                  walking := false
+                }
+                Cons(f, fmore) => {
+                  match f {
+                    PTermF(t) => {
+                      out := md_add_term(out, t)
+                    }
+                    PNt(n) => ()
+                    PGroup(x) => ()
+                    PRepeat(x) => ()
+                    POptional(x) => ()
+                  }
+                  fs := fmore
+                }
+              }
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// `out` is in order. A terminal that is there has its scanners united.
+fn md_add_term(out: List(PTerm), t: PTerm) -> List(PTerm) {
+  match out {
+    Nil => Cons(t, Nil)
+    Cons(x, rest) => if md_same_term(x, t) {
+      Cons(
+        PTerm { text: x.text, kind: x.kind, states: lg_union(
+          x.states,
+          lg_sort(t.states)
+        ), clipped: x.clipped, la: x.la },
+        rest
+      )
+    } else {
+      Cons(x, md_add_term(rest, t))
+    }
+  }
+}
+
+// ---------------------------------------------------------------- names
+
+fn md_is_alnum(b: u64) -> Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+}
+
+fn md_upper(b: u64) -> u64 {
+  if b >= 97 && b <= 122 { b - 32 } else { b }
+}
+
+fn md_byte_text(b: u64) -> Text {
+  text_slice_or_empty(
+    "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\u{9}\u{a}\u{b}\u{c}\u{d}\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f} !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u{7f}",
+    b,
+    b + 1
+  )
+}
+
+// A name in upper camel case: each `_` is taken out and the character after
+// it made upper case, but a `_` stays between two digits and before a
+// leading digit.
+fn md_camel(name: Text) -> Text {
+  var b = buf_new()
+  var up = true
+  var last: u64 = 46
+  var at: u64 = 0
+  while at < text_len(name) {
+    let c = text_byte_value(name, at)
+    if c == 95 {
+      up := true
+    } else if up {
+      if cn_digit(last) && cn_digit(c) {
+        buf_push(&mut b, &"_")
+      }
+      last := md_upper(c)
+      buf_push(&mut b, &md_byte_text(last))
+      up := false
+    } else {
+      last := c
+      buf_push(&mut b, &md_byte_text(c))
+    }
+    at := at + 1
+  }
+  let r = text_of(b)
+  if cn_digit(text_byte_value(r, 0)) { text_concat_all(Cons("_", Cons(r, Nil))) } else { r }
+}
+
+fn md_symbol_name(c: u64) -> Text {
+  if c == 92 {
+    ""
+  } else if c == 124 {
+    "Or"
+  } else if c == 40 {
+    "LParen"
+  } else if c == 41 {
+    "RParen"
+  } else if c == 91 {
+    "LBracket"
+  } else if c == 93 {
+    "RBracket"
+  } else if c == 123 {
+    "LBrace"
+  } else if c == 125 {
+    "RBrace"
+  } else if c == 43 {
+    "Plus"
+  } else if c == 45 {
+    "Minus"
+  } else if c == 42 {
+    "Star"
+  } else if c == 47 {
+    "Slash"
+  } else if c == 61 {
+    "Equ"
+  } else if c == 33 {
+    "Bang"
+  } else if c == 46 {
+    "Dot"
+  } else if c == 126 {
+    "Tilde"
+  } else if c == 36 {
+    "Dollar"
+  } else if c == 37 {
+    "Percent"
+  } else if c == 60 {
+    "LT"
+  } else if c == 62 {
+    "GT"
+  } else if c == 63 {
+    "Quest"
+  } else if c == 64 {
+    "At"
+  } else if c == 58 {
+    "Colon"
+  } else if c == 59 {
+    "Semicolon"
+  } else if c == 94 {
+    "Circumflex"
+  } else if c == 95 {
+    "Underscore"
+  } else if c == 38 {
+    "Amp"
+  } else if c == 39 {
+    "Tick"
+  } else if c == 34 {
+    "Quote"
+  } else if c == 96 {
+    "Backtick"
+  } else if c == 44 {
+    "Comma"
+  } else if c == 35 {
+    "Hash"
+  } else {
+    "_"
+  }
+}
+
+// The name of a terminal made of its characters.
+fn md_name_of_chars(s: Text) -> Text {
+  var b = buf_new()
+  var cap = true
+  var at: u64 = 0
+  while at < text_len(s) {
+    let c = text_byte_value(s, at)
+    if md_is_alnum(c) {
+      if cap {
+        buf_push(&mut b, &md_byte_text(md_upper(c)))
+      } else {
+        buf_push(&mut b, &md_byte_text(c))
+      }
+      cap := false
+    } else {
+      buf_push(&mut b, &md_symbol_name(c))
+      cap := true
+    }
+    at := at + 1
+  }
+  let name = text_of(b)
+  if text_len(name) == 0 && text_len(s) > 0 {
+    "Esc"
+  } else if cn_digit(text_byte_value(name, 0)) {
+    text_concat_all(Cons("_", Cons(name, Nil)))
+  } else {
+    name
+  }
+}
+
+fn md_is_meta(c: u64) -> Bool {
+  c == 92 || c == 46 || c == 43 || c == 42 || c == 63 || c == 40 || c == 41 || c == 124 || c == 91 || c == 93 || c == 123 || c == 125 || c == 94 || c == 36 || c == 35 || c == 38 || c == 45 || c == 126
+}
+
+// Whether `t` has `\u{hex}` at `at`, and where it ends.
+fn md_unicode_escape_end(t: Text, at: u64) -> Option(u64) {
+  if text_byte_value(
+    t,
+    at
+  ) == 92 && text_byte_value(t, at + 1) == 117 && text_byte_value(t, at + 2) == 123 {
+    var i = at + 3
+    while md_is_hex(text_byte_value(t, i)) && i < text_len(t) {
+      i := i + 1
+    }
+    if i > at + 3 && text_byte_value(t, i) == 125 && i < text_len(t) { Some(i + 1) } else { None }
+  } else {
+    None
+  }
+}
+
+fn md_is_hex(b: u64) -> Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 70) || (b >= 97 && b <= 102)
+}
+
+// The text of a terminal as a regular expression: a text written with `'…'` has its meta characters escaped.
+fn md_expand(t: PTerm) -> Text {
+  if t.kind != 2 {
+    t.text
+  } else {
+    var b = buf_new()
+    var at: u64 = 0
+    while at < text_len(t.text) {
+      match md_unicode_escape_end(t.text, at) {
+        Some(end) => {
+          buf_push(&mut b, &text_slice_or_empty(t.text, at, end))
+          at := end
+        }
+        None => {
+          match text_decode(t.text, at) {
+            Some(d) => {
+              if d.fst < 128 && md_is_meta(d.fst) {
+                buf_push(&mut b, &"\\")
+              }
+              buf_push(&mut b, &text_slice_or_empty(t.text, at, at + d.snd))
+              at := at + d.snd
+            }
+            None => {
+              at := at + 1
+            }
+          }
+        }
+      }
+    }
+    text_of(b)
+  }
+}
+
+fn md_count_prods(prods: List(PProd), lhs: Text) -> u64 {
+  match prods {
+    Nil => 0
+    Cons(p, rest) => (if p.lhs == lhs { 1 } else { 0 }) + md_count_prods(rest, lhs)
+  }
+}
+
+// The non-terminal that is only this terminal.
+fn md_primary(
+  prods: List(PProd),
+  all: List(PProd),
+  expanded: Text,
+  la: Option(PLa)
+) -> Option(Text) {
+  match prods {
+    Nil => None
+    Cons(p, rest) => {
+      let hit = match p.alts {
+        Nil => false
+        Cons(alt, others) => match alt.factors {
+          Nil => false
+          Cons(f, fmore) => match fmore {
+            Nil => match f {
+              PTermF(
+                t
+              ) => md_expand(
+                t
+              ) == expanded && md_count_prods(all, p.lhs) == 1 && md_same_la(la, t.la)
+              PNt(n) => false
+              PGroup(x) => false
+              PRepeat(x) => false
+              POptional(x) => false
+            }
+            Cons(g, gmore) => false
+          }
+        }
+      }
+      if hit { Some(p.lhs) } else { md_primary(rest, all, expanded, la) }
+    }
+  }
+}
+
+// The names of the terminals: the five built in, the ones of the grammar and `Error`.
+fn md_terminal_names(prods: List(PProd), terms: List(PTerm)) -> List(Text) {
+  var acc: List(
+    Text
+  ) = Cons(
+    "BlockComment",
+    Cons("LineComment", Cons("Whitespace", Cons("Newline", Cons("EndOfInput", Nil))))
+  )
+  var rest = terms
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(t, more) => {
+        let expanded = md_expand(t)
+        let preferred = match md_primary(prods, prods, expanded, t.la) {
+          Some(nt) => md_camel(nt)
+          None => md_name_of_chars(expanded)
+        }
+        acc := Cons(cn_name(acc, preferred), acc)
+        rest := more
+      }
+    }
+  }
+  text_list_reverse(Cons(cn_name(acc, "Error"), acc))
+}
+
+// ---------------------------------------------------------------- building
+
+// Whether a name is written as a factor anywhere (inside groups too).
+fn md_uses(prods: List(PProd), n: Text) -> Bool {
+  match prods {
+    Nil => false
+    Cons(p, rest) => md_uses_alts(p.alts, n) || md_uses(rest, n)
+  }
+}
+
+fn md_uses_alts(alts: List(PAlt), n: Text) -> Bool {
+  match alts {
+    Nil => false
+    Cons(a, rest) => md_uses_factors(a.factors, n) || md_uses_alts(rest, n)
+  }
+}
+
+fn md_uses_factors(fs: List(PFactor), n: Text) -> Bool {
+  match fs {
+    Nil => false
+    Cons(f, rest) => (match f {
+      PNt(x) => x == n
+      PTermF(x) => false
+      PGroup(a) => md_uses_alts(a, n)
+      PRepeat(a) => md_uses_alts(a, n)
+      POptional(a) => md_uses_alts(a, n)
+    }) || md_uses_factors(rest, n)
+  }
+}
+
+fn md_defines(prods: List(PProd), n: Text) -> Bool {
+  match prods {
+    Nil => false
+    Cons(p, rest) => p.lhs == n || md_defines(rest, n)
+  }
+}
+
+fn md_append_prod(prods: List(PProd), p: PProd) -> List(PProd) {
+  match prods {
+    Nil => Cons(p, Nil)
+    Cons(x, rest) => Cons(x, md_append_prod(rest, p))
+  }
+}
+
+// `TautoExpr` is the terminal a grammar uses without writing it: the token
+// `${` of an expression in the text, or
+// `$n` of a name alone. The scanner takes `${` on to its closing `}`.
+fn md_with_tauto_expr(prods: List(PProd)) -> List(PProd) {
+  if md_uses(prods, "TautoExpr") && !md_defines(prods, "TautoExpr") {
+    md_append_prod(
+      prods,
+      PProd { lhs: "TautoExpr", alts: Cons(
+        PAlt { factors: Cons(
+          PTermF(
+            PTerm { text: "\\$(\\{|[A-Za-z_][A-Za-z0-9_]*)", kind: 1, states: Cons(
+              0,
+              Nil
+            ), clipped: false, la: None }
+          ),
+          Nil
+        ), attr: 0 },
+        Nil
+      ) }
+    )
+  } else {
+    prods
+  }
+}
+
+fn md_nt_names(prods: List(PProd), start: Text) -> List(Text) {
+  var out: List(Text) = md_insert(Nil, start)
+  var rest = prods
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        out := md_insert(out, p.lhs)
+        match p.alts {
+          Nil => ()
+          Cons(alt, others) => {
+            var fs = alt.factors
+            var walking = true
+            while walking {
+              match fs {
+                Nil => {
+                  walking := false
+                }
+                Cons(f, fmore) => {
+                  match f {
+                    PNt(n) => {
+                      out := md_insert(out, n)
+                    }
+                    PTermF(x) => ()
+                    PGroup(x) => ()
+                    PRepeat(x) => ()
+                    POptional(x) => ()
+                  }
+                  fs := fmore
+                }
+              }
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn md_symbols(fs: List(PFactor), nts: List(Text), terms: List(PTerm)) -> List(MSym) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(match f {
+      PNt(n) => MN(md_index_text(nts, n, 0))
+      PTermF(t) => MT(5 + (match md_term_index(terms, t, 0) {
+        Some(i) => i
+        None => par_die("a terminal is lost")
+      }), t.clipped)
+      PGroup(x) => par_die("a group is left")
+      PRepeat(x) => par_die("a repetition is left")
+      POptional(x) => par_die("an optional is left")
+    }, md_symbols(rest, nts, terms))
+  }
+}
+
+fn md_prods(prods: List(PProd), nts: List(Text), terms: List(PTerm)) -> List(MProd) {
+  match prods {
+    Nil => Nil
+    Cons(p, rest) => {
+      let alt = cn_nth_alt(p.alts, 0)
+      Cons(
+        MProd { lhs: md_index_text(
+          nts,
+          p.lhs,
+          0
+        ), attr: alt.attr, rhs: md_symbols(alt.factors, nts, terms) },
+        md_prods(rest, nts, terms)
+      )
+    }
+  }
+}
+
+// The terminal a non-terminal of one production is: `Name: 'x';`.
+fn md_terminal_of(prods: List(PProd), name: Text) -> Option(PTerm) {
+  match prods {
+    Nil => None
+    Cons(p, rest) => if p.lhs == name {
+      match p.alts {
+        Nil => md_terminal_of(rest, name)
+        Cons(alt, others) => match alt.factors {
+          Cons(f, fmore) => match fmore {
+            Nil => match f {
+              PTermF(t) => Some(t)
+              PNt(n) => md_terminal_of(rest, name)
+              PGroup(x) => md_terminal_of(rest, name)
+              PRepeat(x) => md_terminal_of(rest, name)
+              POptional(x) => md_terminal_of(rest, name)
+            }
+            Cons(g, gmore) => md_terminal_of(rest, name)
+          }
+          Nil => md_terminal_of(rest, name)
+        }
+      }
+    } else {
+      md_terminal_of(rest, name)
+    }
+  }
+}
+
+fn md_skips_of(names: List(Text), prods: List(PProd), terms: List(PTerm)) -> List(u64) {
+  var out: List(u64) = Nil
+  var rest = names
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(n, more) => {
+        match md_terminal_of(prods, n) {
+          Some(t) => match md_term_index(terms, t, 0) {
+            Some(i) => {
+              out := Cons(5 + i, out)
+            }
+            None => par_die("a skipped terminal is lost")
+          }
+          None => par_die(text_concat_all(Cons("a skipped name is no terminal: ", Cons(n, Nil))))
+        }
+        rest := more
+      }
+    }
+  }
+  lg_sort(out)
+}
+
+fn md_skips(scanners: List(PScanner), prods: List(PProd), terms: List(PTerm)) -> List(List(u64)) {
+  match scanners {
+    Nil => Nil
+    Cons(s, rest) => Cons(md_skips_of(s.skip, prods, terms), md_skips(rest, prods, terms))
+  }
+}
+
+// Whether the final productions of a non-terminal are one of a single
+// terminal (or `TautoExpr`).
+fn md_is_token(prods: List(PProd), lhs: Text) -> Bool {
+  if md_count_prods(prods, lhs) != 1 {
+    false
+  } else {
+    match md_prod_named(prods, lhs) {
+      None => false
+      Some(p) => match cn_nth_alt(p.alts, 0).factors {
+        Nil => false
+        Cons(f, fmore) => match fmore {
+          Cons(g, gmore) => false
+          Nil => match f {
+            PTermF(t) => !t.clipped
+            PNt(n) => n == "TautoExpr"
+            PGroup(x) => false
+            PRepeat(x) => false
+            POptional(x) => false
+          }
+        }
+      }
+    }
+  }
+}
+
+fn md_prod_named(prods: List(PProd), lhs: Text) -> Option(PProd) {
+  match prods {
+    Nil => None
+    Cons(p, rest) => if p.lhs == lhs { Some(p) } else { md_prod_named(rest, lhs) }
+  }
+}
+
+// Whether some production of the non-terminal has one of the attributes.
+fn md_has_attr(prods: List(PProd), lhs: Text, a: u64, b: u64) -> Bool {
+  match prods {
+    Nil => false
+    Cons(
+      p,
+      rest
+    ) => (
+      p.lhs == lhs && (cn_nth_alt(p.alts, 0).attr == a || cn_nth_alt(p.alts, 0).attr == b)
+    ) || md_has_attr(rest, lhs, a, b)
+  }
+}
+
+fn md_kinds(nts: List(Text), final: List(PProd), declared: List(PProd)) -> List(u64) {
+  match nts {
+    Nil => Nil
+    Cons(n, rest) => Cons(if md_defines(declared, n) {
+      if md_is_token(final, n) { 1 } else { 0 }
+    } else if md_has_attr(final, n, 1, 2) {
+      2
+    } else if md_has_attr(final, n, 3, 4) {
+      3
+    } else {
+      4
+    }, md_kinds(rest, final, declared))
+  }
+}
+
+fn md_insert_trans(xs: List(MTrans), t: MTrans) -> List(MTrans) {
+  match xs {
+    Nil => Cons(t, Nil)
+    Cons(x, rest) => if t.tok < x.tok { Cons(t, xs) } else { Cons(x, md_insert_trans(rest, t)) }
+  }
+}
+
+fn md_trans_of(
+  sc: PScanner,
+  names: List(Text),
+  prods: List(PProd),
+  terms: List(PTerm)
+) -> List(MTrans) {
+  var out: List(MTrans) = Nil
+  var rest = sc.transitions
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(t, more) => {
+        let tok = match md_terminal_of(prods, t.terminal) {
+          Some(term) => match md_term_index(terms, term, 0) {
+            Some(i) => 5 + i
+            None => par_die("a terminal of a transition is lost")
+          }
+          None => par_die(
+            text_concat_all(Cons("a transition on no terminal: ", Cons(t.terminal, Nil)))
+          )
+        }
+        let target = if t.action == 2 {
+          0
+        } else {
+          match par_index_of(names, t.target, 0) {
+            Some(i) => i
+            None => par_die(text_concat_all(Cons("no scanner is named ", Cons(t.target, Nil))))
+          }
+        }
+        out := md_insert_trans_last(out, MTrans { tok: tok, kind: t.action, target: target })
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// After the ones with the same terminal (the sort of the scanner is stable).
+fn md_insert_trans_last(xs: List(MTrans), t: MTrans) -> List(MTrans) {
+  match xs {
+    Nil => Cons(t, Nil)
+    Cons(x, rest) => if t.tok < x.tok { Cons(t, xs) } else { Cons(x, md_insert_trans_last(rest, t)) }
+  }
+}
+
+fn md_scanner_names(scanners: List(PScanner)) -> List(Text) {
+  match scanners {
+    Nil => Nil
+    Cons(s, rest) => Cons(s.name, md_scanner_names(rest))
+  }
+}
+
+fn md_ttrans(
+  scanners: List(PScanner),
+  prods: List(PProd),
+  terms: List(PTerm)
+) -> List(List(MTrans)) {
+  let names = md_scanner_names(scanners)
+  md_ttrans_each(scanners, names, prods, terms)
+}
+
+fn md_ttrans_each(
+  scanners: List(PScanner),
+  names: List(Text),
+  prods: List(PProd),
+  terms: List(PTerm)
+) -> List(List(MTrans)) {
+  match scanners {
+    Nil => Nil
+    Cons(
+      s,
+      rest
+    ) => Cons(md_trans_of(s, names, prods, terms), md_ttrans_each(rest, names, prods, terms))
+  }
+}
+
+fn md_build(g: PGrammar) -> MModel {
+  let written = md_with_tauto_expr(g.prods)
+  let final = cn_transform(written)
+  let terms = md_terms_of(final)
+  let nts = md_nt_names(final, g.start)
+  MModel {
+    title: g.title
+    terminal_names: md_terminal_names(final, terms)
+    terms: terms
+    nts: nts
+    nt_kinds: md_kinds(nts, final, written)
+    start: md_index_text(nts, g.start, 0)
+    prods: md_prods(final, nts, terms)
+    scanners: g.scanners
+    skips: md_skips(g.scanners, final, terms)
+    ttrans: md_ttrans(g.scanners, final, terms)
+  }
+}

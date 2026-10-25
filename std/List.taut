@@ -137,13 +137,16 @@ fn list_zip<A, B>(l: List(A), m: List(B)) -> List(Pair(A, B)) {
     Nil => Nil
     Cons(a, t) => match m -> List(Pair(A, B)) {
       Nil => Nil
-      Cons(b, u) => Cons(pair(a, b), list_zip(t, u))
+      Cons(b, u) => Cons(Pair { fst: a, snd: b }, list_zip(t, u))
     }
   }
 }
 
 fn list_unzip<A, B>(l: List(Pair(A, B))) -> Pair(List(A), List(B)) {
-  pair(list_map((p: Pair(A, B)) => pair_fst(p), l), list_map((p: Pair(A, B)) => pair_snd(p), l))
+  Pair { fst: list_map(
+    (p: Pair(A, B)) => pair_fst(p),
+    l
+  ), snd: list_map((p: Pair(A, B)) => pair_snd(p), l) }
 }
 
 // ---- lemmas -----------------------------------------------------------------

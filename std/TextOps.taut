@@ -45,16 +45,16 @@ fn bytes_split_step(
   pr: Pair(List(Nat), List(List(Nat)))
 ) -> Pair(List(Nat), List(List(Nat))) {
   match pr -> Pair(List(Nat), List(List(Nat))) {
-    pair(cur, rest) => match nat_eq(h, sep) -> Pair(List(Nat), List(List(Nat))) {
-      yes => pair(Nil, Cons(cur, rest))
-      no => pair(Cons(h, cur), rest)
+    Pair { fst: cur, snd: rest } => match nat_eq(h, sep) -> Pair(List(Nat), List(List(Nat))) {
+      yes => Pair { fst: Nil, snd: Cons(cur, rest) }
+      no => Pair { fst: Cons(h, cur), snd: rest }
     }
   }
 }
 
 fn bytes_split(bs: List(Nat), sep: Nat) -> Pair(List(Nat), List(List(Nat))) {
   match bs -> Pair(List(Nat), List(List(Nat))) {
-    Nil => pair(Nil, Nil)
+    Nil => Pair { fst: Nil, snd: Nil }
     Cons(h, t) => bytes_split_step(h, sep, bytes_split(t, sep))
   }
 }
@@ -69,7 +69,7 @@ fn bytes_join_rest(sep: List(Nat), rest: List(List(Nat))) -> List(Nat) {
 
 fn bytes_unsplit(sep: List(Nat), pr: Pair(List(Nat), List(List(Nat)))) -> List(Nat) {
   match pr -> List(Nat) {
-    pair(cur, rest) => list_append(cur, bytes_join_rest(sep, rest))
+    Pair { fst: cur, snd: rest } => list_append(cur, bytes_join_rest(sep, rest))
   }
 }
 
@@ -113,7 +113,7 @@ fn text_of_bytes_list(parts: List(List(Nat))) -> List(Text) {
 
 fn text_of_split(pr: Pair(List(Nat), List(List(Nat)))) -> List(Text) {
   match pr -> List(Text) {
-    pair(cur, rest) => Cons(text(cur), text_of_bytes_list(rest))
+    Pair { fst: cur, snd: rest } => Cons(text(cur), text_of_bytes_list(rest))
   }
 }
 
@@ -297,14 +297,14 @@ theorem bytes_unsplit_step(
     bytes_unsplit(Cons(sep, Nil), bytes_split_step(h, sep, pr)),
     Cons(h, bytes_unsplit(Cons(sep, Nil), pr))
   ) {
-    pair(cur, rest) => yn_cases(
+    Pair { fst: cur, snd: rest } => yn_cases(
       (y: Yn) => Eq(
         List(Nat),
         bytes_unsplit(
           Cons(sep, Nil),
           match y -> Pair(List(Nat), List(List(Nat))) {
-            yes => pair(Nil, Cons(cur, rest))
-            no => pair(Cons(h, cur), rest)
+            yes => Pair { fst: Nil, snd: Cons(cur, rest) }
+            no => Pair { fst: Cons(h, cur), snd: rest }
           }
         ),
         Cons(h, list_append(cur, bytes_join_rest(Cons(sep, Nil), rest)))
@@ -358,10 +358,7 @@ theorem text_join_pair(
     text_join(text(Cons(sep, Nil)), text_of_split(pr)),
     text(bytes_unsplit(Cons(sep, Nil), pr))
   ) {
-    pair(
-      cur,
-      rest
-    ) => Eq_congr(
+    Pair { fst: cur, snd: rest } => Eq_congr(
       (z: List(List(Nat))) => text(list_append(cur, bytes_join_rest(Cons(sep, Nil), z))),
       text_bytes_of_parts(rest)
     )

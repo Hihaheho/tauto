@@ -1,0 +1,5105 @@
+import "../../syntax/src/syntax.taut"
+import "../../unicode/src/unicode.taut"
+
+// The surface syntax of Tauto read from the tree of `totes/syntax`, in the
+// proof language (`docs/design/self-host.md`): a port of `crates/tauto/src/surface.rs`
+// and `surface/program.rs`. `README.md` says what each
+// part does.
+
+// ---- the surface syntax ------------------------------------------------------------
+//
+// One tree for types and expressions, and the statements and declarations
+// around them. A span is two byte positions, the end excluded.
+
+mutual {
+  inductive SurfaceTerm(): Type {
+    surface_term_mk(kind: SurfaceKind, start: Nat, end: Nat): SurfaceTerm
+  }
+  inductive SurfaceKind(): Type {
+    SkVar(name: Text): SurfaceKind
+    SkNat(digits: Text): SurfaceKind
+    SkText(value: Text): SurfaceKind
+    SkBool(value: Yn): SurfaceKind
+    SkApp(head: SurfaceTerm, args: List(SurfaceTerm)): SurfaceKind
+    SkPi(params: List(SurfaceParam), result: SurfaceTerm, effects: Option(List(Text))): SurfaceKind
+    SkExists(binder: Text, domain: SurfaceTerm, body: SurfaceTerm): SurfaceKind
+    SkLam(params: List(Text), body: SurfaceTerm): SurfaceKind
+    SkUnion(parts: List(SurfaceTerm)): SurfaceKind
+    SkTagged(tag: Text, value: SurfaceTerm): SurfaceKind
+    SkIf(cond: SurfaceTerm, then: SurfaceTerm, otherwise: Option(SurfaceTerm)): SurfaceKind
+    SkField(value: SurfaceTerm, name: Text): SurfaceKind
+    SkBlock(stmts: List(SurfaceStmt)): SurfaceKind
+    SkPerform(op: Text, args: List(SurfaceTerm)): SurfaceKind
+    SkHandle(body: SurfaceTerm, handlers: List(SurfaceHandler)): SurfaceKind
+    SkBudget(amount: SurfaceTerm, body: SurfaceTerm): SurfaceKind
+    SkMatch(
+      scrutinee: SurfaceTerm,
+      motive: Option(SurfaceTerm),
+      arms: List(SurfaceArm),
+      binder: Option(Text)
+    ): SurfaceKind
+    SkHole(name: Text): SurfaceKind
+    SkRecord(name: Text, fields: List(SurfaceField)): SurfaceKind
+    SkBorrow(mutable: Yn, value: SurfaceTerm): SurfaceKind
+    SkFnKind(kind: Text, ty: SurfaceTerm): SurfaceKind
+    SkBorrowLam(borrows: List(Option(Yn)), lam: SurfaceTerm): SurfaceKind
+    SkOther(what: Text): SurfaceKind
+    SkMacroCall(name: Text, arg: SurfaceTerm): SurfaceKind
+    SkQuote(stmts_form: Yn, stmts: List(SurfaceStmt)): SurfaceKind
+    SkSplice(value: SurfaceTerm): SurfaceKind
+    SkSyntaxLit(name: Option(Text), body: Text): SurfaceKind
+    // `by t!(arg) -> G0 { Δ ⊢ G => p … }`.
+    SkStep(
+      tactic: Text,
+      arg: SurfaceTerm,
+      call_start: Nat,
+      call_end: Nat,
+      before: Option(SurfaceTerm),
+      arms: List(SurfaceStepArm)
+    ): SurfaceKind
+  }
+  inductive SurfaceStepArm(): Type {
+    surface_step_arm_mk(
+      binders: List(SurfaceField),
+      goal: SurfaceTerm,
+      body: SurfaceTerm,
+      start: Nat,
+      end: Nat
+    ): SurfaceStepArm
+  }
+  inductive SurfaceParam(): Type {
+    surface_param_mk(name: Option(Text), ty: SurfaceTerm): SurfaceParam
+  }
+  inductive SurfaceField(): Type {
+    surface_field_mk(name: Text, value: SurfaceTerm): SurfaceField
+  }
+  inductive SurfaceNamed(): Type {
+    surface_named_mk(name: Text, ty: SurfaceTerm): SurfaceNamed
+  }
+  inductive SurfacePattern(): Type {
+    PtWild(): SurfacePattern
+    PtBind(name: Text): SurfacePattern
+    PtInt(negative: Yn, magnitude: Nat): SurfacePattern
+    PtBool(value: Yn): SurfacePattern
+    PtText(value: Text): SurfacePattern
+    PtCtor(name: Text, args: List(SurfacePattern)): SurfacePattern
+    PtRecord(name: Text, fields: List(SurfacePatternField)): SurfacePattern
+    PtOther(what: Text): SurfacePattern
+  }
+  inductive SurfacePatternField(): Type {
+    surface_pattern_field_mk(name: Text, pattern: SurfacePattern): SurfacePatternField
+  }
+  inductive SurfaceArm(): Type {
+    surface_arm_mk(
+      pattern: SurfacePattern,
+      guard: Option(SurfaceTerm),
+      goal: Option(SurfaceTerm),
+      body: SurfaceTerm
+    ): SurfaceArm
+  }
+  inductive SurfaceHandler(): Type {
+    HdReturn(pattern: SurfacePattern, body: SurfaceTerm): SurfaceHandler
+    HdOperation(
+      op: Text,
+      patterns: List(SurfacePattern),
+      resume: Option(Text),
+      guard: Option(SurfaceTerm),
+      body: SurfaceTerm
+    ): SurfaceHandler
+  }
+  inductive SurfaceStmt(): Type {
+    StLet(
+      name: Text,
+      ty: Option(SurfaceTerm),
+      value: SurfaceTerm,
+      borrow: Yn,
+      mutable: Yn
+    ): SurfaceStmt
+    StVar(name: Text, ty: Option(SurfaceTerm), value: SurfaceTerm, borrow: Yn): SurfaceStmt
+    StModule(name: Text, stmts: List(SurfaceStmt), start: Nat, end: Nat): SurfaceStmt
+    StAssign(name: Text, value: SurfaceTerm): SurfaceStmt
+    StFn(f: SurfaceFn): SurfaceStmt
+    StTheorem(t: SurfaceTheorem): SurfaceStmt
+    StDef(t: SurfaceTheorem): SurfaceStmt
+    StMutual(stmts: List(SurfaceStmt), start: Nat, end: Nat): SurfaceStmt
+    StImport(path: Text, start: Nat, end: Nat): SurfaceStmt
+    StInductive(i: SurfaceInductive): SurfaceStmt
+    StEffect(e: SurfaceEffect): SurfaceStmt
+    StStruct(d: SurfaceData): SurfaceStmt
+    StEnum(d: SurfaceData): SurfaceStmt
+    StExtern(abi: Text, fns: List(SurfaceFn), start: Nat, end: Nat): SurfaceStmt
+    StClass(c: SurfaceClass): SurfaceStmt
+    StInstance(i: SurfaceInstance): SurfaceStmt
+    StWhile(cond: SurfaceTerm, body: SurfaceTerm): SurfaceStmt
+    StReturn(value: Option(SurfaceTerm)): SurfaceStmt
+    StExpr(value: SurfaceTerm): SurfaceStmt
+    StOther(what: Text, start: Nat, end: Nat): SurfaceStmt
+    StMacro(name: Text, function: Text, start: Nat, end: Nat): SurfaceStmt
+    StSyntax(name: Text, grammar: Text, start: Nat, end: Nat): SurfaceStmt
+  }
+  inductive SurfaceFn(): Type {
+    surface_fn_mk(
+      name: Text,
+      generics: List(Text),
+      bounds: List(Option(Text)),
+      params: List(Text),
+      borrows: List(Option(Yn)),
+      param_types: List(Option(SurfaceTerm)),
+      result: Option(SurfaceTerm),
+      effects: Option(List(Text)),
+      // `where C(T), …`, in the order written.
+      wheres: List(SurfaceConstraint),
+      start: Nat,
+      end: Nat,
+      body: SurfaceTerm
+    ): SurfaceFn
+  }
+  // `C(T)` in a `where`: `T` has the class `C`.
+  inductive SurfaceConstraint(): Type {
+    surface_constraint_mk(class: Text, ty: SurfaceTerm, start: Nat, end: Nat): SurfaceConstraint
+  }
+  // `law name…`: its name and where it is (the proposition is not read).
+  inductive SurfaceLaw(): Type {
+    surface_law_mk(name: Text, start: Nat, end: Nat): SurfaceLaw
+  }
+  // `class C<A: bound> { … }`: the methods' signatures (a method has no
+  // block, so its body is an `Other` term of kind `ExternFn`) and the laws. `arity` is how many parameters were written.
+  inductive SurfaceClass(): Type {
+    surface_class_mk(
+      name: Text,
+      param: Text,
+      arity: Nat,
+      bound: Option(Text),
+      methods: List(SurfaceFn),
+      laws: List(SurfaceLaw),
+      start: Nat,
+      end: Nat
+    ): SurfaceClass
+  }
+  // `instance<generics> C(head) where … { methods }`.
+  inductive SurfaceInstance(): Type {
+    surface_instance_mk(
+      generics: List(Text),
+      bounds: List(Option(Text)),
+      class: Text,
+      head: SurfaceTerm,
+      wheres: List(SurfaceConstraint),
+      methods: List(SurfaceFn),
+      laws: List(SurfaceLaw),
+      start: Nat,
+      end: Nat
+    ): SurfaceInstance
+  }
+  inductive SurfaceTheorem(): Type {
+    surface_theorem_mk(
+      name: Text,
+      implicit: Nat,
+      params: List(SurfaceNamed),
+      ty: SurfaceTerm,
+      body: Option(SurfaceTerm),
+      start: Nat,
+      end: Nat
+    ): SurfaceTheorem
+  }
+  inductive SurfaceCtor(): Type {
+    surface_ctor_mk(
+      name: Text,
+      implicit: Nat,
+      params: List(SurfaceNamed),
+      result: SurfaceTerm
+    ): SurfaceCtor
+  }
+  inductive SurfaceInductive(): Type {
+    surface_inductive_mk(
+      name: Text,
+      params: List(SurfaceNamed),
+      sort: SurfaceTerm,
+      constructors: List(SurfaceCtor),
+      start: Nat,
+      end: Nat
+    ): SurfaceInductive
+  }
+  inductive SurfaceEffect(): Type {
+    surface_effect_mk(
+      name: Text,
+      generics: List(Text),
+      params: List(Option(SurfaceTerm)),
+      result: Option(SurfaceTerm),
+      resume: Option(Text),
+      start: Nat,
+      end: Nat
+    ): SurfaceEffect
+  }
+  inductive SurfaceDataField(): Type {
+    surface_data_field_mk(name: Option(Text), ty: SurfaceTerm): SurfaceDataField
+  }
+  inductive SurfaceDataCtor(): Type {
+    surface_data_ctor_mk(name: Text, fields: List(SurfaceDataField)): SurfaceDataCtor
+  }
+  inductive SurfaceData(): Type {
+    surface_data_mk(
+      kind: Option(Text),
+      name: Text,
+      generics: List(Text),
+      constructors: List(SurfaceDataCtor),
+      start: Nat,
+      end: Nat
+    ): SurfaceData
+  }
+}
+
+// ---- lists ---------------------------------------------------------------------
+
+fn surface_append<A>(xs: List(A), ys: List(A)) -> List(A) {
+  list_append(xs, ys)
+}
+
+fn surface_reverse<A>(xs: List(A)) -> List(A) {
+  list_reverse(xs)
+}
+
+// ---- text literals --------------------------------------------------------------
+
+// The value of a text literal's token (`unquote_text` of `surface.rs`):
+// `"…"` with its escapes resolved (`\\ \" \' \n \r \t \0 \u{X…}`), `'…'` and
+// plaintext`…` as written.
+
+// Without the first character and the last.
+fn surface_inner(token: Text) -> Text {
+  match text_len(token) >= 2 -> Text {
+    yes => text_slice_or_empty(token, 1, text_len(token) - 1)
+    no => ""
+  }
+}
+
+// The value of a hexadecimal digit, or 16.
+fn surface_hex_digit(b: Nat) -> Nat {
+  match b >= 48 && b <= 57 -> Nat {
+    yes => b - 48
+    no => match b >= 97 && b <= 102 -> Nat {
+      yes => b - 87
+      no => match b >= 65 && b <= 70 -> Nat {
+        yes => b - 55
+        no => 16
+      }
+    }
+  }
+}
+
+fn surface_hex_in(k: Nat, digits: Text, at: Nat, acc: Nat) -> Option(Nat) {
+  match k -> Option(Nat) {
+    zero => None
+    succ(j) => match at >= text_len(digits) -> Option(Nat) {
+      yes => Some(acc)
+      no => match surface_hex_digit(text_byte_value(digits, at)) > 15 -> Option(Nat) {
+        yes => None
+        no => match acc * 16 + surface_hex_digit(
+          text_byte_value(digits, at)
+        ) > 4294967295 -> Option(Nat) {
+          yes => None
+          no => surface_hex_in(
+            j,
+            digits,
+            at + 1,
+            acc * 16 + surface_hex_digit(text_byte_value(digits, at))
+          )
+        }
+      }
+    }
+  }
+}
+
+// `u32::from_str_radix(digits, 16)`: an optional `+`, then digits, and the
+// value must fit in 32 bits.
+fn surface_hex(digits: Text) -> Option(Nat) {
+  match text_len(digits) > 0 && text_byte_value(digits, 0) == 43 -> Option(Nat) {
+    yes => match 1 >= text_len(digits) -> Option(Nat) {
+      yes => None
+      no => surface_hex_in(text_len(digits) + 1, digits, 1, 0)
+    }
+    no => match 0 >= text_len(digits) -> Option(Nat) {
+      yes => None
+      no => surface_hex_in(text_len(digits) + 1, digits, 0, 0)
+    }
+  }
+}
+
+// The character of a code point, U+FFFD when there is None.
+fn surface_char_of(code: Option(Nat)) -> Text {
+  match code -> Text {
+    None => text_code_point(65533)
+    Some(c) => match c < 1114112 && !(c >= 55296 && c < 57344) -> Text {
+      yes => text_code_point(c)
+      no => text_code_point(65533)
+    }
+  }
+}
+
+fn surface_unicode_read(body: Text, start: Nat, close: Nat) -> Pair(Text, Nat) {
+  Pair { fst: surface_char_of(
+    surface_hex(text_slice_or_empty(body, start, close))
+  ), snd: match close < text_len(body) -> Nat {
+      yes => close + 1
+      no => close
+    } }
+}
+
+fn surface_unicode_close(body: Text, start: Nat) -> Pair(Text, Nat) {
+  surface_unicode_read(body, start, match text_find(body, "}", start) -> Nat {
+    Some(c) => c
+    None => text_len(body)
+  })
+}
+
+// After `\u`: the next character is skipped (it is the `{`), the characters
+// up to a `}` (which is taken too) are hexadecimal digits of a code point;
+// a bad one is U+FFFD. The character and where reading resumes.
+fn surface_unicode_escape(body: Text, at: Nat) -> Pair(Text, Nat) {
+  surface_unicode_close(body, match text_decode(body, at) -> Nat {
+    Some(skipped) => at + skipped.snd
+    None => at
+  })
+}
+
+// The character an escape `\c` (`c` is `escape`) stands for, when it is not
+// `\u`.
+fn surface_escaped(escape: Nat, written: Text) -> Text {
+  match escape == 110 -> Text {
+    yes => text_code_point(10)
+    no => match escape == 114 -> Text {
+      yes => text_code_point(13)
+      no => match escape == 116 -> Text {
+        yes => text_code_point(9)
+        no => match escape == 48 -> Text {
+          yes => text_code_point(0)
+          no => written
+        }
+      }
+    }
+  }
+}
+
+fn surface_escapes_in(k: Nat, body: Text, at: Nat, done: List(Text)) -> List(Text) {
+  match k -> List(Text) {
+    zero => done
+    succ(j) => match text_decode(body, at) -> List(Text) {
+      None => done
+      Some(c) => match c.fst != 92 -> List(Text) {
+        yes => surface_escapes_in(
+          j,
+          body,
+          at + c.snd,
+          Cons(text_slice_or_empty(body, at, at + c.snd), done)
+        )
+        no => match text_decode(body, at + 1) -> List(Text) {
+          None => done
+          Some(e) => match e.fst == 117 -> List(Text) {
+            yes => surface_escapes_in(
+              j,
+              body,
+              surface_unicode_escape(body, at + 1 + e.snd).snd,
+              Cons(surface_unicode_escape(body, at + 1 + e.snd).fst, done)
+            )
+            no => surface_escapes_in(
+              j,
+              body,
+              at + 1 + e.snd,
+              Cons(surface_escaped(e.fst, text_slice_or_empty(body, at + 1, at + 1 + e.snd)), done)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+fn surface_escapes(body: Text) -> Text {
+  text_concat_all(list_reverse(surface_escapes_in(text_len(body) + 1, body, 0, Nil)))
+}
+
+fn surface_unquote_plain(raw: Text) -> Text {
+  match text_len(raw) > 0 && text_byte_value(raw, text_len(raw) - 1) == 96 -> Text {
+    yes => text_slice_or_empty(raw, 0, text_len(raw) - 1)
+    no => raw
+  }
+}
+
+fn surface_unquote(token: Text) -> Text {
+  match text_starts_with(token, "plaintext`", 0) -> Text {
+    yes => surface_unquote_plain(text_slice_or_empty(token, 10, text_len(token)))
+    no => match text_starts_with(token, "'", 0) -> Text {
+      yes => surface_inner(token)
+      no => surface_escapes(surface_inner(token))
+    }
+  }
+}
+
+// ---- reading the tree ---------------------------------------------------------
+
+// How many nodes the tree has below `flat`, where every walk goes: enough steps
+// for any walk through it.
+mutual {
+  fn surface_size(n: CstNode) -> Nat {
+    match n -> Nat {
+      cst_node(
+        kind,
+        name,
+        terminal,
+        trivia,
+        declared,
+        start,
+        end,
+        children,
+        flat
+      ) => succ(surface_sizes(flat))
+    }
+  }
+  fn surface_sizes(l: List(CstNode)) -> Nat {
+    match l -> Nat {
+      Nil => 0
+      Cons(x, rest) => surface_size(x) + surface_sizes(rest)
+    }
+  }
+}
+
+// What reading the tree of `totes/syntax` needs (`Reader` of `surface.rs`):
+// the source, how far the spans are shifted, the character classes, and how
+// many steps a walk through the tree may take.
+inductive SurfaceCtx(): Type {
+  surface_ctx(source: Text, base: Nat, classes: UnicodeClasses, fuel: Nat): SurfaceCtx
+}
+
+inductive SurfaceSpan(): Type {
+  surface_span_of(start: Nat, end: Nat): SurfaceSpan
+}
+
+fn surface_span(c: SurfaceCtx, n: CstNode) -> SurfaceSpan {
+  SurfaceSpan { start: n.start + c.base, end: n.end + c.base }
+}
+
+fn surface_term_at(kind: SurfaceKind, span: SurfaceSpan) -> SurfaceTerm {
+  SurfaceTerm { kind: kind, start: span.start, end: span.end }
+}
+
+// The text of a node's span (not shifted).
+fn surface_text(c: SurfaceCtx, n: CstNode) -> Text {
+  text_slice_or_empty(c.source, n.start, n.end)
+}
+
+// Whether the node is the non-terminal of this name.
+fn surface_is(n: CstNode, name: Text) -> Yn {
+  !n.terminal && n.name == name
+}
+
+fn surface_find_in(nodes: List(CstNode), name: Text) -> Option(CstNode) {
+  match nodes -> Option(CstNode) {
+    Nil => None
+    Cons(n, rest) => match surface_is(n, name) -> Option(CstNode) {
+      yes => Some(n)
+      no => surface_find_in(rest, name)
+    }
+  }
+}
+
+// The first child (as `Cst::children` has them) of this kind.
+fn surface_first(n: CstNode, name: Text) -> Option(CstNode) {
+  surface_find_in(n.flat, name)
+}
+
+fn surface_filter_in(nodes: List(CstNode), name: Text) -> List(CstNode) {
+  match nodes -> List(CstNode) {
+    Nil => Nil
+    Cons(n, rest) => match surface_is(n, name) -> List(CstNode) {
+      yes => Cons(n, surface_filter_in(rest, name))
+      no => surface_filter_in(rest, name)
+    }
+  }
+}
+
+fn surface_all(n: CstNode, name: Text) -> List(CstNode) {
+  surface_filter_in(n.flat, name)
+}
+
+fn surface_nth(nodes: List(CstNode), i: Nat) -> Option(CstNode) {
+  match nodes -> Option(CstNode) {
+    Nil => None
+    Cons(n, rest) => match i -> Option(CstNode) {
+      zero => Some(n)
+      succ(i2) => surface_nth(rest, i2)
+    }
+  }
+}
+
+fn surface_kind_name(n: CstNode) -> Text {
+  match n.terminal -> Text {
+    yes => "token"
+    no => n.name
+  }
+}
+
+fn surface_other(c: SurfaceCtx, n: CstNode) -> SurfaceTerm {
+  surface_term_at(SkOther(surface_kind_name(n)), surface_span(c, n))
+}
+
+fn surface_var(name: Text, span: SurfaceSpan) -> SurfaceTerm {
+  surface_term_at(SkVar(name), span)
+}
+
+fn surface_app(function: Text, arguments: List(SurfaceTerm), span: SurfaceSpan) -> SurfaceTerm {
+  surface_term_at(SkApp(surface_var(function, span), arguments), span)
+}
+
+// `where C(T)` of a theorem is a parameter after the generics, the record
+// of the class, named `inst@C` followed by the clause's index (`inst@C0`
+// for the first when `index` is 0).
+fn surface_dictionary_params(wheres: List(SurfaceConstraint), index: Nat) -> List(SurfaceNamed) {
+  match wheres -> List(SurfaceNamed) {
+    Nil => Nil
+    Cons(w, rest) => match w -> List(SurfaceNamed) {
+      surface_constraint_mk(class, ty, start, end) => Cons(
+        SurfaceNamed {
+          name: text_concat("inst@", text_concat(class, text_of_nat(index))),
+          ty: surface_app(class, Cons(ty, Nil), SurfaceSpan { start: start, end: end })
+        },
+        surface_dictionary_params(rest, index + 1)
+      )
+    }
+  }
+}
+
+// The only element of the list.
+fn surface_one(xs: List(CstNode)) -> Option(CstNode) {
+  match xs -> Option(CstNode) {
+    Nil => None
+    Cons(x, rest) => match rest -> Option(CstNode) {
+      Nil => Some(x)
+      Cons(y, more) => None
+    }
+  }
+}
+
+// Whether the list holds a node of this kind.
+fn surface_has(nodes: List(CstNode), name: Text) -> Yn {
+  match surface_find_in(nodes, name) -> Yn {
+    Some(n) => yes
+    None => no
+  }
+}
+
+// The text of the first `Ident` among the node's children, or "".
+fn surface_ident(c: SurfaceCtx, n: CstNode) -> Text {
+  match surface_first(n, "Ident") -> Text {
+    Some(i) => surface_text(c, i)
+    None => ""
+  }
+}
+
+fn surface_opt_ident(c: SurfaceCtx, n: CstNode) -> Option(Text) {
+  match surface_first(n, "Ident") -> Option(Text) {
+    Some(i) => Some(surface_text(c, i))
+    None => None
+  }
+}
+
+fn surface_name_of(c: SurfaceCtx, n: Option(CstNode)) -> Text {
+  match n -> Text {
+    Some(x) => surface_text(c, x)
+    None => ""
+  }
+}
+
+fn surface_last_ident(nodes: List(CstNode)) -> Option(CstNode) {
+  surface_find_in(list_reverse(nodes), "Ident")
+}
+
+// ---- white space ---------------------------------------------------------------
+
+fn surface_is_space(c: SurfaceCtx, code: Nat) -> Yn {
+  unicode_is_whitespace(c.classes, code)
+}
+
+// The first position from `at` that is not white space.
+fn surface_skip_space_in(k: Nat, c: SurfaceCtx, t: Text, at: Nat) -> Nat {
+  match k -> Nat {
+    zero => at
+    succ(j) => match text_decode(t, at) -> Nat {
+      None => at
+      Some(d) => match surface_is_space(c, d.fst) -> Nat {
+        yes => surface_skip_space_in(j, c, t, at + d.snd)
+        no => at
+      }
+    }
+  }
+}
+
+// The end of the last character that is not white space.
+fn surface_last_end_in(k: Nat, c: SurfaceCtx, t: Text, at: Nat, last: Nat) -> Nat {
+  match k -> Nat {
+    zero => last
+    succ(j) => match text_decode(t, at) -> Nat {
+      None => last
+      Some(d) => match surface_is_space(c, d.fst) -> Nat {
+        yes => surface_last_end_in(j, c, t, at + d.snd, last)
+        no => surface_last_end_in(j, c, t, at + d.snd, at + d.snd)
+      }
+    }
+  }
+}
+
+fn surface_trim_from(c: SurfaceCtx, t: Text, from: Nat) -> Text {
+  match from >= text_len(t) -> Text {
+    yes => ""
+    no => text_slice_or_empty(t, from, surface_last_end_in(text_len(t) + 1, c, t, from, from))
+  }
+}
+
+// `str::trim`.
+fn surface_trim(c: SurfaceCtx, t: Text) -> Text {
+  surface_trim_from(c, t, surface_skip_space_in(text_len(t) + 1, c, t, 0))
+}
+
+fn surface_strip_in(k: Nat, c: SurfaceCtx, t: Text, at: Nat, done: List(Text)) -> List(Text) {
+  match k -> List(Text) {
+    zero => done
+    succ(j) => match text_decode(t, at) -> List(Text) {
+      None => done
+      Some(d) => match surface_is_space(c, d.fst) -> List(Text) {
+        yes => surface_strip_in(j, c, t, at + d.snd, done)
+        no => surface_strip_in(
+          j,
+          c,
+          t,
+          at + d.snd,
+          Cons(text_slice_or_empty(t, at, at + d.snd), done)
+        )
+      }
+    }
+  }
+}
+
+// `s.replace(char::is_whitespace, "")`.
+fn surface_strip(c: SurfaceCtx, t: Text) -> Text {
+  text_concat_all(list_reverse(surface_strip_in(text_len(t) + 1, c, t, 0, Nil)))
+}
+
+fn surface_trim_marks_in(k: Nat, t: Text, at: Nat) -> Text {
+  match k -> Text {
+    zero => text_slice_or_empty(t, at, text_len(t))
+    succ(j) => match text_byte_value(t, at) == 63 && at < text_len(t) -> Text {
+      yes => surface_trim_marks_in(j, t, at + 1)
+      no => text_slice_or_empty(t, at, text_len(t))
+    }
+  }
+}
+
+// `trim_start_matches('?')`.
+fn surface_trim_marks(t: Text) -> Text {
+  surface_trim_marks_in(text_len(t) + 1, t, 0)
+}
+
+fn surface_trim_bangs_in(k: Nat, t: Text, n: Nat) -> Text {
+  match k -> Text {
+    zero => text_slice_or_empty(t, 0, n)
+    succ(j) => match n > 0 && text_byte_value(t, n - 1) == 33 -> Text {
+      yes => surface_trim_bangs_in(j, t, n - 1)
+      no => text_slice_or_empty(t, 0, n)
+    }
+  }
+}
+
+// `trim_end_matches('!')`.
+fn surface_trim_bangs(t: Text) -> Text {
+  surface_trim_bangs_in(text_len(t) + 1, t, text_len(t))
+}
+
+// The value of a text literal node.
+fn surface_text_value(c: SurfaceCtx, n: CstNode) -> Text {
+  surface_unquote(surface_trim(c, surface_text(c, n)))
+}
+
+// ---- nodes found below others ----------------------------------------------------
+
+// The nodes of kind `item` in `nodes`, through the tails of kinds `tail` and
+// `tail2` (`Stmts: … [ Stmt StmtsTail ]` and the like).
+fn surface_items_in(
+  k: Nat,
+  nodes: List(CstNode),
+  item: Text,
+  tail: Text,
+  tail2: Text
+) -> List(CstNode) {
+  match k -> List(CstNode) {
+    zero => Nil
+    succ(j) => match nodes -> List(CstNode) {
+      Nil => Nil
+      Cons(n, rest) => match surface_is(n, item) -> List(CstNode) {
+        yes => Cons(n, surface_items_in(j, rest, item, tail, tail2))
+        no => match surface_is(n, tail) || surface_is(n, tail2) -> List(CstNode) {
+          yes => list_append(
+            surface_items_in(j, n.flat, item, tail, tail2),
+            surface_items_in(j, rest, item, tail, tail2)
+          )
+          no => surface_items_in(j, rest, item, tail, tail2)
+        }
+      }
+    }
+  }
+}
+
+// Every node of the kind below `nodes`, not looking inside one found.
+fn surface_descend_in(k: Nat, nodes: List(CstNode), name: Text) -> List(CstNode) {
+  match k -> List(CstNode) {
+    zero => Nil
+    succ(j) => match nodes -> List(CstNode) {
+      Nil => Nil
+      Cons(n, rest) => match n.terminal -> List(CstNode) {
+        yes => surface_descend_in(j, rest, name)
+        no => match n.name == name -> List(CstNode) {
+          yes => Cons(n, surface_descend_in(j, rest, name))
+          no => list_append(surface_descend_in(j, n.flat, name), surface_descend_in(j, rest, name))
+        }
+      }
+    }
+  }
+}
+
+fn surface_descend(c: SurfaceCtx, n: CstNode, name: Text) -> List(CstNode) {
+  surface_descend_in(c.fuel, n.flat, name)
+}
+
+// The arms of a step's `{ … }`, if it has one.
+fn surface_step_arm_nodes(c: SurfaceCtx, body: Option(CstNode)) -> List(CstNode) {
+  match body -> List(CstNode) {
+    None => Nil
+    Some(b) => surface_descend(c, b, "StepArm")
+  }
+}
+
+fn surface_items(
+  c: SurfaceCtx,
+  nodes: List(CstNode),
+  item: Text,
+  tail: Text,
+  tail2: Text
+) -> List(CstNode) {
+  surface_items_in(c.fuel, nodes, item, tail, tail2)
+}
+
+// The first node of the kind, searching the children first and then below each.
+fn surface_find_deep(k: Nat, nodes: List(CstNode), name: Text) -> Option(CstNode) {
+  match k -> Option(CstNode) {
+    zero => None
+    succ(j) => match nodes -> Option(CstNode) {
+      Nil => None
+      Cons(n, rest) => match surface_is(n, name) -> Option(CstNode) {
+        yes => Some(n)
+        no => match surface_find_deep(j, n.flat, name) -> Option(CstNode) {
+          Some(f) => Some(f)
+          None => surface_find_deep(j, rest, name)
+        }
+      }
+    }
+  }
+}
+
+// The row after the result type, through `&` and a tag prefix; a row inside a
+// function type is that arrow's. A unit result written as a function type with
+// no arrow keeps the row after it.
+fn surface_row_in_return(k: Nat, ty: Option(CstNode)) -> Option(CstNode) {
+  match k -> Option(CstNode) {
+    zero => None
+    succ(j) => match ty -> Option(CstNode) {
+      None => None
+      Some(t) => match surface_first(t, "EffectRow") -> Option(CstNode) {
+        Some(w) => Some(w)
+        None => match surface_first(t, "FnType") -> Option(CstNode) {
+          Some(f) => match surface_first(f, "EffectRow") -> Option(CstNode) {
+            Some(w) => Some(w)
+            None => surface_row_in_return(j, surface_first(t, "ReturnType"))
+          }
+          None => surface_row_in_return(j, surface_first(t, "ReturnType"))
+        }
+      }
+    }
+  }
+}
+// ---- literals of the macro syntax (`surface/literal.rs`) ---------------------------
+
+inductive SurfaceLit(): Type {
+  surface_lit_of(name: Option(Text), body: Text): SurfaceLit
+}
+
+// Which spelling the literal has, by the first children down to one of
+// them: 0 for `name`…``, 1 to 3 for `name<…`…`>`, 13 to 16 for the blocks.
+fn surface_lit_kind(k: Nat, n: CstNode) -> Nat {
+  match k -> Nat {
+    zero => 0
+    succ(j) => match n.terminal -> Nat {
+      yes => 0
+      no => match n.name == "MacroText" -> Nat {
+        yes => 0
+        no => match n.name == "MacroDelim1" -> Nat {
+          yes => 1
+          no => match n.name == "MacroDelim2" -> Nat {
+            yes => 2
+            no => match n.name == "MacroDelim3" -> Nat {
+              yes => 3
+              no => match n.name == "MacroBlock3" -> Nat {
+                yes => 13
+                no => match n.name == "MacroBlock4" -> Nat {
+                  yes => 14
+                  no => match n.name == "MacroBlock5" -> Nat {
+                    yes => 15
+                    no => match n.name == "MacroBlock6" -> Nat {
+                      yes => 16
+                      no => match surface_nth(n.flat, 0) -> Nat {
+                        Some(first) => surface_lit_kind(j, first)
+                        None => 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn surface_lit_name(t: Text, end: Nat) -> Option(Text) {
+  match end -> Option(Text) {
+    zero => None
+    succ(e) => Some(text_slice_or_empty(t, 0, end))
+  }
+}
+
+fn surface_find_or(t: Text, needle: Text, default: Nat) -> Nat {
+  match text_find(t, needle, 0) -> Nat {
+    Some(i) => i
+    None => default
+  }
+}
+
+// The first character that is white space, or the end.
+fn surface_first_space_in(k: Nat, c: SurfaceCtx, t: Text, at: Nat) -> Nat {
+  match k -> Nat {
+    zero => at
+    succ(j) => match text_decode(t, at) -> Nat {
+      None => at
+      Some(d) => match surface_is_space(c, d.fst) -> Nat {
+        yes => at
+        no => surface_first_space_in(j, c, t, at + d.snd)
+      }
+    }
+  }
+}
+
+// Whether the bytes of `t` from `at` are all spaces and tabs.
+fn surface_blank_tail_in(k: Nat, t: Text, at: Nat) -> Yn {
+  match k -> Yn {
+    zero => yes
+    succ(j) => match at >= text_len(t) -> Yn {
+      yes => yes
+      no => (
+        text_byte_value(t, at) == 32 || text_byte_value(t, at) == 9
+      ) && surface_blank_tail_in(j, t, at + 1)
+    }
+  }
+}
+
+fn surface_blank_tail(t: Text, at: Nat) -> Yn {
+  surface_blank_tail_in(text_len(t) + 1, t, at)
+}
+
+// The last "\n" of `t`, counting down from `at`.
+fn surface_last_newline(t: Text, at: Nat) -> Option(Nat) {
+  match at -> Option(Nat) {
+    zero => match text_byte_value(t, 0) == 10 && 0 < text_len(t) -> Option(Nat) {
+      yes => Some(0)
+      no => None
+    }
+    succ(below) => match text_byte_value(t, at) == 10 && at < text_len(t) -> Option(Nat) {
+      yes => Some(at)
+      no => surface_last_newline(t, below)
+    }
+  }
+}
+
+// The length without the "\n" and "\r" that end it.
+fn surface_without_eol(t: Text, n: Nat) -> Nat {
+  match n -> Nat {
+    zero => 0
+    succ(m) => match text_byte_value(t, m) == 10 || text_byte_value(t, m) == 13 -> Nat {
+      yes => surface_without_eol(t, m)
+      no => n
+    }
+  }
+}
+
+// How many spaces and tabs the bytes start with.
+fn surface_lead_in(k: Nat, t: Text, at: Nat) -> Nat {
+  match k -> Nat {
+    zero => at
+    succ(
+      j
+    ) => match at < text_len(
+      t
+    ) && (text_byte_value(t, at) == 32 || text_byte_value(t, at) == 9) -> Nat {
+      yes => surface_lead_in(j, t, at + 1)
+      no => at
+    }
+  }
+}
+
+// How much of a line's white space to take off: all of a blank line, else
+// `indent` or as much as there is.
+fn surface_take(c: SurfaceCtx, bare: Text, indent: Nat) -> Nat {
+  match text_len(surface_trim(c, bare)) == 0 -> Nat {
+    yes => text_len(bare)
+    no => nat_min(indent, surface_lead_in(text_len(bare) + 1, bare, 0))
+  }
+}
+
+// A line without its line end, and its line end.
+fn surface_dedent_line(c: SurfaceCtx, line: Text, indent: Nat) -> List(Text) {
+  Cons(
+    text_slice_or_empty(
+      line,
+      surface_take(
+        c,
+        text_slice_or_empty(line, 0, surface_without_eol(line, text_len(line))),
+        indent
+      ),
+      surface_without_eol(line, text_len(line))
+    ),
+    Cons(text_slice_or_empty(line, surface_without_eol(line, text_len(line)), text_len(line)), Nil)
+  )
+}
+
+fn surface_line_end(body: Text, at: Nat) -> Nat {
+  match text_find(body, text_newline(), at) -> Nat {
+    Some(i) => i + 1
+    None => text_len(body)
+  }
+}
+
+// The lines of `body` with `indent` bytes of white space taken off each; a
+// line of white space only becomes an empty line. Last first.
+fn surface_dedent_in(
+  k: Nat,
+  c: SurfaceCtx,
+  body: Text,
+  at: Nat,
+  indent: Nat,
+  done: List(Text)
+) -> List(Text) {
+  match k -> List(Text) {
+    zero => done
+    succ(j) => match at < text_len(body) -> List(Text) {
+      yes => surface_dedent_in(
+        j,
+        c,
+        body,
+        surface_line_end(body, at),
+        indent,
+        list_reverse_onto(
+          surface_dedent_line(c, text_slice_or_empty(body, at, surface_line_end(body, at)), indent),
+          done
+        )
+      )
+      no => done
+    }
+  }
+}
+
+fn surface_dedent(c: SurfaceCtx, body: Text, indent: Nat) -> Text {
+  text_concat_all(list_reverse(surface_dedent_in(text_len(body) + 1, c, body, 0, indent, Nil)))
+}
+
+// The content of a block literal: its last line dropped when it is blank,
+// and the indent of that line taken off every line.
+fn surface_block_content(c: SurfaceCtx, content: Text) -> Text {
+  match text_len(content) -> Text {
+    zero => ""
+    succ(last) => match surface_last_newline(content, last) -> Text {
+      Some(i) => match surface_blank_tail(content, i + 1) -> Text {
+        yes => surface_dedent(c, text_slice_or_empty(content, 0, i + 1), text_len(content) - i - 1)
+        no => surface_dedent(c, content, 0)
+      }
+      None => match surface_blank_tail(content, 0) -> Text {
+        yes => ""
+        no => surface_dedent(c, content, 0)
+      }
+    }
+  }
+}
+
+fn surface_block_lit_at(
+  c: SurfaceCtx,
+  whole: Text,
+  n: Nat,
+  after: Text,
+  line_end: Nat
+) -> SurfaceLit {
+  SurfaceLit {
+    name: surface_lit_name(after, surface_first_space_in(text_len(after) + 1, c, after, 0)),
+    body: surface_block_content(
+      c,
+      text_slice_or_empty(whole, line_end, nat_max(text_len(whole) - n, line_end))
+    )
+  }
+}
+
+// ```` ```name ```` and a line end, the content, the closing fence.
+fn surface_block_lit(c: SurfaceCtx, whole: Text, n: Nat) -> SurfaceLit {
+  surface_block_lit_at(
+    c,
+    whole,
+    n,
+    text_slice_or_empty(whole, nat_min(n, text_len(whole)), text_len(whole)),
+    surface_line_end(whole, 0)
+  )
+}
+
+fn surface_lit_with(c: SurfaceCtx, whole: Text, kind: Nat) -> SurfaceLit {
+  match kind == 0 -> SurfaceLit {
+    yes => SurfaceLit {
+      name: surface_lit_name(whole, surface_find_or(whole, "`", 0)),
+      body: text_slice_or_empty(whole, surface_find_or(whole, "`", 0) + 1, text_len(whole) - 1)
+    }
+    no => match kind < 10 -> SurfaceLit {
+      yes => SurfaceLit {
+        name: surface_lit_name(whole, surface_find_or(whole, "<", 0)),
+        body: text_slice_or_empty(
+          whole,
+          surface_find_or(whole, "<", 0) + kind + 1,
+          text_len(whole) - (kind + 1)
+        )
+      }
+      no => surface_block_lit(c, whole, kind - 10)
+    }
+  }
+}
+
+fn surface_lit(c: SurfaceCtx, n: CstNode) -> SurfaceLit {
+  surface_lit_with(c, surface_text(c, n), surface_lit_kind(text_len(c.source) + 1, n))
+}
+// ---- terms that read no other node ----------------------------------------------
+
+fn surface_out(name: Text) -> SurfaceTerm {
+  SurfaceTerm { kind: SkOther(name), start: 0, end: 0 }
+}
+
+fn surface_fn_kind(c: SurfaceCtx, kind: CstNode, ty: SurfaceTerm, span: SurfaceSpan) -> SurfaceTerm {
+  surface_term_at(SkFnKind(surface_trim(c, surface_text(c, kind)), ty), span)
+}
+
+// `&` or `&mut` before `term`.
+fn surface_borrowed(borrow: CstNode, term: SurfaceTerm, span: SurfaceSpan) -> SurfaceTerm {
+  surface_term_at(SkBorrow(surface_has(borrow.flat, "KwMut"), term), span)
+}
+
+fn surface_tagged(
+  c: SurfaceCtx,
+  prefix: CstNode,
+  term: SurfaceTerm,
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  surface_term_at(SkTagged(surface_ident(c, prefix), term), span)
+}
+
+fn surface_chain_ops(c: SurfaceCtx, kids: List(CstNode), join: Text) -> List(Text) {
+  match kids -> List(Text) {
+    Nil => Nil
+    Cons(n, rest) => match surface_is(n, join) -> List(Text) {
+      yes => Cons(surface_text(c, n), surface_chain_ops(c, rest, join))
+      no => surface_chain_ops(c, rest, join)
+    }
+  }
+}
+
+fn surface_all_equal(xs: List(Text), x: Text) -> Yn {
+  match xs -> Yn {
+    Nil => yes
+    Cons(y, rest) => y == x && surface_all_equal(rest, x)
+  }
+}
+
+fn surface_connective(op: Text) -> Text {
+  match op == "\u{2227}" -> Text {
+    yes => "And"
+    no => match op == "\u{2228}" -> Text {
+      yes => "Or"
+      no => match op == "\u{2194}" -> Text {
+        yes => "Iff"
+        no => "Union"
+      }
+    }
+  }
+}
+
+fn surface_join_fold(
+  ops: List(Text),
+  acc: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  match ops -> SurfaceTerm {
+    Nil => acc
+    Cons(op, more) => match rest -> SurfaceTerm {
+      Nil => acc
+      Cons(
+        rhs,
+        others
+      ) => surface_join_fold(
+        more,
+        surface_app(surface_connective(op), Cons(acc, Cons(rhs, Nil)), span),
+        others,
+        span
+      )
+    }
+  }
+}
+
+// `Type: TypeAtom { TypeJoin TypeAtom }`: a union for `|`, a named
+// connective for `∧ ∨ ↔`.
+fn surface_join_chain(atoms: List(SurfaceTerm), ops: List(Text), span: SurfaceSpan) -> SurfaceTerm {
+  match atoms -> SurfaceTerm {
+    Nil => surface_term_at(SkOther("Type"), span)
+    Cons(first, rest) => match ops -> SurfaceTerm {
+      Nil => first
+      Cons(op, more) => match surface_all_equal(ops, "|") -> SurfaceTerm {
+        yes => surface_term_at(SkUnion(atoms), span)
+        no => surface_join_fold(ops, first, rest, span)
+      }
+    }
+  }
+}
+
+fn surface_is_tuple(f: SurfaceTerm) -> Yn {
+  match f.kind -> Yn {
+    SkVar(name) => name == "Tuple"
+    _ => no
+  }
+}
+
+// The arguments of a tuple, or the term alone.
+fn surface_tuple_args(t: SurfaceTerm) -> List(SurfaceTerm) {
+  match t.kind -> List(SurfaceTerm) {
+    SkApp(function, arguments) => match surface_is_tuple(function) -> List(SurfaceTerm) {
+      yes => arguments
+      no => Cons(t, Nil)
+    }
+    _ => Cons(t, Nil)
+  }
+}
+
+fn surface_unnamed(params: List(SurfaceTerm)) -> List(SurfaceParam) {
+  match params -> List(SurfaceParam) {
+    Nil => Nil
+    Cons(p, rest) => Cons(SurfaceParam { name: None, ty: p }, surface_unnamed(rest))
+  }
+}
+
+// `(&x: A)` as a parameter's type: `A`, borrowed as `&x` is (mutably for
+// `&mut x`). The name `x` is not kept.
+fn surface_typed_borrow(name: SurfaceTerm, ty: SurfaceTerm) -> SurfaceTerm {
+  match name.kind -> SurfaceTerm {
+    SkBorrow(
+      mutable,
+      x
+    ) => surface_term_at(SkBorrow(mutable, ty), SurfaceSpan { start: ty.start, end: ty.end })
+    _ => ty
+  }
+}
+
+fn surface_effect_names(c: SurfaceCtx, nodes: List(CstNode)) -> List(Text) {
+  match nodes -> List(Text) {
+    Nil => Nil
+    Cons(n, rest) => match surface_first(n, "Ident") -> List(Text) {
+      Some(i) => Cons(surface_text(c, i), surface_effect_names(c, rest))
+      None => surface_effect_names(c, rest)
+    }
+  }
+}
+
+// The names in an effect row; a row variable `| e` is `|e`.
+fn surface_row_names(c: SurfaceCtx, row: CstNode) -> List(Text) {
+  match surface_first(row, "Ident") -> List(Text) {
+    Some(
+      v
+    ) => list_append(
+      surface_effect_names(c, surface_all(row, "EffectName")),
+      Cons(text_concat("|", surface_text(c, v)), Nil)
+    )
+    None => surface_effect_names(c, surface_all(row, "EffectName"))
+  }
+}
+
+fn surface_opt_row_names(c: SurfaceCtx, row: Option(CstNode)) -> Option(List(Text)) {
+  match row -> Option(List(Text)) {
+    Some(r) => Some(surface_row_names(c, r))
+    None => None
+  }
+}
+
+// The row of a result type: its own, or after the unit type's parentheses
+// (`-> () ! {e}`).
+fn surface_return_row(ret: CstNode) -> Option(CstNode) {
+  match surface_first(ret, "EffectRow") -> Option(CstNode) {
+    Some(r) => Some(r)
+    None => match ret.flat -> Option(CstNode) {
+      Nil => None
+      Cons(n, rest) => match surface_is(n, "FnType") -> Option(CstNode) {
+        yes => surface_first(n, "EffectRow")
+        no => None
+      }
+    }
+  }
+}
+
+fn surface_expr_parts(kids: List(CstNode)) -> List(CstNode) {
+  match kids -> List(CstNode) {
+    Nil => Nil
+    Cons(n, rest) => match !n.terminal && n.name != "Gap" && n.name != "FatArrow" -> List(CstNode) {
+      yes => Cons(n, surface_expr_parts(rest))
+      no => surface_expr_parts(rest)
+    }
+  }
+}
+
+inductive SurfaceLamParam(): Type {
+  surface_lam_param(name: Text, borrow: Option(Yn)): SurfaceLamParam
+}
+
+// A parameter is a name, or a borrowed name `&x` / `&mut x`.
+fn surface_lam_param_of(t: SurfaceTerm) -> Option(SurfaceLamParam) {
+  match t.kind -> Option(SurfaceLamParam) {
+    SkVar(name) => Some(SurfaceLamParam { name: name, borrow: None })
+    SkBorrow(mutable, inner) => match inner.kind -> Option(SurfaceLamParam) {
+      SkVar(name) => Some(SurfaceLamParam { name: name, borrow: Some(mutable) })
+      _ => None
+    }
+    _ => None
+  }
+}
+
+fn surface_params(args: List(SurfaceTerm)) -> Option(List(SurfaceLamParam)) {
+  match args -> Option(List(SurfaceLamParam)) {
+    Nil => Some(Nil)
+    Cons(a, rest) => match surface_lam_param_of(a) -> Option(List(SurfaceLamParam)) {
+      None => None
+      Some(p) => match surface_params(rest) -> Option(List(SurfaceLamParam)) {
+        None => None
+        Some(ps) => Some(Cons(p, ps))
+      }
+    }
+  }
+}
+
+fn surface_param_names(ps: List(SurfaceLamParam)) -> List(Text) {
+  match ps -> List(Text) {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.name, surface_param_names(rest))
+  }
+}
+
+fn surface_param_borrows(ps: List(SurfaceLamParam)) -> List(Option(Yn)) {
+  match ps -> List(Option(Yn)) {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.borrow, surface_param_borrows(rest))
+  }
+}
+
+fn surface_no_borrows(bs: List(Option(Yn))) -> Yn {
+  match bs -> Yn {
+    Nil => yes
+    Cons(b, rest) => match b -> Yn {
+      None => surface_no_borrows(rest)
+      Some(x) => no
+    }
+  }
+}
+
+// `params => body`, as a lambda that borrows when a parameter does.
+fn surface_lambda_of(
+  ps: List(SurfaceLamParam),
+  body: SurfaceTerm,
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  match surface_no_borrows(surface_param_borrows(ps)) -> SurfaceTerm {
+    yes => surface_term_at(SkLam(surface_param_names(ps), body), span)
+    no => surface_term_at(
+      SkBorrowLam(
+        surface_param_borrows(ps),
+        surface_term_at(SkLam(surface_param_names(ps), body), span)
+      ),
+      span
+    )
+  }
+}
+
+fn surface_is_operator(n: CstNode) -> Yn {
+  !n.terminal && (
+    n.name == "OrOp" || n.name == "AndOp" || n.name == "CompareOp" || n.name == "AddOp" || n.name == "MulOp"
+  )
+}
+
+fn surface_operators(c: SurfaceCtx, kids: List(CstNode)) -> List(Text) {
+  match kids -> List(Text) {
+    Nil => Nil
+    Cons(n, rest) => match surface_is_operator(n) -> List(Text) {
+      yes => Cons(surface_text(c, n), surface_operators(c, rest))
+      no => surface_operators(c, rest)
+    }
+  }
+}
+
+fn surface_fold_operators(
+  ops: List(Text),
+  acc: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  match ops -> SurfaceTerm {
+    Nil => acc
+    Cons(op, more) => match rest -> SurfaceTerm {
+      Nil => acc
+      Cons(
+        rhs,
+        others
+      ) => surface_fold_operators(
+        more,
+        surface_app(op, Cons(acc, Cons(rhs, Nil)), SurfaceSpan { start: acc.start, end: span.end }),
+        others,
+        span
+      )
+    }
+  }
+}
+
+// `x op y op z`: nested applications of the operator's name.
+fn surface_left_fold_of(
+  operands: List(SurfaceTerm),
+  ops: List(Text),
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  match operands -> SurfaceTerm {
+    Nil => surface_term_at(SkOther("operator"), span)
+    Cons(first, rest) => surface_fold_operators(ops, first, rest, span)
+  }
+}
+
+// `prefixes` is last first, the order they are applied in.
+fn surface_prefixes(
+  c: SurfaceCtx,
+  prefixes: List(CstNode),
+  acc: SurfaceTerm,
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  match prefixes -> SurfaceTerm {
+    Nil => acc
+    Cons(p, rest) => surface_prefixes(
+      c,
+      rest,
+      match surface_first(p, "TagPrefix") -> SurfaceTerm {
+        Some(tag) => surface_tagged(c, tag, acc, span)
+        None => match surface_first(p, "Borrow") -> SurfaceTerm {
+          Some(borrow) => surface_borrowed(borrow, acc, span)
+          None => surface_app(surface_text(c, p), Cons(acc, Nil), span)
+        }
+      },
+      span
+    )
+  }
+}
+
+fn surface_only_names(kids: List(CstNode)) -> Yn {
+  match kids -> Yn {
+    Nil => yes
+    Cons(n, rest) => (surface_is(n, "Ident") || surface_is(n, "PathSep")) && surface_only_names(
+      rest
+    )
+  }
+}
+
+// The trimmed texts of the names and separators, put together.
+fn surface_path_parts(c: SurfaceCtx, kids: List(CstNode)) -> List(Text) {
+  match kids -> List(Text) {
+    Nil => Nil
+    Cons(n, rest) => match surface_is(n, "Ident") || surface_is(n, "PathSep") -> List(Text) {
+      yes => Cons(surface_trim(c, surface_text(c, n)), surface_path_parts(c, rest))
+      no => surface_path_parts(c, rest)
+    }
+  }
+}
+
+fn surface_has_braces(c: SurfaceCtx, kids: List(CstNode)) -> Yn {
+  match kids -> Yn {
+    Nil => no
+    Cons(n, rest) => surface_trim(c, surface_text(c, n)) == "{}" || surface_has_braces(c, rest)
+  }
+}
+
+fn surface_number(c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+  match surface_one(n.flat) -> SurfaceTerm {
+    Some(only) => match surface_is(only, "Integer") -> SurfaceTerm {
+      yes => surface_term_at(SkNat(surface_text(c, n)), span)
+      no => surface_other(c, n)
+    }
+    None => surface_other(c, n)
+  }
+}
+
+// A tuple of the items, or the one item without a comma.
+fn surface_paren_of(items: List(SurfaceTerm), has_comma: Yn, span: SurfaceSpan) -> SurfaceTerm {
+  match items -> SurfaceTerm {
+    Cons(only, rest) => match rest -> SurfaceTerm {
+      Nil => match has_comma -> SurfaceTerm {
+        yes => surface_app("Tuple", items, span)
+        no => only
+      }
+      Cons(x, y) => surface_app("Tuple", items, span)
+    }
+    Nil => surface_app("Tuple", items, span)
+  }
+}
+
+// The statement, as a term, when it is an expression.
+fn surface_stmt_value(s: SurfaceStmt) -> Option(SurfaceTerm) {
+  match s -> Option(SurfaceTerm) {
+    StExpr(e) => Some(e)
+    _ => None
+  }
+}
+
+// A block holding one expression is that expression.
+fn surface_block_of(read: List(SurfaceStmt), span: SurfaceSpan) -> SurfaceTerm {
+  match read -> SurfaceTerm {
+    Cons(only, rest) => match rest -> SurfaceTerm {
+      Nil => match surface_stmt_value(only) -> SurfaceTerm {
+        Some(e) => e
+        None => surface_term_at(SkBlock(read), span)
+      }
+      Cons(x, y) => surface_term_at(SkBlock(read), span)
+    }
+    Nil => surface_term_at(SkBlock(read), span)
+  }
+}
+
+fn surface_syntax_lit_term(c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+  surface_term_at(SkSyntaxLit(surface_lit(c, n).name, surface_lit(c, n).body), span)
+}
+
+// The kinds of statement, as `surface_stmt_of` tells them apart.
+fn surface_data_kind(c: SurfaceCtx, decl: CstNode) -> Option(Text) {
+  match surface_first(decl, "KwKind") -> Option(Text) {
+    Some(k) => Some(surface_trim(c, surface_text(c, k)))
+    None => None
+  }
+}
+
+fn surface_named_names(xs: List(SurfaceNamed)) -> List(Text) {
+  match xs -> List(Text) {
+    Nil => Nil
+    Cons(x, rest) => Cons(x.name, surface_named_names(rest))
+  }
+}
+
+fn surface_param_idents(c: SurfaceCtx, params: List(CstNode)) -> List(Text) {
+  match params -> List(Text) {
+    Nil => Nil
+    Cons(p, rest) => match surface_first(p, "Ident") -> List(Text) {
+      Some(i) => Cons(surface_text(c, i), surface_param_idents(c, rest))
+      None => surface_param_idents(c, rest)
+    }
+  }
+}
+
+fn surface_borrow_flag(found: Option(CstNode)) -> Option(Yn) {
+  match found -> Option(Yn) {
+    Some(b) => Some(surface_has(b.flat, "KwMut"))
+    None => None
+  }
+}
+
+fn surface_param_borrow_flags(params: List(CstNode)) -> List(Option(Yn)) {
+  match params -> List(Option(Yn)) {
+    Nil => Nil
+    Cons(
+      p,
+      rest
+    ) => Cons(surface_borrow_flag(surface_first(p, "Borrow")), surface_param_borrow_flags(rest))
+  }
+}
+
+inductive SurfaceBounds(): Type {
+  surface_bounds(names: List(Text), bounds: List(Option(Text))): SurfaceBounds
+}
+
+fn surface_bound(c: SurfaceCtx, g: CstNode) -> Option(Text) {
+  match surface_first(g, "GenericKind") -> Option(Text) {
+    Some(k) => Some(surface_strip(c, surface_text(c, k)))
+    None => None
+  }
+}
+
+fn surface_bounds_of(c: SurfaceCtx, nodes: List(CstNode)) -> SurfaceBounds {
+  match nodes -> SurfaceBounds {
+    Nil => SurfaceBounds { names: Nil, bounds: Nil }
+    Cons(g, rest) => SurfaceBounds {
+      names: Cons(surface_ident(c, g), surface_bounds_of(c, rest).names),
+      bounds: Cons(surface_bound(c, g), surface_bounds_of(c, rest).bounds)
+    }
+  }
+}
+
+// The generics' names, and each one's bound as written.
+fn surface_generic_bounds(c: SurfaceCtx, node: CstNode) -> SurfaceBounds {
+  match surface_first(node, "Generics") -> SurfaceBounds {
+    None => SurfaceBounds { names: Nil, bounds: Nil }
+    Some(generics) => surface_bounds_of(c, surface_all(generics, "Generic"))
+  }
+}
+
+fn surface_head_or_empty(names: List(Text)) -> Text {
+  match names -> Text {
+    Nil => ""
+    Cons(n, rest) => n
+  }
+}
+
+fn surface_first_bound(bounds: List(Option(Text))) -> Option(Text) {
+  match bounds -> Option(Text) {
+    Nil => None
+    Cons(b, rest) => b
+  }
+}
+
+// The `law` items: each one's name and span.
+fn surface_laws(c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceLaw) {
+  match nodes -> List(SurfaceLaw) {
+    Nil => Nil
+    Cons(n, rest) => Cons(
+      SurfaceLaw {
+        name: surface_ident(c, n),
+        start: surface_span(c, n).start,
+        end: surface_span(c, n).end
+      },
+      surface_laws(c, rest)
+    )
+  }
+}
+
+// `macro name = function`.
+fn surface_macro_decl(c: SurfaceCtx, inner: CstNode, span: SurfaceSpan) -> SurfaceStmt {
+  StMacro(
+    surface_name_of(c, surface_nth(surface_descend(c, inner, "Ident"), 0)),
+    surface_name_of(c, surface_nth(surface_descend(c, inner, "Ident"), 1)),
+    span.start,
+    span.end
+  )
+}
+
+// ---- integer patterns --------------------------------------------------------------
+
+fn surface_digits_in(k: Nat, t: Text, at: Nat, acc: Nat, limit: Nat) -> Option(Nat) {
+  match k -> Option(Nat) {
+    zero => Some(acc)
+    succ(j) => match at >= text_len(t) -> Option(Nat) {
+      yes => Some(acc)
+      no => match text_digit(text_byte_value(t, at)) -> Option(Nat) {
+        None => None
+        Some(d) => match acc * 10 + d > limit -> Option(Nat) {
+          yes => None
+          no => surface_digits_in(j, t, at + 1, acc * 10 + d, limit)
+        }
+      }
+    }
+  }
+}
+
+// The largest magnitude of an `i64` with the sign `t` starts with.
+fn surface_int_limit(t: Text) -> Nat {
+  match text_byte_value(t, 0) == 45 -> Nat {
+    yes => 9223372036854775807 + 1
+    no => 9223372036854775807
+  }
+}
+
+// `str::parse::<i64>`: a sign, then digits, as the sign and the magnitude.
+fn surface_parse_int(t: Text) -> Option(Pair(Yn, Nat)) {
+  match text_len(t) == 0 -> Option(Pair(Yn, Nat)) {
+    yes => None
+    no => match text_byte_value(t, 0) == 45 || text_byte_value(t, 0) == 43 -> Option(Pair(Yn, Nat)) {
+      yes => match text_len(t) == 1 -> Option(Pair(Yn, Nat)) {
+        yes => None
+        no => match surface_digits_in(
+          text_len(t),
+          t,
+          1,
+          0,
+          surface_int_limit(t)
+        ) -> Option(Pair(Yn, Nat)) {
+          Some(m) => Some(Pair { fst: text_byte_value(t, 0) == 45, snd: m })
+          None => None
+        }
+      }
+      no => match surface_digits_in(
+        text_len(t) + 1,
+        t,
+        0,
+        0,
+        9223372036854775807
+      ) -> Option(Pair(Yn, Nat)) {
+        Some(m) => Some(Pair { fst: no, snd: m })
+        None => None
+      }
+    }
+  }
+}
+
+fn surface_literal_pattern(c: SurfaceCtx, lit: CstNode) -> SurfacePattern {
+  match surface_has(lit.flat, "True") -> SurfacePattern {
+    yes => PtBool(yes)
+    no => match surface_has(lit.flat, "False") -> SurfacePattern {
+      yes => PtBool(no)
+      no => match surface_has(lit.flat, "Text") -> SurfacePattern {
+        yes => PtText(surface_unquote(surface_trim(c, surface_text(c, lit))))
+        no => match surface_parse_int(
+          text_join(text_split(surface_trim(c, surface_text(c, lit)), " "), "")
+        ) -> SurfacePattern {
+          Some(n) => PtInt(n.fst, n.snd)
+          None => PtOther("number pattern")
+        }
+      }
+    }
+  }
+}
+// ---- the kinds of node a reader tells apart ---------------------------------------
+
+// A non-terminal the readers of terms and statements have a case for.
+inductive SurfaceRule(): Type {
+  RuleType(): SurfaceRule
+  RuleTypeAtom(): SurfaceRule
+  RuleBraceTerm(): SurfaceRule
+  RuleFnType(): SurfaceRule
+  RuleReturnType(): SurfaceRule
+  RuleQuantified(): SurfaceRule
+  RuleExpr(): SurfaceRule
+  RuleOr(): SurfaceRule
+  RuleAnd(): SurfaceRule
+  RuleCompare(): SurfaceRule
+  RuleAdditive(): SurfaceRule
+  RuleMultiplicative(): SurfaceRule
+  RuleUnary(): SurfaceRule
+  RulePostfix(): SurfaceRule
+  RulePrimary(): SurfaceRule
+  RulePathExpr(): SurfaceRule
+  RuleNumber(): SurfaceRule
+  RuleHoleExpr(): SurfaceRule
+  RuleText(): SurfaceRule
+  RuleTrue(): SurfaceRule
+  RuleFalse(): SurfaceRule
+  RuleParen(): SurfaceRule
+  RuleBrace(): SurfaceRule
+  RuleArmBody(): SurfaceRule
+  RuleStepExpr(): SurfaceRule
+  RuleBlock(): SurfaceRule
+  RuleIfExpr(): SurfaceRule
+  RulePerformExpr(): SurfaceRule
+  RuleHandleExpr(): SurfaceRule
+  RuleBudgetExpr(): SurfaceRule
+  RuleMatchExpr(): SurfaceRule
+  RuleSyntaxLit(): SurfaceRule
+  RuleMacroCall(): SurfaceRule
+  RuleQuoteExpr(): SurfaceRule
+  RuleSpliceExpr(): SurfaceRule
+  RuleItem(): SurfaceRule
+  RuleLetDecl(): SurfaceRule
+  RuleVarDecl(): SurfaceRule
+  RuleModuleDecl(): SurfaceRule
+  RuleFnDecl(): SurfaceRule
+  RuleTheoremDecl(): SurfaceRule
+  RuleAxiomDecl(): SurfaceRule
+  RuleDefDecl(): SurfaceRule
+  RuleMutualDecl(): SurfaceRule
+  RuleImportDecl(): SurfaceRule
+  RuleSyntaxDecl(): SurfaceRule
+  RuleMacroDecl(): SurfaceRule
+  RuleInductiveDecl(): SurfaceRule
+  RuleEffectDecl(): SurfaceRule
+  RuleStructDecl(): SurfaceRule
+  RuleEnumDecl(): SurfaceRule
+  RuleExternDecl(): SurfaceRule
+  RuleClassDecl(): SurfaceRule
+  RuleInstanceDecl(): SurfaceRule
+  RuleWhileStmt(): SurfaceRule
+  RuleReturnStmt(): SurfaceRule
+  RuleExprStmt(): SurfaceRule
+  RuleNone(): SurfaceRule
+}
+
+fn surface_rule_plain(name: Text) -> SurfaceRule {
+  match name == "Type" -> SurfaceRule {
+    yes => RuleType
+    no => match name == "TypeAtom" -> SurfaceRule {
+      yes => RuleTypeAtom
+      no => match name == "BraceTerm" -> SurfaceRule {
+        yes => RuleBraceTerm
+        no => match name == "FnType" -> SurfaceRule {
+          yes => RuleFnType
+          no => match name == "ReturnType" -> SurfaceRule {
+            yes => RuleReturnType
+            no => match name == "Quantified" -> SurfaceRule {
+              yes => RuleQuantified
+              no => match name == "Expr" -> SurfaceRule {
+                yes => RuleExpr
+                no => match name == "Or" -> SurfaceRule {
+                  yes => RuleOr
+                  no => match name == "And" -> SurfaceRule {
+                    yes => RuleAnd
+                    no => match name == "Compare" -> SurfaceRule {
+                      yes => RuleCompare
+                      no => match name == "Additive" -> SurfaceRule {
+                        yes => RuleAdditive
+                        no => match name == "Multiplicative" -> SurfaceRule {
+                          yes => RuleMultiplicative
+                          no => match name == "Unary" -> SurfaceRule {
+                            yes => RuleUnary
+                            no => match name == "Postfix" -> SurfaceRule {
+                              yes => RulePostfix
+                              no => match name == "Primary" -> SurfaceRule {
+                                yes => RulePrimary
+                                no => match name == "PathExpr" -> SurfaceRule {
+                                  yes => RulePathExpr
+                                  no => match name == "Number" -> SurfaceRule {
+                                    yes => RuleNumber
+                                    no => match name == "HoleExpr" -> SurfaceRule {
+                                      yes => RuleHoleExpr
+                                      no => match name == "Text" -> SurfaceRule {
+                                        yes => RuleText
+                                        no => match name == "True" -> SurfaceRule {
+                                          yes => RuleTrue
+                                          no => match name == "False" -> SurfaceRule {
+                                            yes => RuleFalse
+                                            no => match name == "Paren" -> SurfaceRule {
+                                              yes => RuleParen
+                                              no => match name == "Brace" -> SurfaceRule {
+                                                yes => RuleBrace
+                                                no => match name == "Block" -> SurfaceRule {
+                                                  yes => RuleBlock
+                                                  no => match name == "IfExpr" -> SurfaceRule {
+                                                    yes => RuleIfExpr
+                                                    no => match name == "PerformExpr" -> SurfaceRule {
+                                                      yes => RulePerformExpr
+                                                      no => match name == "HandleExpr" -> SurfaceRule {
+                                                        yes => RuleHandleExpr
+                                                        no => match name == "BudgetExpr" -> SurfaceRule {
+                                                          yes => RuleBudgetExpr
+                                                          no => match name == "MatchExpr" -> SurfaceRule {
+                                                            yes => RuleMatchExpr
+                                                            no => match name == "SyntaxLit" -> SurfaceRule {
+                                                              yes => RuleSyntaxLit
+                                                              no => match name == "MacroCall" -> SurfaceRule {
+                                                                yes => RuleMacroCall
+                                                                no => match name == "QuoteExpr" -> SurfaceRule {
+                                                                  yes => RuleQuoteExpr
+                                                                  no => match name == "SpliceExpr" -> SurfaceRule {
+                                                                    yes => RuleSpliceExpr
+                                                                    no => match name == "Item" -> SurfaceRule {
+                                                                      yes => RuleItem
+                                                                      no => match name == "LetDecl" -> SurfaceRule {
+                                                                        yes => RuleLetDecl
+                                                                        no => match name == "VarDecl" -> SurfaceRule {
+                                                                          yes => RuleVarDecl
+                                                                          no => match name == "ModuleDecl" -> SurfaceRule {
+                                                                            yes => RuleModuleDecl
+                                                                            no => match name == "FnDecl" -> SurfaceRule {
+                                                                              yes => RuleFnDecl
+                                                                              no => match name == "TheoremDecl" -> SurfaceRule {
+                                                                                yes => RuleTheoremDecl
+                                                                                no => match name == "AxiomDecl" -> SurfaceRule {
+                                                                                  yes => RuleAxiomDecl
+                                                                                  no => match name == "DefDecl" -> SurfaceRule {
+                                                                                    yes => RuleDefDecl
+                                                                                    no => match name == "MutualDecl" -> SurfaceRule {
+                                                                                      yes => RuleMutualDecl
+                                                                                      no => match name == "ImportDecl" -> SurfaceRule {
+                                                                                        yes => RuleImportDecl
+                                                                                        no => match name == "SyntaxDecl" -> SurfaceRule {
+                                                                                          yes => RuleSyntaxDecl
+                                                                                          no => match name == "MacroDecl" -> SurfaceRule {
+                                                                                            yes => RuleMacroDecl
+                                                                                            no => match name == "InductiveDecl" -> SurfaceRule {
+                                                                                              yes => RuleInductiveDecl
+                                                                                              no => match name == "EffectDecl" -> SurfaceRule {
+                                                                                                yes => RuleEffectDecl
+                                                                                                no => match name == "StructDecl" -> SurfaceRule {
+                                                                                                  yes => RuleStructDecl
+                                                                                                  no => match name == "EnumDecl" -> SurfaceRule {
+                                                                                                    yes => RuleEnumDecl
+                                                                                                    no => match name == "ExternDecl" -> SurfaceRule {
+                                                                                                      yes => RuleExternDecl
+                                                                                                      no => match name == "WhileStmt" -> SurfaceRule {
+                                                                                                        yes => RuleWhileStmt
+                                                                                                        no => match name == "ReturnStmt" -> SurfaceRule {
+                                                                                                          yes => RuleReturnStmt
+                                                                                                          no => match name == "ExprStmt" -> SurfaceRule {
+                                                                                                            yes => RuleExprStmt
+                                                                                                            no => RuleNone
+                                                                                                          }
+                                                                                                        }
+                                                                                                      }
+                                                                                                    }
+                                                                                                  }
+                                                                                                }
+                                                                                              }
+                                                                                            }
+                                                                                          }
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn surface_rule(name: Text) -> SurfaceRule {
+  match name == "ArmBody" -> SurfaceRule {
+    yes => RuleArmBody
+    no => match name == "ClassDecl" -> SurfaceRule {
+      yes => RuleClassDecl
+      no => match name == "InstanceDecl" -> SurfaceRule {
+        yes => RuleInstanceDecl
+        no => match name == "StepExpr" -> SurfaceRule {
+          yes => RuleStepExpr
+          no => surface_rule_plain(name)
+        }
+      }
+    }
+  }
+}
+// ---- the readers ------------------------------------------------------------------
+//
+// `Reader::term` and what it calls in `crates/tauto/src/surface.rs` and
+// `surface/program.rs`. Each function is the one of the same name there; they
+// call each other, so they share the steps `k`, one taken by each call.
+
+inductive SurfaceReturn(): Type {
+  surface_return_mk(term: SurfaceTerm, effects: Option(List(Text))): SurfaceReturn
+}
+
+fn surface_out_stmt(name: Text) -> SurfaceStmt {
+  StOther(name, 0, 0)
+}
+
+fn surface_out_fn() -> SurfaceFn {
+  SurfaceFn {
+    name: "",
+    generics: Nil,
+    bounds: Nil,
+    params: Nil,
+    borrows: Nil,
+    param_types: Nil,
+    result: None,
+    effects: None,
+    wheres: Nil,
+    start: 0,
+    end: 0,
+    body: surface_out("fuel")
+  }
+}
+
+fn surface_out_theorem() -> SurfaceTheorem {
+  SurfaceTheorem { name: "", implicit: 0, params: Nil, ty: surface_out(
+    "fuel"
+  ), body: None, start: 0, end: 0 }
+}
+
+fn surface_out_data() -> SurfaceData {
+  SurfaceData { kind: None, name: "", generics: Nil, constructors: Nil, start: 0, end: 0 }
+}
+
+// `name = value`, when the target is a name.
+fn surface_assign(target: SurfaceTerm, value: SurfaceTerm, span: SurfaceSpan) -> SurfaceStmt {
+  match target.kind -> SurfaceStmt {
+    SkVar(name) => StAssign(name, value)
+    _ => StOther("assignment target", span.start, span.end)
+  }
+}
+
+// A theorem with the result and body of a `def`.
+fn surface_def_of(t: SurfaceTheorem, ty: SurfaceTerm, body: SurfaceTerm) -> SurfaceTheorem {
+  SurfaceTheorem {
+    name: t.name,
+    implicit: t.implicit,
+    params: t.params,
+    ty: ty,
+    body: Some(body),
+    start: t.start,
+    end: t.end
+  }
+}
+
+// Whether a path pattern is a lone name: no arguments, one name, no `::`.
+fn surface_simple_path(path: CstNode) -> Yn {
+  match surface_first(path, "PatternArgs") -> Yn {
+    Some(a) => no
+    None => match surface_one(surface_all(path, "Ident")) -> Yn {
+      Some(i) => list_length(surface_all(path, "PathSep")) == 0
+      None => no
+    }
+  }
+}
+
+fn surface_bind_pattern(written: Text) -> SurfacePattern {
+  match written == "_" -> SurfacePattern {
+    yes => PtWild
+    no => PtBind(written)
+  }
+}
+
+fn surface_arrow(params: List(SurfaceTerm), r: SurfaceReturn, span: SurfaceSpan) -> SurfaceTerm {
+  surface_term_at(SkPi(surface_unnamed(params), r.term, r.effects), span)
+}
+
+// The `Stmts` of a block, if it has any.
+fn surface_block_list(block: Option(CstNode)) -> Option(CstNode) {
+  match block -> Option(CstNode) {
+    Some(b) => surface_first(b, "Stmts")
+    None => None
+  }
+}
+
+// The parameters of a function type with no arrow: a tuple of them, or the one.
+fn surface_tuple_of(params: List(SurfaceTerm), span: SurfaceSpan) -> SurfaceTerm {
+  match params -> SurfaceTerm {
+    Cons(only, rest) => match rest -> SurfaceTerm {
+      Nil => only
+      Cons(y, more) => surface_app("Tuple", params, span)
+    }
+    Nil => surface_app("Tuple", params, span)
+  }
+}
+
+fn surface_quantifier(kids: List(CstNode), c: SurfaceCtx) -> Text {
+  match kids -> Text {
+    Cons(n, rest) => surface_text(c, n)
+    Nil => ""
+  }
+}
+
+// `∀ x: A. B` or `∃ x: A. B`.
+fn surface_bound_term(
+  quantifier: Text,
+  binder: Text,
+  domain: SurfaceTerm,
+  body: SurfaceTerm,
+  span: SurfaceSpan
+) -> SurfaceTerm {
+  match quantifier == "\u{2203}" || quantifier == "exists" -> SurfaceTerm {
+    yes => surface_term_at(SkExists(binder, domain, body), span)
+    no => surface_term_at(
+      SkPi(Cons(SurfaceParam { name: Some(binder), ty: domain }, Nil), body, None),
+      span
+    )
+  }
+}
+
+// The span from the start of `acc` to the end of `op`.
+fn surface_span_from(acc: SurfaceTerm, end: Nat) -> SurfaceSpan {
+  SurfaceSpan { start: acc.start, end: end }
+}
+
+// The node after `else`, if there is one.
+fn surface_else(kids: List(CstNode)) -> Option(CstNode) {
+  match surface_find_in(kids, "ElseBranch") -> Option(CstNode) {
+    Some(e) => surface_nth(e.flat, 0)
+    None => None
+  }
+}
+
+// The type arguments after a name in a result type: not the effect row.
+fn surface_type_args(second: Option(CstNode)) -> Option(CstNode) {
+  match second -> Option(CstNode) {
+    Some(a) => match surface_is(a, "EffectRow") -> Option(CstNode) {
+      yes => None
+      no => Some(a)
+    }
+    None => None
+  }
+}
+
+fn surface_borrowed_return(mutable: Yn, r: SurfaceReturn, span: SurfaceSpan) -> SurfaceReturn {
+  SurfaceReturn { term: surface_term_at(SkBorrow(mutable, r.term), span), effects: r.effects }
+}
+
+fn surface_opt_text_value(c: SurfaceCtx, t: Option(CstNode)) -> Text {
+  match t -> Text {
+    Some(x) => surface_text_value(c, x)
+    None => ""
+  }
+}
+
+// The grammar of a `syntax` statement.
+fn surface_grammar(c: SurfaceCtx, inner: CstNode) -> Text {
+  match surface_first(inner, "MacroBlock") -> Text {
+    Some(b) => surface_lit(c, b).body
+    None => surface_lit(c, inner).body
+  }
+}
+
+// The effect row of a function: after its result, or inside it.
+fn surface_fn_row(c: SurfaceCtx, result: Option(CstNode)) -> Option(CstNode) {
+  match result -> Option(CstNode) {
+    None => None
+    Some(r) => match surface_first(r, "EffectRow") -> Option(CstNode) {
+      Some(w) => Some(w)
+      None => surface_row_in_return(c.fuel, surface_first(r, "ReturnType"))
+    }
+  }
+}
+
+fn surface_signature(decl: CstNode) -> Option(CstNode) {
+  match surface_first(decl, "EffectBody") -> Option(CstNode) {
+    Some(b) => surface_first(b, "EffectSignature")
+    None => None
+  }
+}
+
+// How an effect resumes: `direct` unless a quantity is written.
+fn surface_resume(c: SurfaceCtx, signature: Option(CstNode)) -> Option(Text) {
+  match signature -> Option(Text) {
+    None => None
+    Some(sig) => match surface_first(sig, "EffectMode") -> Option(Text) {
+      None => None
+      Some(mode) => match surface_first(mode, "Quant") -> Option(Text) {
+        Some(q) => Some(surface_strip(c, surface_text(c, q)))
+        None => Some("direct")
+      }
+    }
+  }
+}
+
+fn surface_struct_fields(c: SurfaceCtx, body: Option(CstNode)) -> List(CstNode) {
+  match body -> List(CstNode) {
+    None => Nil
+    Some(b) => match surface_first(b, "Fields") -> List(CstNode) {
+      Some(f) => surface_descend(c, f, "FieldDecl")
+      None => Nil
+    }
+  }
+}
+
+fn surface_ctor_nodes(c: SurfaceCtx, list: Option(CstNode)) -> List(CstNode) {
+  match list -> List(CstNode) {
+    Some(l) => surface_items(c, l.flat, "Constructor", "ConstructorsTail", "ConstructorsTail")
+    None => Nil
+  }
+}
+
+// Whether a borrow found is `&mut`.
+fn surface_is_mut(found: Option(CstNode)) -> Yn {
+  match found -> Yn {
+    Some(b) => surface_has(b.flat, "KwMut")
+    None => no
+  }
+}
+
+fn surface_cont(c: SurfaceCtx, op: CstNode) -> Option(Text) {
+  match surface_last_ident(op.flat) -> Option(Text) {
+    Some(i) => Some(surface_text(c, i))
+    None => None
+  }
+}
+mutual {
+  fn surface_term(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match n.terminal -> SurfaceTerm {
+        yes => surface_other(c, n)
+        no => match surface_rule(n.name) -> SurfaceTerm {
+          RuleType => surface_join_chain(
+            surface_chain_atoms(j, c, n.flat, "TypeJoin"),
+            surface_chain_ops(c, n.flat, "TypeJoin"),
+            surface_span(c, n)
+          )
+          RuleTypeAtom => surface_type_atom(j, c, n, surface_span(c, n))
+          RuleBraceTerm => surface_term_of(j, c, surface_first(n, "Expr"), n)
+          RuleFnType => surface_fn_type(j, c, n.flat, surface_span(c, n))
+          RuleReturnType => surface_return_parts(j, c, n).term
+          RuleQuantified => surface_quantified(j, c, n.flat, surface_span(c, n))
+          RuleExpr => surface_expr(j, c, n.flat, surface_span(c, n))
+          RuleOr => surface_left_fold(j, c, n.flat, surface_span(c, n))
+          RuleAnd => surface_left_fold(j, c, n.flat, surface_span(c, n))
+          RuleCompare => surface_left_fold(j, c, n.flat, surface_span(c, n))
+          RuleAdditive => surface_left_fold(j, c, n.flat, surface_span(c, n))
+          RuleMultiplicative => surface_left_fold(j, c, n.flat, surface_span(c, n))
+          RuleUnary => surface_unary(j, c, n.flat, surface_span(c, n))
+          RulePostfix => surface_postfix(j, c, n.flat, surface_span(c, n))
+          RulePrimary => surface_term_of(j, c, surface_one(n.flat), n)
+          RulePathExpr => surface_path(j, c, n, surface_span(c, n))
+          RuleNumber => surface_number(c, n, surface_span(c, n))
+          RuleHoleExpr => surface_term_at(
+            SkHole(surface_trim_marks(surface_text(c, n))),
+            surface_span(c, n)
+          )
+          RuleText => surface_term_at(SkText(surface_text_value(c, n)), surface_span(c, n))
+          RuleTrue => surface_term_at(SkBool(yes), surface_span(c, n))
+          RuleFalse => surface_term_at(SkBool(no), surface_span(c, n))
+          RuleParen => surface_paren_of(
+            surface_map_terms(j, c, surface_filter_in(n.flat, "Item")),
+            surface_has(n.flat, "Comma"),
+            surface_span(c, n)
+          )
+          RuleBrace => surface_term_of(j, c, surface_one(n.flat), n)
+          RuleArmBody => surface_term_of(j, c, surface_one(n.flat), n)
+          RuleBlock => surface_block_of(
+            surface_block_stmts(j, c, surface_first(n, "Stmts")),
+            surface_span(c, n)
+          )
+          RuleIfExpr => surface_if(j, c, n.flat, surface_span(c, n))
+          RulePerformExpr => surface_term_at(
+            SkPerform(
+              surface_name_of(c, surface_first(n, "OperationName")),
+              surface_call_args(j, c, surface_first(n, "Call"))
+            ),
+            surface_span(c, n)
+          )
+          RuleHandleExpr => surface_handle(j, c, n, surface_span(c, n))
+          RuleBudgetExpr => surface_budget(j, c, n, surface_span(c, n))
+          RuleMatchExpr => surface_match(j, c, n, surface_span(c, n))
+          RuleSyntaxLit => surface_syntax_lit_term(c, n, surface_span(c, n))
+          RuleMacroCall => surface_term_at(
+            SkMacroCall(
+              surface_trim_bangs(surface_name_of(c, surface_first(n, "MacroBang"))),
+              surface_term_of(j, c, surface_first(n, "Expr"), n)
+            ),
+            surface_span(c, n)
+          )
+          RuleQuoteExpr => surface_term_at(
+            SkQuote(
+              surface_name_of(c, surface_first(n, "Ident")) == "stmts",
+              surface_block_stmts(j, c, surface_block_list(surface_first(n, "Block")))
+            ),
+            surface_span(c, n)
+          )
+          RuleSpliceExpr => surface_splice(j, c, n)
+          RuleStepExpr => surface_step(j, c, n, surface_span(c, n))
+          RuleItem => surface_term_of(j, c, surface_nth(n.flat, 0), n)
+          _ => surface_other(c, n)
+        }
+      }
+    }
+  }
+
+  // The term of the node found, or `Other` for the node it was looked for in.
+  fn surface_term_of(
+    k: Nat,
+    c: SurfaceCtx,
+    found: Option(CstNode),
+    fallback: CstNode
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match found -> SurfaceTerm {
+        Some(n) => surface_term(j, c, n)
+        None => surface_other(c, fallback)
+      }
+    }
+  }
+
+  fn surface_opt_term(k: Nat, c: SurfaceCtx, found: Option(CstNode)) -> Option(SurfaceTerm) {
+    match k -> Option(SurfaceTerm) {
+      zero => None
+      succ(j) => match found -> Option(SurfaceTerm) {
+        Some(n) => Some(surface_term(j, c, n))
+        None => None
+      }
+    }
+  }
+
+  fn surface_map_terms(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceTerm) {
+    match k -> List(SurfaceTerm) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceTerm) {
+        Nil => Nil
+        Cons(n, rest) => Cons(surface_term(j, c, n), surface_map_terms(j, c, rest))
+      }
+    }
+  }
+
+  fn surface_splice(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_first(n, "Expr") -> SurfaceTerm {
+        Some(e) => surface_term_at(SkSplice(surface_term(j, c, e)), surface_span(c, n))
+        None => surface_other(c, n)
+      }
+    }
+  }
+
+  // The arguments of a `Call`, or None.
+  fn surface_call_args(k: Nat, c: SurfaceCtx, call: Option(CstNode)) -> List(SurfaceTerm) {
+    match k -> List(SurfaceTerm) {
+      zero => Nil
+      succ(j) => match call -> List(SurfaceTerm) {
+        Some(x) => surface_map_terms(j, c, surface_all(x, "Item"))
+        None => Nil
+      }
+    }
+  }
+
+  // The atoms of a chain, without the joins.
+  fn surface_chain_atoms(
+    k: Nat,
+    c: SurfaceCtx,
+    kids: List(CstNode),
+    join: Text
+  ) -> List(SurfaceTerm) {
+    match k -> List(SurfaceTerm) {
+      zero => Nil
+      succ(j) => match kids -> List(SurfaceTerm) {
+        Nil => Nil
+        Cons(n, rest) => match surface_is(n, join) -> List(SurfaceTerm) {
+          yes => surface_chain_atoms(j, c, rest, join)
+          no => Cons(surface_term(j, c, n), surface_chain_atoms(j, c, rest, join))
+        }
+      }
+    }
+  }
+
+  fn surface_type_atom(k: Nat, c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match n.flat -> SurfaceTerm {
+        Nil => surface_other(c, n)
+        Cons(head, rest) => match surface_is(head, "Ident") -> SurfaceTerm {
+          yes => match surface_nth(rest, 0) -> SurfaceTerm {
+            Some(
+              args
+            ) => surface_applied_type(
+              j,
+              c,
+              surface_var(surface_text(c, head), surface_span(c, head)),
+              args,
+              span
+            )
+            None => surface_var(surface_text(c, head), surface_span(c, head))
+          }
+          no => match surface_is(
+            head,
+            "FnType"
+          ) || surface_is(
+            head,
+            "Quantified"
+          ) || surface_is(head, "BraceTerm") || surface_is(head, "MacroCall") -> SurfaceTerm {
+            yes => surface_term(j, c, head)
+            no => surface_type_prefix(j, c, n, head, surface_nth(rest, 0), span)
+          }
+        }
+      }
+    }
+  }
+
+  // A type atom that is a prefix (`fn`, `&`, a tag, `¬`) and what follows it.
+  fn surface_type_prefix(
+    k: Nat,
+    c: SurfaceCtx,
+    n: CstNode,
+    head: CstNode,
+    inner: Option(CstNode),
+    span: SurfaceSpan
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match inner -> SurfaceTerm {
+        None => surface_other(c, n)
+        Some(x) => match surface_is(head, "FnKind") -> SurfaceTerm {
+          yes => surface_fn_kind(c, head, surface_term(j, c, x), span)
+          no => match surface_is(head, "Borrow") -> SurfaceTerm {
+            yes => surface_borrowed(head, surface_term(j, c, x), span)
+            no => match surface_is(head, "TagPrefix") -> SurfaceTerm {
+              yes => surface_tagged(c, head, surface_term(j, c, x), span)
+              no => match surface_is(head, "NotSign") -> SurfaceTerm {
+                yes => surface_app("Not", Cons(surface_term(j, c, x), Nil), span)
+                no => surface_other(c, n)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A named type with its arguments, written as a call: `Eq(Nat, plus(n, 1), m)`.
+  fn surface_applied_type(
+    k: Nat,
+    c: SurfaceCtx,
+    name: SurfaceTerm,
+    args: CstNode,
+    span: SurfaceSpan
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(
+        j
+      ) => surface_term_at(
+        SkApp(name, surface_type_call_args(j, c, surface_all(args, "TypeCallArg"))),
+        span
+      )
+    }
+  }
+
+  fn surface_type_call_args(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceTerm) {
+    match k -> List(SurfaceTerm) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceTerm) {
+        Nil => Nil
+        Cons(a, rest) => Cons(surface_type_call_arg(j, c, a), surface_type_call_args(j, c, rest))
+      }
+    }
+  }
+
+  // An argument of a type: an expression, or a function type `(A, B) -> C`
+  // whose parameters are written as a tuple.
+  fn surface_type_call_arg(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match n.flat -> SurfaceTerm {
+        Nil => surface_other(c, n)
+        Cons(head, rest) => match surface_is(head, "NotSign") -> SurfaceTerm {
+          yes => match surface_nth(rest, 0) -> SurfaceTerm {
+            Some(
+              inner
+            ) => surface_app("Not", Cons(surface_term(j, c, inner), Nil), surface_span(c, n))
+            None => surface_other(c, n)
+          }
+          no => match surface_is(head, "Expr") -> SurfaceTerm {
+            yes => match surface_find_in(n.flat, "ReturnType") -> SurfaceTerm {
+              None => surface_term(j, c, head)
+              Some(
+                ret
+              ) => surface_arrow(
+                surface_tuple_args(surface_term(j, c, head)),
+                surface_return_parts(j, c, ret),
+                surface_span(c, n)
+              )
+            }
+            no => surface_term(j, c, head)
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_fn_type(k: Nat, c: SurfaceCtx, kids: List(CstNode), span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_find_in(kids, "ReturnType") -> SurfaceTerm {
+        None => surface_tuple_of(surface_fn_type_params(j, c, kids), span)
+        Some(
+          ret
+        ) => surface_arrow(
+          surface_fn_type_params(j, c, kids),
+          surface_return_parts(j, c, ret),
+          span
+        )
+      }
+    }
+  }
+
+  fn surface_fn_type_params(k: Nat, c: SurfaceCtx, kids: List(CstNode)) -> List(SurfaceTerm) {
+    match k -> List(SurfaceTerm) {
+      zero => Nil
+      succ(j) => match kids -> List(SurfaceTerm) {
+        Nil => Nil
+        Cons(n, rest) => match surface_is(n, "FnTypeParam") -> List(SurfaceTerm) {
+          yes => Cons(surface_fn_type_param(j, c, n), surface_fn_type_params(j, c, rest))
+          no => surface_fn_type_params(j, c, rest)
+        }
+      }
+    }
+  }
+
+  // `(&x: A)` as a parameter's type: `A`, borrowed as `&x` is (mutably for
+  // `&mut x`). The name `x` is not kept.
+  fn surface_fn_type_param(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_all(n, "Type") -> SurfaceTerm {
+        Nil => surface_other(c, n)
+        Cons(first, rest) => match rest -> SurfaceTerm {
+          Nil => surface_term(j, c, first)
+          Cons(second, more) => match more -> SurfaceTerm {
+            Cons(x, y) => surface_other(c, n)
+            Nil => surface_typed_borrow(surface_term(j, c, first), surface_term(j, c, second))
+          }
+        }
+      }
+    }
+  }
+
+  // A result type and the effects after `!`.
+  fn surface_return_parts(k: Nat, c: SurfaceCtx, ret: CstNode) -> SurfaceReturn {
+    match k -> SurfaceReturn {
+      zero => SurfaceReturn { term: surface_out("fuel"), effects: None }
+      succ(j) => match ret.flat -> SurfaceReturn {
+        Nil => SurfaceReturn { term: surface_other(
+          c,
+          ret
+        ), effects: surface_opt_row_names(c, surface_return_row(ret)) }
+        Cons(head, rest) => match surface_is(head, "Borrow") -> SurfaceReturn {
+          // `-> &A ! {e}`: the row stays the function's.
+          yes => match surface_nth(rest, 0) -> SurfaceReturn {
+            Some(
+              inner
+            ) => surface_borrowed_return(
+              surface_has(head.flat, "KwMut"),
+              surface_return_parts(j, c, inner),
+              surface_span(c, ret)
+            )
+            None => SurfaceReturn { term: surface_other(
+              c,
+              ret
+            ), effects: surface_opt_row_names(c, surface_return_row(ret)) }
+          }
+          no => SurfaceReturn {
+            term: surface_return_term(j, c, ret, head, surface_nth(rest, 0)),
+            effects: surface_opt_row_names(c, surface_return_row(ret))
+          }
+        }
+      }
+    }
+  }
+
+  // The type of a result that does not start with `&`.
+  fn surface_return_term(
+    k: Nat,
+    c: SurfaceCtx,
+    ret: CstNode,
+    head: CstNode,
+    second: Option(CstNode)
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_is(head, "Ident") -> SurfaceTerm {
+        yes => match surface_type_args(second) -> SurfaceTerm {
+          Some(
+            a
+          ) => surface_applied_type(
+            j,
+            c,
+            surface_var(surface_text(c, head), surface_span(c, head)),
+            a,
+            surface_span(c, ret)
+          )
+          None => surface_var(surface_text(c, head), surface_span(c, head))
+        }
+        no => match surface_is(head, "FnType") || surface_is(head, "MacroCall") -> SurfaceTerm {
+          yes => surface_term(j, c, head)
+          no => match second -> SurfaceTerm {
+            None => surface_other(c, ret)
+            Some(inner) => match surface_is(head, "FnKind") -> SurfaceTerm {
+              yes => surface_fn_kind(c, head, surface_term(j, c, inner), surface_span(c, ret))
+              no => match surface_is(head, "TagPrefix") -> SurfaceTerm {
+                yes => surface_tagged(
+                  c,
+                  head,
+                  surface_return_parts(j, c, inner).term,
+                  surface_span(c, ret)
+                )
+                no => surface_other(c, ret)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_quantified(
+    k: Nat,
+    c: SurfaceCtx,
+    kids: List(CstNode),
+    span: SurfaceSpan
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_find_in(kids, "Ident") -> SurfaceTerm {
+        None => surface_term_at(SkOther("Quantified"), span)
+        Some(b) => match surface_find_in(kids, "Type") -> SurfaceTerm {
+          None => surface_term_at(SkOther("Quantified"), span)
+          Some(d) => match surface_find_in(kids, "TypeAtom") -> SurfaceTerm {
+            None => surface_term_at(SkOther("Quantified"), span)
+            Some(
+              body
+            ) => surface_bound_term(
+              surface_quantifier(kids, c),
+              surface_text(c, b),
+              surface_term(j, c, d),
+              surface_term(j, c, body),
+              span
+            )
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_expr(k: Nat, c: SurfaceCtx, kids: List(CstNode), span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_expr_parts(kids) -> SurfaceTerm {
+        Nil => surface_term_at(SkOther("Expr"), span)
+        Cons(lhs, rest) => match rest -> SurfaceTerm {
+          Nil => surface_term(j, c, lhs)
+          Cons(rhs, more) => match more -> SurfaceTerm {
+            Nil => match surface_params(surface_tuple_args(surface_term(j, c, lhs))) -> SurfaceTerm {
+              None => surface_term_at(SkOther("Expr"), span)
+              Some(ps) => surface_lambda_of(ps, surface_term(j, c, rhs), span)
+            }
+            Cons(x, y) => surface_term_at(SkOther("Expr"), span)
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_operands(k: Nat, c: SurfaceCtx, kids: List(CstNode)) -> List(SurfaceTerm) {
+    match k -> List(SurfaceTerm) {
+      zero => Nil
+      succ(j) => match kids -> List(SurfaceTerm) {
+        Nil => Nil
+        Cons(n, rest) => match surface_is_operator(n) || surface_is(n, "Gap") -> List(SurfaceTerm) {
+          yes => surface_operands(j, c, rest)
+          no => Cons(surface_term(j, c, n), surface_operands(j, c, rest))
+        }
+      }
+    }
+  }
+
+  // `x op y op z`: nested applications of the operator's name.
+  fn surface_left_fold(
+    k: Nat,
+    c: SurfaceCtx,
+    kids: List(CstNode),
+    span: SurfaceSpan
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => surface_left_fold_of(
+        surface_operands(j, c, kids),
+        surface_operators(c, kids),
+        span
+      )
+    }
+  }
+
+  fn surface_unary(k: Nat, c: SurfaceCtx, kids: List(CstNode), span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match list_reverse(kids) -> SurfaceTerm {
+        Nil => surface_term_at(SkOther("Unary"), span)
+        Cons(operand, prefixes) => surface_prefixes(c, prefixes, surface_term(j, c, operand), span)
+      }
+    }
+  }
+
+  fn surface_postfix(k: Nat, c: SurfaceCtx, kids: List(CstNode), span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match kids -> SurfaceTerm {
+        Nil => surface_term_at(SkOther("Postfix"), span)
+        Cons(primary, ops) => surface_postfix_ops(j, c, ops, surface_term(j, c, primary))
+      }
+    }
+  }
+
+  fn surface_postfix_ops(
+    k: Nat,
+    c: SurfaceCtx,
+    ops: List(CstNode),
+    acc: SurfaceTerm
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match ops -> SurfaceTerm {
+        Nil => acc
+        Cons(op, rest) => match surface_nth(op.flat, 0) -> SurfaceTerm {
+          None => surface_postfix_ops(j, c, rest, acc)
+          Some(
+            inner
+          ) => surface_postfix_ops(
+            j,
+            c,
+            rest,
+            surface_postfix_op(j, c, inner, acc, surface_span_from(acc, surface_span(c, op).end))
+          )
+        }
+      }
+    }
+  }
+
+  // A call or a field access after `acc`.
+  fn surface_postfix_op(
+    k: Nat,
+    c: SurfaceCtx,
+    inner: CstNode,
+    acc: SurfaceTerm,
+    span: SurfaceSpan
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_is(inner, "Call") -> SurfaceTerm {
+        yes => surface_term_at(
+          SkApp(acc, surface_map_terms(j, c, surface_all(inner, "Item"))),
+          span
+        )
+        no => match surface_is(inner, "Field") -> SurfaceTerm {
+          yes => surface_term_at(SkField(acc, surface_ident(c, inner)), span)
+          no => surface_term_at(SkOther(surface_kind_name(inner)), span)
+        }
+      }
+    }
+  }
+
+  fn surface_path(k: Nat, c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_only_names(n.flat) -> SurfaceTerm {
+        yes => surface_var(surface_strip(c, surface_text(c, n)), span)
+        no => match surface_first(n, "RecordBody") -> SurfaceTerm {
+          None => match surface_has_braces(c, n.flat) -> SurfaceTerm {
+            yes => surface_term_at(
+              SkRecord(text_concat_all(surface_path_parts(c, n.flat)), Nil),
+              span
+            )
+            no => surface_other(c, n)
+          }
+          // `Point { x: 1, y: 2 }`
+          Some(
+            body
+          ) => surface_term_at(
+            SkRecord(
+              text_concat_all(surface_path_parts(c, n.flat)),
+              surface_fields(
+                j,
+                c,
+                surface_items(c, body.flat, "FieldInit", "RecordTail", "RecordTail")
+              )
+            ),
+            span
+          )
+        }
+      }
+    }
+  }
+
+  fn surface_fields(k: Nat, c: SurfaceCtx, inits: List(CstNode)) -> List(SurfaceField) {
+    match k -> List(SurfaceField) {
+      zero => Nil
+      succ(j) => match inits -> List(SurfaceField) {
+        Nil => Nil
+        Cons(
+          f,
+          rest
+        ) => Cons(
+          SurfaceField { name: surface_ident(
+            c,
+            f
+          ), value: surface_term_of(j, c, surface_first(f, "Expr"), f) },
+          surface_fields(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_if(k: Nat, c: SurfaceCtx, kids: List(CstNode), span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_find_in(kids, "Expr") -> SurfaceTerm {
+        None => surface_term_at(SkOther("IfExpr"), span)
+        Some(cond) => match surface_find_in(kids, "Block") -> SurfaceTerm {
+          None => surface_term_at(SkOther("IfExpr"), span)
+          Some(
+            then
+          ) => surface_term_at(
+            SkIf(
+              surface_term(j, c, cond),
+              surface_term(j, c, then),
+              surface_opt_term(j, c, surface_else(kids))
+            ),
+            span
+          )
+        }
+      }
+    }
+  }
+
+  // ---- statements and declarations ----
+
+  // The statements of a `Stmts`, through its tails.
+  fn surface_block_stmts(k: Nat, c: SurfaceCtx, stmts: Option(CstNode)) -> List(SurfaceStmt) {
+    match k -> List(SurfaceStmt) {
+      zero => Nil
+      succ(j) => match stmts -> List(SurfaceStmt) {
+        Some(
+          s
+        ) => surface_read_stmts(j, c, surface_items(c, s.flat, "Stmt", "StmtsTail", "StmtsTail"))
+        None => Nil
+      }
+    }
+  }
+
+  fn surface_read_stmts(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceStmt) {
+    match k -> List(SurfaceStmt) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceStmt) {
+        Nil => Nil
+        Cons(s, rest) => Cons(surface_stmt(j, c, s), surface_read_stmts(j, c, rest))
+      }
+    }
+  }
+
+  fn surface_stmt(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfaceStmt {
+    match k -> SurfaceStmt {
+      zero => surface_out_stmt("fuel")
+      succ(j) => match surface_first(n, "OtherStmt") -> SurfaceStmt {
+        None => StOther("Stmt", surface_span(c, n).start, surface_span(c, n).end)
+        Some(other) => match surface_nth(other.flat, 0) -> SurfaceStmt {
+          None => StOther("OtherStmt", surface_span(c, n).start, surface_span(c, n).end)
+          Some(inner) => surface_stmt_of(j, c, inner, surface_span(c, n))
+        }
+      }
+    }
+  }
+
+  fn surface_stmt_of(k: Nat, c: SurfaceCtx, inner: CstNode, span: SurfaceSpan) -> SurfaceStmt {
+    match k -> SurfaceStmt {
+      zero => surface_out_stmt("fuel")
+      succ(j) => match inner.terminal -> SurfaceStmt {
+        yes => StOther("token", span.start, span.end)
+        no => match surface_rule(inner.name) -> SurfaceStmt {
+          RuleLetDecl => StLet(
+            surface_ident(c, inner),
+            surface_opt_term(j, c, surface_first(inner, "Type")),
+            surface_term_of(j, c, surface_first(inner, "Expr"), inner),
+            surface_has(inner.flat, "Borrow"),
+            surface_is_mut(surface_first(inner, "Borrow"))
+          )
+          RuleVarDecl => StVar(
+            surface_ident(c, inner),
+            surface_opt_term(j, c, surface_first(inner, "Type")),
+            surface_term_of(j, c, surface_first(inner, "Expr"), inner),
+            surface_has(inner.flat, "Amp")
+          )
+          RuleModuleDecl => StModule(
+            surface_ident(c, inner),
+            surface_block_stmts(j, c, surface_block_list(surface_first(inner, "Block"))),
+            span.start,
+            span.end
+          )
+          RuleFnDecl => StFn(surface_fn_decl(j, c, inner))
+          RuleTheoremDecl => StTheorem(surface_theorem_decl(j, c, inner, span))
+          RuleAxiomDecl => StTheorem(surface_theorem_decl(j, c, inner, span))
+          RuleDefDecl => StDef(surface_def_decl(j, c, inner, span))
+          RuleMutualDecl => StMutual(
+            surface_mutual_items(
+              j,
+              c,
+              surface_items(c, inner.flat, "MutualItem", "MutualItems", "MutualTail")
+            ),
+            span.start,
+            span.end
+          )
+          RuleImportDecl => StImport(
+            surface_opt_text_value(c, surface_first(inner, "Text")),
+            span.start,
+            span.end
+          )
+          RuleSyntaxDecl => StSyntax(
+            surface_ident(c, inner),
+            surface_grammar(c, inner),
+            span.start,
+            span.end
+          )
+          RuleMacroDecl => surface_macro_decl(c, inner, span)
+          RuleInductiveDecl => StInductive(surface_inductive_decl(j, c, inner, span))
+          RuleEffectDecl => StEffect(surface_effect_decl(j, c, inner))
+          RuleStructDecl => StStruct(surface_struct_decl(j, c, inner))
+          RuleEnumDecl => StEnum(surface_enum_decl(j, c, inner))
+          RuleExternDecl => StExtern(
+            surface_opt_text_value(c, surface_first(inner, "Text")),
+            surface_extern_fns(j, c, surface_descend(c, inner, "ExternFn")),
+            span.start,
+            span.end
+          )
+          RuleClassDecl => StClass(
+            SurfaceClass {
+              name: surface_ident(c, inner),
+              param: surface_head_or_empty(surface_generic_bounds(c, inner).names),
+              arity: list_length(surface_generic_bounds(c, inner).names),
+              bound: surface_first_bound(surface_generic_bounds(c, inner).bounds),
+              methods: surface_extern_fns(j, c, surface_descend(c, inner, "ExternFn")),
+              laws: surface_laws(c, surface_descend(c, inner, "LawDecl")),
+              start: span.start,
+              end: span.end
+            }
+          )
+          RuleInstanceDecl => StInstance(
+            SurfaceInstance {
+              generics: surface_generic_bounds(c, inner).names,
+              bounds: surface_generic_bounds(c, inner).bounds,
+              class: surface_ident(c, inner),
+              head: surface_term_of(j, c, surface_first(inner, "Type"), inner),
+              wheres: surface_wheres(j, c, surface_first(inner, "WhereClause")),
+              methods: surface_extern_fns(j, c, surface_descend(c, inner, "FnDecl")),
+              laws: surface_laws(c, surface_descend(c, inner, "LawDecl")),
+              start: span.start,
+              end: span.end
+            }
+          )
+          RuleWhileStmt => StWhile(
+            surface_term_of(j, c, surface_first(inner, "Expr"), inner),
+            surface_term_of(j, c, surface_first(inner, "Block"), inner)
+          )
+          RuleReturnStmt => StReturn(surface_opt_term(j, c, surface_first(inner, "Expr")))
+          RuleExprStmt => surface_expr_stmt(j, c, surface_all(inner, "Expr"), span)
+          _ => StOther(inner.name, span.start, span.end)
+        }
+      }
+    }
+  }
+
+  // An expression, or `name = value`.
+  fn surface_expr_stmt(
+    k: Nat,
+    c: SurfaceCtx,
+    exprs: List(CstNode),
+    span: SurfaceSpan
+  ) -> SurfaceStmt {
+    match k -> SurfaceStmt {
+      zero => surface_out_stmt("fuel")
+      succ(j) => match exprs -> SurfaceStmt {
+        Nil => StOther("ExprStmt", span.start, span.end)
+        Cons(first, rest) => match rest -> SurfaceStmt {
+          Nil => StExpr(surface_term(j, c, first))
+          Cons(value, more) => match more -> SurfaceStmt {
+            Cons(x, y) => StOther("ExprStmt", span.start, span.end)
+            Nil => surface_assign(surface_term(j, c, first), surface_term(j, c, value), span)
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_extern_fns(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceFn) {
+    match k -> List(SurfaceFn) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceFn) {
+        Nil => Nil
+        Cons(f, rest) => Cons(surface_fn_decl(j, c, f), surface_extern_fns(j, c, rest))
+      }
+    }
+  }
+
+  fn surface_mutual_items(k: Nat, c: SurfaceCtx, items: List(CstNode)) -> List(SurfaceStmt) {
+    match k -> List(SurfaceStmt) {
+      zero => Nil
+      succ(j) => match items -> List(SurfaceStmt) {
+        Nil => Nil
+        Cons(item, rest) => match surface_nth(item.flat, 0) -> List(SurfaceStmt) {
+          None => surface_mutual_items(j, c, rest)
+          Some(decl) => match surface_is(decl, "InductiveDecl") -> List(SurfaceStmt) {
+            yes => Cons(
+              StInductive(surface_inductive_decl(j, c, decl, surface_span(c, decl))),
+              surface_mutual_items(j, c, rest)
+            )
+            no => match surface_is(decl, "FnDecl") -> List(SurfaceStmt) {
+              yes => Cons(StFn(surface_fn_decl(j, c, decl)), surface_mutual_items(j, c, rest))
+              no => match surface_is(decl, "TheoremDecl") -> List(SurfaceStmt) {
+                yes => Cons(
+                  StTheorem(surface_theorem_decl(j, c, decl, surface_span(c, decl))),
+                  surface_mutual_items(j, c, rest)
+                )
+                no => surface_mutual_items(j, c, rest)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_param_types(k: Nat, c: SurfaceCtx, params: List(CstNode)) -> List(Option(SurfaceTerm)) {
+    match k -> List(Option(SurfaceTerm)) {
+      zero => Nil
+      succ(j) => match params -> List(Option(SurfaceTerm)) {
+        Nil => Nil
+        Cons(
+          p,
+          rest
+        ) => Cons(surface_opt_term(j, c, surface_first(p, "Type")), surface_param_types(j, c, rest))
+      }
+    }
+  }
+
+  fn surface_fn_result(k: Nat, c: SurfaceCtx, result: Option(CstNode)) -> Option(SurfaceTerm) {
+    match k -> Option(SurfaceTerm) {
+      zero => None
+      succ(j) => match result -> Option(SurfaceTerm) {
+        None => None
+        Some(r) => match surface_first(r, "ReturnType") -> Option(SurfaceTerm) {
+          Some(t) => Some(surface_return_parts(j, c, t).term)
+          None => None
+        }
+      }
+    }
+  }
+
+  fn surface_fn_decl(k: Nat, c: SurfaceCtx, decl: CstNode) -> SurfaceFn {
+    match k -> SurfaceFn {
+      zero => surface_out_fn()
+      succ(j) => SurfaceFn {
+        name: surface_name_of(c, surface_first(decl, "FnName")),
+        generics: surface_generic_bounds(c, decl).names,
+        bounds: surface_generic_bounds(c, decl).bounds,
+        params: surface_param_idents(c, surface_all(decl, "Param")),
+        borrows: surface_param_borrow_flags(surface_all(decl, "Param")),
+        param_types: surface_param_types(j, c, surface_all(decl, "Param")),
+        result: surface_fn_result(j, c, surface_first(decl, "FnResult")),
+        effects: surface_opt_row_names(c, surface_fn_row(c, surface_first(decl, "FnResult"))),
+        wheres: surface_wheres(j, c, surface_first(decl, "WhereClause")),
+        start: surface_span(c, decl).start,
+        end: surface_span(c, decl).end,
+        // An `extern` function or a class method has no block: its body is an
+        // `Other` term of the declaration's kind (`ExternFn`), never run.
+        body: surface_term_of(j, c, surface_first(decl, "Block"), decl)
+      }
+    }
+  }
+
+  fn surface_wheres(k: Nat, c: SurfaceCtx, w: Option(CstNode)) -> List(SurfaceConstraint) {
+    match k -> List(SurfaceConstraint) {
+      zero => Nil
+      succ(j) => match w -> List(SurfaceConstraint) {
+        Some(clause) => surface_constraints(j, c, surface_all(clause, "Constraint"))
+        None => Nil
+      }
+    }
+  }
+
+  fn surface_constraints(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceConstraint) {
+    match k -> List(SurfaceConstraint) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceConstraint) {
+        Nil => Nil
+        Cons(n, rest) => Cons(
+          SurfaceConstraint {
+            class: surface_ident(c, n),
+            ty: surface_term_of(j, c, surface_first(n, "Type"), n),
+            start: surface_span(c, n).start,
+            end: surface_span(c, n).end
+          },
+          surface_constraints(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_effect_decl(k: Nat, c: SurfaceCtx, decl: CstNode) -> SurfaceEffect {
+    match k -> SurfaceEffect {
+      zero => SurfaceEffect { name: "", generics: Nil, params: Nil, result: None, resume: None, start: 0, end: 0 }
+      succ(j) => SurfaceEffect {
+        name: surface_ident(c, decl),
+        generics: surface_named_names(surface_generics(j, c, decl)),
+        params: surface_signature_params(j, c, surface_signature(decl)),
+        result: surface_signature_result(j, c, surface_signature(decl)),
+        resume: surface_resume(c, surface_signature(decl)),
+        start: surface_span(c, decl).start,
+        end: surface_span(c, decl).end
+      }
+    }
+  }
+
+  fn surface_signature_params(
+    k: Nat,
+    c: SurfaceCtx,
+    signature: Option(CstNode)
+  ) -> List(Option(SurfaceTerm)) {
+    match k -> List(Option(SurfaceTerm)) {
+      zero => Nil
+      succ(j) => match signature -> List(Option(SurfaceTerm)) {
+        Some(sig) => surface_param_types(j, c, surface_all(sig, "Param"))
+        None => Nil
+      }
+    }
+  }
+
+  fn surface_signature_result(
+    k: Nat,
+    c: SurfaceCtx,
+    signature: Option(CstNode)
+  ) -> Option(SurfaceTerm) {
+    match k -> Option(SurfaceTerm) {
+      zero => None
+      succ(j) => match signature -> Option(SurfaceTerm) {
+        Some(sig) => surface_opt_term(j, c, surface_first(sig, "Type"))
+        None => None
+      }
+    }
+  }
+
+  fn surface_data_fields_of(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceDataField) {
+    match k -> List(SurfaceDataField) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceDataField) {
+        Nil => Nil
+        Cons(
+          f,
+          rest
+        ) => Cons(
+          SurfaceDataField { name: surface_opt_ident(
+            c,
+            f
+          ), ty: surface_term_of(j, c, surface_first(f, "Type"), f) },
+          surface_data_fields_of(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_struct_decl(k: Nat, c: SurfaceCtx, decl: CstNode) -> SurfaceData {
+    match k -> SurfaceData {
+      zero => surface_out_data()
+      succ(j) => SurfaceData {
+        kind: surface_data_kind(c, decl),
+        name: surface_ident(c, decl),
+        generics: surface_named_names(surface_generics(j, c, decl)),
+        constructors: Cons(
+          SurfaceDataCtor {
+            name: surface_ident(c, decl),
+            fields: surface_data_fields_of(j, c, surface_struct_fields(c, surface_first(decl, "StructBody")))
+          },
+          Nil
+        ),
+        start: surface_span(c, decl).start,
+        end: surface_span(c, decl).end
+      }
+    }
+  }
+
+  fn surface_variants(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceDataCtor) {
+    match k -> List(SurfaceDataCtor) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceDataCtor) {
+        Nil => Nil
+        Cons(
+          v,
+          rest
+        ) => Cons(
+          SurfaceDataCtor { name: surface_ident(
+            c,
+            v
+          ), fields: surface_variant_fields(j, c, surface_first(v, "VariantBody")) },
+          surface_variants(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_variant_fields(k: Nat, c: SurfaceCtx, body: Option(CstNode)) -> List(SurfaceDataField) {
+    match k -> List(SurfaceDataField) {
+      zero => Nil
+      succ(j) => match body -> List(SurfaceDataField) {
+        None => Nil
+        Some(b) => match surface_first(b, "Fields") -> List(SurfaceDataField) {
+          Some(f) => surface_data_fields_of(j, c, surface_descend(c, f, "FieldDecl"))
+          None => surface_unnamed_fields(j, c, surface_all(b, "Type"))
+        }
+      }
+    }
+  }
+
+  fn surface_unnamed_fields(k: Nat, c: SurfaceCtx, types: List(CstNode)) -> List(SurfaceDataField) {
+    match k -> List(SurfaceDataField) {
+      zero => Nil
+      succ(j) => match types -> List(SurfaceDataField) {
+        Nil => Nil
+        Cons(
+          t,
+          rest
+        ) => Cons(
+          SurfaceDataField { name: None, ty: surface_term(j, c, t) },
+          surface_unnamed_fields(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_enum_decl(k: Nat, c: SurfaceCtx, decl: CstNode) -> SurfaceData {
+    match k -> SurfaceData {
+      zero => surface_out_data()
+      succ(j) => SurfaceData {
+        kind: surface_data_kind(c, decl),
+        name: surface_ident(c, decl),
+        generics: surface_named_names(surface_generics(j, c, decl)),
+        constructors: surface_variants(j, c, surface_descend(c, decl, "Variant")),
+        start: surface_span(c, decl).start,
+        end: surface_span(c, decl).end
+      }
+    }
+  }
+
+  // `<A, n: Nat>`: the generics, typed `Type` unless a kind is written.
+  fn surface_generics(k: Nat, c: SurfaceCtx, node: CstNode) -> List(SurfaceNamed) {
+    match k -> List(SurfaceNamed) {
+      zero => Nil
+      succ(j) => match surface_first(node, "Generics") -> List(SurfaceNamed) {
+        None => Nil
+        Some(generics) => surface_generics_of(j, c, surface_all(generics, "Generic"))
+      }
+    }
+  }
+
+  fn surface_generics_of(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceNamed) {
+    match k -> List(SurfaceNamed) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceNamed) {
+        Nil => Nil
+        Cons(
+          g,
+          rest
+        ) => Cons(
+          SurfaceNamed { name: surface_ident(c, g), ty: surface_generic_kind(j, c, g) },
+          surface_generics_of(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_generic_kind(k: Nat, c: SurfaceCtx, g: CstNode) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_first(g, "GenericKind") -> SurfaceTerm {
+        Some(kind) => match surface_first(kind, "Type") -> SurfaceTerm {
+          Some(t) => surface_term(j, c, t)
+          None => surface_var(surface_strip(c, surface_text(c, kind)), surface_span(c, kind))
+        }
+        None => surface_var("Type", surface_span(c, g))
+      }
+    }
+  }
+
+  fn surface_typed_params_of(k: Nat, c: SurfaceCtx, params: List(CstNode)) -> List(SurfaceNamed) {
+    match k -> List(SurfaceNamed) {
+      zero => Nil
+      succ(j) => match params -> List(SurfaceNamed) {
+        Nil => Nil
+        Cons(
+          p,
+          rest
+        ) => Cons(
+          SurfaceNamed { name: surface_ident(
+            c,
+            p
+          ), ty: surface_term_of(j, c, surface_first(p, "Type"), p) },
+          surface_typed_params_of(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_inductive_decl(
+    k: Nat,
+    c: SurfaceCtx,
+    decl: CstNode,
+    span: SurfaceSpan
+  ) -> SurfaceInductive {
+    match k -> SurfaceInductive {
+      zero => SurfaceInductive { name: "", params: Nil, sort: surface_out(
+        "fuel"
+      ), constructors: Nil, start: 0, end: 0 }
+      succ(j) => SurfaceInductive {
+        name: surface_ident(c, decl),
+        params: surface_typed_params_of(j, c, surface_all(decl, "Param")),
+        sort: surface_term_of(j, c, surface_first(decl, "Type"), decl),
+        constructors: surface_constructors(
+          j,
+          c,
+          surface_ctor_nodes(c, surface_first(decl, "Constructors"))
+        ),
+        start: span.start,
+        end: span.end
+      }
+    }
+  }
+
+  fn surface_constructors(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceCtor) {
+    match k -> List(SurfaceCtor) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceCtor) {
+        Nil => Nil
+        Cons(n, rest) => Cons(
+          SurfaceCtor {
+            name: surface_ident(c, n),
+            implicit: list_length(surface_generics(j, c, n)),
+            params: list_append(surface_generics(j, c, n), surface_typed_params_of(j, c, surface_all(n, "Param"))),
+            result: surface_term_of(j, c, surface_first(n, "Type"), n)
+          },
+          surface_constructors(j, c, rest)
+        )
+      }
+    }
+  }
+
+  // `Colon Type Assign Gap Type`: the first `Type` is the result, the second
+  // the body.
+  fn surface_def_decl(k: Nat, c: SurfaceCtx, decl: CstNode, span: SurfaceSpan) -> SurfaceTheorem {
+    match k -> SurfaceTheorem {
+      zero => surface_out_theorem()
+      succ(j) => match surface_all(decl, "Type") -> SurfaceTheorem {
+        Nil => surface_theorem_decl(j, c, decl, span)
+        Cons(result, rest) => match rest -> SurfaceTheorem {
+          Nil => surface_theorem_decl(j, c, decl, span)
+          Cons(body, more) => match more -> SurfaceTheorem {
+            Cons(x, y) => surface_theorem_decl(j, c, decl, span)
+            Nil => surface_def_of(
+              surface_theorem_decl(j, c, decl, span),
+              surface_term(j, c, result),
+              surface_term(j, c, body)
+            )
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_theorem_decl(
+    k: Nat,
+    c: SurfaceCtx,
+    decl: CstNode,
+    span: SurfaceSpan
+  ) -> SurfaceTheorem {
+    match k -> SurfaceTheorem {
+      zero => surface_out_theorem()
+      succ(j) => SurfaceTheorem {
+        name: surface_ident(c, decl),
+        implicit: list_length(surface_generics(j, c, decl)),
+        params: list_append(
+          surface_generics(j, c, decl),
+          list_append(
+            surface_dictionary_params(surface_wheres(j, c, surface_first(decl, "WhereClause")), 0),
+            surface_typed_params_of(j, c, surface_all(decl, "Param"))
+          )
+        ),
+        ty: surface_term_of(j, c, surface_first(decl, "Type"), decl),
+        body: surface_opt_term(j, c, surface_first(decl, "Block")),
+        start: span.start,
+        end: span.end
+      }
+    }
+  }
+
+  // ---- terms with arms and handlers ----
+
+  fn surface_budget(k: Nat, c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_first(n, "Expr") -> SurfaceTerm {
+        None => surface_other(c, n)
+        Some(steps) => match surface_first(n, "Block") -> SurfaceTerm {
+          None => surface_other(c, n)
+          Some(
+            body
+          ) => surface_term_at(SkBudget(surface_term(j, c, steps), surface_term(j, c, body)), span)
+        }
+      }
+    }
+  }
+
+  fn surface_match(k: Nat, c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_first(n, "Expr") -> SurfaceTerm {
+        None => surface_other(c, n)
+        Some(
+          scrutinee
+        ) => surface_term_at(
+          SkMatch(
+            surface_term(j, c, scrutinee),
+            surface_opt_term(j, c, surface_first(n, "Type")),
+            surface_arms(j, c, surface_descend(c, n, "Arm")),
+            surface_opt_ident(c, n)
+          ),
+          span
+        )
+      }
+    }
+  }
+
+  // `by t!(arg) -> G0 { Δ ⊢ G => p … }` (`step_expr`).
+  fn surface_step(k: Nat, c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_first(n, "MacroCall") -> SurfaceTerm {
+        None => surface_other(c, n)
+        Some(call) => match surface_term(j, c, call) -> SurfaceTerm {
+          surface_term_mk(kind, cs, ce) => match kind -> SurfaceTerm {
+            SkMacroCall(
+              name,
+              arg
+            ) => surface_term_at(
+              SkStep(
+                name,
+                arg,
+                cs,
+                ce,
+                surface_opt_term(j, c, surface_first(n, "Type")),
+                surface_step_arms(j, c, surface_step_arm_nodes(c, surface_first(n, "StepBody")))
+              ),
+              span
+            )
+            SkVar(x) => surface_other(c, n)
+            SkNat(x) => surface_other(c, n)
+            SkText(x) => surface_other(c, n)
+            SkBool(x) => surface_other(c, n)
+            SkApp(x, y) => surface_other(c, n)
+            SkPi(x, y, z) => surface_other(c, n)
+            SkExists(x, y, z) => surface_other(c, n)
+            SkLam(x, y) => surface_other(c, n)
+            SkUnion(x) => surface_other(c, n)
+            SkTagged(x, y) => surface_other(c, n)
+            SkIf(x, y, z) => surface_other(c, n)
+            SkField(x, y) => surface_other(c, n)
+            SkBlock(x) => surface_other(c, n)
+            SkPerform(x, y) => surface_other(c, n)
+            SkHandle(x, y) => surface_other(c, n)
+            SkBudget(x, y) => surface_other(c, n)
+            SkMatch(x, y, z, w) => surface_other(c, n)
+            SkHole(x) => surface_other(c, n)
+            SkRecord(x, y) => surface_other(c, n)
+            SkBorrow(x, y) => surface_other(c, n)
+            SkFnKind(x, y) => surface_other(c, n)
+            SkBorrowLam(x, y) => surface_other(c, n)
+            SkOther(x) => surface_other(c, n)
+            SkQuote(x, y) => surface_other(c, n)
+            SkSplice(x) => surface_other(c, n)
+            SkSyntaxLit(x, y) => surface_other(c, n)
+            SkStep(x, y, z, w, v, u) => surface_other(c, n)
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_step_arms(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceStepArm) {
+    match k -> List(SurfaceStepArm) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceStepArm) {
+        Nil => Nil
+        Cons(arm, rest) => Cons(
+          SurfaceStepArm {
+            binders: surface_step_binders(j, c, surface_all(arm, "StepBinder")),
+            goal: surface_term_of(j, c, surface_first(arm, "Type"), arm),
+            body: surface_term_of(j, c, surface_first(arm, "ArmBody"), arm),
+            start: surface_span(c, arm).start,
+            end: surface_span(c, arm).end
+          },
+          surface_step_arms(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_step_binders(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceField) {
+    match k -> List(SurfaceField) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceField) {
+        Nil => Nil
+        Cons(b, rest) => Cons(
+          SurfaceField {
+            name: surface_ident(c, b),
+            value: surface_term_of(j, c, surface_first(b, "Type"), b)
+          },
+          surface_step_binders(j, c, rest)
+        )
+      }
+    }
+  }
+
+  fn surface_arms(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceArm) {
+    match k -> List(SurfaceArm) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceArm) {
+        Nil => Nil
+        Cons(arm, rest) => Cons(
+          SurfaceArm {
+            pattern: surface_pattern_or(j, c, surface_first(arm, "Pattern"), "Arm"),
+            guard: surface_opt_term(j, c, surface_first(arm, "Or")),
+            goal: surface_opt_term(j, c, surface_first(arm, "Type")),
+            body: surface_term_of(j, c, surface_first(arm, "ArmBody"), arm)
+          },
+          surface_arms(j, c, rest)
+        )
+      }
+    }
+  }
+
+  // The pattern found, or `Other` named `what`.
+  fn surface_pattern_or(
+    k: Nat,
+    c: SurfaceCtx,
+    found: Option(CstNode),
+    what: Text
+  ) -> SurfacePattern {
+    match k -> SurfacePattern {
+      zero => PtOther("fuel")
+      succ(j) => match found -> SurfacePattern {
+        Some(p) => surface_pattern(j, c, p)
+        None => PtOther(what)
+      }
+    }
+  }
+
+  fn surface_pattern_fields(
+    k: Nat,
+    c: SurfaceCtx,
+    found: List(CstNode)
+  ) -> List(SurfacePatternField) {
+    match k -> List(SurfacePatternField) {
+      zero => Nil
+      succ(j) => match found -> List(SurfacePatternField) {
+        Nil => Nil
+        Cons(f, rest) => match surface_first(f, "Ident") -> List(SurfacePatternField) {
+          None => surface_pattern_fields(j, c, rest)
+          Some(i) => Cons(
+            SurfacePatternField {
+              name: surface_text(c, i),
+              pattern: match surface_first(f, "Pattern") -> SurfacePattern {
+                Some(inner) => surface_pattern(j, c, inner)
+                None => PtBind(surface_text(c, i))
+              }
+            },
+            surface_pattern_fields(j, c, rest)
+          )
+        }
+      }
+    }
+  }
+
+  fn surface_patterns(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfacePattern) {
+    match k -> List(SurfacePattern) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfacePattern) {
+        Nil => Nil
+        Cons(p, rest) => Cons(surface_pattern(j, c, p), surface_patterns(j, c, rest))
+      }
+    }
+  }
+
+  fn surface_pattern(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfacePattern {
+    match k -> SurfacePattern {
+      zero => PtOther("fuel")
+      succ(j) => match surface_one(surface_all(n, "PatternAlt")) -> SurfacePattern {
+        None => PtOther("alternatives")
+        Some(alt) => match surface_first(alt, "PathPattern") -> SurfacePattern {
+          Some(path) => surface_path_pattern(j, c, path)
+          None => match surface_first(alt, "LiteralPattern") -> SurfacePattern {
+            None => PtOther("PatternAlt")
+            Some(lit) => surface_literal_pattern(c, lit)
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_path_pattern(k: Nat, c: SurfaceCtx, path: CstNode) -> SurfacePattern {
+    match k -> SurfacePattern {
+      zero => PtOther("fuel")
+      succ(j) => match surface_simple_path(path) -> SurfacePattern {
+        yes => surface_bind_pattern(surface_trim(c, surface_text(c, path)))
+        no => match surface_one(surface_all(path, "Ident")) -> SurfacePattern {
+          None => PtOther("path pattern")
+          Some(name) => match surface_first(path, "PatternArgs") -> SurfacePattern {
+            None => PtOther("path pattern")
+            Some(a) => match surface_first(a, "FieldPatterns") -> SurfacePattern {
+              Some(
+                list
+              ) => PtRecord(
+                surface_text(c, name),
+                surface_pattern_fields(
+                  j,
+                  c,
+                  surface_items(
+                    c,
+                    list.flat,
+                    "FieldPattern",
+                    "FieldPatternsTail",
+                    "FieldPatternsTail"
+                  )
+                )
+              )
+              None => PtCtor(
+                surface_text(c, name),
+                surface_patterns(j, c, surface_all(a, "Pattern"))
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn surface_handle(k: Nat, c: SurfaceCtx, n: CstNode, span: SurfaceSpan) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match surface_first(n, "HandleSubject") -> SurfaceTerm {
+        None => surface_other(c, n)
+        Some(subject) => match surface_first(subject, "Block") -> SurfaceTerm {
+          None => surface_other(c, n)
+          Some(
+            body
+          ) => surface_handle_withs(
+            j,
+            c,
+            surface_descend(c, subject, "HandleWith"),
+            surface_term(j, c, body),
+            span
+          )
+        }
+      }
+    }
+  }
+
+  // Each `with` wraps the ones before it; the evaluator reads the list as
+  // written, so the nesting is kept as nested `Handle` terms.
+  fn surface_handle_withs(
+    k: Nat,
+    c: SurfaceCtx,
+    withs: List(CstNode),
+    term: SurfaceTerm,
+    span: SurfaceSpan
+  ) -> SurfaceTerm {
+    match k -> SurfaceTerm {
+      zero => surface_out("fuel")
+      succ(j) => match withs -> SurfaceTerm {
+        Nil => term
+        Cons(
+          w,
+          rest
+        ) => surface_handle_withs(
+          j,
+          c,
+          rest,
+          surface_term_at(
+            SkHandle(term, surface_handlers(j, c, surface_descend(c, w, "Handler"))),
+            span
+          ),
+          span
+        )
+      }
+    }
+  }
+
+  fn surface_handlers(k: Nat, c: SurfaceCtx, nodes: List(CstNode)) -> List(SurfaceHandler) {
+    match k -> List(SurfaceHandler) {
+      zero => Nil
+      succ(j) => match nodes -> List(SurfaceHandler) {
+        Nil => Nil
+        Cons(h, rest) => Cons(surface_handler(j, c, h), surface_handlers(j, c, rest))
+      }
+    }
+  }
+
+  fn surface_handler(k: Nat, c: SurfaceCtx, n: CstNode) -> SurfaceHandler {
+    match k -> SurfaceHandler {
+      zero => HdReturn(PtOther("fuel"), surface_out("fuel"))
+      succ(j) => match surface_first(n, "ReturnHandler") -> SurfaceHandler {
+        Some(
+          r
+        ) => HdReturn(
+          surface_pattern_or(j, c, surface_first(r, "Pattern"), "return"),
+          surface_term_of(j, c, surface_first(r, "Expr"), r)
+        )
+        None => match surface_first(n, "OperationHandler") -> SurfaceHandler {
+          None => HdReturn(PtWild, surface_term_of(j, c, surface_first(n, "Expr"), n))
+          Some(op) => HdOperation(
+            surface_name_of(c, surface_first(op, "OperationName")),
+            surface_patterns(j, c, surface_all(op, "Pattern")),
+            // `, k` is the identifier after the closing parenthesis.
+            surface_cont(c, op),
+            surface_opt_term(j, c, surface_first(op, "Or")),
+            surface_term_of(j, c, surface_first(op, "Expr"), op)
+          )
+        }
+      }
+    }
+  }
+}
+
+// ---- the program ----------------------------------------------------------------
+
+fn surface_program_of(c: SurfaceCtx, root: CstNode) -> List(SurfaceStmt) {
+  match surface_find_deep(c.fuel, root.flat, "Program") -> List(SurfaceStmt) {
+    None => Nil
+    Some(program) => surface_block_stmts(c.fuel * 16, c, surface_first(program, "Stmts"))
+  }
+}
+
+// The statements of a program whose spans start at `base`, or `None` when it
+// is not one of the grammar.
+fn surface_parse_program(
+  &t: SyntaxTables,
+  classes: UnicodeClasses,
+  source: Text,
+  base: Nat
+) -> Option(List(SurfaceStmt)) {
+  match syntax_parse(t, source) -> Option(List(SurfaceStmt)) {
+    None => None
+    Some(
+      root
+    ) => Some(
+      surface_program_of(
+        SurfaceCtx { source: source, base: base, classes: classes, fuel: surface_size(root) + 1 },
+        root
+      )
+    )
+  }
+}
+// ---- writing a program as text -----------------------------------------------------
+//
+// The same as `crates/tauto/src/surface/dump.rs` writes, so that the two
+// readers can be compared. A line for each term, statement and declaration, two
+// spaces of indent for each level of depth; the fields below the line, a
+// scalar on its own line after its name, a list as `[length]` with its items
+// below. A text read from a literal (its escapes resolved) is written in hex.
+// The lines are gathered last first.
+
+fn sdump_hex_digit(n: Nat) -> Text {
+  text_slice_or_empty("0123456789abcdef", n, n + 1)
+}
+
+fn sdump_hex_bytes(bytes: List(Nat)) -> List(Text) {
+  match bytes -> List(Text) {
+    Nil => Nil
+    Cons(
+      b,
+      rest
+    ) => Cons(
+      sdump_hex_digit(nat_div(b, 16)),
+      Cons(sdump_hex_digit(nat_mod(b, 16)), sdump_hex_bytes(rest))
+    )
+  }
+}
+
+fn sdump_hex(t: Text) -> Text {
+  match text_len(t) == 0 -> Text {
+    yes => "-"
+    no => text_concat_all(sdump_hex_bytes(text_bytes(t)))
+  }
+}
+
+fn sdump_count(n: Nat) -> Text {
+  text_concat_all(Cons("[", Cons(text_of_nat(n), Cons("]", Nil))))
+}
+
+fn sdump_names_from(items: List(Text)) -> List(Text) {
+  match items -> List(Text) {
+    Nil => Nil
+    Cons(i, rest) => Cons(" ", Cons(i, sdump_names_from(rest)))
+  }
+}
+
+fn sdump_names(items: List(Text)) -> Text {
+  text_concat_all(Cons(sdump_count(list_length(items)), sdump_names_from(items)))
+}
+
+fn sdump_at(start: Nat, end: Nat) -> Text {
+  text_concat_all(Cons(text_of_nat(start), Cons(" ", Cons(text_of_nat(end), Nil))))
+}
+
+// A line at a depth, onto the lines so far.
+fn sdump_line(depth: Nat, line: Text, out: List(Text)) -> List(Text) {
+  Cons(
+    text_concat_all(Cons(text_repeat(" ", depth * 2), Cons(line, Cons(text_newline(), Nil)))),
+    out
+  )
+}
+
+fn sdump_name(depth: Nat, field: Text, value: Text, out: List(Text)) -> List(Text) {
+  sdump_line(depth, text_concat_all(Cons(field, Cons(" ", Cons(value, Nil)))), out)
+}
+
+fn sdump_bool(v: Yn) -> Text {
+  match v -> Text {
+    yes => "true"
+    no => "false"
+  }
+}
+
+// The dump with the goal where one is written, and without it where none is.
+fn sdump_pick(goal: Option(SurfaceTerm), written: List(Text), plain: List(Text)) -> List(Text) {
+  match goal -> List(Text) {
+    None => plain
+    Some(_) => written
+  }
+}
+
+// `binder` is in the dump only where it is written.
+fn sdump_binder(binder: Option(Text), depth: Nat, out: List(Text)) -> List(Text) {
+  match binder -> List(Text) {
+    None => out
+    Some(h) => sdump_name(depth, "binder", h, out)
+  }
+}
+
+fn sdump_opt_name(depth: Nat, field: Text, value: Option(Text), out: List(Text)) -> List(Text) {
+  match value -> List(Text) {
+    None => sdump_line(depth, text_concat(field, " None"), out)
+    Some(v) => sdump_line(depth, text_concat_all(Cons(field, Cons(" Some ", Cons(v, Nil)))), out)
+  }
+}
+
+fn sdump_names_field(depth: Nat, field: Text, items: List(Text), out: List(Text)) -> List(Text) {
+  sdump_name(depth, field, sdump_names(items), out)
+}
+
+fn sdump_counted(depth: Nat, field: Text, n: Nat, out: List(Text)) -> List(Text) {
+  sdump_name(depth, field, sdump_count(n), out)
+}
+
+fn sdump_borrow(b: Option(Yn)) -> Text {
+  match b -> Text {
+    None => "-"
+    Some(mutable) => match mutable -> Text {
+      yes => "&mut"
+      no => "&"
+    }
+  }
+}
+
+fn sdump_borrows(items: List(Option(Yn))) -> List(Text) {
+  match items -> List(Text) {
+    Nil => Nil
+    Cons(b, rest) => Cons(sdump_borrow(b), sdump_borrows(rest))
+  }
+}
+
+fn sdump_effects(depth: Nat, effects: Option(List(Text)), out: List(Text)) -> List(Text) {
+  match effects -> List(Text) {
+    None => sdump_line(depth, "effects None", out)
+    Some(e) => sdump_line(depth, text_concat("effects Some ", sdump_names(e)), out)
+  }
+}
+
+fn sdump_bounds_from(depth: Nat, items: List(Option(Text)), out: List(Text)) -> List(Text) {
+  match items -> List(Text) {
+    Nil => out
+    Cons(x, rest) => sdump_bounds_from(depth, rest, sdump_opt_name(depth, "bound", x, out))
+  }
+}
+
+fn sdump_int(negative: Yn, magnitude: Nat) -> Text {
+  match negative && magnitude > 0 -> Text {
+    yes => text_concat("-", text_of_nat(magnitude))
+    no => text_of_nat(magnitude)
+  }
+}
+
+// A `true` flag, written only when it is set.
+fn sdump_flag(set: Yn, depth: Nat, field: Text, out: List(Text)) -> List(Text) {
+  match set -> List(Text) {
+    yes => sdump_name(depth, field, "true", out)
+    no => out
+  }
+}
+
+fn sdump_kind_line(depth: Nat, kind: Text, at: Text, out: List(Text)) -> List(Text) {
+  sdump_line(depth, text_concat_all(Cons("Term.", Cons(kind, Cons(" ", Cons(at, Nil))))), out)
+}
+
+// `None`, or `Some` and what is below it, after `label` when there is one.
+fn sdump_opt_label(label: Text, what: Text) -> Text {
+  match label == "" -> Text {
+    yes => what
+    no => text_concat_all(Cons(label, Cons(" ", Cons(what, Nil))))
+  }
+}
+
+mutual {
+  fn sdump_term(t: SurfaceTerm, depth: Nat, out: List(Text)) -> List(Text) {
+    match t -> List(Text) {
+      surface_term_mk(kind, start, end) => sdump_kind(kind, depth, sdump_at(start, end), out)
+    }
+  }
+
+  fn sdump_terms(items: List(SurfaceTerm), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(t, rest) => sdump_terms(rest, depth, sdump_term(t, depth, out))
+    }
+  }
+
+  // `label None`, or `label Some` and the term below it.
+  fn sdump_opt(t: Option(SurfaceTerm), depth: Nat, label: Text, out: List(Text)) -> List(Text) {
+    match t -> List(Text) {
+      None => sdump_line(depth, sdump_opt_label(label, "None"), out)
+      Some(x) => sdump_term(x, depth + 1, sdump_line(depth, sdump_opt_label(label, "Some"), out))
+    }
+  }
+
+  fn sdump_opts(items: List(Option(SurfaceTerm)), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(t, rest) => sdump_opts(rest, depth, sdump_opt(t, depth + 1, "", out))
+    }
+  }
+
+  fn sdump_params(items: List(SurfaceParam), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(p, rest) => sdump_params(rest, depth, sdump_param(p, depth, out))
+    }
+  }
+
+  fn sdump_param(p: SurfaceParam, depth: Nat, out: List(Text)) -> List(Text) {
+    match p -> List(Text) {
+      surface_param_mk(
+        name,
+        ty
+      ) => sdump_term(ty, depth + 1, sdump_opt_name(depth, "param", name, out))
+    }
+  }
+
+  fn sdump_fields(items: List(SurfaceField), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(f, rest) => sdump_fields(rest, depth, sdump_field(f, depth, out))
+    }
+  }
+
+  fn sdump_field(f: SurfaceField, depth: Nat, out: List(Text)) -> List(Text) {
+    match f -> List(Text) {
+      surface_field_mk(name, value) => sdump_term(
+        value,
+        depth + 2,
+        sdump_line(depth + 1, name, out)
+      )
+    }
+  }
+
+  fn sdump_named_list(items: List(SurfaceNamed), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(x, rest) => sdump_named_list(rest, depth, sdump_named(x, depth, out))
+    }
+  }
+
+  fn sdump_named(x: SurfaceNamed, depth: Nat, out: List(Text)) -> List(Text) {
+    match x -> List(Text) {
+      surface_named_mk(name, ty) => sdump_term(ty, depth + 2, sdump_line(depth + 1, name, out))
+    }
+  }
+
+  fn sdump_kind(kind: SurfaceKind, depth: Nat, at: Text, out: List(Text)) -> List(Text) {
+    match kind -> List(Text) {
+      SkVar(n) => sdump_name(depth + 1, "name", n, sdump_kind_line(depth, "Var", at, out))
+      SkNat(n) => sdump_name(depth + 1, "value", n, sdump_kind_line(depth, "Nat", at, out))
+      SkText(
+        s
+      ) => sdump_name(depth + 1, "value", sdump_hex(s), sdump_kind_line(depth, "Text", at, out))
+      SkBool(
+        v
+      ) => sdump_name(depth + 1, "value", sdump_bool(v), sdump_kind_line(depth, "Bool", at, out))
+      SkApp(
+        function,
+        arguments
+      ) => sdump_terms(
+        arguments,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "arguments",
+          list_length(arguments),
+          sdump_term(
+            function,
+            depth + 2,
+            sdump_line(depth + 1, "function", sdump_kind_line(depth, "App", at, out))
+          )
+        )
+      )
+      SkPi(
+        params,
+        result,
+        effects
+      ) => sdump_effects(
+        depth + 1,
+        effects,
+        sdump_term(
+          result,
+          depth + 2,
+          sdump_line(
+            depth + 1,
+            "result",
+            sdump_params(
+              params,
+              depth + 2,
+              sdump_counted(
+                depth + 1,
+                "params",
+                list_length(params),
+                sdump_kind_line(depth, "Pi", at, out)
+              )
+            )
+          )
+        )
+      )
+      SkExists(
+        binder,
+        domain,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_term(
+            domain,
+            depth + 2,
+            sdump_line(
+              depth + 1,
+              "domain",
+              sdump_name(depth + 1, "binder", binder, sdump_kind_line(depth, "Exists", at, out))
+            )
+          )
+        )
+      )
+      SkLam(
+        params,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_names_field(depth + 1, "params", params, sdump_kind_line(depth, "Lam", at, out))
+        )
+      )
+      SkUnion(
+        items
+      ) => sdump_terms(
+        items,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "items",
+          list_length(items),
+          sdump_kind_line(depth, "Union", at, out)
+        )
+      )
+      SkTagged(
+        tag,
+        term
+      ) => sdump_term(
+        term,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "term",
+          sdump_name(depth + 1, "tag", tag, sdump_kind_line(depth, "Tagged", at, out))
+        )
+      )
+      SkIf(
+        condition,
+        then,
+        otherwise
+      ) => sdump_opt(
+        otherwise,
+        depth + 1,
+        "otherwise",
+        sdump_term(
+          then,
+          depth + 2,
+          sdump_line(
+            depth + 1,
+            "then",
+            sdump_term(
+              condition,
+              depth + 2,
+              sdump_line(depth + 1, "condition", sdump_kind_line(depth, "If", at, out))
+            )
+          )
+        )
+      )
+      SkField(
+        base,
+        name
+      ) => sdump_name(
+        depth + 1,
+        "name",
+        name,
+        sdump_term(
+          base,
+          depth + 2,
+          sdump_line(depth + 1, "base", sdump_kind_line(depth, "Field", at, out))
+        )
+      )
+      SkBlock(
+        stmts
+      ) => sdump_stmts(
+        stmts,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "stmts",
+          list_length(stmts),
+          sdump_kind_line(depth, "Block", at, out)
+        )
+      )
+      SkPerform(
+        eff,
+        args
+      ) => sdump_terms(
+        args,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "args",
+          list_length(args),
+          sdump_name(depth + 1, "effect", eff, sdump_kind_line(depth, "Perform", at, out))
+        )
+      )
+      SkHandle(
+        body,
+        handlers
+      ) => sdump_handlers(
+        handlers,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "handlers",
+          list_length(handlers),
+          sdump_term(
+            body,
+            depth + 2,
+            sdump_line(depth + 1, "body", sdump_kind_line(depth, "Handle", at, out))
+          )
+        )
+      )
+      SkBudget(
+        steps,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_term(
+            steps,
+            depth + 2,
+            sdump_line(depth + 1, "steps", sdump_kind_line(depth, "Budget", at, out))
+          )
+        )
+      )
+      SkMatch(
+        scrutinee,
+        result,
+        arms,
+        binder
+      ) => sdump_arms(
+        arms,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "arms",
+          list_length(arms),
+          sdump_opt(
+            result,
+            depth + 1,
+            "result",
+            sdump_binder(
+              binder,
+              depth + 1,
+              sdump_term(
+                scrutinee,
+                depth + 2,
+                sdump_line(depth + 1, "scrutinee", sdump_kind_line(depth, "Match", at, out))
+              )
+            )
+          )
+        )
+      )
+      SkHole(n) => sdump_name(depth + 1, "name", n, sdump_kind_line(depth, "Hole", at, out))
+      SkRecord(
+        name,
+        fields
+      ) => sdump_fields(
+        fields,
+        depth + 1,
+        sdump_counted(
+          depth + 1,
+          "fields",
+          list_length(fields),
+          sdump_name(depth + 1, "name", name, sdump_kind_line(depth, "Record", at, out))
+        )
+      )
+      SkBorrow(
+        mutable,
+        term
+      ) => sdump_term(
+        term,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "term",
+          sdump_name(
+            depth + 1,
+            "mutable",
+            sdump_bool(mutable),
+            sdump_kind_line(depth, "Borrow", at, out)
+          )
+        )
+      )
+      SkFnKind(
+        fkind,
+        ty
+      ) => sdump_term(
+        ty,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "ty",
+          sdump_name(depth + 1, "kind", fkind, sdump_kind_line(depth, "FnKind", at, out))
+        )
+      )
+      SkBorrowLam(
+        borrows,
+        lam
+      ) => sdump_term(
+        lam,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "lam",
+          sdump_names_field(
+            depth + 1,
+            "borrows",
+            sdump_borrows(borrows),
+            sdump_kind_line(depth, "BorrowLam", at, out)
+          )
+        )
+      )
+      SkOther(n) => sdump_name(depth + 1, "kind", n, sdump_kind_line(depth, "Other", at, out))
+      SkMacroCall(
+        name,
+        arg
+      ) => sdump_term(
+        arg,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "arg",
+          sdump_name(depth + 1, "name", name, sdump_kind_line(depth, "MacroCall", at, out))
+        )
+      )
+      SkQuote(
+        stmts,
+        body
+      ) => sdump_stmts(
+        body,
+        depth + 1,
+        sdump_name(depth + 1, "stmts", sdump_bool(stmts), sdump_kind_line(depth, "Quote", at, out))
+      )
+      SkSplice(
+        inner
+      ) => sdump_term(
+        inner,
+        depth + 2,
+        sdump_line(depth + 1, "term", sdump_kind_line(depth, "Splice", at, out))
+      )
+      SkStep(
+        tactic,
+        arg,
+        cs,
+        ce,
+        before,
+        arms
+      ) => sdump_step_arms(
+        arms,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "arms",
+          list_length(arms),
+          sdump_opt(
+            before,
+            depth + 1,
+            "before",
+            sdump_term(
+              arg,
+              depth + 2,
+              sdump_line(
+                depth + 1,
+                "arg",
+                sdump_name(
+                  depth + 1,
+                  "call",
+                  sdump_at(cs, ce),
+                  sdump_name(depth + 1, "tactic", tactic, sdump_kind_line(depth, "Step", at, out))
+                )
+              )
+            )
+          )
+        )
+      )
+      SkSyntaxLit(name, body) => sdump_name(
+        depth + 1,
+        "text",
+        sdump_hex(body),
+        sdump_name(
+          depth + 1,
+          "name",
+          match name -> Text {
+            Some(n) => n
+            None => "-"
+          },
+          sdump_kind_line(depth, "SyntaxLit", at, out)
+        )
+      )
+    }
+  }
+
+  fn sdump_pattern(p: SurfacePattern, depth: Nat, out: List(Text)) -> List(Text) {
+    match p -> List(Text) {
+      PtWild => sdump_line(depth, "Pattern.Wild", out)
+      PtBind(n) => sdump_name(depth + 1, "name", n, sdump_line(depth, "Pattern.Bind", out))
+      PtInt(
+        negative,
+        magnitude
+      ) => sdump_name(
+        depth + 1,
+        "value",
+        sdump_int(negative, magnitude),
+        sdump_line(depth, "Pattern.Int", out)
+      )
+      PtBool(
+        v
+      ) => sdump_name(depth + 1, "value", sdump_bool(v), sdump_line(depth, "Pattern.Bool", out))
+      PtText(
+        s
+      ) => sdump_name(depth + 1, "value", sdump_hex(s), sdump_line(depth, "Pattern.Text", out))
+      PtCtor(
+        name,
+        args
+      ) => sdump_patterns(
+        args,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "args",
+          list_length(args),
+          sdump_name(depth + 1, "name", name, sdump_line(depth, "Pattern.Ctor", out))
+        )
+      )
+      PtRecord(
+        name,
+        fields
+      ) => sdump_pattern_fields(
+        fields,
+        depth + 1,
+        sdump_counted(
+          depth + 1,
+          "fields",
+          list_length(fields),
+          sdump_name(depth + 1, "name", name, sdump_line(depth, "Pattern.Record", out))
+        )
+      )
+      PtOther(n) => sdump_name(depth + 1, "kind", n, sdump_line(depth, "Pattern.Other", out))
+    }
+  }
+
+  fn sdump_patterns(items: List(SurfacePattern), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(p, rest) => sdump_patterns(rest, depth, sdump_pattern(p, depth, out))
+    }
+  }
+
+  fn sdump_pattern_fields(
+    items: List(SurfacePatternField),
+    depth: Nat,
+    out: List(Text)
+  ) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(f, rest) => sdump_pattern_fields(rest, depth, sdump_pattern_field(f, depth, out))
+    }
+  }
+
+  fn sdump_pattern_field(f: SurfacePatternField, depth: Nat, out: List(Text)) -> List(Text) {
+    match f -> List(Text) {
+      surface_pattern_field_mk(
+        name,
+        pattern
+      ) => sdump_pattern(pattern, depth + 2, sdump_line(depth + 1, name, out))
+    }
+  }
+
+  // Each arm at `depth`, as `StepArm` and its parts below it.
+  fn sdump_step_arms(items: List(SurfaceStepArm), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(a, rest) => sdump_step_arms(rest, depth, sdump_step_arm(a, depth, out))
+    }
+  }
+
+  fn sdump_step_arm(a: SurfaceStepArm, depth: Nat, out: List(Text)) -> List(Text) {
+    match a -> List(Text) {
+      surface_step_arm_mk(
+        binders,
+        goal,
+        body,
+        start,
+        end
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_term(
+            goal,
+            depth + 2,
+            sdump_line(
+              depth + 1,
+              "goal",
+              sdump_fields(
+                binders,
+                depth + 1,
+                sdump_counted(
+                  depth + 1,
+                  "binders",
+                  list_length(binders),
+                  sdump_name(depth, "StepArm", sdump_at(start, end), out)
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_arms(items: List(SurfaceArm), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(a, rest) => sdump_arms(rest, depth, sdump_arm(a, depth, out))
+    }
+  }
+
+  fn sdump_arm(a: SurfaceArm, depth: Nat, out: List(Text)) -> List(Text) {
+    match a -> List(Text) {
+      surface_arm_mk(
+        pattern,
+        guard,
+        goal,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_pick(
+            goal,
+            sdump_opt(
+              goal,
+              depth + 1,
+              "goal",
+              sdump_opt(
+                guard,
+                depth + 1,
+                "guard",
+                sdump_pattern(pattern, depth + 1, sdump_line(depth, "Arm", out))
+              )
+            ),
+            sdump_opt(
+              guard,
+              depth + 1,
+              "guard",
+              sdump_pattern(pattern, depth + 1, sdump_line(depth, "Arm", out))
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_handlers(items: List(SurfaceHandler), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(h, rest) => sdump_handlers(rest, depth, sdump_handler(h, depth, out))
+    }
+  }
+
+  fn sdump_handler(h: SurfaceHandler, depth: Nat, out: List(Text)) -> List(Text) {
+    match h -> List(Text) {
+      HdReturn(
+        pattern,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_pattern(pattern, depth + 1, sdump_line(depth, "Handler.Return", out))
+        )
+      )
+      HdOperation(
+        eff,
+        patterns,
+        cont,
+        guard,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_opt(
+            guard,
+            depth + 1,
+            "guard",
+            sdump_opt_name(
+              depth + 1,
+              "cont",
+              cont,
+              sdump_patterns(
+                patterns,
+                depth + 2,
+                sdump_counted(
+                  depth + 1,
+                  "patterns",
+                  list_length(patterns),
+                  sdump_name(depth + 1, "effect", eff, sdump_line(depth, "Handler.Operation", out))
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_stmts(items: List(SurfaceStmt), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(s, rest) => sdump_stmts(rest, depth, sdump_stmt(s, depth, out))
+    }
+  }
+
+  fn sdump_stmt(s: SurfaceStmt, depth: Nat, out: List(Text)) -> List(Text) {
+    match s -> List(Text) {
+      StLet(
+        name,
+        ty,
+        value,
+        borrow,
+        borrow_mut
+      ) => sdump_flag(
+        borrow_mut,
+        depth + 1,
+        "borrow_mut",
+        sdump_name(
+          depth + 1,
+          "borrow",
+          sdump_bool(borrow),
+          sdump_term(
+            value,
+            depth + 2,
+            sdump_line(
+              depth + 1,
+              "value",
+              sdump_opt(
+                ty,
+                depth + 1,
+                "ty",
+                sdump_name(depth + 1, "name", name, sdump_line(depth, "Stmt.Let", out))
+              )
+            )
+          )
+        )
+      )
+      StVar(
+        name,
+        ty,
+        value,
+        borrow
+      ) => sdump_flag(
+        borrow,
+        depth + 1,
+        "borrow",
+        sdump_term(
+          value,
+          depth + 2,
+          sdump_line(
+            depth + 1,
+            "value",
+            sdump_opt(
+              ty,
+              depth + 1,
+              "ty",
+              sdump_name(depth + 1, "name", name, sdump_line(depth, "Stmt.Var", out))
+            )
+          )
+        )
+      )
+      StModule(
+        name,
+        items,
+        start,
+        end
+      ) => sdump_stmts(
+        items,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "items",
+          list_length(items),
+          sdump_name(
+            depth + 1,
+            "name",
+            name,
+            sdump_line(depth, text_concat("Stmt.Module ", sdump_at(start, end)), out)
+          )
+        )
+      )
+      StAssign(
+        name,
+        value
+      ) => sdump_term(
+        value,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "value",
+          sdump_name(depth + 1, "name", name, sdump_line(depth, "Stmt.Assign", out))
+        )
+      )
+      StFn(f) => sdump_fn(f, depth + 1, sdump_line(depth, "Stmt.Fn", out))
+      StTheorem(t) => sdump_theorem(t, depth + 1, sdump_line(depth, "Stmt.Theorem", out))
+      StDef(t) => sdump_theorem(t, depth + 1, sdump_line(depth, "Stmt.Def", out))
+      StMutual(
+        items,
+        start,
+        end
+      ) => sdump_stmts(
+        items,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "items",
+          list_length(items),
+          sdump_line(depth, text_concat("Stmt.Mutual ", sdump_at(start, end)), out)
+        )
+      )
+      StImport(
+        path,
+        start,
+        end
+      ) => sdump_name(
+        depth + 1,
+        "path",
+        sdump_hex(path),
+        sdump_line(depth, text_concat("Stmt.Import ", sdump_at(start, end)), out)
+      )
+      StInductive(i) => sdump_inductive(i, depth + 1, sdump_line(depth, "Stmt.Inductive", out))
+      StEffect(e) => sdump_effect(e, depth + 1, sdump_line(depth, "Stmt.Effect", out))
+      StStruct(x) => sdump_data(x, depth + 1, sdump_line(depth, "Stmt.Struct", out))
+      StEnum(x) => sdump_data(x, depth + 1, sdump_line(depth, "Stmt.Enum", out))
+      StClass(
+        x
+      ) => sdump_line(
+        depth,
+        text_concat(text_concat("Stmt.Class ", x.name), text_concat(" ", sdump_at(x.start, x.end))),
+        out
+      )
+      StInstance(
+        x
+      ) => sdump_line(
+        depth,
+        text_concat(
+          text_concat("Stmt.Instance ", x.class),
+          text_concat(" ", sdump_at(x.start, x.end))
+        ),
+        out
+      )
+      StExtern(
+        language,
+        fns,
+        start,
+        end
+      ) => sdump_fns(
+        fns,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "fns",
+          list_length(fns),
+          sdump_name(
+            depth + 1,
+            "language",
+            sdump_hex(language),
+            sdump_line(depth, text_concat("Stmt.Extern ", sdump_at(start, end)), out)
+          )
+        )
+      )
+      StWhile(
+        condition,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_term(
+            condition,
+            depth + 2,
+            sdump_line(depth + 1, "condition", sdump_line(depth, "Stmt.While", out))
+          )
+        )
+      )
+      StReturn(v) => sdump_opt(v, depth + 1, "value", sdump_line(depth, "Stmt.Return", out))
+      StExpr(t) => sdump_term(t, depth + 1, sdump_line(depth, "Stmt.Expr", out))
+      StOther(
+        n,
+        start,
+        end
+      ) => sdump_name(
+        depth + 1,
+        "kind",
+        n,
+        sdump_line(depth, text_concat("Stmt.Other ", sdump_at(start, end)), out)
+      )
+      StMacro(
+        name,
+        function,
+        start,
+        end
+      ) => sdump_name(
+        depth + 1,
+        "function",
+        function,
+        sdump_name(
+          depth + 1,
+          "name",
+          name,
+          sdump_line(depth, text_concat("Stmt.Macro ", sdump_at(start, end)), out)
+        )
+      )
+      StSyntax(
+        name,
+        grammar,
+        start,
+        end
+      ) => sdump_name(
+        depth + 1,
+        "grammar",
+        sdump_hex(grammar),
+        sdump_name(
+          depth + 1,
+          "name",
+          name,
+          sdump_line(depth, text_concat("Stmt.Syntax ", sdump_at(start, end)), out)
+        )
+      )
+    }
+  }
+
+  fn sdump_fns(items: List(SurfaceFn), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(f, rest) => sdump_fns(rest, depth, sdump_fn(f, depth, out))
+    }
+  }
+
+  fn sdump_fn(f: SurfaceFn, depth: Nat, out: List(Text)) -> List(Text) {
+    match f -> List(Text) {
+      surface_fn_mk(
+        name,
+        generics,
+        bounds,
+        params,
+        borrows,
+        param_types,
+        result,
+        effects,
+        wheres,
+        start,
+        end,
+        body
+      ) => sdump_term(
+        body,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "body",
+          sdump_effects(
+            depth + 1,
+            effects,
+            sdump_opt(
+              result,
+              depth + 1,
+              "result",
+              sdump_opts(
+                param_types,
+                depth + 1,
+                sdump_counted(
+                  depth + 1,
+                  "param_types",
+                  list_length(param_types),
+                  sdump_names_field(
+                    depth + 1,
+                    "borrows",
+                    sdump_borrows(borrows),
+                    sdump_names_field(
+                      depth + 1,
+                      "params",
+                      params,
+                      sdump_bounds_from(
+                        depth + 2,
+                        bounds,
+                        sdump_counted(
+                          depth + 1,
+                          "bounds",
+                          list_length(bounds),
+                          sdump_names_field(
+                            depth + 1,
+                            "generics",
+                            generics,
+                            sdump_name(
+                              depth + 1,
+                              "name",
+                              name,
+                              sdump_line(depth, text_concat("FnDecl ", sdump_at(start, end)), out)
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_theorem(t: SurfaceTheorem, depth: Nat, out: List(Text)) -> List(Text) {
+    match t -> List(Text) {
+      surface_theorem_mk(
+        name,
+        implicit,
+        params,
+        ty,
+        body,
+        start,
+        end
+      ) => sdump_opt(
+        body,
+        depth + 1,
+        "body",
+        sdump_term(
+          ty,
+          depth + 2,
+          sdump_line(
+            depth + 1,
+            "ty",
+            sdump_named_list(
+              params,
+              depth + 1,
+              sdump_counted(
+                depth + 1,
+                "params",
+                list_length(params),
+                sdump_name(
+                  depth + 1,
+                  "implicit",
+                  text_of_nat(implicit),
+                  sdump_name(
+                    depth + 1,
+                    "name",
+                    name,
+                    sdump_line(depth, text_concat("TheoremDecl ", sdump_at(start, end)), out)
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_inductive(i: SurfaceInductive, depth: Nat, out: List(Text)) -> List(Text) {
+    match i -> List(Text) {
+      surface_inductive_mk(
+        name,
+        params,
+        sort,
+        constructors,
+        start,
+        end
+      ) => sdump_ctors(
+        constructors,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "constructors",
+          list_length(constructors),
+          sdump_term(
+            sort,
+            depth + 2,
+            sdump_line(
+              depth + 1,
+              "sort",
+              sdump_named_list(
+                params,
+                depth + 1,
+                sdump_counted(
+                  depth + 1,
+                  "params",
+                  list_length(params),
+                  sdump_name(
+                    depth + 1,
+                    "name",
+                    name,
+                    sdump_line(depth, text_concat("InductiveDecl ", sdump_at(start, end)), out)
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_ctors(items: List(SurfaceCtor), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(x, rest) => sdump_ctors(rest, depth, sdump_ctor(x, depth, out))
+    }
+  }
+
+  fn sdump_ctor(x: SurfaceCtor, depth: Nat, out: List(Text)) -> List(Text) {
+    match x -> List(Text) {
+      surface_ctor_mk(
+        name,
+        implicit,
+        params,
+        result
+      ) => sdump_term(
+        result,
+        depth + 2,
+        sdump_line(
+          depth + 1,
+          "result",
+          sdump_named_list(
+            params,
+            depth + 1,
+            sdump_counted(
+              depth + 1,
+              "params",
+              list_length(params),
+              sdump_name(
+                depth + 1,
+                "implicit",
+                text_of_nat(implicit),
+                sdump_name(depth + 1, "name", name, sdump_line(depth, "Constructor", out))
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_effect(e: SurfaceEffect, depth: Nat, out: List(Text)) -> List(Text) {
+    match e -> List(Text) {
+      surface_effect_mk(
+        name,
+        generics,
+        params,
+        result,
+        resume,
+        start,
+        end
+      ) => sdump_opt_name(
+        depth + 1,
+        "resume",
+        resume,
+        sdump_opt(
+          result,
+          depth + 1,
+          "result",
+          sdump_opts(
+            params,
+            depth + 1,
+            sdump_counted(
+              depth + 1,
+              "params",
+              list_length(params),
+              sdump_names_field(
+                depth + 1,
+                "generics",
+                generics,
+                sdump_name(
+                  depth + 1,
+                  "name",
+                  name,
+                  sdump_line(depth, text_concat("EffectDecl ", sdump_at(start, end)), out)
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_data(x: SurfaceData, depth: Nat, out: List(Text)) -> List(Text) {
+    match x -> List(Text) {
+      surface_data_mk(
+        kind,
+        name,
+        generics,
+        constructors,
+        start,
+        end
+      ) => sdump_data_ctors(
+        constructors,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "constructors",
+          list_length(constructors),
+          sdump_names_field(
+            depth + 1,
+            "generics",
+            generics,
+            sdump_name(
+              depth + 1,
+              "name",
+              name,
+              sdump_opt_name(
+                depth + 1,
+                "kind",
+                kind,
+                sdump_line(depth, text_concat("DataDecl ", sdump_at(start, end)), out)
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  fn sdump_data_ctors(items: List(SurfaceDataCtor), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(x, rest) => sdump_data_ctors(rest, depth, sdump_data_ctor(x, depth, out))
+    }
+  }
+
+  fn sdump_data_ctor(x: SurfaceDataCtor, depth: Nat, out: List(Text)) -> List(Text) {
+    match x -> List(Text) {
+      surface_data_ctor_mk(
+        name,
+        fields
+      ) => sdump_data_fields(
+        fields,
+        depth + 2,
+        sdump_counted(
+          depth + 1,
+          "fields",
+          list_length(fields),
+          sdump_name(depth + 1, "name", name, sdump_line(depth, "DataConstructor", out))
+        )
+      )
+    }
+  }
+
+  fn sdump_data_fields(items: List(SurfaceDataField), depth: Nat, out: List(Text)) -> List(Text) {
+    match items -> List(Text) {
+      Nil => out
+      Cons(f, rest) => sdump_data_fields(rest, depth, sdump_data_field(f, depth, out))
+    }
+  }
+
+  fn sdump_data_field(f: SurfaceDataField, depth: Nat, out: List(Text)) -> List(Text) {
+    match f -> List(Text) {
+      surface_data_field_mk(
+        name,
+        ty
+      ) => sdump_term(ty, depth + 1, sdump_opt_name(depth, "field", name, out))
+    }
+  }
+}
+
+fn surface_dump(stmts: List(SurfaceStmt)) -> Text {
+  text_concat_all(
+    list_reverse(sdump_stmts(stmts, 1, sdump_counted(0, "Program", list_length(stmts), Nil)))
+  )
+}

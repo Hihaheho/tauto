@@ -1,0 +1,23 @@
+// Formats each file given on the command line and prints `== <path>` and the
+// result, or `error` (the differential test's input, `docs/design/self-host.md`).
+
+fn fmt_main_each(classes: UnicodeClasses, paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => match fmt_format(classes, source) {
+          fmt_ok(formatted) => os_print(formatted)
+          fmt_err(e) => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+        }
+      }
+      fmt_main_each(classes, rest)
+    }
+  }
+}
+
+fmt_main_each(unicode_classes(), os_args())

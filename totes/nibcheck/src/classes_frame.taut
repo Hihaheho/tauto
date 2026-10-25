@@ -1,0 +1,1752 @@
+import "signature_frame.taut"
+
+// Class declaration diagnostics preserve the data summaries and substitution.
+
+fn cf_class_name(x: SurfaceClass) -> Text { x.name }
+
+fn cf_class_param(x: SurfaceClass) -> Text { x.param }
+
+fn cf_class_count(x: SurfaceClass) -> Nat { x.arity }
+
+fn cf_class_bound(x: SurfaceClass) -> Option(Text) { x.bound }
+
+fn cf_class_methods(x: SurfaceClass) -> List(SurfaceFn) { x.methods }
+
+fn cf_class_laws(x: SurfaceClass) -> List(SurfaceLaw) { x.laws }
+
+fn cf_class_span(x: SurfaceClass) -> TySpan { span_at(x.start, x.end) }
+
+fn cf_method_effects(x: SurfaceFn) -> Option(List(Text)) { x.effects }
+
+fn cf_method_wheres(x: SurfaceFn) -> List(SurfaceConstraint) { x.wheres }
+
+fn cf_method_name(x: SurfaceFn) -> Text { x.name }
+
+fn cf_method_span(x: SurfaceFn) -> TySpan { span_at(x.start, x.end) }
+
+fn cf_law_name(x: SurfaceLaw) -> Text { x.name }
+
+fn cf_law_span(x: SurfaceLaw) -> TySpan { span_at(x.start, x.end) }
+
+fn cf_effects(c: Checker, m: SurfaceFn, cl: SurfaceClass, es: List(Text)) -> Mut1(Unit, Checker) {
+  match es -> Mut1(Unit, Checker) {
+    Nil => mut1(star(), c)
+    Cons(
+      e,
+      more
+    ) => ck_rewrap1(
+      ck_error(
+        c,
+        cat5(
+          cf_class_name(cl),
+          ".",
+          signature_name(m),
+          " performs effects, so ",
+          cat2(cf_class_name(cl), " cannot have laws")
+        ),
+        cf_method_span(m)
+      )
+    )
+  }
+}
+
+theorem cf_effects_frame(
+  c: Checker,
+  m: SurfaceFn,
+  cl: SurfaceClass,
+  es: List(Text)
+): CkReadFrame(c, cf_effects(c, m, cl, es)) {
+  match es -> CkReadFrame(c, cf_effects(c, m, cl, es)) {
+    Nil => refl()
+    Cons(
+      e,
+      more
+    ) => frame_rewrap(
+      c,
+      ck_error(
+        c,
+        cat5(
+          cf_class_name(cl),
+          ".",
+          signature_name(m),
+          " performs effects, so ",
+          cat2(cf_class_name(cl), " cannot have laws")
+        ),
+        cf_method_span(m)
+      ),
+      ck_error_frame(
+        c,
+        cat5(
+          cf_class_name(cl),
+          ".",
+          signature_name(m),
+          " performs effects, so ",
+          cat2(cf_class_name(cl), " cannot have laws")
+        ),
+        cf_method_span(m)
+      )
+    )
+  }
+}
+
+fn cf_effects_opt(
+  c: Checker,
+  m: SurfaceFn,
+  cl: SurfaceClass,
+  o: Option(List(Text))
+) -> Mut1(Unit, Checker) {
+  match o -> Mut1(Unit, Checker) {
+    None => mut1(star(), c)
+    Some(es) => cf_effects(c, m, cl, es)
+  }
+}
+
+theorem cf_effects_opt_frame(
+  c: Checker,
+  m: SurfaceFn,
+  cl: SurfaceClass,
+  o: Option(List(Text))
+): CkReadFrame(c, cf_effects_opt(c, m, cl, o)) {
+  match o -> CkReadFrame(c, cf_effects_opt(c, m, cl, o)) {
+    None => refl()
+    Some(es) => cf_effects_frame(c, m, cl, es)
+  }
+}
+
+fn cf_law_cons(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_law_methods(rest, c1, cl)),
+    cf_effects_opt(c, m, cl, cf_method_effects(m))
+  )
+}
+
+theorem cf_law_cons_frame(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_law_methods(rest, next, cl))
+): CkReadFrame(c, cf_law_cons(m, rest, c, cl)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_law_methods(rest, c1, cl)),
+    cf_effects_opt(c, m, cl, cf_method_effects(m)),
+    cf_effects_opt_frame(c, m, cl, cf_method_effects(m)),
+    ignored => c1 => frame_rewrap(c1, ck_law_methods(rest, c1, cl), ih(c1))
+  )
+}
+
+theorem cf_law_unf(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass
+): Eq(
+  Mut1(Unit, Checker),
+  ck_law_methods(Cons(m, rest), c, cl),
+  cf_law_cons(m, rest, c, cl)
+) { refl() }
+
+theorem ck_law_methods_frame(
+  ms: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass
+): CkReadFrame(c, ck_law_methods(ms, c, cl)) {
+  match ms -> CkReadFrame(c, ck_law_methods(ms, c, cl)) {
+    Nil => refl()
+    Cons(
+      m,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_law_unf(m, rest, c, cl)),
+      cf_law_cons_frame(m, rest, c, cl, next => ck_law_methods_frame(rest, next, cl))
+    )
+  }
+}
+
+fn cf_laws_dup(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass,
+  dup: Yn
+) -> Mut1(Unit, Checker) {
+  match dup -> Mut1(Unit, Checker) {
+    yes => frame_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_class_laws_each(rest, seen, c1, cl)),
+      ck_error(
+        c,
+        cat4(cf_class_name(cl), ".", cf_law_name(l), " is declared twice"),
+        cf_law_span(l)
+      )
+    )
+    no => ck_rewrap1(ck_class_laws_each(rest, Cons(cf_law_name(l), seen), c, cl))
+  }
+}
+
+theorem cf_laws_dup_frame(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass,
+  dup: Yn,
+  ih: ∀ ns: List(Text). ∀ next: Checker. CkReadFrame(next, ck_class_laws_each(rest, ns, next, cl))
+): CkReadFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
+  match dup -> CkReadFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
+    yes => frame_bind_ok(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_class_laws_each(rest, seen, c1, cl)),
+      ck_error(
+        c,
+        cat4(cf_class_name(cl), ".", cf_law_name(l), " is declared twice"),
+        cf_law_span(l)
+      ),
+      ck_error_frame(
+        c,
+        cat4(cf_class_name(cl), ".", cf_law_name(l), " is declared twice"),
+        cf_law_span(l)
+      ),
+      ignored => c1 => frame_rewrap(c1, ck_class_laws_each(rest, seen, c1, cl), ih(seen, c1))
+    )
+    no => frame_rewrap(
+      c,
+      ck_class_laws_each(rest, Cons(cf_law_name(l), seen), c, cl),
+      ih(Cons(cf_law_name(l), seen), c)
+    )
+  }
+}
+
+theorem cf_laws_each_unf(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass
+): Eq(
+  Mut1(Unit, Checker),
+  ck_class_laws_each(Cons(l, rest), seen, c, cl),
+  cf_laws_dup(l, rest, seen, c, cl, text_list_has(seen, cf_law_name(l)))
+) { refl() }
+
+theorem ck_class_laws_each_frame(
+  ls: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass
+): CkReadFrame(c, ck_class_laws_each(ls, seen, c, cl)) {
+  match ls -> CkReadFrame(c, ck_class_laws_each(ls, seen, c, cl)) {
+    Nil => refl()
+    Cons(
+      l,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_laws_each_unf(l, rest, seen, c, cl)),
+      cf_laws_dup_frame(
+        l,
+        rest,
+        seen,
+        c,
+        cl,
+        text_list_has(seen, cf_law_name(l)),
+        ns => next => ck_class_laws_each_frame(rest, ns, next, cl)
+      )
+    )
+  }
+}
+
+fn cf_laws_any(c: Checker, cl: SurfaceClass, ls: List(SurfaceLaw)) -> Mut1(Unit, Checker) {
+  match ls -> Mut1(Unit, Checker) {
+    Nil => mut1(star(), c)
+    Cons(l, rest) => ck_rewrap1(ck_law_methods(cf_class_methods(cl), c, cl))
+  }
+}
+
+theorem cf_laws_any_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  ls: List(SurfaceLaw)
+): CkReadFrame(c, cf_laws_any(c, cl, ls)) {
+  match ls -> CkReadFrame(c, cf_laws_any(c, cl, ls)) {
+    Nil => refl()
+    Cons(
+      l,
+      rest
+    ) => frame_rewrap(
+      c,
+      ck_law_methods(cf_class_methods(cl), c, cl),
+      ck_law_methods_frame(cf_class_methods(cl), c, cl)
+    )
+  }
+}
+
+fn cf_laws(c: Checker, cl: SurfaceClass) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_class_laws_each(cf_class_laws(cl), Nil, c1, cl)),
+    cf_laws_any(c, cl, cf_class_laws(cl))
+  )
+}
+
+theorem cf_laws_frame(c: Checker, cl: SurfaceClass): CkReadFrame(c, cf_laws(c, cl)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_class_laws_each(cf_class_laws(cl), Nil, c1, cl)),
+    cf_laws_any(c, cl, cf_class_laws(cl)),
+    cf_laws_any_frame(c, cl, cf_class_laws(cl)),
+    ignored => c1 => frame_rewrap(
+      c1,
+      ck_class_laws_each(cf_class_laws(cl), Nil, c1, cl),
+      ck_class_laws_each_frame(cf_class_laws(cl), Nil, c1, cl)
+    )
+  )
+}
+
+theorem cf_laws_unf(
+  c: Checker,
+  cl: SurfaceClass
+): Eq(Mut1(Unit, Checker), ck_class_laws(c, cl), cf_laws(c, cl)) { refl() }
+
+theorem ck_class_laws_frame(
+  c: Checker,
+  cl: SurfaceClass
+): CkReadFrame(
+  c,
+  ck_class_laws(c, cl)
+) { Eq_subst(
+  (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+  Eq_sym(cf_laws_unf(c, cl)),
+  cf_laws_frame(c, cl)
+) }
+
+fn cf_method_mentions(
+  m: SurfaceFn,
+  cl: SurfaceClass
+) -> Yn { yn_or(opt_terms_mention(m.param_types, cl.param), opt_term_mentions(m.result, cl.param)) }
+
+fn cf_method_where(
+  c: Checker,
+  m: SurfaceFn,
+  cl: SurfaceClass,
+  ws: List(SurfaceConstraint)
+) -> Mut1(Unit, Checker) {
+  match ws -> Mut1(Unit, Checker) {
+    Nil => mut1(star(), c)
+    Cons(
+      w,
+      more
+    ) => ck_rewrap1(
+      ck_error(
+        c,
+        cat4(
+          cf_class_name(cl),
+          ".",
+          signature_name(m),
+          " has no where: write it outside the class"
+        ),
+        cf_method_span(m)
+      )
+    )
+  }
+}
+
+theorem cf_method_where_frame(
+  c: Checker,
+  m: SurfaceFn,
+  cl: SurfaceClass,
+  ws: List(SurfaceConstraint)
+): CkReadFrame(c, cf_method_where(c, m, cl, ws)) {
+  match ws -> CkReadFrame(c, cf_method_where(c, m, cl, ws)) {
+    Nil => refl()
+    Cons(
+      w,
+      more
+    ) => frame_rewrap(
+      c,
+      ck_error(
+        c,
+        cat4(
+          cf_class_name(cl),
+          ".",
+          signature_name(m),
+          " has no where: write it outside the class"
+        ),
+        cf_method_span(m)
+      ),
+      ck_error_frame(
+        c,
+        cat4(
+          cf_class_name(cl),
+          ".",
+          signature_name(m),
+          " has no where: write it outside the class"
+        ),
+        cf_method_span(m)
+      )
+    )
+  }
+}
+
+fn cf_methods_cons(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (
+      ignored1: Unit,
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      Unit,
+      (
+        ignored2: Unit,
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Unit,
+        (
+          ignored3: Unit,
+          c3: Checker
+        ) => ck_rewrap1(ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)),
+        frame_error_if(
+          c2,
+          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
+          cf_method_span(m),
+          yn_not(cf_method_mentions(m, cl))
+        )
+      ),
+      cf_method_where(c1, m, cl, cf_method_wheres(m))
+    ),
+    frame_error_if(
+      c,
+      cat4(cf_class_name(cl), ".", signature_name(m), " is declared twice"),
+      cf_method_span(m),
+      text_list_has(seen, signature_name(m))
+    )
+  )
+}
+
+theorem cf_methods_cons_frame(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass,
+  ih: ∀ ns: List(Text). ∀ next: Checker. CkReadFrame(next, ck_class_methods(rest, ns, next, cl))
+): CkReadFrame(c, cf_methods_cons(m, rest, seen, c, cl)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (
+      ignored1: Unit,
+      c1: Checker
+    ) => frame_bind(
+      Unit,
+      Unit,
+      (
+        ignored2: Unit,
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Unit,
+        (
+          ignored3: Unit,
+          c3: Checker
+        ) => ck_rewrap1(ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)),
+        frame_error_if(
+          c2,
+          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
+          cf_method_span(m),
+          yn_not(cf_method_mentions(m, cl))
+        )
+      ),
+      cf_method_where(c1, m, cl, cf_method_wheres(m))
+    ),
+    frame_error_if(
+      c,
+      cat4(cf_class_name(cl), ".", signature_name(m), " is declared twice"),
+      cf_method_span(m),
+      text_list_has(seen, signature_name(m))
+    ),
+    frame_error_if_ok(
+      c,
+      cat4(cf_class_name(cl), ".", signature_name(m), " is declared twice"),
+      cf_method_span(m),
+      text_list_has(seen, signature_name(m))
+    ),
+    ignored1 => c1 => frame_bind_ok(
+      Unit,
+      Unit,
+      c1,
+      (
+        ignored2: Unit,
+        c2: Checker
+      ) => frame_bind(
+        Unit,
+        Unit,
+        (
+          ignored3: Unit,
+          c3: Checker
+        ) => ck_rewrap1(ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)),
+        frame_error_if(
+          c2,
+          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
+          cf_method_span(m),
+          yn_not(cf_method_mentions(m, cl))
+        )
+      ),
+      cf_method_where(c1, m, cl, cf_method_wheres(m)),
+      cf_method_where_frame(c1, m, cl, cf_method_wheres(m)),
+      ignored2 => c2 => frame_bind_ok(
+        Unit,
+        Unit,
+        c2,
+        (
+          ignored3: Unit,
+          c3: Checker
+        ) => ck_rewrap1(ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl)),
+        frame_error_if(
+          c2,
+          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
+          cf_method_span(m),
+          yn_not(cf_method_mentions(m, cl))
+        ),
+        frame_error_if_ok(
+          c2,
+          cat5(cf_class_name(cl), ".", signature_name(m), " does not mention ", cf_class_param(cl)),
+          cf_method_span(m),
+          yn_not(cf_method_mentions(m, cl))
+        ),
+        ignored3 => c3 => frame_rewrap(
+          c3,
+          ck_class_methods(rest, Cons(signature_name(m), seen), c3, cl),
+          ih(Cons(signature_name(m), seen), c3)
+        )
+      )
+    )
+  )
+}
+
+theorem cf_methods_unf(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass
+): Eq(
+  Mut1(Unit, Checker),
+  ck_class_methods(Cons(m, rest), seen, c, cl),
+  cf_methods_cons(m, rest, seen, c, cl)
+) { refl() }
+
+theorem ck_class_methods_frame(
+  ms: List(SurfaceFn),
+  seen: List(Text),
+  c: Checker,
+  cl: SurfaceClass
+): CkReadFrame(c, ck_class_methods(ms, seen, c, cl)) {
+  match ms -> CkReadFrame(c, ck_class_methods(ms, seen, c, cl)) {
+    Nil => refl()
+    Cons(
+      m,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_methods_unf(m, rest, seen, c, cl)),
+      cf_methods_cons_frame(
+        m,
+        rest,
+        seen,
+        c,
+        cl,
+        ns => next => ck_class_methods_frame(rest, ns, next, cl)
+      )
+    )
+  }
+}
+
+fn cf_ak_arg(p: Pair(Kind, Kind)) -> Kind { p.fst }
+fn cf_ak_result(p: Pair(Kind, Kind)) -> Kind { p.snd }
+fn cf_bound_ctor(
+  c: Checker,
+  cl: SurfaceClass,
+  b: Text,
+  o: Option(Pair(Kind, Kind))
+) -> Mut1(Option(Pair(Kind, Option(Kind))), Checker) {
+  match o -> Mut1(Option(Pair(Kind, Option(Kind))), Checker) {
+    None => frame_bind(
+      Unit,
+      Option(Pair(Kind, Option(Kind))),
+      (ignored: Unit, c1: Checker) => mut1(None(), c1),
+      ck_error(c, cat2(b, " is not a kind"), cf_class_span(cl))
+    )
+    Some(ak) => mut1(Some(Pair { fst: cf_ak_result(ak), snd: Some(cf_ak_arg(ak)) }), c)
+  }
+}
+
+theorem cf_bound_ctor_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  b: Text,
+  o: Option(Pair(Kind, Kind))
+): CkReadFrame(c, cf_bound_ctor(c, cl, b, o)) {
+  match o -> CkReadFrame(c, cf_bound_ctor(c, cl, b, o)) {
+    None => frame_bind_ok(
+      Unit,
+      Option(Pair(Kind, Option(Kind))),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None(), c1),
+      ck_error(c, cat2(b, " is not a kind"), cf_class_span(cl)),
+      ck_error_frame(c, cat2(b, " is not a kind"), cf_class_span(cl)),
+      ignored => c1 => refl()
+    )
+    Some(ak) => refl()
+  }
+}
+
+fn cf_bound_kind(
+  c: Checker,
+  cl: SurfaceClass,
+  b: Text,
+  o: Option(Kind)
+) -> Mut1(Option(Pair(Kind, Option(Kind))), Checker) {
+  match o -> Mut1(Option(Pair(Kind, Option(Kind))), Checker) {
+    None => cf_bound_ctor(c, cl, b, kind_parse_ctor(b))
+    Some(k) => mut1(Some(Pair { fst: k, snd: None() }), c)
+  }
+}
+
+theorem cf_bound_kind_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  b: Text,
+  o: Option(Kind)
+): CkReadFrame(c, cf_bound_kind(c, cl, b, o)) {
+  match o -> CkReadFrame(c, cf_bound_kind(c, cl, b, o)) {
+    None => cf_bound_ctor_frame(c, cl, b, kind_parse_ctor(b))
+    Some(k) => refl()
+  }
+}
+
+fn cf_bound(
+  c: Checker,
+  cl: SurfaceClass,
+  o: Option(Text)
+) -> Mut1(Option(Pair(Kind, Option(Kind))), Checker) {
+  match o -> Mut1(Option(Pair(Kind, Option(Kind))), Checker) {
+    None => mut1(Some(Pair { fst: KindAffine, snd: None() }), c)
+    Some(b) => cf_bound_kind(c, cl, b, kind_parse(b))
+  }
+}
+
+theorem cf_bound_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  o: Option(Text)
+): CkReadFrame(c, cf_bound(c, cl, o)) {
+  match o -> CkReadFrame(c, cf_bound(c, cl, o)) {
+    None => refl()
+    Some(b) => cf_bound_kind_frame(c, cl, b, kind_parse(b))
+  }
+}
+
+theorem cf_bound_unf(
+  c: Checker,
+  cl: SurfaceClass
+): Eq(
+  Mut1(Option(Pair(Kind, Option(Kind))), Checker),
+  ck_class_bound(c, cl),
+  cf_bound(c, cl, cf_class_bound(cl))
+) { refl() }
+
+theorem ck_class_bound_frame(
+  c: Checker,
+  cl: SurfaceClass
+): CkReadFrame(
+  c,
+  ck_class_bound(c, cl)
+) { Eq_subst(
+  (z: Mut1(Option(Pair(Kind, Option(Kind))), Checker)) => CkReadFrame(c, z),
+  Eq_sym(cf_bound_unf(c, cl)),
+  cf_bound_frame(c, cl, cf_class_bound(cl))
+) }
+
+fn cf_class_store(&mut c: Checker, cl: SurfaceClass, bound: Pair(Kind, Option(Kind))) -> Yn {
+  set_to(
+    &mut c.classes,
+    ordmap_insert(
+      c.classes,
+      cl.name,
+      ClassInfo { decl: cl, bound: bound.fst, arg: bound.snd },
+      ordmap_compare_text
+    )
+  )
+  yes
+}
+theorem cf_class_store_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  bound: Pair(Kind, Option(Kind))
+): CkReadFrame(c, cf_class_store(c, cl, bound)) { refl() }
+fn cf_has_class(
+  c: Checker,
+  cl: SurfaceClass
+) -> Yn { ordmap_contains(c.classes, cl.name, ordmap_compare_text) }
+
+fn cf_class_bound_result(
+  c: Checker,
+  cl: SurfaceClass,
+  o: Option(Pair(Kind, Option(Kind)))
+) -> Mut1(Yn, Checker) {
+  match o -> Mut1(Yn, Checker) {
+    None => mut1(no, c)
+    Some(
+      bound
+    ) => frame_bind(
+      Unit,
+      Yn,
+      (
+        ignored1: Unit,
+        c1: Checker
+      ) => frame_bind(
+        Unit,
+        Yn,
+        (ignored2: Unit, c2: Checker) => cf_class_store(c2, cl, bound),
+        ck_class_laws(c1, cl)
+      ),
+      ck_class_methods(cf_class_methods(cl), Nil, c, cl)
+    )
+  }
+}
+
+theorem cf_class_bound_result_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  o: Option(Pair(Kind, Option(Kind)))
+): CkReadFrame(c, cf_class_bound_result(c, cl, o)) {
+  match o -> CkReadFrame(c, cf_class_bound_result(c, cl, o)) {
+    None => refl()
+    Some(
+      bound
+    ) => frame_bind_ok(
+      Unit,
+      Yn,
+      c,
+      (
+        ignored1: Unit,
+        c1: Checker
+      ) => frame_bind(
+        Unit,
+        Yn,
+        (ignored2: Unit, c2: Checker) => cf_class_store(c2, cl, bound),
+        ck_class_laws(c1, cl)
+      ),
+      ck_class_methods(cf_class_methods(cl), Nil, c, cl),
+      ck_class_methods_frame(cf_class_methods(cl), Nil, c, cl),
+      ignored1 => c1 => frame_bind_ok(
+        Unit,
+        Yn,
+        c1,
+        (ignored2: Unit, c2: Checker) => cf_class_store(c2, cl, bound),
+        ck_class_laws(c1, cl),
+        ck_class_laws_frame(c1, cl),
+        ignored2 => c2 => cf_class_store_frame(c2, cl, bound)
+      )
+    )
+  }
+}
+
+fn cf_class_arity(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+) -> Mut1(Yn, Checker) {
+  match bad -> Mut1(Yn, Checker) {
+    yes => frame_return(
+      no,
+      ck_error(
+        c,
+        cat4(
+          "class ",
+          cf_class_name(cl),
+          " takes one parameter, not ",
+          text_of_nat(cf_class_count(cl))
+        ),
+        cf_class_span(cl)
+      )
+    )
+    no => frame_bind(
+      Option(Pair(Kind, Option(Kind))),
+      Yn,
+      (o: Option(Pair(Kind, Option(Kind))), c1: Checker) => cf_class_bound_result(c1, cl, o),
+      ck_class_bound(c, cl)
+    )
+  }
+}
+
+theorem cf_class_arity_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+): CkReadFrame(c, cf_class_arity(c, cl, own_types, bad)) {
+  match bad -> CkReadFrame(c, cf_class_arity(c, cl, own_types, bad)) {
+    yes => frame_return_ok(
+      c,
+      no,
+      ck_error(
+        c,
+        cat4(
+          "class ",
+          cf_class_name(cl),
+          " takes one parameter, not ",
+          text_of_nat(cf_class_count(cl))
+        ),
+        cf_class_span(cl)
+      ),
+      ck_error_frame(
+        c,
+        cat4(
+          "class ",
+          cf_class_name(cl),
+          " takes one parameter, not ",
+          text_of_nat(cf_class_count(cl))
+        ),
+        cf_class_span(cl)
+      )
+    )
+    no => frame_bind_ok(
+      Option(Pair(Kind, Option(Kind))),
+      Yn,
+      c,
+      (o: Option(Pair(Kind, Option(Kind))), c1: Checker) => cf_class_bound_result(c1, cl, o),
+      ck_class_bound(c, cl),
+      ck_class_bound_frame(c, cl),
+      o => c1 => cf_class_bound_result_frame(c1, cl, o)
+    )
+  }
+}
+
+fn cf_class_type(c: Checker, cl: SurfaceClass, own_types: List(Text), bad: Yn) -> Mut1(Yn, Checker) {
+  match bad -> Mut1(Yn, Checker) {
+    yes => frame_return(
+      no,
+      ck_error(c, cat2(cf_class_name(cl), " is already a type"), cf_class_span(cl))
+    )
+    no => cf_class_arity(c, cl, own_types, yn_not(nat_eq(cf_class_count(cl), 1)))
+  }
+}
+
+theorem cf_class_type_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+): CkReadFrame(c, cf_class_type(c, cl, own_types, bad)) {
+  match bad -> CkReadFrame(c, cf_class_type(c, cl, own_types, bad)) {
+    yes => frame_return_ok(
+      c,
+      no,
+      ck_error(c, cat2(cf_class_name(cl), " is already a type"), cf_class_span(cl)),
+      ck_error_frame(c, cat2(cf_class_name(cl), " is already a type"), cf_class_span(cl))
+    )
+    no => cf_class_arity_frame(c, cl, own_types, yn_not(nat_eq(cf_class_count(cl), 1)))
+  }
+}
+
+fn cf_class_duplicate(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+) -> Mut1(Yn, Checker) {
+  match bad -> Mut1(Yn, Checker) {
+    yes => frame_return(
+      no,
+      ck_error(c, cat3("class ", cf_class_name(cl), " is declared twice"), cf_class_span(cl))
+    )
+    no => cf_class_type(c, cl, own_types, text_list_has(own_types, cf_class_name(cl)))
+  }
+}
+
+theorem cf_class_duplicate_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+): CkReadFrame(c, cf_class_duplicate(c, cl, own_types, bad)) {
+  match bad -> CkReadFrame(c, cf_class_duplicate(c, cl, own_types, bad)) {
+    yes => frame_return_ok(
+      c,
+      no,
+      ck_error(c, cat3("class ", cf_class_name(cl), " is declared twice"), cf_class_span(cl)),
+      ck_error_frame(c, cat3("class ", cf_class_name(cl), " is declared twice"), cf_class_span(cl))
+    )
+    no => cf_class_type_frame(c, cl, own_types, text_list_has(own_types, cf_class_name(cl)))
+  }
+}
+
+fn cf_class_builtin(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+) -> Mut1(Yn, Checker) {
+  match bad -> Mut1(Yn, Checker) {
+    yes => frame_return(no, ck_error(c, cat2(cf_class_name(cl), " is built in"), cf_class_span(cl)))
+    no => cf_class_duplicate(c, cl, own_types, cf_has_class(c, cl))
+  }
+}
+
+theorem cf_class_builtin_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text),
+  bad: Yn
+): CkReadFrame(c, cf_class_builtin(c, cl, own_types, bad)) {
+  match bad -> CkReadFrame(c, cf_class_builtin(c, cl, own_types, bad)) {
+    yes => frame_return_ok(
+      c,
+      no,
+      ck_error(c, cat2(cf_class_name(cl), " is built in"), cf_class_span(cl)),
+      ck_error_frame(c, cat2(cf_class_name(cl), " is built in"), cf_class_span(cl))
+    )
+    no => cf_class_duplicate_frame(c, cl, own_types, cf_has_class(c, cl))
+  }
+}
+
+theorem cf_declare_unf(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text)
+): Eq(
+  Mut1(Yn, Checker),
+  ck_declare_class(c, cl, own_types),
+  cf_class_builtin(c, cl, own_types, class_is_structural(cf_class_name(cl)))
+) { refl() }
+
+theorem ck_declare_class_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  own_types: List(Text)
+): CkReadFrame(
+  c,
+  ck_declare_class(c, cl, own_types)
+) { Eq_subst(
+  (z: Mut1(Yn, Checker)) => CkReadFrame(c, z),
+  Eq_sym(cf_declare_unf(c, cl, own_types)),
+  cf_class_builtin_frame(c, cl, own_types, class_is_structural(cf_class_name(cl)))
+) }
+
+fn cf_method_fn(cl: SurfaceClass, info: ClassInfo, m: SurfaceFn) -> SurfaceFn { SurfaceFn {
+    name: cat3(cl.name, ".", m.name),
+    generics: Cons(cl.param, m.generics),
+    bounds: Cons(Some(class_param_bound(info)), opts_resize(list_len(m.generics), m.bounds)),
+    params: m.params,
+    borrows: m.borrows,
+    param_types: m.param_types,
+    result: m.result,
+    effects: m.effects,
+    wheres: Cons(
+          SurfaceConstraint {
+            class: cl.name,
+            ty: surface_at(SkVar(cl.param), m.start, m.end),
+            start: m.start,
+            end: m.end
+          },
+          Nil
+        ),
+    start: m.start,
+    end: m.end,
+    body: m.body
+  } }
+
+fn cf_store_state(
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme
+) -> Checker { ck_st(signature_store(c, f, scheme)) }
+theorem cf_store_state_same(
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme
+): Eq(
+  Pair(Datas, Ordmap(Nat, Ty)),
+  frame_read_view(cf_store_state(c, f, scheme)),
+  frame_read_view(c)
+) { refl() }
+
+fn cf_declare_methods_cons(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass,
+  info: ClassInfo
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Scheme,
+    Unit,
+    (
+      scheme: Scheme,
+      c1: Checker
+    ) => ck_rewrap1(
+      ck_declare_methods_each(rest, cf_store_state(c1, cf_method_fn(cl, info, m), scheme), cl, info)
+    ),
+    ck_signature(c, cf_method_fn(cl, info, m))
+  )
+}
+
+theorem cf_declare_methods_cons_frame(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass,
+  info: ClassInfo,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_declare_methods_each(rest, next, cl, info))
+): CkReadFrame(c, cf_declare_methods_cons(m, rest, c, cl, info)) {
+  frame_bind_ok(
+    Scheme,
+    Unit,
+    c,
+    (
+      scheme: Scheme,
+      c1: Checker
+    ) => ck_rewrap1(
+      ck_declare_methods_each(rest, cf_store_state(c1, cf_method_fn(cl, info, m), scheme), cl, info)
+    ),
+    ck_signature(c, cf_method_fn(cl, info, m)),
+    ck_signature_frame(c, cf_method_fn(cl, info, m)),
+    scheme => c1 => frame_changed(
+      c1,
+      cf_store_state(c1, cf_method_fn(cl, info, m), scheme),
+      ck_rewrap1(
+        ck_declare_methods_each(
+          rest,
+          cf_store_state(c1, cf_method_fn(cl, info, m), scheme),
+          cl,
+          info
+        )
+      ),
+      cf_store_state_same(c1, cf_method_fn(cl, info, m), scheme),
+      frame_rewrap(
+        cf_store_state(c1, cf_method_fn(cl, info, m), scheme),
+        ck_declare_methods_each(
+          rest,
+          cf_store_state(c1, cf_method_fn(cl, info, m), scheme),
+          cl,
+          info
+        ),
+        ih(cf_store_state(c1, cf_method_fn(cl, info, m), scheme))
+      )
+    )
+  )
+}
+
+theorem cf_declare_methods_unf(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass,
+  info: ClassInfo
+): Eq(
+  Mut1(Unit, Checker),
+  ck_declare_methods_each(Cons(m, rest), c, cl, info),
+  cf_declare_methods_cons(m, rest, c, cl, info)
+) { refl() }
+
+theorem ck_declare_methods_each_frame(
+  ms: List(SurfaceFn),
+  c: Checker,
+  cl: SurfaceClass,
+  info: ClassInfo
+): CkReadFrame(c, ck_declare_methods_each(ms, c, cl, info)) {
+  match ms -> CkReadFrame(c, ck_declare_methods_each(ms, c, cl, info)) {
+    Nil => refl()
+    Cons(
+      m,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_declare_methods_unf(m, rest, c, cl, info)),
+      cf_declare_methods_cons_frame(
+        m,
+        rest,
+        c,
+        cl,
+        info,
+        next => ck_declare_methods_each_frame(rest, next, cl, info)
+      )
+    )
+  }
+}
+
+fn cf_class_get(
+  c: Checker,
+  cl: SurfaceClass
+) -> Option(ClassInfo) { ordmap_get(c.classes, cl.name, ordmap_compare_text) }
+
+fn cf_declare_methods_get(
+  c: Checker,
+  cl: SurfaceClass,
+  o: Option(ClassInfo)
+) -> Mut1(Unit, Checker) {
+  match o -> Mut1(Unit, Checker) {
+    None => mut1(star(), c)
+    Some(info) => ck_rewrap1(ck_declare_methods_each(cf_class_methods(cl), c, cl, info))
+  }
+}
+
+theorem cf_declare_methods_get_frame(
+  c: Checker,
+  cl: SurfaceClass,
+  o: Option(ClassInfo)
+): CkReadFrame(c, cf_declare_methods_get(c, cl, o)) {
+  match o -> CkReadFrame(c, cf_declare_methods_get(c, cl, o)) {
+    None => refl()
+    Some(
+      info
+    ) => frame_rewrap(
+      c,
+      ck_declare_methods_each(cf_class_methods(cl), c, cl, info),
+      ck_declare_methods_each_frame(cf_class_methods(cl), c, cl, info)
+    )
+  }
+}
+
+fn cf_methods_classes_cons(
+  cl: SurfaceClass,
+  rest: List(SurfaceClass),
+  c: Checker
+) -> Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_declare_methods(rest, c1)),
+    cf_declare_methods_get(c, cl, cf_class_get(c, cl))
+  )
+}
+
+theorem cf_methods_classes_cons_frame(
+  cl: SurfaceClass,
+  rest: List(SurfaceClass),
+  c: Checker,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_declare_methods(rest, next))
+): CkReadFrame(c, cf_methods_classes_cons(cl, rest, c)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_declare_methods(rest, c1)),
+    cf_declare_methods_get(c, cl, cf_class_get(c, cl)),
+    cf_declare_methods_get_frame(c, cl, cf_class_get(c, cl)),
+    ignored => c1 => frame_rewrap(c1, ck_declare_methods(rest, c1), ih(c1))
+  )
+}
+
+theorem cf_methods_classes_unf(
+  cl: SurfaceClass,
+  rest: List(SurfaceClass),
+  c: Checker
+): Eq(
+  Mut1(Unit, Checker),
+  ck_declare_methods(Cons(cl, rest), c),
+  cf_methods_classes_cons(cl, rest, c)
+) { refl() }
+
+theorem ck_declare_methods_frame(
+  cls: List(SurfaceClass),
+  c: Checker
+): CkReadFrame(c, ck_declare_methods(cls, c)) {
+  match cls -> CkReadFrame(c, ck_declare_methods(cls, c)) {
+    Nil => refl()
+    Cons(
+      cl,
+      rest
+    ) => Eq_subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_methods_classes_unf(cl, rest, c)),
+      cf_methods_classes_cons_frame(cl, rest, c, next => ck_declare_methods_frame(rest, next))
+    )
+  }
+}
+
+fn cf_cons_if_mut<A>(c: Checker, x: A, xs: List(A), take: Yn) -> Mut1(List(A), Checker) {
+  match take -> Mut1(List(A), Checker) {
+    yes => mut1(Cons(x, xs), c)
+    no => mut1(xs, c)
+  }
+}
+theorem cf_cons_if_mut_frame<A: Type>(
+  c: Checker,
+  x: A,
+  xs: List(A),
+  take: Yn
+): CkReadFrame(c, cf_cons_if_mut(c, x, xs, take)) {
+  match take -> CkReadFrame(c, cf_cons_if_mut(c, x, xs, take)) {
+    yes => refl()
+    no => refl()
+  }
+}
+
+fn cf_class_list_cons(
+  cl: SurfaceClass,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+) -> Mut1(List(SurfaceClass), Checker) {
+  frame_bind(
+    Yn,
+    List(SurfaceClass),
+    (
+      ok: Yn,
+      c1: Checker
+    ) => frame_bind(
+      List(SurfaceClass),
+      List(SurfaceClass),
+      (tl: List(SurfaceClass), c2: Checker) => cf_cons_if_mut(c2, cl, tl, ok),
+      ck_declare_class_list(rest, c1, own_types)
+    ),
+    ck_declare_class(c, cl, own_types)
+  )
+}
+
+theorem cf_class_list_cons_frame(
+  cl: SurfaceClass,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_declare_class_list(rest, next, own_types))
+): CkReadFrame(c, cf_class_list_cons(cl, rest, c, own_types)) {
+  frame_bind_ok(
+    Yn,
+    List(SurfaceClass),
+    c,
+    (
+      ok: Yn,
+      c1: Checker
+    ) => frame_bind(
+      List(SurfaceClass),
+      List(SurfaceClass),
+      (tl: List(SurfaceClass), c2: Checker) => cf_cons_if_mut(c2, cl, tl, ok),
+      ck_declare_class_list(rest, c1, own_types)
+    ),
+    ck_declare_class(c, cl, own_types),
+    ck_declare_class_frame(c, cl, own_types),
+    ok => c1 => frame_bind_ok(
+      List(SurfaceClass),
+      List(SurfaceClass),
+      c1,
+      (tl: List(SurfaceClass), c2: Checker) => cf_cons_if_mut(c2, cl, tl, ok),
+      ck_declare_class_list(rest, c1, own_types),
+      ih(c1),
+      tl => c2 => cf_cons_if_mut_frame(c2, cl, tl, ok)
+    )
+  )
+}
+
+theorem cf_class_list_StLet_unf(
+  name: Text,
+  ty: Option(SurfaceTerm),
+  value: SurfaceTerm,
+  borrow: Yn,
+  mutable: Yn,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StLet(name, ty, value, borrow, mutable), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StVar_unf(
+  name: Text,
+  ty: Option(SurfaceTerm),
+  value: SurfaceTerm,
+  borrow: Yn,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StVar(name, ty, value, borrow), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StModule_unf(
+  name: Text,
+  stmts: List(SurfaceStmt),
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StModule(name, stmts, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StAssign_unf(
+  name: Text,
+  value: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StAssign(name, value), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StFn_unf(
+  f: SurfaceFn,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StFn(f), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StTheorem_unf(
+  t: SurfaceTheorem,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StTheorem(t), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StDef_unf(
+  t: SurfaceTheorem,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StDef(t), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StMutual_unf(
+  stmts: List(SurfaceStmt),
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StMutual(stmts, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StImport_unf(
+  path: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StImport(path, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StInductive_unf(
+  i: SurfaceInductive,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StInductive(i), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StEffect_unf(
+  e: SurfaceEffect,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StEffect(e), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StStruct_unf(
+  d: SurfaceData,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StStruct(d), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StEnum_unf(
+  d: SurfaceData,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StEnum(d), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StExtern_unf(
+  abi: Text,
+  fns: List(SurfaceFn),
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StExtern(abi, fns, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StClass_unf(
+  cl: SurfaceClass,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StClass(cl), rest), c, own_types),
+  cf_class_list_cons(cl, rest, c, own_types)
+) { refl() }
+
+theorem cf_class_list_StInstance_unf(
+  i: SurfaceInstance,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StInstance(i), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StWhile_unf(
+  cond: SurfaceTerm,
+  body: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StWhile(cond, body), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StReturn_unf(
+  value: Option(SurfaceTerm),
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StReturn(value), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StExpr_unf(
+  value: SurfaceTerm,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StExpr(value), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StOther_unf(
+  what: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StOther(what, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StMacro_unf(
+  name: Text,
+  function: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StMacro(name, function, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_StSyntax_unf(
+  name: Text,
+  grammar: Text,
+  start: Nat,
+  end: Nat,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): Eq(
+  Mut1(List(SurfaceClass), Checker),
+  ck_declare_class_list(Cons(StSyntax(name, grammar, start, end), rest), c, own_types),
+  ck_rewrap1(ck_declare_class_list(rest, c, own_types))
+) { refl() }
+
+theorem cf_class_list_step(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text),
+  ih: ∀ next: Checker. CkReadFrame(next, ck_declare_class_list(rest, next, own_types))
+): CkReadFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
+  match s -> CkReadFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
+    StLet(
+      name,
+      ty,
+      value,
+      borrow,
+      mutable
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StVar(
+      name,
+      ty,
+      value,
+      borrow
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StVar_unf(name, ty, value, borrow, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StModule(
+      name,
+      stmts,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StModule_unf(name, stmts, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StAssign(
+      name,
+      value
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StAssign_unf(name, value, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StFn(
+      f
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StFn_unf(f, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StTheorem(
+      t
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StTheorem_unf(t, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StDef(
+      t
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StDef_unf(t, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StMutual(
+      stmts,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StMutual_unf(stmts, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StImport(
+      path,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StImport_unf(path, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StInductive(
+      i
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StInductive_unf(i, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StEffect(
+      e
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StEffect_unf(e, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StStruct(
+      d
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StStruct_unf(d, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StEnum(
+      d
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StEnum_unf(d, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StExtern(
+      abi,
+      fns,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StExtern_unf(abi, fns, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StClass(
+      cl
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StClass_unf(cl, rest, c, own_types)),
+      cf_class_list_cons_frame(cl, rest, c, own_types, ih)
+    )
+    StInstance(
+      i
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StInstance_unf(i, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StWhile(
+      cond,
+      body
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StWhile_unf(cond, body, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StReturn(
+      value
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StReturn_unf(value, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StExpr(
+      value
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StExpr_unf(value, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StOther(
+      what,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StOther_unf(what, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StMacro(
+      name,
+      function,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StMacro_unf(name, function, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+    StSyntax(
+      name,
+      grammar,
+      start,
+      end
+    ) => Eq_subst(
+      (z: Mut1(List(SurfaceClass), Checker)) => CkReadFrame(c, z),
+      Eq_sym(cf_class_list_StSyntax_unf(name, grammar, start, end, rest, c, own_types)),
+      frame_rewrap(c, ck_declare_class_list(rest, c, own_types), ih(c))
+    )
+  }
+}
+
+theorem ck_declare_class_list_frame(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own_types: List(Text)
+): CkReadFrame(c, ck_declare_class_list(ss, c, own_types)) {
+  match ss -> CkReadFrame(c, ck_declare_class_list(ss, c, own_types)) {
+    Nil => refl()
+    Cons(
+      s,
+      rest
+    ) => cf_class_list_step(
+      s,
+      rest,
+      c,
+      own_types,
+      next => ck_declare_class_list_frame(rest, next, own_types)
+    )
+  }
+}

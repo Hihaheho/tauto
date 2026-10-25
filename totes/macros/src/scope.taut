@@ -1,0 +1,837 @@
+// Hygiene: the names an expansion made, each tied to its binder
+// (`crates/tauto/src/macros/scope.rs`, `docs/design/macro.md`).
+//
+// A name a macro made carries the expansions that made it after a separator
+// (`tmp` and `1,3` with the separator between). `rs_resolve` gives each such
+// binder a name of its own (`tmp#3`) and ties each such name to the binder
+// that matches; what no binder of the expansion matches is a global and keeps
+// its name, and a local of the caller with that name is renamed so that it
+// does not take it. The order in which numbers are handed out is the order of
+// the Rust walk, step for step.
+
+struct RsBinder { plain: Text, marks: Text, unique: Text, id: u64 }
+
+struct RsGlobal { plain: Text, marks: Text, unique: Text }
+
+struct RsState {
+  env: Vec(RsBinder)
+  globals: Vec(RsGlobal)
+  // The numbers of the binders a name of an expansion would have taken.
+  captured: Vec(u64)
+  // The numbers of the binders to rename.
+  rename: Vec(u64)
+  // The number of binders met, the number of names given.
+  nums: Vec(u64)
+  ctors: List(Text)
+  sep: Text
+}
+
+// ---------------------------------------------------------------- names
+
+struct RsSplit { plain: Text, marks: Text }
+
+// The name and the scopes of a marked name.
+fn rs_split(sep: Text, name: Text) -> RsSplit {
+  match text_find(name, sep, 0) {
+    Some(i) => RsSplit {
+      plain: text_slice_or_empty(name, 0, i),
+      marks: text_slice_or_empty(name, i + text_len(sep), text_len(name))
+    }
+    None => RsSplit { plain: name, marks: "" }
+  }
+}
+
+fn rs_cat3(a: Text, b: Text, c: Text) -> Text {
+  text_concat_all(Cons(a, Cons(b, Cons(c, Nil))))
+}
+
+fn rs_next(&mut st: RsState, which: u64) -> u64 {
+  var out: u64 = 0
+  match vec_get_mut(&mut st.nums, which) {
+    Some(slot) => {
+      out := slot
+      slot := slot + 1
+    }
+    None => ()
+  }
+  out
+}
+
+fn rs_has_num(&v: Vec(u64), x: u64) -> Bool {
+  var i: u64 = 0
+  var found = false
+  while i < vec_len(&v) && !found {
+    let &y = vec_index(&v, i)
+    if y == x {
+      found := true
+    }
+    i := i + 1
+  }
+  found
+}
+
+fn rs_has_text(xs: List(Text), x: Text) -> Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => y == x || rs_has_text(rest, x)
+  }
+}
+
+// A binder: the name to write for it.
+fn rs_bind(&mut st: RsState, name: Text) -> Text {
+  let s = rs_split(st.sep, name)
+  let id = rs_next(&mut st, 0)
+  var unique = s.plain
+  if text_len(s.marks) > 0 {
+    let n = rs_next(&mut st, 1) + 1
+    unique := rs_cat3(s.plain, "#", text_of_u64(n))
+  } else if rs_has_num(&st.rename, id) {
+    let n = rs_next(&mut st, 1) + 1
+    unique := rs_cat3(s.plain, "#r", text_of_u64(n))
+  }
+  vec_push(&mut st.env, RsBinder { plain: s.plain, marks: s.marks, unique: unique, id: id })
+  unique
+}
+
+fn rs_env_find(&env: Vec(RsBinder), plain: Text, marks: Text) -> Option(Text) {
+  var i = vec_len(&env)
+  var out: Option(Text) = None
+  while i > 0 && rs_is_none(out) {
+    i := i - 1
+    let &b = vec_index(&env, i)
+    if b.plain == plain && b.marks == marks {
+      out := Some(b.unique)
+    }
+  }
+  out
+}
+
+fn rs_is_none(o: Option(Text)) -> Bool {
+  match o {
+    None => true
+    Some(x) => false
+  }
+}
+
+fn rs_global_find(&gs: Vec(RsGlobal), plain: Text, marks: Text) -> Option(Text) {
+  var i: u64 = 0
+  var out: Option(Text) = None
+  while i < vec_len(&gs) {
+    let &g = vec_index(&gs, i)
+    if g.plain == plain && g.marks == marks {
+      out := Some(g.unique)
+    }
+    i := i + 1
+  }
+  out
+}
+
+fn rs_capture(&mut st: RsState, plain: Text) -> () {
+  var i: u64 = 0
+  while i < vec_len(&st.env) {
+    let &b = vec_index(&st.env, i)
+    let id = b.id
+    let take = b.plain == plain && text_len(b.marks) == 0
+    if take {
+      if !rs_has_num(&st.captured, id) {
+        vec_push(&mut st.captured, id)
+      }
+    }
+    i := i + 1
+  }
+}
+
+fn rs_reference_one(&mut st: RsState, plain: Text, marks: Text) -> Text {
+  match rs_env_find(&st.env, plain, marks) {
+    Some(u) => u
+    None => {
+      if text_len(marks) > 0 {
+        match rs_global_find(&st.globals, plain, marks) {
+          Some(u) => u
+          None => {
+            rs_capture(&mut st, plain)
+            plain
+          }
+        }
+      } else {
+        plain
+      }
+    }
+  }
+}
+
+// What a name written in the walk stands for.
+fn rs_reference(&mut st: RsState, name: Text) -> Text {
+  let s = rs_split(st.sep, name)
+  match text_find(s.plain, "::", 0) {
+    Some(i) => {
+      let head = rs_reference_one(&mut st, text_slice_or_empty(s.plain, 0, i), s.marks)
+      rs_cat3(head, "::", text_slice_or_empty(s.plain, i + 2, text_len(s.plain)))
+    }
+    None => rs_reference_one(&mut st, s.plain, s.marks)
+  }
+}
+
+fn rs_mark(&st: RsState) -> u64 {
+  vec_len(&st.env)
+}
+
+fn rs_pop(&mut st: RsState, mark: u64) -> () {
+  vec_truncate(&mut st.env, mark)
+}
+
+// ---------------------------------------------------------------- globals
+
+// A declaration an expansion made takes a name of its own.
+fn rs_declare(&mut st: RsState, name: Text) -> Text {
+  let s = rs_split(st.sep, name)
+  if text_len(s.marks) > 0 {
+    let n = rs_next(&mut st, 1) + 1
+    let unique = rs_cat3(s.plain, "#", text_of_u64(n))
+    vec_push(&mut st.globals, RsGlobal { plain: s.plain, marks: s.marks, unique: unique })
+    unique
+  } else {
+    name
+  }
+}
+
+fn rs_declare_ctors(&mut st: RsState, cs: List(SurfaceDataCtor)) -> List(SurfaceDataCtor) {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let name = rs_declare(&mut st, c.name)
+      Cons(SurfaceDataCtor { name: name, fields: c.fields }, rs_declare_ctors(&mut st, rest))
+    }
+  }
+}
+
+fn rs_declare_data(&mut st: RsState, d: SurfaceData) -> SurfaceData {
+  let name = rs_declare(&mut st, d.name)
+  let cs = rs_declare_ctors(&mut st, d.constructors)
+  SurfaceData {
+    kind: d.kind,
+    name: name,
+    generics: d.generics,
+    constructors: cs,
+    start: d.start,
+    end: d.end
+  }
+}
+
+// Declarations an expansion made at the top, and in `mutual` and `module`.
+fn rs_collect(&mut st: RsState, xs: List(SurfaceStmt)) -> List(SurfaceStmt) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => {
+      let out = rs_collect_one(&mut st, s)
+      Cons(out, rs_collect(&mut st, rest))
+    }
+  }
+}
+
+fn rs_collect_one(&mut st: RsState, s: SurfaceStmt) -> SurfaceStmt {
+  match s {
+    StFn(f) => {
+      let name = rs_declare(&mut st, f.name)
+      StFn(SurfaceFn {
+        name: name,
+        generics: f.generics,
+        bounds: f.bounds,
+        params: f.params,
+        borrows: f.borrows,
+        param_types: f.param_types,
+        result: f.result,
+        effects: f.effects,
+        wheres: f.wheres,
+        start: f.start,
+        end: f.end,
+        body: f.body
+      })
+    }
+    StTheorem(d) => StTheorem(rs_declare_theorem(&mut st, d))
+    StDef(d) => StDef(rs_declare_theorem(&mut st, d))
+    StStruct(d) => StStruct(rs_declare_data(&mut st, d))
+    StEnum(d) => StEnum(rs_declare_data(&mut st, d))
+    StEffect(e) => {
+      let name = rs_declare(&mut st, e.name)
+      StEffect(SurfaceEffect {
+        name: name,
+        generics: e.generics,
+        params: e.params,
+        result: e.result,
+        resume: e.resume,
+        start: e.start,
+        end: e.end
+      })
+    }
+    StInductive(d) => {
+      let name = rs_declare(&mut st, d.name)
+      StInductive(SurfaceInductive {
+        name: name,
+        params: d.params,
+        sort: d.sort,
+        constructors: d.constructors,
+        start: d.start,
+        end: d.end
+      })
+    }
+    StMutual(items, a, b) => StMutual(rs_collect(&mut st, items), a, b)
+    StModule(name, items, a, b) => StModule(name, rs_collect(&mut st, items), a, b)
+    other => other
+  }
+}
+
+fn rs_declare_theorem(&mut st: RsState, d: SurfaceTheorem) -> SurfaceTheorem {
+  let name = rs_declare(&mut st, d.name)
+  SurfaceTheorem {
+    name: name,
+    implicit: d.implicit,
+    params: d.params,
+    ty: d.ty,
+    body: d.body,
+    start: d.start,
+    end: d.end
+  }
+}
+
+// ---------------------------------------------------------------- walk
+
+fn rs_top(&mut st: RsState, xs: List(SurfaceStmt)) -> List(SurfaceStmt) {
+  let declared = rs_collect(&mut st, xs)
+  rs_stmt_list(&mut st, declared)
+}
+
+fn rs_stmt_list(&mut st: RsState, xs: List(SurfaceStmt)) -> List(SurfaceStmt) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => {
+      let out = rs_stmt(&mut st, s)
+      Cons(out, rs_stmt_list(&mut st, rest))
+    }
+  }
+}
+
+// The statements of a block: its binders end with it.
+fn rs_block(&mut st: RsState, xs: List(SurfaceStmt)) -> List(SurfaceStmt) {
+  let mark = rs_mark(&st)
+  let out = rs_stmt_list(&mut st, xs)
+  rs_pop(&mut st, mark)
+  out
+}
+
+fn rs_opt(&mut st: RsState, t: Option(SurfaceTerm)) -> Option(SurfaceTerm) {
+  match t {
+    None => None
+    Some(x) => Some(rs_term(&mut st, x))
+  }
+}
+
+fn rs_terms(&mut st: RsState, xs: List(SurfaceTerm)) -> List(SurfaceTerm) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y = rs_term(&mut st, x)
+      Cons(y, rs_terms(&mut st, rest))
+    }
+  }
+}
+
+fn rs_stmt(&mut st: RsState, s: SurfaceStmt) -> SurfaceStmt {
+  match s {
+    StLet(name, ty, value, a, b) => {
+      let ty2 = rs_opt(&mut st, ty)
+      let value2 = rs_term(&mut st, value)
+      let name2 = rs_bind(&mut st, name)
+      StLet(name2, ty2, value2, a, b)
+    }
+    StVar(name, ty, value, a) => {
+      let ty2 = rs_opt(&mut st, ty)
+      let value2 = rs_term(&mut st, value)
+      let name2 = rs_bind(&mut st, name)
+      StVar(name2, ty2, value2, a)
+    }
+    StAssign(name, value) => {
+      let value2 = rs_term(&mut st, value)
+      let name2 = rs_reference(&mut st, name)
+      StAssign(name2, value2)
+    }
+    StFn(f) => StFn(rs_fn(&mut st, f))
+    StTheorem(d) => StTheorem(rs_theorem(&mut st, d))
+    StDef(d) => StDef(rs_theorem(&mut st, d))
+    StWhile(c, body) => {
+      let c2 = rs_term(&mut st, c)
+      let body2 = rs_term(&mut st, body)
+      StWhile(c2, body2)
+    }
+    StReturn(e) => StReturn(rs_opt(&mut st, e))
+    StExpr(e) => StExpr(rs_term(&mut st, e))
+    StStruct(d) => StStruct(rs_data(&mut st, d))
+    StEnum(d) => StEnum(rs_data(&mut st, d))
+    StEffect(e) => StEffect(rs_effect(&mut st, e))
+    StMutual(items, a, b) => StMutual(rs_stmt_list(&mut st, items), a, b)
+    StModule(name, items, a, b) => StModule(name, rs_stmt_list(&mut st, items), a, b)
+    StInductive(d) => StInductive(rs_inductive(&mut st, d))
+    other => other
+  }
+}
+
+// Each parameter's type (when it has one) is read before the parameter binds.
+fn rs_params(
+  &mut st: RsState,
+  names: List(Text),
+  types: List(Option(SurfaceTerm))
+) -> Pair(List(Text), List(Option(SurfaceTerm))) {
+  match names {
+    Nil => Pair { fst: Nil, snd: types }
+    Cons(n, rest) => {
+      var ty: Option(Option(SurfaceTerm)) = None
+      var more: List(Option(SurfaceTerm)) = Nil
+      match types {
+        Nil => ()
+        Cons(t, others) => {
+          ty := Some(rs_opt(&mut st, t))
+          more := others
+        }
+      }
+      let bound = rs_bind(&mut st, n)
+      let tail = rs_params(&mut st, rest, more)
+      Pair {
+        fst: Cons(bound, tail.fst),
+        snd: match ty {
+          None => tail.snd
+          Some(t) => Cons(t, tail.snd)
+        }
+      }
+    }
+  }
+}
+
+fn rs_fn(&mut st: RsState, f: SurfaceFn) -> SurfaceFn {
+  let name = rs_reference(&mut st, f.name)
+  let mark = rs_mark(&st)
+  let ps = rs_params(&mut st, f.params, f.param_types)
+  let result = rs_opt(&mut st, f.result)
+  let body = rs_term(&mut st, f.body)
+  rs_pop(&mut st, mark)
+  SurfaceFn {
+    name: name,
+    generics: f.generics,
+    bounds: f.bounds,
+    params: ps.fst,
+    borrows: f.borrows,
+    param_types: ps.snd,
+    result: result,
+    effects: f.effects,
+    wheres: f.wheres,
+    start: f.start,
+    end: f.end,
+    body: body
+  }
+}
+
+// Types of parameters that bind in turn: each is read, then its name binds.
+fn rs_named(&mut st: RsState, xs: List(SurfaceNamed)) -> List(SurfaceNamed) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty = rs_term(&mut st, p.ty)
+      let name = rs_bind(&mut st, p.name)
+      Cons(SurfaceNamed { name: name, ty: ty }, rs_named(&mut st, rest))
+    }
+  }
+}
+
+fn rs_theorem(&mut st: RsState, d: SurfaceTheorem) -> SurfaceTheorem {
+  let name = rs_reference(&mut st, d.name)
+  let mark = rs_mark(&st)
+  let params = rs_named(&mut st, d.params)
+  let ty = rs_term(&mut st, d.ty)
+  let body = rs_opt(&mut st, d.body)
+  rs_pop(&mut st, mark)
+  SurfaceTheorem {
+    name: name,
+    implicit: d.implicit,
+    params: params,
+    ty: ty,
+    body: body,
+    start: d.start,
+    end: d.end
+  }
+}
+
+fn rs_data_fields(&mut st: RsState, xs: List(SurfaceDataField)) -> List(SurfaceDataField) {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ty = rs_term(&mut st, f.ty)
+      Cons(SurfaceDataField { name: f.name, ty: ty }, rs_data_fields(&mut st, rest))
+    }
+  }
+}
+
+fn rs_data_ctors(&mut st: RsState, xs: List(SurfaceDataCtor)) -> List(SurfaceDataCtor) {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let name = rs_reference(&mut st, c.name)
+      let fields = rs_data_fields(&mut st, c.fields)
+      Cons(SurfaceDataCtor { name: name, fields: fields }, rs_data_ctors(&mut st, rest))
+    }
+  }
+}
+
+fn rs_data(&mut st: RsState, d: SurfaceData) -> SurfaceData {
+  let name = rs_reference(&mut st, d.name)
+  let cs = rs_data_ctors(&mut st, d.constructors)
+  SurfaceData {
+    kind: d.kind,
+    name: name,
+    generics: d.generics,
+    constructors: cs,
+    start: d.start,
+    end: d.end
+  }
+}
+
+fn rs_opts(&mut st: RsState, xs: List(Option(SurfaceTerm))) -> List(Option(SurfaceTerm)) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y = rs_opt(&mut st, x)
+      Cons(y, rs_opts(&mut st, rest))
+    }
+  }
+}
+
+fn rs_effect(&mut st: RsState, e: SurfaceEffect) -> SurfaceEffect {
+  let name = rs_reference(&mut st, e.name)
+  let params = rs_opts(&mut st, e.params)
+  let result = rs_opt(&mut st, e.result)
+  SurfaceEffect {
+    name: name,
+    generics: e.generics,
+    params: params,
+    result: result,
+    resume: e.resume,
+    start: e.start,
+    end: e.end
+  }
+}
+
+fn rs_ind_ctors(&mut st: RsState, xs: List(SurfaceCtor)) -> List(SurfaceCtor) {
+  match xs {
+    Nil => Nil
+    Cons(c, rest) => {
+      let name = rs_reference(&mut st, c.name)
+      let inner = rs_mark(&st)
+      let params = rs_named(&mut st, c.params)
+      let result = rs_term(&mut st, c.result)
+      rs_pop(&mut st, inner)
+      Cons(
+        SurfaceCtor { name: name, implicit: c.implicit, params: params, result: result },
+        rs_ind_ctors(&mut st, rest)
+      )
+    }
+  }
+}
+
+fn rs_inductive(&mut st: RsState, d: SurfaceInductive) -> SurfaceInductive {
+  let name = rs_reference(&mut st, d.name)
+  let mark = rs_mark(&st)
+  let params = rs_named(&mut st, d.params)
+  let sort = rs_term(&mut st, d.sort)
+  let cs = rs_ind_ctors(&mut st, d.constructors)
+  rs_pop(&mut st, mark)
+  SurfaceInductive {
+    name: name,
+    params: params,
+    sort: sort,
+    constructors: cs,
+    start: d.start,
+    end: d.end
+  }
+}
+
+// ---------------------------------------------------------------- patterns
+
+fn rs_patterns(&mut st: RsState, xs: List(SurfacePattern)) -> List(SurfacePattern) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let q = rs_pattern(&mut st, p)
+      Cons(q, rs_patterns(&mut st, rest))
+    }
+  }
+}
+
+fn rs_pattern_fields(&mut st: RsState, xs: List(SurfacePatternField)) -> List(SurfacePatternField) {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let p = rs_pattern(&mut st, f.pattern)
+      Cons(SurfacePatternField { name: f.name, pattern: p }, rs_pattern_fields(&mut st, rest))
+    }
+  }
+}
+
+fn rs_pattern(&mut st: RsState, p: SurfacePattern) -> SurfacePattern {
+  match p {
+    PtBind(n) => {
+      let s = rs_split(st.sep, n)
+      if rs_has_text(st.ctors, s.plain) {
+        PtBind(rs_reference(&mut st, n))
+      } else {
+        PtBind(rs_bind(&mut st, n))
+      }
+    }
+    PtCtor(name, args) => {
+      let name2 = rs_reference(&mut st, name)
+      PtCtor(name2, rs_patterns(&mut st, args))
+    }
+    PtRecord(name, fields) => {
+      let name2 = rs_reference(&mut st, name)
+      PtRecord(name2, rs_pattern_fields(&mut st, fields))
+    }
+    other => other
+  }
+}
+
+fn rs_binder(&mut st: RsState, b: Option(Text)) -> Option(Text) {
+  match b {
+    None => None
+    Some(h) => Some(rs_bind(&mut st, h))
+  }
+}
+
+fn rs_arms(&mut st: RsState, xs: List(SurfaceArm)) -> List(SurfaceArm) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let mark = rs_mark(&st)
+      let pattern = rs_pattern(&mut st, a.pattern)
+      let guard = rs_opt(&mut st, a.guard)
+      let goal = rs_opt(&mut st, a.goal)
+      let body = rs_term(&mut st, a.body)
+      rs_pop(&mut st, mark)
+      Cons(
+        SurfaceArm { pattern: pattern, guard: guard, goal: goal, body: body },
+        rs_arms(&mut st, rest)
+      )
+    }
+  }
+}
+
+fn rs_step_binders(&mut st: RsState, xs: List(SurfaceField)) -> List(SurfaceField) {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ty = rs_term(&mut st, f.value)
+      let name = rs_bind(&mut st, f.name)
+      Cons(SurfaceField { name: name, value: ty }, rs_step_binders(&mut st, rest))
+    }
+  }
+}
+
+fn rs_step_arms(&mut st: RsState, xs: List(SurfaceStepArm)) -> List(SurfaceStepArm) {
+  match xs {
+    Nil => Nil
+    Cons(a, rest) => {
+      let mark = rs_mark(&st)
+      let binders = rs_step_binders(&mut st, a.binders)
+      let goal = rs_term(&mut st, a.goal)
+      let body = rs_term(&mut st, a.body)
+      rs_pop(&mut st, mark)
+      let arm = SurfaceStepArm { binders: binders, goal: goal, body: body, start: a.start, end: a.end }
+      Cons(arm, rs_step_arms(&mut st, rest))
+    }
+  }
+}
+
+fn rs_handler(&mut st: RsState, h: SurfaceHandler) -> SurfaceHandler {
+  let mark = rs_mark(&st)
+  let out = match h {
+    HdReturn(p, body) => {
+      let p2 = rs_pattern(&mut st, p)
+      let body2 = rs_term(&mut st, body)
+      HdReturn(p2, body2)
+    }
+    HdOperation(eff, patterns, cont, guard, body) => {
+      let eff2 = rs_reference(&mut st, eff)
+      let patterns2 = rs_patterns(&mut st, patterns)
+      let cont2 = match cont {
+        None => None
+        Some(k) => Some(rs_bind(&mut st, k))
+      }
+      let guard2 = rs_opt(&mut st, guard)
+      let body2 = rs_term(&mut st, body)
+      HdOperation(eff2, patterns2, cont2, guard2, body2)
+    }
+  }
+  rs_pop(&mut st, mark)
+  out
+}
+
+fn rs_handlers(&mut st: RsState, xs: List(SurfaceHandler)) -> List(SurfaceHandler) {
+  match xs {
+    Nil => Nil
+    Cons(h, rest) => {
+      let h2 = rs_handler(&mut st, h)
+      Cons(h2, rs_handlers(&mut st, rest))
+    }
+  }
+}
+
+// ---------------------------------------------------------------- terms
+
+fn rs_pi_params(&mut st: RsState, xs: List(SurfaceParam)) -> List(SurfaceParam) {
+  match xs {
+    Nil => Nil
+    Cons(p, rest) => {
+      let ty = rs_term(&mut st, p.ty)
+      let name = match p.name {
+        None => None
+        Some(n) => Some(rs_bind(&mut st, n))
+      }
+      Cons(SurfaceParam { name: name, ty: ty }, rs_pi_params(&mut st, rest))
+    }
+  }
+}
+
+fn rs_binds(&mut st: RsState, xs: List(Text)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let y = rs_bind(&mut st, x)
+      Cons(y, rs_binds(&mut st, rest))
+    }
+  }
+}
+
+fn rs_fields(&mut st: RsState, xs: List(SurfaceField)) -> List(SurfaceField) {
+  match xs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let v = rs_term(&mut st, f.value)
+      Cons(SurfaceField { name: f.name, value: v }, rs_fields(&mut st, rest))
+    }
+  }
+}
+
+fn rs_term(&mut st: RsState, t: SurfaceTerm) -> SurfaceTerm {
+  SurfaceTerm { kind: rs_kind(&mut st, t.kind), start: t.start, end: t.end }
+}
+
+fn rs_kind(&mut st: RsState, k: SurfaceKind) -> SurfaceKind {
+  match k {
+    SkVar(n) => SkVar(rs_reference(&mut st, n))
+    SkMacroCall(name, arg) => SkMacroCall(name, rs_term(&mut st, arg))
+    SkSplice(arg) => SkSplice(rs_term(&mut st, arg))
+    SkApp(f, args) => {
+      let f2 = rs_term(&mut st, f)
+      SkApp(f2, rs_terms(&mut st, args))
+    }
+    SkPi(params, result, effects) => {
+      let mark = rs_mark(&st)
+      let params2 = rs_pi_params(&mut st, params)
+      let result2 = rs_term(&mut st, result)
+      rs_pop(&mut st, mark)
+      SkPi(params2, result2, effects)
+    }
+    SkExists(binder, domain, body) => {
+      let domain2 = rs_term(&mut st, domain)
+      let mark = rs_mark(&st)
+      let binder2 = rs_bind(&mut st, binder)
+      let body2 = rs_term(&mut st, body)
+      rs_pop(&mut st, mark)
+      SkExists(binder2, domain2, body2)
+    }
+    SkLam(params, body) => {
+      let mark = rs_mark(&st)
+      let params2 = rs_binds(&mut st, params)
+      let body2 = rs_term(&mut st, body)
+      rs_pop(&mut st, mark)
+      SkLam(params2, body2)
+    }
+    SkBorrowLam(modes, lam) => SkBorrowLam(modes, rs_term(&mut st, lam))
+    SkUnion(items) => SkUnion(rs_terms(&mut st, items))
+    SkTagged(tag, term) => SkTagged(tag, rs_term(&mut st, term))
+    SkBorrow(m, term) => SkBorrow(m, rs_term(&mut st, term))
+    SkFnKind(kind, ty) => SkFnKind(kind, rs_term(&mut st, ty))
+    SkIf(c, a, b) => {
+      let c2 = rs_term(&mut st, c)
+      let a2 = rs_term(&mut st, a)
+      SkIf(c2, a2, rs_opt(&mut st, b))
+    }
+    SkField(base, name) => SkField(rs_term(&mut st, base), name)
+    SkBlock(stmts) => SkBlock(rs_block(&mut st, stmts))
+    SkPerform(eff, args) => {
+      let eff2 = rs_reference(&mut st, eff)
+      SkPerform(eff2, rs_terms(&mut st, args))
+    }
+    SkHandle(body, handlers) => {
+      let body2 = rs_term(&mut st, body)
+      SkHandle(body2, rs_handlers(&mut st, handlers))
+    }
+    SkBudget(steps, body) => {
+      let steps2 = rs_term(&mut st, steps)
+      SkBudget(steps2, rs_term(&mut st, body))
+    }
+    SkMatch(scrutinee, result, arms, binder) => {
+      let s2 = rs_term(&mut st, scrutinee)
+      let r2 = rs_opt(&mut st, result)
+      let mark = rs_mark(&st)
+      let b2 = rs_binder(&mut st, binder)
+      let arms2 = rs_arms(&mut st, arms)
+      rs_pop(&mut st, mark)
+      SkMatch(s2, r2, arms2, b2)
+    }
+    SkRecord(name, fields) => {
+      let name2 = rs_reference(&mut st, name)
+      SkRecord(name2, rs_fields(&mut st, fields))
+    }
+    // The variables an arm adds are bound in its goal and its proof.
+    SkStep(tactic, arg, cs, ce, before, arms) => {
+      let arg2 = rs_term(&mut st, arg)
+      let before2 = rs_opt(&mut st, before)
+      SkStep(tactic, arg2, cs, ce, before2, rs_step_arms(&mut st, arms))
+    }
+    other => other
+  }
+}
+
+// ---------------------------------------------------------------- entry
+
+fn rs_state(ctors: List(Text), sep: Text, rename: Vec(u64)) -> RsState {
+  var nums: Vec(u64) = vec_new()
+  vec_push(&mut nums, 0)
+  vec_push(&mut nums, 0)
+  RsState {
+    env: vec_new(),
+    globals: vec_new(),
+    captured: vec_new(),
+    rename: rename,
+    nums: nums,
+    ctors: ctors,
+    sep: sep
+  }
+}
+
+// The constructors `ctors` may be named bare in a pattern; `sep` is what
+// stands between a name and its scopes.
+fn rs_resolve(stmts: List(SurfaceStmt), ctors: List(Text), sep: Text) -> List(SurfaceStmt) {
+  var first = rs_state(ctors, sep, vec_new())
+  let probe = rs_top(&mut first, stmts)
+  if vec_len(&first.captured) == 0 {
+    probe
+  } else {
+    var rename: Vec(u64) = vec_new()
+    var i: u64 = 0
+    while i < vec_len(&first.captured) {
+      let &x = vec_index(&first.captured, i)
+      vec_push(&mut rename, x)
+      i := i + 1
+    }
+    var again = rs_state(ctors, sep, rename)
+    rs_top(&mut again, stmts)
+  }
+}

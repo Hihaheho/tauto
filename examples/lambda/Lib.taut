@@ -1,4 +1,5 @@
 import "../../std/Std.taut"
+import "../../std/Mode.taut"
 
 inductive Ty(): Type {
   tunit(): Ty
@@ -57,6 +58,66 @@ inductive Has(): (List(Ty)) -> (Nat) -> (Ty) -> Prop {
   has_there<G: List(Ty), A: Ty, B: Ty, i: Nat>(h: Has(G, i, A)): Has(Cons(B, G), succ(i), A)
 }
 
+inductive Looked(G: List(Ty), i: Nat): Type {
+  has_found(A: Ty, h: Has(G, i, A)): Looked(G, i)
+  has_none(): Looked(G, i)
+}
+
+fn lookup(G: List(Ty), i: Nat) -> Looked(G, i) {
+  match G -> Looked(G, i) {
+    Nil => has_none()
+    Cons(B, rest) => match i -> Looked(Cons(B, rest), i) {
+      zero => has_found(B, has_here())
+      succ(j) => match lookup(rest, j) -> Looked(Cons(B, rest), succ(j)) {
+        has_found(A, h) => has_found(A, has_there(h))
+        has_none => has_none()
+      }
+    }
+  }
+}
+
+inductive TyDec(A: Ty, C: Ty): Type {
+  ty_same(e: Eq(Ty, A, C)): TyDec(A, C)
+  ty_diff(): TyDec(A, C)
+}
+
+fn ty_dec(A: Ty, C: Ty) -> TyDec(A, C) {
+  match A -> TyDec(A, C) {
+    tunit => match C -> TyDec(tunit, C) {
+      tunit => ty_same(refl())
+      arr(c1, c2) => ty_diff()
+    }
+    arr(a1, a2) => match C -> TyDec(arr(a1, a2), C) {
+      tunit => ty_diff()
+      arr(c1, c2) => match ty_dec(a1, c1) -> TyDec(arr(a1, a2), arr(c1, c2)) {
+        ty_same(e1) => match ty_dec(a2, c2) -> TyDec(arr(a1, a2), arr(c1, c2)) {
+          ty_same(
+            e2
+          ) => ty_same(
+            Eq_trans(Eq_congr((x: Ty) => arr(x, a2), e1), Eq_congr((x: Ty) => arr(c1, x), e2))
+          )
+          ty_diff => ty_diff()
+        }
+        ty_diff => ty_diff()
+      }
+    }
+  }
+}
+
+// The rules of `Typing` are a program: `infer` reads them, with the proof that its answer is right
+// (`Inferred`). A premise on `Has` is answered by `lookup`, and the type a rule asks to be the same
+// twice is compared by `ty_dec`.
+#[mode!(
+  spec(
+    in(G),
+    rec(t),
+    out(A),
+    name(infer),
+    result(Inferred, inferred, not_inferred),
+    via(Has, lookup, has_found, has_none),
+    eq(Ty, ty_dec, ty_same, ty_diff)
+  )
+) => inductive Inferred, fn infer]
 inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop {
   t_var<G: List(Ty), i: Nat, A: Ty>(h: Has(G, i, A)): Typing(G, tvar(i), A)
   t_lam<G: List(
@@ -97,7 +158,12 @@ inductive Steps(): (Tm) -> (Tm) -> Prop {
 // context or a type, `t[u]` is `subst(t, single(u))`, and `t ~> u` and `t ~>* u` are `Step` and `Steps`.
 // A bare term is that term.
 
-syntax lc = ```par
+syntax lc =>
+  enum lc_Arrows, enum lc_Atom, struct lc_Bind, struct lc_Ctx, struct lc_Ctx_Rep1,
+  enum lc_CtxHead, struct lc_Judgement, struct lc_Lam, struct lc_Paren, struct lc_Postfix,
+  struct lc_Postfix_Rep1, struct lc_Reduction, struct lc_Reduction_Opt1, struct lc_Spine,
+  struct lc_StarAtom, enum lc_Stmt, enum lc_Tm, struct lc_Ty, struct lc_Ty_Opt1, enum lc_TyAtom,
+  struct lc_TyParen, struct lc_UnitTy, struct lc_VarAtom, fn lc_parse = ```par
 %start Stmt
 %title "lc"
 %%

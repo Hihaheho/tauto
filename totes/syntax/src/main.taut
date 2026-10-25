@@ -1,0 +1,76 @@
+// Prints `== <path>` and the dump of the tree of each file given on the
+// command line, or `error` (the differential test's input,
+// `docs/design/self-host.md`).
+
+// With `--tokens` first: the scanner's tokens only, a line `<kind> <start>
+// <end>` for each (the differential test's way to tell the scanner's faults
+// from the parser's).
+fn syntax_tokens_each(t: SyntaxTables, paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => syntax_print_tokens(t, scan_all(t.scan, source))
+      }
+      syntax_tokens_each(t, rest)
+    }
+  }
+}
+
+fn syntax_print_tokens(t: SyntaxTables, tokens: List(ScanToken)) -> () {
+  var b = buf_new()
+  var rest = tokens
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(token, more) => {
+        rest := more
+        buf_push(&mut b, &syntax_name(t.terminal_kinds, token.token_type))
+        buf_push(&mut b, &" ")
+        buf_push(&mut b, &text_of_u64(token.start))
+        buf_push(&mut b, &" ")
+        buf_push(&mut b, &text_of_u64(token.end))
+        buf_push(&mut b, &text_newline())
+      }
+    }
+  }
+  os_print(text_of(b))
+}
+
+fn syntax_main_each(t: SyntaxTables, paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(source) => match syntax_dump(t, source) {
+          Some(dump) => os_print(dump)
+          None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
+        }
+      }
+      syntax_main_each(t, rest)
+    }
+  }
+}
+
+match syntax_tables() {
+  None => os_eprint("the tables of the syntax are damaged")
+  Some(t) => match os_args() {
+    Nil => ()
+    Cons(first, rest) => if first == "--tokens" {
+      syntax_tokens_each(t, rest)
+    } else {
+      syntax_main_each(t, Cons(first, rest))
+    }
+  }
+}

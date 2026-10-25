@@ -1,0 +1,519 @@
+// The lookahead automata: a trie of the tuples of a production, the union of
+// the tries of a non-terminal's productions, and the minimal automaton.
+
+// A state: the production it accepts plus one (0 for none) and its
+// transitions, each `terminal * 65536 + next state`, sorted. The automaton's
+// `k` is kept in its first state.
+struct LgState { prod: u64, trans: List(u64), k: u64 }
+
+fn lg_state_get(&v: Vec(LgState), i: u64) -> LgState {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn lg_state_set(&mut v: Vec(LgState), i: u64, x: LgState) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := x
+    }
+    None => ()
+  }
+}
+
+fn lg_find_trans(xs: List(u64), term: u64) -> Option(u64) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if div(x, 65536) == term { Some(mod(x, 65536)) } else {
+      lg_find_trans(rest, term)
+    }
+  }
+}
+
+// The state a transition leads to, new if
+// there was none.
+fn lg_dfa_add(&mut states: Vec(LgState), from: u64, term: u64) -> u64 {
+  let st = lg_state_get(&states, from)
+  match lg_find_trans(st.trans, term) {
+    Some(to) => to
+    None => {
+      let id = vec_len(&states)
+      vec_push(&mut states, LgState { prod: 0, trans: Nil, k: 0 })
+      lg_state_set(
+        &mut states,
+        from,
+        LgState { prod: st.prod, trans: lg_union(st.trans, Cons(term * 65536 + id, Nil)), k: st.k }
+      )
+      id
+    }
+  }
+}
+
+// The trie of the tuples of production `prod`.
+fn lg_dfa_of(tuples: List(u64), prod: u64) -> Vec(LgState) {
+  var states: Vec(LgState) = vec_new()
+  vec_push(&mut states, LgState { prod: match tuples {
+    Nil => prod + 1
+    Cons(t, rest) => 0
+  }, trans: Nil, k: 0 })
+  var k: u64 = 0
+  var rest = tuples
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(t, more) => {
+        var current: u64 = 0
+        if !kt_is_eps(t) {
+          var ts = kt_terms(t)
+          var walking = true
+          while walking {
+            match ts {
+              Nil => {
+                walking := false
+              }
+              Cons(term, others) => {
+                current := lg_dfa_add(&mut states, current, term)
+                ts := others
+              }
+            }
+          }
+          if kt_len(t) > k {
+            k := kt_len(t)
+          }
+        }
+        let st = lg_state_get(&states, current)
+        lg_state_set(&mut states, current, LgState { prod: prod + 1, trans: st.trans, k: st.k })
+        rest := more
+      }
+    }
+  }
+  let first = lg_state_get(&states, 0)
+  lg_state_set(&mut states, 0, LgState { prod: first.prod, trans: first.trans, k: k })
+  states
+}
+
+// The union of two automata: `other` is added to `states`; whether two
+// productions were predicted by the same tokens.
+fn lg_dfa_unite(&mut states: Vec(LgState), &other: Vec(LgState)) -> Bool {
+  var mapping: Vec(u64) = vec_new()
+  var i: u64 = 0
+  while i < vec_len(&other) {
+    vec_push(&mut mapping, 0)
+    i := i + 1
+  }
+  lg_set_u64(&mut mapping, 0, 1)
+  var conflict = false
+  var changed = true
+  while changed {
+    changed := false
+    var from: u64 = 0
+    while from < vec_len(&other) {
+      let o = lg_state_get(&other, from)
+      let mapped = lg_get_u64(&mapping, from)
+      if mapped != 0 {
+        var ts = o.trans
+        var walking = true
+        while walking {
+          match ts {
+            Nil => {
+              walking := false
+            }
+            Cons(tr, others) => {
+              let term = div(tr, 65536)
+              let to = mod(tr, 65536)
+              let result_state = lg_dfa_add(&mut states, mapped - 1, term)
+              let was = lg_get_u64(&mapping, to)
+              lg_set_u64(&mut mapping, to, result_state + 1)
+              if was == 0 {
+                changed := true
+                let other_prod = lg_state_get(&other, to).prod
+                let st = lg_state_get(&states, result_state)
+                if other_prod != 0 && st.prod != 0 && other_prod != st.prod {
+                  conflict := true
+                }
+                lg_state_set(
+                  &mut states,
+                  result_state,
+                  LgState { prod: other_prod, trans: st.trans, k: st.k }
+                )
+              }
+              ts := others
+            }
+          }
+        }
+      }
+      from := from + 1
+    }
+  }
+  conflict
+}
+
+fn lg_get_u64(&v: Vec(u64), i: u64) -> u64 {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn lg_set_u64(&mut v: Vec(u64), i: u64, x: u64) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := x
+    }
+    None => ()
+  }
+}
+
+// ---------------------------------------------------------------- minimal
+
+// A state of the compiled automaton: its number, its production plus one
+// and its neighbours, each `next state * 65536 + terminal`, sorted.
+struct LgNode { id: u64, prod: u64, nb: List(u64) }
+
+// The nodes of an automaton: each state with its production and its
+// neighbours, each `next state * 65536 + terminal`, sorted.
+fn lg_nodes_of(&d: Vec(LgState)) -> List(LgNode) {
+  var out: List(LgNode) = Nil
+  var i: u64 = vec_len(&d)
+  while i > 0 {
+    i := i - 1
+    let st = lg_state_get(&d, i)
+    var nb: List(u64) = Nil
+    var ts = st.trans
+    var walking = true
+    while walking {
+      match ts {
+        Nil => {
+          walking := false
+        }
+        Cons(tr, others) => {
+          nb := Cons(mod(tr, 65536) * 65536 + div(tr, 65536), nb)
+          ts := others
+        }
+      }
+    }
+    out := Cons(LgNode { id: i, prod: st.prod, nb: lg_sort(nb) }, out)
+  }
+  out
+}
+
+fn lg_rev_node(xs: List(LgNode)) -> List(LgNode) {
+  var out: List(LgNode) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// The nodes without `drop`, and the neighbours that led to `drop` leading
+// to `keep`.
+fn lg_rename(nodes: List(LgNode), drop: u64, keep: u64) -> List(LgNode) {
+  var out: List(LgNode) = Nil
+  var rest = nodes
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(n, more) => {
+        if n.id != drop {
+          var nb: List(u64) = Nil
+          var changed = false
+          var ts = n.nb
+          var walking = true
+          while walking {
+            match ts {
+              Nil => {
+                walking := false
+              }
+              Cons(x, others) => {
+                if div(x, 65536) == drop {
+                  nb := Cons(keep * 65536 + mod(x, 65536), nb)
+                  changed := true
+                } else {
+                  nb := Cons(x, nb)
+                }
+                ts := others
+              }
+            }
+          }
+          let list = lg_rev(nb)
+          out := Cons(LgNode { id: n.id, prod: n.prod, nb: if changed { lg_sort_keep(list) } else {
+            list
+          } }, out)
+        }
+        rest := more
+      }
+    }
+  }
+  lg_rev_node(out)
+}
+
+// Sorted, repeats kept.
+fn lg_sort_keep(xs: List(u64)) -> List(u64) {
+  let n = lg_len(xs)
+  if n < 2 {
+    xs
+  } else {
+    let half = div(n, 2)
+    lg_merge_keep(lg_sort_keep(lg_take(xs, half)), lg_sort_keep(lg_drop(xs, half)))
+  }
+}
+
+fn lg_merge_keep(xs: List(u64), ys: List(u64)) -> List(u64) {
+  var out: List(u64) = Nil
+  var a = xs
+  var b = ys
+  var running = true
+  while running {
+    match a {
+      Nil => {
+        out := lg_rev_onto(out, b)
+        running := false
+      }
+      Cons(x, rest) => match b {
+        Nil => {
+          out := lg_rev_onto(out, a)
+          running := false
+        }
+        Cons(y, more) => if x <= y {
+          out := Cons(x, out)
+          a := rest
+        } else {
+          out := Cons(y, out)
+          b := more
+        }
+      }
+    }
+  }
+  out
+}
+
+fn lg_node_get(nodes: List(LgNode), id: u64) -> LgNode {
+  match nodes {
+    Nil => LgNode { id: id, prod: 0, nb: Nil }
+    Cons(n, rest) => if n.id == id { n } else { lg_node_get(rest, id) }
+  }
+}
+
+// Two nodes made one: `merge` goes into `keep`.
+fn lg_combine(nodes: List(LgNode), keep: u64, merge: u64) -> List(LgNode) {
+  let k = lg_node_get(nodes, keep)
+  let m = lg_node_get(nodes, merge)
+  var nb = k.nb
+  var added = false
+  var ts = m.nb
+  var walking = true
+  while walking {
+    match ts {
+      Nil => {
+        walking := false
+      }
+      Cons(x, others) => {
+        if !lg_has(nb, x) {
+          nb := lg_append(nb, Cons(x, Nil))
+          added := true
+        }
+        ts := others
+      }
+    }
+  }
+  let merged = lg_with_nb(nodes, keep, if added { lg_sort_keep(nb) } else { nb })
+  lg_rename(merged, merge, keep)
+}
+
+fn lg_has(xs: List(u64), v: u64) -> Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => if x == v { true } else { lg_has(rest, v) }
+  }
+}
+
+fn lg_with_nb(nodes: List(LgNode), id: u64, nb: List(u64)) -> List(LgNode) {
+  match nodes {
+    Nil => Nil
+    Cons(n, rest) => Cons(if n.id == id { LgNode { id: n.id, prod: n.prod, nb: nb } } else {
+      n
+    }, lg_with_nb(rest, id, nb))
+  }
+}
+
+// The first two nodes with the same production among the accepting ones
+// (their numbers), if any.
+fn lg_find_same_prod(nodes: List(LgNode)) -> Option(Pair(u64, u64)) {
+  match nodes {
+    Nil => None
+    Cons(n, rest) => if n.prod == 0 {
+      lg_find_same_prod(rest)
+    } else {
+      match lg_find_prod_in(rest, n.prod) {
+        Some(m) => Some(Pair { fst: n.id, snd: m })
+        None => lg_find_same_prod(rest)
+      }
+    }
+  }
+}
+
+fn lg_find_prod_in(nodes: List(LgNode), prod: u64) -> Option(u64) {
+  match nodes {
+    Nil => None
+    Cons(n, rest) => if n.prod == prod { Some(n.id) } else { lg_find_prod_in(rest, prod) }
+  }
+}
+
+// The first two states that do not accept and have the same neighbours.
+fn lg_find_same_nb(nodes: List(LgNode)) -> Option(Pair(u64, u64)) {
+  match nodes {
+    Nil => None
+    Cons(n, rest) => if n.prod != 0 {
+      lg_find_same_nb(rest)
+    } else {
+      match lg_find_nb_in(rest, n.nb) {
+        Some(m) => Some(Pair { fst: n.id, snd: m })
+        None => lg_find_same_nb(rest)
+      }
+    }
+  }
+}
+
+fn lg_find_nb_in(nodes: List(LgNode), nb: List(u64)) -> Option(u64) {
+  match nodes {
+    Nil => None
+    Cons(n, rest) => if n.prod == 0 && lg_list_eq(n.nb, nb) { Some(n.id) } else {
+      lg_find_nb_in(rest, nb)
+    }
+  }
+}
+
+fn lg_has_id(nodes: List(LgNode), id: u64) -> Bool {
+  match nodes {
+    Nil => false
+    Cons(n, rest) => if n.id == id { true } else { lg_has_id(rest, id) }
+  }
+}
+
+fn lg_count_nodes(nodes: List(LgNode)) -> u64 {
+  match nodes {
+    Nil => 0
+    Cons(n, rest) => 1 + lg_count_nodes(rest)
+  }
+}
+
+// The least number from 1 that no node has.
+fn lg_free_id(nodes: List(LgNode), from: u64) -> u64 {
+  if lg_has_id(nodes, from) { lg_free_id(nodes, from + 1) } else { from }
+}
+
+// The id of the first node whose id is not its place, if any.
+fn lg_misplaced(nodes: List(LgNode), at: u64) -> Option(u64) {
+  match nodes {
+    Nil => None
+    Cons(n, rest) => if n.id != at { Some(n.id) } else { lg_misplaced(rest, at + 1) }
+  }
+}
+
+fn lg_move(nodes: List(LgNode), from: u64, to: u64) -> List(LgNode) {
+  let moved = lg_sort_nodes(lg_rename_ids(nodes, from, to))
+  moved
+}
+
+// Node `from` becomes `to` and the neighbours leading to `from` lead to `to`.
+fn lg_rename_ids(nodes: List(LgNode), from: u64, to: u64) -> List(LgNode) {
+  match nodes {
+    Nil => Nil
+    Cons(n, rest) => {
+      var nb: List(u64) = Nil
+      var changed = false
+      var ts = n.nb
+      var walking = true
+      while walking {
+        match ts {
+          Nil => {
+            walking := false
+          }
+          Cons(x, others) => {
+            if div(x, 65536) == from {
+              nb := Cons(to * 65536 + mod(x, 65536), nb)
+              changed := true
+            } else {
+              nb := Cons(x, nb)
+            }
+            ts := others
+          }
+        }
+      }
+      let list = lg_rev(nb)
+      Cons(LgNode { id: if n.id == from { to } else { n.id }, prod: n.prod, nb: if changed {
+        lg_sort_keep(list)
+      } else {
+        list
+      } }, lg_rename_ids(rest, from, to))
+    }
+  }
+}
+
+fn lg_sort_nodes(nodes: List(LgNode)) -> List(LgNode) {
+  match nodes {
+    Nil => Nil
+    Cons(n, rest) => lg_insert_node(n, lg_sort_nodes(rest))
+  }
+}
+
+fn lg_insert_node(n: LgNode, nodes: List(LgNode)) -> List(LgNode) {
+  match nodes {
+    Nil => Cons(n, Nil)
+    Cons(m, rest) => if n.id < m.id { Cons(n, nodes) } else { Cons(m, lg_insert_node(n, rest)) }
+  }
+}
+
+// The minimal automaton: the accepting nodes with the same production made
+// one, then the other nodes with the same neighbours, then the nodes
+// numbered by their places.
+fn lg_minimize(nodes: List(LgNode)) -> List(LgNode) {
+  var cur = nodes
+  var running = true
+  while running {
+    match lg_find_same_prod(cur) {
+      Some(pair) => {
+        cur := lg_combine(cur, pair.fst, pair.snd)
+      }
+      None => {
+        running := false
+      }
+    }
+  }
+  running := true
+  while running {
+    match lg_find_same_nb(cur) {
+      Some(pair) => {
+        cur := lg_combine(cur, pair.fst, pair.snd)
+      }
+      None => {
+        running := false
+      }
+    }
+  }
+  running := true
+  while running {
+    match lg_misplaced(cur, 0) {
+      Some(id) => {
+        cur := lg_move(cur, id, lg_free_id(cur, 1))
+      }
+      None => {
+        running := false
+      }
+    }
+  }
+  cur
+}

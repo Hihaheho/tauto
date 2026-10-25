@@ -1,0 +1,379 @@
+// FOLLOW(k) and the deciding of k for each non-terminal.
+
+enum LgFPart {
+  LgFTerms(LgSet)
+  LgFFirst(u64)
+}
+
+// One equation of FOLLOW: what follows the non-terminal `target` at the
+// position `at` of a production of `source` (the parts after it).
+struct LgEq { at: u64, target: u64, source: u64, parts: List(LgFPart) }
+
+struct LgFollow { last: List(LgSet), nts: List(LgSet) }
+
+fn lg_follow_parts(raw: List(LgRawAt), k: u64) -> List(LgFPart) {
+  var out: List(LgFPart) = Nil
+  var rest = raw
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        out := Cons(match p.raw {
+          LgRawT(run) => LgFTerms(lg_set_of(run, k))
+          LgRawN(n) => LgFFirst(n)
+        }, out)
+        rest := more
+      }
+    }
+  }
+  lg_rev_fpart(out)
+}
+
+fn lg_rev_fpart(xs: List(LgFPart)) -> List(LgFPart) {
+  var out: List(LgFPart) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn lg_rev_eq(xs: List(LgEq)) -> List(LgEq) {
+  var out: List(LgEq) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn lg_follow_equations(g: LgGrammar, k: u64) -> List(LgEq) {
+  var out: List(LgEq) = Nil
+  var p: u64 = 0
+  let n = lg_n_prods(g)
+  while p < n {
+    let prod = lg_prod_at(g, p)
+    let raw = lg_raw_parts(prod.rhs)
+    var rest = raw
+    var running = true
+    while running {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(part, after) => {
+          match part.raw {
+            LgRawN(target) => {
+              out := Cons(
+                LgEq { at: part.at, target: target, source: prod.lhs, parts: lg_follow_parts(
+                  after,
+                  k
+                ) },
+                out
+              )
+            }
+            LgRawT(run) => ()
+          }
+          rest := after
+        }
+      }
+    }
+    p := p + 1
+  }
+  lg_rev_eq(out)
+}
+
+// FOLLOW(k): the fixpoint, from what FOLLOW(k - 1) gave (or from nothing);
+// the start symbol is followed by the end of the input.
+fn lg_follow(g: LgGrammar, k: u64, first: LgFirst, prev: Option(LgFollow)) -> LgFollow {
+  let n_nts = lg_n_nts(g)
+  let equations = lg_follow_equations(g, k)
+  let first_nts = array_of_list(first.nts)
+  var state: Vec(LgSet) = vec_new()
+  var i: u64 = 0
+  while i < n_nts {
+    vec_push(&mut state, if i == g.start { lg_set_end(k) } else { lg_set_empty(k) })
+    i := i + 1
+  }
+  var old: List(LgSet) = match prev {
+    None => lg_repeat_set(lg_set_empty(k), lg_len_eq(equations))
+    Some(f) => lg_set_k_all(f.last, k)
+  }
+  var latest: List(LgSet) = Nil
+  var running = true
+  while running {
+    var made: List(LgSet) = Nil
+    var rest = equations
+    var inner = true
+    while inner {
+      match rest {
+        Nil => {
+          inner := false
+        }
+        Cons(eq, more) => {
+          var r = lg_set_eps(k)
+          var parts = eq.parts
+          var walking = true
+          while walking {
+            match parts {
+              Nil => {
+                walking := false
+              }
+              Cons(part, others) => {
+                r := match part {
+                  LgFTerms(s) => lg_set_concat(r, s, k)
+                  LgFFirst(n) => lg_set_concat(r, lg_aget(first_nts, n), k)
+                }
+                parts := others
+              }
+            }
+          }
+          r := lg_set_concat(r, lg_vec_get(&state, eq.source), k)
+          let before = lg_vec_get(&state, eq.target)
+          lg_vec_set(&mut state, eq.target, lg_set_union(before, r))
+          made := Cons(r, made)
+          rest := more
+        }
+      }
+    }
+    latest := lg_rev_set(made)
+    if lg_set_eq_list(latest, old) {
+      running := false
+    } else {
+      old := latest
+    }
+  }
+  var nts: List(LgSet) = Nil
+  var j: u64 = n_nts
+  while j > 0 {
+    j := j - 1
+    nts := Cons(lg_vec_get(&state, j), nts)
+  }
+  LgFollow { last: latest, nts: nts }
+}
+
+fn lg_len_eq(xs: List(LgEq)) -> u64 {
+  var n: u64 = 0
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        n := n + 1
+        rest := more
+      }
+    }
+  }
+  n
+}
+
+fn lg_vec_get(&v: Vec(LgSet), i: u64) -> LgSet {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn lg_vec_set(&mut v: Vec(LgSet), i: u64, x: LgSet) -> () {
+  match vec_get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := x
+    }
+    None => ()
+  }
+}
+
+// ---------------------------------------------------------------- deciding k
+
+// The sets FIRST(k) and FOLLOW(k) for k = 0, 1, … as far as they are made.
+struct LgCache { firsts: List(LgFirst), follows: List(LgFollow) }
+
+fn lg_nth_first(xs: List(LgFirst), i: u64) -> LgFirst {
+  match xs {
+    Nil => LgFirst { prods: Nil, nts: Nil }
+    Cons(x, rest) => if i == 0 { x } else { lg_nth_first(rest, i - 1) }
+  }
+}
+
+fn lg_nth_follow(xs: List(LgFollow), i: u64) -> LgFollow {
+  match xs {
+    Nil => LgFollow { last: Nil, nts: Nil }
+    Cons(x, rest) => if i == 0 { x } else { lg_nth_follow(rest, i - 1) }
+  }
+}
+
+fn lg_len_first(xs: List(LgFirst)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + lg_len_first(rest)
+  }
+}
+
+fn lg_append_first(xs: List(LgFirst), x: LgFirst) -> List(LgFirst) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, lg_append_first(rest, x))
+  }
+}
+
+fn lg_append_follow(xs: List(LgFollow), x: LgFollow) -> List(LgFollow) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, lg_append_follow(rest, x))
+  }
+}
+
+// The cache with the sets up to `k` made.
+fn lg_cache_upto(g: LgGrammar, c: LgCache, k: u64) -> LgCache {
+  var cache = c
+  var made = lg_len_first(cache.firsts)
+  while made <= k {
+    let first = lg_first(g, made, if made == 0 {
+      None
+    } else {
+      Some(lg_nth_first(cache.firsts, made - 1))
+    })
+    let follow = lg_follow(g, made, first, if made == 0 {
+      None
+    } else {
+      Some(lg_nth_follow(cache.follows, made - 1))
+    })
+    cache := LgCache { firsts: lg_append_first(
+      cache.firsts,
+      first
+    ), follows: lg_append_follow(cache.follows, follow) }
+    made := made + 1
+  }
+  cache
+}
+
+fn lg_nth_set(xs: List(LgSet), i: u64) -> LgSet {
+  match xs {
+    Nil => lg_set_empty(0)
+    Cons(x, rest) => if i == 0 { x } else { lg_nth_set(rest, i - 1) }
+  }
+}
+
+// The tuples of the productions of `nt` at `k`: FIRST(k) of the production
+// followed by FOLLOW(k) of the non-terminal (the pairs: production, tuples).
+fn lg_tuples_of(g: LgGrammar, c: LgCache, nt: u64, k: u64) -> List(Pair(u64, LgSet)) {
+  let first = lg_nth_first(c.firsts, k)
+  let follow = lg_nth_follow(c.follows, k)
+  let follow_nt = lg_nth_set(follow.nts, nt)
+  var out: List(Pair(u64, LgSet)) = Nil
+  var ps = lg_nt_prods_at(g, nt)
+  var running = true
+  while running {
+    match ps {
+      Nil => {
+        running := false
+      }
+      Cons(p, rest) => {
+        out := Cons(
+          Pair { fst: p, snd: lg_set_concat(lg_nth_set(first.prods, p), follow_nt, k) },
+          out
+        )
+        ps := rest
+      }
+    }
+  }
+  lg_rev_pairs(out)
+}
+
+fn lg_rev_pairs(xs: List(Pair(u64, LgSet))) -> List(Pair(u64, LgSet)) {
+  var out: List(Pair(u64, LgSet)) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// Whether the tuples of no two productions have a tuple in common.
+fn lg_pairwise_disjoint(xs: List(Pair(u64, LgSet))) -> Bool {
+  match xs {
+    Nil => true
+    Cons(x, rest) => lg_disjoint_from(x, rest) && lg_pairwise_disjoint(rest)
+  }
+}
+
+fn lg_disjoint_from(x: Pair(u64, LgSet), ys: List(Pair(u64, LgSet))) -> Bool {
+  match ys {
+    Nil => true
+    Cons(y, rest) => lg_disjoint(x.snd.tuples, y.snd.tuples) && lg_disjoint_from(x, rest)
+  }
+}
+
+fn lg_has_many(xs: List(u64)) -> Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => match rest {
+      Nil => false
+      Cons(y, more) => true
+    }
+  }
+}
+
+// `decidable`: the least k from 1 to `max_k` for which the productions of
+// `nt` are told apart (0 when it has one), or `None`.
+struct LgDecided { k: u64, cache: LgCache }
+
+fn lg_decide(g: LgGrammar, c: LgCache, nt: u64, max_k: u64) -> Option(LgDecided) {
+  if !lg_has_many(lg_nt_prods_at(g, nt)) {
+    Some(LgDecided { k: 0, cache: c })
+  } else {
+    var cache = c
+    var k: u64 = 1
+    var found: Option(u64) = None
+    while k <= max_k && lg_is_none(found) {
+      cache := lg_cache_upto(g, cache, k)
+      if lg_pairwise_disjoint(lg_tuples_of(g, cache, nt, k)) {
+        found := Some(k)
+      } else {
+        k := k + 1
+      }
+    }
+    match found {
+      None => None
+      Some(kk) => Some(LgDecided { k: kk, cache: cache })
+    }
+  }
+}
+
+fn lg_is_none(o: Option(u64)) -> Bool {
+  match o {
+    None => true
+    Some(x) => false
+  }
+}

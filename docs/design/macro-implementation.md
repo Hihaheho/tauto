@@ -97,13 +97,13 @@ Splice:     Dollar Ident | Dollar LParen Expr RParen ;
 - `fmt.rs`：`SyntaxLit` の中身に触れない（`Text` のリテラルの中身に触れないのと同じ）。`quote { … }` は普通のブロックと同じ字下げ。
 - ケース `untagged-backtick-text-needs-the-syntax-name`（`cases/types/syntax-literals.eure`。`` `abc` `` は拒否）：`` `abc` `` は字句では名前のない `MacroText` として読めるが、
   マクロの引数の外なので `surface.rs` が拒む。
-- `tauto.par` を変えたら `bash scripts/generate-tauto-parol.sh` で作り直し、`self-host.md` の表（`totes/syntax/src/tables.nib`）も作り直す。
+- `tauto.par` を変えたら `bash scripts/generate-tauto-parol.sh` で作り直し、`self-host.md` の表（`bash scripts/generate-syntax-tables.sh`：`totes/syntax/src/tables.taut` と `tables/*.txt`）も作り直す。
 
 ### `totes/llkgen` と表のファイル
 
 ```text
 totes/llkgen/
-  src/main.nib  標準入力から文法の文字列、標準出力に表のファイル
+  src/main.taut  標準入力から文法の文字列、標準出力に表のファイル
 ```
 
 - 入力の文法を `macro.md`「`syntax` 宣言」の規則で検査する（禁止の指示、`%start` が一つ、`k ≤ 3`）。
@@ -134,7 +134,7 @@ lookahead_dfas <N> { <nstates> { <accepting> <ntrans> { <class> <target> } } }
 schema <N> { 型の宣言（`macro.md`「型付き AST の生成規則」）：<種類> <名前> <フィールドの数> { <名前> <型> } … }
 ```
 
-- `generator` の行は、表を作った生成器と表の書き方を決める版。`totes/llkgen` は、参照の表に書かれた版の書き方（状態の番号の付け方まで）に一致するように書いてある。
+- `generator` の行は、表を作った生成器と表の書き方を決める版（`generator llkgen 0.1.0`：tote `totes/llkgen` とその版）。読み手はこの行を確かめない。`totes/llkgen` は、参照の表の書き方（状態の番号の付け方まで）に一致するように書いてある。
 - 文字クラスは区間の列（全コードポイントを走査しなくてよい）。字句の先読みは DFA を `lookahead_dfas` に番号で書く。
 
 ### `crates/tauto-syntax`
@@ -158,11 +158,17 @@ schema <N> { 型の宣言（`macro.md`「型付き AST の生成規則」）：<
 - 確保の数え上げ：データ、資源（`Buf` など）、セル、継続の捕獲で 1 を足す。
 - 普通の `tauto run` は、すべてを許すホストで同じ振る舞い。
 
-### `crates/tauto/src/macros/`
+### マクロの実装
+
+`expand*` と `checker.rs` は `crates/tauto-macro/src/macros/`、構文値の
+`node`、`origin`、`quote`、`scope`、`syn` は `crates/tauto-surface/src/macros/` に置く。
+既存の入口 `tauto::macros` は読み込み層が再エクスポートし、検査器を接続する。
+境界の trait は [`rust-layers.md`](rust-layers.md) に記す。
 
 | ファイル | 中身 |
 |---|---|
 | `mod.rs` | 入口。プログラムの展開 |
+| `checker.rs` | 型付きマクロが使う検査器のインターフェース |
 | `expand.rs` | ファイルごとの展開：`syntax` の表を読み、`quote` を構成子の呼び出しにし、リテラルを型付き AST の値にし、外側から呼び出しを展開する。登録（関数の型から種類を決める、行の検査、builtin の到達性の検査）、深さ・出力の大きさ・禁止の出力の検査 |
 | `expand/typed.rs` | 型付きマクロ：`macro.md`「呼び出しと段」の 1〜6。`Code` と、その使用の要約 `U` を作る |
 | `expand/elab.rs` | `elab_*` の操作を凍結した環境で答える（読むだけ） |

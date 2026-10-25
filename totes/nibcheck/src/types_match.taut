@@ -1,0 +1,702 @@
+import "types_decl.taut"
+import "direct.taut"
+
+// Scopes, patterns, what a `match` covers, and the parts of `handle` that
+// check no expression (`pattern`, `covers`, `handle` of `types.rs`), in the
+// proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
+
+// ----- scopes -----
+
+// The locals in scope, the newest first.
+inductive Scope(): Type {
+  scope_mk(items: List(Local)): Scope
+}
+
+fn env_find(env: List(Local), name: Text) -> Option(Local) {
+  match env -> Option(Local) {
+    Nil => None()
+    Cons(l, rest) => if l.name == name { Some(l) } else { env_find(rest, name) }
+  }
+}
+
+fn env_has(env: List(Local), name: Text) -> Yn {
+  match env_find(env, name) -> Yn {
+    Some(l) => yes
+    None => no
+  }
+}
+
+fn ck_bind_local(
+  &mut c: Checker,
+  &mut env: Scope,
+  name: Text,
+  ty: Ty,
+  mutable: Yn,
+  site: Nat
+) -> () {
+  set_to(
+    &mut c.locals,
+    ordmap_insert(c.locals, LocalKey { name: name, site: site }, ty, local_key_compare)
+  )
+  env := Scope { items: Cons(Local { name: name, ty: ty, mutable: mutable, view: no }, env.items) }
+}
+
+fn ck_bind_params(
+  names: List(Text),
+  &mut c: Checker,
+  &mut env: Scope,
+  tys: List(Ty),
+  site: Nat
+) -> () {
+  match names -> () {
+    Nil => ()
+    Cons(n, rest) => match tys -> () {
+      Nil => ()
+      Cons(t, more) => {
+        ck_bind_local(&mut c, &mut env, n, t, no, site)
+        ck_bind_params(rest, &mut c, &mut env, more, site)
+      }
+    }
+  }
+}
+
+fn ck_fresh_each(gs: List(Text), &mut c: Checker) -> List(Ty) {
+  match gs -> List(Ty) {
+    Nil => Nil
+    Cons(g, rest) => {
+      let h = ck_fresh(&mut c)
+      let tl = ck_fresh_each(rest, &mut c)
+      Cons(h, tl)
+    }
+  }
+}
+
+fn data_generics_of(d: Datas, dname: Text) -> List(Text) {
+  match datas_decl(d, dname) -> List(Text) {
+    Some(data) => data.generics
+    None => Nil
+  }
+}
+
+fn data_is_struct(d: Datas, dname: Text) -> Yn {
+  match datas_decl(d, dname) -> Yn {
+    Some(data) => data.is_struct
+    None => no
+  }
+}
+
+// ----- patterns -----
+
+fn datas_nullary(d: Datas, name: Text) -> Yn {
+  match datas_ctor(d, name) -> Yn {
+    None => no
+    Some(dc) => match datas_decl(d, dc.fst) -> Yn {
+      None => no
+      Some(data) => match datas_constructor(d, dc.fst, dc.snd) -> Yn {
+        None => no
+        Some(ctor) => match ctor.fields -> Yn {
+          Nil => !data.is_struct
+          Cons(f, rest) => no
+        }
+      }
+    }
+  }
+}
+
+fn ty_borrow_mode(t: Ty) -> Option(Yn) {
+  match t -> Option(Yn) {
+    TyBorrow(x, m) => Some(m)
+    _ => None()
+  }
+}
+
+fn field_under(t: Ty, borrowed: Option(Yn)) -> Ty {
+  match borrowed -> Ty {
+    Some(m) => TyBorrow(t, m)
+    None => t
+  }
+}
+
+// A literal pattern of type `l` against the scrutinee's type `t`.
+fn ck_pattern_literal(&mut c: Checker, l: Ty, t: Ty, span: TySpan) -> () {
+  let target = ty_unborrowed(ck_resolve(&c, t))
+  if !ck_unify(&mut c, l, target) {
+    let target2 = ck_resolve(&c, target)
+    let lit2 = ck_resolve(&c, l)
+    ck_error(&mut c, cat4("a pattern of ", ty_show(lit2), " cannot match ", ty_show(target2)), span)
+  }
+}
+
+// The fields of constructor `name` at the scrutinee's type `t`, or `none`
+// (reported) when the pattern does not fit.
+fn ck_ctor_fields(
+  &mut c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan
+) -> Option(List(DataField)) {
+  match datas_ctor(c.datas, name) -> Option(List(DataField)) {
+    None => {
+      ck_error(&mut c, cat2(name, " is not a constructor"), span)
+      None()
+    }
+    Some(dc) => {
+      let d = dc.fst
+      let targs = ck_fresh_each(data_generics_of(c.datas, d), &mut c)
+      let target = ty_unborrowed(ck_resolve(&c, t))
+      if !ck_unify(&mut c, target, TyNamed(d, targs)) {
+        let shown = ck_shown(&c, target)
+        ck_error(&mut c, cat4("a pattern of ", d, " cannot match ", ty_show(shown)), span)
+        None()
+      } else {
+        let fields = datas_fields(c.datas, d, dc.snd, targs)
+        if !(list_len(fields) == list_len(args)) {
+          ck_error(
+            &mut c,
+            cat5(
+              name,
+              " has ",
+              text_of_nat(list_len(fields)),
+              " fields, the pattern ",
+              text_of_nat(list_len(args))
+            ),
+            span
+          )
+          None()
+        } else {
+          Some(fields)
+        }
+      }
+    }
+  }
+}
+
+// Binds a pattern's names; literals must have the scrutinee's type. A name
+// that is a constructor without fields is that constructor. Over a borrow,
+// what a pattern binds is borrowed too.
+mutual {
+  fn ck_pattern_in(
+    k: Nat,
+    &mut c: Checker,
+    p: SurfacePattern,
+    t: Ty,
+    &mut env: Scope,
+    span: TySpan,
+    at: Nat
+  ) -> () {
+    match k -> () {
+      zero => ()
+      succ(j) => match p -> () {
+        PtWild => ()
+        PtBind(name) => if datas_nullary(c.datas, name) {
+          ck_ctor_pattern_in(j, &mut c, name, Nil, t, &mut env, span, at)
+        } else {
+          ck_bind_local(&mut c, &mut env, name, t, no, at)
+        }
+        PtInt(negative, magnitude) => {
+          let i = ck_fresh_int(&mut c)
+          set_to(
+            &mut c.literals,
+            Cons(
+              TyLiteral {
+                start: span.start,
+                end: span.end,
+                negative: negative && magnitude > 0,
+                magnitude: magnitude,
+                ty: i
+              },
+              c.literals
+            )
+          )
+          ck_pattern_literal(&mut c, i, t, span)
+        }
+        PtBool(b) => ck_pattern_literal(&mut c, TyBool, t, span)
+        PtText(s) => ck_pattern_literal(&mut c, TyText, t, span)
+        PtCtor(name, args) => ck_ctor_pattern_in(j, &mut c, name, args, t, &mut env, span, at)
+        PtRecord(name, fields) => match datas_positional(c.datas, name, fields) -> () {
+          PositionalOk(args) => ck_ctor_pattern_in(j, &mut c, name, args, t, &mut env, span, at)
+          PositionalErr(e) => ck_error(&mut c, e, span)
+        }
+        PtOther(what) => ck_error(&mut c, cat2("this pattern is not supported yet: ", what), span)
+      }
+    }
+  }
+
+  fn ck_ctor_pattern_in(
+    k: Nat,
+    &mut c: Checker,
+    name: Text,
+    args: List(SurfacePattern),
+    t: Ty,
+    &mut env: Scope,
+    span: TySpan,
+    at: Nat
+  ) -> () {
+    match k -> () {
+      zero => ()
+      succ(j) => {
+        let borrowed = ty_borrow_mode(ck_resolve(&c, t))
+        match ck_ctor_fields(&mut c, name, args, t, span) -> () {
+          None => ()
+          Some(fields) => ck_ctor_args_in(j, &mut c, args, fields, borrowed, &mut env, span, at)
+        }
+      }
+    }
+  }
+
+  fn ck_ctor_args_in(
+    k: Nat,
+    &mut c: Checker,
+    args: List(SurfacePattern),
+    fields: List(DataField),
+    borrowed: Option(Yn),
+    &mut env: Scope,
+    span: TySpan,
+    at: Nat
+  ) -> () {
+    match k -> () {
+      zero => ()
+      succ(j) => match args -> () {
+        Nil => ()
+        Cons(p, rest) => match fields -> () {
+          Nil => ()
+          Cons(f, more) => {
+            ck_pattern_in(j, &mut c, p, field_under(f.ty, borrowed), &mut env, span, at)
+            ck_ctor_args_in(j, &mut c, rest, more, borrowed, &mut env, span, at)
+          }
+        }
+      }
+    }
+  }
+}
+
+fn ck_pattern(
+  &mut c: Checker,
+  p: SurfacePattern,
+  t: Ty,
+  &mut env: Scope,
+  span: TySpan,
+  at: Nat
+) -> () {
+  ck_pattern_in(c.steps, &mut c, p, t, &mut env, span, at)
+}
+
+// ----- covers -----
+
+// The patterns of the arms without a guard.
+fn open_patterns(arms: List(SurfaceArm)) -> List(SurfacePattern) {
+  match arms -> List(SurfacePattern) {
+    Nil => Nil
+    Cons(a, rest) => match a.guard -> List(SurfacePattern) {
+      None => Cons(a.pattern, open_patterns(rest))
+      Some(g) => open_patterns(rest)
+    }
+  }
+}
+
+fn pattern_takes_all(d: Datas, p: SurfacePattern) -> Yn {
+  match p -> Yn {
+    PtWild => yes
+    PtBind(n) => !datas_nullary(d, n)
+    _ => no
+  }
+}
+
+fn any_takes_all(d: Datas, pats: List(SurfacePattern)) -> Yn {
+  match pats -> Yn {
+    Nil => no
+    Cons(p, rest) => pattern_takes_all(d, p) || any_takes_all(d, rest)
+  }
+}
+
+fn pattern_is_bool(p: SurfacePattern, b: Yn) -> Yn {
+  match p -> Yn {
+    PtBool(x) => x == b
+    _ => no
+  }
+}
+
+fn has_bool(pats: List(SurfacePattern), b: Yn) -> Yn {
+  match pats -> Yn {
+    Nil => no
+    Cons(p, rest) => pattern_is_bool(p, b) || has_bool(rest, b)
+  }
+}
+
+fn is_ctor_of(d: Datas, name: Text, dname: Text, i: Nat) -> Yn {
+  match datas_ctor(d, name) -> Yn {
+    None => no
+    Some(dc) => dc.fst == dname && dc.snd == i
+  }
+}
+
+// The argument patterns of a pattern that names constructor `i`.
+fn covers_row_of(d: Datas, dname: Text, i: Nat, p: SurfacePattern) -> Option(List(SurfacePattern)) {
+  match p -> Option(List(SurfacePattern)) {
+    PtCtor(n, args) => if is_ctor_of(d, n, dname, i) { Some(args) } else { None() }
+    PtRecord(n, fields) => if is_ctor_of(d, n, dname, i) {
+      match datas_positional(d, n, fields) -> Option(List(SurfacePattern)) {
+        PositionalOk(args) => Some(args)
+        PositionalErr(e) => None()
+      }
+    } else {
+      None()
+    }
+    PtBind(n) => if is_ctor_of(d, n, dname, i) { Some(Nil) } else { None() }
+    _ => None()
+  }
+}
+
+// The argument patterns of the patterns that name constructor `i`.
+fn covers_rows(
+  d: Datas,
+  dname: Text,
+  i: Nat,
+  pats: List(SurfacePattern)
+) -> List(List(SurfacePattern)) {
+  match pats -> List(List(SurfacePattern)) {
+    Nil => Nil
+    Cons(p, rest) => match covers_row_of(d, dname, i, p) -> List(List(SurfacePattern)) {
+      Some(r) => Cons(r, covers_rows(d, dname, i, rest))
+      None => covers_rows(d, dname, i, rest)
+    }
+  }
+}
+
+fn first_of_rows(rows: List(List(SurfacePattern))) -> List(SurfacePattern) {
+  match rows -> List(SurfacePattern) {
+    Nil => Nil
+    Cons(row, rest) => match row -> List(SurfacePattern) {
+      Nil => first_of_rows(rest)
+      Cons(p, more) => Cons(p, first_of_rows(rest))
+    }
+  }
+}
+
+fn data_ctor_count(d: Datas, dname: Text) -> Option(Nat) {
+  match datas_decl(d, dname) -> Option(Nat) {
+    None => None()
+    Some(data) => Some(list_len(data.constructors))
+  }
+}
+
+// Whether the unguarded arms take every value of `t`: a name or `_`, `true`
+// and `false`, or every constructor of an `enum` with patterns that take
+// every value of its fields. The fields' types are followed, so this takes
+// the declarations' steps.
+mutual {
+  fn covers_in(k: Nat, d: Datas, t: Ty, pats: List(SurfacePattern)) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(
+        j
+      ) => any_takes_all(
+        d,
+        pats
+      ) || (has_bool(pats, yes) && has_bool(pats, no)) || match ty_unborrowed(t) -> Yn {
+        TyNamed(dname, args) => match data_ctor_count(d, dname) -> Yn {
+          None => no
+          Some(n) => covers_ctors_in(j, d, dname, args, pats, 0, n)
+        }
+        _ => no
+      }
+    }
+  }
+
+  fn covers_ctors_in(
+    k: Nat,
+    d: Datas,
+    dname: Text,
+    args: List(Ty),
+    pats: List(SurfacePattern),
+    i: Nat,
+    n: Nat
+  ) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(
+        j
+      ) => n <= i || (
+        covers_ctor_in(
+          j,
+          d,
+          datas_fields(d, dname, i, args),
+          covers_rows(d, dname, i, pats)
+        ) && covers_ctors_in(j, d, dname, args, pats, i + 1, n)
+      )
+    }
+  }
+
+  fn covers_ctor_in(
+    k: Nat,
+    d: Datas,
+    fields: List(DataField),
+    rows: List(List(SurfacePattern))
+  ) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => covers_any_row_in(j, d, rows, fields) || match fields -> Yn {
+        Cons(f, rest) => match rest -> Yn {
+          Nil => covers_in(j, d, f.ty, first_of_rows(rows))
+          Cons(g, more) => no
+        }
+        Nil => no
+      }
+    }
+  }
+
+  fn covers_row_in(k: Nat, d: Datas, row: List(SurfacePattern), fields: List(DataField)) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match row -> Yn {
+        Nil => match fields -> Yn {
+          Nil => yes
+          Cons(f, more) => no
+        }
+        Cons(p, rest) => match fields -> Yn {
+          Nil => no
+          Cons(f, more) => covers_in(j, d, f.ty, Cons(p, Nil)) && covers_row_in(j, d, rest, more)
+        }
+      }
+    }
+  }
+
+  fn covers_any_row_in(
+    k: Nat,
+    d: Datas,
+    rows: List(List(SurfacePattern)),
+    fields: List(DataField)
+  ) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match rows -> Yn {
+        Nil => no
+        Cons(
+          row,
+          rest
+        ) => (
+          list_len(row) == list_len(fields) && covers_row_in(j, d, row, fields)
+        ) || covers_any_row_in(j, d, rest, fields)
+      }
+    }
+  }
+}
+
+fn covers(d: Datas, t: Ty, pats: List(SurfacePattern)) -> Yn {
+  covers_in(d.steps, d, t, pats)
+}
+
+// ----- handle -----
+
+fn handler_answers_exceeded(h: SurfaceHandler) -> Yn {
+  match h -> Yn {
+    HdOperation(eff, ps, k, g, b) => eff == "exceeded"
+    HdReturn(p, b) => no
+  }
+}
+
+fn handlers_answer_exceeded(hs: List(SurfaceHandler)) -> Yn {
+  match hs -> Yn {
+    Nil => no
+    Cons(h, rest) => handler_answers_exceeded(h) || handlers_answer_exceeded(rest)
+  }
+}
+
+fn handlers_return(hs: List(SurfaceHandler)) -> Option(Pair(SurfacePattern, SurfaceTerm)) {
+  match hs -> Option(Pair(SurfacePattern, SurfaceTerm)) {
+    Nil => None()
+    Cons(h, rest) => match h -> Option(Pair(SurfacePattern, SurfaceTerm)) {
+      HdReturn(p, b) => Some(Pair { fst: p, snd: b })
+      HdOperation(eff, ps, k, g, b) => handlers_return(rest)
+    }
+  }
+}
+
+fn ty_fn_sig(t: Ty) -> Option(Pair(List(Ty), Ty)) {
+  match t -> Option(Pair(List(Ty), Ty)) {
+    TyFn(ps, r, k) => Some(Pair { fst: ps, snd: r })
+    _ => None()
+  }
+}
+
+// The values an operation gives its arm and the answer it takes back.
+fn ck_handle_sig(
+  &mut c: Checker,
+  eff: Text,
+  result: Ty,
+  budget_ty: Ty,
+  body: SurfaceTerm
+) -> Option(Pair(List(Ty), Ty)) {
+  if eff == "exceeded" {
+    Some(Pair { fst: Cons(TyInfo(result), Nil), snd: budget_ty })
+  } else {
+    match ordmap_get(c.effects, eff, ordmap_compare_text) -> Option(Pair(List(Ty), Ty)) {
+      Some(
+        s
+      ) => ty_fn_sig(ck_instantiate_named(&mut c, s.generics, TyFn(s.params, s.result, KindShared)))
+      None => {
+        ck_error(&mut c, cat3("no effect `", eff, "` is declared"), span_of(body))
+        None()
+      }
+    }
+  }
+}
+
+fn ck_quant_of(c: Checker, eff: Text) -> Quant {
+  match ordmap_get(c.quants, eff, ordmap_compare_text) -> Quant {
+    Some(q) => q
+    None => QuantAtMostOne
+  }
+}
+
+fn quant_is_zero(q: Quant) -> Yn {
+  match q -> Yn {
+    QuantZero => yes
+    _ => no
+  }
+}
+
+// A `direct` operation's arm ends every path in `k(e)`.
+fn ck_handle_direct(
+  &mut c: Checker,
+  quant: Quant,
+  eff: Text,
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+) -> () {
+  let tail = match cont -> Yn {
+    Some(k) => dir_is_tail(body, k) && dir_guard_ok(guard, k)
+    None => no
+  }
+  if quant_is_direct(quant) && !tail {
+    ck_error(
+      &mut c,
+      cat3(eff, " is direct; every path of its arm must end in k(e)", ""),
+      span_of(body)
+    )
+  }
+}
+
+fn ck_handle_patterns(
+  ps: List(SurfacePattern),
+  &mut c: Checker,
+  tys: List(Ty),
+  &mut inner: Scope,
+  body: SurfaceTerm
+) -> () {
+  match ps -> () {
+    Nil => ()
+    Cons(p, rest) => match tys -> () {
+      Nil => ()
+      Cons(t, more) => {
+        ck_pattern(&mut c, p, t, &mut inner, span_of(body), body.start)
+        ck_handle_patterns(rest, &mut c, more, &mut inner, body)
+      }
+    }
+  }
+}
+
+// The continuation `k` of an arm, a function from the answer to the result.
+fn ck_handle_cont(
+  &mut c: Checker,
+  &mut inner: Scope,
+  quant: Quant,
+  eff: Text,
+  cont: Option(Text),
+  answer: Ty,
+  result: Ty,
+  body: SurfaceTerm
+) -> () {
+  match cont -> () {
+    Some(k) => {
+      if quant_is_zero(quant) {
+        ck_error(
+          &mut c,
+          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          span_of(body)
+        )
+      }
+      ck_bind_local(
+        &mut c,
+        &mut inner,
+        k,
+        TyFn(Cons(answer, Nil), result, quant_continuation_kind(quant)),
+        no,
+        body.start
+      )
+    }
+    None => ()
+  }
+}
+
+fn ck_widen_fn(&mut c: Checker, a: Ty, current: Ty, rv: Nat) -> Yn {
+  match ck_resolve(&c, a) -> Yn {
+    TyFn(pa, ra, ka) => match current -> Yn {
+      TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && !kind_eq(ka, kb) {
+        let wide = TyFn(pb, rb, kind_join(ka, kb))
+        let probe = TyFn(pa, ra, kind_join(ka, kb))
+        if ck_attempt_unify(&mut c, probe, wide) {
+          let w = ck_resolve(&c, wide)
+          if !ck_occurs(&c, rv, w) {
+            ck_set_subst(&mut c, rv, w)
+          }
+          yes
+        } else {
+          no
+        }
+      } else {
+        no
+      }
+      _ => no
+    }
+    _ => no
+  }
+}
+
+fn ck_widen_borrowed_current(&mut c: Checker, a: Ty, current: Ty, rv: Nat) -> Yn {
+  match current -> Yn {
+    TyBorrow(
+      x,
+      m
+    ) => if !ty_is_borrow(
+      ck_resolve(&c, a)
+    ) && kind_dup(ck_kind(&c, x)) && ck_attempt_fits(&mut c, a, x) {
+      let x2 = ck_resolve(&c, x)
+      if !ck_occurs(&c, rv, x2) {
+        ck_set_subst(&mut c, rv, x2)
+      }
+      yes
+    } else {
+      no
+    }
+    _ => no
+  }
+}
+
+fn ck_widen_borrowed_arm(&mut c: Checker, a: Ty, current: Ty) -> Yn {
+  match ck_resolve(&c, a) -> Yn {
+    TyBorrow(
+      x,
+      m
+    ) => !ty_is_borrow(current) && kind_dup(ck_kind(&c, x)) && ck_attempt_fits(&mut c, x, current)
+    _ => no
+  }
+}
+
+// Takes an arm's type `a` into the result: the looser of two functions of
+// one shape, a duplicable value for its borrow, or the union.
+fn ck_handle_widen(&mut c: Checker, a: Ty, result: Ty, rv: Nat) -> () {
+  let current = ck_resolve(&c, result)
+  if !ck_widen_fn(&mut c, a, current, rv) {
+    if !ck_widen_borrowed_current(&mut c, a, current, rv) {
+      if !ck_widen_borrowed_arm(&mut c, a, current) {
+        if !ck_attempt_fits(&mut c, a, current) {
+          let a2 = ck_resolve(&c, a)
+          ck_set_subst(&mut c, rv, ty_union(Cons(current, Cons(a2, Nil))))
+        }
+      }
+    }
+  }
+}

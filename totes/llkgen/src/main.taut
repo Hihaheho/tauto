@@ -1,0 +1,476 @@
+// `llkgen TABLES…`: from the grammar in a table file (its productions after the
+// EBNF is gone) prints the `max_k` and `lookahead` lines that the file holds,
+// made by the lookahead analysis of `analysis.taut` and `follow.taut`.
+
+// The words of the line that starts with `name`.
+fn lg_find_line(lines: List(Text), name: Text) -> List(Text) {
+  match lines {
+    Nil => Nil
+    Cons(line, rest) => {
+      let words = text_split(line, " ")
+      match words {
+        Nil => lg_find_line(rest, name)
+        Cons(first, more) => if first == name { more } else { lg_find_line(rest, name) }
+      }
+    }
+  }
+}
+
+fn lg_int(t: Text) -> i64 {
+  match text_parse_i64(t) {
+    Some(n) => n
+    None => 0
+  }
+}
+
+fn lg_nat(t: Text) -> u64 {
+  u64_of_i64(lg_int(t))
+}
+
+fn lg_word_array(words: List(Text)) -> Array(i64) {
+  array_of_list(lg_ints(words))
+}
+
+fn lg_ints(words: List(Text)) -> List(i64) {
+  match words {
+    Nil => Nil
+    Cons(w, rest) => Cons(lg_int(w), lg_ints(rest))
+  }
+}
+
+fn lg_at(a: Array(i64), i: u64) -> i64 {
+  match array_get(a, i) {
+    Some(x) => x
+    None => 0
+  }
+}
+
+// The grammar from the words after `productions`: the count, then for each
+// production its left side, its attribute and its symbols (a number from 0 is
+// a non-terminal, below 0 the terminal `-n - 1`).
+fn lg_grammar_of(words: List(Text), n_nts: u64, start: u64) -> LgGrammar {
+  let a = lg_word_array(words)
+  let n_prods = u64_of_i64(lg_at(a, 0))
+  var prods: List(LgProd) = Nil
+  var by_nt: Vec(List(u64)) = vec_new()
+  var i: u64 = 0
+  while i < n_nts {
+    vec_push(&mut by_nt, Nil)
+    i := i + 1
+  }
+  var p: u64 = 0
+  var at: u64 = 1
+  while p < n_prods {
+    let lhs = u64_of_i64(lg_at(a, at))
+    let n = u64_of_i64(lg_at(a, at + 2))
+    var syms: List(LgSym) = Nil
+    var j: u64 = 0
+    while j < n {
+      let s = lg_at(a, at + 3 + j)
+      syms := Cons(if s >= 0 { LgN(u64_of_i64(s)) } else { LgT(u64_of_i64(0 - s - 1)) }, syms)
+      j := j + 1
+    }
+    prods := Cons(LgProd { lhs: lhs, rhs: lg_rev_sym(syms) }, prods)
+    lg_push_prod(&mut by_nt, lhs, p)
+    at := at + 3 + n
+    p := p + 1
+  }
+  var nt_prods: List(List(u64)) = Nil
+  var q: u64 = n_nts
+  while q > 0 {
+    q := q - 1
+    nt_prods := Cons(lg_rev(lg_vec_list(&by_nt, q)), nt_prods)
+  }
+  LgGrammar { prods: array_of_list(
+    lg_rev_prod(prods)
+  ), nt_prods: array_of_list(nt_prods), start: start }
+}
+
+fn lg_vec_list(&v: Vec(List(u64)), i: u64) -> List(u64) {
+  let &x = vec_index(&v, i)
+  x
+}
+
+fn lg_push_prod(&mut v: Vec(List(u64)), nt: u64, p: u64) -> () {
+  match vec_get_mut(&mut v, nt) {
+    Some(slot) => {
+      slot := Cons(p, slot)
+    }
+    None => ()
+  }
+}
+
+fn lg_rev_sym(xs: List(LgSym)) -> List(LgSym) {
+  var out: List(LgSym) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn lg_rev_prod(xs: List(LgProd)) -> List(LgProd) {
+  var out: List(LgProd) = Nil
+  var rest = xs
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+fn lg_push_num(&mut b: Buf, n: u64) -> () {
+  buf_push(&mut b, &" ")
+  buf_push(&mut b, &text_of_u64(n))
+}
+
+fn lg_push_prod_num(&mut b: Buf, p: u64) -> () {
+  buf_push(&mut b, &" ")
+  if p == 0 {
+    buf_push(&mut b, &"-1")
+  } else {
+    buf_push(&mut b, &text_of_u64(p - 1))
+  }
+}
+
+// One automaton as `lookahead` writes it: the non-terminal, the production
+// with no token read, `k`, the number of transitions and each transition.
+fn lg_push_automaton(&mut b: Buf, nt: u64, nodes: List(LgNode), k: u64) -> () {
+  var count: u64 = 0
+  var rest = nodes
+  var running = true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(n, more) => {
+        count := count + lg_len(n.nb)
+        rest := more
+      }
+    }
+  }
+  lg_push_num(&mut b, nt)
+  lg_push_prod_num(&mut b, lg_node_get(nodes, 0).prod)
+  lg_push_num(&mut b, k)
+  lg_push_num(&mut b, count)
+  rest := nodes
+  running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(n, more) => {
+        var ts = lg_sort_by_term(n.nb)
+        var walking = true
+        while walking {
+          match ts {
+            Nil => {
+              walking := false
+            }
+            Cons(x, others) => {
+              lg_push_num(&mut b, n.id)
+              lg_push_num(&mut b, mod(x, 65536))
+              lg_push_num(&mut b, div(x, 65536))
+              lg_push_prod_num(&mut b, lg_node_get(nodes, div(x, 65536)).prod)
+              ts := others
+            }
+          }
+        }
+        rest := more
+      }
+    }
+  }
+}
+
+// Neighbours (`state * 65536 + terminal`) in the order of their terminals.
+fn lg_sort_by_term(nb: List(u64)) -> List(u64) {
+  lg_unswap(lg_sort_keep(lg_swap(nb)))
+}
+
+fn lg_swap(nb: List(u64)) -> List(u64) {
+  match nb {
+    Nil => Nil
+    Cons(x, rest) => Cons(mod(x, 65536) * 65536 + div(x, 65536), lg_swap(rest))
+  }
+}
+
+fn lg_unswap(nb: List(u64)) -> List(u64) {
+  lg_swap(nb)
+}
+
+struct LgRun { text: Text, max_k: u64, failed: Option(Text) }
+
+// The lookahead automata of all non-terminals.
+fn lg_lookahead(g: LgGrammar, max_k: u64) -> LgRun {
+  var b = buf_new()
+  var cache = LgCache { firsts: Nil, follows: Nil }
+  var most: u64 = 0
+  var failed: Option(Text) = None
+  var nt: u64 = 0
+  let n_nts = lg_n_nts(g)
+  let c0 = lg_cache_upto(g, cache, 0)
+  cache := c0
+  while nt < n_nts && lg_is_none_text(failed) {
+    match lg_decide(g, cache, nt, max_k) {
+      None => {
+        failed := Some("a non-terminal needs more lookahead")
+      }
+      Some(d) => {
+        cache := d.cache
+        var tuples = lg_tuples_of(g, cache, nt, d.k)
+        var dfa: Vec(LgState) = vec_new()
+        var first = true
+        var rest = tuples
+        var running = true
+        while running {
+          match rest {
+            Nil => {
+              running := false
+            }
+            Cons(pair, more) => {
+              let one = lg_dfa_of(pair.snd.tuples, pair.fst)
+              if first {
+                dfa := one
+                first := false
+              } else if lg_dfa_unite(&mut dfa, &one) {
+                failed := Some("a conflict in the union of automata")
+              }
+              rest := more
+            }
+          }
+        }
+        let k_dfa = lg_state_get(&dfa, 0).k
+        if k_dfa > most {
+          most := k_dfa
+        }
+        let nodes = lg_minimize(lg_nodes_of(&dfa))
+        lg_push_automaton(&mut b, nt, nodes, k_dfa)
+        nt := nt + 1
+      }
+    }
+  }
+  LgRun { text: text_of(b), max_k: most, failed: failed }
+}
+
+fn lg_is_none_text(o: Option(Text)) -> Bool {
+  match o {
+    None => true
+    Some(x) => false
+  }
+}
+
+fn lg_one(path: Text) -> () {
+  match os_read_file(path) {
+    Err(e) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+    Ok(source) => {
+      let lines = text_lines(source)
+      let start = lg_nat(match lg_find_line(lines, "start") {
+        Nil => "0"
+        Cons(w, rest) => w
+      })
+      let n_nts = lg_nat(match lg_find_line(lines, "non_terminals") {
+        Nil => "0"
+        Cons(w, rest) => w
+      })
+      let g = lg_grammar_of(lg_find_line(lines, "productions"), n_nts, start)
+      let run = lg_lookahead(g, 3)
+      match run.failed {
+        Some(why) => os_print(text_concat_all(Cons(why, Cons(text_newline(), Nil))))
+        None => {
+          os_print(
+            text_concat_all(Cons("max_k ", Cons(text_of_u64(run.max_k), Cons(text_newline(), Nil))))
+          )
+          os_print(
+            text_concat_all(
+              Cons(
+                "lookahead ",
+                Cons(text_of_u64(n_nts), Cons(run.text, Cons(text_newline(), Nil)))
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+}
+
+fn lg_each(paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      lg_one(path)
+      lg_each(rest)
+    }
+  }
+}
+
+// `--par FILE…`: for each grammar file, the lines of its table file that
+// the reading of the grammar and the model decide.
+fn lg_par_each(paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(
+          source
+        ) => os_print(
+          text_concat_all(Cons(em_model(md_build(par_read(source))), Cons(text_newline(), Nil)))
+        )
+      }
+      lg_par_each(rest)
+    }
+  }
+}
+
+// `--rx FILE`: the tree of the regular expression that each line of the
+// file is.
+fn lg_rx_lines(lines: List(Text)) -> () {
+  match lines {
+    Nil => ()
+    Cons(line, rest) => {
+      if text_len(line) > 0 {
+        os_print(text_concat_all(Cons(rx_show(rx_parse(line)), Cons(text_newline(), Nil))))
+      }
+      lg_rx_lines(rest)
+    }
+  }
+}
+
+fn lg_rx(path: Text) -> () {
+  match os_read_file(path) {
+    Err(e) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+    Ok(source) => lg_rx_lines(text_lines(source))
+  }
+}
+
+// `--scan FILE…`: for each grammar file, the lines of its table file that
+// the scanner decides.
+fn lg_scan_each(paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      match os_read_file(path) {
+        Err(
+          e
+        ) => os_print(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+        Ok(
+          source
+        ) => os_print(
+          text_concat_all(
+            Cons(
+              text_join(sc_lines(md_build(par_read(source))), text_newline()),
+              Cons(text_newline(), Nil)
+            )
+          )
+        )
+      }
+      lg_scan_each(rest)
+    }
+  }
+}
+
+// The lines of a table file in the order they are written, from the grammar.
+fn lg_tables(source: Text) -> Text {
+  let m = md_build(par_read(source))
+  let base = text_lines(em_model(m))
+  // title, max_k, terminals, non_terminals, nt_kinds, start, productions,
+  // symbol_attrs, lookahead, skip.
+  if lg_count(base) != 10 {
+    par_die(text_join(base, text_newline()))
+  } else {
+    let schema = sg_build(m)
+    let scan = sc_lines(m)
+    let head = lg_take_lines(base, 8)
+    let tail = lg_drop_lines(base, 8)
+    let lines = lg_cat(
+      Cons(
+        "tauto-syntax-tables 1",
+        Cons(
+          text_concat_all(Cons("grammar_sha256 ", Cons(sha256_hex(source), Nil))),
+          Cons("generator llkgen 0.1.0", Nil)
+        )
+      ),
+      lg_cat(
+        head,
+        Cons(
+          sg_prod_types_line(&schema),
+          lg_cat(tail, lg_cat(scan, Cons(sg_schema_line(&schema), Nil)))
+        )
+      )
+    )
+    text_concat_all(Cons(text_join(lines, text_newline()), Cons(text_newline(), Nil)))
+  }
+}
+
+fn lg_count(xs: List(Text)) -> u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + lg_count(rest)
+  }
+}
+
+fn lg_take_lines(xs: List(Text), n: u64) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if n == 0 { Nil } else { Cons(x, lg_take_lines(rest, n - 1)) }
+  }
+}
+
+fn lg_drop_lines(xs: List(Text), n: u64) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => if n == 0 { xs } else { lg_drop_lines(rest, n - 1) }
+  }
+}
+
+fn lg_cat(a: List(Text), b: List(Text)) -> List(Text) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, lg_cat(rest, b))
+  }
+}
+
+// `--gen FILE`: the table file of a grammar.
+fn lg_gen(path: Text) -> () {
+  match os_read_file(path) {
+    Err(e) => os_eprint(text_concat_all(Cons("cannot read: ", Cons(e, Cons(text_newline(), Nil)))))
+    Ok(source) => os_print(lg_tables(source))
+  }
+}
+
+// With no arguments the grammar is read on standard input and its table file
+// is written on standard output; this is the generator `tauto syntax gen`
+// runs (`TAUTO_GRAMMAR_GEN` names another).
+match os_args() {
+  Nil => lg_gen("/dev/stdin")
+  Cons("--gen", Cons(path, rest)) => lg_gen(path)
+  Cons("--scan", paths) => lg_scan_each(paths)
+  Cons("--rx", Cons(path, rest)) => lg_rx(path)
+  Cons("--par", paths) => lg_par_each(paths)
+  paths => lg_each(paths)
+}

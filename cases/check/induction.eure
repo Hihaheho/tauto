@@ -224,12 +224,12 @@ theorem base_not_arr(a: Ty, b: Ty, e: Eq(Ty, base, arr(a, b))): False {
 checks.arr_inj = "ok"
 checks.base_not_arr = "ok"
 
-@ cases.a-nested-inductive-recurses-through-the-list
+@ cases.a-nested-inductive-recurses-through-a-seq
 parses = true
 source = ```tauto
-inductive List(A: Type): Type {
-  nil(): List(A)
-  cons(h: A, t: List(A)): List(A)
+inductive Seq(A: Type): Type {
+  nil(): Seq(A)
+  cons(h: A, t: Seq(A)): Seq(A)
 }
 fn plus(n: Nat, m: Nat) -> Nat {
   match n -> Nat {
@@ -238,7 +238,7 @@ fn plus(n: Nat, m: Nat) -> Nat {
   }
 }
 inductive Tree(): Type {
-  node(x: Nat, cs: List(Tree)): Tree
+  node(x: Nat, cs: Seq(Tree)): Tree
 }
 fn leaf(x: Nat) -> Tree { node(x, nil) }
 mutual {
@@ -247,7 +247,7 @@ mutual {
       node(x, cs) => succ(sizes(cs))
     }
   }
-  fn sizes(l: List(Tree)) -> Nat {
+  fn sizes(l: Seq(Tree)) -> Nat {
     match l -> Nat {
       nil => zero
       cons(h, rest) => plus(size(h), sizes(rest))

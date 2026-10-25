@@ -1,0 +1,217 @@
+// A value of a macro's world as plain data (`crates/tauto/src/macros/node.rs`),
+// and the text the differential test compares.
+
+enum Node {
+  // A constructor by the name `make` takes, with its fields' names where they
+  // are written.
+  NCtor(Text, List(NField))
+  NText(Text)
+  NInt(i64)
+  NBool(Bool)
+  NList(List(Node))
+  NOpt(Option(Node))
+  NPair(Node, Node)
+  // A value filled in where a `quote` has `$`: the term that makes it.
+  NSplice(SurfaceTerm)
+  // In a list: a list of the same kind whose items go in here.
+  NSpliceList(SurfaceTerm)
+}
+
+struct NField { label: Option(Text), value: Node }
+
+fn nd_ctor(name: Text, fields: List(Node)) -> Node {
+  NCtor(name, nd_unlabeled(fields))
+}
+
+fn nd_unlabeled(fields: List(Node)) -> List(NField) {
+  match fields {
+    Nil => Nil
+    Cons(f, rest) => Cons(NField { label: None, value: f }, nd_unlabeled(rest))
+  }
+}
+
+struct NLabeled { name: Text, value: Node }
+
+// A struct's value: all its fields named.
+fn nd_st(name: Text, fields: List(NLabeled)) -> Node {
+  NCtor(name, nd_labeled(fields))
+}
+
+fn nd_labeled(fields: List(NLabeled)) -> List(NField) {
+  match fields {
+    Nil => Nil
+    Cons(f, rest) => Cons(NField { label: Some(f.name), value: f.value }, nd_labeled(rest))
+  }
+}
+
+fn nd_text(t: Text) -> Node {
+  NText(t)
+}
+
+fn nd_texts(xs: List(Text)) -> Node {
+  NList(nd_texts_of(xs))
+}
+
+fn nd_texts_of(xs: List(Text)) -> List(Node) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(NText(x), nd_texts_of(rest))
+  }
+}
+
+fn nd_opt_texts(xs: Option(List(Text))) -> Node {
+  match xs {
+    None => NOpt(None)
+    Some(l) => NOpt(Some(nd_texts(l)))
+  }
+}
+
+// ---------------------------------------------------------------- text
+
+fn nd_join(parts: List(Text), sep: Text) -> Text {
+  text_join(parts, sep)
+}
+
+fn nd_field_texts(fs: List(NField)) -> List(Text) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(match f.label {
+      None => nd_show(f.value)
+      Some(l) => text_concat_all(Cons(l, Cons("=", Cons(nd_show(f.value), Nil))))
+    }, nd_field_texts(rest))
+  }
+}
+
+fn nd_shows(xs: List(Node)) -> List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(nd_show(x), nd_shows(rest))
+  }
+}
+
+// One line: `Name(a b label=c)`, `[a b]`, `Some(a)`, `None`, `<a b>`, `t:HEX`.
+fn nd_show(n: Node) -> Text {
+  match n {
+    NCtor(
+      name,
+      fs
+    ) => text_concat_all(
+      Cons(name, Cons("(", Cons(nd_join(nd_field_texts(fs), " "), Cons(")", Nil))))
+    )
+    NText(t) => text_concat_all(Cons("t:", Cons(sdump_hex(t), Nil)))
+    NInt(i) => text_concat_all(Cons("i:", Cons(text_of_i64(i), Nil)))
+    NBool(b) => if b { "true" } else { "false" }
+    NList(xs) => text_concat_all(Cons("[", Cons(nd_join(nd_shows(xs), " "), Cons("]", Nil))))
+    NOpt(o) => match o {
+      None => "None"
+      Some(x) => text_concat_all(Cons("Some(", Cons(nd_show(x), Cons(")", Nil))))
+    }
+    NPair(
+      a,
+      b
+    ) => text_concat_all(Cons("<", Cons(nd_show(a), Cons(" ", Cons(nd_show(b), Cons(">", Nil))))))
+    NSplice(t) => "splice"
+    NSpliceList(t) => "splice"
+  }
+}
+
+// ---------------------------------------------------------------- as a term
+
+// A span: where it starts and where it ends.
+struct NdSp { start: u64, end: u64 }
+
+fn nd_term(kind: SurfaceKind, sp: NdSp) -> SurfaceTerm {
+  SurfaceTerm { kind: kind, start: sp.start, end: sp.end }
+}
+
+fn nd_var(name: Text, sp: NdSp) -> SurfaceTerm {
+  nd_term(SkVar(name), sp)
+}
+
+fn nd_app(f: Text, args: List(SurfaceTerm), sp: NdSp) -> SurfaceTerm {
+  nd_term(SkApp(nd_var(f, sp), args), sp)
+}
+
+fn nd_all_labeled(fs: List(NField)) -> Bool {
+  match fs {
+    Nil => true
+    Cons(f, rest) => match f.label {
+      None => false
+      Some(l) => nd_all_labeled(rest)
+    }
+  }
+}
+
+fn nd_term_fields(fs: List(NField), sp: NdSp) -> List(SurfaceTerm) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(nd_to_term(f.value, sp), nd_term_fields(rest, sp))
+  }
+}
+
+fn nd_record_fields(fs: List(NField), sp: NdSp) -> List(SurfaceField) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      SurfaceField { name: match f.label {
+        None => ""
+        Some(l) => l
+      }, value: nd_to_term(f.value, sp) },
+      nd_record_fields(rest, sp)
+    )
+  }
+}
+
+fn nd_list_term(items: List(Node), sp: NdSp) -> SurfaceTerm {
+  match items {
+    Nil => nd_var("List::Nil", sp)
+    Cons(item, rest) => {
+      let acc = nd_list_term(rest, sp)
+      match item {
+        NSpliceList(t) => nd_app("syn_append", Cons(t, Cons(acc, Nil)), sp)
+        other => nd_app("List::Cons", Cons(nd_to_term(item, sp), Cons(acc, Nil)), sp)
+      }
+    }
+  }
+}
+
+// `Node::to_term`: the constructor calls that build the value, all at `sp`.
+fn nd_to_term(n: Node, sp: NdSp) -> SurfaceTerm {
+  match n {
+    NSplice(t) => t
+    NSpliceList(t) => t
+    NText(t) => nd_term(SkText(t), sp)
+    NInt(i) => if i < 0 {
+      nd_app("-", Cons(nd_term(SkNat(text_of_u64(u64_of_i64(0 - i))), sp), Nil), sp)
+    } else {
+      nd_term(SkNat(text_of_i64(i)), sp)
+    }
+    NBool(b) => nd_term(SkBool(b), sp)
+    NList(items) => nd_list_term(items, sp)
+    NOpt(o) => match o {
+      None => nd_var("Option::None", sp)
+      Some(x) => nd_app("Option::Some", Cons(nd_to_term(x, sp), Nil), sp)
+    }
+    NPair(
+      a,
+      b
+    ) => nd_term(
+      SkRecord(
+        "Pair",
+        Cons(
+          SurfaceField { name: "fst", value: nd_to_term(a, sp) },
+          Cons(SurfaceField { name: "snd", value: nd_to_term(b, sp) }, Nil)
+        )
+      ),
+      sp
+    )
+    NCtor(name, fields) => match fields {
+      Nil => nd_var(name, sp)
+      more => if nd_all_labeled(fields) {
+        nd_term(SkRecord(name, nd_record_fields(fields, sp)), sp)
+      } else {
+        nd_app(name, nd_term_fields(fields, sp), sp)
+      }
+    }
+  }
+}
