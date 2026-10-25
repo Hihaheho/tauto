@@ -1,0 +1,91 @@
+// What proofs may use without declaring it. Everything here is an inductive
+// family (whose eliminators the kernel generates) or a theorem proved from
+// those; nothing is assumed, so nothing is tracked as an axiom.
+// Generics `<A>` are implicit: a call may leave them out (they are inferred),
+// or write every argument. The parameters of an inductive type are implicit
+// in its constructors and eliminators in the same way.
+
+inductive Nat(): Type {
+  zero(): Nat
+  succ(n: Nat): Nat
+}
+
+inductive True(): Prop {
+  trivial(): True
+}
+
+inductive False(): Prop {
+}
+
+inductive Eq(A: Type, a: A): (A) -> Prop {
+  refl(): Eq(A, a, a)
+}
+
+inductive And(A: Prop, B: Prop): Prop {
+  and_intro(a: A, b: B): And(A, B)
+}
+
+inductive Or(A: Prop, B: Prop): Prop {
+  or_inl(a: A): Or(A, B)
+  or_inr(b: B): Or(A, B)
+}
+
+inductive Not(A: Prop): Prop {
+  not_intro(f: (A) -> False): Not(A)
+}
+
+inductive Iff(A: Prop, B: Prop): Prop {
+  iff_intro(f: (A) -> B, g: (B) -> A): Iff(A, B)
+}
+
+theorem False_elim<P: Prop>(f: False): P {
+  False_ind(t => P, f)
+}
+
+theorem Eq_subst<A: Type, a: A, b: A>(P: (A) -> Prop, e: Eq(A, a, b), p: P(a)): P(b) {
+  Eq_ind(A, a, y => e2 => P(y), p, b, e)
+}
+
+theorem and_left<A: Prop, B: Prop>(p: And(A, B)): A {
+  And_ind(A, B, t => A, x => y => x, p)
+}
+
+theorem and_right<A: Prop, B: Prop>(p: And(A, B)): B {
+  And_ind(A, B, t => B, x => y => y, p)
+}
+
+theorem or_elim<A: Prop, B: Prop, C: Prop>(p: Or(A, B), f: (A) -> C, g: (B) -> C): C {
+  Or_ind(A, B, t => C, x => f(x), y => g(y), p)
+}
+
+theorem not_elim<A: Prop>(n: Not(A), a: A): False {
+  Not_ind(A, t => False, h => h(a), n)
+}
+
+theorem iff_mp<A: Prop, B: Prop>(p: Iff(A, B), a: A): B {
+  Iff_ind(A, B, t => B, f => g => f(a), p)
+}
+
+theorem iff_mpr<A: Prop, B: Prop>(p: Iff(A, B), b: B): A {
+  Iff_ind(A, B, t => A, f => g => g(b), p)
+}
+
+inductive Unit(): Type {
+  star(): Unit
+}
+
+theorem Eq_sym<A: Type, a: A, b: A>(e: Eq(A, a, b)): Eq(A, b, a) {
+  Eq_subst(A, a, b, y => Eq(A, y, a), e, refl(A, a))
+}
+
+theorem Eq_trans<A: Type, a: A, b: A, c: A>(e1: Eq(A, a, b), e2: Eq(A, b, c)): Eq(A, a, c) {
+  Eq_subst(A, b, c, y => Eq(A, a, y), e2, e1)
+}
+
+theorem Eq_congr<A: Type, B: Type, a: A, b: A>(f: (A) -> B, e: Eq(A, a, b)): Eq(B, f(a), f(b)) {
+  Eq_subst(A, a, b, y => Eq(B, f(a), f(y)), e, refl(B, f(a)))
+}
+
+// `let x: T = e` in a proof stands for `the(T, e)` wherever `x` is used: the
+// kernel types it as `T`, and only if `e` has type `T`.
+fn the(A: Type1, x: A) -> A { x }
