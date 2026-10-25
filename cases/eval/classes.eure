@@ -1,0 +1,386 @@
+// Classes run: the expansion gives each constraint the methods as arguments.
+
+@ cases.class-call
+source = ```nib
+class Cmp<A: linear> {
+  fn cmp(&a: A, &b: A) -> i64
+}
+instance Cmp(i64) {
+  fn cmp(&a: i64, &b: i64) -> i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+}
+perform show("c", Cmp.cmp(&1, &2))
+```
+shows = ["c = -1"]
+
+@ cases.class-nested-instance
+source = ```nib
+class Cmp<A: linear> {
+  fn cmp(&a: A, &b: A) -> i64
+}
+instance Cmp(i64) {
+  fn cmp(&a: i64, &b: i64) -> i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+}
+instance<A> Cmp(List(A)) where Cmp(A) {
+  fn cmp(&a: List(A), &b: List(A)) -> i64 {
+    match a {
+      Nil => match b {
+        Nil => 0
+        Cons(y, ys) => 0 - 1
+      }
+      Cons(x, xs) => match b {
+        Nil => 1
+        Cons(y, ys) => {
+          let c = Cmp.cmp(&x, &y)
+          if c == 0 { Cmp.cmp(&xs, &ys) } else { c }
+        }
+      }
+    }
+  }
+}
+perform show("a", Cmp.cmp(&Cons(1, Cons(2, Nil)), &Cons(1, Cons(3, Nil))))
+perform show("b", Cmp.cmp(&Cons(1, Nil), &Cons(1, Nil)))
+```
+shows = ["a = -1", "b = 0"]
+
+@ cases.class-constrained-function
+source = ```nib
+class Cmp<A: linear> {
+  fn cmp(&a: A, &b: A) -> i64
+}
+instance Cmp(i64) {
+  fn cmp(&a: i64, &b: i64) -> i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+}
+fn bigger<A: shared>(a: A, b: A) -> A where Cmp(A) {
+  if Cmp.cmp(&a, &b) < 0 { b } else { a }
+}
+perform show("m", bigger(3, 7))
+```
+shows = ["m = 7"]
+
+@ cases.class-two-methods
+source = ```nib
+class Shape<A: shared> {
+  fn area(&a: A) -> i64
+  fn name(&a: A) -> Text
+}
+struct Sq { side: i64 }
+instance Shape(Sq) {
+  fn area(&a: Sq) -> i64 { a.side * a.side }
+  fn name(&a: Sq) -> Text { "square" }
+}
+fn describe<A: shared>(s: A) -> Text where Shape(A) {
+  Shape.name(&s)
+}
+perform show("n", describe(Sq { side: 3 }))
+perform show("a", Shape.area(&Sq { side: 3 }))
+```
+shows = ["n = \"square\"", "a = 9"]
+
+@ cases.class-closure-returns
+source = ```nib
+class Cmp<A: linear> {
+  fn cmp(&a: A, &b: A) -> i64
+}
+instance Cmp(i64) {
+  fn cmp(&a: i64, &b: i64) -> i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+}
+fn rank<A: shared>(base: A) -> (A) -> i64 where Cmp(A) {
+  (x: A) => Cmp.cmp(&x, &base)
+}
+let f = rank(5)
+perform show("r", f(9))
+```
+shows = ["r = 1"]
+
+@ cases.class-method-as-value
+source = ```nib
+class Cmp<A: linear> {
+  fn cmp(&a: A, &b: A) -> i64
+}
+instance Cmp(i64) {
+  fn cmp(&a: i64, &b: i64) -> i64 { if a < b { 0 - 1 } else if a == b { 0 } else { 1 } }
+}
+fn twice(f: (&i64, &i64) -> i64) -> i64 { f(&1, &2) + f(&2, &1) }
+perform show("t", twice(Cmp.cmp))
+```
+shows = ["t = 0"]
+
+@ cases.std-ord
+source = ```nib
+perform show("a", Ord.compare(&1, &2))
+perform show("b", Ord.compare(&Cons(1, Nil), &Cons(1, Cons(0, Nil))))
+perform show("c", Ord.compare(&Some(3), &None))
+perform show("d", Ord.compare(&Pair { fst: 1, snd: "b" }, &Pair { fst: 1, snd: "a" }))
+```
+shows = ["a = Less", "b = Less", "c = Greater", "d = Greater"]
+
+@ cases.std-sort-and-extremes
+source = ```nib
+var v = vec_new()
+vec_push(&mut v, 3)
+vec_push(&mut v, 1)
+vec_push(&mut v, 2)
+vec_sort(&mut v)
+perform show("v", vec_into_list(v))
+perform show("max", list_max(Cons(2, Cons(9, Cons(4, Nil)))))
+perform show("min", list_min(Cons(2, Cons(9, Cons(4, Nil)))))
+```
+shows = ["v = Cons(1, Cons(2, Cons(3, Nil)))", "max = Some(9)", "min = Some(2)"]
+
+@ cases.std-to-text
+source = ```nib
+perform show("a", ToText.to_text(&Cons(1, Cons(2, Nil))))
+perform show("b", join(Cons(1, Cons(2, Cons(3, Nil))), "-"))
+perform show("c", ToText.to_text(&Some(true)))
+perform show("d", ToText.to_text(&Pair { fst: 7, snd: "x" }))
+```
+shows = ["a = \"[1, 2]\"", "b = \"1-2-3\"", "c = \"Some(true)\"", "d = \"(7, x)\""]
+
+@ cases.user-instance-for-a-std-class
+source = ```nib
+struct P { x: i64 }
+instance Ord(P) {
+  fn compare(&a: P, &b: P) -> Ordering { Ord.compare(&a.x, &b.x) }
+}
+var v = vec_new()
+vec_push(&mut v, P { x: 5 })
+vec_push(&mut v, P { x: 2 })
+vec_sort(&mut v)
+perform show("first", vec_index(&v, 0).x)
+```
+shows = ["first = 2"]
+
+@ cases.method-generics-fold
+source = ```nib
+class Fold<A> {
+  fn fold<B: shared>(&a: A, init: B, f: (B, i64) -> B) -> B
+}
+instance Fold(i64) {
+  fn fold<B: shared>(&a: i64, init: B, f: (B, i64) -> B) -> B { f(init, a) }
+}
+fn both<A>(x: A) -> Text where Fold(A) {
+  let n = Fold.fold(&x, 10, (acc, v) => acc + v)
+  let t = Fold.fold(&x, "n", (acc, v) => text_concat(acc, text_of_i64(v)))
+  text_concat(t, text_of_i64(n))
+}
+perform show("r", both(5))
+```
+shows = ["r = \"n515\""]
+
+@ cases.method-generics-passed-on
+source = ```nib
+class Fold<A> {
+  fn fold<B: shared>(&a: A, init: B, f: (B, i64) -> B) -> B
+}
+instance Fold(i64) {
+  fn fold<B: shared>(&a: i64, init: B, f: (B, i64) -> B) -> B { f(init, a) }
+}
+fn inner<A>(x: A) -> i64 where Fold(A) { Fold.fold(&x, 1, (acc, v) => acc + v) }
+fn outer<A>(x: A) -> i64 where Fold(A) { inner(x) * 2 }
+perform show("r", outer(5))
+```
+shows = ["r = 12"]
+
+@ cases.method-generics-nested-instance
+source = ```nib
+class Fold<A> {
+  fn fold<B: shared>(&a: A, init: B, f: (B, i64) -> B) -> B
+}
+instance Fold(i64) {
+  fn fold<B: shared>(&a: i64, init: B, f: (B, i64) -> B) -> B { f(init, a) }
+}
+instance<A: shared> Fold(List(A)) where Fold(A) {
+  fn fold<B: shared>(&a: List(A), init: B, f: (B, i64) -> B) -> B {
+    match a {
+      Nil => init
+      Cons(x, rest) => Fold.fold(&rest, Fold.fold(&x, init, f), f)
+    }
+  }
+}
+fn total<A>(x: A) -> i64 where Fold(A) { Fold.fold(&x, 0, (acc, v) => acc + v) }
+perform show("r", total(Cons(1, Cons(2, Cons(3, Nil)))))
+```
+shows = ["r = 6"]
+
+@ cases.hkt-functor-list
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(List) {
+  fn map<A: shared, B: shared>(x: List(A), f: (A) -> B) -> List(B) {
+    match x {
+      Nil => Nil
+      Cons(h, t) => Cons(f(h), Functor.map(t, f))
+    }
+  }
+}
+instance Functor(Option) {
+  fn map<A: shared, B: shared>(x: Option(A), f: (A) -> B) -> Option(B) {
+    match x {
+      None => None
+      Some(v) => Some(f(v))
+    }
+  }
+}
+instance<E: shared> Functor(Result(E)) {
+  fn map<A: shared, B: shared>(x: Result(E, A), f: (A) -> B) -> Result(E, B) {
+    match x {
+      Ok(v) => Ok(v)
+      Err(e) => Err(f(e))
+    }
+  }
+}
+fn double_all<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  Functor.map(x, (n: i64) => n * 2)
+}
+fn twice<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  double_all(double_all(x))
+}
+perform show("r", Functor.map(Cons(1, Cons(2, Nil)), (n: i64) => n + 1))
+```
+shows = ["r = Cons(2, Cons(3, Nil))"]
+
+@ cases.hkt-generic-use
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(List) {
+  fn map<A: shared, B: shared>(x: List(A), f: (A) -> B) -> List(B) {
+    match x {
+      Nil => Nil
+      Cons(h, t) => Cons(f(h), Functor.map(t, f))
+    }
+  }
+}
+instance Functor(Option) {
+  fn map<A: shared, B: shared>(x: Option(A), f: (A) -> B) -> Option(B) {
+    match x {
+      None => None
+      Some(v) => Some(f(v))
+    }
+  }
+}
+instance<E: shared> Functor(Result(E)) {
+  fn map<A: shared, B: shared>(x: Result(E, A), f: (A) -> B) -> Result(E, B) {
+    match x {
+      Ok(v) => Ok(v)
+      Err(e) => Err(f(e))
+    }
+  }
+}
+fn double_all<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  Functor.map(x, (n: i64) => n * 2)
+}
+fn twice<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  double_all(double_all(x))
+}
+perform show("a", double_all(Some(2)))
+perform show("b", double_all(Cons(1, Cons(2, Nil))))
+```
+shows = ["a = Some(4)", "b = Cons(2, Cons(4, Nil))"]
+
+@ cases.hkt-generic-use-passed-on
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(List) {
+  fn map<A: shared, B: shared>(x: List(A), f: (A) -> B) -> List(B) {
+    match x {
+      Nil => Nil
+      Cons(h, t) => Cons(f(h), Functor.map(t, f))
+    }
+  }
+}
+instance Functor(Option) {
+  fn map<A: shared, B: shared>(x: Option(A), f: (A) -> B) -> Option(B) {
+    match x {
+      None => None
+      Some(v) => Some(f(v))
+    }
+  }
+}
+instance<E: shared> Functor(Result(E)) {
+  fn map<A: shared, B: shared>(x: Result(E, A), f: (A) -> B) -> Result(E, B) {
+    match x {
+      Ok(v) => Ok(v)
+      Err(e) => Err(f(e))
+    }
+  }
+}
+fn double_all<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  Functor.map(x, (n: i64) => n * 2)
+}
+fn twice<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  double_all(double_all(x))
+}
+perform show("a", twice(Some(3)))
+```
+shows = ["a = Some(12)"]
+
+@ cases.hkt-partial-application
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(List) {
+  fn map<A: shared, B: shared>(x: List(A), f: (A) -> B) -> List(B) {
+    match x {
+      Nil => Nil
+      Cons(h, t) => Cons(f(h), Functor.map(t, f))
+    }
+  }
+}
+instance Functor(Option) {
+  fn map<A: shared, B: shared>(x: Option(A), f: (A) -> B) -> Option(B) {
+    match x {
+      None => None
+      Some(v) => Some(f(v))
+    }
+  }
+}
+instance<E: shared> Functor(Result(E)) {
+  fn map<A: shared, B: shared>(x: Result(E, A), f: (A) -> B) -> Result(E, B) {
+    match x {
+      Ok(v) => Ok(v)
+      Err(e) => Err(f(e))
+    }
+  }
+}
+fn double_all<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  Functor.map(x, (n: i64) => n * 2)
+}
+fn twice<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  double_all(double_all(x))
+}
+let r: Result(Text, i64) = Err(5)
+perform show("a", Functor.map(r, (n: i64) => n + 1))
+let ok: Result(Text, i64) = Ok("x")
+perform show("b", Functor.map(ok, (n: i64) => n + 1))
+```
+shows = ["a = Err(6)", "b = Ok(\"x\")"]
+
+@ cases.method-row-variable
+source = ```nib
+class Walk<F: (shared) -> shared> {
+  fn each<A: shared, e>(x: F(A), f: (A) -> () ! {Div|e}) -> () ! {Div|e}
+}
+instance Walk(List) {
+  fn each<A: shared, e>(x: List(A), f: (A) -> () ! {Div|e}) -> () ! {Div|e} {
+    match x {
+      Nil => ()
+      Cons(h, t) => {
+        f(h)
+        Walk.each(t, f)
+      }
+    }
+  }
+}
+fn show_all<F: (shared) -> shared>(x: F(i64)) -> () where Walk(F) {
+  Walk.each(x, (n: i64) => perform show("n", n))
+}
+show_all(Cons(1, Cons(2, Nil)))
+```
+shows = ["n = 1", "n = 2"]

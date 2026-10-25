@@ -1,0 +1,41 @@
+// Explicit changes of an integer's width.
+
+@ cases.num-widen
+source = ```nib
+perform show("a", u64_of_u8(255))
+perform show("b", i64_of_i32(7))
+perform show("c", u64_of_u32(7))
+```
+shows = ["a = 255", "b = 7", "c = 7"]
+
+@ cases.num-narrow-fails
+source = ```nib
+perform show("a", u8_of_u64(256))
+```
+run_error = "the number is too large"
+
+@ cases.num-narrow-fits
+source = ```nib
+perform show("a", u8_of_u64(255))
+perform show("b", u32_of_u64(4294967295))
+perform show("c", i32_of_i64(0 - 2147483648))
+```
+shows = ["a = 255", "b = 4294967295", "c = -2147483648"]
+
+@ cases.num-i32-of-i64-fails
+source = ```nib
+perform show("a", i32_of_i64(2147483648))
+```
+run_error = "the number is too large"
+
+@ cases.num-i64-of-u64
+source = ```nib
+perform show("a", i64_of_u64(5))
+```
+shows = ["a = 5"]
+
+@ cases.num-u64-of-i64-negative-fails
+source = ```nib
+perform show("a", u64_of_i64(0 - 1))
+```
+run_error = "the number is too large"

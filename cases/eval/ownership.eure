@@ -1,0 +1,229 @@
+// Running structs, enums, borrows and the affine standard library.
+// Every `shows` case also runs with the dynamic ownership check, which must
+// agree.
+
+@ cases.structs-and-enums
+source = ```nib
+struct P { x: i64, y: i64 }
+enum Shape { Circle(i64), Rect { w: i64, h: i64 }, Empty }
+fn area(s: Shape) -> i64 {
+  match s {
+    Circle(r) => 3 * r * r
+    Rect { w, h } => w * h
+    Empty => 0
+  }
+}
+let p = P { x: 1, y: 2 }
+perform show("p", p)
+perform show("x", p.x)
+perform show("a", area(Circle(2)) + area(Rect { w: 2, h: 5 }) + area(Empty))
+```
+shows = ["p = P { x: 1, y: 2 }", "x = 1", "a = 22"]
+
+@ cases.vec-and-borrows
+source = ```nib
+fn total(&v: Vec(i64)) -> i64 {
+  var s = 0
+  var i: u64 = 0
+  while i < vec_len(&v) {
+    let n = handle { vec_index(&v, i) } with {
+      out_of_bounds() => 0
+    }
+    s := s + n
+    i := i + 1
+  }
+  s
+}
+var v = vec_new()
+vec_push(&mut v, 1)
+vec_push(&mut v, 2)
+vec_push(&mut v, 3)
+perform show("len", vec_len(&v))
+perform show("total", total(&v))
+perform show("popped", vec_pop(&mut v))
+perform show("v", v)
+```
+shows = ["len = 3", "total = 6", "popped = Some(3)", "v = Vec[1, 2]"]
+
+@ cases.a-mutable-borrow-writes-the-owner
+source = ```nib
+struct Counter { n: i64 }
+fn bump(&mut c: Counter) -> () {
+  c := Counter { n: c.n + 1 }
+}
+var c = Counter { n: 0 }
+bump(&mut c)
+bump(&mut c)
+perform show("c", c.n)
+```
+shows = ["c = 2"]
+
+@ cases.a-field-of-a-var-is-a-place
+source = ```nib
+struct Two { a: Vec(i64), b: Vec(i64) }
+fn put(&mut x: Vec(i64), &mut y: Vec(i64)) -> () {
+  vec_push(&mut x, 1)
+  vec_push(&mut y, 2)
+  vec_push(&mut y, 3)
+}
+var t = Two { a: vec_new(), b: vec_new() }
+put(&mut t.a, &mut t.b)
+perform show("a", vec_len(&t.a))
+perform show("b", vec_len(&t.b))
+```
+shows = ["a = 1", "b = 2"]
+
+@ cases.replace-and-clone
+source = ```nib
+affine enum Expr { Lit(Buf), Add(Expr, Expr) }
+fn size(&e: Expr) -> i64 {
+  match e {
+    Lit(b) => 1
+    Add(l, r) => size(l) + size(r)
+  }
+}
+var e = Add(Lit(buf_of("a")), Lit(buf_of("b")))
+let copy = clone(&e)
+let old = replace(&mut e, Lit(buf_of("c")))
+perform show("old", size(&old))
+perform show("copy", size(&copy))
+perform show("now", size(&e))
+```
+shows = ["old = 2", "copy = 2", "now = 1"]
+
+@ cases.buffers-and-text
+source = ```nib
+let b = buf_of("hello big world")
+let n = fold(words(text_of(buf_clone(&b))), 0, (acc, w) => acc + 1)
+perform show("words", n)
+perform show("text", text_of(b))
+perform show("joined", concat("a", "b"))
+```
+shows = ["words = 3", "text = \"hello big world\"", "joined = \"ab\""]
+
+@ cases.higher-order-functions-take-closures-by-borrow
+source = ```nib
+var seen = 0
+let xs = Cons(1, Cons(2, Cons(3, Nil)))
+each(xs, (x) => {
+  seen := seen + x
+})
+let ys = map(Cons(1, Cons(2, Nil)), (x) => x * 10)
+perform show("seen", seen)
+perform show("ys", ys)
+```
+shows = ["seen = 6", "ys = Cons(10, Cons(20, Nil))"]
+
+@ cases.a-vec-of-affine-values
+source = ```nib
+affine struct Job { id: i64 }
+var jobs = vec_new()
+vec_push(&mut jobs, Job { id: 1 })
+vec_push(&mut jobs, Job { id: 2 })
+var sum = 0
+vec_each(&jobs, (&j) => {
+  sum := sum + j.id
+})
+vec_consume(jobs, (j) => {
+  match j {
+    Job { id } => perform show("job", id)
+  }
+})
+perform show("sum", sum)
+```
+shows = ["job = 1", "job = 2", "sum = 3"]
+
+@ cases.sorting-borrows-the-comparison
+source = ```nib
+var v = vec_new()
+vec_push(&mut v, 3)
+vec_push(&mut v, 1)
+vec_push(&mut v, 2)
+vec_sort_by(&mut v, (&a, &b) => a < b)
+perform show("v", v)
+```
+shows = ["v = Vec[1, 2, 3]"]
+
+@ cases.hash-maps
+source = ```nib
+var m = hashmap_new()
+let old = hashmap_insert(&mut m, "a", 1)
+let again = hashmap_insert(&mut m, "a", 2)
+let one = handle { hashmap_index(&m, "a") } with {
+  missing() => 0
+}
+let none = handle { hashmap_index(&m, "z") } with {
+  missing() => 0 - 1
+}
+perform show("old", old)
+perform show("again", again)
+perform show("a", one)
+perform show("z", none)
+```
+shows = ["old = None", "again = Some(1)", "a = 2", "z = -1"]
+
+@ cases.persistent-maps
+source = ```nib
+let m = map_insert(map_insert(map_empty(), "a", 1), "b", 2)
+let m2 = map_insert(m, "a", 3)
+perform show("a", map_get(m, "a"))
+perform show("a2", map_get(m2, "a"))
+perform show("c", map_get(m2, "c"))
+```
+shows = ["a = Some(1)", "a2 = Some(3)", "c = None"]
+
+@ cases.an-extern-is-not-runnable
+source = ```nib
+affine struct File {}
+extern {
+  fn file_open(&path: Text) -> File
+}
+let f = file_open("a.txt")
+```
+run_error = "extern is not runnable"
+build = "error: has no rust binding"
+
+@ cases.a-resume-zero-arm-ends-the-handle
+source = ```nib
+effect fail: (msg: Text) -> Never resume 0
+fn safe_div(a: i64, b: i64) -> i64 ! {fail} {
+  if b == 0 { perform fail("zero") } else { div(a, b) }
+}
+let r = handle { safe_div(1, 0) } with {
+  fail(m) => 0 - 1
+}
+perform show("r", r)
+```
+shows = ["r = -1"]
+
+@ cases.a-linear-value-is-consumed-once
+source = ```nib
+linear struct Handshake { id: i64 }
+fn hello(id: i64) -> Handshake { Handshake { id: id } }
+fn finish(h: Handshake) -> i64 {
+  match h {
+    Handshake { id } => id
+  }
+}
+let h = hello(7)
+perform show("done", finish(h))
+```
+shows = ["done = 7"]
+
+@ cases.ref-mutex-and-atomic-are-shared-cells
+source = ```nib
+let r = ref_new(1)
+let bump = () => ref_set(r, ref_get(r) + 1)
+bump()
+bump()
+let m = mutex_new(vec_new())
+mutex_with(m, (&mut v) => vec_push(&mut v, 7))
+mutex_with(m, (&mut v) => vec_push(&mut v, 8))
+let n = mutex_with(m, (&mut v) => vec_len(&v))
+let a = atomic_new(10)
+let old = atomic_fetch_add(a, 5)
+perform show("r", ref_get(r))
+perform show("n", n)
+perform show("a", old + atomic_load(a))
+```
+shows = ["r = 3", "n = 2", "a = 25"]

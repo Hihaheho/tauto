@@ -1,0 +1,472 @@
+// Structural predicates and `where`.
+
+@ cases.eq-on-functions
+source = ```nib
+fn f(x: i64) -> i64 { x }
+f == f
+```
+types = "error: == needs PartialEq((i64) -> i64)"
+
+@ cases.eq-on-vec
+source = ```nib
+var v = vec_new()
+vec_push(&mut v, 1)
+v == v
+```
+types = "error: == needs PartialEq(Vec(i64))"
+
+@ cases.eq-on-struct
+source = ```nib
+struct P { x: i64 }
+perform show("e", P { x: 1 } == P { x: 1 })
+```
+shows = ["e = true"]
+
+@ cases.eq-on-struct-with-function
+source = ```nib
+struct Q { f: (i64) -> i64 }
+fn id(x: i64) -> i64 { x }
+let q = Q { f: id }
+q == q
+```
+types = "error: == needs PartialEq(Q)"
+
+@ cases.eq-on-recursive-enum
+source = ```nib
+enum L { N, C(i64, L) }
+C(1, N) == C(1, N)
+```
+types = "ok"
+
+@ cases.eq-on-generic-unconstrained
+source = ```nib
+fn s<A: shared>(x: A, y: A) -> Bool { x == y }
+```
+types = "error: == needs PartialEq(A): add where PartialEq(A)"
+
+@ cases.eq-on-generic-constrained
+source = ```nib
+fn s<A>(&x: A, &y: A) -> Bool where PartialEq(A) { x == y }
+```
+lin = "ok"
+
+@ cases.deceq-gives-partialeq
+source = ```nib
+fn s<A>(&x: A, &y: A) -> Bool where DecEq(A) { x == y }
+```
+types = "ok"
+
+@ cases.eq-does-not-move
+source = ```nib
+affine struct T { n: i64 }
+let t = T { n: 1 }
+let b = t == t
+t
+```
+lin = "ok"
+
+@ cases.float-is-partialeq
+source = ```nib
+fn same(x: Float, y: Float) -> Bool { x == y }
+```
+types = "ok"
+
+@ cases.where-not-a-generic
+source = ```nib
+fn g<A>(x: A) -> () where DecEq(List(A)) { () }
+```
+types = "error: where constrains only generics of g"
+
+@ cases.where-twice
+source = ```nib
+fn g<A>(x: A) -> () where DecEq(A), DecEq(A) { () }
+```
+types = "error: DecEq(A) is written twice"
+
+@ cases.not-a-class
+source = ```nib
+fn g<A>(x: A) -> () where Nope(A) { () }
+```
+types = "error: Nope is not a class"
+
+@ cases.a-constrained-function-is-checked-at-the-call
+source = ```nib
+fn same<A>(&x: A, &y: A) -> Bool where PartialEq(A) { x == y }
+fn id(x: i64) -> i64 { x }
+same(&id, &id)
+```
+types = "error: same needs PartialEq((i64) -> i64)"
+
+@ cases.float-key-is-rejected
+source = ```nib
+fn put(k: Float) -> Option(i64) {
+  var m = hashmap_new()
+  hashmap_insert(&mut m, k, 1)
+}
+```
+types = "error: hashmap_new needs DecEq(Float)"
+
+@ cases.hashmap-struct-key
+source = ```nib
+struct P { x: i64 }
+var m = hashmap_new()
+hashmap_insert(&mut m, P { x: 1 }, 2)
+```
+types = "ok"
+
+@ cases.hashmap-function-key
+source = ```nib
+fn f(x: i64) -> i64 { x }
+var m = hashmap_new()
+hashmap_insert(&mut m, f, 2)
+```
+types = "error: hashmap_new needs DecEq((i64) -> i64)"
+
+@ cases.map-get-needs-deceq
+source = ```nib
+fn g<K: shared>(m: Map(K, i64), k: K) -> Option(i64) { map_get(m, k) }
+```
+types = "error: map_get needs DecEq(K): add where DecEq(K)"
+
+// Classes and instances. The standard library's classes come with
+// the library; these declare their own.
+
+@ cases.class-call
+source = ```nib
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> i64
+}
+instance Ord(i64) {
+  fn compare(&a: i64, &b: i64) -> i64 { if a < b { 0 } else { 1 } }
+}
+Ord.compare(&1, &2)
+```
+types = "ok"
+
+@ cases.class-nested-instance
+source = ```nib
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> i64
+}
+instance Ord(i64) {
+  fn compare(&a: i64, &b: i64) -> i64 { if a < b { 0 } else { 1 } }
+}
+instance<A> Ord(List(A)) where Ord(A) {
+  fn compare(&a: List(A), &b: List(A)) -> i64 {
+    match a {
+      Nil => 0
+      Cons(x, xs) => match b {
+        Nil => 1
+        Cons(y, ys) => Ord.compare(&x, &y)
+      }
+    }
+  }
+}
+Ord.compare(&Cons(1, Nil), &Cons(2, Nil))
+```
+types = "ok"
+
+@ cases.class-missing-instance
+source = ```nib
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> i64
+}
+fn f(x: i64) -> i64 { x }
+Ord.compare(&f, &f)
+```
+types = "error: no instance Ord((i64) -> i64)"
+
+@ cases.class-missing-context
+source = ```nib
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> i64
+}
+fn m<A>(&a: A, &b: A) -> i64 { Ord.compare(&a, &b) }
+```
+types = "error: Ord.compare needs Ord(A): add where Ord(A)"
+
+@ cases.class-with-context
+source = ```nib
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> i64
+}
+fn m<A>(&a: A, &b: A) -> i64 where Ord(A) { Ord.compare(&a, &b) }
+```
+types = "ok"
+
+@ cases.class-overlap
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+struct P { x: i64 }
+instance C(P) { fn m(&a: P) -> i64 { 1 } }
+instance C(P) { fn m(&a: P) -> i64 { 2 } }
+```
+types = "error: C already has an instance for P"
+
+@ cases.class-head-repeated-generic
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+instance<A> C(Pair(A, A)) { fn m(&a: Pair(A, A)) -> i64 { 1 } }
+```
+types = "error: an instance head applies a type to distinct generics"
+
+@ cases.class-head-concrete-argument
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+instance C(List(i64)) { fn m(&a: List(i64)) -> i64 { 1 } }
+```
+types = "error: an instance head applies a type to distinct generics"
+
+@ cases.class-head-generic-unused
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+instance<A, B> C(List(A)) { fn m(&a: List(A)) -> i64 { 1 } }
+```
+types = "error: B does not appear in the head"
+
+@ cases.class-method-missing
+source = ```nib
+class C<A> {
+  fn m(&a: A) -> i64
+  fn n(&a: A) -> i64
+}
+instance C(i64) { fn m(&a: i64) -> i64 { 1 } }
+```
+types = "error: the instance C(i64) does not define n"
+
+@ cases.class-method-signature-differs
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+instance C(i64) { fn m(a: i64) -> i64 { 1 } }
+```
+types = "error: C.m of i64 takes &a: i64"
+
+@ cases.class-method-not-mentioning
+source = ```nib
+class C<A> { fn m() -> i64 }
+```
+types = "error: C.m does not mention A"
+
+@ cases.class-kind-bound
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+linear struct H {}
+instance C(H) { fn m(&a: H) -> i64 { 1 } }
+```
+types = "error: C takes types up to affine, and H is linear"
+
+@ cases.class-unqualified-call
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+m(&1)
+```
+types = "error: m is not defined"
+
+@ cases.class-undetermined
+source = ```nib
+class C<A> { fn m(&a: A) -> i64 }
+fn g() -> i64 { C.m(&Nil) }
+```
+types = "error: the type in C(?) is not determined"
+
+@ cases.class-no-structural-instance
+source = ```nib
+struct P { x: i64 }
+instance DecEq(P) {}
+```
+types = "error: DecEq is structural and has no instances to write"
+
+@ cases.class-laws-are-read
+source = ```nib
+class C<A> {
+  fn m(&a: A) -> i64
+  law l<a: A>(): Eq(i64, C.m(a), C.m(a))
+}
+```
+types = "ok"
+
+@ cases.class-instance-of-a-non-class
+source = ```nib
+instance Nope(i64) {}
+```
+types = "error: Nope is not a class"
+
+@ cases.class-where-closure
+source = ```nib
+class C<A: shared> { fn m(&a: A) -> i64 }
+instance C(i64) { fn m(&a: i64) -> i64 { a } }
+fn f<A: shared>(x: A) -> (A) -> i64 where C(A) { (y: A) => C.m(&y) }
+f(1)
+```
+types = "ok"
+
+@ cases.class-name-clash
+source = ```nib
+struct Ord {}
+```
+types = "error: Ord is already a class"
+
+@ cases.class-orphan
+source = ```nib
+instance Ord(Text) {
+  fn compare(&a: Text, &b: Text) -> Ordering { Equal }
+}
+```
+types = "error: Ord(Text) must be in the tote of Ord or of Text"
+
+@ cases.class-missing-std-instance
+source = ```nib
+fn f(x: i64) -> i64 { x }
+Ord.compare(&f, &f)
+```
+types = "error: no instance Ord((i64) -> i64)"
+
+@ cases.method-generics
+source = ```nib
+class Fold<A> {
+  fn fold<B: shared>(&a: A, init: B, &f: (B, i64) -> B) -> B
+}
+instance Fold(i64) {
+  fn fold<B: shared>(&a: i64, init: B, &f: (B, i64) -> B) -> B { f(init, a) }
+}
+fn go<A>(x: A) -> i64 where Fold(A) { Fold.fold(&x, 1, (a, b) => a + b) }
+go(5)
+```
+types = "ok"
+
+@ cases.hkt-functor-list
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(List) {
+  fn map<A: shared, B: shared>(x: List(A), f: (A) -> B) -> List(B) {
+    match x {
+      Nil => Nil
+      Cons(h, t) => Cons(f(h), Functor.map(t, f))
+    }
+  }
+}
+fn double_all<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) {
+  Functor.map(x, (n: i64) => n * 2)
+}
+double_all(Cons(2, Nil))
+```
+types = "ok"
+
+@ cases.hkt-partial-application
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance<E: shared> Functor(Result(E)) {
+  fn map<A: shared, B: shared>(x: Result(E, A), f: (A) -> B) -> Result(E, B) {
+    match x {
+      Ok(v) => Ok(v)
+      Err(e) => Err(f(e))
+    }
+  }
+}
+```
+types = "ok"
+
+@ cases.hkt-partial-not-last
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(Pair(_, i64)) {
+  fn map<A: shared, B: shared>(x: Pair(A, i64), f: (A) -> B) -> Pair(B, i64) { x }
+}
+```
+types = "error: an instance head applies a type to distinct generics"
+
+@ cases.hkt-not-an-application
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(List) {
+  fn map<A: shared, B: shared>(x: List(A), f: (A) -> B) -> List(B) { Nil }
+}
+fn double_all<F: (shared) -> shared>(x: F(i64)) -> F(i64) where Functor(F) { x }
+double_all(3)
+```
+types = "error: i64 is not an application of a type constructor"
+
+@ cases.hkt-kind-bound
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(Vec) {
+  fn map<A: shared, B: shared>(x: Vec(A), f: (A) -> B) -> Vec(B) { vec_new() }
+}
+```
+types = "error: Functor takes constructors from shared to shared, and Vec(shared) is affine"
+
+@ cases.hkt-arity
+source = ```nib
+let x: Pair(i64) = Pair { fst: 1, snd: 2 }
+```
+types = "error: Pair takes 2 arguments"
+
+@ cases.hkt-wrong-instance-kind
+source = ```nib
+class Functor<F: (shared) -> shared> {
+  fn map<A: shared, B: shared>(x: F(A), f: (A) -> B) -> F(B)
+}
+instance Functor(i64) {
+  fn map<A: shared, B: shared>(x: i64, f: (A) -> B) -> i64 { x }
+}
+```
+types = "error: Functor takes a type constructor with one argument missing, and i64 is not one"
+
+@ cases.law-effectful-method
+source = ```nib
+effect ask: () -> i64
+class C<A> {
+  fn m(&a: A) -> () ! {ask}
+  law l<a: A>(): Eq(i64, 1, 1)
+}
+```
+types = "error: C.m performs effects, so C cannot have laws"
+
+@ cases.law-in-a-class-without-effects-is-fine
+source = ```nib
+class C<A> {
+  fn m(&a: A) -> i64
+  law l<a: A>(): Eq(i64, 1, 1)
+}
+instance C(i64) {
+  fn m(&a: i64) -> i64 { a }
+  law l<a: i64>(): Eq(i64, 1, 1) { refl() }
+}
+```
+types = "ok"
+
+@ cases.law-not-in-the-class
+source = ```nib
+class C<A> {
+  fn m(&a: A) -> i64
+}
+instance C(i64) {
+  fn m(&a: i64) -> i64 { a }
+  law nope<a: i64>(): Eq(i64, 1, 1) { refl() }
+}
+```
+types = "error: C has no law nope"
+
+@ cases.law-written-twice
+source = ```nib
+class C<A> {
+  fn m(&a: A) -> i64
+  law l<a: A>(): Eq(i64, 1, 1)
+}
+instance C(i64) {
+  fn m(&a: i64) -> i64 { a }
+  law l<a: i64>(): Eq(i64, 1, 1) { refl() }
+  law l<a: i64>(): Eq(i64, 1, 1) { refl() }
+}
+```
+types = "error: the law l of the instance is written twice"

@@ -1,0 +1,143 @@
+// `shows`: what the program shows with `perform show(name, v)`, in order, as
+// "<name> = <value>". The host answers `show`; the program goes on with `()`.
+
+@ cases.arithmetic
+source = ```nib
+let a = 1 + 2 * 3
+let f = (x, y) => x * y
+perform show("a", a)
+perform show("b", f(a, 2))
+```
+shows = ["a = 7", "b = 14"]
+
+@ cases.a-loop
+source = ```nib
+fn sum(n: i64) -> i64 {
+  var i = 0
+  var s = 0
+  while i < n {
+    i := i + 1
+    s := s + i
+  }
+  s
+}
+perform show("r", sum(100))
+```
+shows = ["r = 5050"]
+
+@ cases.a-continuation-resumes-twice
+source = ```nib
+effect ask: (n: i64) -> i64 resume ω
+let c = handle { perform ask(5) + 1 } with {
+  ask(n), k => k(n) + k(n + 1)
+  return v => v
+}
+perform show("c", c)
+```
+shows = ["c = 13"]
+
+@ cases.show-is-ordered-with-the-handled-computation
+source = ```nib
+effect ask: () -> i64 resume ω
+let c = handle {
+  perform show("before", 1)
+  let v = perform ask()
+  perform show("after", v)
+  v
+} with {
+  ask(), k => k(2) + k(3)
+}
+perform show("c", c)
+```
+shows = ["before = 1", "after = 2", "after = 3", "c = 5"]
+
+@ cases.a-budget-is-an-effect
+source = ```nib
+fn spin() -> i64 {
+  while true { }
+  0
+}
+let d = handle { budget(steps: 50) { spin() } } with {
+  exceeded(info), k => k(0 - 1)
+}
+perform show("d", d)
+```
+shows = ["d = -1"]
+
+@ cases.more-steps-resume-the-body
+description = "info.more(m) goes back into the stopped body; what it showed before stopping stays shown once"
+source = ```nib
+fn count(n: i64) -> i64 {
+  var i = 0
+  while i < n { i := i + 1 }
+  i
+}
+let d = handle {
+  budget(steps: 40) {
+    perform show("start", 0)
+    count(100)
+  }
+} with {
+  exceeded(info), k => info.more(40)
+}
+perform show("d", d)
+```
+shows = ["start = 0", "d = 100"]
+
+@ cases.unbounded-runs-the-body-to-the-end
+source = ```nib
+fn count(n: i64) -> i64 {
+  var i = 0
+  while i < n { i := i + 1 }
+  i
+}
+let d = handle { budget(steps: 10) { count(1000) } } with {
+  exceeded(info), k => info.unbounded()
+}
+perform show("d", d)
+```
+shows = ["d = 1000"]
+
+@ cases.div-and-mod
+source = ```nib
+perform show("q", div(7, 2))
+perform show("r", mod(7, 2))
+perform show("n", div(0 - 7, 2))
+```
+shows = ["q = 3", "r = 1", "n = -3"]
+
+@ cases.i32-overflows-at-its-width
+source = ```nib
+let a: i32 = 2147483647
+perform show("a", a + 1)
+```
+run_error = "too large"
+
+@ cases.i64-holds-it
+source = ```nib
+let a: i64 = 2147483647
+perform show("a", a + 1)
+```
+shows = ["a = 2147483648"]
+
+@ cases.division-by-zero
+source = "perform show(\"q\", div(1, 0))"
+run_error = "division by zero"
+
+@ cases.spawn-and-join-under-run-eager
+source = ```nib
+let r = run_eager(() => {
+  let a = perform spawn(() => 20)
+  let b = perform spawn(() => 22)
+  task_join(a) + task_join(b)
+})
+perform show("r", r)
+```
+shows = ["r = 42"]
+
+@ cases.par-pairs-two-results
+source = ```nib
+let p = run_eager(() => par(() => 1 + 1, () => "x"))
+perform show("p", p)
+```
+shows = ["p = Pair { fst: 2, snd: \"x\" }"]

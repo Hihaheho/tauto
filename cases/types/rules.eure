@@ -1,0 +1,105 @@
+// `types`: "ok" or "error: <part of the message>" from the type check.
+
+@ cases.an-integer-literal-is-i64
+source = "let a = 1 + 2"
+types = "ok"
+
+@ cases.a-written-width-is-kept
+source = "let a: i32 = 1 + 2"
+types = "ok"
+
+@ cases.widths-do-not-mix
+source = "fn f(a: i32, b: i64) -> i64 { a + b }"
+types = "error: operands differ"
+
+@ cases.i32-does-not-fit-i64
+source = "fn f(a: i32) -> i64 { a }"
+types = "error: i32 does not fit i64"
+
+@ cases.a-literal-out-of-range
+source = "let a: i32 = 3000000000"
+types = "error: does not fit i32"
+
+@ cases.integer-division-is-a-type-error
+source = "let a = 7 / 2"
+types = "error: integer `/`"
+
+@ cases.div-and-mod-divide-integers
+source = "let a: i32 = div(7, 2)"
+types = "ok"
+
+@ cases.no-concatenation-of-text
+source = "let a = \"x\" + \"y\""
+types = "error: not a number"
+
+@ cases.names-are-case-sensitive
+source = ```nib
+fn total() -> i64 { 1 }
+let a = Total()
+```
+types = "error: Total is not defined"
+
+@ cases.a-handler-gives-the-union-of-its-arms
+source = ```nib
+effect ask: () -> i64
+fn f() -> (i64 | Text) {
+  handle { perform ask() } with {
+    ask(), k => "none"
+  }
+}
+```
+types = "ok"
+
+@ cases.the-union-is-not-widened-to-a-number
+source = ```nib
+effect ask: () -> i64
+fn f() -> i64 {
+  handle { perform ask() } with {
+    ask(), k => "none"
+  }
+}
+```
+types = "error: i64 | Text does not fit i64"
+
+@ cases.k-takes-the-operation-result
+source = ```nib
+effect ask: () -> i64
+let c = handle { perform ask() } with {
+  ask(), k => k("a")
+}
+```
+types = "error: Text does not fit i64"
+
+@ cases.info-more-gives-the-handle-type
+source = ```nib
+let d: i64 = handle { budget(steps: 10) { 1 } } with {
+  exceeded(info), k => info.more(10)
+}
+```
+types = "ok"
+
+@ cases.show-takes-a-name
+source = "perform show(1, 2)"
+types = "error: i64 does not fit Text"
+
+@ cases.a-tag-is-forgotten
+source = ```nib
+label price
+fn f(x: @price i64) -> i64 { x }
+```
+types = "ok"
+
+@ cases.a-tag-is-not-added
+source = ```nib
+label price
+fn f(x: i64) -> @price i64 { x }
+```
+types = "error: does not fit @price i64"
+
+@ cases.a-match-covers-every-value
+source = "let a = match 1 { 0 => 1 }"
+types = "error: does not cover"
+
+@ cases.a-bool-match-with-both-arms
+source = "let a = match true { true => 1, false => 0 }"
+types = "ok"

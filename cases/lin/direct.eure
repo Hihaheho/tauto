@@ -1,0 +1,265 @@
+// `direct` operations: an arm that continues with
+// `k(e)` at the end of every path, and runs as an ordinary call.
+
+@ cases.direct-arm-k-of-e
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => k(())
+}
+```
+types = "ok"
+
+@ cases.direct-arm-block-tail
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => {
+    perform show("t", t)
+    k(())
+  }
+}
+```
+types = "ok"
+
+@ cases.direct-arm-if-tail
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => if t == "a" { k(()) } else {
+    perform show("t", t)
+    k(())
+  }
+}
+```
+types = "ok"
+
+@ cases.direct-arm-match-tail
+source = ```nib
+effect get: () -> i64 direct
+let o: Option(i64) = Some(1)
+let r = handle { perform get() } with {
+  get(), k => match o {
+    Some(v) => k(v)
+    None => k(0)
+  }
+}
+```
+types = "ok"
+
+@ cases.direct-arm-k-twice-rejected
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => k(k(()))
+}
+```
+types = "error: log is direct; every path of its arm must end in k(e)"
+
+@ cases.direct-arm-without-k-rejected
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t) => ()
+}
+```
+types = "error: log is direct; every path of its arm must end in k(e)"
+
+@ cases.direct-arm-k-not-tail-rejected
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => {
+    k(())
+    ()
+  }
+}
+```
+types = "error: log is direct; every path of its arm must end in k(e)"
+
+@ cases.direct-arm-one-path-misses-k
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => if t == "a" { k(()) } else { () }
+}
+```
+types = "error: log is direct; every path of its arm must end in k(e)"
+
+@ cases.direct-arm-k-in-closure-rejected
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => {
+    let g = () => k(())
+    g()
+  }
+}
+```
+types = "error: log is direct; every path of its arm must end in k(e)"
+
+@ cases.direct-arm-if-without-else-rejected
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => if t == "a" { k(()) }
+}
+```
+types = "error: log is direct; every path of its arm must end in k(e)"
+
+@ cases.direct-arm-tail-runs-statements
+source = ```nib
+effect log: (t: Text) -> () direct
+var out = buf_new()
+handle { perform log("a") } with {
+  log(t), k => {
+    buf_push(&mut out, &t)
+    buf_push(&mut out, &"!")
+    k(())
+  }
+}
+perform show("out", text_of(buf_clone(&out)))
+```
+shows = ["out = \"a!\""]
+
+@ cases.direct-arm-performs-direct
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => k(perform show("log", t))
+}
+```
+rows = "ok"
+
+@ cases.direct-arm-performs-ask
+source = ```nib
+effect log: (t: Text) -> () direct
+effect ask: () -> i64
+let r = handle { perform log("a") } with {
+  log(t), k => k({ perform ask(); () })
+}
+```
+rows = "error: the arm of log performs ask, which is not direct"
+
+@ cases.direct-arm-loops
+source = ```nib
+effect log: (t: Text) -> () direct
+let r = handle { perform log("a") } with {
+  log(t), k => k({ while true { }; () })
+}
+```
+rows = "error: the arm of log performs Div, which is not direct"
+
+@ cases.direct-arm-borrows-mut
+source = ```nib
+effect log: (t: Text) -> () direct
+var out = buf_new()
+handle { perform log("a") } with {
+  log(t), k => k(buf_push(&mut out, &t))
+}
+```
+lin = "ok"
+
+@ cases.direct-arm-owner-frozen
+source = ```nib
+effect log: (t: Text) -> () direct
+var out = buf_new()
+handle {
+  buf_push(&mut out, &"x")
+  perform log("a")
+} with {
+  log(t), k => k(buf_push(&mut out, &t))
+}
+```
+lin = "error: out is borrowed by the arm of log"
+
+@ cases.direct-arm-moves-affine
+source = ```nib
+effect log: (t: Text) -> () direct
+var out = buf_new()
+handle { perform log("a") } with {
+  log(t), k => {
+    let s = text_of(out)
+    k(())
+  }
+}
+```
+lin = "error: the arm of log moves out, but it runs many times"
+
+@ cases.non-direct-arm-captures-affine
+source = ```nib
+effect ask: () -> i64
+var out = buf_new()
+handle { perform ask() } with {
+  ask(), k => {
+    buf_push(&mut out, &"x")
+    k(1)
+  }
+}
+```
+lin = "error: arm captures affine var out"
+
+@ cases.linear-across-direct
+source = ```nib
+effect log: (t: Text) -> () direct
+linear struct H {}
+fn hello() -> H { H {} }
+fn finish(h: H) -> i64 { match h { H {} => 0 } }
+fn f() -> i64 ! {log} {
+  let h = hello()
+  perform log("a")
+  finish(h)
+}
+```
+lin = "ok"
+
+@ cases.row-variable-direct-bound
+source = ```nib
+effect log: (t: Text) -> () direct
+fn each_d<e: direct>(&f: () -> () ! {|e}) -> () ! {|e} { f() }
+fn main() -> () ! {log} { each_d(() => perform log("a")) }
+```
+rows = "ok"
+
+@ cases.row-variable-direct-rejects-ask
+source = ```nib
+effect ask: () -> i64
+fn each_d<e: direct>(&f: () -> () ! {|e}) -> () ! {|e} { f() }
+fn main() -> () ! {ask} { each_d(() => { perform ask(); () }) }
+```
+rows = "error: ask is not direct but e is direct"
+
+@ cases.direct-arm-runs-in-order
+source = ```nib
+effect log: (t: Text) -> () direct
+var out = buf_new()
+handle {
+  perform log("a")
+  perform log("b")
+} with {
+  log(t), k => k(buf_push(&mut out, &t))
+}
+perform show("out", text_of(buf_clone(&out)))
+```
+shows = ["out = \"ab\""]
+
+@ cases.show-is-direct
+source = ```nib
+handle { perform show("x", 1) } with {
+  show(n, v), k => k(perform show(n, v))
+}
+```
+shows = ["x = 1"]
+
+@ cases.nested-direct-reaches-outer
+source = ```nib
+effect log: (t: Text) -> () direct
+handle {
+  handle { perform log("a"); perform log("b") } with {
+    log(t), k => k(perform log(t))
+  }
+} with {
+  log(t), k => k(perform show("seen", t))
+}
+```
+shows = ["seen = \"a\"", "seen = \"b\""]

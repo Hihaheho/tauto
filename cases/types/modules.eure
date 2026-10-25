@@ -1,0 +1,63 @@
+// Modules.
+
+@ cases.module-qualified-call
+source = ```nib
+module M { fn one() -> i64 { 1 } }
+perform show("x", M.one())
+```
+shows = ["x = 1"]
+
+@ cases.module-inner-unqualified
+source = ```nib
+module M {
+  fn one() -> i64 { 1 }
+  fn two() -> i64 { one() + one() }
+}
+M.two()
+```
+types = "ok"
+
+@ cases.module-not-open
+source = ```nib
+module M { fn one() -> i64 { 1 } }
+one()
+```
+types = "error: one is not defined"
+
+@ cases.module-and-type-same-name
+source = ```nib
+struct P { x: i64 }
+module P { fn mk() -> i64 { 1 } }
+P.mk()
+```
+types = "ok"
+
+@ cases.module-nested
+source = ```nib
+module A { module B { fn f() -> i64 { 1 } } }
+A.B.f()
+```
+types = "ok"
+
+@ cases.module-twice
+source = ```nib
+module M { }
+module M { }
+```
+types = "error: module M is declared twice"
+
+@ cases.local-named-like-module
+source = ```nib
+module m { fn f() -> i64 { 1 } }
+let m = 1
+```
+types = "error: m is the name of a module"
+
+@ cases.module-collides-with-class
+source = ```nib
+class Ord<A: linear> {
+  fn compare(&a: A, &b: A) -> i64
+}
+module Ord { fn compare(&a: i64, &b: i64) -> i64 { 0 } }
+```
+types = "error: module Ord collides with class Ord"

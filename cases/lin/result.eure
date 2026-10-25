@@ -1,0 +1,100 @@
+// `Result`, `fail` / `raise` / `catch` and `Slice`.
+
+@ cases.raise-ok
+source = ```nib
+let r: Result(i64, Text) = Ok(1)
+let v = catch(() => raise(r) + 1)
+perform show("v", v)
+```
+shows = ["v = Ok(2)"]
+
+@ cases.raise-err-stops
+source = ```nib
+let r: Result(i64, Text) = Err("bad")
+let v = catch(() => raise(r) + 1)
+perform show("v", v)
+```
+shows = ["v = Err(\"bad\")"]
+
+@ cases.raise-needs-row
+source = ```nib
+fn f(r: Result(i64, Text)) -> i64 ! {} { raise(r) }
+```
+rows = "error: `f` may perform fail"
+
+@ cases.catch-removes-fail
+source = ```nib
+fn f(r: Result(i64, Text)) -> Result(i64, Text) ! {} { catch(() => raise(r)) }
+```
+rows = "ok"
+
+@ cases.catch-keeps-other-effects
+source = ```nib
+effect ask: () -> i64
+fn f(r: Result(i64, Text)) -> Result(i64, Text) ! {} {
+  catch(() => raise(r) + perform ask())
+}
+```
+rows = "error: `f` may perform ask"
+
+@ cases.two-fails-are-told-apart
+description = "fail(IoError) and fail(ParseError) are two effects, so `catch` cannot tell which one it handles"
+unimplemented = "the row check does not yet tell effects apart by their type arguments"
+source = ```nib
+struct IoError { code: i64 }
+struct ParseError { line: i64 }
+fn f(a: Result(i64, IoError), b: Result(i64, ParseError)) -> Result(i64, IoError) ! {} {
+  catch(() => raise(a) + raise(b))
+}
+```
+rows = "error: fail is ambiguous here"
+
+@ cases.affine-across-raise
+source = ```nib
+fn f(r: Result(u64, Text)) -> u64 ! {fail} {
+  var v = vec_new()
+  vec_push(&mut v, 1)
+  raise(r) + vec_len(&v)
+}
+```
+lin = "ok"
+
+@ cases.linear-across-raise
+source = ```nib
+linear struct H {}
+fn hello() -> H { H {} }
+fn finish(h: H) -> i64 { match h { H {} => 0 } }
+fn f(r: Result(i64, Text)) -> i64 ! {fail} {
+  let h = hello()
+  let v = raise(r)
+  finish(h) + v
+}
+```
+lin = "error: h is live across fail, which may not resume"
+
+@ cases.slice-only-borrowed
+source = ```nib
+fn f(s: Slice(i64)) -> u64 { 0 }
+```
+types = "error: Slice(A) can only be borrowed"
+
+@ cases.slice-in-a-vec-is-rejected
+source = ```nib
+fn f(&v: Vec(Slice(i64))) -> u64 { 0 }
+```
+types = "error: Slice(A) can only be borrowed"
+
+@ cases.slice-borrowed-is-fine
+source = ```nib
+fn f(&s: Slice(i64)) -> u64 { slice_len(&s) }
+```
+types = "ok"
+
+@ cases.slice-len
+source = ```nib
+var v = vec_new()
+vec_push(&mut v, 1)
+let &s = vec_as_slice(&v)
+perform show("n", slice_len(&s))
+```
+shows = ["n = 1"]

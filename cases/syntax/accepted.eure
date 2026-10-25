@@ -1,0 +1,320 @@
+// Programs Nib's grammar accepts. Only the parser runs: types and names are
+// not checked here.
+
+@ cases.let-var-and-assignment
+parses = true
+source = ```nib
+let rate = 10
+var total = 0
+total := total + 100
+```
+
+@ cases.a-lambda
+parses = true
+source = "x => x * 2"
+
+@ cases.a-lambda-with-a-block
+parses = true
+source = ```nib
+x => {
+  if x == 0 {
+    return 0
+  }
+  x * 2
+}
+```
+
+@ cases.several-parameters
+parses = true
+source = "(price, count) => price * count"
+
+@ cases.typed-parameter
+parses = true
+source = "(x: i64) => x * 2"
+
+@ cases.named-function-and-while
+parses = true
+source = ```nib
+fn factorial(n: i64) -> i64 {
+  var result = 1
+  var i = 2
+  while i <= n {
+    result := result * i
+    i := i + 1
+  }
+  result
+}
+```
+
+@ cases.else-if
+parses = true
+source = "if a > 0 { 1 } else if a < 0 { -1 } else { 0 }"
+
+@ cases.operators
+parses = true
+source = ```nib
+let a = -2 + 3 * 4 - 1
+let b = x == 1 && !c || y != 2
+```
+
+@ cases.fields-and-comments
+parses = true
+source = ```nib
+r.price * r.count // a comment
+/* a comment
+ over lines */ 1
+```
+
+@ cases.newlines-inside-parentheses
+description = "A newline inside ( ) does not end the statement; `;` does"
+parses = true
+source = ```nib
+f(
+  a,
+  b
+); 1; 2
+```
+
+@ cases.continued-binary-operator
+parses = true
+source = ```nib
+let x =
+  1 +
+  2
+```
+
+@ cases.empty
+parses = true
+source = ""
+
+@ cases.loops
+parses = true
+source = ```nib
+let v = loop { break 3 }
+```
+
+@ cases.struct-and-enum
+parses = true
+source = ```nib
+struct Point { x: Float, y: Float }
+enum Shape<T> {
+  Circle(Float)
+  Rect { w: Float, h: Float }
+  Empty
+}
+let p = Point { x: 1.0, y: 2.0 }
+let q = Shape::Circle(1.0)
+```
+
+@ cases.record-literal-over-lines
+description = "A `{` whose first content is `name:` is a record, even on the next line"
+parses = true
+source = ```nib
+let r = {
+
+  x: 1
+  y: 2
+}
+```
+
+@ cases.match
+parses = true
+source = ```nib
+let a = match s {
+  Shape::Circle(r) => r * r
+  Shape::Rect { w, h: hh } if w > 0 => w * hh,
+  -1 => 2
+  _ => 0
+}
+```
+
+@ cases.function-types
+parses = true
+source = "let g: (i64, Text) -> Bool = (x: i64, y: Text) => true"
+
+@ cases.effects-and-handlers
+parses = true
+source = ```nib
+effect ask: (q: Text) -> i64
+
+fn total() -> i64 ! {ask} {
+  perform ask("a") + perform ask("b")
+}
+
+let result = handle { total() } with {
+  ask(q), k => k(10)
+  return v => v * 2
+}
+```
+
+@ cases.effect-rows
+description = "A row binds to the nearest arrow"
+parses = true
+source = ```nib
+fn apply<A, B>(x: A, f: (A) -> B ! {e}) -> B ! {e} { f(x) }
+fn h() -> (i64) -> i64 ! {ask | e} { x => x }
+```
+
+@ cases.tags
+parses = true
+source = ```nib
+label price
+let v = @price 3
+```
+
+@ cases.a-budget
+parses = true
+source = "let r = budget(steps: 100) { 1 + 2 }"
+
+@ cases.kinds-on-declarations
+parses = true
+source = ```nib
+affine struct File {}
+linear struct Handshake { step: i64 }
+copy struct Point { x: i64, y: i64 }
+shared enum Tree<A> { Leaf, Node(Tree(A), A, Tree(A)) }
+```
+
+@ cases.the-kind-of-a-function-type
+parses = true
+source = ```nib
+fn once(f: affine () -> i64) -> i64 { f() }
+fn exactly(f: linear (Handshake) -> ()) -> () { () }
+```
+
+@ cases.resume-quantities
+parses = true
+source = ```nib
+effect ask: () -> i64
+effect choose: () -> Bool resume ω
+effect fail: (msg: Text) -> Never resume 0
+effect step: () -> () resume 1
+effect pick: () -> i64 resume <=1
+```
+
+@ cases.borrowed-parameters-and-results
+parses = true
+source = ```nib
+fn len(&v: Vec(i64)) -> u64 { vec_len(&v) }
+fn push(&mut v: Vec(i64), x: i64) -> () { vec_push(&mut v, x) }
+fn first(&v: Vec(File)) -> &File { vec_index(&v, 0) }
+```
+
+@ cases.let-of-a-borrow
+parses = true
+source = ```nib
+fn f(&v: Vec(File)) -> i64 {
+  let &x = vec_index(&v, 0)
+  0
+}
+```
+
+@ cases.bounds-on-generics
+parses = true
+source = ```nib
+fn twice<A: shared>(x: A) -> Pair(A, A) { pair(x, x) }
+fn keep<A: linear>(x: A) -> A { x }
+fn with_file<A, e: <=1>(path: Text, &body: (&f: File) -> A ! {|e}) -> A ! {|e} { body(&f) }
+```
+
+@ cases.an-extern-block
+parses = true
+source = ```nib
+affine struct File {}
+affine struct IoError {}
+extern {
+  fn file_open(&path: Text) -> Result(File, IoError)
+  fn file_close(f: File) -> ()
+}
+```
+build = "error: has no rust binding"
+
+@ cases.match-on-a-borrow
+parses = true
+source = ```nib
+fn size(&e: Expr) -> i64 {
+  match &e {
+    Num(n) => 1
+    Add(l, r) => size(&l) + size(&r)
+  }
+}
+```
+
+@ cases.names-that-are-kinds-elsewhere
+parses = true
+source = ```nib
+let copy = 1
+let affine = copy + 1
+let mut = 2
+let resume = mut
+```
+
+@ cases.a-direct-operation
+parses = true
+source = ```nib
+effect log: (t: Text) -> () direct
+effect get: () -> i64 direct
+```
+
+@ cases.direct-is-a-name-elsewhere
+parses = true
+source = ```nib
+let direct = 1
+fn use_it<e: direct>(&f: () -> () ! {|e}) -> () ! {|e} { f() }
+let again = direct + 1
+```
+
+@ cases.text-literals-in-three-forms
+parses = true
+source = ```nib
+let a = "line\n\ttab \"q\" \\ \u{1F600}"
+let b = 'C:\Users\x'
+let c = plaintext`\n is two characters here`
+```
+
+@ cases.a-text-pattern-in-single-quotes
+parses = true
+source = ```nib
+fn f(s: Text) -> i64 {
+  match s -> i64 {
+    'a\b' => 1
+    _ => 0
+  }
+}
+```
+
+@ cases.a-syntax-literal-is-text-to-the-parser
+parses = true
+source = "let a = `abc`"
+
+@ cases.a-syntax-declaration
+parses = true
+source = ````nib
+syntax math = ```par
+%start E
+%%
+E: /[0-9]+/;
+```
+````
+
+@ cases.where-clause
+parses = true
+source = ```nib
+fn max<A: shared>(a: A, b: A) -> A where Ord(A) { a }
+fn get<K, V>(&m: Map(K, V), &k: K) -> V ! {missing} where DecEq(K), Hash(K) { m }
+```
+
+@ cases.where-in-extern
+parses = true
+source = ```nib
+extern {
+  fn lookup<K>(&k: K) -> i64 where DecEq(K)
+}
+```
+
+@ cases.where-stays-a-name
+parses = true
+source = ```nib
+let where = 1
+where + 1
+```

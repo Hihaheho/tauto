@@ -1,0 +1,132 @@
+// Kinds: `lin` is "ok" or "error: <part of the
+// message>" from the use check, which runs once the types check.
+
+@ cases.a-struct-of-copies-is-copy
+source = ```nib
+struct P { x: i64, y: i64 }
+let a = P { x: 1, y: 2 }
+let b = a
+let c = a
+```
+lin = "ok"
+
+@ cases.text-makes-shared
+source = ```nib
+struct Q { t: Text }
+let a = Q { t: "hi" }
+let b = a
+let c = a
+```
+lin = "ok"
+
+@ cases.declared-copy-with-shared-field
+source = "copy struct Q { t: Text }"
+types = "error: declared copy"
+
+@ cases.declared-affine-is-used-once
+source = ```nib
+affine struct F {}
+fn f(x: F) -> F { x }
+let a = F {}
+let b = f(a)
+let c = f(a)
+```
+lin = "error: a is used after move"
+
+@ cases.declared-affine-may-be-dropped
+source = ```nib
+affine struct F {}
+fn g(x: F) -> i64 { 0 }
+```
+lin = "ok"
+
+@ cases.linear-must-be-used
+source = ```nib
+linear struct H {}
+fn g(x: H) -> i64 { 0 }
+```
+lin = "error: x is not used"
+
+@ cases.linear-used-on-one-path
+source = ```nib
+linear struct H {}
+fn consume(x: H) -> i64 { match x { H {} => 1 } }
+fn g(x: H, b: Bool) -> i64 { if b { consume(x) } else { 0 } }
+```
+lin = "error: used on some paths only"
+
+@ cases.affine-field-makes-affine
+source = ```nib
+affine struct F {}
+struct W { f: F }
+fn keep(w: W) -> W { w }
+let a = W { f: F {} }
+let b = keep(a)
+let c = keep(a)
+```
+lin = "error: used after move"
+
+@ cases.recursive-enum-is-shared
+source = ```nib
+enum L { Nil, Cons(i64, L) }
+let a = Cons(1, Nil)
+let b = a
+let c = a
+```
+lin = "ok"
+
+@ cases.generic-default-is-affine
+source = "fn twice<A>(x: A) -> Pair(A, A) { Pair { fst: x, snd: x } }"
+lin = "error: x is used after move"
+
+@ cases.generic-shared-may-dup
+source = "fn twice<A: shared>(x: A) -> Pair(A, A) { Pair { fst: x, snd: x } }"
+lin = "ok"
+
+@ cases.generic-default-may-drop
+source = "fn fst<A, B>(p: Pair(A, B)) -> A { match p { Pair { fst: a, snd: _ } => a } }"
+lin = "ok"
+
+@ cases.generic-linear-may-not-drop
+source = "fn fst<A, B: linear>(p: Pair(A, B)) -> A { match p { Pair { fst: a, snd: b } => a } }"
+lin = "error: b is not used"
+
+@ cases.linear-does-not-fit-affine-bound
+source = ```nib
+linear struct H {}
+fn f<A>(x: A) -> A { x }
+let h = H {}
+let g = f(h)
+```
+types = "error: linear does not fit affine"
+
+@ cases.closure-capturing-affine-is-affine
+source = ```nib
+affine struct F {}
+fn consume(x: F) -> i64 { 0 }
+let a = F {}
+let g = () => consume(a)
+let r = g()
+let s = g()
+```
+lin = "error: g is used after move"
+
+@ cases.closure-capturing-affine-needs-affine-type
+source = ```nib
+affine struct F {}
+fn consume(x: F) -> i64 { 0 }
+fn run(f: () -> i64) -> i64 { f() }
+let a = F {}
+let r = run(() => consume(a))
+```
+types = "error: affine closure where shared"
+
+@ cases.an-affine-function-type-takes-the-closure
+source = ```nib
+affine struct F {}
+fn consume(x: F) -> i64 { 0 }
+fn run(f: affine () -> i64) -> i64 { f() }
+let a = F {}
+let r = run(() => consume(a))
+```
+lin = "ok"

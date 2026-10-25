@@ -1,0 +1,123 @@
+// Programs Nib's grammar rejects.
+
+@ cases.let-without-a-name
+parses = false
+source = "let = 1"
+
+@ cases.unclosed-paren
+parses = false
+source = "f(1, 2"
+
+@ cases.unclosed-parameter-list
+parses = false
+source = ```nib
+fn f(x: i64 -> i64 {
+  x
+}
+```
+
+@ cases.double-assignment
+parses = false
+source = "x := := 1"
+
+@ cases.unterminated-text
+parses = false
+source = "let t = \"abc"
+
+@ cases.two-operators
+parses = false
+source = "1 + * 2"
+
+@ cases.a-handle-without-a-block-is-rejected
+description = "handle takes a block and then with { arms }; the form handle e { arms } is not read"
+parses = false
+source = ```nib
+effect ask: () -> i64
+handle 1 + 1 {
+  ask() => 1
+}
+```
+
+@ cases.a-handle-block-with-arms-but-no-with-is-rejected
+parses = false
+source = ```nib
+effect ask: () -> i64
+handle { 1 } {
+  ask() => 2
+}
+```
+
+@ cases.no-unit-suffix
+parses = false
+source = "let a = 3'km"
+
+@ cases.no-percent
+parses = false
+source = "let a = 5%"
+
+@ cases.no-holes-or-try
+parses = false
+source = "let a = try { f()? }"
+
+@ cases.no-text-concatenation-operator
+parses = false
+source = "let a = \"x\" & \"y\""
+
+@ cases.equality-is-written-one-way
+description = "`==` and `!=`; neither `=` nor `<>` compares"
+parses = false
+source = "let a = if x = 1 { 0 } else { x <> 2 }"
+
+@ cases.no-indexing
+parses = false
+source = "let a = xs[0]"
+
+@ cases.no-power-operator
+parses = false
+source = "let a = 2 ^ 3"
+
+@ cases.no-for-loop
+parses = false
+source = "for x in xs { }"
+
+@ cases.no-rest-or-default-parameters
+parses = false
+source = "fn f(x: i64 = 1, ...xs: i64) -> i64 { x }"
+
+@ cases.a-type-is-applied-as-a-call
+description = "`Option(i64)`, never `Option<i64>`"
+parses = false
+source = "fn f(x: Option<i64>) -> i64 { 0 }"
+
+@ cases.a-struct-without-braces
+parses = false
+source = "affine struct File"
+
+@ cases.a-kind-on-a-function
+parses = false
+source = "affine fn f() -> i64 { 1 }"
+
+@ cases.resume-and-direct-together
+parses = false
+source = "effect log: (t: Text) -> () resume 1 direct"
+
+@ cases.direct-before-the-result
+parses = false
+source = "effect log: (t: Text) direct -> ()"
+
+@ cases.extern-names-no-language
+description = "The rust path goes in Tauto.eure"
+parses = false
+source = ```nib
+extern "rust" {
+  fn f(x: i64) -> i64
+}
+```
+
+@ cases.unknown-escape-in-a-double-quoted-text
+parses = false
+source = "let a = \"\\q\""
+
+@ cases.an-unclosed-single-quoted-text
+parses = false
+source = "let a = 'abc"

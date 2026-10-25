@@ -1,0 +1,293 @@
+// A `return` inside a handle that may resume more than once, and a `budget`
+// inside one.
+
+@ cases.return-from-a-handle-that-resumes-twice
+source = ```nib
+effect choose: () -> Bool resume ω
+fn pick() -> i64 {
+  let r = handle {
+    let b = perform choose()
+    if b {
+      return 100
+    }
+    1
+  } with {
+    choose(), k => k(true) + k(false)
+  }
+  r + 1000
+}
+perform show("p", pick())
+```
+shows = ["p = 100"]
+
+@ cases.the-second-resume-returns
+source = ```nib
+effect choose: () -> Bool resume ω
+fn pick() -> i64 {
+  let r = handle {
+    let b = perform choose()
+    if b {
+      2
+    } else {
+      return 7
+    }
+  } with {
+    choose(), k => {
+      let a = k(true)
+      perform show("a", a)
+      a + k(false)
+    }
+  }
+  r + 1000
+}
+perform show("p", pick())
+```
+shows = ["a = 2", "p = 7"]
+
+@ cases.no-return-taken
+source = ```nib
+effect choose: () -> Bool resume ω
+fn pick(n: i64) -> i64 {
+  let r = handle {
+    let b = perform choose()
+    if n > 5 {
+      return 0 - 1
+    }
+    if b { 10 } else { 20 }
+  } with {
+    choose(), k => k(true) + k(false)
+  }
+  r + 1000
+}
+perform show("a", pick(1))
+perform show("b", pick(9))
+```
+shows = ["a = 1030", "b = -1"]
+
+@ cases.return-from-a-while-in-the-body
+source = ```nib
+effect pick: () -> i64 resume ω
+fn first_big() -> i64 {
+  let r = handle {
+    var i = 0
+    while i < 5 {
+      let x = perform pick()
+      if x + i > 3 {
+        return x + i
+      }
+      i := i + 1
+    }
+    0
+  } with {
+    pick(), k => k(1) + k(2)
+  }
+  r
+}
+perform show("v", first_big())
+```
+shows = ["v = 4"]
+
+@ cases.return-in-a-function-that-suspends
+source = ```nib
+effect choose: () -> Bool resume ω
+effect ask: () -> i64
+fn pick() -> i64 ! {ask} {
+  let r = handle {
+    let b = perform choose()
+    if b {
+      return perform ask() + 1
+    }
+    1
+  } with {
+    choose(), k => k(true) + k(false)
+  }
+  r + 1000
+}
+let v = handle { pick() } with {
+  ask(), k => k(41)
+}
+perform show("v", v)
+```
+shows = ["v = 42"]
+
+@ cases.return-in-a-function-that-aborts
+source = ```nib
+effect choose: () -> Bool resume ω
+effect fail: () -> Never resume 0
+fn pick() -> i64 ! {fail} {
+  let r = handle {
+    let b = perform choose()
+    if b {
+      return 5
+    }
+    if perform choose() {
+      perform fail()
+    } else {
+      3
+    }
+  } with {
+    choose(), k => k(true) + k(false)
+  }
+  r + 1000
+}
+let v = handle { pick() } with {
+  fail() => 0 - 1
+}
+perform show("v", v)
+```
+shows = ["v = 5"]
+
+@ cases.a-budget-in-a-handle-that-resumes-twice
+source = ```nib
+effect choose: () -> Bool resume ω
+fn spin() -> i64 {
+  while true { }
+  0
+}
+let d = handle {
+  let b = perform choose()
+  budget(steps: 50) {
+    if b {
+      spin()
+    } else {
+      5
+    }
+  }
+} with {
+  choose(), k => k(true) + k(false)
+  exceeded(info), k => k(0 - 1)
+}
+perform show("d", d)
+```
+shows = ["d = 4"]
+rust_shows = ["d = 4"]
+
+@ cases.more-steps-resume-the-body-in-m
+source = ```nib
+effect choose: () -> Bool resume ω
+fn count(n: i64) -> i64 {
+  var i = 0
+  while i < n {
+    i := i + 1
+  }
+  i
+}
+let d = handle {
+  let b = perform choose()
+  budget(steps: 50) {
+    if b {
+      count(100)
+    } else {
+      count(10)
+    }
+  }
+} with {
+  choose(), k => k(true) + k(false)
+  exceeded(info), k => k(info.more(200))
+}
+perform show("d", d)
+```
+shows = ["d = 110"]
+rust_shows = ["d = 110"]
+
+@ cases.a-budget-body-that-resumes-twice
+source = ```nib
+effect choose: () -> Bool resume ω
+fn count(n: i64) -> i64 {
+  var i = 0
+  while i < n {
+    i := i + 1
+  }
+  i
+}
+let d = handle {
+  budget(steps: 1000) {
+    let b = perform choose()
+    if b {
+      count(3)
+    } else {
+      count(4)
+    }
+  }
+} with {
+  choose(), k => k(true) + k(false)
+  exceeded(info), k => k(0 - 1)
+}
+perform show("d", d)
+```
+shows = ["d = 7"]
+rust_shows = ["d = 7"]
+
+@ cases.unbounded-in-m
+source = ```nib
+effect choose: () -> Bool resume ω
+fn count(n: i64) -> i64 {
+  var i = 0
+  while i < n {
+    i := i + 1
+  }
+  i
+}
+let d = handle {
+  let b = perform choose()
+  budget(steps: 5) {
+    count(if b { 30 } else { 20 })
+  }
+} with {
+  choose(), k => k(true) + k(false)
+  exceeded(info), k => k(info.unbounded())
+}
+perform show("d", d)
+```
+shows = ["d = 50"]
+rust_shows = ["d = 50"]
+
+@ cases.return-from-inside-a-budget-in-m
+source = ```nib
+effect choose: () -> Bool resume ω
+fn pick() -> i64 {
+  let r = handle {
+    let b = perform choose()
+    budget(steps: 100) {
+      if b {
+        return 9
+      }
+      1
+    }
+  } with {
+    choose(), k => k(false) + k(true)
+    exceeded(info), k => k(0)
+  }
+  r + 1000
+}
+perform show("p", pick())
+```
+shows = ["p = 9"]
+rust_shows = ["p = 9"]
+
+@ cases.nested-budgets-in-m
+source = ```nib
+effect choose: () -> Bool resume ω
+fn spin() -> i64 {
+  while true { }
+  0
+}
+let d = handle {
+  let b = perform choose()
+  budget(steps: 1000) {
+    budget(steps: 20) {
+      if b {
+        spin()
+      } else {
+        3
+      }
+    }
+  }
+} with {
+  choose(), k => k(true) + k(false)
+  exceeded(info), k => k(100)
+}
+perform show("d", d)
+```
+shows = ["d = 103"]
+rust_shows = ["d = 103"]
