@@ -19,7 +19,8 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 | `lean/` | Lean 4 による形式化：参照意味論と、それについての証明 |
 | `std/` | Tauto で書き、Tauto で証明した標準ライブラリ |
 | `meta/` | Lean による形式化の一部を Tauto で書き直したもの：小さな核と、カーネルのモデル（合流性、subject reduction、型付けの導出を返す検査器） |
-| `crates/tauto/src/prelude.taut` | プレリュード：証明が宣言なしで使える型と定理（`Nat`、`Eq`、`And`、`Or`、`Not`、`Iff` など）。公理はない。実装のうち、ここで公開するのはこのファイルだけ |
+| `crates/tauto/src/prelude.taut` | プレリュード：証明が宣言なしで使える型と定理（`Nat`、`Eq`、`And`、`Or`、`Not`、`Iff` など）。公理はない。実装のうち、ここで公開するのはこのファイルと `crates/tauto-parol/tauto.par` だけ |
+| `crates/tauto-parol/tauto.par` | Tauto の文法：読み込みが受け付けるすべての形。基本の規則のあとに、tauto 自身の規則（依存型と証明）が続く |
 | `examples/` | Tauto のプログラムと証明 |
 | `cases/` | 入力に対して実装が何を答えるべきかを定めるケースファイル（tauto とその Nib の部分） |
 | `Tauto.eure` | プロジェクトのマニフェスト（まだどのツールも読みません） |
