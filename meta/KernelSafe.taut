@@ -1,0 +1,907 @@
+import "KernelPar.taut"
+
+// Weakening, substitution and the structure of cumulativity for
+// lean/Proto/Kernel/Typing.lean, and then subject reduction for
+// lean/Proto/Kernel/Safety.lean, over the declarative `KTyping` of Kernel.taut.
+
+// ---- conversion under renaming and substitution ----------------------------------
+
+theorem conv_ren<a: KTm, b: KTm>(
+  h: KConv(a, b),
+  xi: (Nat) -> Nat
+): KConv(Kren(a, xi), Kren(b, xi)) {
+  match h -> KConv(Kren(a, xi), Kren(b, xi)) {
+    cv_step(r) => par_conv(par_ren(red1_par(r), xi))
+    cv_refl(x) => cv_refl(Kren(x, xi))
+    cv_symm(h1) => cv_symm(conv_ren(h1, xi))
+    cv_trans(h1, h2) => cv_trans(conv_ren(h1, xi), conv_ren(h2, xi))
+  }
+}
+
+theorem par_refl_pw(sigma: (Nat) -> KTm): ∀ i: Nat. Par(sigma(i), sigma(i)) {
+  i => par_refl(sigma(i))
+}
+
+theorem conv_subst<a: KTm, b: KTm>(
+  h: KConv(a, b),
+  sigma: (Nat) -> KTm
+): KConv(Ksubst(a, sigma), Ksubst(b, sigma)) {
+  match h -> KConv(Ksubst(a, sigma), Ksubst(b, sigma)) {
+    cv_step(r) => par_conv(par_subst(red1_par(r), sigma, sigma, par_refl_pw(sigma)))
+    cv_refl(x) => cv_refl(Ksubst(x, sigma))
+    cv_symm(h1) => cv_symm(conv_subst(h1, sigma))
+    cv_trans(h1, h2) => cv_trans(conv_subst(h1, sigma), conv_subst(h2, sigma))
+  }
+}
+
+theorem conv_inst_r(b: KTm, a: KTm, a2: KTm, h: KConv(a, a2)): KConv(Kinst(b, a), Kinst(b, a2)) {
+  match h -> KConv(Kinst(b, a), Kinst(b, a2)) {
+    cv_step(r) => par_conv(par_inst(par_refl(b), red1_par(r)))
+    cv_refl(x) => cv_refl(Kinst(b, x))
+    cv_symm(x, y, h1) => cv_symm(conv_inst_r(b, x, y, h1))
+    cv_trans(x, y, z, h1, h2) => cv_trans(conv_inst_r(b, x, y, h1), conv_inst_r(b, y, z, h2))
+  }
+}
+
+theorem conv_inst<b: KTm, b2: KTm, a: KTm, a2: KTm>(
+  hb: KConv(b, b2),
+  ha: KConv(a, a2)
+): KConv(Kinst(b, a), Kinst(b2, a2)) {
+  cv_trans(conv_subst(hb, Ksingle(a)), conv_inst_r(b2, a, a2, ha))
+}
+
+// ---- the step type -------------------------------------------------------------------
+
+theorem ren_stepTy(xi: (Nat) -> Nat, P: KTm): Eq(KTm, Kren(stepTy(P), xi), stepTy(Kren(P, xi))) {
+  eq_Kpi(
+    refl(KTm, Knat),
+    eq_Kpi(
+      eq_Kapp(ren_lift(P, xi), refl(KTm, Kvar(0))),
+      eq_Kapp(
+        Eq_trans(ren_lift(Klift(P), upR(xi)), Eq_congr(Klift, ren_lift(P, xi))),
+        refl(KTm, Ksucc(Kvar(1)))
+      )
+    )
+  )
+}
+
+theorem subst_stepTy(
+  sigma: (Nat) -> KTm,
+  P: KTm
+): Eq(KTm, Ksubst(stepTy(P), sigma), stepTy(Ksubst(P, sigma))) {
+  eq_Kpi(
+    refl(KTm, Knat),
+    eq_Kpi(
+      eq_Kapp(subst_lift(sigma, P), refl(KTm, Kvar(0))),
+      eq_Kapp(
+        Eq_trans(subst_lift(Kup(sigma), Klift(P)), Eq_congr(Klift, subst_lift(sigma, P))),
+        refl(KTm, Ksucc(Kvar(1)))
+      )
+    )
+  )
+}
+
+theorem conv_stepTy<P: KTm, P2: KTm>(h: KConv(P, P2)): KConv(stepTy(P), stepTy(P2)) {
+  cv_pi(
+    cv_refl(Knat),
+    cv_pi(
+      cv_app(conv_ren(h, succ), cv_refl(Kvar(0))),
+      cv_app(conv_ren(conv_ren(h, succ), succ), cv_refl(Ksucc(Kvar(1))))
+    )
+  )
+}
+
+// ---- cumulativity ----------------------------------------------------------------------
+
+theorem nle_trans<n: Nat, m: Nat>(h1: NLe(n, m), k: Nat, h2: NLe(m, k)): NLe(n, k) {
+  match h1 -> NLe(n, k) {
+    le_zero(x) => le_zero(k)
+    le_succ(a, b, h) => match h2 -> NLe(succ(a), k) {
+      le_succ(c, d, h3) => le_succ(nle_trans(h, d, h3))
+    }
+  }
+}
+
+theorem sub_conv_left<A: KTm, A2: KTm, C: KTm>(s: KSub(A2, C), h: KConv(A, A2)): KSub(A, C) {
+  match s -> KSub(A, C) {
+    sb_conv(c) => sb_conv(cv_trans(h, c))
+    sb_sort(c1, c2, l) => sb_sort(cv_trans(h, c1), c2, l)
+    sb_pi(c1, c2, d, s1) => sb_pi(cv_trans(h, c1), c2, d, s1)
+  }
+}
+
+theorem sub_conv_right<A: KTm, C: KTm, C2: KTm>(s: KSub(A, C), h: KConv(C, C2)): KSub(A, C2) {
+  match s -> KSub(A, C2) {
+    sb_conv(c) => sb_conv(cv_trans(c, h))
+    sb_sort(c1, c2, l) => sb_sort(c1, cv_trans(cv_symm(h), c2), l)
+    sb_pi(c1, c2, d, s1) => sb_pi(c1, cv_trans(cv_symm(h), c2), d, s1)
+  }
+}
+
+theorem sub_refl(A: KTm): KSub(A, A) {
+  sb_conv(cv_refl(A))
+}
+
+inductive CvSub(A: KTm, A2: KTm, B: KTm, B2: KTm): Prop {
+  cv_sub(h1: KConv(A, A2), h2: KSub(B, B2)): CvSub(A, A2, B, B2)
+}
+
+theorem sub_pi_inv_pp<A: KTm, A2: KTm, B: KTm, B2: KTm, A1: KTm, B1: KTm, A3: KTm, B3: KTm>(
+  d: KConv(A1, A3),
+  s: KSub(B1, B3),
+  e1: CvBoth(A, A1, B, B1),
+  e2: CvBoth(A2, A3, B2, B3)
+): CvSub(A, A2, B, B2) {
+  match e1 -> CvSub(A, A2, B, B2) {
+    cv_both(f1, f2) => match e2 -> CvSub(A, A2, B, B2) {
+      cv_both(
+        g1,
+        g2
+      ) => cv_sub(
+        cv_trans(f1, cv_trans(d, cv_symm(g1))),
+        sub_conv_right(sub_conv_left(s, f2), cv_symm(g2))
+      )
+    }
+  }
+}
+
+theorem sub_trans_pi2<x: KTm, C1: KTm, A1: KTm, B1: KTm, A2: KTm, B2: KTm, A3: KTm, B3: KTm, A4: KTm, B4: KTm>(
+  c1: KConv(x, Kpi(A1, B1)),
+  d: KConv(A1, A2),
+  e2: KConv(C1, Kpi(A4, B4)),
+  e3: KConv(A3, A4),
+  e4: KSub(B3, B4),
+  ih: ∀ C: KTm. (KSub(B2, C)) -> KSub(B1, C),
+  g: CvBoth(A2, A3, B2, B3)
+): KSub(x, C1) {
+  match g -> KSub(x, C1) {
+    cv_both(g1, g2) => sb_pi(c1, e2, cv_trans(d, cv_trans(g1, e3)), ih(B4, sub_conv_left(e4, g2)))
+  }
+}
+
+theorem sub_trans<A: KTm, B: KTm>(h1: KSub(A, B), C: KTm, h2: KSub(B, C)): KSub(A, C) {
+  match h1 {
+    sb_conv(c) => sub_conv_left(h2, c)
+    sb_sort(x, y, n, m, c1, c2, l) => match h2 {
+      sb_conv(c) => sb_sort(c1, cv_trans(cv_symm(c), c2), l)
+      sb_sort(
+        y1,
+        C1,
+        n2,
+        m2,
+        d1,
+        d2,
+        l2
+      ) => sb_sort(
+        c1,
+        d2,
+        nle_trans(Eq_subst(z => NLe(n, z), sort_inj(cv_trans(cv_symm(c2), d1)), l), m2, l2)
+      )
+      sb_pi(d1, d2, d3, d4) => False_elim(pi_ne_sort(cv_trans(cv_symm(d1), c2)))
+    }
+    sb_pi(x, y, A1, B1, A2, B2, c1, c2, d, s) => match h2 {
+      sb_conv(c) => sb_pi(c1, cv_trans(cv_symm(c), c2), d, sub_trans(s, B2, sub_refl(B2)))
+      sb_sort(d1, d2, l) => False_elim(pi_ne_sort(cv_trans(cv_symm(c2), d1)))
+      sb_pi(
+        e1,
+        e2,
+        e3,
+        e4
+      ) => sub_trans_pi2(
+        c1,
+        d,
+        e2,
+        e3,
+        e4,
+        C0 => h0 => sub_trans(s, C0, h0),
+        pi_inj(cv_trans(cv_symm(c2), e1))
+      )
+    }
+  }
+}
+
+theorem sub_pi_inv_c<A: KTm, A2: KTm, B: KTm, B2: KTm>(
+  e: CvBoth(A, A2, B, B2)
+): CvSub(A, A2, B, B2) {
+  match e -> CvSub(A, A2, B, B2) {
+    cv_both(f1, f2) => cv_sub(f1, sb_conv(f2))
+  }
+}
+
+theorem sub_pi_inv<A: KTm, B: KTm, A2: KTm, B2: KTm>(
+  h: KSub(Kpi(A, B), Kpi(A2, B2))
+): CvSub(A, A2, B, B2) {
+  match h -> CvSub(A, A2, B, B2) {
+    sb_conv(c) => sub_pi_inv_c(pi_inj(c))
+    sb_sort(c1, c2, l) => False_elim(pi_ne_sort(c1))
+    sb_pi(c1, c2, d, s) => sub_pi_inv_pp(d, s, pi_inj(c1), pi_inj(c2))
+  }
+}
+
+theorem sub_ren<A: KTm, B: KTm>(h: KSub(A, B), xi: (Nat) -> Nat): KSub(Kren(A, xi), Kren(B, xi)) {
+  match h -> KSub(Kren(A, xi), Kren(B, xi)) {
+    sb_conv(c) => sb_conv(conv_ren(c, xi))
+    sb_sort(c1, c2, l) => sb_sort(conv_ren(c1, xi), conv_ren(c2, xi), l)
+    sb_pi(
+      c1,
+      c2,
+      d,
+      s
+    ) => sb_pi(conv_ren(c1, xi), conv_ren(c2, xi), conv_ren(d, xi), sub_ren(s, upR(xi)))
+  }
+}
+
+theorem sub_subst<A: KTm, B: KTm>(
+  h: KSub(A, B),
+  sigma: (Nat) -> KTm
+): KSub(Ksubst(A, sigma), Ksubst(B, sigma)) {
+  match h -> KSub(Ksubst(A, sigma), Ksubst(B, sigma)) {
+    sb_conv(c) => sb_conv(conv_subst(c, sigma))
+    sb_sort(c1, c2, l) => sb_sort(conv_subst(c1, sigma), conv_subst(c2, sigma), l)
+    sb_pi(
+      c1,
+      c2,
+      d,
+      s
+    ) => sb_pi(
+      conv_subst(c1, sigma),
+      conv_subst(c2, sigma),
+      conv_subst(d, sigma),
+      sub_subst(s, Kup(sigma))
+    )
+  }
+}
+
+// ---- weakening and substitution ----------------------------------------------------
+
+theorem ty_cast<G: List(
+  KTm
+), t: KTm, A: KTm, A2: KTm>(e: Eq(KTm, A, A2), h: KTyping(G, t, A)): KTyping(G, t, A2) {
+  match e -> KTyping(G, t, A2) {
+    refl => h
+  }
+}
+
+theorem look_cast<G: List(
+  KTm
+), i: Nat, A: KTm, A2: KTm>(e: Eq(KTm, A, A2), h: KLook(G, i, A)): KLook(G, i, A2) {
+  match e -> KLook(G, i, A2) {
+    refl => h
+  }
+}
+
+theorem ren_up_ok(
+  xi: (Nat) -> Nat,
+  G: List(KTm),
+  D: List(KTm),
+  A: KTm,
+  i: Nat,
+  B: KTm,
+  hi: KLook(Cons(A, G), i, B),
+  r: ∀ j: Nat. ∀ C: KTm. (KLook(G, j, C)) -> KLook(D, xi(j), Kren(C, xi))
+): KLook(Cons(Kren(A, xi), D), upR(xi, i), Kren(B, upR(xi))) {
+  match hi -> KLook(Cons(Kren(A, xi), D), upR(xi, i), Kren(B, upR(xi))) {
+    lk_zero(G0, A0) => look_cast(Eq_sym(ren_lift(A0, xi)), lk_zero(D, Kren(A0, xi)))
+    lk_succ(
+      B0,
+      i0,
+      A0,
+      h0
+    ) => look_cast(
+      Eq_sym(ren_lift(A0, xi)),
+      lk_succ(Kren(B0, xi), xi(i0), Kren(A0, xi), r(i0, A0, h0))
+    )
+  }
+}
+
+theorem ren_succ_ok<G: List(
+  KTm
+)>(A: KTm, i: Nat, B: KTm, h: KLook(G, i, B)): KLook(Cons(A, G), succ(i), Klift(B)) {
+  lk_succ(A, i, B, h)
+}
+
+theorem ktyping_ren<G: List(
+  KTm
+), t: KTm, A: KTm>(
+  h: KTyping(G, t, A),
+  xi: (Nat) -> Nat,
+  D: List(KTm),
+  r: ∀ j: Nat. ∀ C: KTm. (KLook(G, j, C)) -> KLook(D, xi(j), Kren(C, xi))
+): KTyping(D, Kren(t, xi), Kren(A, xi)) {
+  match h -> KTyping(D, Kren(t, xi), Kren(A, xi)) {
+    ty_var(G0, i, A0, h0) => ty_var(r(i, A0, h0))
+    ty_sort(G0, n) => ty_sort(D, n)
+    ty_pi(
+      G0,
+      A0,
+      B0,
+      s1,
+      s2,
+      hA,
+      hB
+    ) => ty_pi(
+      ktyping_ren(hA, xi, D, r),
+      ktyping_ren(
+        hB,
+        upR(xi),
+        Cons(KTm, Kren(A0, xi), D),
+        j => C => hj => ren_up_ok(xi, G0, D, A0, j, C, hj, r)
+      )
+    )
+    ty_lam(
+      G0,
+      A0,
+      B0,
+      b0,
+      s,
+      hA,
+      hb
+    ) => ty_lam(
+      ktyping_ren(hA, xi, D, r),
+      ktyping_ren(
+        hb,
+        upR(xi),
+        Cons(KTm, Kren(A0, xi), D),
+        j => C => hj => ren_up_ok(xi, G0, D, A0, j, C, hj, r)
+      )
+    )
+    ty_app(
+      G0,
+      f,
+      a,
+      A0,
+      B0,
+      hf,
+      ha
+    ) => ty_cast(
+      Eq_sym(ren_inst(xi, B0, a)),
+      ty_app(ktyping_ren(hf, xi, D, r), ktyping_ren(ha, xi, D, r))
+    )
+    ty_sub(
+      h0,
+      hB,
+      sb
+    ) => ty_sub(ktyping_ren(h0, xi, D, r), ktyping_ren(hB, xi, D, r), sub_ren(sb, xi))
+    ty_nat(G0) => ty_nat(D)
+    ty_zero(G0) => ty_zero(D)
+    ty_succ(h0) => ty_succ(ktyping_ren(h0, xi, D, r))
+    ty_rec(
+      G0,
+      P,
+      z,
+      s2,
+      n,
+      s,
+      hP,
+      hz,
+      hs,
+      hn
+    ) => ty_rec(
+      ktyping_ren(hP, xi, D, r),
+      ktyping_ren(hz, xi, D, r),
+      ty_cast(ren_stepTy(xi, P), ktyping_ren(hs, xi, D, r)),
+      ktyping_ren(hn, xi, D, r)
+    )
+  }
+}
+
+theorem ty_weaken<G: List(
+  KTm
+), t: KTm, A: KTm>(B: KTm, h: KTyping(G, t, A)): KTyping(Cons(B, G), Klift(t), Klift(A)) {
+  ktyping_ren(h, succ, Cons(KTm, B, G), j => C => hj => ren_succ_ok(B, j, C, hj))
+}
+
+theorem subst_up_ok(
+  sigma: (Nat) -> KTm,
+  G: List(KTm),
+  D: List(KTm),
+  A: KTm,
+  i: Nat,
+  B: KTm,
+  hi: KLook(Cons(A, G), i, B),
+  s: ∀ j: Nat. ∀ C: KTm. (KLook(G, j, C)) -> KTyping(D, sigma(j), Ksubst(C, sigma))
+): KTyping(Cons(Ksubst(A, sigma), D), Kup(sigma, i), Ksubst(B, Kup(sigma))) {
+  match hi -> KTyping(Cons(Ksubst(A, sigma), D), Kup(sigma, i), Ksubst(B, Kup(sigma))) {
+    lk_zero(G0, A0) => ty_cast(Eq_sym(subst_lift(sigma, A0)), ty_var(lk_zero(D, Ksubst(A0, sigma))))
+    lk_succ(
+      B0,
+      i0,
+      A0,
+      h0
+    ) => ty_cast(Eq_sym(subst_lift(sigma, A0)), ty_weaken(Ksubst(B0, sigma), s(i0, A0, h0)))
+  }
+}
+
+theorem ktyping_subst<G: List(
+  KTm
+), t: KTm, A: KTm>(
+  h: KTyping(G, t, A),
+  sigma: (Nat) -> KTm,
+  D: List(KTm),
+  s: ∀ j: Nat. ∀ C: KTm. (KLook(G, j, C)) -> KTyping(D, sigma(j), Ksubst(C, sigma))
+): KTyping(D, Ksubst(t, sigma), Ksubst(A, sigma)) {
+  match h -> KTyping(D, Ksubst(t, sigma), Ksubst(A, sigma)) {
+    ty_var(G0, i, A0, h0) => s(i, A0, h0)
+    ty_sort(G0, n) => ty_sort(D, n)
+    ty_pi(
+      G0,
+      A0,
+      B0,
+      s1,
+      s2,
+      hA,
+      hB
+    ) => ty_pi(
+      ktyping_subst(hA, sigma, D, s),
+      ktyping_subst(
+        hB,
+        Kup(sigma),
+        Cons(KTm, Ksubst(A0, sigma), D),
+        j => C => hj => subst_up_ok(sigma, G0, D, A0, j, C, hj, s)
+      )
+    )
+    ty_lam(
+      G0,
+      A0,
+      B0,
+      b0,
+      s1,
+      hA,
+      hb
+    ) => ty_lam(
+      ktyping_subst(hA, sigma, D, s),
+      ktyping_subst(
+        hb,
+        Kup(sigma),
+        Cons(KTm, Ksubst(A0, sigma), D),
+        j => C => hj => subst_up_ok(sigma, G0, D, A0, j, C, hj, s)
+      )
+    )
+    ty_app(
+      G0,
+      f,
+      a,
+      A0,
+      B0,
+      hf,
+      ha
+    ) => ty_cast(
+      Eq_sym(subst_inst(sigma, B0, a)),
+      ty_app(ktyping_subst(hf, sigma, D, s), ktyping_subst(ha, sigma, D, s))
+    )
+    ty_sub(
+      h0,
+      hB,
+      sb
+    ) => ty_sub(
+      ktyping_subst(h0, sigma, D, s),
+      ktyping_subst(hB, sigma, D, s),
+      sub_subst(sb, sigma)
+    )
+    ty_nat(G0) => ty_nat(D)
+    ty_zero(G0) => ty_zero(D)
+    ty_succ(h0) => ty_succ(ktyping_subst(h0, sigma, D, s))
+    ty_rec(
+      G0,
+      P,
+      z,
+      s2,
+      n,
+      s1,
+      hP,
+      hz,
+      hs,
+      hn
+    ) => ty_rec(
+      ktyping_subst(hP, sigma, D, s),
+      ktyping_subst(hz, sigma, D, s),
+      ty_cast(subst_stepTy(sigma, P), ktyping_subst(hs, sigma, D, s)),
+      ktyping_subst(hn, sigma, D, s)
+    )
+  }
+}
+
+theorem single_ok<G: List(
+  KTm
+), a: KTm, A: KTm, i: Nat, B: KTm>(
+  hi: KLook(Cons(A, G), i, B),
+  h: KTyping(G, a, A)
+): KTyping(G, Ksingle(a, i), Kinst(B, a)) {
+  match hi -> KTyping(G, Ksingle(a, i), Kinst(B, a)) {
+    lk_zero(G0, A0) => ty_cast(Eq_sym(subst_single_lift(A0, a)), h)
+    lk_succ(B0, i0, A0, h0) => ty_cast(Eq_sym(subst_single_lift(A0, a)), ty_var(h0))
+  }
+}
+
+theorem ty_inst<G: List(
+  KTm
+), b: KTm, a: KTm, A: KTm, B: KTm>(
+  hb: KTyping(Cons(A, G), b, B),
+  ha: KTyping(G, a, A)
+): KTyping(G, Kinst(b, a), Kinst(B, a)) {
+  ktyping_subst(hb, Ksingle(a), G, j => C => hj => single_ok(hj, ha))
+}
+
+// ---- generation ------------------------------------------------------------------------
+
+inductive LamInv(G: List(KTm), b: KTm, T: KTm): Prop {
+  lam_is<A: KTm, B: KTm, s: Nat>(
+    hA: KTyping(G, A, Ksort(s)),
+    hb: KTyping(Cons(A, G), b, B),
+    sb: KSub(Kpi(A, B), T)
+  ): LamInv(G, b, T)
+}
+
+theorem lam_inv_sub<G: List(
+  KTm
+), b: KTm, A: KTm, B: KTm>(li: LamInv(G, b, A), sb: KSub(A, B)): LamInv(G, b, B) {
+  match li -> LamInv(G, b, B) {
+    lam_is(hA, hb, sb1) => lam_is(hA, hb, sub_trans(sb1, B, sb))
+  }
+}
+
+theorem lam_inv<G: List(KTm), b: KTm, T: KTm>(h: KTyping(G, Klam(b), T)): LamInv(G, b, T) {
+  match h {
+    ty_lam(G0, A0, B0, b0, s, hA, hb) => lam_is(hA, hb, sub_refl(Kpi(A0, B0)))
+    ty_sub(h0, hB, sb) => lam_inv_sub(lam_inv(h0), sb)
+  }
+}
+
+inductive PiGen(G: List(KTm), A: KTm, B: KTm, T: KTm): Prop {
+  pig<s1: Nat, s2: Nat>(
+    hA: KTyping(G, A, Ksort(s1)),
+    hB: KTyping(Cons(A, G), B, Ksort(s2)),
+    sb: KSub(Ksort(imax(s1, s2)), T)
+  ): PiGen(G, A, B, T)
+}
+
+theorem pi_gen_sub<G: List(
+  KTm
+), A: KTm, B: KTm, T: KTm, T2: KTm>(pg: PiGen(G, A, B, T), sb: KSub(T, T2)): PiGen(G, A, B, T2) {
+  match pg -> PiGen(G, A, B, T2) {
+    pig(hA, hB, sb1) => pig(hA, hB, sub_trans(sb1, T2, sb))
+  }
+}
+
+theorem pi_gen<G: List(
+  KTm
+), A: KTm, B: KTm, T: KTm>(h: KTyping(G, Kpi(A, B), T)): PiGen(G, A, B, T) {
+  match h {
+    ty_pi(G0, A0, B0, s1, s2, hA, hB) => pig(hA, hB, sub_refl(Ksort(imax(s1, s2))))
+    ty_sub(h0, hB, sb) => pi_gen_sub(pi_gen(h0), sb)
+  }
+}
+
+theorem succ_inv<G: List(KTm), n: KTm, T: KTm>(h: KTyping(G, Ksucc(n), T)): KTyping(G, n, Knat) {
+  match h {
+    ty_succ(h0) => h0
+    ty_sub(h0, hB, sb) => succ_inv(h0)
+  }
+}
+
+// ---- validity ----------------------------------------------------------------------------
+
+inductive KWF(): (List(KTm)) -> Prop {
+  wf_nil(): KWF(Nil)
+  wf_cons<G: List(KTm), A: KTm, s: Nat>(hw: KWF(G), h: KTyping(G, A, Ksort(s))): KWF(Cons(A, G))
+}
+
+inductive SortOf(G: List(KTm), A: KTm): Prop {
+  sortof<s: Nat>(h: KTyping(G, A, Ksort(s))): SortOf(G, A)
+}
+
+theorem sortof_weaken<G: List(
+  KTm
+), A: KTm>(B: KTm, so: SortOf(G, A)): SortOf(Cons(B, G), Klift(A)) {
+  match so -> SortOf(Cons(B, G), Klift(A)) {
+    sortof(h) => sortof(ty_weaken(B, h))
+  }
+}
+
+theorem wf_lookup<G: List(KTm), i: Nat, A: KTm>(hi: KLook(G, i, A), hw: KWF(G)): SortOf(G, A) {
+  match hi -> SortOf(G, A) {
+    lk_zero(G0, A0) => match hw -> SortOf(Cons(KTm, A0, G0), Klift(A0)) {
+      wf_cons(G1, A1, s, hw1, h1) => sortof(ty_weaken(A1, h1))
+    }
+    lk_succ(G0, B0, i0, A0, h0) => match hw -> SortOf(Cons(KTm, B0, G0), Klift(A0)) {
+      wf_cons(G1, B1, s, hw1, h1) => sortof_weaken(B1, wf_lookup(h0, hw1))
+    }
+  }
+}
+
+theorem stepTy_typed<G: List(
+  KTm
+), P: KTm, s: Nat>(
+  hP: KTyping(G, P, Kpi(Knat, Ksort(s)))
+): KTyping(G, stepTy(P), Ksort(imax(1, imax(s, s)))) {
+  ty_pi(
+    ty_nat(G),
+    ty_pi(
+      ty_app(ty_weaken(Knat, hP), ty_var(lk_zero(G, Knat))),
+      ty_app(
+        ty_weaken(Kapp(Klift(P), Kvar(0)), ty_weaken(Knat, hP)),
+        ty_succ(ty_var(lk_succ(Kapp(Klift(P), Kvar(0)), zero, Klift(Knat), lk_zero(G, Knat))))
+      )
+    )
+  )
+}
+
+theorem valid_lam<G: List(
+  KTm
+), A: KTm, B: KTm, s: Nat>(
+  hA: KTyping(G, A, Ksort(s)),
+  so: SortOf(Cons(A, G), B)
+): SortOf(G, Kpi(A, B)) {
+  match so -> SortOf(G, Kpi(A, B)) {
+    sortof(hB) => sortof(ty_pi(hA, hB))
+  }
+}
+
+theorem valid_app2<G: List(
+  KTm
+), a: KTm, A: KTm, B: KTm, T: KTm>(
+  ha: KTyping(G, a, A),
+  pg: PiGen(G, A, B, T)
+): SortOf(G, Kinst(B, a)) {
+  match pg -> SortOf(G, Kinst(B, a)) {
+    pig(hA, hB, sb) => sortof(ty_inst(hB, ha))
+  }
+}
+
+theorem valid_app<G: List(
+  KTm
+), a: KTm, A: KTm, B: KTm>(ha: KTyping(G, a, A), so: SortOf(G, Kpi(A, B))): SortOf(G, Kinst(B, a)) {
+  match so -> SortOf(G, Kinst(B, a)) {
+    sortof(hp) => valid_app2(ha, pi_gen(hp))
+  }
+}
+
+theorem valid<G: List(KTm), t: KTm, A: KTm>(h: KTyping(G, t, A), hw: KWF(G)): SortOf(G, A) {
+  match h -> SortOf(G, A) {
+    ty_var(h0) => wf_lookup(h0, hw)
+    ty_sort(G0, n) => sortof(ty_sort(G0, succ(n)))
+    ty_pi(G0, A0, B0, s1, s2, hA, hB) => sortof(ty_sort(G0, imax(s1, s2)))
+    ty_lam(hA, hb) => valid_lam(hA, valid(hb, wf_cons(hw, hA)))
+    ty_app(hf, ha) => valid_app(ha, valid(hf, hw))
+    ty_sub(h0, hB, sb) => sortof(hB)
+    ty_nat(G0) => sortof(ty_sort(G0, 1))
+    ty_zero(G0) => sortof(ty_nat(G0))
+    ty_succ(G0, n, h0) => sortof(ty_nat(G0))
+    ty_rec(hP, hz, hs, hn) => sortof(ty_app(hP, hn))
+  }
+}
+
+// ---- subject reduction ----------------------------------------------------------------------
+
+theorem iota_e0(P: KTm, n: KTm): Eq(KTm, Ksubst(Kapp(Klift(P), Kvar(0)), Ksingle(n)), Kapp(P, n)) {
+  eq_Kapp(subst_single_lift(P, n), refl(KTm, n))
+}
+
+theorem iota_e2(
+  P: KTm,
+  n: KTm,
+  r: KTm
+): Eq(
+  KTm,
+  Kinst(Ksubst(Kapp(Klift(Klift(P)), Ksucc(Kvar(1))), Kup(Ksingle(n))), r),
+  Kapp(P, Ksucc(n))
+) {
+  eq_Kapp(
+    Eq_trans(
+      Eq_congr(
+        x => Kinst(x, r),
+        Eq_trans(subst_lift(Ksingle(n), Klift(P)), Eq_congr(Klift, subst_single_lift(P, n)))
+      ),
+      subst_single_lift(P, r)
+    ),
+    eq_Ksucc(subst_single_lift(n, r))
+  )
+}
+
+theorem iota_typing<G: List(
+  KTm
+), P: KTm, z: KTm, s2: KTm, n: KTm>(
+  hs: KTyping(G, s2, stepTy(P)),
+  hn: KTyping(G, n, Knat),
+  hr: KTyping(G, KnatRec(P, z, s2, n), Kapp(P, n))
+): KTyping(G, Kapp(Kapp(s2, n), KnatRec(P, z, s2, n)), Kapp(P, Ksucc(n))) {
+  ty_cast(
+    iota_e2(P, n, KnatRec(P, z, s2, n)),
+    ty_app(ty_app(hs, hn), ty_cast(Eq_sym(iota_e0(P, n)), hr))
+  )
+}
+
+theorem conv_ctx_ok<G: List(
+  KTm
+), A: KTm, A2: KTm, j: Nat, C: KTm>(
+  hj: KLook(Cons(A, G), j, C),
+  s: Nat,
+  hA: KTyping(G, A, Ksort(s)),
+  c: KConv(A, A2)
+): KTyping(Cons(A2, G), Kvar(j), Ksubst(C, Kvar)) {
+  match hj -> KTyping(Cons(KTm, A2, G), Kvar(j), Ksubst(C, Kvar)) {
+    lk_zero(
+      G0,
+      A0
+    ) => ty_cast(
+      Eq_sym(subst_var(Klift(A0), Kvar, i => refl(KTm, Kvar(i)))),
+      ty_sub(ty_var(lk_zero(G0, A2)), ty_weaken(A2, hA), sb_conv(conv_ren(cv_symm(c), succ)))
+    )
+    lk_succ(
+      B0,
+      i0,
+      A0,
+      h0
+    ) => ty_cast(
+      Eq_sym(subst_var(Klift(A0), Kvar, i => refl(KTm, Kvar(i)))),
+      ty_var(lk_succ(A2, i0, A0, h0))
+    )
+  }
+}
+
+theorem ty_cast_t<G: List(
+  KTm
+), t: KTm, t2: KTm, A: KTm>(e: Eq(KTm, t, t2), h: KTyping(G, t, A)): KTyping(G, t2, A) {
+  match e -> KTyping(G, t2, A) {
+    refl => h
+  }
+}
+
+theorem conv_ctx<G: List(
+  KTm
+), A: KTm, A2: KTm, B: KTm, C: KTm, s: Nat>(
+  h: KTyping(Cons(A, G), B, C),
+  hA: KTyping(G, A, Ksort(s)),
+  c: KConv(A, A2)
+): KTyping(Cons(A2, G), B, C) {
+  let moved: KTyping(
+    Cons(A2, G),
+    Ksubst(B, Kvar),
+    Ksubst(C, Kvar)
+  ) = ktyping_subst(h, Kvar, Cons(KTm, A2, G), j => D => hj => conv_ctx_ok(hj, s, hA, c))
+  let typed: KTyping(
+    Cons(A2, G),
+    Ksubst(B, Kvar),
+    C
+  ) = ty_cast(subst_var(C, Kvar, i => refl(KTm, Kvar(i))), moved)
+  ty_cast_t(subst_var(B, Kvar, i => refl(KTm, Kvar(i))), typed)
+}
+
+theorem sr_beta3<G: List(
+  KTm
+), b: KTm, a: KTm, A0: KTm, B0: KTm, A1: KTm, B1: KTm, s: Nat>(
+  ha: KTyping(G, a, A0),
+  sv: Nat,
+  hv: KTyping(G, Kinst(B0, a), Ksort(sv)),
+  hA1: KTyping(G, A1, Ksort(s)),
+  hb1: KTyping(Cons(A1, G), b, B1),
+  cs: CvSub(A1, A0, B1, B0)
+): KTyping(G, Kinst(b, a), Kinst(B0, a)) {
+  match cs -> KTyping(G, Kinst(b, a), Kinst(B0, a)) {
+    cv_sub(
+      hc,
+      hB
+    ) => ty_sub(ty_inst(hb1, ty_sub(ha, hA1, sb_conv(cv_symm(hc)))), hv, sub_subst(hB, Ksingle(a)))
+  }
+}
+
+theorem sr_beta2<G: List(
+  KTm
+), b: KTm, a: KTm, A0: KTm, B0: KTm>(
+  ha: KTyping(G, a, A0),
+  sv: Nat,
+  hv: KTyping(G, Kinst(B0, a), Ksort(sv)),
+  li: LamInv(G, b, Kpi(A0, B0))
+): KTyping(G, Kinst(b, a), Kinst(B0, a)) {
+  match li -> KTyping(G, Kinst(b, a), Kinst(B0, a)) {
+    lam_is(hA1, hb1, sb1) => sr_beta3(ha, sv, hv, hA1, hb1, sub_pi_inv(sb1))
+  }
+}
+
+theorem sr_beta1<G: List(
+  KTm
+), b: KTm, a: KTm, A0: KTm, B0: KTm>(
+  hf: KTyping(G, Klam(b), Kpi(A0, B0)),
+  ha: KTyping(G, a, A0),
+  so: SortOf(G, Kinst(B0, a))
+): KTyping(G, Kinst(b, a), Kinst(B0, a)) {
+  match so -> KTyping(G, Kinst(b, a), Kinst(B0, a)) {
+    sortof(sv, hv) => sr_beta2(ha, sv, hv, lam_inv(hf))
+  }
+}
+
+theorem sr_appR<G: List(
+  KTm
+), f: KTm, a: KTm, a2: KTm, A: KTm, B: KTm>(
+  hf: KTyping(G, f, Kpi(A, B)),
+  ha2: KTyping(G, a2, A),
+  c: KConv(a, a2),
+  so: SortOf(G, Kinst(B, a))
+): KTyping(G, Kapp(f, a2), Kinst(B, a)) {
+  match so -> KTyping(G, Kapp(f, a2), Kinst(B, a)) {
+    sortof(hv) => ty_sub(ty_app(hf, ha2), hv, sb_conv(conv_inst_r(B, a2, a, cv_symm(c))))
+  }
+}
+
+theorem sr_recP<G: List(
+  KTm
+), P: KTm, P2: KTm, z: KTm, s2: KTm, n: KTm, s: Nat>(
+  hP: KTyping(G, P, Kpi(Knat, Ksort(s))),
+  hz: KTyping(G, z, Kapp(P, Kzero)),
+  hs: KTyping(G, s2, stepTy(P)),
+  hn: KTyping(G, n, Knat),
+  hP2: KTyping(G, P2, Kpi(Knat, Ksort(s))),
+  hc: KConv(P, P2)
+): KTyping(G, KnatRec(P2, z, s2, n), Kapp(P, n)) {
+  ty_sub(
+    ty_rec(
+      hP2,
+      ty_sub(hz, ty_app(hP2, ty_zero(G)), sb_conv(cv_app(hc, cv_refl(Kzero)))),
+      ty_sub(hs, stepTy_typed(hP2), sb_conv(conv_stepTy(hc))),
+      hn
+    ),
+    ty_app(hP, hn),
+    sb_conv(cv_app(cv_symm(hc), cv_refl(n)))
+  )
+}
+
+theorem subject_reduction<G: List(
+  KTm
+), t: KTm, A: KTm>(h: KTyping(G, t, A), hw: KWF(G), t2: KTm, r: Red1(t, t2)): KTyping(G, t2, A) {
+  match h -> KTyping(G, t2, A) {
+    ty_var(G0, i, A0, h0) => match r -> KTyping(G0, t2, A0) {
+    }
+    ty_sort(G0, n) => match r -> KTyping(G0, t2, Ksort(succ(n))) {
+    }
+    ty_pi(G0, A0, B0, s1, s2, hA, hB) => match r -> KTyping(G0, t2, Ksort(imax(s1, s2))) {
+      r1_piL(x, x2, y, r1) => ty_pi(
+        subject_reduction(hA, hw, x2, r1),
+        conv_ctx(hB, hA, cv_step(r1))
+      )
+      r1_piR(x, y, y2, r1) => ty_pi(hA, subject_reduction(hB, wf_cons(hw, hA), y2, r1))
+    }
+    ty_lam(G0, A0, B0, b0, s, hA, hb) => match r -> KTyping(G0, t2, Kpi(A0, B0)) {
+      r1_lam(x, x2, r1) => ty_lam(hA, subject_reduction(hb, wf_cons(hw, hA), x2, r1))
+    }
+    ty_app(G0, f, a, A0, B0, hf, ha) => match r {
+      r1_beta(b, a1) => sr_beta1(hf, ha, valid(ty_app(hf, ha), hw))
+      r1_appL(f1, f2, a1, r1) => ty_app(subject_reduction(hf, hw, f2, r1), ha)
+      r1_appR(
+        f1,
+        a1,
+        a2,
+        r1
+      ) => sr_appR(hf, subject_reduction(ha, hw, a2, r1), cv_step(r1), valid(ty_app(hf, ha), hw))
+    }
+    ty_sub(h0, hB, sb) => ty_sub(subject_reduction(h0, hw, t2, r), hB, sb)
+    ty_nat(G0) => match r -> KTyping(G0, t2, Ksort(1)) {
+    }
+    ty_zero(G0) => match r -> KTyping(G0, t2, Knat) {
+    }
+    ty_succ(G0, n, h0) => match r -> KTyping(G0, t2, Knat) {
+      r1_succ(x, x2, r1) => ty_succ(subject_reduction(h0, hw, x2, r1))
+    }
+    ty_rec(G0, P, z, s2, n, s, hP, hz, hs, hn) => match r {
+      r1_iotaZ(P1, z1, s1) => hz
+      r1_iotaS(P1, z1, s1, n1) => {
+        let hn1: KTyping(G0, n1, Knat) = succ_inv(hn)
+        iota_typing(hs, hn1, ty_rec(hP, hz, hs, hn1))
+      }
+      r1_recP(
+        P1,
+        P2,
+        z1,
+        s1,
+        n1,
+        r1
+      ) => sr_recP(hP, hz, hs, hn, subject_reduction(hP, hw, P2, r1), cv_step(r1))
+      r1_recZ(P1, z1, z3, s1, n1, r1) => ty_rec(hP, subject_reduction(hz, hw, z3, r1), hs, hn)
+      r1_recS(P1, z1, s1, s3, n1, r1) => ty_rec(hP, hz, subject_reduction(hs, hw, s3, r1), hn)
+      r1_recN(P1, z1, s1, n1, n3, r1) => {
+        let hn3: KTyping(G0, n3, Knat) = subject_reduction(hn, hw, n3, r1)
+        let back: KConv(n3, n) = cv_symm(cv_step(r1))
+        ty_sub(ty_rec(hP, hz, hs, hn3), ty_app(hP, hn), sb_conv(cv_app(cv_refl(P), back)))
+      }
+    }
+  }
+}

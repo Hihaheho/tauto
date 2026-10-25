@@ -19,6 +19,7 @@ not published yet; what is here is the specification side of the project.
 | --- | --- |
 | `lean/` | The Lean 4 formalization: the reference semantics and the proofs about it |
 | `std/` | The standard library, written and proved in Tauto |
+| `meta/` | Parts of the Lean formalization redone in Tauto: the small core, and a model of the kernel with its confluence, subject reduction and a checker that returns typing derivations |
 | `examples/` | Programs and proofs in Tauto |
 | `crates/tauto-test-suite/cases/` | Case files that specify what the implementation answers |
 | `Tauto.eure` | The project manifest (not read by any tool yet) |

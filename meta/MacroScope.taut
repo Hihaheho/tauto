@@ -1,0 +1,147 @@
+import "../std/Row.taut"
+import "Effects.taut"
+
+// A port of lean/Proto/Macro/Scope.lean:
+// the resolution of an identifier among bindings by the scopes they carry, and
+// the theorems of hygiene H1 to H3. A name is a `Nat`, the scopes of an
+// identifier or a binding are a list read as a set (`Sub`, from Row.taut).
+
+inductive MBind(): Type {
+  // A binding `(x, B, id)`: the name, the scopes, the number.
+  mbind(name: Nat, scopes: List(Nat), id: Nat): MBind
+}
+
+fn mname(b: MBind) -> Nat {
+  match b -> Nat {
+    mbind(n, s, i) => n
+  }
+}
+
+fn mscopes(b: MBind) -> List(Nat) {
+  match b -> List(Nat) {
+    mbind(n, s, i) => s
+  }
+}
+
+// What the identifier `x^S` may mean: a binding of the same name whose scopes
+// are among its own.
+def Cand(
+  x: Nat,
+  S: List(Nat),
+  env: List(MBind),
+  b: MBind
+): Prop := And(Mem(MBind, b, env), And(Eq(Nat, mname(b), x), Sub(Nat, mscopes(b), S)))
+
+// `b` is strictly below `c`: fewer scopes.
+def Below(
+  b: MBind,
+  c: MBind
+): Prop := And(Sub(Nat, mscopes(b), mscopes(c)), (Sub(Nat, mscopes(c), mscopes(b))) -> False)
+
+// `resolve(x^S, env) = b`: a candidate with no candidate above it.
+def Found(
+  x: Nat,
+  S: List(Nat),
+  env: List(MBind),
+  b: MBind
+): Prop := And(Cand(x, S, env, b), ∀ c: MBind. (Cand(x, S, env, c)) -> (Below(b, c)) -> False)
+
+// A binding with a scope the identifier lacks is never what it means.
+theorem found_lacks<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), b: MBind, s: Nat>(h: Found(x, S, env, b), hs: Mem(Nat, s, mscopes(b))): Mem(Nat, s, S) {
+  and_right(and_right(and_left(h)))(s, hs)
+}
+
+// H1: an identifier from the input (without the expansion's scope `s`) does not
+// resolve to a binding the expansion introduced (with it).
+theorem resolve_not_intro<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), b: MBind, s: Nat>(
+  hx: (Mem(Nat, s, S)) -> False,
+  hb: Mem(Nat, s, mscopes(b)),
+  h: Found(x, S, env, b)
+): False {
+  hx(found_lacks(h, hb))
+}
+
+// H2: an identifier that lacks the scope `f` of an enclosing binding form does
+// not resolve to a binding of that form.
+theorem intro_not_capture<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), b: MBind, f: Nat>(
+  hx: (Mem(Nat, f, S)) -> False,
+  hb: Mem(Nat, f, mscopes(b)),
+  h: Found(x, S, env, b)
+): False {
+  resolve_not_intro(hx, hb, h)
+}
+
+// A candidate of the extended environment is a candidate of the old one, if
+// every new binding has the scope the identifier lacks.
+theorem cand_append_old<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), new: List(
+  MBind
+), c: MBind, s: Nat>(
+  hx: (Mem(Nat, s, S)) -> False,
+  hn: ∀ d: MBind. (Mem(MBind, d, new)) -> Mem(Nat, s, mscopes(d)),
+  h: Cand(x, S, append(MBind, env, new), c)
+): Cand(x, S, env, c) {
+  or_elim(
+    mem_append_inv(MBind, c, env, new, and_left(h)),
+    m => and_intro(m, and_right(h)),
+    m => False_elim(Cand(x, S, env, c), hx(and_right(and_right(h))(s, hn(c, m))))
+  )
+}
+
+theorem cand_append_new<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), new: List(MBind), c: MBind>(h: Cand(x, S, env, c)): Cand(x, S, append(MBind, env, new), c) {
+  and_intro(mem_append_left(new, and_left(h)), and_right(h))
+}
+
+// H3: what an input identifier means is the same with the bindings the
+// expansion introduced added.
+theorem input_keeps_binding_fwd<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), new: List(
+  MBind
+), b: MBind, s: Nat>(
+  hx: (Mem(Nat, s, S)) -> False,
+  hn: ∀ d: MBind. (Mem(MBind, d, new)) -> Mem(Nat, s, mscopes(d)),
+  h: Found(x, S, append(MBind, env, new), b)
+): Found(x, S, env, b) {
+  and_intro(cand_append_old(hx, hn, and_left(h)), c => hc => and_right(h)(c, cand_append_new(hc)))
+}
+
+theorem input_keeps_binding_bwd<x: Nat, S: List(
+  Nat
+), env: List(
+  MBind
+), new: List(
+  MBind
+), b: MBind, s: Nat>(
+  hx: (Mem(Nat, s, S)) -> False,
+  hn: ∀ d: MBind. (Mem(MBind, d, new)) -> Mem(Nat, s, mscopes(d)),
+  h: Found(x, S, env, b)
+): Found(x, S, append(MBind, env, new), b) {
+  and_intro(cand_append_new(and_left(h)), c => hc => and_right(h)(c, cand_append_old(hx, hn, hc)))
+}
+
+// H4: the scopes handed out one after the other are different.
+theorem fresh_injective(n: Nat): (Eq(Nat, n, succ(n))) -> False {
+  e => Nat_ne_succ(n, e)
+}

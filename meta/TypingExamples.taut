@@ -1,0 +1,166 @@
+import "Typing.taut"
+
+// A port of lean/Proto/Nib/Examples.lean: small programs Nib's typing
+// rules must accept, and a fact they must refuse.
+
+// An effect `ask(): i64`, declared once.
+fn ask() -> Eff { eff(0, Nil) }
+
+// Its declaration: no values in, an `i64` out.
+fn askSig(e: Eff) -> Option(Decl) {
+  match e -> Option(Decl) {
+    eff(d, a) => match d -> Option(Decl) {
+      zero => match a -> Option(Decl) {
+        Nil => Some(decl(Nil, tint(i64)))
+        Cons(h, t) => None
+      }
+      succ(k) => None
+    }
+  }
+}
+
+theorem askSig_ask(): Eq(Option(Decl), askSig(ask()), Some(decl(Nil, tint(i64)))) { refl() }
+
+// `perform ask()` has the type of the answer and performs `ask`.
+theorem perform_ask(): HasType(askSig, Nil(Ty), tperform(ask(), Nil), tint(i64), Cons(ask(), Nil)) {
+  h_perform(Nil, ask(), Nil, Nil, tint(i64), Nil, askSig_ask(), ht_nil(Nil))
+}
+
+theorem Sub_cons_right<A: Type>(r: List(A), x: A): Sub(A, r, Cons(x, r)) {
+  e => m => mem_there(A, e, x, r, m)
+}
+
+theorem mem_singleton<A: Type, a: A, b: A>(m: Mem(A, a, Cons(b, Nil))): Eq(A, a, b) {
+  match m -> Eq(A, a, b) {
+    mem_here(t) => refl()
+    mem_there(b2, t2, m2) => Mem_nil(Eq(A, a, b), m2)
+  }
+}
+
+// A function value that performs when called is not performing it now.
+theorem lam_is_pure(): HasType(
+  askSig,
+  Nil(Ty),
+  tlam(Nil, tperform(ask(), Nil)),
+  tfn(Nil, tint(i64), Cons(ask(), Nil)),
+  Nil(Eff)
+) {
+  h_lam(Nil, Nil, tperform(ask(), Nil), tint(i64), Cons(ask(), Nil), perform_ask())
+}
+
+// Handling `ask` removes it: the arm answers `0`, and the handled
+// computation is pure.
+theorem ask_clause_ok<c: Clause>(
+  m: Mem(Clause, c, Cons(clause(ask(), tintLit(i64, 0)), Nil))
+): ClauseOk(askSig, Nil(Ty), tint(i64), Nil(Eff), c) {
+  Eq_subst(
+    x => ClauseOk(askSig, Nil, tint(i64), Nil, x),
+    Eq_sym(mem_singleton(m)),
+    co_mk(
+      Nil,
+      tint(i64),
+      Nil,
+      ask(),
+      tintLit(i64, 0),
+      Nil,
+      tint(i64),
+      Nil,
+      tint(i64),
+      askSig_ask(),
+      h_int(Cons(tfn(Cons(tint(i64), Nil), tint(i64), Nil), Nil), i64, 0),
+      fits_refl(tint(i64)),
+      nil_sub(Nil)
+    )
+  )
+}
+
+theorem handled_ask(): HasType(
+  askSig,
+  Nil(Ty),
+  thandle(tperform(ask(), Nil), None, Cons(clause(ask(), tintLit(i64, 0)), Nil)),
+  tint(i64),
+  Nil(Eff)
+) {
+  h_handle(
+    Nil,
+    tperform(ask(), Nil),
+    Cons(clause(ask(), tintLit(i64, 0)), Nil),
+    tint(i64),
+    tint(i64),
+    Cons(ask(), Nil),
+    Nil,
+    perform_ask(),
+    fits_refl(tint(i64)),
+    e => m => or_inl(m),
+    c => m => ask_clause_ok(m)
+  )
+}
+
+// Without a clause for it, `ask` stays in the row of the handle.
+theorem unhandled_ask(
+  h: HasType(askSig, Nil(Ty), thandle(tperform(ask(), Nil), None, Nil), tint(i64), Nil(Eff))
+): False {
+  Mem_nil(False, unhandled_perform(h))
+}
+
+// `budget(steps: 100) { perform ask() }`: no rule of its own. The body may
+// perform `Div` besides `ask`; the call performs `Exceeded(i64)` and what the
+// body performs besides `Div`.
+theorem budget_ask(): HasType(
+  askSig,
+  Nil(Ty),
+  tapp(
+    tprim(pbudget, tint(i64), Cons(ask(), Nil)),
+    Cons(tintLit(i64, 100), Cons(tlam(Nil, tperform(ask(), Nil)), Nil))
+  ),
+  tint(i64),
+  Cons(exceededEff(tint(i64)), Cons(ask(), Nil))
+) {
+  h_app(
+    Nil,
+    tprim(pbudget, tint(i64), Cons(ask(), Nil)),
+    Cons(tintLit(i64, 100), Cons(tlam(Nil, tperform(ask(), Nil)), Nil)),
+    Cons(tint(i64), Cons(tfn(Nil, tint(i64), Cons(divEff(), Cons(ask(), Nil))), Nil)),
+    tint(i64),
+    Nil,
+    Nil,
+    Cons(exceededEff(tint(i64)), Cons(ask(), Nil)),
+    h_prim(Nil, pbudget, tint(i64), Cons(ask(), Nil)),
+    ht_cons(
+      Nil,
+      tintLit(i64, 100),
+      Cons(tlam(Nil, tperform(ask(), Nil)), Nil),
+      tint(i64),
+      Cons(tfn(Nil, tint(i64), Cons(divEff(), Cons(ask(), Nil))), Nil),
+      Nil,
+      Nil,
+      h_int(Nil, i64, 100),
+      ht_cons(
+        Nil,
+        tlam(Nil, tperform(ask(), Nil)),
+        Nil,
+        tfn(Nil, tint(i64), Cons(divEff(), Cons(ask(), Nil))),
+        Nil,
+        Nil,
+        Nil,
+        h_lam(
+          Nil,
+          Nil,
+          tperform(ask(), Nil),
+          tint(i64),
+          Cons(divEff(), Cons(ask(), Nil)),
+          h_weaken(
+            Nil,
+            tperform(ask(), Nil),
+            tint(i64),
+            Cons(ask(), Nil),
+            Cons(divEff(), Cons(ask(), Nil)),
+            perform_ask(),
+            Sub_cons_right(Cons(ask(), Nil), divEff())
+          )
+        ),
+        ht_nil(Nil)
+      )
+    )
+  )
+}

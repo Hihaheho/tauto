@@ -1,0 +1,128 @@
+import "../std/Row.taut"
+
+// A port of lean/Proto/Choice.lean and lean/Proto/Budget.lean: a shared,
+// resumable step budget for multi-shot branching. `choose` stores the rest of
+// the computation in a function of the answer; the machine evaluates both
+// resumptions. One global budget serves the whole search machine, so
+// duplicating a continuation does not duplicate fuel, and running `n + m`
+// steps is running `n` and then resuming for `m`.
+
+inductive Bit(): Type {
+  b0(): Bit
+  b1(): Bit
+}
+
+inductive ChoiceTree(A: Type): Type {
+  pure(value: A): ChoiceTree(A)
+  choose(resume: (Bit) -> ChoiceTree(A)): ChoiceTree(A)
+}
+
+inductive Machine(A: Type): Type {
+  machine(pending: List(ChoiceTree(A)), answers: List(A)): Machine(A)
+}
+
+fn start(A: Type, tree: ChoiceTree(A)) -> Machine(A) {
+  machine(Cons(tree, Nil), Nil)
+}
+
+// One globally accounted evaluation step.
+fn step(A: Type, s: Machine(A)) -> Machine(A) {
+  match s -> Machine(A) {
+    machine(p, ans) => match p -> Machine(A) {
+      Nil => machine(Nil, ans)
+      Cons(t, rest) => match t -> Machine(A) {
+        pure(v) => machine(rest, append(A, ans, Cons(v, Nil)))
+        choose(k) => machine(Cons(k(b0), Cons(k(b1), rest)), ans)
+      }
+    }
+  }
+}
+
+// Execute at most `fuel` steps; steps after completion do nothing.
+fn advance(A: Type, fuel: Nat, s: Machine(A)) -> Machine(A) {
+  match fuel -> Machine(A) {
+    zero => s
+    succ(n) => advance(A, n, step(A, s))
+  }
+}
+
+// Adding budget later is the same as supplying it up front.
+theorem advance_add<A: Type>(
+  n: Nat,
+  m: Nat,
+  s: Machine(A)
+): Eq(Machine(A), advance(A, plus(n, m), s), advance(A, m, advance(A, n, s))) {
+  match n -> Eq(Machine(A), advance(A, plus(n, m), s), advance(A, m, advance(A, n, s))) {
+    zero => refl()
+    succ(k) => advance_add(k, m, step(A, s))
+  }
+}
+
+// A completed machine never consumes further work.
+theorem step_complete<A: Type>(
+  answers: List(A)
+): Eq(Machine(A), step(A, machine(Nil, answers)), machine(Nil, answers)) {
+  refl()
+}
+
+theorem advance_complete<A: Type>(
+  n: Nat,
+  answers: List(A)
+): Eq(Machine(A), advance(A, n, machine(Nil, answers)), machine(Nil, answers)) {
+  match n -> Eq(Machine(A), advance(A, n, machine(Nil, answers)), machine(Nil, answers)) {
+    zero => refl()
+    succ(k) => advance_complete(k, answers)
+  }
+}
+
+fn pick(b: Bit) -> Nat {
+  match b -> Nat {
+    b0 => 1
+    b1 => 2
+  }
+}
+
+// The sample: choose, then answer 1 or 2.
+fn sample() -> ChoiceTree(Nat) {
+  choose(b => pure(pick(b)))
+}
+
+fn answers_of(A: Type, m: Machine(A)) -> List(A) {
+  match m -> List(A) {
+    machine(p, a) => a
+  }
+}
+
+fn pending_of(A: Type, m: Machine(A)) -> List(ChoiceTree(A)) {
+  match m -> List(ChoiceTree(A)) {
+    machine(p, a) => p
+  }
+}
+
+fn length(A: Type, l: List(A)) -> Nat {
+  match l -> Nat {
+    Nil => 0
+    Cons(h, t) => succ(length(A, t))
+  }
+}
+
+// The first branching step queues two alternatives.
+theorem one_step_queues_two(): Eq(
+  Nat,
+  length(ChoiceTree(Nat), pending_of(Nat, advance(Nat, 1, start(Nat, sample())))),
+  2
+) { refl() }
+
+// The two branches share one three-step budget.
+theorem three_steps(): Eq(
+  List(Nat),
+  answers_of(Nat, advance(Nat, 3, start(Nat, sample()))),
+  Cons(1, Cons(2, Nil))
+) { refl() }
+
+// Two steps can only produce the first answer.
+theorem two_steps(): Eq(
+  List(Nat),
+  answers_of(Nat, advance(Nat, 2, start(Nat, sample()))),
+  Cons(1, Nil)
+) { refl() }
