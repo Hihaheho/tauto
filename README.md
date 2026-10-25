@@ -20,7 +20,8 @@ not published yet; what is here is the specification side of the project.
 | `lean/` | The Lean 4 formalization: the reference semantics and the proofs about it |
 | `std/` | The standard library, written and proved in Tauto |
 | `meta/` | Parts of the Lean formalization redone in Tauto: the small core, and a model of the kernel with its confluence, subject reduction and a checker that returns typing derivations |
-| `crates/tauto/src/prelude.taut` | The prelude: the types and theorems every proof may use without declaring them (`Nat`, `Eq`, `And`, `Or`, `Not`, `Iff`, …), with no axioms. It is the only file of the implementation published here |
+| `crates/tauto/src/prelude.taut` | The prelude: the types and theorems every proof may use without declaring them (`Nat`, `Eq`, `And`, `Or`, `Not`, `Iff`, …), with no axioms. With `crates/tauto-parol/tauto.par`, it is one of the two files of the implementation published here |
+| `crates/tauto-parol/tauto.par` | The grammar of Tauto: every form the reader accepts, with the base rules first and tauto's own (dependent types and proofs) after them |
 | `examples/` | Programs and proofs in Tauto |
 | `cases/` | Case files that specify what the implementation answers for an input, for tauto and its Nib part |
 | `Tauto.eure` | The project manifest (not read by any tool yet) |

@@ -1,0 +1,500 @@
+%start Program
+%title "Tauto"
+%comment "Tauto grammar: the base rules, then tauto's own rules. Newlines end statements, except inside ( )."
+%grammar_type 'LL(k)'
+%block_comment '/*' '*/'
+%auto_newline_off
+%skip Comment
+
+%on LParen %push InParen
+%on LBrace, RecordOpen %push InBrace
+%on MacroDelimStart1 %push InMacroDelim1
+%on MacroDelimStart2 %push InMacroDelim2
+%on MacroDelimStart3 %push InMacroDelim3
+%on MacroBlockStart3 %push InMacroBlock3
+%on MacroBlockStart4 %push InMacroBlock4
+%on MacroBlockStart5 %push InMacroBlock5
+%on MacroBlockStart6 %push InMacroBlock6
+
+%scanner InParen {
+  %block_comment '/*' '*/'
+  %skip Comment
+  %on LParen %push InParen
+  %on RParen %pop
+  %on LBrace, RecordOpen %push InBrace
+  %on MacroDelimStart1 %push InMacroDelim1
+  %on MacroDelimStart2 %push InMacroDelim2
+  %on MacroDelimStart3 %push InMacroDelim3
+  %on MacroBlockStart3 %push InMacroBlock3
+  %on MacroBlockStart4 %push InMacroBlock4
+  %on MacroBlockStart5 %push InMacroBlock5
+  %on MacroBlockStart6 %push InMacroBlock6
+}
+%scanner InBrace {
+  %block_comment '/*' '*/'
+  %skip Comment
+  %auto_newline_off
+  %on LParen %push InParen
+  %on LBrace, RecordOpen %push InBrace
+  %on RBrace %pop
+  %on MacroDelimStart1 %push InMacroDelim1
+  %on MacroDelimStart2 %push InMacroDelim2
+  %on MacroDelimStart3 %push InMacroDelim3
+  %on MacroBlockStart3 %push InMacroBlock3
+  %on MacroBlockStart4 %push InMacroBlock4
+  %on MacroBlockStart5 %push InMacroBlock5
+  %on MacroBlockStart6 %push InMacroBlock6
+}
+// The inside of a syntax literal: nothing
+// is skipped, and the closing token leaves the mode.
+%scanner InMacroDelim1 { %auto_newline_off %auto_ws_off %on MacroDelimEnd1 %pop }
+%scanner InMacroDelim2 { %auto_newline_off %auto_ws_off %on MacroDelimEnd2 %pop }
+%scanner InMacroDelim3 { %auto_newline_off %auto_ws_off %on MacroDelimEnd3 %pop }
+%scanner InMacroBlock3 { %auto_newline_off %auto_ws_off %on MacroBlockEnd3 %pop }
+%scanner InMacroBlock4 { %auto_newline_off %auto_ws_off %on MacroBlockEnd4 %pop }
+%scanner InMacroBlock5 { %auto_newline_off %auto_ws_off %on MacroBlockEnd5 %pop }
+%scanner InMacroBlock6 { %auto_newline_off %auto_ws_off %on MacroBlockEnd6 %pop }
+
+%%
+
+Stmts: { Sep } [ Stmt StmtsTail ] ;
+StmtsTail: [ Sep { Sep } [ Stmt StmtsTail ] ] ;
+Sep: Nl | Semi ;
+
+Stmt: OtherStmt ;
+OtherStmt: LetDecl | VarDecl | FnDecl | StructDecl | EnumDecl | EffectDecl
+    | LabelDecl | BrandDecl | TheoremDecl | AxiomDecl | InductiveDecl | DefDecl | ImportDecl | MutualDecl | ReturnStmt | BreakStmt | ContinueStmt | WhileStmt
+    | ExternDecl | ClassDecl | InstanceDecl | ModuleDecl | SyntaxDecl | MacroDecl | ExprStmt ;
+// `let &x = first(&v)` binds a borrow a function returns.
+// `let &mut x = vec_last_mut(&mut v)` binds a `&mut` borrow.
+LetDecl: KwLet [ Borrow ] Ident [ Colon Type ] Eq Gap Expr ;
+// `var &it = vec_iter(&v)` binds a view that is advanced with `&mut it`.
+VarDecl: KwVar [ Amp ] Ident [ Colon Type ] Eq Gap Expr ;
+// A recursion the checker cannot see to terminate names a well-founded
+// relation on the first parameter: `fn f(t: Term) -> Nat decreasing_by measure(size) { ... }`.
+FnDecl: KwFn FnName [ Generics ] LParen [ Param { Comma Param } ] RParen [ FnResult ] [ WhereClause ] [ KwDecreasingBy Expr ] Block ;
+// Constraints on the generics, after the result and its effects:
+// `fn max<A>(a: A, b: A) -> A where Ord(A) { ... }`.
+WhereClause: KwWhere Constraint { Comma Constraint } ;
+Constraint: Ident LParen Type RParen ;
+FnResult: ThinArrow ReturnType | EffectRow ;
+// A result type, and the effects the function may leave unhandled:
+// `-> i64 ! {Clock, Ask | e}`. A row binds to the nearest arrow.
+// `-> &A` returns a borrow of an argument.
+ReturnType: Ident [ TypeCall ] [ EffectRow ] | MacroCall [ EffectRow ] | FnType | FnKind FnType | TagPrefix ReturnType | Borrow ReturnType ;
+EffectRow: Bang LBrace [ EffectName { Comma EffectName } ] [ Pipe Ident ] RBrace | Bang EmptyBraces ;
+// An effect with type arguments is applied as a type is: `State(i64)`.
+EffectName: Ident [ TypeCall ] ;
+// `x`, `x: i64`
+FnName: Ident ;
+// `x: A` takes the value, `&x: A` a borrow of it, `&mut x: A` a borrow that
+// may be written.
+Param: [ Borrow ] Ident [ Colon Type ] ;
+Borrow: Amp [ KwMut ] ;
+// Type and universe parameters, with kinds when they are not types:
+// `<A, u: Level, P: Prop>`; the arguments are inferred (implicit).
+Generics: Lt Generic { Comma Generic } Gt ;
+// `<A: shared>`, `<A: linear>`; a row variable may admit only effects that
+// resume at most once: `<e: <=1>`.
+Generic: Ident [ Colon GenericKind ] ;
+GenericKind: Type | Le Integer ;
+ReturnStmt: KwReturn [ Expr ] ;
+BreakStmt: KwBreak [ Expr ] ;
+ContinueStmt: KwContinue ;
+WhileStmt: KwWhile Expr Block ;
+ExprStmt: Expr [ Assign Gap Expr ] ;
+
+// `struct Point { x: Float, y: Float }`; fields end with a comma or a newline.
+// A kind before it bounds what its values may be: `affine struct File {}`,
+// `linear enum Handshake { … }`, `view struct Iter<A> {}`.
+StructDecl: [ KwKind ] KwStruct Ident [ Generics ] StructBody ;
+StructBody: OpenBrace Fields RBrace | EmptyBraces ;
+OpenBrace: LBrace | RecordOpen ;
+Fields: { MemberSep } [ FieldDecl FieldsTail ] ;
+FieldsTail: [ MemberSep { MemberSep } [ FieldDecl FieldsTail ] ] ;
+FieldDecl: Ident Colon Type ;
+MemberSep: Nl | Comma ;
+// `enum Shape { Circle(Float), Rect { w: Float, h: Float }, Empty }`
+EnumDecl: [ KwKind ] KwEnum Ident [ Generics ] LBrace Variants RBrace ;
+Variants: { MemberSep } [ Variant VariantsTail ] ;
+VariantsTail: [ MemberSep { MemberSep } [ Variant VariantsTail ] ] ;
+Variant: Ident [ VariantBody ] ;
+VariantBody: LParen [ Type { Comma Type } ] RParen | OpenBrace Fields RBrace ;
+// An effect is one operation, called by its name:
+// `effect ask: (question: Text) -> i64`. A set of effects has a name of its
+// own: `effect State<T> = {Get(T), Put(T)}`.
+EffectDecl: KwEffect Ident [ Generics ] EffectBody ;
+EffectBody: EffectSignature | EffectAlias ;
+// How many times an arm may resume its continuation follows the signature:
+// `resume 0`, `resume <=1` (when nothing is written), `resume 1`, `resume ω`.
+// A `direct` operation is one whose arm continues with `k(e)` at the end of
+// every path.
+EffectSignature: Colon LParen [ Param { Comma Param } ] RParen [ ThinArrow Type ] [ EffectMode ] ;
+EffectMode: KwResume Quant | KwDirect ;
+Quant: Integer | Le Integer | Omega ;
+EffectAlias: Eq LBrace Gap [ EffectName { Comma Gap EffectName } Gap ] RBrace ;
+
+Gap: { Nl } ;
+
+// Tags: `label price` may be put on a value anywhere,
+// `brand checked { fn … }` only by the functions inside its block.
+// `@price Decimal` is the type, `@price 100` puts it on a value.
+LabelDecl: KwLabel Ident ;
+BrandDecl: KwBrand Ident Block ;
+// `module File { fn open(…) … }`: names that are written `File.open` outside.
+ModuleDecl: KwModule Ident ( Block | EmptyBraces ) ;
+TagPrefix: At Ident ;
+
+// `i64`, `Option(i64)`, `(i64, Text) -> Bool`, `()`, and a union of
+// types, `Decimal | Missing`.
+// Types are also propositions: `A ∧ B`, `A ∨ B`, `A ↔ B`, `¬A`, mixed only
+// with parentheses. `A | B` is the union of types.
+Type: TypeAtom { TypeJoin TypeAtom } ;
+TypeJoin: Pipe | AndSign | OrSign | IffSign ;
+TypeAtom: Ident [ TypeCall ] | FnType | FnKind FnType | TagPrefix TypeAtom | Quantified | NotSign TypeAtom | BraceTerm
+    | Borrow TypeAtom | MacroCall ;
+// `affine (File) -> ()` may be called once, `linear (H) -> ()` exactly once.
+FnKind: KwFnKind ;
+// A type is applied as a function is, `Option(i64)`, `Eq(Nat, plus(n, 1), m)`:
+// an argument is any expression, or a function type.
+TypeCall: LParen [ TypeCallArg { Comma TypeCallArg } ] RParen ;
+TypeCallArg: Expr [ ThinArrow ReturnType ] | Quantified | NotSign TypeAtom ;
+// Any other term where a type is written, in braces:
+// `{ if b { Nat } else { Bool } }`.
+BraceTerm: LBrace Gap Expr Gap RBrace ;
+// A parameter may have a name, as a borrowed one does: `(&x: A) -> ()`.
+FnType: LParen [ FnTypeParam { Comma FnTypeParam } ] RParen [ ThinArrow ReturnType | EffectRow ] ;
+FnTypeParam: Type [ Colon Type ] ;
+
+Expr: Or [ FatArrow Gap Expr ] ;
+Or: And { OrOp Gap And } ;
+OrOp: PipePipe ;
+And: Compare { AndOp Gap Compare } ;
+AndOp: AmpAmp ;
+Compare: Additive [ CompareOp Gap Additive ] ;
+CompareOp: EqEq | BangEq | Le | Ge | Lt | Gt ;
+Additive: Multiplicative { AddOp Gap Multiplicative } ;
+AddOp: Plus | Minus ;
+Multiplicative: Unary { MulOp Gap Unary } ;
+MulOp: Star | Slash ;
+Unary: { UnaryOp } Postfix ;
+// `&x` and `&mut x` borrow; where a borrow may stand is the checker's.
+UnaryOp: Minus | Plus | Bang | TagPrefix | Borrow ;
+Postfix: Primary { PostOp } ;
+PostOp: Call | Field ;
+Call: LParen [ Item { Comma Item } ] RParen ;
+// An argument, or a lambda parameter with its type: `(x: i64) => x * 2`.
+Item: Expr [ Colon Type ] | Quantified ;
+Field: Dot Ident ;
+
+Primary: Number | Text | True | False | PathExpr | Paren | Brace | IfExpr | MatchExpr | LoopExpr
+       | PerformExpr | HandleExpr | BudgetExpr | HoleExpr | SyntaxLit | MacroCall | QuoteExpr | SpliceExpr
+       | StepExpr ;
+// A named hole, `?h`, stands for a term not written yet. It is never part of
+// an accepted declaration: the checker reports its goal and the declaration
+// stays incomplete (`tauto goals` shows the goal).
+HoleExpr: Hole ;
+// `budget(steps: 10000) { work(x) }`: the block's value,
+// or, when it takes more than that many steps, `Exceeded(T)` performed
+// where the budget is written.
+BudgetExpr: KwBudget LParen Ident Colon Expr RParen Block ;
+// A request of an operation: `perform ask("a")`, `perform show("x", v)`.
+// Operations are not functions: a call without `perform` never performs one.
+PerformExpr: KwPerform OperationName Call ;
+// The operation a `perform` or an arm names.
+OperationName: Ident ;
+// `x`, `Shape::Circle`, and with fields a struct literal `Point { x: 1, y: 2 }`.
+PathExpr: Ident { PathSep Ident } [ RecordBody | EmptyBraces ];
+Number: Float | Decimal | Integer ;
+Paren: LParen [ Item { Comma Item } ] RParen ;
+// A block, or a record `{ x: 1, y: 2 }` when a name and `:` come first.
+Brace: RecordBody | Block ;
+Block: LBrace Stmts RBrace ;
+RecordBody: RecordOpen Gap FieldInit RecordTail RBrace ;
+RecordTail: { MemberSep } [ FieldInit RecordTail ] ;
+FieldInit: Ident Colon Gap Expr ;
+IfExpr: KwIf Expr Block [ KwElse ElseBranch ] ;
+ElseBranch: IfExpr | Block ;
+LoopExpr: KwLoop Block ;
+// A dependent match gives its result type, which may mention the scrutinee:
+// `match v -> Vector(i64, n) { ... }`. On a term that is not a variable,
+// `as e` names the equation between the term and each arm's constructor.
+MatchExpr: KwMatch Expr [ KwAs Ident ] [ ThinArrow Type ] LBrace Arms RBrace ;
+// `extern { fn file_open(&path: Text) -> Result(File, IoError) }`: the
+// signatures of functions the host defines, trusted as axioms. Which Rust
+// function each one is lives in `Tauto.eure`, not in the source.
+ExternDecl: KwExtern OpenBrace ExternItems RBrace ;
+ExternItems: { MemberSep } [ ExternItem ExternTail ] ;
+ExternTail: [ MemberSep { MemberSep } [ ExternItem ExternTail ] ] ;
+// `instance PartialEq(Regex)`: the host provides the instance.
+ExternItem: ExternFn | ExternInstance ;
+ExternInstance: KwInstance Ident LParen Type RParen ;
+
+// `class Ord<A: linear> { fn compare(&a: A, &b: A) -> Ordering }`: methods are
+// signatures; a law states a proposition.
+ClassDecl: KwClass Ident Generics ClassBody ;
+ClassBody: OpenBrace ClassItems RBrace | EmptyBraces ;
+ClassItems: { MemberSep } [ ClassItem ClassItemsTail ] ;
+ClassItemsTail: [ MemberSep { MemberSep } [ ClassItem ClassItemsTail ] ] ;
+ClassItem: ExternFn | LawDecl ;
+// `law trans<a: A>(h: P): Q`, with a proof in a block where an instance gives one.
+LawDecl: KwLaw Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon Type [ Block ] ;
+
+// `instance<A> Ord(List(A)) where Ord(A) { fn compare(…) … }`
+InstanceDecl: KwInstance [ Generics ] Ident LParen Type RParen [ WhereClause ] InstanceBody ;
+InstanceBody: OpenBrace InstanceItems RBrace | EmptyBraces ;
+InstanceItems: { MemberSep } [ InstanceItem InstanceItemsTail ] ;
+InstanceItemsTail: [ MemberSep { MemberSep } [ InstanceItem InstanceItemsTail ] ] ;
+InstanceItem: FnDecl | LawDecl ;
+ExternFn: KwFn FnName [ Generics ] LParen [ Param { Comma Param } ] RParen [ FnResult ] [ WhereClause ] ;
+Arms: { MemberSep } [ Arm ArmsTail ] ;
+ArmsTail: [ MemberSep { MemberSep } [ Arm ArmsTail ] ] ;
+// `Less ⊢ G => body` states the goal of the arm, which the kernel compares with the one it computes.
+Arm: Pattern [ KwIf Or ] [ Turnstile Type ] FatArrow Gap ArmBody ;
+ArmBody: Quantified | Expr ;
+// A step of a proof: `by rewrite!(e) -> G0 { h: P ⊢ G1 => p }`. The tactic, the
+// goal it starts from and the goals it leaves, each with the variables it adds,
+// are written; the tactic writes the term between them.
+// Where the step is the whole proof of a step's arm, the arm's goal is its goal
+// and `-> G0` is not written.
+StepExpr: KwBy MacroCall [ ThinArrow Type ] StepBody ;
+StepBody: OpenBrace StepArms RBrace | EmptyBraces ;
+StepArms: { MemberSep } [ StepArm StepArmsTail ] ;
+StepArmsTail: [ MemberSep { MemberSep } [ StepArm StepArmsTail ] ] ;
+StepArm: [ StepBinder { Comma StepBinder } ] Turnstile Type FatArrow Gap ArmBody ;
+StepBinder: Ident Colon Type ;
+
+// `_`, `x`, `1`, `"a"`, `Shape::Circle(r)`, `Point { x, y: 0 }`, `Some(x) | None`
+Pattern: PatternAlt { Pipe PatternAlt } ;
+PatternAlt: PathPattern | LiteralPattern ;
+PathPattern: Ident { PathSep Ident } [ PatternArgs ] ;
+PatternArgs: LParen [ Pattern { Comma Pattern } ] RParen | OpenBrace FieldPatterns RBrace | EmptyBraces ;
+FieldPatterns: { MemberSep } [ FieldPattern FieldPatternsTail ] ;
+FieldPatternsTail: [ MemberSep { MemberSep } [ FieldPattern FieldPatternsTail ] ] ;
+FieldPattern: Ident [ Colon Pattern ] ;
+LiteralPattern: [ Minus ] Number | Text | True | False ;
+
+
+// `handle { total() } with { return v => v * 2; ask(q), k => k(10) }`:
+// the computation is a block, each `with` adds a handler around the ones
+// before it. An arm names the operation it answers, patterns for the
+// operation's values, the continuation's name when the arm uses it, and a
+// guard.
+HandleExpr: KwHandle HandleSubject ;
+HandleSubject: Block HandleTail ;
+HandleTail: HandleWith { HandleWith } ;
+HandleWith: KwWith LBrace Handlers RBrace ;
+Handlers: { MemberSep } [ Handler HandlersTail ] ;
+HandlersTail: [ MemberSep { MemberSep } [ Handler HandlersTail ] ] ;
+Handler: OperationHandler | ReturnHandler ;
+OperationHandler: OperationName LParen [ Pattern { Comma Pattern } ] RParen [ Comma Ident ] [ KwIf Or ] FatArrow Gap Expr ;
+ReturnHandler: KwReturn Pattern FatArrow Gap Expr ;
+// Tauto's words, before `Ident` so a tie goes to the word.
+KwTheorem: <INITIAL, InParen, InBrace>'theorem' ;
+KwDef: <INITIAL, InParen, InBrace>'def' ;
+KwImport: <INITIAL, InParen, InBrace>'import' ;
+KwMutual: <INITIAL, InParen, InBrace>'mutual' ;
+KwAxiom: <INITIAL, InParen, InBrace>'axiom' ;
+KwInductive: <INITIAL, InParen, InBrace>'inductive' ;
+KwForall: <INITIAL, InParen, InBrace>/∀|forall/ ;
+KwExists: <INITIAL, InParen, InBrace>/∃|exists/ ;
+KwDecreasingBy: <INITIAL, InParen, InBrace>'decreasing_by' ;
+// `by` before a tactic's call; contextual, so `by` stays a name elsewhere.
+// `as` names the equation of a match on a term: `match f(x) as e -> G {`.
+KwAs: <INITIAL, InParen, InBrace>/as/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*(->|\{)/ ;
+KwBy: <INITIAL, InParen, InBrace>/by/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*!\(/ ;
+Turnstile: <INITIAL, InParen, InBrace>'⊢' ;
+AndSign: <INITIAL, InParen, InBrace>'∧' ;
+OrSign: <INITIAL, InParen, InBrace>'∨' ;
+IffSign: <INITIAL, InParen, InBrace>'↔' ;
+NotSign: <INITIAL, InParen, InBrace>'¬' ;
+KwLet: <INITIAL, InParen, InBrace>'let' ;
+KwVar: <INITIAL, InParen, InBrace>'var' ;
+KwFn: <INITIAL, InParen, InBrace>'fn' ;
+KwReturn: <INITIAL, InParen, InBrace>'return' ;
+KwWhile: <INITIAL, InParen, InBrace>'while' ;
+KwLoop: <INITIAL, InParen, InBrace>'loop' ;
+KwBreak: <INITIAL, InParen, InBrace>'break' ;
+KwContinue: <INITIAL, InParen, InBrace>'continue' ;
+KwIf: <INITIAL, InParen, InBrace>'if' ;
+KwElse: <INITIAL, InParen, InBrace>'else' ;
+KwMatch: <INITIAL, InParen, InBrace>'match' ;
+KwStruct: <INITIAL, InParen, InBrace>'struct' ;
+KwEnum: <INITIAL, InParen, InBrace>'enum' ;
+KwEffect: <INITIAL, InParen, InBrace>'effect' ;
+KwHandle: <INITIAL, InParen, InBrace>'handle' ;
+KwWith: <INITIAL, InParen, InBrace>'with' ;
+KwPerform: <INITIAL, InParen, InBrace>'perform' ;
+// `budget`, `label` and `brand` are words only where they begin their
+// form: elsewhere they stay names, so a program that uses them as names
+// reads as before.
+KwBudget: <INITIAL, InParen, InBrace>/budget/ ?= /[ \t]*\([ \t\r\n]*steps[ \t]*:/ ;
+KwLabel: <INITIAL, InBrace>/label/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*[^\p{L}\p{N}_ \t]/ ;
+KwBrand: <INITIAL, InBrace>/brand/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*\{/ ;
+// A kind is a word only before `struct` or `enum`, an arrow's kind only
+// before its parameters; elsewhere `copy`, `shared`, `affine`, `linear`, `view` are
+// names (`<A: shared>` names the kind as a type).
+KwKind: <INITIAL, InParen, InBrace>/copy|shared|affine|linear|view/ ?= /[ \t]+(struct|enum)[ \t]/ ;
+KwFnKind: <INITIAL, InParen, InBrace>/affine|linear/ ?= /[ \t]*\(/ ;
+KwResume: <INITIAL, InParen, InBrace>/resume/ ?= /[ \t]+(<=|[0-9]|ω)/ ;
+// `direct` is a word only where it ends an effect's signature: elsewhere
+// (`<e: direct>`, a name) it stays a name.
+KwDirect: <INITIAL, InParen, InBrace>/direct/ ?= /[ \t]*(\r?\n|\}|;|\/\/)/ ;
+KwMut: <INITIAL, InParen, InBrace>/mut/ ?= /[ \t]+[\p{L}_]/ ;
+KwModule: <INITIAL, InBrace>/module/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*\{/ ;
+// `where` is a word only where a constraint follows: elsewhere it is a name.
+KwWhere: <INITIAL, InParen, InBrace>/where/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*\(/ ;
+// `class`, `instance` and `law` are words only where they begin their form.
+KwClass: <INITIAL, InBrace>/class/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*</ ;
+KwInstance: <INITIAL, InBrace>/instance/ ?= /[ \t]*<|[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*\(/ ;
+KwLaw: <INITIAL, InBrace>/law/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*[<(]/ ;
+KwExtern: <INITIAL, InBrace>/extern/ ?= /[ \t]*["{]/ ;
+Omega: <INITIAL, InParen, InBrace>'ω' ;
+True: <INITIAL, InParen, InBrace>'true' ;
+False: <INITIAL, InParen, InBrace>'false' ;
+
+Hole: <INITIAL, InParen, InBrace>/\?[\p{L}_][\p{L}\p{N}_]*/ ;
+
+// Blank lines fold into one newline token.
+Nl: <INITIAL, InBrace>/\r?\n([ \t]*\r?\n)*/ ;
+// A line comment stops before its newline, which still ends the statement.
+Comment: <INITIAL, InParen, InBrace>/\/\/[^\r\n]*/ ;
+Semi: <INITIAL, InParen, InBrace>';' ;
+Assign: <INITIAL, InParen, InBrace>':=' ;
+PathSep: <INITIAL, InParen, InBrace>'::' ;
+ThinArrow: <INITIAL, InParen, InBrace>'->' ;
+FatArrow: <INITIAL, InParen, InBrace>'=>' ;
+EqEq: <INITIAL, InParen, InBrace>'==' ;
+BangEq: <INITIAL, InParen, InBrace>'!=' ;
+Le: <INITIAL, InParen, InBrace>'<=' ;
+Ge: <INITIAL, InParen, InBrace>'>=' ;
+AmpAmp: <INITIAL, InParen, InBrace>'&&' ;
+Amp: <INITIAL, InParen, InBrace>'&' ;
+PipePipe: <INITIAL, InParen, InBrace>'||' ;
+Lt: <INITIAL, InParen, InBrace>'<' ;
+Gt: <INITIAL, InParen, InBrace>'>' ;
+Eq: <INITIAL, InParen, InBrace>'=' ;
+Bang: <INITIAL, InParen, InBrace>'!' ;
+Pipe: <INITIAL, InParen, InBrace>'|' ;
+At: <INITIAL, InParen, InBrace>'@' ;
+Colon: <INITIAL, InParen, InBrace>':' ;
+Comma: <INITIAL, InParen, InBrace>',' ;
+Dot: <INITIAL, InParen, InBrace>'.' ;
+Plus: <INITIAL, InParen, InBrace>'+' ;
+Minus: <INITIAL, InParen, InBrace>'-' ;
+Star: <INITIAL, InParen, InBrace>'*' ;
+Slash: <INITIAL, InParen, InBrace>'/' ;
+LParen: <INITIAL, InParen, InBrace>'(' ;
+RParen: <INITIAL, InParen, InBrace>')' ;
+// A `{` whose first content is `name:` opens a record, not a block.
+RecordOpen: <INITIAL, InParen, InBrace>/\{/ ?= /\s*[\p{L}_][\p{L}\p{N}_]*\s*:[^:=]/ ;
+// `{}` with nothing between: a struct without fields, its value `F {}`, the
+// pattern `F {}`, and the empty row `! {}`. An empty block is `{ }`.
+EmptyBraces: <INITIAL, InParen, InBrace>'{}' ;
+LBrace: <INITIAL, InParen, InBrace>'{' ;
+RBrace: <INITIAL, InParen, InBrace>'}' ;
+
+Float: <INITIAL, InParen, InBrace>/[0-9]+(\.[0-9]+)?[eE][+-]?[0-9]+/ ;
+Decimal: <INITIAL, InParen, InBrace>/[0-9]+\.[0-9]+/ ;
+Integer: <INITIAL, InParen, InBrace>/[0-9]+/ ;
+// Three forms: `"…"` with the escapes `\\ \" \' \n \r \t \0 \u{X…}`
+// (one to six hex digits), `'…'` with none (no `'` inside), and
+// plaintext`…` (no escapes, no backtick or line break inside).
+Text: <INITIAL, InParen, InBrace>/"([^"\\]|\\[\\"'nrt0]|\\u\{[0-9a-fA-F]{1,6}\})*"|'[^']*'|plaintext`[^`\r\n]*`/ ;
+
+// Syntax literals, with the name of the syntax first:
+// name`…`, name<`…`> (also <<`…`>> and <<<`…`>>>) and a block of three to six
+// backticks, `` ```name `` through the same number again. The name may be
+// missing here; the reader refuses a missing name outside a macro's argument.
+// plaintext`…` stays a Text (above): same meaning, and it is listed first, so
+// it wins the tie with MacroText.
+MacroText: <INITIAL, InParen, InBrace>/([\p{L}_][\p{L}\p{N}_]*)?`[^`\r\n]*`/ ;
+MacroDelimStart3: <INITIAL, InParen, InBrace>/([\p{L}_][\p{L}\p{N}_]*)?<<<`/ ;
+MacroDelimStart2: <INITIAL, InParen, InBrace>/([\p{L}_][\p{L}\p{N}_]*)?<<`/ ;
+MacroDelimStart1: <INITIAL, InParen, InBrace>/([\p{L}_][\p{L}\p{N}_]*)?<`/ ;
+MacroBlockStart3: <INITIAL, InParen, InBrace>/`{3}([\p{L}_][\p{L}\p{N}_]*)?[ \t]*\r?\n/ ;
+MacroBlockStart4: <INITIAL, InParen, InBrace>/`{4}([\p{L}_][\p{L}\p{N}_]*)?[ \t]*\r?\n/ ;
+MacroBlockStart5: <INITIAL, InParen, InBrace>/`{5}([\p{L}_][\p{L}\p{N}_]*)?[ \t]*\r?\n/ ;
+MacroBlockStart6: <INITIAL, InParen, InBrace>/`{6}([\p{L}_][\p{L}\p{N}_]*)?[ \t]*\r?\n/ ;
+MacroDelimEnd3: <InMacroDelim3>'`>>>' ;
+MacroDelimEnd2: <InMacroDelim2>'`>>' ;
+MacroDelimEnd1: <InMacroDelim1>'`>' ;
+// A backtick that does not close (the longer closing is taken first).
+MacroTick: <InMacroDelim1, InMacroDelim2, InMacroDelim3>'`' ;
+MacroBlockEnd3: <InMacroBlock3>/`{3}/ ;
+MacroTicks2: <InMacroBlock3>/`{1,2}/ ;
+MacroBlockEnd4: <InMacroBlock4>/`{4}/ ;
+MacroTicks3: <InMacroBlock4>/`{1,3}/ ;
+MacroBlockEnd5: <InMacroBlock5>/`{5}/ ;
+MacroTicks4: <InMacroBlock5>/`{1,4}/ ;
+MacroBlockEnd6: <InMacroBlock6>/`{6}/ ;
+MacroTicks5: <InMacroBlock6>/`{1,5}/ ;
+MacroChunk: <InMacroDelim1, InMacroDelim2, InMacroDelim3, InMacroBlock3, InMacroBlock4, InMacroBlock5, InMacroBlock6>/[^`]+/ ;
+
+SyntaxLit: MacroText | MacroDelim | MacroBlock ;
+MacroDelim: MacroDelim3 | MacroDelim2 | MacroDelim1 ;
+MacroDelim1: MacroDelimStart1 { MacroChunk | MacroTick } MacroDelimEnd1 ;
+MacroDelim2: MacroDelimStart2 { MacroChunk | MacroTick } MacroDelimEnd2 ;
+MacroDelim3: MacroDelimStart3 { MacroChunk | MacroTick } MacroDelimEnd3 ;
+MacroBlock: MacroBlock3 | MacroBlock4 | MacroBlock5 | MacroBlock6 ;
+MacroBlock3: MacroBlockStart3 { MacroChunk | MacroTicks2 } MacroBlockEnd3 ;
+MacroBlock4: MacroBlockStart4 { MacroChunk | MacroTicks3 } MacroBlockEnd4 ;
+MacroBlock5: MacroBlockStart5 { MacroChunk | MacroTicks4 } MacroBlockEnd5 ;
+MacroBlock6: MacroBlockStart6 { MacroChunk | MacroTicks5 } MacroBlockEnd6 ;
+
+// `syntax math = ```par … ``` `: a syntax's grammar, in a block named `par`
+// (the reader checks the name). Contextual, so `syntax` stays a name elsewhere.
+KwSyntax: <INITIAL, InBrace>/syntax/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
+SyntaxDecl: KwSyntax Ident Eq MacroBlock ;
+// `macro math = math_expand`: registers a function as a macro.
+KwMacro: <INITIAL, InBrace>/macro/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
+MacroDecl: KwMacro Ident Eq Ident ;
+// `math!(`1 + 2 = 3`)`, `unroll!(e)`: the name, `!` and `(` follow without a space,
+// which tells a call from a negation and from an effect row.
+MacroBang: <INITIAL, InParen, InBrace>/[\p{L}_][\p{L}\p{N}_]*!/ ?= /\(/ ;
+MacroCall: MacroBang LParen Expr RParen ;
+// `quote { … }` is a SynExpr, `quote stmts { … }` a List(SynStmt). A name that
+// starts with `$` is filled in with a value; `$(e)` fills in an expression.
+KwQuote: <INITIAL, InParen, InBrace>/quote/ ?= /[ \t]*\{|[ \t]+stmts[ \t]*\{/ ;
+QuoteExpr: KwQuote [ Ident ] Block ;
+Dollar: <INITIAL, InParen, InBrace>/\$/ ?= /\(/ ;
+SpliceExpr: Dollar LParen Expr RParen ;
+Ident: <INITIAL, InParen, InBrace>/\$?[\p{L}_][\p{L}\p{N}_]*/ ;
+
+// ---------------------------------------------------------------------------
+// Tauto's own rules: dependent types and proofs, which Nib
+// does not have. The rules above are the base grammar.
+
+// A program is statements; tauto adds `theorem`, `axiom` and `inductive`.
+Program: Stmts ;
+// `theorem swap<A, B>(p: And(A, B)): And(B, A) { ... }`: the result is a
+// proposition, the body a proof term (a step, `by`, is one with its goals
+// written), and the theorem is erased.
+TheoremDecl: KwTheorem Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon Type [ WhereClause ] Block ;
+// `mutual { inductive A … inductive B … }` declares families that mention each
+// other; `mutual { fn f … fn g … }` defines functions by recursion through
+// each other, one per family.
+MutualDecl: KwMutual OpenBrace MutualItems RBrace ;
+MutualItems: { MemberSep } [ MutualItem MutualTail ] ;
+MutualTail: [ MemberSep { MemberSep } [ MutualItem MutualTail ] ] ;
+MutualItem: InductiveDecl | FnDecl | TheoremDecl ;
+// `import "Std.taut"`: the declarations of another file, found relative to
+// this one and checked once.
+ImportDecl: KwImport Text ;
+// `def RenOk(xi: (Nat) -> Nat, g: List(Ty), d: List(Ty)): Prop := ∀ i: Nat. …`: a
+// definition whose body is a type (a proposition or a type former), which
+// the expression grammar cannot write.
+DefDecl: KwDef Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon Type Assign Gap Type ;
+// `axiom em<P>(): Or(P, Not(P))`, tracked wherever it is used.
+AxiomDecl: KwAxiom Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon Type ;
+// An inductive family, possibly indexed and living in `Prop`:
+// `inductive Typing(g: Ctx, t: Term, a: Term): Prop { var(i: Nat): Typing(g, t, a) }`
+InductiveDecl: KwInductive Ident LParen [ Param { Comma Param } ] RParen Colon Type OpenBrace Constructors RBrace ;
+Constructors: { MemberSep } [ Constructor ConstructorsTail ] ;
+ConstructorsTail: [ MemberSep { MemberSep } [ Constructor ConstructorsTail ] ] ;
+// A constructor's generics are fields a call may leave out, as a theorem's:
+// `cv_trans<x: KTm, y: KTm, z: KTm>(h1: KConv(x, y), h2: KConv(y, z)): KConv(x, z)`.
+Constructor: Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon Type ;
+// `∀ x: A. B` and `∃ x: A. B`, with `forall` / `exists` as ASCII.
+Quantified: Quantifier Ident Colon Type Dot TypeAtom ;
+Quantifier: KwForall | KwExists ;
