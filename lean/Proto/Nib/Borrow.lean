@@ -895,7 +895,7 @@ mutual
 end
 
 /-- The definitions' bodies pass the borrow check, but for the view
-functions, whose bodies return a borrow (`ViewDecl`: a parameter) and are
+functions, whose bodies return a borrow (`ViewDecl`: one of the parameters) and are
 only called. -/
 def DefsB (os : OwnSig) (sg : Sig) : Prop :=
   ∀ Fr d A b, sg.defs d = some (A, b) → ¬ ViewDef sg d → BLin os sg Fr [] [] [] [] b ∧ Bare [] [] b

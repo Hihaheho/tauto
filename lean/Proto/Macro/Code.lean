@@ -47,7 +47,7 @@ holds there: a `Code` always has a derivation. -/
 theorem code_derivable {σ : K.Env} (c : Code K σ) :
     K.Derivable σ c.ctx c.term c.ty c.row c.use := c.true_
 
-/-- The acceptance of a typed macro for one call: (1)–(6) as fields. `Whole` is the
+/-- The acceptance for one call: (1)–(6) as fields. `Whole` is the
 check of the whole declaration; `plug` puts a term in the hole; `sg` is the
 signature the declaration infers. -/
 structure Accept (Decl Sig : Type) (whole : Decl → Prop) (plug : Decl → K.Tm → Decl)

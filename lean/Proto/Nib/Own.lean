@@ -39,11 +39,12 @@ theorem Chain.kind_le (os : OwnSig) {t A B} (c : Chain t A B) : A.kind os ≤ B.
   | fits _ f ih => exact Kind.le_trans ih (Fits.kind_le os f)
   | tag _ _ ih => simp only [Ty.kind]; exact ih
 
-theorem Tms.occLo_borrowVal {a : Item} : ∀ {vs : List Tm}, (∀ v ∈ vs, BorrowVal v) → Tms.occLo a vs = 0
+theorem Tms.occLo_viewVal {a : Item} : ∀ {vs : List Tm}, (∀ v ∈ vs, ViewVal v) → Tms.occLo a vs = 0
   | [], _ => rfl
   | v :: vs, h => by
-      have ih := Tms.occLo_borrowVal (a := a) (fun x hx => h x (List.mem_cons_of_mem _ hx))
-      obtain ⟨l, hv | hv⟩ := h v List.mem_cons_self
+      have ih := Tms.occLo_viewVal (a := a) (fun x hx => h x (List.mem_cons_of_mem _ hx))
+      rcases h v List.mem_cons_self with ⟨l, hv | hv⟩ | ⟨b, hv⟩
+      · simp [Tms.occLo, hv, Tm.occLo, ih]
       · simp [Tms.occLo, hv, Tm.occLo, ih]
       · simp [Tms.occLo, hv, Tm.occLo, ih]
 
@@ -329,7 +330,7 @@ theorem Frame.holeOk {os sg S S' Γ C t u} (F F' : Frame) (hr : FrameRel F F') (
   have ht : ∀ X ρ, HasType sg S Γ (F.plug t) X ρ → HasType sg S' Γ (F'.plug u) X ρ := by
     intro X ρ h
     obtain ⟨H, ρh, ht, k⟩ := F.replace htv h
-    exact hr.hasType (k S' x u ρh (ho.1 H ρh ht) (Row.Sub.refl _))
+    exact hr.hasType (k S' x u ρh (ho.1 H ρh ht) (ListSet.Sub.refl _))
   refine ⟨ht, fun ⟨⟨A, ρ, h, hk⟩, _, _⟩ => ⟨⟨A, ρ, ht A ρ h, hk⟩, fun ps b e => ?_, fun i e => ?_⟩,
     fun ⟨⟨A, ρ, h, hk⟩, _, _⟩ => ⟨⟨A, ρ, ht A ρ h, hk⟩, fun ps b e => ?_, fun i e => ?_⟩⟩
   · exact absurd e (Frame.plug_not_lam _ _ _ _)
@@ -1230,7 +1231,7 @@ theorem captured_lin {os sg} {S e vs ps R E ret cls}
       obtain ⟨A, ρ0, ⟨ps', ρa, he', _, rfl⟩, -, hc'⟩ := h.head
       rw [he] at he'; cases he'
       exact ((HasType.var (sg := sg) (S := S) (Γ := [R]) (i := 0) rfl).chainOf hc'
-        (by intro h; cases h)).weaken (Row.nil_sub _)
+        (by intro h; cases h)).weaken (ListSet.nil_sub _)
     refine ⟨h1, fun ⟨⟨A, ρ', hA, hk⟩, _, _⟩ => ⟨⟨A, ρ', h1 A ρ' hA, hk⟩, fun _ _ e => (by cases e), ?_⟩,
       fun ⟨⟨A, ρ', hA, hk⟩, _, _⟩ => ⟨⟨A, ρ', h1 A ρ' hA, hk⟩, fun _ _ e => (by cases e), ?_⟩⟩
     · intro i e
@@ -1405,8 +1406,8 @@ theorem fn_fit {A X : Ty} {ρ0 ρ : Row} {ps : List Ty} {u : Tm} (c : Chain u A 
 theorem ite_inv {sg S Γ c t f X ρ} (h : HasType sg S Γ (.ite c t f) X ρ) :
     HasType sg S Γ t X ρ ∧ HasType sg S Γ f X ρ := by
   obtain ⟨A, ρ0, ⟨ρc, ρt, ρf, _, ht, hf, rfl⟩, hs, hx⟩ := h.head
-  exact ⟨(ht.weaken (Row.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h),
-    (hf.weaken (Row.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h)⟩
+  exact ⟨(ht.weaken (ListSet.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h),
+    (hf.weaken (ListSet.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h)⟩
 
 theorem firm_single {os sg e ps R} (hsig : SigOk sg) (he : sg.op e = some (ps, R))
     (hq : os.quant e = .one) : ∀ q, Row.quants os [e] q → q = .one := by
@@ -1544,7 +1545,7 @@ theorem lin_preservation {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig 
       | app _ ha _ =>
           cases ha with
           | cons hi _ => exact ⟨hi, hsl⟩
-  | @vcall d ps T ρ0 i vs w hdef hpi hbv hw =>
+  | @vcall d ps T ρ0 b i vs w hdef hrun hbv hw =>
       intro S S' X ρ h hμ hμ' _ hl hsl
       obtain rfl := hμ'.ctx_eq hμ
       cases hl with
@@ -2772,14 +2773,16 @@ theorem uniq_step {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig : SigOk
       intro S S' X ρ D c h hμ hμ' _ hl hsl hu
       obtain rfl := hμ'.ctx_eq hμ
       exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ], Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo]⟩
-  | @vcall d ps T ρ0 i vs w hdef hpi hbv hw =>
+  | @vcall d ps T ρ0 b i vs w hdef hrun hbv hw =>
       intro S S' X ρ D c h hμ hμ' _ hl hsl hu
       obtain rfl := hμ'.ctx_eq hμ
-      obtain ⟨l, rfl | rfl⟩ := hbv w (List.mem_of_getElem? hw)
+      rcases hbv w (List.mem_of_getElem? hw) with ⟨l, rfl | rfl⟩ | ⟨bb, rfl⟩
       · exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ],
-          Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo_borrowVal hbv]⟩
+          Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo_viewVal hbv]⟩
       · exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ],
-          Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo_borrowVal hbv]⟩
+          Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo_viewVal hbv]⟩
+      · exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ],
+          Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo_viewVal hbv]⟩
   | more =>
       intro S S' X ρ D c h hμ hμ' _ hl hsl hu
       obtain rfl := hμ'.ctx_eq hμ

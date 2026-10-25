@@ -1,3 +1,5 @@
+import Proto.Renaming
+
 /-!
 # A small proved core: substitution, preservation, progress
 
@@ -12,8 +14,9 @@ preservation, and progress for closed terms (a closed well-typed term is a
 value or steps). Call-by-value, so `beta` needs a value argument.
 
 Not covered: dependent types and conversion, the indexed eliminators, effects
-and handlers, and termination. Preservation and progress do not give
-termination.
+and handlers (`Nib/Typing.lean` and `Nib/Safety.lean` type and run them,
+without dependent types), and termination. Preservation and progress do not
+give termination.
 -/
 
 namespace Proto.Core
@@ -37,10 +40,6 @@ inductive Tm where
   | ite (c t e : Tm)
 
 /-! ## Renaming and substitution -/
-
-def upR (ξ : Nat → Nat) : Nat → Nat
-  | 0 => 0
-  | n + 1 => ξ n + 1
 
 def ren (ξ : Nat → Nat) : Tm → Tm
   | .var i => .var (ξ i)

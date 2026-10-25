@@ -118,7 +118,7 @@ inductive Prim where
   /-- A call of the view function declared at the top as `d` (`ViewDecl`):
   its parameters are borrows and its body gives one of them back. `T` is the
   parameters `ps`, with the result type `T`. The call is a borrow of its
-  arguments (the result is derived from all the borrowed arguments),
+  arguments,
   so, like `reborrow`, it is only ever the head of a call. -/
   | vcall (d : Nat) (ps : List Ty)
 
@@ -327,6 +327,14 @@ theorem BorrowVal.value {v : Tm} (h : BorrowVal v) : Value v := by
   · exact .brw
   · exact .mbrw
 
+/-- An argument of a view call that is a value: a borrow of a place, or a
+`bool` the view function branches on. -/
+def ViewVal (v : Tm) : Prop := BorrowVal v ∨ ∃ b, v = .bool b
+
+theorem ViewVal.value {v : Tm} : ViewVal v → Value v
+  | .inl h => h.value
+  | .inr ⟨_, e⟩ => e ▸ .bool
+
 /-- What a program declares:
 * its effects: the parameter types and the result type of each operation,
   already instantiated;
@@ -469,12 +477,110 @@ def Ty.IsBrw : Ty → Prop
   | .mbrw _ => True
   | _ => False
 
-/-- `d` declares a view function with parameters `ps` and result `B`: every parameter is a borrow,
-the body is the `i`-th parameter, and the result type is that parameter's.
-So the result is one of the borrowed arguments, which the signature alone
-says (it is derived from them). -/
+/-- A parameter of a view function: a borrow, which the result may be, or a
+`bool`, which the body may branch on. -/
+def ViewParam (p : Ty) : Prop := p.IsBrw ∨ p = .bool
+
+/-- `is` passes the caller's parameters `ps` on as the callee's `qs`, one for one,
+each at the type the callee expects. -/
+def ViewPass (ps qs : List Ty) (is : List Nat) : Prop :=
+  is.length = qs.length ∧ ∀ k x : Nat, is[k]? = some x → ps[x]? = qs[k]?
+
+/-- The body of the view function `d` with parameters `ps` and result `T`:
+it gives back one of the borrowed parameters, which it picks by
+
+* `param`: the parameter `j`, of the result's type;
+* `ite`: by an `if` on a `bool` parameter;
+* `call`: by a call of a view function declared before (`d' < d`, so no
+  recursion) on parameters of its own.
+
+Whichever it picks, the result is one of the arguments, at the result type. -/
+inductive ViewBody (sg : Sig) : Nat → List Ty → Ty → Tm → Prop where
+  | param {d ps T j} : ps[j]? = some T → ViewBody sg d ps T (.var j)
+  | ite {d ps T c t f} : ps[c]? = some .bool → ViewBody sg d ps T t → ViewBody sg d ps T f →
+      ViewBody sg d ps T (.ite (.var c) t f)
+  | call {d d' ps qs T is b} : d' < d → sg.defs d' = some (.fn qs T [], .lam qs b) →
+      (∀ p ∈ qs, ViewParam p) → ViewPass ps qs is → ViewBody sg d' qs T b →
+      ViewBody sg d ps T (.app (.prim (.vcall d' qs) T []) (is.map .var))
+
+/-- `d` declares a view function with parameters `ps` and result `B`: every
+parameter is a borrow or a `bool`, the result is a borrow, and the body
+picks one of the parameters (`ViewBody`). So the result is one of the
+borrowed arguments, which the signature alone says (it is derived from
+them). -/
 def ViewDecl (sg : Sig) (d : Nat) (ps : List Ty) (B : Ty) : Prop :=
-  ∃ i, (∀ p ∈ ps, p.IsBrw) ∧ ps[i]? = some B ∧ sg.defs d = some (.fn ps B [], .lam ps (.var i))
+  (∀ p ∈ ps, ViewParam p) ∧ B.IsBrw ∧ ∃ b, sg.defs d = some (.fn ps B [], .lam ps b) ∧ ViewBody sg d ps B b
+
+/-- The parameter picked by the body `b` of a view function, run on the
+arguments `vs`. The facts about types are in the derivation: the parameter
+has the result's type (`ViewRun.ty`). -/
+inductive ViewRun (sg : Sig) : List Ty → Ty → Tm → List Tm → Nat → Prop where
+  | param {ps T j vs} : ps[j]? = some T → ViewRun sg ps T (.var j) vs j
+  | ite {ps T c t f vs b i} : vs[c]? = some (.bool b) →
+      ViewRun sg ps T (if b then t else f) vs i → ViewRun sg ps T (.ite (.var c) t f) vs i
+  | call {ps qs T d' is b vs j i} : sg.defs d' = some (.fn qs T [], .lam qs b) → ViewPass ps qs is →
+      ViewRun sg qs T b (is.map (fun x => vs.getD x .unit)) j → is[j]? = some i →
+      ViewRun sg ps T (.app (.prim (.vcall d' qs) T []) (is.map .var)) vs i
+
+/-- The parameter picked has the result's type. -/
+theorem ViewRun.ty {sg ps T b vs i} (h : ViewRun sg ps T b vs i) : ps[i]? = some T := by
+  induction h with
+  | param hj => exact hj
+  | ite _ _ ih => exact ih
+  | call _ hp _ hi ih => rw [hp.2 _ _ hi]; exact ih
+
+/-- A view function has a parameter: the result is one of them. -/
+theorem ViewBody.ne_nil {sg d ps T b} (h : ViewBody sg d ps T b) : ps ≠ [] := by
+  induction h with
+  | param hj => rintro rfl; simp at hj
+  | ite hc => rintro rfl; simp at hc
+  | @call d d' ps qs T is b _ _ _ hp _ ih =>
+      rintro rfl
+      have hq : 0 < qs.length := List.length_pos_iff.mpr ih
+      have hi : 0 < is.length := by have := hp.1; omega
+      have := hp.2 0 (is[0]) (List.getElem?_eq_getElem hi)
+      simp [List.getElem?_eq_getElem hq] at this
+
+/-- A view function's body runs on arguments that have the right shape:
+as many as parameters, and a `bool` where the parameter is one. -/
+theorem ViewBody.run {sg d ps T b} (h : ViewBody sg d ps T b) :
+    ∀ vs : List Tm, vs.length = ps.length → (∀ j : Nat, ps[j]? = some Ty.bool → ∃ bb, vs[j]? = some (Tm.bool bb)) →
+      ∃ i, ViewRun sg ps T b vs i := by
+  induction h with
+  | param hj => exact fun _ _ _ => ⟨_, .param hj⟩
+  | @ite d ps T c t f hc _ _ iht ihf =>
+      intro vs hl hb
+      obtain ⟨bb, hbb⟩ := hb c hc
+      cases bb
+      · obtain ⟨i, hi⟩ := ihf vs hl hb
+        exact ⟨i, .ite hbb hi⟩
+      · obtain ⟨i, hi⟩ := iht vs hl hb
+        exact ⟨i, .ite hbb hi⟩
+  | @call d d' ps qs T is b hlt hdef hqs hp _ ih =>
+      intro vs hl hb
+      have hlen : (is.map (fun x => vs.getD x .unit)).length = qs.length := by simpa using hp.1
+      obtain ⟨j, hj⟩ := ih _ hlen (fun k hk => by
+        have hk' : k < is.length := by
+          have := (List.getElem?_eq_some_iff.mp hk).1
+          have := hp.1
+          omega
+        obtain ⟨bb, hbb⟩ := hb (is[k]) (by rw [hp.2 k _ (by simp)]; exact hk)
+        exact ⟨bb, by simp [hk', List.getD_eq_getElem?_getD, hbb]⟩)
+      have hjq : j < qs.length := (List.getElem?_eq_some_iff.mp hj.ty).1
+      have hji : j < is.length := by have := hp.1; omega
+      exact ⟨is[j], .call hdef hp hj (by simp)⟩
+
+theorem ViewBody.transfer {sg sg' : Sig} (hdefs : ∀ d x, sg'.defs d = some x → sg.defs d = some x)
+    {d ps T b} (h : ViewBody sg' d ps T b) : ViewBody sg d ps T b := by
+  induction h with
+  | param hj => exact .param hj
+  | ite hc _ _ ih1 ih2 => exact .ite hc ih1 ih2
+  | call hlt hdef hqs hp _ ih => exact .call hlt (hdefs _ _ hdef) hqs hp ih
+
+theorem ViewDecl.transfer {sg sg' : Sig} (hdefs : ∀ d x, sg'.defs d = some x → sg.defs d = some x)
+    {d ps B} (h : ViewDecl sg' d ps B) : ViewDecl sg d ps B := by
+  obtain ⟨hp, hB, b, hdef, hb⟩ := h
+  exact ⟨hp, hB, b, hdefs _ _ hdef, hb.transfer hdefs⟩
 
 /-- `d` is declared as a view function. -/
 def ViewDef (sg : Sig) (d : Nat) : Prop := ∃ ps B, ViewDecl sg d ps B

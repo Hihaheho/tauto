@@ -1,0 +1,452 @@
+import "Base.taut"
+import "Nat.taut"
+import "Data.taut"
+
+// Lists beyond the basics of `Base.taut`: folds, searches, zips, and the
+// lemmas that relate them. Predicates are `(A) -> Yn`.
+
+// ---- functions --------------------------------------------------------------
+
+fn list_filter<A>(p: (A) -> Yn, l: List(A)) -> List(A) {
+  match l -> List(A) {
+    Nil => Nil
+    Cons(h, t) => match p(h) -> List(A) {
+      no => list_filter(p, t)
+      yes => Cons(h, list_filter(p, t))
+    }
+  }
+}
+
+fn list_foldr<A, B>(f: (A, B) -> B, z: B, l: List(A)) -> B {
+  match l -> B {
+    Nil => z
+    Cons(h, t) => f(h, list_foldr(f, z, t))
+  }
+}
+
+// Folds from the left: `f(f(f(z, a), b), c)` for `[a, b, c]`.
+fn list_foldl<A, B>(f: (B, A) -> B, z: B, l: List(A)) -> B {
+  list_foldr((a: A, acc: B) => f(acc, a), z, list_reverse(l))
+}
+
+fn list_any<A>(p: (A) -> Yn, l: List(A)) -> Yn {
+  match l -> Yn {
+    Nil => no
+    Cons(h, t) => yn_or(p(h), list_any(p, t))
+  }
+}
+
+fn list_all<A>(p: (A) -> Yn, l: List(A)) -> Yn {
+  match l -> Yn {
+    Nil => yes
+    Cons(h, t) => yn_and(p(h), list_all(p, t))
+  }
+}
+
+// The first element satisfying `p`.
+fn list_find<A>(p: (A) -> Yn, l: List(A)) -> Option(A) {
+  match l -> Option(A) {
+    Nil => None
+    Cons(h, t) => match p(h) -> Option(A) {
+      no => list_find(p, t)
+      yes => Some(h)
+    }
+  }
+}
+
+// Membership by a decision `eq` on the elements.
+fn list_contains<A>(eq: (A, A) -> Yn, x: A, l: List(A)) -> Yn {
+  list_any((y: A) => eq(x, y), l)
+}
+
+fn list_replicate<A>(n: Nat, x: A) -> List(A) {
+  match n -> List(A) {
+    zero => Nil
+    succ(k) => Cons(x, list_replicate(k, x))
+  }
+}
+
+// `0, 1, …, n - 1`.
+fn list_range(n: Nat) -> List(Nat) {
+  match n -> List(Nat) {
+    zero => Nil
+    succ(k) => Cons(zero, list_map(succ, list_range(k)))
+  }
+}
+
+// `start, start + 1, …, start + n - 1`.
+fn list_range_from(start: Nat, n: Nat) -> List(Nat) {
+  list_map((i: Nat) => nat_add(start, i), list_range(n))
+}
+
+fn list_head<A>(l: List(A)) -> Option(A) {
+  match l -> Option(A) {
+    Nil => None
+    Cons(h, t) => Some(h)
+  }
+}
+
+fn list_tail<A>(l: List(A)) -> List(A) {
+  match l -> List(A) {
+    Nil => Nil
+    Cons(h, t) => t
+  }
+}
+
+fn list_last<A>(l: List(A)) -> Option(A) {
+  match l -> Option(A) {
+    Nil => None
+    Cons(h, t) => match t -> Option(A) {
+      Nil => Some(h)
+      Cons(h2, t2) => list_last(t)
+    }
+  }
+}
+
+// The lists of `ls` one after another.
+fn list_concat<A>(ls: List(List(A))) -> List(A) {
+  match ls -> List(A) {
+    Nil => Nil
+    Cons(h, t) => list_append(h, list_concat(t))
+  }
+}
+
+fn list_take_while<A>(p: (A) -> Yn, l: List(A)) -> List(A) {
+  match l -> List(A) {
+    Nil => Nil
+    Cons(h, t) => match p(h) -> List(A) {
+      no => Nil
+      yes => Cons(h, list_take_while(p, t))
+    }
+  }
+}
+
+fn list_drop_while<A>(p: (A) -> Yn, l: List(A)) -> List(A) {
+  match l -> List(A) {
+    Nil => Nil
+    Cons(h, t) => match p(h) -> List(A) {
+      no => l
+      yes => list_drop_while(p, t)
+    }
+  }
+}
+
+// Pairs up to the shorter of the two lists.
+fn list_zip<A, B>(l: List(A), m: List(B)) -> List(Pair(A, B)) {
+  match l -> List(Pair(A, B)) {
+    Nil => Nil
+    Cons(a, t) => match m -> List(Pair(A, B)) {
+      Nil => Nil
+      Cons(b, u) => Cons(pair(a, b), list_zip(t, u))
+    }
+  }
+}
+
+fn list_unzip<A, B>(l: List(Pair(A, B))) -> Pair(List(A), List(B)) {
+  pair(list_map((p: Pair(A, B)) => pair_fst(p), l), list_map((p: Pair(A, B)) => pair_snd(p), l))
+}
+
+// ---- lemmas -----------------------------------------------------------------
+
+theorem list_append_nil<A: Type>(l: List(A)): Eq(List(A), list_append(l, Nil), l) {
+  match l -> Eq(List(A), list_append(l, Nil), l) {
+    Nil => refl()
+    Cons(h, t) => Eq_congr((z: List(A)) => Cons(h, z), list_append_nil(t))
+  }
+}
+
+theorem list_length_append<A: Type>(
+  l: List(A),
+  m: List(A)
+): Eq(Nat, list_length(list_append(l, m)), nat_add(list_length(l), list_length(m))) {
+  match l -> Eq(Nat, list_length(list_append(l, m)), nat_add(list_length(l), list_length(m))) {
+    Nil => Eq_sym(nat_add_zero_left(list_length(m)))
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      Eq_congr(succ, list_length_append(t, m)),
+      Eq_sym(nat_add_succ_left(list_length(t), list_length(m)))
+    )
+  }
+}
+
+theorem list_length_map<A: Type, B: Type>(
+  f: (A) -> B,
+  l: List(A)
+): Eq(Nat, list_length(list_map(f, l)), list_length(l)) {
+  match l -> Eq(Nat, list_length(list_map(f, l)), list_length(l)) {
+    Nil => refl()
+    Cons(h, t) => Eq_congr(succ, list_length_map(f, t))
+  }
+}
+
+theorem list_map_append<A: Type, B: Type>(
+  f: (A) -> B,
+  l: List(A),
+  m: List(A)
+): Eq(List(B), list_map(f, list_append(l, m)), list_append(list_map(f, l), list_map(f, m))) {
+  match l -> Eq(
+    List(B),
+    list_map(f, list_append(l, m)),
+    list_append(list_map(f, l), list_map(f, m))
+  ) {
+    Nil => refl()
+    Cons(h, t) => Eq_congr((z: List(B)) => Cons(f(h), z), list_map_append(f, t, m))
+  }
+}
+
+theorem list_map_map<A: Type, B: Type, C: Type>(
+  f: (A) -> B,
+  g: (B) -> C,
+  l: List(A)
+): Eq(List(C), list_map(g, list_map(f, l)), list_map((x: A) => g(f(x)), l)) {
+  match l -> Eq(List(C), list_map(g, list_map(f, l)), list_map((x: A) => g(f(x)), l)) {
+    Nil => refl()
+    Cons(h, t) => Eq_congr((z: List(C)) => Cons(g(f(h)), z), list_map_map(f, g, t))
+  }
+}
+
+theorem list_map_id<A: Type>(l: List(A)): Eq(List(A), list_map((x: A) => x, l), l) {
+  match l -> Eq(List(A), list_map((x: A) => x, l), l) {
+    Nil => refl()
+    Cons(h, t) => Eq_congr((z: List(A)) => Cons(h, z), list_map_id(t))
+  }
+}
+
+theorem list_reverse_onto_append<A: Type>(
+  l: List(A),
+  acc: List(A)
+): Eq(List(A), list_reverse_onto(l, acc), list_append(list_reverse(l), acc)) {
+  match l -> Eq(List(A), list_reverse_onto(l, acc), list_append(list_reverse(l), acc)) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      list_reverse_onto_append(t, Cons(h, acc)),
+      Eq_sym(
+        Eq_trans(
+          Eq_congr((z: List(A)) => list_append(z, acc), list_reverse_onto_append(t, Cons(h, Nil))),
+          list_append_assoc(list_reverse(t), Cons(h, Nil), acc)
+        )
+      )
+    )
+  }
+}
+
+theorem list_reverse_cons<A: Type>(
+  h: A,
+  t: List(A)
+): Eq(List(A), list_reverse(Cons(h, t)), list_append(list_reverse(t), Cons(h, Nil))) {
+  list_reverse_onto_append(t, Cons(h, Nil))
+}
+
+theorem list_reverse_append<A: Type>(
+  l: List(A),
+  m: List(A)
+): Eq(List(A), list_reverse(list_append(l, m)), list_append(list_reverse(m), list_reverse(l))) {
+  match l -> Eq(
+    List(A),
+    list_reverse(list_append(l, m)),
+    list_append(list_reverse(m), list_reverse(l))
+  ) {
+    Nil => Eq_sym(list_append_nil(list_reverse(m)))
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      list_reverse_cons(h, list_append(t, m)),
+      Eq_trans(
+        Eq_congr((z: List(A)) => list_append(z, Cons(h, Nil)), list_reverse_append(t, m)),
+        Eq_trans(
+          list_append_assoc(list_reverse(m), list_reverse(t), Cons(h, Nil)),
+          Eq_congr((z: List(A)) => list_append(list_reverse(m), z), Eq_sym(list_reverse_cons(h, t)))
+        )
+      )
+    )
+  }
+}
+
+theorem list_reverse_reverse<A: Type>(l: List(A)): Eq(List(A), list_reverse(list_reverse(l)), l) {
+  match l -> Eq(List(A), list_reverse(list_reverse(l)), l) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      Eq_congr((z: List(A)) => list_reverse(z), list_reverse_cons(h, t)),
+      Eq_trans(
+        list_reverse_append(list_reverse(t), Cons(h, Nil)),
+        Eq_congr((z: List(A)) => Cons(h, z), list_reverse_reverse(t))
+      )
+    )
+  }
+}
+
+theorem list_length_reverse<A: Type>(
+  l: List(A)
+): Eq(Nat, list_length(list_reverse(l)), list_length(l)) {
+  match l -> Eq(Nat, list_length(list_reverse(l)), list_length(l)) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      Eq_congr((z: List(A)) => list_length(z), list_reverse_cons(h, t)),
+      Eq_trans(
+        list_length_append(list_reverse(t), Cons(h, Nil)),
+        Eq_congr(succ, list_length_reverse(t))
+      )
+    )
+  }
+}
+
+// The first `n` elements and the rest make up the list again.
+theorem list_take_drop<A: Type>(
+  n: Nat,
+  l: List(A)
+): Eq(List(A), list_append(list_take(n, l), list_drop(n, l)), l) {
+  match n -> Eq(List(A), list_append(list_take(n, l), list_drop(n, l)), l) {
+    zero => refl()
+    succ(k) => match l -> Eq(List(A), list_append(list_take(succ(k), l), list_drop(succ(k), l)), l) {
+      Nil => refl()
+      Cons(h, t) => Eq_congr((z: List(A)) => Cons(h, z), list_take_drop(k, t))
+    }
+  }
+}
+
+theorem list_length_replicate<A: Type>(
+  n: Nat,
+  x: A
+): Eq(Nat, list_length(list_replicate(n, x)), n) {
+  match n -> Eq(Nat, list_length(list_replicate(n, x)), n) {
+    zero => refl()
+    succ(k) => Eq_congr(succ, list_length_replicate(k, x))
+  }
+}
+
+theorem list_length_range(n: Nat): Eq(Nat, list_length(list_range(n)), n) {
+  match n -> Eq(Nat, list_length(list_range(n)), n) {
+    zero => refl()
+    succ(k) => Eq_congr(succ, Eq_trans(list_length_map(succ, list_range(k)), list_length_range(k)))
+  }
+}
+
+theorem list_foldr_append<A: Type, B: Type>(
+  f: (A, B) -> B,
+  z: B,
+  l: List(A),
+  m: List(A)
+): Eq(B, list_foldr(f, z, list_append(l, m)), list_foldr(f, list_foldr(f, z, m), l)) {
+  match l -> Eq(B, list_foldr(f, z, list_append(l, m)), list_foldr(f, list_foldr(f, z, m), l)) {
+    Nil => refl()
+    Cons(h, t) => Eq_congr((y: B) => f(h, y), list_foldr_append(f, z, t, m))
+  }
+}
+
+theorem list_concat_append<A: Type>(
+  ls: List(List(A)),
+  ms: List(List(A))
+): Eq(List(A), list_concat(list_append(ls, ms)), list_append(list_concat(ls), list_concat(ms))) {
+  match ls -> Eq(
+    List(A),
+    list_concat(list_append(ls, ms)),
+    list_append(list_concat(ls), list_concat(ms))
+  ) {
+    Nil => refl()
+    Cons(
+      h,
+      t
+    ) => Eq_trans(
+      Eq_congr((z: List(A)) => list_append(h, z), list_concat_append(t, ms)),
+      Eq_sym(list_append_assoc(h, list_concat(t), list_concat(ms)))
+    )
+  }
+}
+
+theorem list_filter_append<A: Type>(
+  p: (A) -> Yn,
+  l: List(A),
+  m: List(A)
+): Eq(
+  List(A),
+  list_filter(p, list_append(l, m)),
+  list_append(list_filter(p, l), list_filter(p, m))
+) {
+  match l -> Eq(
+    List(A),
+    list_filter(p, list_append(l, m)),
+    list_append(list_filter(p, l), list_filter(p, m))
+  ) {
+    Nil => refl()
+    Cons(h, t) => yn_cases(
+      (y: Yn) => Eq(
+        List(A),
+        match y -> List(A) {
+          no => list_filter(p, list_append(t, m))
+          yes => Cons(h, list_filter(p, list_append(t, m)))
+        },
+        list_append(
+          match y -> List(A) {
+            no => list_filter(p, t)
+            yes => Cons(h, list_filter(p, t))
+          },
+          list_filter(p, m)
+        )
+      ),
+      p(h),
+      (e: Eq(Yn, p(h), no)) => list_filter_append(p, t, m),
+      (e: Eq(Yn, p(h), yes)) => Eq_congr((z: List(A)) => Cons(h, z), list_filter_append(p, t, m))
+    )
+  }
+}
+
+// What `list_take_while` keeps and `list_drop_while` leaves make up the list again.
+theorem list_take_drop_while<A: Type>(
+  p: (A) -> Yn,
+  l: List(A)
+): Eq(List(A), list_append(list_take_while(p, l), list_drop_while(p, l)), l) {
+  match l -> Eq(List(A), list_append(list_take_while(p, l), list_drop_while(p, l)), l) {
+    Nil => refl()
+    Cons(h, t) => yn_cases(
+      (y: Yn) => Eq(
+        List(A),
+        list_append(
+          match y -> List(A) {
+            no => Nil
+            yes => Cons(h, list_take_while(p, t))
+          },
+          match y -> List(A) {
+            no => Cons(h, t)
+            yes => list_drop_while(p, t)
+          }
+        ),
+        Cons(h, t)
+      ),
+      p(h),
+      (e: Eq(Yn, p(h), no)) => refl(),
+      (e: Eq(Yn, p(h), yes)) => Eq_congr((z: List(A)) => Cons(h, z), list_take_drop_while(p, t))
+    )
+  }
+}
+
+theorem list_length_zip_le<A: Type, B: Type>(
+  l: List(A),
+  m: List(B)
+): Eq(Yn, nat_le(list_length(list_zip(l, m)), list_length(l)), yes) {
+  match l -> Eq(Yn, nat_le(list_length(list_zip(l, m)), list_length(l)), yes) {
+    Nil => refl()
+    Cons(
+      a,
+      t
+    ) => match m -> Eq(
+      Yn,
+      nat_le(list_length(list_zip(Cons(a, t), m)), list_length(Cons(a, t))),
+      yes
+    ) {
+      Nil => refl()
+      Cons(b, u) => list_length_zip_le(t, u)
+    }
+  }
+}

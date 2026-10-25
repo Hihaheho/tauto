@@ -1,0 +1,61 @@
+import "../../../std/Text.taut"
+
+// A regular-expression matcher by Brzozowski derivatives: to match `c` followed by `w`, match
+// `w` against the derivative of the expression by `c`. `proof/regex.taut` proves that it
+// decides the language the expression denotes.
+
+inductive Re(): Type {
+  r_empty(): Re
+  r_eps(): Re
+  r_chr(c: Nat): Re
+  r_alt(a: Re, b: Re): Re
+  r_seq(a: Re, b: Re): Re
+  r_star(a: Re): Re
+}
+
+// Whether the empty string matches.
+fn re_nullable(r: Re) -> Yn {
+  match r -> Yn {
+    r_empty => no
+    r_eps => yes
+    r_chr(c) => no
+    r_alt(a, b) => yn_or(re_nullable(a), re_nullable(b))
+    r_seq(a, b) => yn_and(re_nullable(a), re_nullable(b))
+    r_star(a) => yes
+  }
+}
+
+// `r` when `a` matches the empty string, else nothing: what is left when a first part that can be empty is skipped.
+fn re_if_nullable(a: Re, r: Re) -> Re {
+  match re_nullable(a) -> Re {
+    no => r_empty
+    yes => r
+  }
+}
+
+// What is left to match after `c`.
+fn re_deriv(c: Nat, r: Re) -> Re {
+  match r -> Re {
+    r_empty => r_empty
+    r_eps => r_empty
+    r_chr(d) => match nat_eq(c, d) -> Re {
+      no => r_empty
+      yes => r_eps
+    }
+    r_alt(a, b) => r_alt(re_deriv(c, a), re_deriv(c, b))
+    r_seq(a, b) => r_alt(r_seq(re_deriv(c, a), b), re_if_nullable(a, re_deriv(c, b)))
+    r_star(a) => r_seq(re_deriv(c, a), r_star(a))
+  }
+}
+
+fn re_match(w: List(Nat), r: Re) -> Yn {
+  match w -> Yn {
+    Nil => re_nullable(r)
+    Cons(c, rest) => re_match(rest, re_deriv(c, r))
+  }
+}
+
+// The expression against the bytes of a text.
+fn re_match_text(t: Text, r: Re) -> Yn {
+  re_match(text_bytes(t), r)
+}

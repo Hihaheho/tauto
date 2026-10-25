@@ -158,16 +158,33 @@ theorem Sems.split : ∀ {As vs Bs ws}, As.length = vs.length → Sems sg I S (A
   | [], _ :: _, _, _, hl, _ => by simp at hl
   | _ :: _, [], _, _, hl, _ => by simp at hl
 
-theorem Sems.borrowVal : ∀ {As vs}, Sems sg I S As vs → (∀ p ∈ As, p.IsBrw) → ∀ v ∈ vs, BorrowVal v
+theorem Sems.viewVal : ∀ {As vs}, Sems sg I S As vs → (∀ p ∈ As, ViewParam p) → ∀ v ∈ vs, ViewVal v
   | [], [], _, _, v, hv => by cases hv
   | A :: As, v :: vs, ⟨hv, hs⟩, hb, x, hx => by
       rcases List.mem_cons.mp hx with rfl | hx
-      · match A, hb A (by simp) with
-        | .brw B, _ => obtain ⟨l, rfl, -⟩ := hv; exact ⟨l, Or.inl rfl⟩
-        | .mbrw B, _ => obtain ⟨l, rfl, -⟩ := hv; exact ⟨l, Or.inr rfl⟩
-      · exact hs.borrowVal (fun p hp => hb p (by simp [hp])) x hx
+      · rcases hb A (by simp) with hA | rfl
+        · match A, hA with
+          | .brw B, _ => obtain ⟨l, rfl, -⟩ := hv; exact .inl ⟨l, Or.inl rfl⟩
+          | .mbrw B, _ => obtain ⟨l, rfl, -⟩ := hv; exact .inl ⟨l, Or.inr rfl⟩
+        · obtain ⟨b, rfl⟩ := hv; exact .inr ⟨b, rfl⟩
+      · exact hs.viewVal (fun p hp => hb p (by simp [hp])) x hx
   | [], _ :: _, h, _, _, _ => by simp [Sems] at h
   | _ :: _, [], h, _, _, _ => by simp [Sems] at h
+
+theorem Sems.boolAt : ∀ {As vs}, Sems sg I S As vs →
+    ∀ j : Nat, As[j]? = some Ty.bool → ∃ bb, vs[j]? = some (Tm.bool bb)
+  | [], [], _, j, h => by simp at h
+  | A :: As, v :: vs, ⟨hv, hs⟩, j, h => by
+      cases j with
+      | zero =>
+          simp at h; subst h
+          obtain ⟨b, rfl⟩ := hv
+          exact ⟨b, rfl⟩
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at h ⊢
+          exact hs.boolAt j h
+  | [], _ :: _, h, _, _ => by simp [Sems] at h
+  | _ :: _, [], h, _, _ => by simp [Sems] at h
 
 theorem Sems.of_get : ∀ {As vs}, As.length = vs.length →
     (∀ (i : Nat) A v, As[i]? = some A → vs[i]? = some v → Sem sg I S A v) → Sems sg I S As vs
@@ -915,7 +932,7 @@ theorem select_sem (hI : Good sg I) {S₀ e ps R T ρ vs k} (he : sg.op e = some
         | none => exact .step (.selArm hbs) (List.prefix_refl _) ((hc S bs hS hlen hΔ).2 μ hs)
         | some g =>
             refine .step (.selGuard hbs) (List.prefix_refl _) ?_
-            have hg' := ((hc S bs hS hlen hΔ).1 g rfl μ hs).mono_row (ρ' := ρ) (Row.nil_sub _)
+            have hg' := ((hc S bs hS hlen hΔ).1 g rfl μ hs).mono_row (ρ' := ρ) (ListSet.nil_sub _)
             refine Comp.bind (.iteF _ _) trivial rfl (fun _ h => h) hg' ?_
             intro S' v μ' hS' _ hs' hv
             obtain ⟨b, rfl⟩ := hv
@@ -1025,7 +1042,7 @@ theorem plug_answer {sg S E e vs B ρb ps R S' w} (h : HasType sg S [] (plug E (
   obtain ⟨H, ρh, hp, k⟩ := replace E (by intro h; cases h) h
   obtain ⟨A, ρ0, ⟨ps', ρa, he', _, rfl⟩, _, hf⟩ := hp.head
   rw [he] at he'; cases he'
-  exact k S' x w [] (hw.chainOf hf (by intro h; cases h)) (Row.nil_sub _)
+  exact k S' x w [] (hw.chainOf hf (by intro h; cases h)) (ListSet.nil_sub _)
 
 section
 variable {sg : Sig} {I : Interp}
@@ -1551,13 +1568,15 @@ theorem prim_sem (hI : Good sg I) (hbt : Builtins sg) (hsig : SigOk sg) (hdk : D
   | vcall d ps =>
       simp only [Prim.ty, Sem]
       refine ⟨.prim, .prim, .prim hp, Or.inr fun S' args _ ha μ hs => ?_⟩
-      obtain ⟨-, -, i, hbrw, hpi, hdef⟩ := hp
+      obtain ⟨-, -, hps, -, b, hdef, hbody⟩ := hp
       have hlen := ha.length
+      obtain ⟨i, hrun⟩ := hbody.run args hlen.symm (fun j hj => ha.boolAt j hj)
+      have hpi := hrun.ty
       obtain ⟨w, hw⟩ : ∃ w, args[i]? = some w := by
         have : i < ps.length := (List.getElem?_eq_some_iff.mp hpi).1
         exact ⟨args[i]'(by omega), by simp⟩
-      have hbv := ha.borrowVal hbrw
-      exact .step (.vcall hdef hpi hbv hw) (List.prefix_refl _)
+      have hbv := ha.viewVal hps
+      exact .step (.vcall hdef hrun hbv hw) (List.prefix_refl _)
         (.val (hbv w (List.mem_of_getElem? hw)).value hs (ha.get hpi hw))
 
 /-- The definitions that `sg'` lets a term use run as their types say. -/
@@ -1608,8 +1627,8 @@ theorem Prim.Ok.transfer (hop : sg'.op = sg.op) (hdata : sg'.data = sg.data)
     (h : Prim.Ok sg' p T ρ) : Prim.Ok sg p T ρ := by
   cases p with
   | vcall d ps =>
-      obtain ⟨hρ, hm, i, hb, hpi, hdef⟩ := h
-      exact ⟨hρ, hm, i, hb, hpi, hdefs _ _ hdef⟩
+      obtain ⟨hρ, hm, hd⟩ := h
+      exact ⟨hρ, hm, hd.transfer hdefs⟩
   | _ => first | exact BudgetOk.transfer hop hdata h | trivial
 
 mutual

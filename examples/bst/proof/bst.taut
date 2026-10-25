@@ -1,0 +1,1170 @@
+import "../src/bst.taut"
+
+// What the tree operations do, proved for any keys with an order (`Ord(A)`). The proofs use the
+// laws of `Ord` (`std/Ord.taut`) and nothing about the keys. No program imports this
+// file; `tauto check` checks it.
+
+// `x` is a key of `t`.
+inductive In(A: Type, x: A): (Tree(A)) -> Prop {
+  in_here<l: Tree(A), r: Tree(A)>(): In(A, x, node(l, x, r))
+  in_left<l: Tree(A), k: A, r: Tree(A)>(h: In(A, x, l)): In(A, x, node(l, k, r))
+  in_right<l: Tree(A), k: A, r: Tree(A)>(h: In(A, x, r)): In(A, x, node(l, k, r))
+}
+
+// `a` is smaller than `b`.
+fn lt<A>(a: A, b: A) -> Prop where Ord(A) { Eq(Ordering, Ord.compare(a, b), Less) }
+
+// Every key of `t` is smaller (larger) than `k`.
+fn all_less<A>(t: Tree(A), k: A) -> Prop where Ord(A) { (∀ y: A. (In(A, y, t)) -> lt(y, k)) }
+
+fn all_greater<A>(t: Tree(A), k: A) -> Prop where Ord(A) { (∀ y: A. (In(A, y, t)) -> lt(k, y)) }
+
+// `t` is ordered: at every node, the keys on the left are smaller and those on the right larger.
+// `R` is the "smaller" relation; `bst` below is it at `lt`.
+inductive Bst(A: Type, R: (A, A) -> Prop): (Tree(A)) -> Prop {
+  bst_leaf(): Bst(A, R, leaf)
+  bst_node<l: Tree(
+    A
+  ), k: A, r: Tree(
+    A
+  )>(
+    hl: Bst(A, R, l),
+    hr: Bst(A, R, r),
+    al: (∀ y: A. (In(A, y, l)) -> R(y, k)),
+    ar: (∀ y: A. (In(A, y, r)) -> R(k, y))
+  ): Bst(A, R, node(l, k, r))
+}
+
+fn bst<A>(t: Tree(A)) -> Prop where Ord(A) { Bst(A, (a: A, b: A) => lt(a, b), t) }
+
+theorem bst_build<A, l: Tree(
+  A
+), k: A, r: Tree(
+  A
+)>(
+  hl: bst(l),
+  hr: bst(r),
+  al: all_less(l, k),
+  ar: all_greater(r, k)
+): bst(node(l, k, r)) where Ord(A) {
+  bst_node(hl, hr, al, ar)
+}
+
+theorem bst_left<A>(l: Tree(A), k: A, r: Tree(A), hb: bst(node(l, k, r))): bst(l) where Ord(A) {
+  match hb -> bst(l) {
+    bst_node(l2, k2, r2, hl, hr, al, ar) => hl
+  }
+}
+
+theorem bst_right<A>(l: Tree(A), k: A, r: Tree(A), hb: bst(node(l, k, r))): bst(r) where Ord(A) {
+  match hb -> bst(r) {
+    bst_node(l2, k2, r2, hl, hr, al, ar) => hr
+  }
+}
+
+theorem bst_all_less<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  hb: bst(node(l, k, r))
+): all_less(l, k) where Ord(A) {
+  match hb -> all_less(l, k) {
+    bst_node(l2, k2, r2, hl, hr, al, ar) => al
+  }
+}
+
+theorem bst_all_greater<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  hb: bst(node(l, k, r))
+): all_greater(r, k) where Ord(A) {
+  match hb -> all_greater(r, k) {
+    bst_node(l2, k2, r2, hl, hr, al, ar) => ar
+  }
+}
+
+// ---- the comparison --------------------------------------------------------
+
+theorem cmp_less<A>(a: A, b: A, e: Eq(Ordering, Ord.compare(a, b), Less)): lt(a, b) where Ord(A) {
+  e
+}
+
+theorem cmp_equal<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Equal)
+): Eq(A, a, b) where Ord(A) {
+  ord_equal_eq(a, b, e)
+}
+
+theorem cmp_greater<A>(
+  a: A,
+  b: A,
+  e: Eq(Ordering, Ord.compare(a, b), Greater)
+): lt(b, a) where Ord(A) {
+  ord_swap_greater(a, b, e)
+}
+
+theorem cmp_of_less<A>(
+  a: A,
+  b: A,
+  h: lt(a, b)
+): Eq(Ordering, Ord.compare(a, b), Less) where Ord(A) {
+  h
+}
+
+theorem cmp_of_greater<A>(
+  a: A,
+  b: A,
+  h: lt(b, a)
+): Eq(Ordering, Ord.compare(a, b), Greater) where Ord(A) {
+  ord_swap_less(b, a, h)
+}
+
+theorem cmp_refl<A>(a: A): Eq(Ordering, Ord.compare(a, a), Equal) where Ord(A) {
+  ord_eq_equal(a, a, refl())
+}
+
+theorem lt_trans<A>(a: A, b: A, c: A, h1: lt(a, b), h2: lt(b, c)): lt(a, c) where Ord(A) {
+  Ord.trans(h1, h2)
+}
+
+theorem less_irrefl<A>(a: A, h: Eq(Ordering, Ord.compare(a, a), Less)): False where Ord(A) {
+  equal_ne_less(Eq_trans(Eq_sym(cmp_refl(a)), h))
+}
+
+theorem less_asym<A>(
+  a: A,
+  b: A,
+  h1: Eq(Ordering, Ord.compare(a, b), Less),
+  h2: Eq(Ordering, Ord.compare(b, a), Less)
+): False where Ord(A) {
+  greater_ne_less(Eq_trans(Eq_sym(ord_swap_less(a, b, h1)), h2))
+}
+
+// `Eq_subst` at `Ordering`: the motive is then known to be a function on `Ordering`, so it may `match` on its argument.
+theorem ord_subst(
+  P: (Ordering) -> Prop,
+  a: Ordering,
+  b: Ordering,
+  e: Eq(Ordering, a, b),
+  p: P(a)
+): P(b) {
+  Eq_subst(P, e, p)
+}
+
+// What `tree_insert` does at a node, by the comparison of the key with the node's.
+theorem insert_less<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Less)
+): Eq(Tree(A), tree_insert(x, node(l, k, r)), node(tree_insert(x, l), k, r)) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Tree(A),
+      match q -> Tree(A) {
+        Less => node(tree_insert(x, l), k, r)
+        Equal => node(l, k, r)
+        Greater => node(l, k, tree_insert(x, r))
+      },
+      node(tree_insert(x, l), k, r)
+    ),
+    Less,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+theorem insert_equal<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Equal)
+): Eq(Tree(A), tree_insert(x, node(l, k, r)), node(l, k, r)) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Tree(A),
+      match q -> Tree(A) {
+        Less => node(tree_insert(x, l), k, r)
+        Equal => node(l, k, r)
+        Greater => node(l, k, tree_insert(x, r))
+      },
+      node(l, k, r)
+    ),
+    Equal,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+theorem insert_greater<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Greater)
+): Eq(Tree(A), tree_insert(x, node(l, k, r)), node(l, k, tree_insert(x, r))) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Tree(A),
+      match q -> Tree(A) {
+        Less => node(tree_insert(x, l), k, r)
+        Equal => node(l, k, r)
+        Greater => node(l, k, tree_insert(x, r))
+      },
+      node(l, k, tree_insert(x, r))
+    ),
+    Greater,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+// ---- insert ----------------------------------------------------------------
+
+theorem in_of_key<A>(
+  y: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  p: Eq(A, y, k)
+): In(A, y, node(l, k, r)) where Ord(A) {
+  Eq_subst((z: A) => In(A, z, node(l, k, r)), Eq_sym(p), the(In(A, k, node(l, k, r)), in_here()))
+}
+
+// A key of a node is its own key, or a key of one of its subtrees.
+theorem in_node_inv<A>(
+  y: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  h: In(A, y, node(l, k, r))
+): Or(Eq(A, y, k), Or(In(A, y, l), In(A, y, r))) where Ord(A) {
+  match h -> Or(Eq(A, y, k), Or(In(A, y, l), In(A, y, r))) {
+    in_here(l2, r2) => or_inl(refl())
+    in_left(l2, k2, r2, h1) => or_inr(or_inl(h1))
+    in_right(l2, k2, r2, h1) => or_inr(or_inr(h1))
+  }
+}
+
+theorem not_in_leaf<A>(y: A, h: In(A, y, leaf)): False where Ord(A) {
+  match h -> False {
+  }
+}
+
+// A key of the tree after an insertion was the inserted key or a key from before.
+theorem in_insert_inv<A>(
+  x: A,
+  t: Tree(A),
+  y: A,
+  h: In(A, y, tree_insert(x, t))
+): Or(Eq(A, y, x), In(A, y, t)) where Ord(A) {
+  match t -> Or(Eq(A, y, x), In(A, y, t)) {
+    leaf => or_elim(
+      in_node_inv(y, leaf, x, leaf, h),
+      p => or_inl(p),
+      q => or_elim(q, q1 => False_elim(not_in_leaf(y, q1)), q2 => False_elim(not_in_leaf(y, q2)))
+    )
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => Or(Eq(A, y, x), In(A, y, node(l, k, r))),
+      Ord.compare(x, k),
+      e => or_elim(
+        in_node_inv(
+          y,
+          tree_insert(x, l),
+          k,
+          r,
+          Eq_subst((z: Tree(A)) => In(A, y, z), insert_less(x, l, k, r, e), h)
+        ),
+        p => or_inr(in_of_key(y, l, k, r, p)),
+        q => or_elim(
+          q,
+          q1 => or_elim(in_insert_inv(x, l, y, q1), p => or_inl(p), p => or_inr(in_left(p))),
+          q2 => or_inr(in_right(q2))
+        )
+      ),
+      e => or_inr(Eq_subst((z: Tree(A)) => In(A, y, z), insert_equal(x, l, k, r, e), h)),
+      e => or_elim(
+        in_node_inv(
+          y,
+          l,
+          k,
+          tree_insert(x, r),
+          Eq_subst((z: Tree(A)) => In(A, y, z), insert_greater(x, l, k, r, e), h)
+        ),
+        p => or_inr(in_of_key(y, l, k, r, p)),
+        q => or_elim(
+          q,
+          q1 => or_inr(in_left(q1)),
+          q2 => or_elim(in_insert_inv(x, r, y, q2), p => or_inl(p), p => or_inr(in_right(p)))
+        )
+      )
+    )
+  }
+}
+
+// The inserted key, and every key from before, are keys of the tree after an insertion.
+theorem in_insert_intro<A>(
+  x: A,
+  t: Tree(A),
+  y: A,
+  p: Or(Eq(A, y, x), In(A, y, t))
+): In(A, y, tree_insert(x, t)) where Ord(A) {
+  match t -> In(A, y, tree_insert(x, t)) {
+    leaf => or_elim(p, e => in_of_key(y, leaf, x, leaf, e), q => False_elim(not_in_leaf(y, q)))
+    node(
+      l,
+      k,
+      r
+    ) => match Ord.compare(x, k) as e -> In(A, y, tree_insert(x, node(l, k, r))) {
+      Less ⊢ In(A, y, node(tree_insert(x, l), k, r)) => or_elim(
+        p,
+        p1 => in_left(in_insert_intro(x, l, y, or_inl(p1))),
+        q => or_elim(
+          in_node_inv(y, l, k, r, q),
+          q1 => in_of_key(y, tree_insert(x, l), k, r, q1),
+          q2 => or_elim(
+            q2,
+            q3 => in_left(in_insert_intro(x, l, y, or_inr(q3))),
+            q4 => in_right(q4)
+          )
+        )
+      )
+      Equal ⊢ In(A, y, node(l, k, r)) => or_elim(
+        p,
+        p1 => in_of_key(y, l, k, r, Eq_trans(p1, cmp_equal(x, k, e))),
+        q => q
+      )
+      Greater ⊢ In(A, y, node(l, k, tree_insert(x, r))) => or_elim(
+        p,
+        p1 => in_right(in_insert_intro(x, r, y, or_inl(p1))),
+        q => or_elim(
+          in_node_inv(y, l, k, r, q),
+          q1 => in_of_key(y, l, k, tree_insert(x, r), q1),
+          q2 => or_elim(
+            q2,
+            q3 => in_left(q3),
+            q4 => in_right(in_insert_intro(x, r, y, or_inr(q4)))
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem insert_bst<A>(x: A, t: Tree(A), h: bst(t)): bst(tree_insert(x, t)) where Ord(A) {
+  match t -> bst(tree_insert(x, t)) {
+    leaf => bst_build(
+      bst_leaf(),
+      bst_leaf(),
+      (y: A) => (hy: In(A, y, leaf)) => False_elim(not_in_leaf(y, hy)),
+      (y: A) => (hy: In(A, y, leaf)) => False_elim(not_in_leaf(y, hy))
+    )
+    node(
+      l,
+      k,
+      r
+    ) => match Ord.compare(x, k) as e -> bst(tree_insert(x, node(l, k, r))) {
+      Less ⊢ bst(node(tree_insert(x, l), k, r)) => bst_build(
+        insert_bst(x, l, bst_left(l, k, r, h)),
+        bst_right(l, k, r, h),
+        (y: A) => (hy: In(A, y, tree_insert(x, l))) => or_elim(
+          in_insert_inv(x, l, y, hy),
+          p => Eq_subst((z: A) => lt(z, k), Eq_sym(p), cmp_less(x, k, e)),
+          q => bst_all_less(l, k, r, h)(y, q)
+        ),
+        bst_all_greater(l, k, r, h)
+      )
+      Equal ⊢ bst(node(l, k, r)) => bst_build(
+        bst_left(l, k, r, h),
+        bst_right(l, k, r, h),
+        bst_all_less(l, k, r, h),
+        bst_all_greater(l, k, r, h)
+      )
+      Greater ⊢ bst(node(l, k, tree_insert(x, r))) => bst_build(
+        bst_left(l, k, r, h),
+        insert_bst(x, r, bst_right(l, k, r, h)),
+        bst_all_less(l, k, r, h),
+        (y: A) => (hy: In(A, y, tree_insert(x, r))) => or_elim(
+          in_insert_inv(x, r, y, hy),
+          p => Eq_subst((z: A) => lt(k, z), Eq_sym(p), cmp_greater(x, k, e)),
+          q => bst_all_greater(l, k, r, h)(y, q)
+        )
+      )
+    }
+  }
+}
+
+// ---- member ----------------------------------------------------------------
+
+theorem member_less<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Less)
+): Eq(Yn, tree_member(x, node(l, k, r)), tree_member(x, l)) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Yn,
+      match q -> Yn {
+        Less => tree_member(x, l)
+        Equal => yes
+        Greater => tree_member(x, r)
+      },
+      tree_member(x, l)
+    ),
+    Less,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+theorem member_equal<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Equal)
+): Eq(Yn, tree_member(x, node(l, k, r)), yes) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Yn,
+      match q -> Yn {
+        Less => tree_member(x, l)
+        Equal => yes
+        Greater => tree_member(x, r)
+      },
+      yes
+    ),
+    Equal,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+theorem member_greater<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Greater)
+): Eq(Yn, tree_member(x, node(l, k, r)), tree_member(x, r)) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Yn,
+      match q -> Yn {
+        Less => tree_member(x, l)
+        Equal => yes
+        Greater => tree_member(x, r)
+      },
+      tree_member(x, r)
+    ),
+    Greater,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+// A key that is found is a key (the tree need not be ordered).
+theorem member_sound<A>(
+  x: A,
+  t: Tree(A),
+  h: Eq(Yn, tree_member(x, t), yes)
+): In(A, x, t) where Ord(A) {
+  match t -> In(A, x, t) {
+    leaf => False_elim(no_ne_yes(h))
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => In(A, x, node(l, k, r)),
+      Ord.compare(x, k),
+      e => in_left(
+        member_sound(x, l, Eq_subst((z: Yn) => Eq(Yn, z, yes), member_less(x, l, k, r, e), h))
+      ),
+      e => in_of_key(x, l, k, r, cmp_equal(x, k, e)),
+      e => in_right(
+        member_sound(x, r, Eq_subst((z: Yn) => Eq(Yn, z, yes), member_greater(x, l, k, r, e), h))
+      )
+    )
+  }
+}
+
+// In an ordered tree, a key of the tree is found.
+theorem member_complete<A>(
+  x: A,
+  t: Tree(A),
+  hb: bst(t),
+  hi: In(A, x, t)
+): Eq(Yn, tree_member(x, t), yes) where Ord(A) {
+  match t -> Eq(Yn, tree_member(x, t), yes) {
+    leaf => False_elim(not_in_leaf(x, hi))
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => Eq(Yn, tree_member(x, node(l, k, r)), yes),
+      Ord.compare(x, k),
+      e => Eq_subst(
+        (z: Yn) => Eq(Yn, z, yes),
+        Eq_sym(member_less(x, l, k, r, e)),
+        member_complete(
+          x,
+          l,
+          bst_left(l, k, r, hb),
+          or_elim(
+            in_node_inv(x, l, k, r, hi),
+            p => False_elim(less_irrefl(k, Eq_subst((z: A) => lt(z, k), p, cmp_less(x, k, e)))),
+            q => or_elim(
+              q,
+              q1 => q1,
+              q2 => False_elim(
+                less_asym(x, k, cmp_less(x, k, e), bst_all_greater(l, k, r, hb)(x, q2))
+              )
+            )
+          )
+        )
+      ),
+      e => member_equal(x, l, k, r, e),
+      e => Eq_subst(
+        (z: Yn) => Eq(Yn, z, yes),
+        Eq_sym(member_greater(x, l, k, r, e)),
+        member_complete(
+          x,
+          r,
+          bst_right(l, k, r, hb),
+          or_elim(
+            in_node_inv(x, l, k, r, hi),
+            p => False_elim(less_irrefl(k, Eq_subst((z: A) => lt(k, z), p, cmp_greater(x, k, e)))),
+            q => or_elim(
+              q,
+              q1 => False_elim(
+                less_asym(x, k, bst_all_less(l, k, r, hb)(x, q1), cmp_greater(x, k, e))
+              ),
+              q2 => q2
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+// In an ordered tree, `tree_member` decides whether the key is in it.
+theorem member_correct<A>(
+  x: A,
+  t: Tree(A),
+  hb: bst(t)
+): Iff(Eq(Yn, tree_member(x, t), yes), In(A, x, t)) where Ord(A) {
+  iff_intro(
+    (h: Eq(Yn, tree_member(x, t), yes)) => member_sound(x, t, h),
+    (h: In(A, x, t)) => member_complete(x, t, hb, h)
+  )
+}
+
+// Computed: inserting 1, 3 and 2 into the empty tree.
+theorem small_tree(): Eq(
+  Tree(Nat),
+  tree_insert(2, tree_insert(3, tree_insert(1, leaf))),
+  node(leaf, 1, node(node(leaf, 2, leaf), 3, leaf))
+) {
+  refl()
+}
+
+// ---- removing the smallest key ---------------------------------------------
+
+theorem min_in<A>(l: Tree(A), k: A, r: Tree(A)): In(A, tree_min(l, k), node(l, k, r)) where Ord(A) {
+  match l -> In(A, tree_min(l, k), node(l, k, r)) {
+    leaf => in_here()
+    node(ll, lk, lr) => in_left(min_in(ll, lk, lr))
+  }
+}
+
+// A key of the tree is the smallest key or a key of the rest.
+theorem remove_min_cases<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  y: A,
+  h: In(A, y, node(l, k, r))
+): Or(Eq(A, y, tree_min(l, k)), In(A, y, tree_remove_min(node(l, k, r)))) where Ord(A) {
+  match l -> Or(Eq(A, y, tree_min(l, k)), In(A, y, tree_remove_min(node(l, k, r)))) {
+    leaf => or_elim(
+      in_node_inv(y, leaf, k, r, h),
+      p => or_inl(p),
+      q => or_elim(q, q1 => False_elim(not_in_leaf(y, q1)), q2 => or_inr(q2))
+    )
+    node(
+      ll,
+      lk,
+      lr
+    ) => or_elim(
+      in_node_inv(y, node(ll, lk, lr), k, r, h),
+      p => or_inr(in_of_key(y, tree_remove_min(node(ll, lk, lr)), k, r, p)),
+      q => or_elim(
+        q,
+        q1 => or_elim(remove_min_cases(ll, lk, lr, y, q1), p => or_inl(p), p => or_inr(in_left(p))),
+        q2 => or_inr(in_right(q2))
+      )
+    )
+  }
+}
+
+theorem remove_min_sub<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  y: A,
+  h: In(A, y, tree_remove_min(node(l, k, r)))
+): In(A, y, node(l, k, r)) where Ord(A) {
+  match l -> In(A, y, node(l, k, r)) {
+    leaf => in_right(h)
+    node(
+      ll,
+      lk,
+      lr
+    ) => or_elim(
+      in_node_inv(y, tree_remove_min(node(ll, lk, lr)), k, r, h),
+      p => in_of_key(y, node(ll, lk, lr), k, r, p),
+      q => or_elim(q, q1 => in_left(remove_min_sub(ll, lk, lr, y, q1)), q2 => in_right(q2))
+    )
+  }
+}
+
+// In an ordered tree, no key is below the smallest.
+theorem min_least<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  hb: bst(node(l, k, r)),
+  y: A,
+  h: In(A, y, node(l, k, r))
+): Or(Eq(A, tree_min(l, k), y), lt(tree_min(l, k), y)) where Ord(A) {
+  match l -> Or(Eq(A, tree_min(l, k), y), lt(tree_min(l, k), y)) {
+    leaf => or_elim(
+      in_node_inv(y, leaf, k, r, h),
+      p => or_inl(Eq_sym(p)),
+      q => or_elim(
+        q,
+        q1 => False_elim(not_in_leaf(y, q1)),
+        q2 => or_inr(bst_all_greater(leaf, k, r, hb)(y, q2))
+      )
+    )
+    node(
+      ll,
+      lk,
+      lr
+    ) => or_elim(
+      in_node_inv(y, node(ll, lk, lr), k, r, h),
+      p => or_inr(
+        Eq_subst(
+          (z: A) => lt(tree_min(ll, lk), z),
+          Eq_sym(p),
+          bst_all_less(node(ll, lk, lr), k, r, hb)(tree_min(ll, lk), min_in(ll, lk, lr))
+        )
+      ),
+      q => or_elim(
+        q,
+        q1 => min_least(ll, lk, lr, bst_left(node(ll, lk, lr), k, r, hb), y, q1),
+        q2 => or_inr(
+          lt_trans(
+            tree_min(ll, lk),
+            k,
+            y,
+            bst_all_less(node(ll, lk, lr), k, r, hb)(tree_min(ll, lk), min_in(ll, lk, lr)),
+            bst_all_greater(node(ll, lk, lr), k, r, hb)(y, q2)
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem remove_min_bst<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  hb: bst(node(l, k, r))
+): bst(tree_remove_min(node(l, k, r))) where Ord(A) {
+  match l -> bst(tree_remove_min(node(l, k, r))) {
+    leaf => bst_right(leaf, k, r, hb)
+    node(
+      ll,
+      lk,
+      lr
+    ) => bst_build(
+      remove_min_bst(ll, lk, lr, bst_left(node(ll, lk, lr), k, r, hb)),
+      bst_right(node(ll, lk, lr), k, r, hb),
+      (
+        y: A
+      ) => (
+        hy: In(A, y, tree_remove_min(node(ll, lk, lr)))
+      ) => bst_all_less(node(ll, lk, lr), k, r, hb)(y, remove_min_sub(ll, lk, lr, y, hy)),
+      bst_all_greater(node(ll, lk, lr), k, r, hb)
+    )
+  }
+}
+
+// In an ordered tree, the keys left after removing the smallest are larger than it.
+theorem remove_min_greater<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  hb: bst(node(l, k, r)),
+  y: A,
+  h: In(A, y, tree_remove_min(node(l, k, r)))
+): lt(tree_min(l, k), y) where Ord(A) {
+  match l -> lt(tree_min(l, k), y) {
+    leaf => bst_all_greater(leaf, k, r, hb)(y, h)
+    node(
+      ll,
+      lk,
+      lr
+    ) => or_elim(
+      in_node_inv(y, tree_remove_min(node(ll, lk, lr)), k, r, h),
+      p => Eq_subst(
+        (z: A) => lt(tree_min(ll, lk), z),
+        Eq_sym(p),
+        bst_all_less(node(ll, lk, lr), k, r, hb)(tree_min(ll, lk), min_in(ll, lk, lr))
+      ),
+      q => or_elim(
+        q,
+        q1 => remove_min_greater(ll, lk, lr, bst_left(node(ll, lk, lr), k, r, hb), y, q1),
+        q2 => lt_trans(
+          tree_min(ll, lk),
+          k,
+          y,
+          bst_all_less(node(ll, lk, lr), k, r, hb)(tree_min(ll, lk), min_in(ll, lk, lr)),
+          bst_all_greater(node(ll, lk, lr), k, r, hb)(y, q2)
+        )
+      )
+    )
+  }
+}
+
+// ---- joining two subtrees --------------------------------------------------
+
+// The keys of the join are the keys of the two trees.
+theorem join_sub<A>(
+  l: Tree(A),
+  r: Tree(A),
+  y: A,
+  h: In(A, y, tree_join(l, r))
+): Or(In(A, y, l), In(A, y, r)) where Ord(A) {
+  match r -> Or(In(A, y, l), In(A, y, r)) {
+    leaf => or_inl(h)
+    node(
+      rl,
+      rk,
+      rr
+    ) => or_elim(
+      in_node_inv(y, l, tree_min(rl, rk), tree_remove_min(node(rl, rk, rr)), h),
+      p => or_inr(Eq_subst((z: A) => In(A, z, node(rl, rk, rr)), Eq_sym(p), min_in(rl, rk, rr))),
+      q => or_elim(q, q1 => or_inl(q1), q2 => or_inr(remove_min_sub(rl, rk, rr, y, q2)))
+    )
+  }
+}
+
+theorem join_intro<A>(
+  l: Tree(A),
+  r: Tree(A),
+  y: A,
+  h: Or(In(A, y, l), In(A, y, r))
+): In(A, y, tree_join(l, r)) where Ord(A) {
+  match r -> In(A, y, tree_join(l, r)) {
+    leaf => or_elim(h, h1 => h1, h2 => False_elim(not_in_leaf(y, h2)))
+    node(
+      rl,
+      rk,
+      rr
+    ) => or_elim(
+      h,
+      h1 => in_left(h1),
+      h2 => or_elim(
+        remove_min_cases(rl, rk, rr, y, h2),
+        p => in_of_key(y, l, tree_min(rl, rk), tree_remove_min(node(rl, rk, rr)), p),
+        q => in_right(q)
+      )
+    )
+  }
+}
+
+// Joining the subtrees of an ordered node gives an ordered tree.
+theorem join_bst<A>(
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  hb: bst(node(l, k, r))
+): bst(tree_join(l, r)) where Ord(A) {
+  match r -> bst(tree_join(l, r)) {
+    leaf => bst_left(l, k, r, hb)
+    node(
+      rl,
+      rk,
+      rr
+    ) => bst_build(
+      bst_left(l, k, r, hb),
+      remove_min_bst(rl, rk, rr, bst_right(l, k, r, hb)),
+      (
+        y: A
+      ) => (
+        hy: In(A, y, l)
+      ) => lt_trans(
+        y,
+        k,
+        tree_min(rl, rk),
+        bst_all_less(l, k, r, hb)(y, hy),
+        bst_all_greater(l, k, r, hb)(tree_min(rl, rk), min_in(rl, rk, rr))
+      ),
+      (
+        y: A
+      ) => (
+        hy: In(A, y, tree_remove_min(node(rl, rk, rr)))
+      ) => remove_min_greater(rl, rk, rr, bst_right(l, k, r, hb), y, hy)
+    )
+  }
+}
+
+// ---- delete ----------------------------------------------------------------
+
+theorem delete_less<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Less)
+): Eq(Tree(A), tree_delete(x, node(l, k, r)), node(tree_delete(x, l), k, r)) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Tree(A),
+      match q -> Tree(A) {
+        Less => node(tree_delete(x, l), k, r)
+        Equal => tree_join(l, r)
+        Greater => node(l, k, tree_delete(x, r))
+      },
+      node(tree_delete(x, l), k, r)
+    ),
+    Less,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+theorem delete_equal<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Equal)
+): Eq(Tree(A), tree_delete(x, node(l, k, r)), tree_join(l, r)) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Tree(A),
+      match q -> Tree(A) {
+        Less => node(tree_delete(x, l), k, r)
+        Equal => tree_join(l, r)
+        Greater => node(l, k, tree_delete(x, r))
+      },
+      tree_join(l, r)
+    ),
+    Equal,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+theorem delete_greater<A>(
+  x: A,
+  l: Tree(A),
+  k: A,
+  r: Tree(A),
+  e: Eq(Ordering, Ord.compare(x, k), Greater)
+): Eq(Tree(A), tree_delete(x, node(l, k, r)), node(l, k, tree_delete(x, r))) where Ord(A) {
+  ord_subst(
+    (q: Ordering) => Eq(
+      Tree(A),
+      match q -> Tree(A) {
+        Less => node(tree_delete(x, l), k, r)
+        Equal => tree_join(l, r)
+        Greater => node(l, k, tree_delete(x, r))
+      },
+      node(l, k, tree_delete(x, r))
+    ),
+    Greater,
+    Ord.compare(x, k),
+    Eq_sym(e),
+    refl()
+  )
+}
+
+// Deleting removes keys only.
+theorem delete_sub<A>(
+  x: A,
+  t: Tree(A),
+  y: A,
+  h: In(A, y, tree_delete(x, t))
+): In(A, y, t) where Ord(A) {
+  match t -> In(A, y, t) {
+    leaf => h
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => In(A, y, node(l, k, r)),
+      Ord.compare(x, k),
+      e => or_elim(
+        in_node_inv(
+          y,
+          tree_delete(x, l),
+          k,
+          r,
+          Eq_subst((z: Tree(A)) => In(A, y, z), delete_less(x, l, k, r, e), h)
+        ),
+        p => in_of_key(y, l, k, r, p),
+        q => or_elim(q, q1 => in_left(delete_sub(x, l, y, q1)), q2 => in_right(q2))
+      ),
+      e => or_elim(
+        join_sub(l, r, y, Eq_subst((z: Tree(A)) => In(A, y, z), delete_equal(x, l, k, r, e), h)),
+        q1 => in_left(q1),
+        q2 => in_right(q2)
+      ),
+      e => or_elim(
+        in_node_inv(
+          y,
+          l,
+          k,
+          tree_delete(x, r),
+          Eq_subst((z: Tree(A)) => In(A, y, z), delete_greater(x, l, k, r, e), h)
+        ),
+        p => in_of_key(y, l, k, r, p),
+        q => or_elim(q, q1 => in_left(q1), q2 => in_right(delete_sub(x, r, y, q2)))
+      )
+    )
+  }
+}
+
+// The deleted key is gone from an ordered tree.
+theorem delete_gone<A>(
+  x: A,
+  t: Tree(A),
+  hb: bst(t),
+  y: A,
+  h: In(A, y, tree_delete(x, t)),
+  e: Eq(A, y, x)
+): False where Ord(A) {
+  match t -> False {
+    leaf => not_in_leaf(y, h)
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => False,
+      Ord.compare(x, k),
+      d => or_elim(
+        in_node_inv(
+          y,
+          tree_delete(x, l),
+          k,
+          r,
+          Eq_subst((z: Tree(A)) => In(A, y, z), delete_less(x, l, k, r, d), h)
+        ),
+        p => less_irrefl(
+          k,
+          Eq_subst((z: A) => lt(z, k), Eq_trans(Eq_sym(e), p), cmp_less(x, k, d))
+        ),
+        q => or_elim(
+          q,
+          q1 => delete_gone(x, l, bst_left(l, k, r, hb), y, q1, e),
+          q2 => less_asym(
+            x,
+            k,
+            cmp_less(x, k, d),
+            Eq_subst((z: A) => lt(k, z), e, bst_all_greater(l, k, r, hb)(y, q2))
+          )
+        )
+      ),
+      d => or_elim(
+        join_sub(l, r, y, Eq_subst((z: Tree(A)) => In(A, y, z), delete_equal(x, l, k, r, d), h)),
+        q1 => less_irrefl(
+          k,
+          Eq_subst(
+            (z: A) => lt(z, k),
+            Eq_trans(e, cmp_equal(x, k, d)),
+            bst_all_less(l, k, r, hb)(y, q1)
+          )
+        ),
+        q2 => less_irrefl(
+          k,
+          Eq_subst(
+            (z: A) => lt(k, z),
+            Eq_trans(e, cmp_equal(x, k, d)),
+            bst_all_greater(l, k, r, hb)(y, q2)
+          )
+        )
+      ),
+      d => or_elim(
+        in_node_inv(
+          y,
+          l,
+          k,
+          tree_delete(x, r),
+          Eq_subst((z: Tree(A)) => In(A, y, z), delete_greater(x, l, k, r, d), h)
+        ),
+        p => less_irrefl(
+          k,
+          Eq_subst((z: A) => lt(k, z), Eq_trans(Eq_sym(e), p), cmp_greater(x, k, d))
+        ),
+        q => or_elim(
+          q,
+          q1 => less_asym(
+            x,
+            k,
+            Eq_subst((z: A) => lt(z, k), e, bst_all_less(l, k, r, hb)(y, q1)),
+            cmp_greater(x, k, d)
+          ),
+          q2 => delete_gone(x, r, bst_right(l, k, r, hb), y, q2, e)
+        )
+      )
+    )
+  }
+}
+
+// Every other key stays.
+theorem delete_keeps<A>(
+  x: A,
+  t: Tree(A),
+  y: A,
+  h: In(A, y, t),
+  ne: (Eq(A, y, x)) -> False
+): In(A, y, tree_delete(x, t)) where Ord(A) {
+  match t -> In(A, y, tree_delete(x, t)) {
+    leaf => h
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => In(A, y, tree_delete(x, node(l, k, r))),
+      Ord.compare(x, k),
+      e => Eq_subst(
+        (z: Tree(A)) => In(A, y, z),
+        Eq_sym(delete_less(x, l, k, r, e)),
+        or_elim(
+          in_node_inv(y, l, k, r, h),
+          p => in_of_key(y, tree_delete(x, l), k, r, p),
+          q => or_elim(q, q1 => in_left(delete_keeps(x, l, y, q1, ne)), q2 => in_right(q2))
+        )
+      ),
+      e => Eq_subst(
+        (z: Tree(A)) => In(A, y, z),
+        Eq_sym(delete_equal(x, l, k, r, e)),
+        join_intro(
+          l,
+          r,
+          y,
+          or_elim(
+            in_node_inv(y, l, k, r, h),
+            p => False_elim(ne(Eq_trans(p, Eq_sym(cmp_equal(x, k, e))))),
+            q => q
+          )
+        )
+      ),
+      e => Eq_subst(
+        (z: Tree(A)) => In(A, y, z),
+        Eq_sym(delete_greater(x, l, k, r, e)),
+        or_elim(
+          in_node_inv(y, l, k, r, h),
+          p => in_of_key(y, l, k, tree_delete(x, r), p),
+          q => or_elim(q, q1 => in_left(q1), q2 => in_right(delete_keeps(x, r, y, q2, ne)))
+        )
+      )
+    )
+  }
+}
+
+theorem delete_bst<A>(x: A, t: Tree(A), hb: bst(t)): bst(tree_delete(x, t)) where Ord(A) {
+  match t -> bst(tree_delete(x, t)) {
+    leaf => bst_leaf()
+    node(
+      l,
+      k,
+      r
+    ) => ordering_cases(
+      (o: Ordering) => bst(tree_delete(x, node(l, k, r))),
+      Ord.compare(x, k),
+      e => Eq_subst(
+        (z: Tree(A)) => bst(z),
+        Eq_sym(delete_less(x, l, k, r, e)),
+        bst_build(
+          delete_bst(x, l, bst_left(l, k, r, hb)),
+          bst_right(l, k, r, hb),
+          (
+            y: A
+          ) => (
+            hy: In(A, y, tree_delete(x, l))
+          ) => bst_all_less(l, k, r, hb)(y, delete_sub(x, l, y, hy)),
+          bst_all_greater(l, k, r, hb)
+        )
+      ),
+      e => Eq_subst(
+        (z: Tree(A)) => bst(z),
+        Eq_sym(delete_equal(x, l, k, r, e)),
+        join_bst(
+          l,
+          k,
+          r,
+          bst_build(
+            bst_left(l, k, r, hb),
+            bst_right(l, k, r, hb),
+            bst_all_less(l, k, r, hb),
+            bst_all_greater(l, k, r, hb)
+          )
+        )
+      ),
+      e => Eq_subst(
+        (z: Tree(A)) => bst(z),
+        Eq_sym(delete_greater(x, l, k, r, e)),
+        bst_build(
+          bst_left(l, k, r, hb),
+          delete_bst(x, r, bst_right(l, k, r, hb)),
+          bst_all_less(l, k, r, hb),
+          (
+            y: A
+          ) => (
+            hy: In(A, y, tree_delete(x, r))
+          ) => bst_all_greater(l, k, r, hb)(y, delete_sub(x, r, y, hy))
+        )
+      )
+    )
+  }
+}
+
+// Computed: deleting the root of `1, 3, 2` brings the smallest key of the right subtree up.
+theorem small_delete(): Eq(
+  Tree(Nat),
+  tree_delete(1, node(leaf, 1, node(node(leaf, 2, leaf), 3, leaf))),
+  node(leaf, 2, node(leaf, 3, leaf))
+) {
+  refl()
+}

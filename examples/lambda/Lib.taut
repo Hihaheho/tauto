@@ -53,15 +53,15 @@ fn single(a: Tm, n: Nat) -> Tm {
 }
 
 inductive Has(): (List(Ty)) -> (Nat) -> (Ty) -> Prop {
-  has_here<G: List(Ty), A: Ty>(): Has(cons(A, G), zero, A)
-  has_there<G: List(Ty), A: Ty, B: Ty, i: Nat>(h: Has(G, i, A)): Has(cons(B, G), succ(i), A)
+  has_here<G: List(Ty), A: Ty>(): Has(Cons(A, G), zero, A)
+  has_there<G: List(Ty), A: Ty, B: Ty, i: Nat>(h: Has(G, i, A)): Has(Cons(B, G), succ(i), A)
 }
 
 inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop {
   t_var<G: List(Ty), i: Nat, A: Ty>(h: Has(G, i, A)): Typing(G, tvar(i), A)
   t_lam<G: List(
     Ty
-  ), A: Ty, B: Ty, b: Tm>(h: Typing(cons(A, G), b, B)): Typing(G, lam(A, b), arr(A, B))
+  ), A: Ty, B: Ty, b: Tm>(h: Typing(Cons(A, G), b, B)): Typing(G, lam(A, b), arr(A, B))
   t_app<G: List(
     Ty
   ), A: Ty, B: Ty, f: Tm, a: Tm>(
@@ -93,7 +93,7 @@ inductive Steps(): (Tm) -> (Tm) -> Prop {
 // ---- the `lc` notation: named binders, judgements and reductions ---------------------------------
 //
 // ``lc!(`x: unit |- fun y: unit. x : unit -> unit`)`` is `Typing(Cons(tunit, Nil), lam(tunit, tvar(1)), arr(tunit, tunit))`:
-// names become de Bruijn indices (the last binding of a context is index 0), `${e}` embeds a tauto term, a
+// names become de Bruijn indices (the last binding of a context is index 0), `$e` embeds a tauto term, a
 // context or a type, `t[u]` is `subst(t, single(u))`, and `t ~> u` and `t ~>* u` are `Step` and `Steps`.
 // A bare term is that term.
 
@@ -250,18 +250,18 @@ fn lc_ctx_rest(acc: SynExpr, rest: List(lc_Ctx_Rep1)) -> SynExpr ! {macro_error,
     Nil => acc
     Cons(r, more) => {
       let ty = lc_ty(r.bind.ty)
-      lc_ctx_rest(quote { cons($ty, $acc) }, more)
+      lc_ctx_rest(quote { Cons($ty, $acc) }, more)
     }
   }
 }
 
 fn lc_ctx(c: lc_Ctx) -> SynExpr ! {macro_error, Div} {
   match c.ctx_head {
-    None => lc_ctx_rest(quote { nil }, c.rep)
+    None => lc_ctx_rest(quote { Nil }, c.rep)
     Some(h) => match h {
       Bind(b) => {
         let ty = lc_ty(b.ty)
-        lc_ctx_rest(quote { cons($ty, nil) }, c.rep)
+        lc_ctx_rest(quote { Cons($ty, Nil) }, c.rep)
       }
       CtxEmbed(e) => lc_ctx_rest(e, c.rep)
     }
@@ -480,3 +480,18 @@ fn lc_reduce(s: lc_Stmt) -> SynExpr ! {macro_error, Div} {
 }
 
 macro reduce = lc_reduce
+
+// `reduce_goal!` is a tactic: in
+// `by reduce_goal!(()) -> Steps(t, nf) {}` it reads `t` from the goal written, and
+// the proof is found from the claim.
+fn lc_reduce_goal(s: ProofStep) -> SynExpr ! {macro_error, Div} {
+  match code_term(s.before) {
+    ExApp(f, args, sp) => match args {
+      Cons(t, rest) => lc_chain(lc_read(sp, t), 100)
+      Nil => syn_error(sp, "reduce_goal! needs a Steps(t, u)")
+    }
+    _ => syn_error(s.span, "reduce_goal! needs a Steps(t, u)")
+  }
+}
+
+macro reduce_goal = lc_reduce_goal

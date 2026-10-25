@@ -34,14 +34,21 @@ theorem view_call_blin {os sg Fr S Γ C P} (T : Ty) (ρ : List Eff) {c : Tm}
 /-! ## Declared view functions
 
 A function declared at the top whose result is one of its borrowed
-parameters (`ViewDecl`: every parameter is a borrow, the body is the `i`-th
-parameter) is called with `Prim.vcall d ps`. As for `reborrow`, the call is
-a borrow of its arguments, so it is no `Bare` term, it is only ever called
-(its `ref` is no value, `view_ref_not_blin`), and the borrow check lets it
-stand only with ready arguments. The step takes the `i`-th argument, the
+parameters (`ViewDecl`: every parameter is a borrow or a `bool`, and the body
+picks a borrow, `ViewBody`) is called with `Prim.vcall d ps`. As for
+`reborrow`, the call is a borrow of its arguments, so it is no `Bare` term, it
+is only ever called (its `ref` is no value, `view_ref_not_blin`), and the
+borrow check lets it stand only with ready arguments. The step takes the `i`-th argument, the
 body's value, so the result is tied to the arguments by the signature: the
 borrow check counts the call as borrowing all of them (`Tm.bor` of a call is
-the sum over its arguments), and what the step leaves is one of them. The
+the sum over its arguments), and what the step leaves is one of them.
+
+The body picks the borrow by (`ViewBody`) a parameter, an `if` on a `bool`
+parameter, or a call of a view function declared before it (so that no view
+function calls itself) on parameters of its own. The step runs the pick
+(`ViewRun`): it finds the `i`-th argument, whichever branch and call it
+goes through, and the signature says that parameter has the result's type
+(`ViewRun.ty`), so the result is tied to the arguments as before. The
 definition itself is not checked as an ordinary one (`DefsB` leaves out the
 view functions): `ViewDecl` is its check. -/
 
@@ -58,14 +65,14 @@ theorem vcall_blin {os sg Fr S Γ C P} (d : Nat) (ps : List Ty) (T : Ty) (ρ : L
     BLin os sg Fr S Γ C P (.app (.prim (.vcall d ps) T ρ) cs) :=
   .viewApp (Or.inr (Or.inr ⟨d, ps, rfl⟩)) hc hb hu hs
 
-/-- Borrows of places that exist (a value) are ready arguments: the
-parts of a call of them do not move one another's places (a borrow uses
+/-- Borrows of places that exist, and `bool`s (a value), are ready arguments:
+the parts of a call of them do not move one another's places (a borrow uses
 nothing). -/
-theorem Seq.borrowVals {os S Γ C P} {cs : List Tm} (hv : ∀ v ∈ cs, BorrowVal v) :
+theorem Seq.viewVals {os S Γ C P} {cs : List Tm} (hv : ∀ v ∈ cs, ViewVal v) :
     Seq os S Γ C P false cs := by
   intro i j ci cj hij hi hj a ha
-  obtain ⟨l, rfl | rfl⟩ := hv ci (List.mem_of_getElem? hi) <;>
-    obtain ⟨l', rfl | rfl⟩ := hv cj (List.mem_of_getElem? hj) <;>
+  rcases hv ci (List.mem_of_getElem? hi) with ⟨l, rfl | rfl⟩ | ⟨b, rfl⟩ <;>
+    rcases hv cj (List.mem_of_getElem? hj) with ⟨l', rfl | rfl⟩ | ⟨b', rfl⟩ <;>
     simp [Tm.occ]
 
 /-- A view function is not a value: its name is no term that passes the
@@ -79,9 +86,9 @@ theorem view_ref_not_blin {os sg Fr S Γ C P d ts rs} (h : ViewDef sg d) :
 
 /-- The result of the call is one of the arguments: it borrows nothing the
 arguments do not. -/
-theorem vcall_step_bor {sg : Sig} {d : Nat} {ps : List Ty} {T : Ty} {ρ : List Eff} {i : Nat}
+theorem vcall_step_bor {sg : Sig} {d : Nat} {ps : List Ty} {T : Ty} {ρ : List Eff} {b : Tm} {i : Nat}
     {vs : List Tm} {w : Tm} (a : Item)
-    (_ : sg.defs d = some (.fn ps T [], .lam ps (.var i))) (hw : vs[i]? = some w) :
+    (_ : sg.defs d = some (.fn ps T [], .lam ps b)) (_ : ViewRun sg ps T b vs i) (hw : vs[i]? = some w) :
     w.bor a ≤ (Tm.app (.prim (.vcall d ps) T ρ) vs).bor a := by
   have := Tms.bor_mem_le a (List.mem_of_getElem? hw)
   simp only [Tm.bor]; omega

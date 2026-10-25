@@ -251,7 +251,7 @@ example : HasType askSig [] [] (.lam [] (.perform ask [])) (.fn [] (.int .i64) [
 theorem ask_arm_ok (T : Ty) (ρ : Row) (body : Tm) (A : Ty)
     (hb : HasType askSig [] [] body A []) (hf : Fits A T) :
     ClauseOk askSig [] [] T ρ (.mk ask [.wild] none body) :=
-  .mk askSig_ask (.cons .wild .nil) hb hf (Row.nil_sub _)
+  .mk askSig_ask (.cons .wild .nil) hb hf (ListSet.nil_sub _)
 
 /-- Handling `ask` removes it: the arm answers `0`, and the handled
 computation is pure. -/
@@ -305,9 +305,9 @@ theorem pickArms_ok : ∀ c ∈ pickArms, ClauseOk askSig [] [] (.int .i64) [] c
   simp only [pickArms, List.mem_cons, List.not_mem_nil, or_false] at hc
   rcases hc with rfl | rfl
   · exact .mk askSig_pick (.cons (.bool .refl) (.cons .wild .nil)) (.int (by decide)) (Fits.refl _)
-      (Row.nil_sub _)
+      (ListSet.nil_sub _)
   · exact .mk askSig_pick (.cons (.bool .refl) (.cons .wild .nil)) (.int (by decide)) (Fits.refl _)
-      (Row.nil_sub _)
+      (ListSet.nil_sub _)
 
 example (b : Bool) :
     HasType askSig [] [] (.handle (.perform pick [.bool b]) none pickArms) (.int .i64) [] := by
@@ -358,12 +358,12 @@ def boolMatch (b : Bool) : Tm :=
 
 /-- Both arms: exhaustive, so the match performs nothing. -/
 example (b : Bool) : HasType askSig [] [] (boolMatch b) (.int .i64) [] := by
-  refine HasType.mtch askSig_builtins .bool (Row.nil_sub _) ?_ ?_
+  refine HasType.mtch askSig_builtins .bool (ListSet.nil_sub _) ?_ ?_
   · intro a ha
     simp only [List.mem_cons, List.not_mem_nil, or_false] at ha
     rcases ha with rfl | rfl <;>
       exact Arm.clauseOk askSig_builtins (.bool .refl) (.int (by decide)) (Fits.refl _)
-        (Row.nil_sub _)
+        (ListSet.nil_sub _)
   · intro v hv
     cases hv with
     | @bool b' =>
@@ -439,7 +439,7 @@ example (ρ ρ' : Row) :
 /-- `fn() -> i64 { 1 }` where `() -> i64 ! {ask}` is expected: a function may
 perform less than its type allows. -/
 example : HasType askSig [] [] (.lam [] (.int .i64 1)) (.fn [] (.int .i64) [ask]) [] :=
-  .fits (.lam (int_ok 1)) (.row (Row.nil_sub _))
+  .fits (.lam (int_ok 1)) (.row (ListSet.nil_sub _))
 
 /-- `fn(x: i64) -> i64 { x }` where `(@price i64) -> i64` is expected: it takes
 any `i64`, so also a tagged one (parameters are contravariant). -/
@@ -488,14 +488,14 @@ def optArms : List Arm :=
 /-- Both constructors: exhaustive, so the match performs nothing. -/
 theorem optMatch_ok (t : Tm) (ht : HasType askSig [] [] t (.data 1 [.int .i64]) []) :
     HasType askSig [] [] (.mtch (.data 1 [.int .i64]) t optArms) (.int .i64) [] := by
-  refine HasType.mtch askSig_builtins ht (Row.nil_sub _) ?_ ?_
+  refine HasType.mtch askSig_builtins ht (ListSet.nil_sub _) ?_ ?_
   · intro a ha
     simp only [optArms, List.mem_cons, List.not_mem_nil, or_false] at ha
     rcases ha with rfl | rfl
     · exact Arm.clauseOk askSig_builtins (.con .refl .data rfl rfl .nil) (int_ok 0) (Fits.refl _)
-        (Row.nil_sub _)
+        (ListSet.nil_sub _)
     · refine Arm.clauseOk askSig_builtins (Δ := [.int .i64])
-        (.con .refl .data rfl rfl ?_) (.var rfl) (Fits.refl _) (Row.nil_sub _)
+        (.con .refl .data rfl rfl ?_) (.var rfl) (Fits.refl _) (ListSet.nil_sub _)
       simpa [fieldsOf, Ty.inst, instOf] using PatsOk.cons (sg := askSig) (PatOk.bind (A := .int .i64)) .nil
   · intro v hv
     cases hv with
@@ -574,17 +574,17 @@ theorem unionMatch_ok (t : Tm) (ht : HasType askSig [] [] t optOrBool []) :
     · exact .bool
   have hh : Holds (.data 1 [.int .i64]) optOrBool := .union (by simp [optOrBool]) .refl
   have hb : Holds .bool optOrBool := .union (by simp [optOrBool]) .refl
-  refine HasType.mtch askSig_builtins ht (Row.nil_sub _) ?_ ?_
+  refine HasType.mtch askSig_builtins ht (ListSet.nil_sub _) ?_ ?_
   · intro a ha
     simp only [unionArms, List.mem_cons, List.not_mem_nil, or_false] at ha
     rcases ha with rfl | rfl | rfl | rfl
     · exact Arm.clauseOk askSig_builtins (.con hh ho rfl rfl .nil) (int_ok 0) (Fits.refl _)
-        (Row.nil_sub _)
+        (ListSet.nil_sub _)
     · refine Arm.clauseOk askSig_builtins (Δ := [.int .i64])
-        (.con hh ho rfl rfl ?_) (.var rfl) (Fits.refl _) (Row.nil_sub _)
+        (.con hh ho rfl rfl ?_) (.var rfl) (Fits.refl _) (ListSet.nil_sub _)
       simpa [fieldsOf, Ty.inst, instOf] using PatsOk.cons (sg := askSig) (PatOk.bind (A := .int .i64)) .nil
-    · exact Arm.clauseOk askSig_builtins (.bool hb) (int_ok 1) (Fits.refl _) (Row.nil_sub _)
-    · exact Arm.clauseOk askSig_builtins (.bool hb) (int_ok 2) (Fits.refl _) (Row.nil_sub _)
+    · exact Arm.clauseOk askSig_builtins (.bool hb) (int_ok 1) (Fits.refl _) (ListSet.nil_sub _)
+    · exact Arm.clauseOk askSig_builtins (.bool hb) (int_ok 2) (Fits.refl _) (ListSet.nil_sub _)
   · intro v hv
     cases hv with
     | union hm hv =>
@@ -806,12 +806,12 @@ a pure `match` on `true`, after any steps, is a value or steps on. -/
 example {μ t} (hs : Steps askSig [] (boolMatch true) μ t) :
     Value t ∨ (∃ μ' t', Step askSig μ t μ' t') ∨ Fault t := by
   have h : HasType askSig [] [] (boolMatch true) (.int .i64) [] := by
-    refine HasType.mtch askSig_builtins .bool (Row.nil_sub _) ?_ ?_
+    refine HasType.mtch askSig_builtins .bool (ListSet.nil_sub _) ?_ ?_
     · intro a ha
       simp only [List.mem_cons, List.not_mem_nil, or_false] at ha
       rcases ha with rfl | rfl <;>
         exact Arm.clauseOk askSig_builtins (.bool .refl) (.int (by decide)) (Fits.refl _)
-          (Row.nil_sub _)
+          (ListSet.nil_sub _)
     · intro v hv
       cases hv with
       | @bool b' =>
@@ -924,7 +924,7 @@ example :
       simpa using HasType.app (.lam (ps := [.unit]) (Γ := [.cell knotTy]) hb) (.cons hs .nil)
     exact .lam (ps := [.cell knotTy]) (Γ := []) ha
   have hc : HasType askSig [] [] (.cell knotTy (.lam [] (.int .i64 0))) (.cell knotTy) [] :=
-    .cell (.lam (.weaken (.int (by decide)) (Row.nil_sub _))) knotTy_divClosed
+    .cell (.lam (.weaken (.int (by decide)) (ListSet.nil_sub _))) knotTy_divClosed
   simpa using HasType.app hf (.cons hc .nil)
 
 /-- Once the `var` holds `() => c()`, `c()` comes back to itself; its row
@@ -995,7 +995,7 @@ example : HasType loopSig [] [] fixLoop (.int .i64) [] := by
   · intro c hc
     simp only [List.mem_singleton] at hc; subst hc
     refine .mk (ps := []) (R := .fn [] (.int .i64) [fixE]) rfl (.cons .bind .nil) ?_ (Fits.refl _)
-      (Row.nil_sub _)
+      (ListSet.nil_sub _)
     have hg : HasType loopSig [] [.fn [.fn [] (.int .i64) [fixE]] (.int .i64) []]
         (.lam [] (.app (.perform fixE []) [])) (.fn [] (.int .i64) [fixE]) [] :=
       .lam (.weaken (.app (.perform (args := []) rfl .nil) .nil)
@@ -1035,11 +1035,11 @@ def omega : Tm := .app selfApp [.con 2 [] 0 [selfApp]]
 
 example : HasType loopSig [] [] omega (.int .i64) [] := by
   have hf : HasType loopSig [] [] selfApp (.fn [dTy] (.int .i64) []) [] := by
-    refine .lam (HasType.mtch loopSig_builtins (.var rfl) (Row.nil_sub _) ?_ ?_)
+    refine .lam (HasType.mtch loopSig_builtins (.var rfl) (ListSet.nil_sub _) ?_ ?_)
     · intro a ha
       simp only [List.mem_singleton] at ha; subst ha
       refine Arm.clauseOk loopSig_builtins (Δ := [.fn [dTy] (.int .i64) []])
-        (.con .refl .data rfl rfl ?_) ?_ (Fits.refl _) (Row.nil_sub _)
+        (.con .refl .data rfl rfl ?_) ?_ (Fits.refl _) (ListSet.nil_sub _)
       · simpa [fieldsOf, Ty.inst] using PatsOk.cons (sg := loopSig) (PatOk.bind (A := .fn [dTy] (.int .i64) [])) .nil
       · simpa using HasType.app (sg := loopSig) (S := []) (Γ := [.fn [dTy] (.int .i64) [], dTy])
           (.var rfl) (.cons (.var rfl) .nil)

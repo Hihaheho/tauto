@@ -1,27 +1,29 @@
 import "Add.taut"
 
-theorem mul_zero_r(n: Nat): nat!(`${n} * 0 = 0`) {
-  match n -> nat!(`${n} * 0 = 0`) {
+theorem mul_zero_r(n: Nat): nat!(`$n * 0 = 0`) {
+  match n -> nat!(`$n * 0 = 0`) {
     zero => refl()
     succ(k) => mul_zero_r(k)
   }
 }
 
-theorem mul_succ_r(n: Nat, m: Nat): nat!(`${n} * ${succ(m)} = ${n} + ${n} * ${m}`) {
-  match n -> nat!(`${n} * ${succ(m)} = ${n} + ${n} * ${m}`) {
+theorem mul_succ_r(n: Nat, m: Nat): nat!(`$n * ${succ(m)} = $n + $n * $m`) {
+  match n -> nat!(`$n * ${succ(m)} = $n + $n * $m`) {
     zero => refl()
     succ(
       k
-    ) => succ_cong(
-      Eq_trans(Eq_congr(x => add(m, x), mul_succ_r(k, m)), add_left_comm(m, k, mul(k, m)))
-    )
+    ) => succ_cong(Eq_trans(Eq_congr(x => m + x, mul_succ_r(k, m)), add_left_comm(m, k, k * m)))
   }
 }
 
-theorem mul_comm(n: Nat, m: Nat): nat!(`${n} * ${m} = ${m} * ${n}`) {
-  match n -> nat!(`${n} * ${m} = ${m} * ${n}`) {
+theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
+  match n -> nat!(`$n * $m = $m * $n`) {
     zero => Eq_sym(mul_zero_r(m))
-    succ(k) => Eq_trans(Eq_congr(x => add(m, x), mul_comm(k, m)), Eq_sym(mul_succ_r(m, k)))
+    succ(k) => by rewrite!(mul_succ_r(m, k)) -> nat!(`$m + $k * $m = $m * ${succ(k)}`) {
+      ⊢ nat!(`$m + $k * $m = $m + $m * $k`) => by rewrite!(mul_comm(k, m)) {
+        ⊢ nat!(`$m + $m * $k = $m + $m * $k`) => refl()
+      }
+    }
   }
 }
 
@@ -29,14 +31,14 @@ theorem mul_add_distrib_r(
   a: Nat,
   b: Nat,
   c: Nat
-): nat!(`(${a} + ${b}) * ${c} = ${a} * ${c} + ${b} * ${c}`) {
-  match a -> nat!(`(${a} + ${b}) * ${c} = ${a} * ${c} + ${b} * ${c}`) {
+): nat!(`($a + $b) * $c = $a * $c + $b * $c`) {
+  match a -> nat!(`($a + $b) * $c = $a * $c + $b * $c`) {
     zero => refl()
     succ(
       k
     ) => Eq_trans(
-      Eq_congr(x => add(c, x), mul_add_distrib_r(k, b, c)),
-      Eq_sym(add_assoc(c, mul(k, c), mul(b, c)))
+      Eq_congr(x => c + x, mul_add_distrib_r(k, b, c)),
+      Eq_sym(add_assoc(c, k * c, b * c))
     )
   }
 }
@@ -45,41 +47,36 @@ theorem mul_add_distrib_l(
   a: Nat,
   b: Nat,
   c: Nat
-): nat!(`${a} * (${b} + ${c}) = ${a} * ${b} + ${a} * ${c}`) {
-  let s1: nat!(`${a} * (${b} + ${c}) = (${b} + ${c}) * ${a}`) = mul_comm(a, add(b, c))
-  let s2: nat!(`(${b} + ${c}) * ${a} = ${b} * ${a} + ${c} * ${a}`) = mul_add_distrib_r(b, c, a)
+): nat!(`$a * ($b + $c) = $a * $b + $a * $c`) {
+  let s1: nat!(`$a * ($b + $c) = ($b + $c) * $a`) = mul_comm(a, b + c)
+  let s2: nat!(`($b + $c) * $a = $b * $a + $c * $a`) = mul_add_distrib_r(b, c, a)
   let s3: nat!(
-    `${b} * ${a} + ${c} * ${a} = ${a} * ${b} + ${c} * ${a}`
-  ) = Eq_congr(x => add(x, mul(c, a)), mul_comm(b, a))
+    `$b * $a + $c * $a = $a * $b + $c * $a`
+  ) = Eq_congr(x => x + c * a, mul_comm(b, a))
   let s4: nat!(
-    `${a} * ${b} + ${c} * ${a} = ${a} * ${b} + ${a} * ${c}`
-  ) = Eq_congr(x => add(mul(a, b), x), mul_comm(c, a))
+    `$a * $b + $c * $a = $a * $b + $a * $c`
+  ) = Eq_congr(x => a * b + x, mul_comm(c, a))
   Eq_trans(s1, Eq_trans(s2, Eq_trans(s3, s4)))
 }
 
-theorem mul_assoc(a: Nat, b: Nat, c: Nat): nat!(`(${a} * ${b}) * ${c} = ${a} * (${b} * ${c})`) {
-  match a -> nat!(`(${a} * ${b}) * ${c} = ${a} * (${b} * ${c})`) {
+theorem mul_assoc(a: Nat, b: Nat, c: Nat): nat!(`($a * $b) * $c = $a * ($b * $c)`) {
+  match a -> nat!(`($a * $b) * $c = $a * ($b * $c)`) {
     zero => refl()
-    succ(
-      k
-    ) => Eq_trans(
-      mul_add_distrib_r(b, mul(k, b), c),
-      Eq_congr(x => add(mul(b, c), x), mul_assoc(k, b, c))
+    succ(k) => Eq_trans(
+      mul_add_distrib_r(b, k * b, c),
+      Eq_congr(x => b * c + x, mul_assoc(k, b, c))
     )
   }
 }
 
-theorem mul_one_l(n: Nat): nat!(`1 * ${n} = ${n}`) {
+theorem mul_one_l(n: Nat): nat!(`1 * $n = $n`) {
   add_zero_r(n)
 }
 
-theorem mul_one_r(n: Nat): nat!(`${n} * 1 = ${n}`) {
-  Eq_trans(mul_succ_r(n, 0), Eq_trans(Eq_congr(x => add(n, x), mul_zero_r(n)), add_zero_r(n)))
+theorem mul_one_r(n: Nat): nat!(`$n * 1 = $n`) {
+  Eq_trans(mul_succ_r(n, 0), Eq_trans(Eq_congr(x => n + x, mul_zero_r(n)), add_zero_r(n)))
 }
 
-theorem mul_left_comm(a: Nat, b: Nat, c: Nat): nat!(`${a} * (${b} * ${c}) = ${b} * (${a} * ${c})`) {
-  Eq_trans(
-    Eq_sym(mul_assoc(a, b, c)),
-    Eq_trans(Eq_congr(x => mul(x, c), mul_comm(a, b)), mul_assoc(b, a, c))
-  )
+theorem mul_left_comm(a: Nat, b: Nat, c: Nat): nat!(`$a * ($b * $c) = $b * ($a * $c)`) {
+  by nat_norm!(()) -> nat!(`$a * ($b * $c) = $b * ($a * $c)`) {}
 }

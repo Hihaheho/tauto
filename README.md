@@ -6,9 +6,9 @@
 
 Tauto is a small formal language for programs and proofs that an AI writes and
 a human checks. It has a dependently typed pure core in which proofs are
-terms, deep multi-shot algebraic effect handlers, nominal effects, and
-resumable execution under a shared step budget. Nib is Tauto without
-dependent types and proofs.
+terms, deep multi-shot algebraic effect handlers, nominal effects, ownership
+and borrowing, and resumable execution under a shared step budget. Nib is
+Tauto without dependent types and proofs.
 
 ## What this preview contains
 
@@ -41,9 +41,9 @@ let d = handle { budget(steps: 3) { 7 } } with {
 }
 ```
 
-Proofs are terms; there are no tactics. A `match` on an inductive value is
-compiled to the generated eliminator, and a call on a field of the matched
-value is the induction hypothesis (`std/Base.taut`):
+Proofs are terms. A `match` on an inductive value is compiled to the generated
+eliminator, and a call on a field of the matched value is the induction
+hypothesis (`std/Base.taut`):
 
 ```
 theorem nat_eq_sound(a: Nat, b: Nat, e: Eq(Yn, nat_eq(a, b), yes)): Eq(Nat, a, b) {
@@ -60,16 +60,61 @@ theorem nat_eq_sound(a: Nat, b: Nat, e: Eq(Yn, nat_eq(a, b), yes)): Eq(Nat, a, b
 }
 ```
 
+A proof may also be written as steps that state their goals:
+`by t!(arg) -> G0 { Δ ⊢ G => p … }`. The tactic `t` is a macro that is not
+trusted. `G0` is the goal before the step and each arm writes the goal it
+leaves. The kernel checks every goal written and the term the tactic made
+(`examples/nat/Mul.taut`, with the `nat!` notation):
+
+```
+theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
+  match n -> nat!(`$n * $m = $m * $n`) {
+    zero => Eq_sym(mul_zero_r(m))
+    succ(k) => by rewrite!(mul_succ_r(m, k)) -> nat!(`$m + $k * $m = $m * ${succ(k)}`) {
+      ⊢ nat!(`$m + $k * $m = $m + $m * $k`) => by rewrite!(mul_comm(k, m)) {
+        ⊢ nat!(`$m + $m * $k = $m + $m * $k`) => refl()
+      }
+    }
+  }
+}
+```
+
+The standard library has two tactics (`std/Tactic.taut`). `rewrite!(e)`
+rewrites with an equation. `nat_norm!(())` proves an equation of the semiring
+of natural numbers with a normaliser that is proved sound in Tauto.
+
 Design principles, in short:
 
 - **Soundness over convenience.** Every declaration the kernel accepts is
-  checked again by an independent kernel; new syntax elaborates to terms the
+  checked again by an independent kernel. New syntax elaborates to terms the
   kernel already takes, and adds no kernel rule.
 - **Explicit over short.** Implicit arguments are only those first-order
   matching determines. There is no motive inference and no `_` hole for
-  inference. A named hole `?h` marks an unfinished proof: a declaration that
-  holds one is reported as incomplete, never accepted.
+  inference, and no tactic leaves its goals unwritten. A named hole `?h` marks
+  an unfinished proof: a declaration that holds one is reported as incomplete,
+  never accepted. There is no `sorry`.
 - **One way to write one thing.**
+
+## Examples
+
+- `examples/proofs.taut`: small proofs, an axiom and what depends on it, and
+  the refutation of a false equation.
+- `examples/handlers.taut`, `examples/effects.taut`: effects, handlers and
+  `budget`.
+- `examples/ownership.taut`: ownership, borrows and functions that return a
+  view of their argument.
+- `examples/nat/`: proofs about natural numbers (commutativity, distributivity,
+  order, divisibility, …) written with a `nat!` syntax macro.
+- `examples/lambda/`: the simply typed lambda calculus: type safety and strong
+  normalization, proved without axioms, with an `lc!` macro for its notation.
+- Verified programs that also run, each with a `NOTES.md`:
+  - `examples/sort/`: insertion sort for any ordered type.
+  - `examples/bst/`: a binary search tree.
+  - `examples/compiler/`: arithmetic expressions compiled to a stack machine.
+  - `examples/regex/`: a matcher by derivatives that decides its language.
+  - `examples/wf/`: functions by well-founded recursion.
+- `examples/rust/`: Tauto programs that call Rust crates through generated
+  bindings, and tasks on threads.
 
 ## The Lean formalization
 
@@ -78,9 +123,9 @@ Design principles, in short:
 | Modules | What they prove |
 | --- | --- |
 | `Proto/Kernel/` | A model of the dependent kernel: subject reduction, confluence, strong normalization and consistency of the predicative core, and the soundness of the bidirectional checker (complete given strong normalization) |
-| `Proto/Nib/` | Nib's core: typing and small-step semantics with deep multi-shot handlers, preservation and progress, termination of programs whose row has no `Div`, and ownership (the use check, borrows, and that a place is not moved while it is lent) |
+| `Proto/Nib/` | Nib's core: typing and small-step semantics with deep multi-shot handlers, preservation and progress, termination of programs whose row has no `Div`, and ownership (the use check, borrows, that a place is not moved while it is lent, and functions that return a view) |
 | `Proto/Macro/` | Macros: hygiene by scope sets, expansion with fuel, and the acceptance of typed macros |
-| `Proto/Core.lean`, `Tags.lean`, `Effects.lean`, `Choice.lean`, `Budget.lean`, `Syntax.lean` | A small non-dependent core with preservation and progress; tags and effect rows as sets; a model of the shared step budget |
+| `Proto/Core.lean`, `Renaming.lean`, `ListSet.lean`, `Tags.lean`, `Effects.lean`, `Choice.lean`, `Budget.lean`, `Syntax.lean` | A small non-dependent core with preservation and progress; renaming; finite sets as lists; tags and effect rows as sets; a model of the shared step budget |
 
 ### Building
 
@@ -104,20 +149,17 @@ cd lean
 ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cache build
 ```
 
-## Examples
-
-- `examples/proofs.taut`: small proofs, an axiom and what depends on it, and
-  a theorem the kernel rejects.
-- `examples/handlers.taut`: effects, handlers and `budget`.
-- `examples/nat/`: proofs about natural numbers (commutativity, distributivity,
-  order, divisibility, …) written with a `nat!` syntax macro.
-- `examples/lambda/`: the simply typed lambda calculus: type safety and strong
-  normalization, proved without axioms, with an `lc!` macro for its notation.
-- `examples/rust/`: Tauto programs that call Rust crates through generated
-  bindings.
-
 ## Supply chain
 
 - `.cargo/config.toml` refuses crate versions published less than 14 days ago,
   enforced by the nightly Cargo pinned in `rust-toolchain.toml`.
 - `.gitignore` is an allowlist: everything is ignored unless allowed.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this work, as defined in the Apache-2.0 license, shall be dual
+licensed as above, without any additional terms or conditions.

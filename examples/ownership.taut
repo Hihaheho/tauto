@@ -1,0 +1,46 @@
+// Ownership and borrowing. A `Vec` is owned by one variable; `&v` lends it for reading and
+// `&mut v` for writing, and a function can return a borrow of its argument (a view).
+
+// A view: the result is a borrow of `v` itself, not a copy of the number.
+fn first(&v: Vec(i64)) -> &i64 ! {out_of_bounds} { vec_index(&v, 0) }
+
+// A view that writes through: the caller changes `x` by changing the result.
+fn same(&mut x: i64) -> &mut i64 { x }
+
+// Takes the vector by value: the caller cannot use `v` afterwards.
+fn total(v: Vec(i64)) -> i64 ! {out_of_bounds, Div} {
+  var sum = 0
+  var i = 0
+  while i < vec_len(&v) {
+    sum := sum + vec_index(&v, i)
+    i := i + 1
+  }
+  sum
+}
+
+var v = vec_new()
+vec_push(&mut v, 3)
+vec_push(&mut v, 4)
+
+let head = handle {
+  let &r = first(&v)
+  r
+} with {
+  out_of_bounds() => 0
+}
+perform show("first", head)
+
+// The borrow ended, so `v` can change again.
+vec_push(&mut v, 5)
+
+var n = 1
+{
+  let &mut m = same(&mut n)
+  m := 9
+}
+perform show("n", n)
+
+let sum = handle { total(v) } with {
+  out_of_bounds() => 0
+}
+perform show("total", sum)

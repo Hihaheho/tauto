@@ -367,11 +367,12 @@ inductive Step (sg : Sig) : Store → Tm → Store → Tm → Prop where
   | reborrow {μ T ρ l} : Step sg μ (.app (.prim .reborrow T ρ) [.brw (.loc l)]) μ (.brw (.loc l))
   | reborrowMut {μ T ρ l} :
       Step sg μ (.app (.prim .reborrowMut T ρ) [.mbrw (.loc l)]) μ (.mbrw (.loc l))
-  /-- A call of a declared view function: the body, the `i`-th parameter, is
-  the `i`-th argument (all arguments are borrows). -/
-  | vcall {μ d ps T ρ i vs w} :
-      sg.defs d = some (.fn ps T [], .lam ps (.var i)) → ps[i]? = some T →
-      (∀ v ∈ vs, BorrowVal v) → vs[i]? = some w →
+  /-- A call of a declared view function: the body picks the `i`-th
+  parameter (`ViewRun`), and the call is the `i`-th argument (all arguments
+  are borrows or `bool`s). -/
+  | vcall {μ d ps T ρ b i vs w} :
+      sg.defs d = some (.fn ps T [], .lam ps b) → ViewRun sg ps T b vs i →
+      (∀ v ∈ vs, ViewVal v) → vs[i]? = some w →
       Step sg μ (.app (.prim (.vcall d ps) T ρ) vs) μ w
   /-- `more(info, m)`: the suspended body, `m` more steps. -/
   | more {μ T ρ T' ρ' b w m} :
@@ -625,7 +626,7 @@ theorem Fits.atom {a b : Ty} (f : Fits a b) :
       intro T P h
       obtain ⟨rfl, rfl⟩ := h.plain_inv trivial
       exact ⟨[], _, .plain trivial, fun _ h => h, Or.inr ⟨_, _, _, _, _, _, rfl, rfl,
-        FitsStars.refl _, .single f, Row.Sub.refl _⟩⟩
+        FitsStars.refl _, .single f, ListSet.Sub.refl _⟩⟩
   | row hr =>
       intro T P h
       obtain ⟨rfl, rfl⟩ := h.plain_inv trivial
@@ -635,7 +636,7 @@ theorem Fits.atom {a b : Ty} (f : Fits a b) :
       intro T P h
       obtain ⟨rfl, rfl⟩ := h.plain_inv trivial
       exact ⟨[], _, .plain trivial, fun _ h => h, Or.inr ⟨_, _, _, _, _, _, rfl, rfl,
-        FitsStars.one _ _ f, .refl, Row.Sub.refl _⟩⟩
+        FitsStars.one _ _ f, .refl, ListSet.Sub.refl _⟩⟩
   | exit _ ih =>
       intro T P h
       cases h with
@@ -712,7 +713,7 @@ theorem Chain.fn {t ps B ρ ps' A ρ'} (c : Chain t (.fn ps B ρ) (.fn ps' A ρ'
   rcases l with h | ⟨_, _, _, _, _, _, h1, h2, f1, f2, f3⟩
   · simp only [Ty.fn.injEq] at h
     obtain ⟨rfl, rfl, rfl⟩ := h
-    exact ⟨FitsStars.refl _, .refl, Row.Sub.refl _⟩
+    exact ⟨FitsStars.refl _, .refl, ListSet.Sub.refl _⟩
   · simp only [Ty.fn.injEq] at h1 h2
     obtain ⟨rfl, rfl, rfl⟩ := h1
     obtain ⟨rfl, rfl, rfl⟩ := h2
@@ -857,39 +858,39 @@ theorem Head.hasType {sg S Γ t A ρ} (h : Head sg S Γ t A ρ) : HasType sg S �
 theorem HasType.head {sg S Γ t X ρ} (h : HasType sg S Γ t X ρ) :
     ∃ A ρ0, Head sg S Γ t A ρ0 ∧ Row.Sub ρ0 ρ ∧ Chain t A X := by
   match h with
-  | .var hi => exact ⟨_, _, ⟨hi, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .int hn => exact ⟨_, _, ⟨rfl, hn, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .bool => exact ⟨_, _, ⟨rfl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .unit => exact ⟨_, _, ⟨rfl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .text => exact ⟨_, _, ⟨rfl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .dec => exact ⟨_, _, ⟨rfl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .flt => exact ⟨_, _, ⟨rfl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .prim hp => exact ⟨_, _, ⟨rfl, rfl, hp⟩, Row.Sub.refl _, .refl⟩
-  | .lam hb => exact ⟨_, _, ⟨rfl, _, _, rfl, hb⟩, Row.Sub.refl _, .refl⟩
-  | .app hf ha => exact ⟨_, _, ⟨_, _, _, _, hf, ha, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .ite hc ht hf => exact ⟨_, _, ⟨_, _, _, hc, ht, hf, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .cell ht hd => exact ⟨_, _, ⟨rfl, ht, hd⟩, Row.Sub.refl _, .refl⟩
-  | .fresh ht hd => exact ⟨_, _, ⟨rfl, ht, hd⟩, Row.Sub.refl _, .refl⟩
-  | .get hc => exact ⟨_, _, hc, Row.Sub.refl _, .refl⟩
-  | .set hc hv => exact ⟨_, _, ⟨_, _, _, rfl, hc, hv, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .ref hd => exact ⟨_, _, ⟨_, _, hd, rfl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .tag ht => exact ⟨_, _, ⟨_, rfl, ht⟩, Row.Sub.refl _, .refl⟩
-  | .con hd hc hf => exact ⟨_, _, ⟨_, _, rfl, hd, hc, hf⟩, Row.Sub.refl _, .refl⟩
-  | .proj hd hi ht => exact ⟨_, _, ⟨_, _, _, _, hd, hi, rfl, ht⟩, Row.Sub.refl _, .refl⟩
-  | .perform he ha => exact ⟨_, _, ⟨_, _, he, ha, rfl⟩, Row.Sub.refl _, .refl⟩
+  | .var hi => exact ⟨_, _, ⟨hi, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .int hn => exact ⟨_, _, ⟨rfl, hn, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .bool => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .unit => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .text => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .dec => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .flt => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .prim hp => exact ⟨_, _, ⟨rfl, rfl, hp⟩, ListSet.Sub.refl _, .refl⟩
+  | .lam hb => exact ⟨_, _, ⟨rfl, _, _, rfl, hb⟩, ListSet.Sub.refl _, .refl⟩
+  | .app hf ha => exact ⟨_, _, ⟨_, _, _, _, hf, ha, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .ite hc ht hf => exact ⟨_, _, ⟨_, _, _, hc, ht, hf, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .cell ht hd => exact ⟨_, _, ⟨rfl, ht, hd⟩, ListSet.Sub.refl _, .refl⟩
+  | .fresh ht hd => exact ⟨_, _, ⟨rfl, ht, hd⟩, ListSet.Sub.refl _, .refl⟩
+  | .get hc => exact ⟨_, _, hc, ListSet.Sub.refl _, .refl⟩
+  | .set hc hv => exact ⟨_, _, ⟨_, _, _, rfl, hc, hv, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .ref hd => exact ⟨_, _, ⟨_, _, hd, rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .tag ht => exact ⟨_, _, ⟨_, rfl, ht⟩, ListSet.Sub.refl _, .refl⟩
+  | .con hd hc hf => exact ⟨_, _, ⟨_, _, rfl, hd, hc, hf⟩, ListSet.Sub.refl _, .refl⟩
+  | .proj hd hi ht => exact ⟨_, _, ⟨_, _, _, _, hd, hi, rfl, ht⟩, ListSet.Sub.refl _, .refl⟩
+  | .perform he ha => exact ⟨_, _, ⟨_, _, he, ha, rfl⟩, ListSet.Sub.refl _, .refl⟩
   | .handleRet hb hr hs hrow hcl =>
-      exact ⟨_, _, ⟨_, _, hb, ⟨_, hr, hs⟩, hrow, hcl⟩, Row.Sub.refl _, .refl⟩
+      exact ⟨_, _, ⟨_, _, hb, ⟨_, hr, hs⟩, hrow, hcl⟩, ListSet.Sub.refl _, .refl⟩
   | .handle hb hf hrow hcl =>
-      exact ⟨_, _, ⟨_, _, hb, hf, hrow, hcl⟩, Row.Sub.refl _, .refl⟩
-  | .loc hl => exact ⟨_, _, ⟨_, rfl, hl, rfl⟩, Row.Sub.refl _, .refl⟩
-  | .run hb => exact ⟨_, _, ⟨rfl, rfl, hb⟩, Row.Sub.refl _, .refl⟩
-  | .info hb => exact ⟨_, _, ⟨rfl, rfl, hb⟩, Row.Sub.refl _, .refl⟩
+      exact ⟨_, _, ⟨_, _, hb, hf, hrow, hcl⟩, ListSet.Sub.refl _, .refl⟩
+  | .loc hl => exact ⟨_, _, ⟨_, rfl, hl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .run hb => exact ⟨_, _, ⟨rfl, rfl, hb⟩, ListSet.Sub.refl _, .refl⟩
+  | .info hb => exact ⟨_, _, ⟨rfl, rfl, hb⟩, ListSet.Sub.refl _, .refl⟩
   | .select he hvs hv hk hkt hcl hans =>
-      exact ⟨_, _, ⟨_, _, _, _, he, hvs, hv, hk, hkt, hcl, hans⟩, Row.Sub.refl _, .refl⟩
-  | .brw ht => exact ⟨_, _, ⟨_, rfl, ht⟩, Row.Sub.refl _, .refl⟩
-  | .mbrw ht => exact ⟨_, _, ⟨_, rfl, ht⟩, Row.Sub.refl _, .refl⟩
-  | .field hd hi hb => exact ⟨_, _, ⟨_, _, _, _, hd, hi, rfl, hb⟩, Row.Sub.refl _, .refl⟩
-  | .write hb hv => exact ⟨_, _, ⟨_, _, _, rfl, hb, hv, rfl⟩, Row.Sub.refl _, .refl⟩
+      exact ⟨_, _, ⟨_, _, _, _, he, hvs, hv, hk, hkt, hcl, hans⟩, ListSet.Sub.refl _, .refl⟩
+  | .brw ht => exact ⟨_, _, ⟨_, rfl, ht⟩, ListSet.Sub.refl _, .refl⟩
+  | .mbrw ht => exact ⟨_, _, ⟨_, rfl, ht⟩, ListSet.Sub.refl _, .refl⟩
+  | .field hd hi hb => exact ⟨_, _, ⟨_, _, _, _, hd, hi, rfl, hb⟩, ListSet.Sub.refl _, .refl⟩
+  | .write hb hv => exact ⟨_, _, ⟨_, _, _, rfl, hb, hv, rfl⟩, ListSet.Sub.refl _, .refl⟩
   | .weaken h s =>
       obtain ⟨A, ρ0, hh, hs, hf⟩ := HasType.head h
       exact ⟨A, ρ0, hh, hs.trans s, hf⟩
@@ -2198,19 +2199,19 @@ theorem Frame.replace {sg S Γ X ρ} (F : Frame) {t} (htv : ¬ Value t)
       obtain ⟨ps, ρf, ρa, ρl, hft, ha, rfl⟩ := hh
       refine ⟨_, _, hft, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.app ht' (ha.ext x)) ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app (Row.Sub.app hs' (Row.Sub.refl _)) (Row.Sub.refl _)) hs
+      exact ListSet.Sub.trans (Row.Sub.app (Row.Sub.app hs' (ListSet.Sub.refl _)) (ListSet.Sub.refl _)) hs
   | argF f vs rest =>
       obtain ⟨ps, ρf, ρa, ρl, hft, ha, rfl⟩ := hh
       obtain ⟨As₁, H, As₂, ρ₁, ρt, ρ₂, rfl, h₁, ht, h₂, rfl⟩ := HasTypes.split ha
       refine ⟨_, _, ht, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.app (hft.ext x) (HasTypes.join (h₁.ext x) ht' (h₂.ext x))) ?_).chainOf hf hnv
-      refine Row.Sub.trans (Row.Sub.app (Row.Sub.app (Row.Sub.refl _) ?_) (Row.Sub.refl _)) hs
-      exact Row.Sub.app (Row.Sub.refl _) (Row.Sub.app hs' (Row.Sub.refl _))
+      refine ListSet.Sub.trans (Row.Sub.app (Row.Sub.app (ListSet.Sub.refl _) ?_) (ListSet.Sub.refl _)) hs
+      exact Row.Sub.app (ListSet.Sub.refl _) (Row.Sub.app hs' (ListSet.Sub.refl _))
   | iteF a b =>
       obtain ⟨ρc, ρt, ρf, hc, ht, hfl, rfl⟩ := hh
       refine ⟨_, _, hc, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.ite ht' (ht.ext x) (hfl.ext x)) ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app (Row.Sub.app hs' (Row.Sub.refl _)) (Row.Sub.refl _)) hs
+      exact ListSet.Sub.trans (Row.Sub.app (Row.Sub.app hs' (ListSet.Sub.refl _)) (ListSet.Sub.refl _)) hs
   | cellF B =>
       obtain ⟨rfl, ht, hd⟩ := hh
       refine ⟨_, _, ht, fun S' x t' ρ' ht' hs' => ?_⟩
@@ -2226,19 +2227,19 @@ theorem Frame.replace {sg S Γ X ρ} (F : Frame) {t} (htv : ¬ Value t)
       obtain ⟨B, ρc, ρv, rfl, hc, hv, rfl⟩ := hh
       refine ⟨_, _, hc, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.set ht' (hv.ext x)) ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app hs' (Row.Sub.refl _)) hs
+      exact ListSet.Sub.trans (Row.Sub.app hs' (ListSet.Sub.refl _)) hs
   | setR c =>
       obtain ⟨B, ρc, ρv, rfl, hc, hv, rfl⟩ := hh
       refine ⟨_, _, hv, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.set (hc.ext x) ht') ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app (Row.Sub.refl _) hs') hs
+      exact ListSet.Sub.trans (Row.Sub.app (ListSet.Sub.refl _) hs') hs
   | perfF e vs rest =>
       obtain ⟨ps, ρa, he, ha, rfl⟩ := hh
       obtain ⟨As₁, H, As₂, ρ₁, ρt, ρ₂, rfl, h₁, ht, h₂, rfl⟩ := HasTypes.split ha
       refine ⟨_, _, ht, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.perform he (HasTypes.join (h₁.ext x) ht' (h₂.ext x))) ?_).chainOf hf hnv
-      refine Row.Sub.trans (Row.Sub.cons e (Row.Sub.app (Row.Sub.refl _) ?_)) hs
-      exact Row.Sub.app hs' (Row.Sub.refl _)
+      refine ListSet.Sub.trans (Row.Sub.cons e (Row.Sub.app (ListSet.Sub.refl _) ?_)) hs
+      exact Row.Sub.app hs' (ListSet.Sub.refl _)
   | handleF r cls =>
       obtain ⟨B, ρb, hb, hr, hrow, hcl⟩ := hh
       refine ⟨_, _, hb, fun S' x t' ρ' ht' hs' => ?_⟩
@@ -2263,7 +2264,7 @@ theorem Frame.replace {sg S Γ X ρ} (F : Frame) {t} (htv : ¬ Value t)
       have hj := HasTypes.join (h₁.ext x) ht' (h₂.ext x)
       rw [← hAs] at hj
       refine (HasType.weaken (.con hd hc hj) ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app (Row.Sub.refl _) (Row.Sub.app hs' (Row.Sub.refl _))) hs
+      exact ListSet.Sub.trans (Row.Sub.app (ListSet.Sub.refl _) (Row.Sub.app hs' (ListSet.Sub.refl _))) hs
   | projF i =>
       obtain ⟨d, args, F', B, hd, hi, rfl, ht⟩ := hh
       refine ⟨_, _, ht, fun S' x t' ρ' ht' hs' => ?_⟩
@@ -2284,12 +2285,12 @@ theorem Frame.replace {sg S Γ X ρ} (F : Frame) {t} (htv : ¬ Value t)
       obtain ⟨B, ρc, ρv, rfl, hc, hv, rfl⟩ := hh
       refine ⟨_, _, hc, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.write ht' (hv.ext x)) ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app hs' (Row.Sub.refl _)) hs
+      exact ListSet.Sub.trans (Row.Sub.app hs' (ListSet.Sub.refl _)) hs
   | writeR c =>
       obtain ⟨B, ρc, ρv, rfl, hc, hv, rfl⟩ := hh
       refine ⟨_, _, hv, fun S' x t' ρ' ht' hs' => ?_⟩
       refine (HasType.weaken (.write (hc.ext x) ht') ?_).chainOf hf hnv
-      exact Row.Sub.trans (Row.Sub.app (Row.Sub.refl _) hs') hs
+      exact ListSet.Sub.trans (Row.Sub.app (ListSet.Sub.refl _) hs') hs
 
 theorem replace {sg S Γ X ρ} : ∀ (E : List Frame) {t}, ¬ Value t → HasType sg S Γ (plug E t) X ρ →
     ∃ H ρh, HasType sg S Γ t H ρh ∧
@@ -2299,7 +2300,7 @@ theorem replace {sg S Γ X ρ} : ∀ (E : List Frame) {t}, ¬ Value t → HasTyp
   | F :: E, t, hv, h => by
       obtain ⟨H, ρh, ht, k⟩ := F.replace (plug_not_value E hv) h
       obtain ⟨H', ρh', ht', k'⟩ := replace E hv ht
-      exact ⟨H', ρh', ht', fun S' x t' ρ' h' s => k S' x _ _ (k' S' x t' ρ' h' s) (Row.Sub.refl _)⟩
+      exact ⟨H', ρh', ht', fun S' x t' ρ' h' s => k S' x _ _ (k' S' x t' ρ' h' s) (ListSet.Sub.refl _)⟩
 
 /-- A step inside a `run` takes one off its count; the type is the same. -/
 theorem Frame.next_hasType {sg S Γ X ρ F F' t} (hn : Frame.next F = some F')
@@ -2411,7 +2412,7 @@ theorem captured_hasType {sg S Γ E e vs ret cls B ρb T ρ ps R}
   cases he'
   have hk := k S (Ext.refl S) (.var 0) []
     ((HasType.var (sg := sg) (S := S) (Γ := R :: Γ) (i := 0) rfl).chainOf hf (by intro h; cases h))
-    (Row.nil_sub _)
+    (ListSet.nil_sub _)
   refine .lam (Head.hasType (t := .handle _ _ _) ⟨B, ρb, hk, ?_, ?_, ?_⟩)
   · cases ret with
     | none => exact hr
@@ -2453,7 +2454,7 @@ theorem prim_call {sg S Γ p T ρ args X ρ'} (h : HasType sg S Γ (.app (.prim 
   rw [hty] at hfs
   obtain ⟨f1, f2, f3⟩ := hfs.fn
   refine ⟨qs, R, ρr, ρa, hty, ha.fitsStars f1, ?_, Chain.ofFitsStar f2 hx⟩
-  refine Row.Sub.trans (fun e he => ?_) hs
+  refine ListSet.Sub.trans (fun e he => ?_) hs
   simp only [List.mem_append] at he ⊢
   rcases he with h | h
   · exact Or.inl (Or.inr h)
@@ -2472,18 +2473,18 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       obtain ⟨f1, f2, f3⟩ := hfs.fn
       refine (((hbody.subst ((SubstOk.var sg S []).consAll (ha.fitsStars f1) hv)).fitsStar
         f2).weaken ?_).chainOf hx (by intro h; cases h)
-      refine Row.Sub.trans (fun e he => ?_) hs
+      refine ListSet.Sub.trans (fun e he => ?_) hs
       simp only [List.mem_append]
       exact Or.inr (f3 e he)
-  | @vcall d ps T ρ0 i vs w hdef hpi hbv hw =>
+  | @vcall d ps T ρ0 b i vs w hdef hrun hbv hw =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨ps', A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
-      obtain ⟨ρw, hwt⟩ := ha.get hw hpi
+      obtain ⟨ρw, hwt⟩ := ha.get hw hrun.ty
       refine ((Value.pure (hbv w (List.mem_of_getElem? hw)).value hwt).weaken ?_).chainOf hx (by intro h; cases h)
-      exact Row.Sub.trans (fun e he => by simp at he) hs
+      exact ListSet.Sub.trans (fun e he => by simp at he) hs
   | budget hv =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2498,42 +2499,42 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
               have hg := hv.pure hg
               refine ((HasType.run (.weaken (.app hg .nil) ?_)).weaken ?_).chainOf hx (by intro h; cases h)
               · intro e he; simpa using he
-              · exact Row.Sub.trans (fun e he => by simp [he]) hs
+              · exact ListSet.Sub.trans (fun e he => by simp [he]) hs
   | arith hc =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨ps, A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
-      exact (HasType.weaken (.int (Op.calc_fits hc)) (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact (HasType.weaken (.int (Op.calc_fits hc)) (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | decArith hc =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨ps, A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
-      exact (HasType.weaken .dec (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact (HasType.weaken .dec (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | floatArith hc =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨ps, A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
-      exact (HasType.weaken .flt (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact (HasType.weaken .flt (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | toDecimal =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨ps, A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
-      exact (HasType.weaken .dec (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact (HasType.weaken .dec (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | concat =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨ps, A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
-      exact (HasType.weaken .text (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact (HasType.weaken .text (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | reborrow =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2543,7 +2544,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       cases ha with
       | cons hg ha =>
           cases ha
-          exact ((Value.brw.pure hg).weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+          exact ((Value.brw.pure hg).weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | reborrowMut =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2553,7 +2554,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       cases ha with
       | cons hg ha =>
           cases ha
-          exact ((Value.mbrw.pure hg).weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+          exact ((Value.mbrw.pure hg).weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | more =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2565,7 +2566,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
           obtain ⟨A', ρ1, ⟨rfl, -, hbody⟩, -, hfs⟩ := hi.head
           cases hfs.eq (by simp [Plain]) (by simp [Plain]) (by simp [IsFn])
           refine ((HasType.run hbody).weaken ?_).chainOf hx (by intro h; cases h)
-          exact Row.Sub.trans (fun e he => by simp [he]) hs
+          exact ListSet.Sub.trans (fun e he => by simp [he]) hs
   | unbounded =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2577,17 +2578,17 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
           obtain ⟨A', ρ1, ⟨rfl, -, hbody⟩, -, hfs⟩ := hi.head
           cases hfs.eq (by simp [Plain]) (by simp [Plain]) (by simp [IsFn])
           refine (hbody.weaken ?_).chainOf hx (by intro h; cases h)
-          exact Row.Sub.trans (fun e he => by simp [he]) hs
+          exact ListSet.Sub.trans (fun e he => by simp [he]) hs
   | iteT =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨A, ρ0, ⟨ρc, ρt, ρf, _, ht, _, rfl⟩, hs, hx⟩ := h.head
-      exact (ht.weaken (Row.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h)
+      exact (ht.weaken (ListSet.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h)
   | iteF =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨A, ρ0, ⟨ρc, ρt, ρf, _, _, hf, rfl⟩, hs, hx⟩ := h.head
-      exact (hf.weaken (Row.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h)
+      exact (hf.weaken (ListSet.Sub.trans (fun e he => by simp [he]) hs)).chainOf hx (by intro h; cases h)
   | cell hv =>
       rename_i A v
       intro S X ρ h hμ
@@ -2613,7 +2614,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
           simp at hl; subst hl
           refine ⟨v, ?_, hv, (hv.pure hvt).ext x⟩
           rw [List.getElem?_append_right (by rw [hlen]; exact hge), hlen, this]; rfl
-      · refine (HasType.weaken (.loc ?_) (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      · refine (HasType.weaken (.loc ?_) (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
         rw [hlen, List.getElem?_append_right (Nat.le_refl _)]; simp
   | fresh hv =>
       rename_i A v
@@ -2640,7 +2641,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
           simp at hl; subst hl
           refine ⟨v, ?_, hv, (hv.pure hvt).ext x⟩
           rw [List.getElem?_append_right (by rw [hlen]; exact hge), hlen, this]; rfl
-      · refine (HasType.weaken (.loc ?_) (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      · refine (HasType.weaken (.loc ?_) (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
         rw [hlen, List.getElem?_append_right (Nat.le_refl _)]; simp
   | get hl =>
       intro S X ρ h hμ
@@ -2650,7 +2651,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       cases hfs.eq (by simp [Plain]) (by simp [Plain]) (by simp [IsFn])
       obtain ⟨w, hw, _, hwt⟩ := hμ.2.2 _ _ hSl
       rw [hl] at hw; cases hw
-      exact (hwt.weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact (hwt.weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | set hl0 hv =>
       rename_i l A0 w0 v
       intro S X ρ h hμ
@@ -2677,7 +2678,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
           exact ⟨v, by simp [hlt], hv, hv.pure hvt⟩
         · obtain ⟨w, hw, hwv, hwt⟩ := hμ.2.2 l' C hl'
           exact ⟨w, by rw [List.getElem?_set_ne (Ne.symm he)]; exact hw, hwv, hwt⟩
-      · exact (HasType.weaken .unit (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      · exact (HasType.weaken .unit (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | ref hdef =>
       rename_i d ts rs A b
       intro S X ρ h hμ
@@ -2686,7 +2687,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       rw [hdef] at hdef'; cases hdef'
       have := (hd _ _ _ hdef).inst hsig (instOf ts rs)
       simp only [List.map_nil, Row.inst_nil] at this
-      exact ((this.ext ⟨S, by simp⟩).weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact ((this.ext ⟨S, by simp⟩).weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | untag hv =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2703,7 +2704,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       subst hF
       obtain ⟨ρv, hvt⟩ := hf.get hi (by rw [fieldsOf, List.getElem?_map, hiB]; rfl)
       have hv := hvs _ (List.mem_of_getElem? hi)
-      exact ((hv.pure hvt).weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact ((hv.pure hvt).weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | field hl hi =>
       rename_i i l A0 d0 args0 c fs v
       intro S X ρ h hμ
@@ -2722,7 +2723,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       subst hF
       obtain ⟨ρv, hvt⟩ := hf.get hi (by rw [fieldsOf, List.getElem?_map, hiB]; rfl)
       have hv : Value v := by cases hwv with | con hfs => exact hfs _ (List.mem_of_getElem? hi)
-      exact ((hv.pure hvt).weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact ((hv.pure hvt).weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | write hl0 hv =>
       rename_i l A0 w0 v
       intro S X ρ h hμ
@@ -2751,7 +2752,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
           exact ⟨v, by simp [hlt], hv, hv.pure hvt⟩
         · obtain ⟨w, hw, hwv, hwt⟩ := hμ.2.2 l' C hl'
           exact ⟨w, by rw [List.getElem?_set_ne (Ne.symm he)]; exact hw, hwv, hwt⟩
-      · exact (HasType.weaken .unit (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      · exact (HasType.weaken .unit (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | ret hv =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2762,7 +2763,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨T, ρ0, ⟨B, ρb, hb, hfit, _, _⟩, hs, hx⟩ := h.head
-      exact ((hv.pure hb).fits hfit |>.weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact ((hv.pure hb).fits hfit |>.weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | capture hE hv hno hin he =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2814,7 +2815,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
             (hans.imp (fun a => a.tail (Or.inr (Or.inl (by simp [Clause.guard])))) id)
           refine ((HasType.ite (hg.subst hσ) (((hcb.subst hσ).fits hfit).weaken hsub)
             hrest).weaken ?_).chainOf hx (by intro h; cases h)
-          exact Row.Sub.trans (fun e he => by simp at he; simp [he]) hs
+          exact ListSet.Sub.trans (fun e he => by simp at he; simp [he]) hs
   | selNone =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2823,7 +2824,7 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       have hp := HasType.perform he (hv.pure hvs)
       refine ((HasType.app (hk.pure hkt) (.cons hp .nil)).weaken ?_).chainOf hx
         (by intro h; cases h)
-      refine Row.Sub.trans (fun e he => ?_) hs
+      refine ListSet.Sub.trans (fun e he => ?_) hs
       simp only [List.nil_append, List.append_nil, List.mem_append, List.mem_cons,
         List.not_mem_nil, or_false] at he
       rcases he with rfl | he
@@ -2833,18 +2834,18 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨A, ρ0, ⟨rfl, rfl, hb⟩, hs, hx⟩ := h.head
-      exact ((hv.pure hb).weaken (Row.nil_sub _)).chainOf hx (by intro h; cases h)
+      exact ((hv.pure hb).weaken (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | runOut _ =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
       obtain ⟨A, ρ0, ⟨rfl, rfl, hbody⟩, hs, hx⟩ := h.head
       refine (HasType.weaken (.perform (hb.2.1 _ _) (.cons (.info hbody) .nil)) ?_).chainOf hx (by intro h; cases h)
-      exact Row.Sub.trans (fun e he => by simp_all) hs
+      exact ListSet.Sub.trans (fun e he => by simp_all) hs
   | frame _ hn hst ih =>
       intro S X ρ h hμ
       obtain ⟨H, ρh, ht, k⟩ := Frame.replace _ hst.not_value (Frame.next_hasType hn h)
       obtain ⟨S', x, hμ', ht'⟩ := ih ht hμ
-      exact ⟨S', x, hμ', k S' x _ _ ht' (Row.Sub.refl _)⟩
+      exact ⟨S', x, hμ', k S' x _ _ ht' (ListSet.Sub.refl _)⟩
 
 theorem preservation_steps {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
     {μ t μ' t'} (hs : Steps sg μ t μ' t') :
@@ -3073,21 +3074,39 @@ theorem Value.fn_inv {sg S Γ v ps A ρ ρ'} (hv : Value v) (h : HasType sg S Γ
   | brw => obtain ⟨B, rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
   | mbrw => obtain ⟨B, rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
 
-/-- Arguments of borrow types that are values are borrows. -/
-theorem HasTypes.borrowVal {sg S Γ} : ∀ {ts As ρ}, HasTypes sg S Γ ts As ρ →
-    (∀ p ∈ As, p.IsBrw) → (∀ v ∈ ts, Value v) → ∀ v ∈ ts, BorrowVal v
+/-- Arguments of borrow types that are values are borrows, and of type `bool`
+are `bool`s. -/
+theorem HasTypes.viewVal {sg S Γ} : ∀ {ts As ρ}, HasTypes sg S Γ ts As ρ →
+    (∀ p ∈ As, ViewParam p) → (∀ v ∈ ts, Value v) → ∀ v ∈ ts, ViewVal v
   | _, _, _, .nil, _, _, v, hv => by cases hv
   | _, _, _, .cons (t := t) (A := A) (ts := ts) ht hs, hb, hv, v, hm => by
       rcases List.mem_cons.mp hm with rfl | hm
       · have hA := hb A (by simp)
-        match A, hA with
-        | .brw B, _ =>
-            obtain ⟨l, rfl, -⟩ := (hv _ (by simp)).brw_inv ht
-            exact ⟨l, Or.inl rfl⟩
-        | .mbrw B, _ =>
-            obtain ⟨l, rfl, -⟩ := (hv _ (by simp)).mbrw_inv ht
-            exact ⟨l, Or.inr rfl⟩
-      · exact hs.borrowVal (fun p hp => hb p (by simp [hp])) (fun x hx => hv x (by simp [hx])) v hm
+        rcases hA with hA | rfl
+        · match A, hA with
+          | .brw B, _ =>
+              obtain ⟨l, rfl, -⟩ := (hv _ (by simp)).brw_inv ht
+              exact .inl ⟨l, Or.inl rfl⟩
+          | .mbrw B, _ =>
+              obtain ⟨l, rfl, -⟩ := (hv _ (by simp)).mbrw_inv ht
+              exact .inl ⟨l, Or.inr rfl⟩
+        · obtain ⟨b, rfl⟩ := (hv _ (by simp)).bool_inv ht
+          exact .inr ⟨b, rfl⟩
+      · exact hs.viewVal (fun p hp => hb p (by simp [hp])) (fun x hx => hv x (by simp [hx])) v hm
+
+/-- Arguments of type `bool` that are values are `bool`s, at their places. -/
+theorem HasTypes.boolAt {sg S Γ} : ∀ {ts As ρ}, HasTypes sg S Γ ts As ρ → (∀ v ∈ ts, Value v) →
+    ∀ j : Nat, As[j]? = some Ty.bool → ∃ bb, ts[j]? = some (Tm.bool bb)
+  | _, _, _, .nil, _, j, h => by simp at h
+  | _, _, _, .cons (t := t) (A := A) (ts := ts) ht hs, hv, j, h => by
+      cases j with
+      | zero =>
+          simp at h; subst h
+          obtain ⟨b, rfl⟩ := (hv _ (by simp)).bool_inv ht
+          exact ⟨b, rfl⟩
+      | succ j =>
+          simp only [List.getElem?_cons_succ] at h ⊢
+          exact hs.boolAt (fun x hx => hv x (by simp [hx])) j h
 
 /-- A call whose callee and arguments are values steps, or fails at run
 time. -/
@@ -3185,12 +3204,13 @@ theorem progress_call {sg S μ f args ps A ρl ρf ρa} (hf : HasType sg S [] f 
       | vcall d qs0 =>
           simp only [Prim.ty, Ty.fn.injEq] at hty
           obtain ⟨rfl, rfl, rfl⟩ := hty
-          obtain ⟨-, -, i, hbrw, hpi, hdef⟩ := hok
+          obtain ⟨-, -, hps, -, b, hdef, hbody⟩ := hok
           have hlen := ha.length
+          obtain ⟨i, hrun⟩ := hbody.run args hlen (fun j => ha.boolAt hva j)
           obtain ⟨w, hw⟩ : ∃ w, args[i]? = some w := by
-            have : i < _ := (List.getElem?_eq_some_iff.mp hpi).1
+            have : i < _ := (List.getElem?_eq_some_iff.mp hrun.ty).1
             exact ⟨args[i]'(by omega), by simp⟩
-          exact Or.inl ⟨_, _, .vcall hdef hpi (ha.borrowVal hbrw hva) hw⟩
+          exact Or.inl ⟨_, _, .vcall hdef hrun (ha.viewVal hps hva) hw⟩
       | more =>
           simp only [Prim.ty, Ty.fn.injEq] at hty
           obtain ⟨rfl, -, -⟩ := hty
@@ -3293,7 +3313,7 @@ mutual
         rcases progressList hb hμ hΓ hf with hva | ⟨vs, u, rest, rfl, hvs, hbu⟩
         · exact Or.inl (.con hva)
         · exact Or.inr (Busy.lift (.conF d args c vs rest) hvs rfl (fun _ h => h) hbu
-            (Row.Sub.refl _))
+            (ListSet.Sub.refl _))
     | .proj (i := i) hd hi ht =>
         right
         rcases progress hb hμ hΓ ht with hv | hbt
@@ -3306,7 +3326,7 @@ mutual
           simp only [fieldsOf, List.length_map] at hl
           have hlt : i < fs.length := by rw [hl]; exact (List.getElem?_eq_some_iff.mp hi).1
           exact Or.inl ⟨_, _, .proj hvs (List.getElem?_eq_getElem hlt)⟩
-        · exact Busy.lift (.projF i) trivial rfl (fun _ h => h) hbt (Row.Sub.refl _)
+        · exact Busy.lift (.projF i) trivial rfl (fun _ h => h) hbt (ListSet.Sub.refl _)
     | .app (f := f) (args := args) hf ha =>
         right
         rcases progress hb hμ hΓ hf with hvf | hbf
@@ -3330,19 +3350,19 @@ mutual
         right
         rcases progress hb hμ hΓ ht with hv | hbt
         · exact Or.inl ⟨_, _, .cell hv⟩
-        · exact Busy.lift (.cellF _) trivial rfl (fun _ h => h) hbt (Row.Sub.refl _)
+        · exact Busy.lift (.cellF _) trivial rfl (fun _ h => h) hbt (ListSet.Sub.refl _)
     | .fresh ht _ =>
         right
         rcases progress hb hμ hΓ ht with hv | hbt
         · exact Or.inl ⟨_, _, .fresh hv⟩
-        · exact Busy.lift (.freshF _) trivial rfl (fun _ h => h) hbt (Row.Sub.refl _)
+        · exact Busy.lift (.freshF _) trivial rfl (fun _ h => h) hbt (ListSet.Sub.refl _)
     | .get hc =>
         right
         rcases progress hb hμ hΓ hc with hv | hbc
         · obtain ⟨l, rfl, hl⟩ := hv.cell_inv hc
           obtain ⟨w, hw, -⟩ := hμ.2.2 _ _ hl
           exact Or.inl ⟨_, _, .get hw⟩
-        · exact Busy.lift .getF trivial rfl (fun _ h => h) hbc (Row.Sub.refl _)
+        · exact Busy.lift .getF trivial rfl (fun _ h => h) hbc (ListSet.Sub.refl _)
     | .set (c := c) (v := v) hc hv =>
         right
         rcases progress hb hμ hΓ hc with hvc | hbc
@@ -3357,7 +3377,7 @@ mutual
         right
         rcases progress hb hμ hΓ ht with hv | hbt
         · exact Or.inl ⟨_, _, .untag hv⟩
-        · exact Busy.lift (.tagF _) trivial rfl (fun _ h => h) hbt (Row.Sub.refl _)
+        · exact Busy.lift (.tagF _) trivial rfl (fun _ h => h) hbt (ListSet.Sub.refl _)
     | .perform (e := e) (args := args) he ha =>
         right
         rcases progressList hb hμ hΓ ha with hva | ⟨vs, u, rest, rfl, hvs, hbu⟩
@@ -3380,11 +3400,11 @@ mutual
     | .brw ht =>
         rcases progress hb hμ hΓ ht with hv | hbt
         · obtain ⟨l, rfl, -⟩ := hv.cell_inv ht; exact Or.inl .brw
-        · exact Or.inr (Busy.lift .brwF trivial rfl (fun _ h => h) hbt (Row.Sub.refl _))
+        · exact Or.inr (Busy.lift .brwF trivial rfl (fun _ h => h) hbt (ListSet.Sub.refl _))
     | .mbrw ht =>
         rcases progress hb hμ hΓ ht with hv | hbt
         · obtain ⟨l, rfl, -⟩ := hv.cell_inv ht; exact Or.inl .mbrw
-        · exact Or.inr (Busy.lift .mbrwF trivial rfl (fun _ h => h) hbt (Row.Sub.refl _))
+        · exact Or.inr (Busy.lift .mbrwF trivial rfl (fun _ h => h) hbt (ListSet.Sub.refl _))
     | .field (i := i) hd hi hbt =>
         right
         rcases progress hb hμ hΓ hbt with hv | hbb
@@ -3399,7 +3419,7 @@ mutual
           simp only [fieldsOf, List.length_map] at hlen
           have hlt : i < fs.length := by rw [hlen]; exact (List.getElem?_eq_some_iff.mp hi).1
           exact Or.inl ⟨_, _, .field hw (List.getElem?_eq_getElem hlt)⟩
-        · exact Busy.lift (.fieldF i) trivial rfl (fun _ h => h) hbb (Row.Sub.refl _)
+        · exact Busy.lift (.fieldF i) trivial rfl (fun _ h => h) hbb (ListSet.Sub.refl _)
     | .write (b := c) (v := v) hc hv =>
         right
         rcases progress hb hμ hΓ hc with hvc | hbc
@@ -3427,12 +3447,12 @@ mutual
             rcases hm with rfl | hm
             · exact hv
             · exact hva v hm
-          · refine Or.inr ⟨t :: vs, u, rest, rfl, ?_, hbu.mono (Row.sub_append_right _ _)⟩
+          · refine Or.inr ⟨t :: vs, u, rest, rfl, ?_, hbu.mono (ListSet.sub_append_right _ _)⟩
             intro v hm; simp only [List.mem_cons] at hm
             rcases hm with rfl | hm
             · exact hv
             · exact hvs v hm
-        · exact Or.inr ⟨[], t, ts, rfl, by simp, hbt.mono (Row.sub_append_left _ _)⟩
+        · exact Or.inr ⟨[], t, ts, rfl, by simp, hbt.mono (ListSet.sub_append_left _ _)⟩
 end
 
 /-! ## Type safety -/

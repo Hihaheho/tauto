@@ -39,6 +39,11 @@ theorem k_star(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`
   reduce!(`(fun x: unit. fun y: unit. x) star`)
 }
 
+// The same, as a step: the tactic reads the term from the goal the step starts from.
+theorem k_star_goal(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {
+  by reduce_goal!(()) -> lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {}
+}
+
 // Church addition, 2 + 2 = 4, reducing under the binders.
 theorem two_plus_two(): lc!(
   `(fun m: (unit -> unit) -> unit -> unit. fun n: (unit -> unit) -> unit -> unit. fun f: unit -> unit. fun x: unit. m f (n f x)) (fun f: unit -> unit. fun x: unit. f (f x)) (fun f: unit -> unit. fun x: unit. f (f x)) ~>* fun f: unit -> unit. fun x: unit. f (f (f (f x)))`
@@ -81,6 +86,6 @@ theorem omega_not_sn(h: SN(omega())): False {
   )
 }
 
-theorem omega_untypable<G: List(Ty), A: Ty>(h: lc!(`${G} |- ${omega()} : ${A}`)): False {
+theorem omega_untypable<G: List(Ty), A: Ty>(h: lc!(`$G |- ${omega()} : $A`)): False {
   omega_not_sn(strong_normalization(h))
 }

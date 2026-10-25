@@ -1,3 +1,5 @@
+import Proto.Renaming
+
 /-!
 # A model of the kernel: terms, renaming and substitution
 
@@ -32,10 +34,6 @@ inductive Tm where
 open Tm
 
 /-! ## Renaming and substitution -/
-
-def upR (ξ : Nat → Nat) : Nat → Nat
-  | 0 => 0
-  | n + 1 => ξ n + 1
 
 def ren (ξ : Nat → Nat) : Tm → Tm
   | var i => var (ξ i)
@@ -75,12 +73,6 @@ abbrev inst (b a : Tm) : Tm := subst (single a) b
 abbrev lift (t : Tm) : Tm := ren Nat.succ t
 
 /-! ## The substitution algebra -/
-
-theorem upR_id : upR id = id := by
-  funext i; cases i <;> rfl
-
-theorem upR_comp (ξ ζ : Nat → Nat) : upR (ξ ∘ ζ) = upR ξ ∘ upR ζ := by
-  funext i; cases i <;> rfl
 
 theorem ren_id (t : Tm) : ren id t = t := by
   induction t with

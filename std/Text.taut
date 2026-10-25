@@ -29,8 +29,8 @@ fn text_byte(t: Text, i: Nat) -> Option(Nat) {
 // The byte at `i`; 0 past the end.
 fn text_byte_value(t: Text, i: Nat) -> Nat {
   match text_byte(t, i) -> Nat {
-    none => zero
-    some(b) => b
+    None => zero
+    Some(b) => b
   }
 }
 
@@ -38,8 +38,8 @@ fn text_byte_value(t: Text, i: Nat) -> Nat {
 // `10xxxxxx`.
 fn text_boundary(t: Text, i: Nat) -> Yn {
   match text_byte(t, i) -> Yn {
-    none => nat_eq(i, text_len(t))
-    some(b) => yn_or(nat_lt(b, 128), nat_le(192, b))
+    None => nat_eq(i, text_len(t))
+    Some(b) => yn_or(nat_lt(b, 128), nat_le(192, b))
   }
 }
 
@@ -50,16 +50,16 @@ fn text_slice(t: Text, start: Nat, end: Nat) -> Option(Text) {
     nat_le(start, end),
     yn_and(text_boundary(t, start), text_boundary(t, end))
   ) -> Option(Text) {
-    no => none
-    yes => some(text(list_take(nat_sub(end, start), list_drop(start, text_bytes(t)))))
+    no => None
+    yes => Some(text(list_take(nat_sub(end, start), list_drop(start, text_bytes(t)))))
   }
 }
 
 // The slice, or "" when there is none.
 fn text_slice_or_empty(t: Text, start: Nat, end: Nat) -> Text {
   match text_slice(t, start, end) -> Text {
-    none => ""
-    some(s) => s
+    None => ""
+    Some(s) => s
   }
 }
 
@@ -71,23 +71,23 @@ fn text_concat(a: Text, b: Text) -> Text {
 // Mapped: the parts one after another.
 fn text_concat_all(parts: List(Text)) -> Text {
   match parts -> Text {
-    nil => text(nil)
-    cons(p, rest) => text_concat(p, text_concat_all(rest))
+    Nil => text(Nil)
+    Cons(p, rest) => text_concat(p, text_concat_all(rest))
   }
 }
 
 fn bytes_compare(a: List(Nat), b: List(Nat)) -> Ordering {
   match a -> Ordering {
-    nil => match b -> Ordering {
-      nil => equal
-      cons(y, ys) => less
+    Nil => match b -> Ordering {
+      Nil => Equal
+      Cons(y, ys) => Less
     }
-    cons(x, xs) => match b -> Ordering {
-      nil => greater
-      cons(y, ys) => match nat_lt(x, y) -> Ordering {
-        yes => less
+    Cons(x, xs) => match b -> Ordering {
+      Nil => Greater
+      Cons(y, ys) => match nat_lt(x, y) -> Ordering {
+        yes => Less
         no => match nat_lt(y, x) -> Ordering {
-          yes => greater
+          yes => Greater
           no => bytes_compare(xs, ys)
         }
       }
@@ -103,9 +103,9 @@ fn text_compare(a: Text, b: Text) -> Ordering {
 // Mapped.
 fn text_eq(a: Text, b: Text) -> Yn {
   match text_compare(a, b) -> Yn {
-    less => no
-    equal => yes
-    greater => no
+    Less => no
+    Equal => yes
+    Greater => no
   }
 }
 
@@ -115,50 +115,50 @@ fn nat_digits(fuel: Nat, n: Nat, acc: List(Nat)) -> List(Nat) {
   match fuel -> List(Nat) {
     zero => acc
     succ(f) => match nat_eq(nat_div(n, 10), 0) -> List(Nat) {
-      yes => cons(nat_add(nat_mod(n, 10), 48), acc)
-      no => nat_digits(f, nat_div(n, 10), cons(nat_add(nat_mod(n, 10), 48), acc))
+      yes => Cons(nat_add(nat_mod(n, 10), 48), acc)
+      no => nat_digits(f, nat_div(n, 10), Cons(nat_add(nat_mod(n, 10), 48), acc))
     }
   }
 }
 
 // Mapped: `n` in decimal.
 fn text_of_nat(n: Nat) -> Text {
-  text(nat_digits(succ(n), n, nil))
+  text(nat_digits(succ(n), n, Nil))
 }
 
 // Mapped: the UTF-8 encoding of the character `c`; "" when `c` is not one
 // (a surrogate, or past 0x10FFFF).
 fn text_of_code_point(c: Nat) -> Text {
   match nat_lt(c, 128) -> Text {
-    yes => text(cons(c, nil))
+    yes => text(Cons(c, Nil))
     no => match nat_lt(c, 2048) -> Text {
-      yes => text(cons(nat_add(nat_div(c, 64), 192), cons(nat_add(nat_mod(c, 64), 128), nil)))
+      yes => text(Cons(nat_add(nat_div(c, 64), 192), Cons(nat_add(nat_mod(c, 64), 128), Nil)))
       no => match yn_and(nat_le(55296, c), nat_lt(c, 57344)) -> Text {
-        yes => text(nil)
+        yes => text(Nil)
         no => match nat_lt(c, 65536) -> Text {
           yes => text(
-            cons(
+            Cons(
               nat_add(nat_div(c, 4096), 224),
-              cons(
+              Cons(
                 nat_add(nat_mod(nat_div(c, 64), 64), 128),
-                cons(nat_add(nat_mod(c, 64), 128), nil)
+                Cons(nat_add(nat_mod(c, 64), 128), Nil)
               )
             )
           )
           no => match nat_lt(c, 1114112) -> Text {
             yes => text(
-              cons(
+              Cons(
                 nat_add(nat_div(c, 262144), 240),
-                cons(
+                Cons(
                   nat_add(nat_mod(nat_div(c, 4096), 64), 128),
-                  cons(
+                  Cons(
                     nat_add(nat_mod(nat_div(c, 64), 64), 128),
-                    cons(nat_add(nat_mod(c, 64), 128), nil)
+                    Cons(nat_add(nat_mod(c, 64), 128), Nil)
                   )
                 )
               )
             )
-            no => text(nil)
+            no => text(Nil)
           }
         }
       }
@@ -174,11 +174,11 @@ theorem text_concat_ab(): Eq(Text, text_concat("a", "b"), "ab") {
   refl()
 }
 
-theorem text_slice_cuts_bytes(): Eq(Option(Text), text_slice("héllo", 1, 3), some("é")) {
+theorem text_slice_cuts_bytes(): Eq(Option(Text), text_slice("héllo", 1, 3), Some("é")) {
   refl()
 }
 
-theorem text_slice_inside_a_character(): Eq(Option(Text), text_slice("héllo", 2, 3), none) {
+theorem text_slice_inside_a_character(): Eq(Option(Text), text_slice("héllo", 2, 3), None) {
   refl()
 }
 

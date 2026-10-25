@@ -1,0 +1,96 @@
+import "../../../std/Base.taut"
+
+// A compiler from arithmetic expressions to a stack machine. `proof/compiler.taut` proves
+// that running the compiled code leaves the value of the expression on the stack, and that
+// constant folding keeps the value.
+
+inductive Expr(): Type {
+  e_lit(n: Nat): Expr
+  e_add(a: Expr, b: Expr): Expr
+  e_mul(a: Expr, b: Expr): Expr
+}
+
+inductive Instr(): Type {
+  i_push(n: Nat): Instr
+  i_add(): Instr
+  i_mul(): Instr
+}
+
+fn eval_expr(e: Expr) -> Nat {
+  match e -> Nat {
+    e_lit(n) => n
+    e_add(a, b) => nat_add(eval_expr(a), eval_expr(b))
+    e_mul(a, b) => nat_mul(eval_expr(a), eval_expr(b))
+  }
+}
+
+// Runs `code` on the stack `st` (the top is the head). `None` when an instruction finds
+// too few values on the stack.
+fn run_code(code: List(Instr), st: List(Nat)) -> Option(List(Nat)) {
+  match code -> Option(List(Nat)) {
+    Nil => Some(st)
+    Cons(i, rest) => match i -> Option(List(Nat)) {
+      i_push(n) => run_code(rest, Cons(n, st))
+      i_add => match st -> Option(List(Nat)) {
+        Nil => None
+        Cons(b, s1) => match s1 -> Option(List(Nat)) {
+          Nil => None
+          Cons(a, s2) => run_code(rest, Cons(nat_add(a, b), s2))
+        }
+      }
+      i_mul => match st -> Option(List(Nat)) {
+        Nil => None
+        Cons(b, s1) => match s1 -> Option(List(Nat)) {
+          Nil => None
+          Cons(a, s2) => run_code(rest, Cons(nat_mul(a, b), s2))
+        }
+      }
+    }
+  }
+}
+
+// The code of `e` followed by `k`. (Passing the rest of the code along avoids appending lists.)
+fn comp_expr(e: Expr, k: List(Instr)) -> List(Instr) {
+  match e -> List(Instr) {
+    e_lit(n) => Cons(i_push(n), k)
+    e_add(a, b) => comp_expr(a, comp_expr(b, Cons(i_add, k)))
+    e_mul(a, b) => comp_expr(a, comp_expr(b, Cons(i_mul, k)))
+  }
+}
+
+fn compile_expr(e: Expr) -> List(Instr) {
+  comp_expr(e, Nil)
+}
+
+fn fold_add(a: Expr, b: Expr) -> Expr {
+  match a -> Expr {
+    e_lit(n) => match b -> Expr {
+      e_lit(m) => e_lit(nat_add(n, m))
+      e_add(b1, b2) => e_add(a, b)
+      e_mul(b1, b2) => e_add(a, b)
+    }
+    e_add(a1, a2) => e_add(a, b)
+    e_mul(a1, a2) => e_add(a, b)
+  }
+}
+
+fn fold_mul(a: Expr, b: Expr) -> Expr {
+  match a -> Expr {
+    e_lit(n) => match b -> Expr {
+      e_lit(m) => e_lit(nat_mul(n, m))
+      e_add(b1, b2) => e_mul(a, b)
+      e_mul(b1, b2) => e_mul(a, b)
+    }
+    e_add(a1, a2) => e_mul(a, b)
+    e_mul(a1, a2) => e_mul(a, b)
+  }
+}
+
+// Constant folding: a sum or product of two numbers is computed.
+fn fold_expr(e: Expr) -> Expr {
+  match e -> Expr {
+    e_lit(n) => e_lit(n)
+    e_add(a, b) => fold_add(fold_expr(a), fold_expr(b))
+    e_mul(a, b) => fold_mul(fold_expr(a), fold_expr(b))
+  }
+}

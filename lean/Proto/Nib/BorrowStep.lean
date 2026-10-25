@@ -561,7 +561,7 @@ theorem Frame.blin {os sg Fr Fr' S S' St} {t u : Tm} (F F' : Frame) (hr : FrameR
   have hcnt := Frame.counts_of_blin F' htv htx h
   have hplug : ∀ X ρ, HasType sg S [] (F'.plug t) X ρ → HasType sg S' [] (F'.plug u) X ρ := fun X ρ h => by
     obtain ⟨H, ρh, ht, k⟩ := F'.replace htv h
-    exact k S' x u ρh (hty H ρh ht) (Row.Sub.refl _)
+    exact k S' x u ρh (hty H ρh ht) (ListSet.Sub.refl _)
   cases F' <;> simp only [Frame.plug] at h hKo hKb ⊢
   case appF args =>
     cases h with

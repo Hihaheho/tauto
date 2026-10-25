@@ -1,0 +1,47 @@
+// Algebraic effects: a program asks for something with `perform`, and the handler around it
+// decides what the answer is, and whether the rest of the program runs once, never or many times.
+
+// ---- an exception: the handler does not resume ----------------------------------------------
+
+effect fail: (why: Text) -> i64
+
+fn safe_div(a: i64, b: i64) -> i64 {
+  if b == 0 { perform fail("division by zero") } else { div(a, b) }
+}
+
+// The handler answers the whole `handle` block; `k`, the rest of the block, is dropped.
+let ok = handle { safe_div(84, 2) } with {
+  fail(why), k => 0 - 1
+  return v => v
+}
+let err = handle { safe_div(1, 0) } with {
+  fail(why), k => 0 - 1
+  return v => v
+}
+
+// ---- a choice: the handler resumes twice (`resume ω`) ----------------------------------------
+
+effect choose: () -> i64 resume ω
+
+fn pair_sum() -> i64 {
+  let a = perform choose()
+  let b = perform choose()
+  a * 10 + b
+}
+
+// Each `k(…)` runs the rest of the program with that answer; here the results are added.
+let total = handle { pair_sum() } with {
+  choose(), k => k(1) + k(2)
+  return v => v
+}
+
+// ---- a step budget: running out of steps is an effect too ------------------------------------
+
+let more = handle { budget(steps: 3) { 7 } } with {
+  exceeded(info), k => info.more(100)
+}
+
+perform show("ok", ok)
+perform show("err", err)
+perform show("total", total)
+perform show("more", more)

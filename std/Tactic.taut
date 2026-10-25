@@ -1,0 +1,172 @@
+import "Rewrite.taut"
+import "NatNorm.taut"
+
+// `nat_norm!(())`, for a goal `Eq(Nat, l, r)` whose sides are made of `nat_add`,
+// `nat_mul` (or `+` and `*`, which are the same), `succ`, `zero`, numerals and anything else (which is a variable of the
+// equation): reflection. The sides are read as `NatExpr`s (`std/NatNorm.taut`), and
+// the term is `nat_norm_eq(vars, l', r', refl())`, whose `refl()` the kernel accepts
+// only when the two sides have the same normal form. The theorem `nat_norm_eq` is
+// the trust; the reading here is not (a wrong one is a term that does not check).
+// No goal is left: write no arm.
+fn tac_nat_norm(s: ProofStep) -> SynExpr ! {macro_error, Div} {
+  match s.after {
+    Cons(_, _) => syn_error(s.span, "nat_norm! leaves no goal: write no arm")
+    Nil => match syn_app_parts(code_term(s.before)) {
+      None => syn_error(s.span, "nat_norm!: the goal is not an equation of Nat")
+      Some(p) => match p.snd {
+        Cons(ty, rest) => match syn_name_of(ty) {
+          Some(t) => match rest {
+            Cons(l, more) => match more {
+              Cons(r, extra) => if t == "Nat" {
+                tac_nat_norm_sides(s.span, l, r)
+              } else {
+                syn_error(s.span, "nat_norm!: the goal is not an equation of Nat")
+              }
+              Nil => syn_error(s.span, "nat_norm!: the goal is not an equation of Nat")
+            }
+            Nil => syn_error(s.span, "nat_norm!: the goal is not an equation of Nat")
+          }
+          None => syn_error(s.span, "nat_norm!: the goal is not an equation of Nat")
+        }
+        Nil => syn_error(s.span, "nat_norm!: the goal is not an equation of Nat")
+      }
+    }
+  }
+}
+
+fn tac_nat_norm_sides(at: SynSpan, l: SynExpr, r: SynExpr) -> SynExpr ! {macro_error, Div} {
+  let a = tac_nn_read(l, Nil, at)
+  let b = tac_nn_read(r, a.snd, at)
+  let env = tac_nn_list(b.snd)
+  let x = a.fst
+  let y = b.fst
+  quote { nat_norm_eq($env, $x, $y, refl()) }
+}
+
+// The `NatExpr` of `e`, with the variables met so far (in order) and then the ones
+// `e` adds.
+fn tac_nn_read(
+  e: SynExpr,
+  vars: List(SynExpr),
+  at: SynSpan
+) -> Pair(SynExpr, List(SynExpr)) ! {macro_error, Div} {
+  match syn_nat_text(e) {
+    Some(n) => {
+      let k = ExNat(n, at)
+      Pair { fst: quote { NeConst($k) }, snd: vars }
+    }
+    None => match syn_app_parts(e) {
+      None => match syn_name_of(e) {
+        Some(name) => if name == "zero" {
+          Pair { fst: quote { NeConst(zero) }, snd: vars }
+        } else {
+          tac_nn_var(e, vars, at)
+        }
+        None => tac_nn_var(e, vars, at)
+      }
+      Some(p) => match syn_name_of(p.fst) {
+        None => tac_nn_var(e, vars, at)
+        Some(name) => tac_nn_call(e, name, p.snd, vars, at)
+      }
+    }
+  }
+}
+
+// A call of `name` with `args`: the operations of the semiring, or else a variable.
+fn tac_nn_call(
+  e: SynExpr,
+  name: Text,
+  args: List(SynExpr),
+  vars: List(SynExpr),
+  at: SynSpan
+) -> Pair(SynExpr, List(SynExpr)) ! {macro_error, Div} {
+  match args {
+    Nil => tac_nn_var(e, vars, at)
+    Cons(a, rest) => match rest {
+      Nil => if name == "succ" {
+        let x = tac_nn_read(a, vars, at)
+        let one = quote { NeConst(succ(zero)) }
+        let u = x.fst
+        Pair { fst: quote { NeAdd($u, $one) }, snd: x.snd }
+      } else {
+        tac_nn_var(e, vars, at)
+      }
+      Cons(b, extra) => match extra {
+        Nil => if name == "nat_add" || name == "+" {
+          let x = tac_nn_read(a, vars, at)
+          let y = tac_nn_read(b, x.snd, at)
+          let u = x.fst
+          let v = y.fst
+          Pair { fst: quote { NeAdd($u, $v) }, snd: y.snd }
+        } else {
+          if name == "nat_mul" || name == "*" {
+            let x = tac_nn_read(a, vars, at)
+            let y = tac_nn_read(b, x.snd, at)
+            let u = x.fst
+            let v = y.fst
+            Pair { fst: quote { NeMul($u, $v) }, snd: y.snd }
+          } else {
+            tac_nn_var(e, vars, at)
+          }
+        }
+        Cons(_, _) => tac_nn_var(e, vars, at)
+      }
+    }
+  }
+}
+
+// `e` as a variable: its place in the list, which grows by `e` if it is new.
+fn tac_nn_var(
+  e: SynExpr,
+  vars: List(SynExpr),
+  at: SynSpan
+) -> Pair(SynExpr, List(SynExpr)) ! {macro_error, Div} {
+  match tac_nn_index(e, vars, 0) {
+    Some(i) => Pair { fst: tac_nn_var_expr(i), snd: vars }
+    None => {
+      let grown = syn_append(vars, Cons(e, Nil))
+      Pair { fst: tac_nn_var_expr(tac_nn_length(vars, 0)), snd: grown }
+    }
+  }
+}
+
+fn tac_nn_var_expr(i: u64) -> SynExpr {
+  let n = tac_nn_nat(i)
+  quote { NeVar($n) }
+}
+
+fn tac_nn_index(e: SynExpr, vars: List(SynExpr), i: u64) -> Option(u64) {
+  match vars {
+    Nil => None
+    Cons(v, rest) => if syn_same(e, v) { Some(i) } else { tac_nn_index(e, rest, i + 1) }
+  }
+}
+
+fn tac_nn_length(vars: List(SynExpr), n: u64) -> u64 {
+  match vars {
+    Nil => n
+    Cons(_, rest) => tac_nn_length(rest, n + 1)
+  }
+}
+
+// `zero`, `succ(zero)`, … for `i`.
+fn tac_nn_nat(i: u64) -> SynExpr {
+  if i == 0 {
+    quote { zero }
+  } else {
+    let k = tac_nn_nat(i - 1)
+    quote { succ($k) }
+  }
+}
+
+fn tac_nn_list(vars: List(SynExpr)) -> SynExpr {
+  match vars {
+    Nil => quote { Nil }
+    Cons(v, rest) => {
+      let tail = tac_nn_list(rest)
+      quote { Cons($v, $tail) }
+    }
+  }
+}
+
+macro nat_norm = tac_nat_norm
