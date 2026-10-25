@@ -1,0 +1,82 @@
+import "Identity.taut"
+
+// A port of lean/Proto/Syntax.lean: the abstract syntax of the core
+// language, with de Bruijn variables. Syntax only: formation, typing,
+// conversion and evaluation are not formalized here. Names are numbers.
+// `CoreTerm` nests `List` and `Pair`.
+
+inductive CoreUniv(): Type {
+  uzero(): CoreUniv
+  usucc(u: CoreUniv): CoreUniv
+  umax(u: CoreUniv, v: CoreUniv): CoreUniv
+  uparam(name: Nat): CoreUniv
+}
+
+inductive CoreSort(): Type {
+  sprop(): CoreSort
+  suniv(level: CoreUniv): CoreSort
+}
+
+// Names in `cref` are declarations, not free de Bruijn variables.
+inductive CoreTerm(): Type {
+  cbvar(index: Nat): CoreTerm
+  cref(name: Nat): CoreTerm
+  csort(s: CoreSort): CoreTerm
+  cpi(domain: CoreTerm, latent: List(EffectId), codomain: CoreTerm): CoreTerm
+  clam(domain: CoreTerm, body: CoreTerm): CoreTerm
+  capp(fn_: CoreTerm, arg: CoreTerm): CoreTerm
+  cletE(value: CoreTerm, body: CoreTerm): CoreTerm
+  cperform(operation: EffectId, arg: CoreTerm): CoreTerm
+  chandle(body: CoreTerm, returnBody: CoreTerm, arms: List(Pair(EffectId, CoreTerm))): CoreTerm
+  ctaggedType(tags: List(Nat), ty: CoreTerm): CoreTerm
+  cunionType(members: List(CoreTerm)): CoreTerm
+  cunionIntro(memberIndex: Nat, value: CoreTerm): CoreTerm
+  cfold(recursiveType: CoreTerm, value: CoreTerm): CoreTerm
+  cunfold(value: CoreTerm): CoreTerm
+}
+
+// The terms nest, so a recursive function over them is a `mutual` block over
+// the term and its lists.
+mutual {
+  fn term_size(t: CoreTerm) -> Nat {
+    match t -> Nat {
+      cbvar(i) => 1
+      cref(n) => 1
+      csort(s) => 1
+      cpi(d, l, c) => succ(plus(term_size(d), term_size(c)))
+      clam(d, b) => succ(plus(term_size(d), term_size(b)))
+      capp(f, a) => succ(plus(term_size(f), term_size(a)))
+      cletE(v, b) => succ(plus(term_size(v), term_size(b)))
+      cperform(o, a) => succ(term_size(a))
+      chandle(b, r, arms) => succ(plus(term_size(b), plus(term_size(r), arms_size(arms))))
+      ctaggedType(tags, ty) => succ(term_size(ty))
+      cunionType(ms) => succ(terms_size(ms))
+      cunionIntro(i, v) => succ(term_size(v))
+      cfold(r, v) => succ(plus(term_size(r), term_size(v)))
+      cunfold(v) => succ(term_size(v))
+    }
+  }
+  fn terms_size(l: List(CoreTerm)) -> Nat {
+    match l -> Nat {
+      Nil => 0
+      Cons(h, rest) => plus(term_size(h), terms_size(rest))
+    }
+  }
+  fn arms_size(l: List(Pair(EffectId, CoreTerm))) -> Nat {
+    match l -> Nat {
+      Nil => 0
+      Cons(h, rest) => plus(pair_size(h), arms_size(rest))
+    }
+  }
+  fn pair_size(p: Pair(EffectId, CoreTerm)) -> Nat {
+    match p -> Nat {
+      pair(o, t) => term_size(t)
+    }
+  }
+}
+
+theorem size_of_a_small_term(): Eq(
+  Nat,
+  term_size(capp(cbvar(0), cunionType(Cons(cref(1), Cons(cbvar(2), Nil))))),
+  5
+) { refl() }

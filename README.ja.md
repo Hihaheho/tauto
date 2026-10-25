@@ -18,6 +18,7 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 | --- | --- |
 | `lean/` | Lean 4 による形式化：参照意味論と、それについての証明 |
 | `std/` | Tauto で書き、Tauto で証明した標準ライブラリ |
+| `meta/` | Lean による形式化の一部を Tauto で書き直したもの：小さな核と、カーネルのモデル（合流性、subject reduction、型付けの導出を返す検査器） |
 | `examples/` | Tauto のプログラムと証明 |
 | `crates/tauto-test-suite/cases/` | 実装が何を答えるべきかを定めるケースファイル |
 | `Tauto.eure` | プロジェクトのマニフェスト（まだどのツールも読みません） |

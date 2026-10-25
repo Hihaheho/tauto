@@ -1,0 +1,379 @@
+import "Effects.taut"
+
+// A port of lean/Proto/Nib/Typing.lean: the typing of Nib's effects
+// (functions, calls, `perform`, `handle`) with its effect rules. A function
+// value performs nothing when made; its type carries the row it may perform
+// when called. `handle` answers the effects its clauses name; the arms run
+// outside the handler. `HasType sg G t A rho` reads "t has type A and
+// performs at most rho"; rows are read as sets.
+
+inductive Bit(): Type {
+  b0(): Bit
+  b1(): Bit
+}
+
+// Built-in functions: their typing is their signature.
+inductive Prim(): Type {
+  pbudget(): Prim
+  // `div(a, b)` at a width: integers have no `/`.
+  pdiv(w: Width): Prim
+}
+
+// `budget(T, e)(steps: i64, body: () -> T ! {Div | e}) -> T ! {Exceeded(T) | e}`
+// with the row variable `e` taken to be `rho`; `div` at `w` is `(w, w) -> w`.
+fn prim_ty(p: Prim, T: Ty, rho: List(Eff)) -> Ty {
+  match p -> Ty {
+    pbudget => tfn(
+      Cons(tint(i64), Cons(tfn(Nil, T, Cons(divEff(), rho)), Nil)),
+      T,
+      Cons(exceededEff(T), rho)
+    )
+    pdiv(w) => tfn(Cons(tint(w), Cons(tint(w), Nil)), tint(w), Nil)
+  }
+}
+
+mutual {
+  inductive Tm(): Type {
+    tvar(i: Nat): Tm
+    // An integer literal at the width it is used with (a `Nat` here; the Lean
+    // model's is an `Int`).
+    tintLit(w: Width, n: Nat): Tm
+    tboolLit(b: Bit): Tm
+    tunitV(): Tm
+    tprim(p: Prim, T: Ty, rho: List(Eff)): Tm
+    // `(ps) => body`; the parameters are variables `0 … ps.length - 1`.
+    tlam(ps: List(Ty), body: Tm): Tm
+    tapp(f: Tm, args: List(Tm)): Tm
+    // `perform e(args)`
+    tperform(e: Eff, args: List(Tm)): Tm
+    // `handle { body } with { return x => ret; clauses }`
+    thandle(body: Tm, ret: Option(Tm), clauses: List(Clause)): Tm
+  }
+
+  // `e(params), k => body`
+  inductive Clause(): Type {
+    clause(eff: Eff, body: Tm): Clause
+  }
+}
+
+fn eff_of(c: Clause) -> Eff {
+  match c -> Eff {
+    clause(e, b) => e
+  }
+}
+
+fn clause_effs(cs: List(Clause)) -> List(Eff) {
+  match cs -> List(Eff) {
+    Nil => Nil
+    Cons(c, rest) => Cons(eff_of(c), clause_effs(rest))
+  }
+}
+
+// Declared effects: the parameter types and the result type of the operation.
+inductive Decl(): Type {
+  decl(params: List(Ty), result: Ty): Decl
+}
+
+def Sig(): Type := (Eff) -> Option(Decl)
+
+fn nth(A: Type, l: List(A), i: Nat) -> Option(A) {
+  match l -> Option(A) {
+    Nil => None
+    Cons(h, t) => match i -> Option(A) {
+      zero => Some(h)
+      succ(k) => nth(A, t, k)
+    }
+  }
+}
+
+// A value of type `a` may be put where `t` is expected: it is `t`, or `t` is a
+// union that holds `a`. Nothing is converted.
+inductive Fits(): (Ty) -> (Ty) -> Prop {
+  fits_refl(a: Ty): Fits(a, a)
+  fits_union<a: Ty, ts: List(Ty)>(m: Mem(Ty, a, ts)): Fits(a, tunion(ts))
+}
+
+// Every effect of the body is answered by a clause or kept in the row.
+def Covers(body: List(Eff), clauses: List(Clause), rho: List(Eff)): Prop :=
+∀ e: Eff. (Mem(Eff, e, body)) -> Or(Mem(Eff, e, clause_effs(clauses)), Mem(Eff, e, rho))
+
+mutual {
+  inductive HasType(sg: Sig): (List(Ty)) -> (Tm) -> (Ty) -> (List(Eff)) -> Prop {
+    h_var(
+      G: List(Ty),
+      i: Nat,
+      A: Ty,
+      e: Eq(Option(Ty), nth(Ty, G, i), Some(A))
+    ): HasType(sg, G, tvar(i), A, Nil(Eff))
+    h_prim(
+      G: List(Ty),
+      p: Prim,
+      T: Ty,
+      rho: List(Eff)
+    ): HasType(sg, G, tprim(p, T, rho), prim_ty(p, T, rho), Nil(Eff))
+    h_int(G: List(Ty), w: Width, n: Nat): HasType(sg, G, tintLit(w, n), tint(w), Nil(Eff))
+    h_bool(G: List(Ty), b: Bit): HasType(sg, G, tboolLit(b), tbool, Nil(Eff))
+    h_unit(G: List(Ty)): HasType(sg, G, tunitV, tunit, Nil(Eff))
+    // Making a function performs nothing; the body's row is its latent row.
+    h_lam(
+      G: List(Ty),
+      ps: List(Ty),
+      body: Tm,
+      A: Ty,
+      rho: List(Eff),
+      h: HasType(sg, append(Ty, ps, G), body, A, rho)
+    ): HasType(sg, G, tlam(ps, body), tfn(ps, A, rho), Nil(Eff))
+    // A call performs the callee's row, the arguments' rows and the latent row.
+    h_app(
+      G: List(Ty),
+      f: Tm,
+      args: List(Tm),
+      ps: List(Ty),
+      A: Ty,
+      rf: List(Eff),
+      ra: List(Eff),
+      rho: List(Eff),
+      hf: HasType(sg, G, f, tfn(ps, A, rho), rf),
+      ha: HasTypes(sg, G, args, ps, ra)
+    ): HasType(sg, G, tapp(f, args), A, append(Eff, append(Eff, rf, ra), rho))
+    h_perform(
+      G: List(Ty),
+      e: Eff,
+      args: List(Tm),
+      ps: List(Ty),
+      R: Ty,
+      ra: List(Eff),
+      d: Eq(Option(Decl), sg(e), Some(decl(ps, R))),
+      ha: HasTypes(sg, G, args, ps, ra)
+    ): HasType(sg, G, tperform(e, args), R, Cons(e, ra))
+    // `handle` with the `return` arm.
+    h_handle_ret(
+      G: List(Ty),
+      body: Tm,
+      ret: Tm,
+      clauses: List(Clause),
+      B: Ty,
+      T: Ty,
+      rb: List(Eff),
+      rr: List(Eff),
+      rho: List(Eff),
+      hb: HasType(sg, G, body, B, rb),
+      hr: HasType(sg, Cons(B, G), ret, T, rr),
+      sub: Sub(Eff, rr, rho),
+      cover: Covers(rb, clauses, rho),
+      ok: ∀ c: Clause. (Mem(Clause, c, clauses)) -> ClauseOk(sg, G, T, rho, c)
+    ): HasType(sg, G, thandle(body, Some(ret), clauses), T, rho)
+    // `handle` without one: the body's value is the result.
+    h_handle(
+      G: List(Ty),
+      body: Tm,
+      clauses: List(Clause),
+      B: Ty,
+      T: Ty,
+      rb: List(Eff),
+      rho: List(Eff),
+      hb: HasType(sg, G, body, B, rb),
+      f: Fits(B, T),
+      cover: Covers(rb, clauses, rho),
+      ok: ∀ c: Clause. (Mem(Clause, c, clauses)) -> ClauseOk(sg, G, T, rho, c)
+    ): HasType(sg, G, thandle(body, None, clauses), T, rho)
+    // A bigger row is also fine.
+    h_weaken(
+      G: List(Ty),
+      t: Tm,
+      A: Ty,
+      rho: List(Eff),
+      rho2: List(Eff),
+      h: HasType(sg, G, t, A, rho),
+      sub: Sub(Eff, rho, rho2)
+    ): HasType(sg, G, t, A, rho2)
+  }
+
+  // The arguments have the parameter types, in order.
+  inductive HasTypes(sg: Sig): (List(Ty)) -> (List(Tm)) -> (List(Ty)) -> (List(Eff)) -> Prop {
+    ht_nil(G: List(Ty)): HasTypes(sg, G, Nil(Tm), Nil(Ty), Nil(Eff))
+    ht_cons(
+      G: List(Ty),
+      t: Tm,
+      ts: List(Tm),
+      A: Ty,
+      As: List(Ty),
+      r: List(Eff),
+      rs: List(Eff),
+      h: HasType(sg, G, t, A, r),
+      hs: HasTypes(sg, G, ts, As, rs)
+    ): HasTypes(sg, G, Cons(t, ts), Cons(A, As), append(Eff, r, rs))
+  }
+
+  // An arm for `e`: it runs outside the handler, with the operation's values
+  // and `k : (R) -> T ! rho` in scope, and gives the handle's result type `T`,
+  // performing at most the handle's row `rho`.
+  inductive ClauseOk(sg: Sig): (List(Ty)) -> (Ty) -> (List(Eff)) -> (Clause) -> Prop {
+    co_mk(
+      G: List(Ty),
+      T: Ty,
+      rho: List(Eff),
+      e: Eff,
+      body: Tm,
+      ps: List(Ty),
+      R: Ty,
+      ra: List(Eff),
+      A: Ty,
+      d: Eq(Option(Decl), sg(e), Some(decl(ps, R))),
+      h: HasType(
+        sg,
+        append(Ty, append(Ty, ps, Cons(tfn(Cons(R, Nil), T, rho), Nil)), G),
+        body,
+        A,
+        ra
+      ),
+      f: Fits(A, T),
+      sub: Sub(Eff, ra, rho)
+    ): ClauseOk(sg, G, T, rho, clause(e, body))
+  }
+}
+
+// A `perform` is in the row of whatever type derivation it has.
+theorem perform_mem_aux<sg: Sig, G: List(
+  Ty
+), t: Tm, A: Ty, rho: List(
+  Eff
+)>(
+  h: HasType(sg, G, t, A, rho),
+  e: Eff,
+  args: List(Tm),
+  q: Eq(Tm, t, tperform(e, args))
+): Mem(Eff, e, rho) {
+  match h -> Mem(Eff, e, rho) {
+    h_var(G0, i, A0, d) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_prim(G0, p, T0, r) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_int(G0, w, n) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_bool(G0, b) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_unit(G0) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_lam(G0, ps, body, A0, r, h0) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_app(
+      G0,
+      f,
+      args0,
+      ps,
+      A0,
+      rf,
+      ra,
+      r,
+      hf,
+      ha
+    ) => match q -> Mem(Eff, e, append(Eff, append(Eff, rf, ra), r)) {
+    }
+    h_perform(G0, e0, args0, ps, R, ra, d, ha) => match q -> Mem(Eff, e, Cons(Eff, e0, ra)) {
+      refl => mem_here(Eff, e, ra)
+    }
+    h_handle_ret(
+      G0,
+      body,
+      ret,
+      cl,
+      B,
+      T0,
+      rb,
+      rr,
+      r,
+      hb,
+      hr,
+      sub,
+      cover,
+      ok
+    ) => match q -> Mem(Eff, e, r) {
+    }
+    h_handle(G0, body, cl, B, T0, rb, r, hb, f, cover, ok) => match q -> Mem(Eff, e, r) {
+    }
+    h_weaken(G0, t0, A0, r0, r1, h0, sub) => sub(e, perform_mem_aux(h0, e, args, q))
+  }
+}
+
+theorem perform_mem<sg: Sig, G: List(
+  Ty
+), e: Eff, args: List(
+  Tm
+), R: Ty, rho: List(Eff)>(h: HasType(sg, G, tperform(e, args), R, rho)): Mem(Eff, e, rho) {
+  perform_mem_aux(h, e, args, refl())
+}
+
+// A handle with no clause answers nothing: the body's `perform` is still in
+// its row.
+theorem unhandled_perform_aux<sg: Sig, G: List(
+  Ty
+), t: Tm, T: Ty, rho: List(
+  Eff
+)>(
+  h: HasType(sg, G, t, T, rho),
+  e: Eff,
+  args: List(Tm),
+  q: Eq(Tm, t, thandle(tperform(e, args), None, Nil))
+): Mem(Eff, e, rho) {
+  match h -> Mem(Eff, e, rho) {
+    h_var(G0, i, A0, d) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_prim(G0, p, T0, r) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_int(G0, w, n) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_bool(G0, b) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_unit(G0) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_lam(G0, ps, body, A0, r, h0) => match q -> Mem(Eff, e, Nil(Eff)) {
+    }
+    h_app(
+      G0,
+      f,
+      args0,
+      ps,
+      A0,
+      rf,
+      ra,
+      r,
+      hf,
+      ha
+    ) => match q -> Mem(Eff, e, append(Eff, append(Eff, rf, ra), r)) {
+    }
+    h_perform(G0, e0, args0, ps, R, ra, d, ha) => match q -> Mem(Eff, e, Cons(Eff, e0, ra)) {
+    }
+    h_handle_ret(
+      G0,
+      body,
+      ret,
+      cl,
+      B,
+      T0,
+      rb,
+      rr,
+      r,
+      hb,
+      hr,
+      sub,
+      cover,
+      ok
+    ) => match q -> Mem(Eff, e, r) {
+    }
+    h_handle(G0, body, cl, B, T0, rb, r, hb, f, cover, ok) => match q -> Mem(Eff, e, r) {
+      refl => or_elim(cover(e, perform_mem(hb)), a => Mem_nil(Mem(Eff, e, r), a), a => a)
+    }
+    h_weaken(G0, t0, A0, r0, r1, h0, sub) => sub(e, unhandled_perform_aux(h0, e, args, q))
+  }
+}
+
+theorem unhandled_perform<sg: Sig, G: List(
+  Ty
+), e: Eff, args: List(
+  Tm
+), T: Ty, rho: List(
+  Eff
+)>(h: HasType(sg, G, thandle(tperform(e, args), None, Nil), T, rho)): Mem(Eff, e, rho) {
+  unhandled_perform_aux(h, e, args, refl())
+}

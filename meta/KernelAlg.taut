@@ -1,0 +1,542 @@
+import "Kernel.taut"
+
+// The algebra of renaming and substitution for lean/Proto/Kernel/Syntax.lean.
+// There is no function extensionality in tauto, so every lemma is stated
+// up to a pointwise equal renaming or substitution: `rho(i) = xi(zeta(i))`
+// for all `i`, rather than `rho = xi ∘ zeta`.
+
+theorem eq_Kpi<A: KTm, A2: KTm, B: KTm, B2: KTm>(
+  e1: Eq(KTm, A, A2),
+  e2: Eq(KTm, B, B2)
+): Eq(KTm, Kpi(A, B), Kpi(A2, B2)) {
+  match e1 -> Eq(KTm, Kpi(A, B), Kpi(A2, B2)) {
+    refl => Eq_congr(x => Kpi(A, x), e2)
+  }
+}
+
+theorem eq_Klam<b: KTm, b2: KTm>(e: Eq(KTm, b, b2)): Eq(KTm, Klam(b), Klam(b2)) {
+  Eq_congr(x => Klam(x), e)
+}
+
+theorem eq_Kapp<f: KTm, f2: KTm, a: KTm, a2: KTm>(
+  e1: Eq(KTm, f, f2),
+  e2: Eq(KTm, a, a2)
+): Eq(KTm, Kapp(f, a), Kapp(f2, a2)) {
+  match e1 -> Eq(KTm, Kapp(f, a), Kapp(f2, a2)) {
+    refl => Eq_congr(x => Kapp(f, x), e2)
+  }
+}
+
+theorem eq_Ksucc<n: KTm, n2: KTm>(e: Eq(KTm, n, n2)): Eq(KTm, Ksucc(n), Ksucc(n2)) {
+  Eq_congr(x => Ksucc(x), e)
+}
+
+theorem eq_KnatRec<P: KTm, P2: KTm, z: KTm, z2: KTm, s: KTm, s2: KTm, n: KTm, n2: KTm>(
+  e1: Eq(KTm, P, P2),
+  e2: Eq(KTm, z, z2),
+  e3: Eq(KTm, s, s2),
+  e4: Eq(KTm, n, n2)
+): Eq(KTm, KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) {
+  match e1 -> Eq(KTm, KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2)) {
+    refl => match e2 -> Eq(KTm, KnatRec(P, z, s, n), KnatRec(P, z2, s2, n2)) {
+      refl => match e3 -> Eq(KTm, KnatRec(P, z, s, n), KnatRec(P, z, s2, n2)) {
+        refl => Eq_congr(x => KnatRec(P, z, s, x), e4)
+      }
+    }
+  }
+}
+
+// ---- pointwise equal renamings and substitutions ---------------------------
+
+theorem ren_pw(
+  t: KTm,
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  h: ∀ i: Nat. Eq(Nat, xi(i), zeta(i))
+): Eq(KTm, Kren(t, xi), Kren(t, zeta)) {
+  match t -> Eq(KTm, Kren(t, xi), Kren(t, zeta)) {
+    Kvar(i) => Eq_congr(Kvar, h(i))
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(A, B) => eq_Kpi(ren_pw(A, xi, zeta, h), ren_pw(B, upR(xi), upR(zeta), upR_pw(xi, zeta, h)))
+    Klam(b) => eq_Klam(ren_pw(b, upR(xi), upR(zeta), upR_pw(xi, zeta, h)))
+    Kapp(f, a) => eq_Kapp(ren_pw(f, xi, zeta, h), ren_pw(a, xi, zeta, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(ren_pw(n, xi, zeta, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      ren_pw(P, xi, zeta, h),
+      ren_pw(z, xi, zeta, h),
+      ren_pw(s, xi, zeta, h),
+      ren_pw(n, xi, zeta, h)
+    )
+  }
+}
+
+theorem up_pw_at(
+  sigma: (Nat) -> KTm,
+  tau: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, sigma(i), tau(i)),
+  i: Nat
+): Eq(KTm, Kup(sigma, i), Kup(tau, i)) {
+  match i -> Eq(KTm, Kup(sigma, i), Kup(tau, i)) {
+    zero => refl(KTm, Kvar(zero))
+    succ(m) => Eq_congr(x => Kren(x, succ), h(m))
+  }
+}
+
+theorem up_pw(
+  sigma: (Nat) -> KTm,
+  tau: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, sigma(i), tau(i))
+): ∀ i: Nat. Eq(KTm, Kup(sigma, i), Kup(tau, i)) {
+  i => up_pw_at(sigma, tau, h, i)
+}
+
+theorem subst_pw(
+  t: KTm,
+  sigma: (Nat) -> KTm,
+  tau: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, sigma(i), tau(i))
+): Eq(KTm, Ksubst(t, sigma), Ksubst(t, tau)) {
+  match t -> Eq(KTm, Ksubst(t, sigma), Ksubst(t, tau)) {
+    Kvar(i) => h(i)
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(
+      A,
+      B
+    ) => eq_Kpi(subst_pw(A, sigma, tau, h), subst_pw(B, Kup(sigma), Kup(tau), up_pw(sigma, tau, h)))
+    Klam(b) => eq_Klam(subst_pw(b, Kup(sigma), Kup(tau), up_pw(sigma, tau, h)))
+    Kapp(f, a) => eq_Kapp(subst_pw(f, sigma, tau, h), subst_pw(a, sigma, tau, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(subst_pw(n, sigma, tau, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      subst_pw(P, sigma, tau, h),
+      subst_pw(z, sigma, tau, h),
+      subst_pw(s, sigma, tau, h),
+      subst_pw(n, sigma, tau, h)
+    )
+  }
+}
+
+// ---- the up-lemmas ----------------------------------------------------------
+
+theorem rr_up_at(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  rho: (Nat) -> Nat,
+  h: ∀ i: Nat. Eq(Nat, rho(i), xi(zeta(i))),
+  i: Nat
+): Eq(Nat, upR(rho, i), upR(xi, upR(zeta, i))) {
+  match i -> Eq(Nat, upR(rho, i), upR(xi, upR(zeta, i))) {
+    zero => refl(Nat, zero)
+    succ(m) => Eq_congr(succ, h(m))
+  }
+}
+
+theorem rr_up(
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  rho: (Nat) -> Nat,
+  h: ∀ i: Nat. Eq(Nat, rho(i), xi(zeta(i)))
+): ∀ i: Nat. Eq(Nat, upR(rho, i), upR(xi, upR(zeta, i))) {
+  i => rr_up_at(xi, zeta, rho, h, i)
+}
+
+theorem sr_up_at(
+  sigma: (Nat) -> KTm,
+  xi: (Nat) -> Nat,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), sigma(xi(i))),
+  i: Nat
+): Eq(KTm, Kup(rho, i), Kup(sigma, upR(xi, i))) {
+  match i -> Eq(KTm, Kup(rho, i), Kup(sigma, upR(xi, i))) {
+    zero => refl(KTm, Kvar(zero))
+    succ(m) => Eq_congr(x => Kren(x, succ), h(m))
+  }
+}
+
+theorem sr_up(
+  sigma: (Nat) -> KTm,
+  xi: (Nat) -> Nat,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), sigma(xi(i)))
+): ∀ i: Nat. Eq(KTm, Kup(rho, i), Kup(sigma, upR(xi, i))) {
+  i => sr_up_at(sigma, xi, rho, h, i)
+}
+
+theorem sv_up_at(
+  sigma: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, sigma(i), Kvar(i)),
+  i: Nat
+): Eq(KTm, Kup(sigma, i), Kvar(i)) {
+  match i -> Eq(KTm, Kup(sigma, i), Kvar(i)) {
+    zero => refl(KTm, Kvar(zero))
+    succ(m) => Eq_congr(x => Kren(x, succ), h(m))
+  }
+}
+
+theorem sv_up(
+  sigma: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, sigma(i), Kvar(i))
+): ∀ i: Nat. Eq(KTm, Kup(sigma, i), Kvar(i)) {
+  i => sv_up_at(sigma, h, i)
+}
+
+// ---- renaming twice ----------------------------------------------------------
+
+theorem ren_ren(
+  t: KTm,
+  xi: (Nat) -> Nat,
+  zeta: (Nat) -> Nat,
+  rho: (Nat) -> Nat,
+  h: ∀ i: Nat. Eq(Nat, rho(i), xi(zeta(i)))
+): Eq(KTm, Kren(Kren(t, zeta), xi), Kren(t, rho)) {
+  match t -> Eq(KTm, Kren(Kren(t, zeta), xi), Kren(t, rho)) {
+    Kvar(i) => Eq_congr(Kvar, Eq_sym(h(i)))
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(
+      A,
+      B
+    ) => eq_Kpi(
+      ren_ren(A, xi, zeta, rho, h),
+      ren_ren(B, upR(xi), upR(zeta), upR(rho), rr_up(xi, zeta, rho, h))
+    )
+    Klam(b) => eq_Klam(ren_ren(b, upR(xi), upR(zeta), upR(rho), rr_up(xi, zeta, rho, h)))
+    Kapp(f, a) => eq_Kapp(ren_ren(f, xi, zeta, rho, h), ren_ren(a, xi, zeta, rho, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(ren_ren(n, xi, zeta, rho, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      ren_ren(P, xi, zeta, rho, h),
+      ren_ren(z, xi, zeta, rho, h),
+      ren_ren(s, xi, zeta, rho, h),
+      ren_ren(n, xi, zeta, rho, h)
+    )
+  }
+}
+
+// ---- substituting into a renamed term ---------------------------------------
+
+theorem subst_ren(
+  t: KTm,
+  sigma: (Nat) -> KTm,
+  xi: (Nat) -> Nat,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), sigma(xi(i)))
+): Eq(KTm, Ksubst(Kren(t, xi), sigma), Ksubst(t, rho)) {
+  match t -> Eq(KTm, Ksubst(Kren(t, xi), sigma), Ksubst(t, rho)) {
+    Kvar(i) => Eq_sym(h(i))
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(
+      A,
+      B
+    ) => eq_Kpi(
+      subst_ren(A, sigma, xi, rho, h),
+      subst_ren(B, Kup(sigma), upR(xi), Kup(rho), sr_up(sigma, xi, rho, h))
+    )
+    Klam(b) => eq_Klam(subst_ren(b, Kup(sigma), upR(xi), Kup(rho), sr_up(sigma, xi, rho, h)))
+    Kapp(f, a) => eq_Kapp(subst_ren(f, sigma, xi, rho, h), subst_ren(a, sigma, xi, rho, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(subst_ren(n, sigma, xi, rho, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      subst_ren(P, sigma, xi, rho, h),
+      subst_ren(z, sigma, xi, rho, h),
+      subst_ren(s, sigma, xi, rho, h),
+      subst_ren(n, sigma, xi, rho, h)
+    )
+  }
+}
+
+// ---- substitution with the identity -----------------------------------------
+
+theorem subst_var(
+  t: KTm,
+  sigma: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, sigma(i), Kvar(i))
+): Eq(KTm, Ksubst(t, sigma), t) {
+  match t -> Eq(KTm, Ksubst(t, sigma), t) {
+    Kvar(i) => h(i)
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(A, B) => eq_Kpi(subst_var(A, sigma, h), subst_var(B, Kup(sigma), sv_up(sigma, h)))
+    Klam(b) => eq_Klam(subst_var(b, Kup(sigma), sv_up(sigma, h)))
+    Kapp(f, a) => eq_Kapp(subst_var(f, sigma, h), subst_var(a, sigma, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(subst_var(n, sigma, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      subst_var(P, sigma, h),
+      subst_var(z, sigma, h),
+      subst_var(s, sigma, h),
+      subst_var(n, sigma, h)
+    )
+  }
+}
+
+// ---- renaming a substituted term ----------------------------------------------
+
+theorem rs_up_at(
+  xi: (Nat) -> Nat,
+  sigma: (Nat) -> KTm,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), Kren(sigma(i), xi)),
+  i: Nat
+): Eq(KTm, Kup(rho, i), Kren(Kup(sigma, i), upR(xi))) {
+  match i -> Eq(KTm, Kup(rho, i), Kren(Kup(sigma, i), upR(xi))) {
+    zero => refl(KTm, Kvar(zero))
+    succ(
+      m
+    ) => Eq_trans(
+      Eq_congr(x => Kren(x, succ), h(m)),
+      Eq_trans(
+        ren_ren(sigma(m), succ, xi, j => succ(xi(j)), j => refl(Nat, succ(xi(j)))),
+        Eq_sym(ren_ren(sigma(m), upR(xi), succ, j => succ(xi(j)), j => refl(Nat, succ(xi(j)))))
+      )
+    )
+  }
+}
+
+theorem rs_up(
+  xi: (Nat) -> Nat,
+  sigma: (Nat) -> KTm,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), Kren(sigma(i), xi))
+): ∀ i: Nat. Eq(KTm, Kup(rho, i), Kren(Kup(sigma, i), upR(xi))) {
+  i => rs_up_at(xi, sigma, rho, h, i)
+}
+
+theorem ren_subst(
+  t: KTm,
+  xi: (Nat) -> Nat,
+  sigma: (Nat) -> KTm,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), Kren(sigma(i), xi))
+): Eq(KTm, Kren(Ksubst(t, sigma), xi), Ksubst(t, rho)) {
+  match t -> Eq(KTm, Kren(Ksubst(t, sigma), xi), Ksubst(t, rho)) {
+    Kvar(i) => Eq_sym(h(i))
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(
+      A,
+      B
+    ) => eq_Kpi(
+      ren_subst(A, xi, sigma, rho, h),
+      ren_subst(B, upR(xi), Kup(sigma), Kup(rho), rs_up(xi, sigma, rho, h))
+    )
+    Klam(b) => eq_Klam(ren_subst(b, upR(xi), Kup(sigma), Kup(rho), rs_up(xi, sigma, rho, h)))
+    Kapp(f, a) => eq_Kapp(ren_subst(f, xi, sigma, rho, h), ren_subst(a, xi, sigma, rho, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(ren_subst(n, xi, sigma, rho, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      ren_subst(P, xi, sigma, rho, h),
+      ren_subst(z, xi, sigma, rho, h),
+      ren_subst(s, xi, sigma, rho, h),
+      ren_subst(n, xi, sigma, rho, h)
+    )
+  }
+}
+
+// ---- substituting into a substituted term ---------------------------------------
+
+theorem ss_up_at(
+  tau: (Nat) -> KTm,
+  sigma: (Nat) -> KTm,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), Ksubst(sigma(i), tau)),
+  i: Nat
+): Eq(KTm, Kup(rho, i), Ksubst(Kup(sigma, i), Kup(tau))) {
+  match i -> Eq(KTm, Kup(rho, i), Ksubst(Kup(sigma, i), Kup(tau))) {
+    zero => refl(KTm, Kvar(zero))
+    succ(
+      m
+    ) => Eq_trans(
+      Eq_congr(x => Kren(x, succ), h(m)),
+      Eq_trans(
+        ren_subst(sigma(m), succ, tau, j => Kren(tau(j), succ), j => refl(KTm, Kren(tau(j), succ))),
+        Eq_sym(
+          subst_ren(
+            sigma(m),
+            Kup(tau),
+            succ,
+            j => Kren(tau(j), succ),
+            j => refl(KTm, Kren(tau(j), succ))
+          )
+        )
+      )
+    )
+  }
+}
+
+theorem ss_up(
+  tau: (Nat) -> KTm,
+  sigma: (Nat) -> KTm,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), Ksubst(sigma(i), tau))
+): ∀ i: Nat. Eq(KTm, Kup(rho, i), Ksubst(Kup(sigma, i), Kup(tau))) {
+  i => ss_up_at(tau, sigma, rho, h, i)
+}
+
+theorem subst_subst(
+  t: KTm,
+  tau: (Nat) -> KTm,
+  sigma: (Nat) -> KTm,
+  rho: (Nat) -> KTm,
+  h: ∀ i: Nat. Eq(KTm, rho(i), Ksubst(sigma(i), tau))
+): Eq(KTm, Ksubst(Ksubst(t, sigma), tau), Ksubst(t, rho)) {
+  match t -> Eq(KTm, Ksubst(Ksubst(t, sigma), tau), Ksubst(t, rho)) {
+    Kvar(i) => Eq_sym(h(i))
+    Ksort(n) => refl(KTm, Ksort(n))
+    Kpi(
+      A,
+      B
+    ) => eq_Kpi(
+      subst_subst(A, tau, sigma, rho, h),
+      subst_subst(B, Kup(tau), Kup(sigma), Kup(rho), ss_up(tau, sigma, rho, h))
+    )
+    Klam(b) => eq_Klam(subst_subst(b, Kup(tau), Kup(sigma), Kup(rho), ss_up(tau, sigma, rho, h)))
+    Kapp(f, a) => eq_Kapp(subst_subst(f, tau, sigma, rho, h), subst_subst(a, tau, sigma, rho, h))
+    Knat => refl(KTm, Knat)
+    Kzero => refl(KTm, Kzero)
+    Ksucc(n) => eq_Ksucc(subst_subst(n, tau, sigma, rho, h))
+    KnatRec(
+      P,
+      z,
+      s,
+      n
+    ) => eq_KnatRec(
+      subst_subst(P, tau, sigma, rho, h),
+      subst_subst(z, tau, sigma, rho, h),
+      subst_subst(s, tau, sigma, rho, h),
+      subst_subst(n, tau, sigma, rho, h)
+    )
+  }
+}
+
+// ---- the instances the typing rules use ------------------------------------------
+
+theorem subst_single_lift(t: KTm, a: KTm): Eq(KTm, Kinst(Klift(t), a), t) {
+  Eq_trans(
+    subst_ren(t, Ksingle(a), succ, Kvar, j => refl(KTm, Kvar(j))),
+    subst_var(t, Kvar, j => refl(KTm, Kvar(j)))
+  )
+}
+
+theorem ren_lift(t: KTm, xi: (Nat) -> Nat): Eq(KTm, Kren(Klift(t), upR(xi)), Klift(Kren(t, xi))) {
+  Eq_trans(
+    ren_ren(t, upR(xi), succ, j => succ(xi(j)), j => refl(Nat, succ(xi(j)))),
+    Eq_sym(ren_ren(t, succ, xi, j => succ(xi(j)), j => refl(Nat, succ(xi(j)))))
+  )
+}
+
+theorem subst_lift(
+  sigma: (Nat) -> KTm,
+  t: KTm
+): Eq(KTm, Ksubst(Klift(t), Kup(sigma)), Klift(Ksubst(t, sigma))) {
+  Eq_trans(
+    subst_ren(t, Kup(sigma), succ, j => Kren(sigma(j), succ), j => refl(KTm, Kren(sigma(j), succ))),
+    Eq_sym(
+      ren_subst(t, succ, sigma, j => Kren(sigma(j), succ), j => refl(KTm, Kren(sigma(j), succ)))
+    )
+  )
+}
+
+theorem ri_h(
+  xi: (Nat) -> Nat,
+  a: KTm,
+  j: Nat
+): Eq(KTm, Kren(Ksingle(a, j), xi), Ksingle(Kren(a, xi), upR(xi, j))) {
+  match j -> Eq(KTm, Kren(Ksingle(a, j), xi), Ksingle(Kren(a, xi), upR(xi, j))) {
+    zero => refl(KTm, Kren(a, xi))
+    succ(m) => refl(KTm, Kvar(xi(m)))
+  }
+}
+
+theorem ren_inst(
+  xi: (Nat) -> Nat,
+  b: KTm,
+  a: KTm
+): Eq(KTm, Kren(Kinst(b, a), xi), Kinst(Kren(b, upR(xi)), Kren(a, xi))) {
+  Eq_trans(
+    ren_subst(
+      b,
+      xi,
+      Ksingle(a),
+      j => Kren(Ksingle(a, j), xi),
+      j => refl(KTm, Kren(Ksingle(a, j), xi))
+    ),
+    Eq_sym(
+      subst_ren(b, Ksingle(Kren(a, xi)), upR(xi), j => Kren(Ksingle(a, j), xi), j => ri_h(xi, a, j))
+    )
+  )
+}
+
+theorem si_h(
+  sigma: (Nat) -> KTm,
+  a: KTm,
+  j: Nat
+): Eq(KTm, Ksubst(Ksingle(a, j), sigma), Ksubst(Kup(sigma, j), Ksingle(Ksubst(a, sigma)))) {
+  match j -> Eq(
+    KTm,
+    Ksubst(Ksingle(a, j), sigma),
+    Ksubst(Kup(sigma, j), Ksingle(Ksubst(a, sigma)))
+  ) {
+    zero => refl(KTm, Ksubst(a, sigma))
+    succ(m) => Eq_sym(subst_single_lift(sigma(m), Ksubst(a, sigma)))
+  }
+}
+
+theorem subst_inst(
+  sigma: (Nat) -> KTm,
+  b: KTm,
+  a: KTm
+): Eq(KTm, Ksubst(Kinst(b, a), sigma), Kinst(Ksubst(b, Kup(sigma)), Ksubst(a, sigma))) {
+  Eq_trans(
+    subst_subst(
+      b,
+      sigma,
+      Ksingle(a),
+      j => Ksubst(Ksingle(a, j), sigma),
+      j => refl(KTm, Ksubst(Ksingle(a, j), sigma))
+    ),
+    Eq_sym(
+      subst_subst(
+        b,
+        Ksingle(Ksubst(a, sigma)),
+        Kup(sigma),
+        j => Ksubst(Ksingle(a, j), sigma),
+        j => si_h(sigma, a, j)
+      )
+    )
+  )
+}

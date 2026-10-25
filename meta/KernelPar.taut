@@ -1,0 +1,653 @@
+import "KernelAlg.taut"
+
+// Parallel reduction, its complete development and confluence, for
+// lean/Proto/Kernel/Reduction.lean. Conversion (`KConv`, the equivalence
+// closure of one-step reduction) is then shown to be the joinability of
+// reducts, which gives the injectivity of `Kpi` and the disjointness of the
+// head constructors that the typing rules need.
+
+inductive Par(): (KTm, KTm) -> Prop {
+  p_var(i: Nat): Par(Kvar(i), Kvar(i))
+  p_sort(n: Nat): Par(Ksort(n), Ksort(n))
+  p_pi<A: KTm, A2: KTm, B: KTm, B2: KTm>(
+    hA: Par(A, A2),
+    hB: Par(B, B2)
+  ): Par(Kpi(A, B), Kpi(A2, B2))
+  p_lam<b: KTm, b2: KTm>(h: Par(b, b2)): Par(Klam(b), Klam(b2))
+  p_app<f: KTm, f2: KTm, a: KTm, a2: KTm>(
+    hf: Par(f, f2),
+    ha: Par(a, a2)
+  ): Par(Kapp(f, a), Kapp(f2, a2))
+  p_beta<b: KTm, b2: KTm, a: KTm, a2: KTm>(
+    hb: Par(b, b2),
+    ha: Par(a, a2)
+  ): Par(Kapp(Klam(b), a), Kinst(b2, a2))
+  p_nat(): Par(Knat, Knat)
+  p_zero(): Par(Kzero, Kzero)
+  p_succ<n: KTm, n2: KTm>(h: Par(n, n2)): Par(Ksucc(n), Ksucc(n2))
+  p_rec<P: KTm, P2: KTm, z: KTm, z2: KTm, s: KTm, s2: KTm, n: KTm, n2: KTm>(
+    hP: Par(P, P2),
+    hz: Par(z, z2),
+    hs: Par(s, s2),
+    hn: Par(n, n2)
+  ): Par(KnatRec(P, z, s, n), KnatRec(P2, z2, s2, n2))
+  p_iotaZ<P: KTm, P2: KTm, z: KTm, z2: KTm, s: KTm, s2: KTm>(
+    hP: Par(P, P2),
+    hz: Par(z, z2),
+    hs: Par(s, s2)
+  ): Par(KnatRec(P, z, s, Kzero), z2)
+  p_iotaS<P: KTm, P2: KTm, z: KTm, z2: KTm, s: KTm, s2: KTm, n: KTm, n2: KTm>(
+    hP: Par(P, P2),
+    hz: Par(z, z2),
+    hs: Par(s, s2),
+    hn: Par(n, n2)
+  ): Par(KnatRec(P, z, s, Ksucc(n)), Kapp(Kapp(s2, n2), KnatRec(P2, z2, s2, n2)))
+}
+
+theorem par_cast_r<a: KTm, b: KTm, b2: KTm>(e: Eq(KTm, b, b2), h: Par(a, b)): Par(a, b2) {
+  match e -> Par(a, b2) {
+    refl => h
+  }
+}
+
+theorem par_refl(t: KTm): Par(t, t) {
+  match t -> Par(t, t) {
+    Kvar(i) => p_var(i)
+    Ksort(n) => p_sort(n)
+    Kpi(A, B) => p_pi(par_refl(A), par_refl(B))
+    Klam(b) => p_lam(par_refl(b))
+    Kapp(f, a) => p_app(par_refl(f), par_refl(a))
+    Knat => p_nat
+    Kzero => p_zero
+    Ksucc(n) => p_succ(par_refl(n))
+    KnatRec(P, z, s, n) => p_rec(par_refl(P), par_refl(z), par_refl(s), par_refl(n))
+  }
+}
+
+theorem par_ren<a: KTm, b: KTm>(h: Par(a, b), xi: (Nat) -> Nat): Par(Kren(a, xi), Kren(b, xi)) {
+  match h -> Par(Kren(a, xi), Kren(b, xi)) {
+    p_var(i) => p_var(xi(i))
+    p_sort(n) => p_sort(n)
+    p_pi(hA, hB) => p_pi(par_ren(hA, xi), par_ren(hB, upR(xi)))
+    p_lam(h1) => p_lam(par_ren(h1, upR(xi)))
+    p_app(hf, ha) => p_app(par_ren(hf, xi), par_ren(ha, xi))
+    p_beta(
+      b1,
+      b2,
+      a1,
+      a2,
+      hb,
+      ha
+    ) => par_cast_r(Eq_sym(ren_inst(xi, b2, a2)), p_beta(par_ren(hb, upR(xi)), par_ren(ha, xi)))
+    p_nat => p_nat
+    p_zero => p_zero
+    p_succ(h1) => p_succ(par_ren(h1, xi))
+    p_rec(
+      hP,
+      hz,
+      hs,
+      hn
+    ) => p_rec(par_ren(hP, xi), par_ren(hz, xi), par_ren(hs, xi), par_ren(hn, xi))
+    p_iotaZ(hP, hz, hs) => p_iotaZ(par_ren(hP, xi), par_ren(hz, xi), par_ren(hs, xi))
+    p_iotaS(
+      hP,
+      hz,
+      hs,
+      hn
+    ) => p_iotaS(par_ren(hP, xi), par_ren(hz, xi), par_ren(hs, xi), par_ren(hn, xi))
+  }
+}
+
+theorem par_up_at(
+  sigma: (Nat) -> KTm,
+  tau: (Nat) -> KTm,
+  hs: ∀ i: Nat. Par(sigma(i), tau(i)),
+  i: Nat
+): Par(Kup(sigma, i), Kup(tau, i)) {
+  match i -> Par(Kup(sigma, i), Kup(tau, i)) {
+    zero => p_var(zero)
+    succ(m) => par_ren(hs(m), succ)
+  }
+}
+
+theorem par_up(
+  sigma: (Nat) -> KTm,
+  tau: (Nat) -> KTm,
+  hs: ∀ i: Nat. Par(sigma(i), tau(i))
+): ∀ i: Nat. Par(Kup(sigma, i), Kup(tau, i)) {
+  i => par_up_at(sigma, tau, hs, i)
+}
+
+theorem par_subst<a: KTm, b: KTm>(
+  h: Par(a, b),
+  sigma: (Nat) -> KTm,
+  tau: (Nat) -> KTm,
+  hs: ∀ i: Nat. Par(sigma(i), tau(i))
+): Par(Ksubst(a, sigma), Ksubst(b, tau)) {
+  match h -> Par(Ksubst(a, sigma), Ksubst(b, tau)) {
+    p_var(i) => hs(i)
+    p_sort(n) => p_sort(n)
+    p_pi(
+      hA,
+      hB
+    ) => p_pi(
+      par_subst(hA, sigma, tau, hs),
+      par_subst(hB, Kup(sigma), Kup(tau), par_up(sigma, tau, hs))
+    )
+    p_lam(h1) => p_lam(par_subst(h1, Kup(sigma), Kup(tau), par_up(sigma, tau, hs)))
+    p_app(hf, ha) => p_app(par_subst(hf, sigma, tau, hs), par_subst(ha, sigma, tau, hs))
+    p_beta(
+      b1,
+      b2,
+      a1,
+      a2,
+      hb,
+      ha
+    ) => par_cast_r(
+      Eq_sym(subst_inst(tau, b2, a2)),
+      p_beta(
+        par_subst(hb, Kup(sigma), Kup(tau), par_up(sigma, tau, hs)),
+        par_subst(ha, sigma, tau, hs)
+      )
+    )
+    p_nat => p_nat
+    p_zero => p_zero
+    p_succ(h1) => p_succ(par_subst(h1, sigma, tau, hs))
+    p_rec(
+      hP,
+      hz,
+      hs1,
+      hn
+    ) => p_rec(
+      par_subst(hP, sigma, tau, hs),
+      par_subst(hz, sigma, tau, hs),
+      par_subst(hs1, sigma, tau, hs),
+      par_subst(hn, sigma, tau, hs)
+    )
+    p_iotaZ(
+      hP,
+      hz,
+      hs1
+    ) => p_iotaZ(
+      par_subst(hP, sigma, tau, hs),
+      par_subst(hz, sigma, tau, hs),
+      par_subst(hs1, sigma, tau, hs)
+    )
+    p_iotaS(
+      hP,
+      hz,
+      hs1,
+      hn
+    ) => p_iotaS(
+      par_subst(hP, sigma, tau, hs),
+      par_subst(hz, sigma, tau, hs),
+      par_subst(hs1, sigma, tau, hs),
+      par_subst(hn, sigma, tau, hs)
+    )
+  }
+}
+
+theorem par_single_at<a: KTm, a2: KTm>(ha: Par(a, a2), i: Nat): Par(Ksingle(a, i), Ksingle(a2, i)) {
+  match i -> Par(Ksingle(a, i), Ksingle(a2, i)) {
+    zero => ha
+    succ(m) => p_var(m)
+  }
+}
+
+theorem par_inst<b: KTm, b2: KTm, a: KTm, a2: KTm>(
+  hb: Par(b, b2),
+  ha: Par(a, a2)
+): Par(Kinst(b, a), Kinst(b2, a2)) {
+  par_subst(hb, Ksingle(a), Ksingle(a2), i => par_single_at(ha, i))
+}
+
+// ---- complete development ----------------------------------------------------
+
+fn dev_beta(df: KTm, da: KTm) -> KTm {
+  match df -> KTm {
+    Kvar(i) => Kapp(df, da)
+    Ksort(n) => Kapp(df, da)
+    Kpi(A, B) => Kapp(df, da)
+    Klam(db) => Kinst(db, da)
+    Kapp(g, a) => Kapp(df, da)
+    Knat => Kapp(df, da)
+    Kzero => Kapp(df, da)
+    Ksucc(n) => Kapp(df, da)
+    KnatRec(P, z, s, n) => Kapp(df, da)
+  }
+}
+
+fn dev_app(f: KTm, df: KTm, da: KTm) -> KTm {
+  match f -> KTm {
+    Kvar(i) => Kapp(df, da)
+    Ksort(n) => Kapp(df, da)
+    Kpi(A, B) => Kapp(df, da)
+    Klam(b) => dev_beta(df, da)
+    Kapp(f, a) => Kapp(df, da)
+    Knat => Kapp(df, da)
+    Kzero => Kapp(df, da)
+    Ksucc(n) => Kapp(df, da)
+    KnatRec(P, z, s, n) => Kapp(df, da)
+  }
+}
+
+fn dev_succ(dP: KTm, dz: KTm, ds: KTm, dn: KTm) -> KTm {
+  match dn -> KTm {
+    Kvar(i) => KnatRec(dP, dz, ds, dn)
+    Ksort(n) => KnatRec(dP, dz, ds, dn)
+    Kpi(A, B) => KnatRec(dP, dz, ds, dn)
+    Klam(b) => KnatRec(dP, dz, ds, dn)
+    Kapp(f, a) => KnatRec(dP, dz, ds, dn)
+    Knat => KnatRec(dP, dz, ds, dn)
+    Kzero => KnatRec(dP, dz, ds, dn)
+    Ksucc(dm) => Kapp(Kapp(ds, dm), KnatRec(dP, dz, ds, dm))
+    KnatRec(P, z, s, n) => KnatRec(dP, dz, ds, dn)
+  }
+}
+
+fn dev_rec(n: KTm, dP: KTm, dz: KTm, ds: KTm, dn: KTm) -> KTm {
+  match n -> KTm {
+    Kvar(i) => KnatRec(dP, dz, ds, dn)
+    Ksort(k) => KnatRec(dP, dz, ds, dn)
+    Kpi(A, B) => KnatRec(dP, dz, ds, dn)
+    Klam(b) => KnatRec(dP, dz, ds, dn)
+    Kapp(f, a) => KnatRec(dP, dz, ds, dn)
+    Knat => KnatRec(dP, dz, ds, dn)
+    Kzero => dz
+    Ksucc(m) => dev_succ(dP, dz, ds, dn)
+    KnatRec(P, z, s, m) => KnatRec(dP, dz, ds, dn)
+  }
+}
+
+fn develop(t: KTm) -> KTm {
+  match t -> KTm {
+    Kvar(i) => Kvar(i)
+    Ksort(n) => Ksort(n)
+    Kpi(A, B) => Kpi(develop(A), develop(B))
+    Klam(b) => Klam(develop(b))
+    Kapp(f, a) => dev_app(f, develop(f), develop(a))
+    Knat => Knat
+    Kzero => Kzero
+    Ksucc(n) => Ksucc(develop(n))
+    KnatRec(P, z, s, n) => dev_rec(n, develop(P), develop(z), develop(s), develop(n))
+  }
+}
+
+theorem par_lam_to<b: KTm, db: KTm>(h: Par(Klam(b), Klam(db))): Par(b, db) {
+  match h {
+    p_lam(hb) => hb
+  }
+}
+
+theorem par_succ_to<a: KTm, d: KTm>(h: Par(Ksucc(a), Ksucc(d))): Par(a, d) {
+  match h {
+    p_succ(h1) => h1
+  }
+}
+
+theorem par_dev_lam<b: KTm, f2: KTm, a2: KTm, db: KTm, da: KTm>(
+  hf: Par(Klam(b), f2),
+  ihf: Par(f2, Klam(db)),
+  iha: Par(a2, da)
+): Par(Kapp(f2, a2), Kinst(db, da)) {
+  match hf -> Par(Kapp(f2, a2), Kinst(db, da)) {
+    p_lam(hb) => p_beta(par_lam_to(ihf), iha)
+  }
+}
+
+theorem par_dev_app<f: KTm, f2: KTm, a: KTm, a2: KTm>(
+  hf: Par(f, f2),
+  ihf: Par(f2, develop(f)),
+  iha: Par(a2, develop(a))
+): Par(Kapp(f2, a2), develop(Kapp(f, a))) {
+  match f -> Par(Kapp(f2, a2), develop(Kapp(f, a))) {
+    Kvar(i) => p_app(ihf, iha)
+    Ksort(n) => p_app(ihf, iha)
+    Kpi(A, B) => p_app(ihf, iha)
+    Klam(b) => par_dev_lam(hf, ihf, iha)
+    Kapp(f1, a1) => p_app(ihf, iha)
+    Knat => p_app(ihf, iha)
+    Kzero => p_app(ihf, iha)
+    Ksucc(n) => p_app(ihf, iha)
+    KnatRec(P, z, s, n) => p_app(ihf, iha)
+  }
+}
+
+theorem par_dev_rec<P: KTm, P2: KTm, z: KTm, z2: KTm, s: KTm, s2: KTm, n: KTm, n2: KTm>(
+  hn: Par(n, n2),
+  ihP: Par(P2, develop(P)),
+  ihz: Par(z2, develop(z)),
+  ihs: Par(s2, develop(s)),
+  ihn: Par(n2, develop(n))
+): Par(KnatRec(P2, z2, s2, n2), develop(KnatRec(P, z, s, n))) {
+  match n -> Par(KnatRec(P2, z2, s2, n2), develop(KnatRec(P, z, s, n))) {
+    Kvar(i) => p_rec(ihP, ihz, ihs, ihn)
+    Ksort(k) => p_rec(ihP, ihz, ihs, ihn)
+    Kpi(A, B) => p_rec(ihP, ihz, ihs, ihn)
+    Klam(b) => p_rec(ihP, ihz, ihs, ihn)
+    Kapp(f, a) => p_rec(ihP, ihz, ihs, ihn)
+    Knat => p_rec(ihP, ihz, ihs, ihn)
+    Kzero => match hn -> Par(KnatRec(P2, z2, s2, n2), develop(z)) {
+      p_zero => p_iotaZ(par_refl(P2), ihz, par_refl(s2))
+    }
+    Ksucc(m) => match hn -> Par(KnatRec(P2, z2, s2, n2), develop(KnatRec(P, z, s, Ksucc(m)))) {
+      p_succ(hm) => p_iotaS(ihP, ihz, ihs, par_succ_to(ihn))
+    }
+    KnatRec(P1, z1, s1, n1) => p_rec(ihP, ihz, ihs, ihn)
+  }
+}
+
+theorem par_dev<t: KTm, t2: KTm>(h: Par(t, t2)): Par(t2, develop(t)) {
+  match h -> Par(t2, develop(t)) {
+    p_var(i) => p_var(i)
+    p_sort(n) => p_sort(n)
+    p_pi(hA, hB) => p_pi(par_dev(hA), par_dev(hB))
+    p_lam(h1) => p_lam(par_dev(h1))
+    p_app(hf, ha) => par_dev_app(hf, par_dev(hf), par_dev(ha))
+    p_beta(hb, ha) => par_inst(par_dev(hb), par_dev(ha))
+    p_nat => p_nat
+    p_zero => p_zero
+    p_succ(h1) => p_succ(par_dev(h1))
+    p_rec(hP, hz, hs, hn) => par_dev_rec(hn, par_dev(hP), par_dev(hz), par_dev(hs), par_dev(hn))
+    p_iotaZ(hP, hz, hs) => par_dev(hz)
+    p_iotaS(
+      hP,
+      hz,
+      hs,
+      hn
+    ) => p_app(
+      p_app(par_dev(hs), par_dev(hn)),
+      p_rec(par_dev(hP), par_dev(hz), par_dev(hs), par_dev(hn))
+    )
+  }
+}
+
+// ---- confluence ---------------------------------------------------------------
+
+inductive ParS(): (KTm, KTm) -> Prop {
+  ps_refl(a: KTm): ParS(a, a)
+  ps_step<a: KTm, b: KTm, c: KTm>(h: ParS(a, b), p: Par(b, c)): ParS(a, c)
+}
+
+inductive SJ(): (KTm, KTm) -> Prop {
+  sj<b: KTm, c: KTm, d: KTm>(h1: ParS(b, d), h2: Par(c, d)): SJ(b, c)
+}
+
+inductive PJ(): (KTm, KTm) -> Prop {
+  pj<a: KTm, b: KTm, d: KTm>(h1: ParS(a, d), h2: ParS(b, d)): PJ(a, b)
+}
+
+theorem ps_trans<a: KTm, b: KTm, c: KTm>(h2: ParS(b, c), h1: ParS(a, b)): ParS(a, c) {
+  match h2 -> ParS(a, c) {
+    ps_refl(x) => h1
+    ps_step(h, p) => ps_step(ps_trans(h, h1), p)
+  }
+}
+
+theorem ps_single<a: KTm, b: KTm>(p: Par(a, b)): ParS(a, b) {
+  ps_step(ps_refl(a), p)
+}
+
+theorem strip_step<b: KTm, m: KTm, c: KTm>(s: SJ(b, m), p: Par(m, c)): SJ(b, c) {
+  match s -> SJ(b, c) {
+    sj(h1, h2) => sj(ps_step(h1, par_dev(h2)), par_dev(p))
+  }
+}
+
+theorem strip<b1: KTm, b: KTm, c: KTm>(hs: ParS(b1, c), h: Par(b1, b)): SJ(b, c) {
+  match hs -> SJ(b, c) {
+    ps_refl(x) => sj(ps_refl(b), h)
+    ps_step(hm, p) => strip_step(strip(hm, h), p)
+  }
+}
+
+theorem confl_fin<a: KTm, b: KTm, c: KTm>(s: SJ(a, c), hy: ParS(b, c)): PJ(a, b) {
+  match s -> PJ(a, b) {
+    sj(h1, h2) => pj(h1, ps_step(hy, h2))
+  }
+}
+
+theorem confl_step<a1: KTm, a2: KTm, b: KTm>(hj: PJ(a1, b), p: Par(a1, a2)): PJ(a2, b) {
+  match hj -> PJ(a2, b) {
+    pj(hx, hy) => confl_fin(strip(hx, p), hy)
+  }
+}
+
+theorem confluent<t: KTm, a: KTm, b: KTm>(h1: ParS(t, a), h2: ParS(t, b)): PJ(a, b) {
+  match h1 -> PJ(a, b) {
+    ps_refl(x) => pj(h2, ps_refl(b))
+    ps_step(hm, p) => confl_step(confluent(hm, h2), p)
+  }
+}
+
+// ---- conversion is joinability -------------------------------------------------
+
+theorem red1_par<a: KTm, b: KTm>(r: Red1(a, b)): Par(a, b) {
+  match r -> Par(a, b) {
+    r1_beta(b0, a0) => p_beta(par_refl(b0), par_refl(a0))
+    r1_iotaZ(P, z, s) => p_iotaZ(par_refl(P), par_refl(z), par_refl(s))
+    r1_iotaS(P, z, s, n) => p_iotaS(par_refl(P), par_refl(z), par_refl(s), par_refl(n))
+    r1_piL(B, r1) => p_pi(red1_par(r1), par_refl(B))
+    r1_piR(A, B, B2, r1) => p_pi(par_refl(A), red1_par(r1))
+    r1_lam(r1) => p_lam(red1_par(r1))
+    r1_appL(a0, r1) => p_app(red1_par(r1), par_refl(a0))
+    r1_appR(f, a0, a2, r1) => p_app(par_refl(f), red1_par(r1))
+    r1_succ(r1) => p_succ(red1_par(r1))
+    r1_recP(z, s, n, r1) => p_rec(red1_par(r1), par_refl(z), par_refl(s), par_refl(n))
+    r1_recZ(P, z, z2, s, n, r1) => p_rec(par_refl(P), red1_par(r1), par_refl(s), par_refl(n))
+    r1_recS(P, z, s, s2, n, r1) => p_rec(par_refl(P), par_refl(z), red1_par(r1), par_refl(n))
+    r1_recN(P, z, s, n, n2, r1) => p_rec(par_refl(P), par_refl(z), par_refl(s), red1_par(r1))
+  }
+}
+
+theorem par_conv<a: KTm, b: KTm>(h: Par(a, b)): KConv(a, b) {
+  match h -> KConv(a, b) {
+    p_var(i) => cv_refl(Kvar(i))
+    p_sort(n) => cv_refl(Ksort(n))
+    p_pi(hA, hB) => cv_pi(par_conv(hA), par_conv(hB))
+    p_lam(h1) => cv_lam(par_conv(h1))
+    p_app(hf, ha) => cv_app(par_conv(hf), par_conv(ha))
+    p_beta(
+      b0,
+      b2,
+      a0,
+      a2,
+      hb,
+      ha
+    ) => cv_trans(cv_app(cv_lam(par_conv(hb)), par_conv(ha)), cv_step(r1_beta(b2, a2)))
+    p_nat => cv_refl(Knat)
+    p_zero => cv_refl(Kzero)
+    p_succ(h1) => cv_succ(par_conv(h1))
+    p_rec(hP, hz, hs, hn) => cv_natRec(par_conv(hP), par_conv(hz), par_conv(hs), par_conv(hn))
+    p_iotaZ(P, P2, z, z2, s, s2, hP, hz, hs) => cv_trans(cv_step(r1_iotaZ(P, z, s)), par_conv(hz))
+    p_iotaS(
+      P,
+      P2,
+      z,
+      z2,
+      s,
+      s2,
+      n,
+      n2,
+      hP,
+      hz,
+      hs,
+      hn
+    ) => cv_trans(
+      cv_step(r1_iotaS(P, z, s, n)),
+      cv_app(
+        cv_app(par_conv(hs), par_conv(hn)),
+        cv_natRec(par_conv(hP), par_conv(hz), par_conv(hs), par_conv(hn))
+      )
+    )
+  }
+}
+
+theorem ps_conv<a: KTm, b: KTm>(h: ParS(a, b)): KConv(a, b) {
+  match h -> KConv(a, b) {
+    ps_refl(x) => cv_refl(x)
+    ps_step(hm, p) => cv_trans(ps_conv(hm), par_conv(p))
+  }
+}
+
+theorem pj_conv<a: KTm, b: KTm>(h: PJ(a, b)): KConv(a, b) {
+  match h -> KConv(a, b) {
+    pj(h1, h2) => cv_trans(ps_conv(h1), cv_symm(ps_conv(h2)))
+  }
+}
+
+theorem pj_symm<a: KTm, b: KTm>(h: PJ(a, b)): PJ(b, a) {
+  match h -> PJ(b, a) {
+    pj(h1, h2) => pj(h2, h1)
+  }
+}
+
+theorem pj_trans_fin<a: KTm, c: KTm, d1: KTm, d2: KTm>(
+  j: PJ(d1, d2),
+  h1: ParS(a, d1),
+  h2: ParS(c, d2)
+): PJ(a, c) {
+  match j -> PJ(a, c) {
+    pj(hx, hy) => pj(ps_trans(hx, h1), ps_trans(hy, h2))
+  }
+}
+
+theorem pj_trans_a<a: KTm, b: KTm, c: KTm, d2: KTm>(
+  h1: PJ(a, b),
+  k1: ParS(b, d2),
+  k2: ParS(c, d2)
+): PJ(a, c) {
+  match h1 -> PJ(a, c) {
+    pj(g1, g2) => pj_trans_fin(confluent(g2, k1), g1, k2)
+  }
+}
+
+theorem pj_trans<a: KTm, b: KTm, c: KTm>(h2: PJ(b, c), h1: PJ(a, b)): PJ(a, c) {
+  match h2 -> PJ(a, c) {
+    pj(k1, k2) => pj_trans_a(h1, k1, k2)
+  }
+}
+
+theorem conv_pj<a: KTm, b: KTm>(h: KConv(a, b)): PJ(a, b) {
+  match h -> PJ(a, b) {
+    cv_step(x, y, r) => pj(ps_single(red1_par(r)), ps_refl(y))
+    cv_refl(x) => pj(ps_refl(x), ps_refl(x))
+    cv_symm(h1) => pj_symm(conv_pj(h1))
+    cv_trans(h1, h2) => pj_trans(conv_pj(h2), conv_pj(h1))
+  }
+}
+
+// ---- injectivity and disjointness ------------------------------------------------
+
+inductive CvBoth(A: KTm, A2: KTm, B: KTm, B2: KTm): Prop {
+  cv_both(h1: KConv(A, A2), h2: KConv(B, B2)): CvBoth(A, A2, B, B2)
+}
+
+inductive PiInv(A: KTm, B: KTm): (KTm) -> Prop {
+  pi_is<A2: KTm, B2: KTm>(hA: ParS(A, A2), hB: ParS(B, B2)): PiInv(A, B, Kpi(A2, B2))
+}
+
+theorem pi_step<A: KTm, B: KTm, m: KTm, c: KTm>(pi: PiInv(A, B, m), p: Par(m, c)): PiInv(A, B, c) {
+  match pi -> PiInv(A, B, c) {
+    pi_is(A2, B2, hA, hB) => match p -> PiInv(A, B, c) {
+      p_pi(h1, h2) => pi_is(ps_step(hA, h1), ps_step(hB, h2))
+    }
+  }
+}
+
+theorem ps_pi_inv<A: KTm, B: KTm, t: KTm>(h: ParS(Kpi(A, B), t)): PiInv(A, B, t) {
+  match h {
+    ps_refl(x) => pi_is(ps_refl(A), ps_refl(B))
+    ps_step(hm, p) => pi_step(ps_pi_inv(hm), p)
+  }
+}
+
+theorem sort_step<n: Nat, m: KTm, c: KTm>(
+  e: Eq(KTm, m, Ksort(n)),
+  p: Par(m, c)
+): Eq(KTm, c, Ksort(n)) {
+  match e -> Eq(KTm, c, Ksort(n)) {
+    refl => match p -> Eq(KTm, c, Ksort(n)) {
+      p_sort(k) => refl(KTm, Ksort(k))
+    }
+  }
+}
+
+theorem ps_sort_inv<n: Nat, t: KTm>(h: ParS(Ksort(n), t)): Eq(KTm, t, Ksort(n)) {
+  match h {
+    ps_refl(x) => refl(KTm, Ksort(n))
+    ps_step(hm, p) => sort_step(ps_sort_inv(hm), p)
+  }
+}
+
+theorem sort_eq_inj<n: Nat, m: Nat>(e: Eq(KTm, Ksort(n), Ksort(m))): Eq(Nat, n, m) {
+  match e {
+    refl => refl(Nat, n)
+  }
+}
+
+theorem sort_inj_a<n: Nat, m: Nat>(j: PJ(Ksort(n), Ksort(m))): Eq(Nat, n, m) {
+  match j -> Eq(Nat, n, m) {
+    pj(h1, h2) => sort_eq_inj(Eq_trans(Eq_sym(ps_sort_inv(h1)), ps_sort_inv(h2)))
+  }
+}
+
+theorem sort_inj<n: Nat, m: Nat>(h: KConv(Ksort(n), Ksort(m))): Eq(Nat, n, m) {
+  sort_inj_a(conv_pj(h))
+}
+
+theorem pi_inj_b<A: KTm, B: KTm, A2: KTm, B2: KTm, X: KTm, Y: KTm>(
+  hA: ParS(A, X),
+  hB: ParS(B, Y),
+  q: PiInv(A2, B2, Kpi(X, Y))
+): CvBoth(A, A2, B, B2) {
+  match q -> CvBoth(A, A2, B, B2) {
+    pi_is(
+      hA2,
+      hB2
+    ) => cv_both(
+      cv_trans(ps_conv(hA), cv_symm(ps_conv(hA2))),
+      cv_trans(ps_conv(hB), cv_symm(ps_conv(hB2)))
+    )
+  }
+}
+
+theorem pi_inj_a<A: KTm, B: KTm, A2: KTm, B2: KTm, d: KTm>(
+  p1: PiInv(A, B, d),
+  h2: ParS(Kpi(A2, B2), d)
+): CvBoth(A, A2, B, B2) {
+  match p1 -> CvBoth(A, A2, B, B2) {
+    pi_is(hA, hB) => pi_inj_b(hA, hB, ps_pi_inv(h2))
+  }
+}
+
+theorem pi_inj_j<A: KTm, B: KTm, A2: KTm, B2: KTm>(
+  j: PJ(Kpi(A, B), Kpi(A2, B2))
+): CvBoth(A, A2, B, B2) {
+  match j -> CvBoth(A, A2, B, B2) {
+    pj(h1, h2) => pi_inj_a(ps_pi_inv(h1), h2)
+  }
+}
+
+theorem pi_inj<A: KTm, B: KTm, A2: KTm, B2: KTm>(
+  h: KConv(Kpi(A, B), Kpi(A2, B2))
+): CvBoth(A, A2, B, B2) {
+  pi_inj_j(conv_pj(h))
+}
+
+theorem pi_ne_a<A: KTm, B: KTm, n: Nat, d: KTm>(p: PiInv(A, B, d), e: Eq(KTm, d, Ksort(n))): False {
+  match p -> False {
+    pi_is(X, Y, hA, hB) => match e -> False {
+    }
+  }
+}
+
+theorem pi_ne_sort_j<A: KTm, B: KTm, n: Nat>(j: PJ(Kpi(A, B), Ksort(n))): False {
+  match j -> False {
+    pj(h1, h2) => pi_ne_a(ps_pi_inv(h1), ps_sort_inv(h2))
+  }
+}
+
+theorem pi_ne_sort<A: KTm, B: KTm, n: Nat>(h: KConv(Kpi(A, B), Ksort(n))): False {
+  pi_ne_sort_j(conv_pj(h))
+}

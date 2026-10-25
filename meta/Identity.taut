@@ -1,0 +1,179 @@
+import "../std/Row.taut"
+
+// A port of lean/Proto/Effects.lean: effect identities and rows. Keys are
+// pure arithmetic terms compared by value, an effect is its declaration, type
+// parameter, key and tags, and a row contains an effect modulo that
+// equivalence. Names are numbers here (tauto has no text type in the kernel).
+
+inductive TypeCode(): Type {
+  cnat(): TypeCode
+  cbool(): TypeCode
+  cunit(): TypeCode
+  cvector(element: TypeCode, length: Nat): TypeCode
+  ctagged(tags: List(Nat), inner: TypeCode): TypeCode
+}
+
+inductive KeyTerm(): Type {
+  klit(value: Nat): KeyTerm
+  kadd(lhs: KeyTerm, rhs: KeyTerm): KeyTerm
+}
+
+fn eval(k: KeyTerm) -> Nat {
+  match k -> Nat {
+    klit(n) => n
+    kadd(x, y) => plus(eval(x), eval(y))
+  }
+}
+
+def KeyEq(x: KeyTerm, y: KeyTerm): Prop := Eq(Nat, eval(x), eval(y))
+
+theorem one_plus_one_is_two(): KeyEq(kadd(klit(1), klit(1)), klit(2)) { refl() }
+
+inductive EffectId(): Type {
+  effid(declaration: Nat, parameter: TypeCode, key: KeyTerm, tags: List(Nat)): EffectId
+}
+
+fn declaration(x: EffectId) -> Nat {
+  match x -> Nat {
+    effid(d, p, k, t) => d
+  }
+}
+
+fn parameter(x: EffectId) -> TypeCode {
+  match x -> TypeCode {
+    effid(d, p, k, t) => p
+  }
+}
+
+fn key(x: EffectId) -> KeyTerm {
+  match x -> KeyTerm {
+    effid(d, p, k, t) => k
+  }
+}
+
+fn tags(x: EffectId) -> List(Nat) {
+  match x -> List(Nat) {
+    effid(d, p, k, t) => t
+  }
+}
+
+// Two collections of tags are equal when they have the same names.
+def TagEq(xs: List(Nat), ys: List(Nat)): Prop := Equiv(Nat, xs, ys)
+
+// Effects are matched by this equivalence, not by subtyping.
+def EffectEq(x: EffectId, y: EffectId): Prop :=
+And(
+  Eq(Nat, declaration(x), declaration(y)),
+  {And(
+    Eq(TypeCode, parameter(x), parameter(y)),
+    And(KeyEq(key(x), key(y)), TagEq(tags(x), tags(y)))
+  )}
+)
+
+theorem effectEq_refl(x: EffectId): EffectEq(x, x) {
+  and_intro(refl(), and_intro(refl(), and_intro(refl(), Equiv_refl(tags(x)))))
+}
+
+theorem effectEq_symm<x: EffectId, y: EffectId>(h: EffectEq(x, y)): EffectEq(y, x) {
+  and_intro(
+    Eq_sym(and_left(h)),
+    and_intro(
+      Eq_sym(and_left(and_right(h))),
+      and_intro(
+        Eq_sym(and_left(and_right(and_right(h)))),
+        Equiv_symm(Nat, tags(x), tags(y), and_right(and_right(and_right(h))))
+      )
+    )
+  )
+}
+
+theorem effectEq_trans<x: EffectId, y: EffectId, z: EffectId>(
+  h1: EffectEq(x, y),
+  h2: EffectEq(y, z)
+): EffectEq(x, z) {
+  and_intro(
+    Eq_trans(and_left(h1), and_left(h2)),
+    and_intro(
+      Eq_trans(and_left(and_right(h1)), and_left(and_right(h2))),
+      and_intro(
+        Eq_trans(and_left(and_right(and_right(h1))), and_left(and_right(and_right(h2)))),
+        Equiv_trans(
+          Nat,
+          tags(x),
+          tags(y),
+          tags(z),
+          and_right(and_right(and_right(h1))),
+          and_right(and_right(and_right(h2)))
+        )
+      )
+    )
+  )
+}
+
+// Membership modulo effect equivalence.
+inductive RowContains(row: List(EffectId), target: EffectId): Prop {
+  rc_intro<member: EffectId>(
+    m: Mem(EffectId, member, row),
+    e: EffectEq(member, target)
+  ): RowContains(row, target)
+}
+
+// The row equality used by type-checking.
+def RowEq(a: List(EffectId), b: List(EffectId)): Prop :=
+∀ e: EffectId. Iff(RowContains(a, e), RowContains(b, e))
+
+// Membership modulo equivalence follows membership: a row with the same members
+// (`Equiv` of std/Row.taut) is an equal row.
+theorem rc_sub<a: List(
+  EffectId
+), b: List(
+  EffectId
+), e: EffectId>(s: Sub(EffectId, a, b), h: RowContains(a, e)): RowContains(b, e) {
+  match h -> RowContains(b, e) {
+    rc_intro(member, m, q) => rc_intro(s(member, m), q)
+  }
+}
+
+theorem rowEq_of_equiv<a: List(
+  EffectId
+), b: List(EffectId)>(h: Equiv(EffectId, a, b)): RowEq(a, b) {
+  e => iff_intro(x => rc_sub(and_left(h), x), x => rc_sub(and_right(h), x))
+}
+
+theorem rowEq_refl(a: List(EffectId)): RowEq(a, a) {
+  e => iff_intro(h => h, h => h)
+}
+
+theorem rowEq_symm<a: List(EffectId), b: List(EffectId)>(h: RowEq(a, b)): RowEq(b, a) {
+  e => iff_intro(x => iff_mpr(h(e), x), x => iff_mp(h(e), x))
+}
+
+theorem rowEq_trans<a: List(
+  EffectId
+), b: List(EffectId), c: List(EffectId)>(h1: RowEq(a, b), h2: RowEq(b, c)): RowEq(a, c) {
+  e => iff_intro(x => iff_mp(h2(e), iff_mp(h1(e), x)), x => iff_mpr(h1(e), iff_mpr(h2(e), x)))
+}
+
+// An unordered row union needs no normalization in the logic.
+theorem row_union_comm(
+  a: List(EffectId),
+  b: List(EffectId)
+): RowEq(append(EffectId, a, b), append(EffectId, b, a)) {
+  rowEq_of_equiv(append_comm(a, b))
+}
+
+// Adding the same effects twice does not change the meaning.
+theorem row_union_idempotent(a: List(EffectId)): RowEq(append(EffectId, a, a), a) {
+  rowEq_of_equiv(append_idem(a))
+}
+
+// Changing only the order of tag names cannot create a new effect.
+theorem tag_order_does_not_change_effect(
+  x: EffectId,
+  extra: List(Nat)
+): EffectEq(
+  effid(declaration(x), parameter(x), key(x), append(Nat, tags(x), extra)),
+  effid(declaration(x), parameter(x), key(x), append(Nat, extra, tags(x)))
+) {
+  and_intro(refl(), and_intro(refl(), and_intro(refl(), append_comm(tags(x), extra))))
+}

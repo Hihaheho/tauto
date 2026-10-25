@@ -1,0 +1,73 @@
+import "../std/Row.taut"
+
+// A port of the types and effects of lean/Proto/Nib/Row.lean. An effect is
+// its declaration with its type arguments (`Get(i64)` and `Get(Text)` are two
+// effects); a function type carries the row it may perform. `Ty` and `Eff`
+// are mutually recursive and nest `List`, so this needs both mutual and
+// nested inductive types.
+
+// The width of an integer type.
+inductive Width(): Type {
+  i32(): Width
+  i64(): Width
+}
+
+mutual {
+  inductive Ty(): Type {
+    // `i32`, `i64`
+    tint(w: Width): Ty
+    tbool(): Ty
+    tunit(): Ty
+    // The type of an expression that never gives a value (`Div`'s result).
+    tnever(): Ty
+    // `(ps) -> ret ! row`
+    tfn(ps: List(Ty), ret: Ty, row: List(Eff)): Ty
+    // A union, kept as written.
+    tunion(ts: List(Ty)): Ty
+  }
+
+  inductive Eff(): Type {
+    eff(decl: Nat, args: List(Ty)): Eff
+  }
+}
+
+// `Div` and `Exceeded(T)` are declared by Nib's standard library; here they are
+// given fixed numbers.
+fn divDecl() -> Nat { 1000 }
+fn exceededDecl() -> Nat { 1001 }
+
+fn divEff() -> Eff { eff(1000, Nil) }
+
+// `Exceeded(T)`, `T` the type of the budgeted body.
+fn exceededEff(T: Ty) -> Eff { eff(1001, Cons(T, Nil)) }
+
+// A row is read as a set, so the lemmas of `Row.taut` apply to rows of
+// effects: the row of a handled call is below the row with the handler.
+theorem row_order_irrelevant(
+  a: List(Eff),
+  b: List(Eff)
+): Equiv(Eff, append(Eff, a, b), append(Eff, b, a)) {
+  append_comm(a, b)
+}
+
+theorem pure_below_all(r: List(Eff)): Sub(Eff, Nil(Eff), r) {
+  nil_sub(r)
+}
+
+fn decl_of(e: Eff) -> Nat {
+  match e -> Nat {
+    eff(d, args) => d
+  }
+}
+
+theorem Nat_ne_succ(n: Nat, e: Eq(Nat, n, succ(n))): False {
+  match n -> False {
+    zero => Nat_noconf(False, zero, succ(zero), e)
+    succ(k) => Nat_noconf(False, succ(k), succ(succ(k)), e, h => Nat_ne_succ(k, h))
+  }
+}
+
+// The two budget effects are different effects.
+theorem div_is_not_exceeded<T: Ty>(e: Eq(Eff, divEff(), exceededEff(T))): False {
+  Nat_ne_succ(1000, Eq_congr(decl_of, e))
+}
