@@ -1,4 +1,4 @@
-# tauto の self-host（Rust バックエンドに関係しない部分）
+# tauto の self-host
 
 tauto のコンパイラの大部分を tauto で書き直す方針と、その構成。部品は tote（`totes/`）にまとめ、
 kernel が検査する全域な層（`inductive` と total な `fn`）で書き、要所に正しさの定理を付ける。
@@ -8,7 +8,7 @@ kernel が検査する全域な層（`inductive` と total な `fn`）で書き�
 
 | 項目 | 方針 |
 | --- | --- |
-| 何を書くか | Rust バックエンドを使わずに進められる部分だけ（「構成」）。実行は `eval.rs`（インタプリタ）で、遅くても正しければよい |
+| 何を書くか | 主要な層は「構成」の tote。限定的な Rust 出力は `totes/rustgen` が担当する。実行は `eval.rs`（インタプリタ）または既存の Rust バックエンドによるビルドで行う |
 | どこまで証明するか | 全域性と型（kernel が検査し、止まり、網羅的）に加え、要所の正しさの定理。全関数の仕様は書かない。ただし `totes/nibcheck` は検査器全体の健全性まで示す（「nibcheck の健全性（`totes/nibcheck/src/`）」） |
 | kernel | 通常の検査には Rust の `check.rs` と `check/core.rs` を使う。独立カーネルの Tauto 実装 `totes/kernel` は、書き出した精密化済みの宣言を再検査する。精密化の糖衣（「精密化の糖衣」）は kernel の外にあり、kernel と `check/core.rs` が受け取る項の形は糖衣なしで書いたときと同じ |
 | 実行 | **Nib への extraction**（「extraction（`crates/tauto/src/extract.rs`）」）。生成した Nib が `eval.rs` で動き、[`rust-backend.md`](rust-backend.md) でネイティブにもなる |
@@ -29,6 +29,12 @@ kernel が検査する全域な層（`inductive` と total な `fn`）で書き�
 | `crates/tauto-nibcheck/src/types.rs`、`rows.rs`、`lin.rs` | `totes/nibcheck` |
 | `crates/tauto-kernel/src/check/core.rs` の閉じた宣言の検査 | `totes/kernel`（[`totes/kernel/README.md`](../../totes/kernel/README.md)） |
 | `tauto-rt`、`tools/tauto-parol-gen` | Rust のまま（後者は Rust の表の生成器を動かす道具なので。`totes/llkgen` が同じ表を作る） |
+
+限定的な Rust 出力は [`totes/rustgen`](../../totes/rustgen/README.md) が担当する。
+Tauto の surface parser から関数を読み、明示的な `i64`/`Bool` の部分言語を検査して Rust を出力する。
+未対応の構文は拒否し、Rust の精密化器やコード生成器に入力を転送しない。
+この tote 自体のビルドは既存の Rust コンパイラを使い、精密化器全体・完全な Rust バックエンド・
+コンパイラの bootstrap は含まない。
 
 依存は一方向で、循環は tote の読み込みが拒否する。
 
@@ -237,7 +243,9 @@ Nib の `Vec`（affine）に、五つの関数を `vec_new`・`vec_push`・`vec_
 
 ## 構文（`totes/scan`、`totes/llk`、`totes/syntax`）
 
-構文は手書きしない。`tools/tauto-parol-gen` が `tauto.par` から作った表を、tauto のデータとして書き出し、それを読む駆動部を tauto で書く。
+構文の正本は `totes/grammar/src/grammar.taut` の `syntax tauto` 宣言。生成された `tauto_parse` は型付き AST を返し、同 tote の入口で実際にソースを解析する。`tauto syntax source totes/grammar tauto` が文法のリテラルをそのまま取り出し、`scripts/generate-tauto-grammar.sh` が bootstrap 用の `tauto.par` と試験用の文法へ書く（`--check` は差分の検出だけ）。
+
+`tools/tauto-parol-gen` がその `tauto.par` から作った表を、tauto のデータとして書き出し、それを読む駆動部を tauto で書く。最初に宣言を読む Rust の bootstrap parser と `tauto_parse` の `syn_parse` runtime は残る。型付き AST の parser をコンパイラの CST・エラー回復の駆動部に置き換えたという意味ではない。
 
 1. 表の書き出し：`tauto_parol::syntax_tables()` が `generated/parser.rs` の定数を読んで表を作り、`scripts/generate-syntax-tables.sh` が表ごとのデータ `totes/syntax/src/tables/<name>.txt` と、それを `include_text!` で返す関数の `totes/syntax/src/tables.taut` に書く（`--check` で確かめるだけ）。書き出すもの：終端記号と非終端記号の名前、宣言された非終端記号、先読みの最大 k、読み飛ばすトークン、先読み DFA、生成規則（逆順で入っている）、字句のモードと DFA、文字クラス（全 Unicode スカラー値を区間にまとめる）、開始の非終端記号。
 2. 静的なデータのリテラルがないので、数を空白で区切った長い文字列（データのファイルの中身）にして tote の中で読む。
@@ -461,6 +469,41 @@ nibcheck の証明も同じ書き方をする。
 
 上の保存定理は宣言環境を変えないことを示すもので、クラス解決や式の型付けの健全性の代わりにはならない。
 
+## 差分試験の実行ファイルのキャッシュ
+
+`crates/tauto-selfhost/src/native_cache.rs` は、差分試験に使う tote の release 実行ファイルを
+内容アドレスで保存する。実行結果や証明の判定は保存しない。呼び出すたびに tote が実行され、
+独立カーネルを含む比較対象の検査も実行される。
+
+* tote の鍵は、推移的な依存のマニフェスト、選ばれたソースと import、`include_text!` の
+  読み込み先、構文表、およびコンパイラの鍵から作る。読めなかった include のパスと、
+  include の境界を決める祖先の `Tauto.eure` も追跡する。無関係な tote の本文は鍵に入らない。
+* コンパイラの鍵は、正規化したソースの絶対パス、コンパイラ・生成器・実行時のソース、
+  埋め込む prelude、ロックファイル、設定と環境、Rust ツールチェーンの内容を含む。
+  環境は保守的に、子プロセスへ渡すもの全体をハッシュするため、ビルドに影響しない環境の変更でも失効する。
+  呼び出し元の試験用に設定された既知のライブラリ検索パス、`CARGO_BIN_EXE_*` とシェルの `_` は渡さず、
+  コンパイラのビルド自身が環境を設定する。
+  同じコンパイラの tote はそのコンパイラのビルド領域を共有するが、別のソース配置や
+  コンパイラの鍵とは共有しない。生成物の中間領域も明示した target の内側に置く。
+* Rust ツールチェーンはプロセス内で最初に内容をハッシュする。以後は全ファイルの集合と
+  device、inode、サイズ、mtime、ctime（ナノ秒まで）を照合し、一致する場合だけその
+  内容ハッシュを再利用する。細かい時刻を持たない環境では再利用しない。
+  これはローカルのファイルシステムとインストールされたツールチェーンを信頼する仕組みで、
+  OS やシステムライブラリ全体の真正性を保証するものではない。
+* 独自のホスト依存、wrapper、設定の間接参照、未対応のフラグ、シンボリックリンクなどで
+  入力を閉じて追跡できないときは、再利用せず独立した領域でビルドする。ビルド中やロック待ちの
+  間に入力が変わった場合は、古い鍵で返さず再実行を求める。
+  生成した Rust を整形する実行ファイルも同じツールチェーンの内容として追跡する。
+  `RUSTFMT` による差し替えや独自の整形設定がある場合は再利用しない。
+* 同じ tote の生成はプロセス間ロックで直列化する。実行ファイルを専用の一時ファイルへ
+  コピーし、内容を照合したあとに記録を rename する。成功記録のないもの、サイズや
+  SHA-256 が一致しないものは使わない。キャッシュのパスの既存シンボリックリンクは拒否する。
+  失敗は記憶しない。使用中のパスを消さないため、公開済みの実行ファイルは自動削除しない。
+* 保存先は `$TAUTO_TARGET_DIR`、なければ `$CARGO_TARGET_DIR`、それもなければリポジトリの
+  `target` の中の `tauto-selfhost-cache/v1`。生成中の専用領域はビルドの結果を受け取った時点で除去する。強制終了で残った領域、公開済みの
+  実行ファイルとコンパイラの領域は、その target を明示的に掃除するときに除去する。
+  `TAUTO_SELFHOST_CACHE_TRACE` を設定すると、検証済みの hit、miss、再利用しない build を表示する。
+
 ## 証明のキャッシュ（`crates/tauto-kernel/src/check/cache.rs`）
 
 一度検査を通った定理の証明は、それが依るものが変わらない限り検査し直さない（項目ごと、内容アドレス）。
@@ -500,3 +543,23 @@ nibcheck の証明も同じ書き方をする。
 | 4 | 静的なデータのリテラル（`const` の表、バイト列の埋め込み） |
 | 5 | 証明側の遅さが問題になったとき、kernel の primitive（`Text`、機械整数）を足すか |
 | 6 | nibcheck の健全性の残り：関数本体・トップレベルの式・最終診断を含む検査全体が `datas` を保つこと、データと関数の宣言が宣言的な規則でよく形成されていること、層 4〜8（式、クラス、効果、線形性、全体） |
+
+## native checker の比較
+
+`CARGO_PROFILE_BENCH_LTO=fat CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 cargo bench -p tauto-selfhost --bench compiler`
+は `totes/nibcheck` の rows・types・lin を Rust 実装と比較する。bench の LTO と codegen units を
+生成 crate の release 設定（fat LTO、1 unit）に揃える。双方が同じファイルを読み、マクロを実行しない構文読み取りから同じ
+診断の出力までを行う。カーネル検査、精密化、コード生成を含むコンパイラ全体の比較ではない。
+
+各標本は別プロセスで、起動・ファイル読み取り・表と prelude の準備・出力・終了を含む。
+最初の標本と、それ以降の中央値・95 パーセンタイルを区別する。後者で温まるのは
+ファイルシステムのキャッシュであり、プロセス内のキャッシュではない。OS のキャッシュを
+消さないため、最初の標本もディスクの cold-start とは呼ばない。実行順は交互にする。
+各標本の標準出力が Rust の参照出力と完全に一致しなければ比較は失敗する。
+
+`--samples N` は最初の標本の後の標本数、`--filter TEXT` は corpus の入力名の絞り込み、
+`--native PATH` は生成済みの native 実行ファイル、`--analysis rows|types|lin` は対象の分析を指定する。
+絞り込みと入力数を報告に残す。中央値は偶数個なら中央の二値の平均、95 パーセンタイルは
+nearest-rank とする。
+生成物と Rust 側で同じ最適化設定を使い、元のコミット、コンパイラの版、ビルド設定を
+計測結果とともに保管する。表の読み取りを除いた値や一部の入力の値を全体の速度として扱わない。

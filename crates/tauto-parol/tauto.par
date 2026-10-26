@@ -1,7 +1,6 @@
 %start Program
 %title "Tauto"
 %comment "Tauto grammar: the base rules, then tauto's own rules. Newlines end statements, except inside ( )."
-%grammar_type 'LL(k)'
 %block_comment '/*' '*/'
 %auto_newline_off
 %skip Comment
@@ -312,9 +311,9 @@ KwInductive: <INITIAL, InParen, InBrace>'inductive' ;
 KwForall: <INITIAL, InParen, InBrace>/∀|forall/ ;
 KwExists: <INITIAL, InParen, InBrace>/∃|exists/ ;
 KwDecreasingBy: <INITIAL, InParen, InBrace>'decreasing_by' ;
-// `by` before a tactic's call; contextual, so `by` stays a name elsewhere.
 // `as` names the equation of a match on a term: `match f(x) as e -> G {`.
 KwAs: <INITIAL, InParen, InBrace>/as/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*(->|\{)/ ;
+// `by` before a tactic's call; contextual, so `by` stays a name elsewhere.
 KwBy: <INITIAL, InParen, InBrace>/by/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*!\(/ ;
 Turnstile: <INITIAL, InParen, InBrace>'⊢' ;
 AndSign: <INITIAL, InParen, InBrace>'∧' ;
@@ -339,8 +338,7 @@ KwHandle: <INITIAL, InParen, InBrace>'handle' ;
 KwWith: <INITIAL, InParen, InBrace>'with' ;
 KwPerform: <INITIAL, InParen, InBrace>'perform' ;
 // `budget`, `label` and `brand` are words only where they begin their
-// form: elsewhere they stay names, so a program that uses them as names
-// reads as before.
+// form: elsewhere they stay names, and a program may use them as names.
 KwBudget: <INITIAL, InParen, InBrace>/budget/ ?= /[ \t]*\([ \t\r\n]*steps[ \t]*:/ ;
 KwLabel: <INITIAL, InBrace>/label/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*[^\p{L}\p{N}_ \t]/ ;
 KwBrand: <INITIAL, InBrace>/brand/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*\{/ ;
@@ -478,7 +476,8 @@ Ident: <INITIAL, InParen, InBrace>/\$?[\p{L}_][\p{L}\p{N}_]*/ ;
 // Tauto's own rules: dependent types and proofs, which Nib
 // does not have. The rules above are the base grammar.
 
-// A program is statements; tauto adds `theorem`, `axiom` and `inductive`.
+// A program is statements; tauto adds `theorem`, `axiom`, `inductive`, `def`,
+// `import` and `mutual`.
 Program: Stmts ;
 // `theorem swap<A, B>(p: And(A, B)): And(B, A) { ... }`: the result is a
 // proposition, the body a proof term (a step, `by`, is one with its goals

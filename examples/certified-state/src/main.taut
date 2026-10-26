@@ -1,0 +1,14 @@
+// This one-assignment adapter is trusted; its transition is the checked function.
+fn gate_commit(&mut cell: GateState, commands: List(GateCommand)) -> () {
+  cell := gate_advance(commands, cell)
+}
+
+var cell = gate_run(Nil, 2)
+gate_commit(&mut cell, Cons(gate_spend, Nil))
+perform show("denied", gate_balance(cell))
+gate_commit(&mut cell, Cons(gate_authorize, Cons(gate_spend, Nil)))
+perform show("remaining", gate_balance(cell))
+gate_commit(&mut cell, Cons(gate_revoke, Cons(gate_spend, Nil)))
+perform show("revoked", gate_balance(cell))
+gate_commit(&mut cell, Cons(gate_authorize, Cons(gate_spend, Cons(gate_spend, Nil))))
+perform show("exhausted", gate_balance(cell))

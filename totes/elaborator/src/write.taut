@@ -1,0 +1,77 @@
+import "program.taut"
+
+fn elab_words(xs: List(Text)) -> Text { text_join(xs, " ") }
+fn elab_write_levels(xs: List(Pair(Text, Nat))) -> List(Text) {
+  match xs -> List(Text) {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.fst, Cons(text_of_nat(p.snd), elab_write_levels(rest)))
+  }
+}
+fn elab_write_digits(xs: List(Nat)) -> List(Text) {
+  match xs -> List(Text) {
+    Nil => Nil
+    Cons(n, rest) => Cons(text_of_nat(n), elab_write_digits(rest))
+  }
+}
+fn elab_write_sort(s: KernelSort) -> Text {
+  match s -> Text {
+    KernelProp => "P"
+    KernelType(
+      l
+    ) => elab_words(
+      Cons(
+        "T",
+        Cons(
+          text_of_nat(l.constant),
+          Cons(text_of_nat(list_length(l.variables)), elab_write_levels(l.variables))
+        )
+      )
+    )
+  }
+}
+fn elab_write_term(t: KernelTerm) -> Text {
+  match t -> Text {
+    KernelBVar(i) => text_concat("b ", text_of_nat(i))
+    KernelFVar(i) => text_concat("f ", text_of_nat(i))
+    KernelSortTerm(s) => text_concat("s ", elab_write_sort(s))
+    KernelConst(n) => text_concat("c ", n)
+    KernelPi(a, b) => elab_words(Cons("p", Cons(elab_write_term(a), Cons(elab_write_term(b), Nil))))
+    KernelLam(b) => text_concat("l ", elab_write_term(b))
+    KernelApp(f, a) => elab_words(
+      Cons("a", Cons(elab_write_term(f), Cons(elab_write_term(a), Nil)))
+    )
+    KernelLit(ds) => elab_words(
+      Cons("n", Cons(text_of_nat(list_length(ds)), elab_write_digits(ds)))
+    )
+    KernelBool(b) => if b { "z 1" } else { "z 0" }
+  }
+}
+fn elab_transparent(t: Yn) -> Text { if t { "1" } else { "0" } }
+fn elab_write_declarations(ds: List(ElabDeclaration)) -> Text {
+  match ds -> Text {
+    Nil => ""
+    Cons(
+      d,
+      rest
+    ) => text_concat_all(
+      Cons(
+        elab_words(
+          Cons(
+            "D",
+            Cons(
+              d.name,
+              Cons(
+                elab_write_term(d.ty),
+                Cons(
+                  "1",
+                  Cons(elab_write_term(d.value), Cons(elab_transparent(d.transparent), Nil))
+                )
+              )
+            )
+          )
+        ),
+        Cons(text_newline(), Cons(elab_write_declarations(rest), Nil))
+      )
+    )
+  }
+}

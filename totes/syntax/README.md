@@ -1,7 +1,7 @@
 # syntax
 
 Tauto's syntax: the parser and scanner tables of `crates/tauto-parol`
-(made from `crates/tauto-parol/tauto.par`), written out as data, the `scan` and
+(made from the `syntax tauto` declaration in `totes/grammar`), written out as data, the `scan` and
 `llk` totes that read them, and the tree. The tree and the dump are in the
 proof language (`src/syntax.taut`, `docs/design/self-host.md`); `src/syntax.taut`
 only passes the texts of `tables.taut` to it, and `src/main.taut` is the

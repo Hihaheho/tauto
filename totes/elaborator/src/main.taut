@@ -1,0 +1,49 @@
+fn elab_source(k: u64, source: Text) -> ElabResult(List(ElabDeclaration)) {
+  match syntax_tables() -> ElabResult(List(ElabDeclaration)) {
+    None => ElabErr("invalid syntax tables")
+    Some(tables) => match syntax_parse(tables, source) -> ElabResult(List(ElabDeclaration)) {
+      None => ElabErr("cannot parse source")
+      Some(root) => if elab_unsupported(surface_size(root) + 1, Cons(root, Nil)) {
+        ElabErr("attributes and generated declarations are unsupported")
+      } else {
+        let stmts = surface_program_of(
+          SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(
+            root
+          ) + 1 },
+          root
+        )
+        var core = kernel_new()
+        elab_program(stmts, k, &mut core)
+      }
+    }
+  }
+}
+
+// Each file is an independent source program. Successful output is the kernel
+// wire format, suitable for replay by totes/kernel, not a host API result.
+fn elab_main_files(paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      match os_read_file(path) {
+        Err(message) => {
+          os_eprint(
+            text_concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil)))))
+          )
+          os_exit(1)
+        }
+        Ok(source) => match elab_source(2000, source) {
+          ElabErr(message) => {
+            os_eprint(
+              text_concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil)))))
+            )
+            os_exit(1)
+          }
+          ElabOk(ds) => os_print(elab_write_declarations(ds))
+        }
+      }
+      elab_main_files(rest)
+    }
+  }
+}
+elab_main_files(os_args())

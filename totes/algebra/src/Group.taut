@@ -1,0 +1,245 @@
+import "Monoid.taut"
+
+// A group is an explicit monoid, inverse operation, and this law witness.
+inductive AlgebraGroup(u: Level, A: Type(u), m: AlgebraMonoid(u, A), inverse: (A) -> A): Prop {
+  algebra_group(
+    left: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)),
+    right: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m))
+  ): AlgebraGroup(u, A, m, inverse)
+}
+
+theorem algebra_inverse_left<u: Level, A: Type(
+  u
+), m: AlgebraMonoid(
+  u,
+  A
+), inverse: (
+  A
+) -> A>(
+  g: AlgebraGroup(u, A, m, inverse),
+  x: A
+): AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)) {
+  AlgebraGroup_ind(
+    u,
+    A,
+    m,
+    inverse,
+    witness => AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)),
+    left => right => left(x),
+    g
+  )
+}
+
+theorem algebra_inverse_right<u: Level, A: Type(
+  u
+), m: AlgebraMonoid(
+  u,
+  A
+), inverse: (
+  A
+) -> A>(
+  g: AlgebraGroup(u, A, m, inverse),
+  x: A
+): AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m)) {
+  AlgebraGroup_ind(
+    u,
+    A,
+    m,
+    inverse,
+    witness => AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m)),
+    left => right => right(x),
+    g
+  )
+}
+
+theorem algebra_cancel_left<u: Level, A: Type(
+  u
+), m: AlgebraMonoid(
+  u,
+  A
+), inverse: (
+  A
+) -> A>(
+  g: AlgebraGroup(u, A, m, inverse),
+  a: A,
+  b: A,
+  c: A,
+  h: AlgebraEq(u, A, algebra_op(u, A, m)(a, b), algebra_op(u, A, m)(a, c))
+): AlgebraEq(u, A, b, c) {
+  let step0: AlgebraEq(
+    u,
+    A,
+    b,
+    algebra_op(u, A, m)(algebra_unit(u, A, m), b)
+  ) = algebra_sym(
+    u,
+    A,
+    algebra_op(u, A, m)(algebra_unit(u, A, m), b),
+    b,
+    algebra_left_unit(u, A, m, b)
+  );
+  let step1: AlgebraEq(
+    u,
+    A,
+    algebra_op(u, A, m)(algebra_unit(u, A, m), b),
+    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b)
+  ) = algebra_congr(
+    u,
+    u,
+    A,
+    A,
+    algebra_unit(u, A, m),
+    algebra_op(u, A, m)(inverse(a), a),
+    t => algebra_op(u, A, m)(t, b),
+    algebra_sym(
+      u,
+      A,
+      algebra_op(u, A, m)(inverse(a), a),
+      algebra_unit(u, A, m),
+      algebra_inverse_left(u, A, m, inverse, g, a)
+    )
+  );
+  let step2: AlgebraEq(
+    u,
+    A,
+    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
+    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b))
+  ) = algebra_assoc(u, A, m, inverse(a), a, b);
+  let step3: AlgebraEq(
+    u,
+    A,
+    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
+    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c))
+  ) = algebra_congr(
+    u,
+    u,
+    A,
+    A,
+    algebra_op(u, A, m)(a, b),
+    algebra_op(u, A, m)(a, c),
+    t => algebra_op(u, A, m)(inverse(a), t),
+    h
+  );
+  let step4: AlgebraEq(
+    u,
+    A,
+    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
+    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c)
+  ) = algebra_sym(
+    u,
+    A,
+    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
+    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
+    algebra_assoc(u, A, m, inverse(a), a, c)
+  );
+  let step5: AlgebraEq(
+    u,
+    A,
+    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
+    algebra_op(u, A, m)(algebra_unit(u, A, m), c)
+  ) = algebra_congr(
+    u,
+    u,
+    A,
+    A,
+    algebra_op(u, A, m)(inverse(a), a),
+    algebra_unit(u, A, m),
+    t => algebra_op(u, A, m)(t, c),
+    algebra_inverse_left(u, A, m, inverse, g, a)
+  );
+  let step6: AlgebraEq(
+    u,
+    A,
+    algebra_op(u, A, m)(algebra_unit(u, A, m), c),
+    c
+  ) = algebra_left_unit(u, A, m, c);
+  algebra_trans(
+    u,
+    A,
+    b,
+    algebra_op(u, A, m)(algebra_unit(u, A, m), b),
+    c,
+    step0,
+    algebra_trans(
+      u,
+      A,
+      algebra_op(u, A, m)(algebra_unit(u, A, m), b),
+      algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
+      c,
+      step1,
+      algebra_trans(
+        u,
+        A,
+        algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
+        algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
+        c,
+        step2,
+        algebra_trans(
+          u,
+          A,
+          algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
+          algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
+          c,
+          step3,
+          algebra_trans(
+            u,
+            A,
+            algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
+            algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
+            c,
+            step4,
+            algebra_trans(
+              u,
+              A,
+              algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
+              algebra_op(u, A, m)(algebra_unit(u, A, m), c),
+              c,
+              step5,
+              step6
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+theorem algebra_inverse_unique<u: Level, A: Type(
+  u
+), m: AlgebraMonoid(
+  u,
+  A
+), inverse: (
+  A
+) -> A>(
+  g: AlgebraGroup(u, A, m, inverse),
+  a: A,
+  candidate: A,
+  h: AlgebraEq(u, A, algebra_op(u, A, m)(a, candidate), algebra_unit(u, A, m))
+): AlgebraEq(u, A, candidate, inverse(a)) {
+  algebra_cancel_left(
+    u,
+    A,
+    m,
+    inverse,
+    g,
+    a,
+    candidate,
+    inverse(a),
+    algebra_trans(
+      u,
+      A,
+      algebra_op(u, A, m)(a, candidate),
+      algebra_unit(u, A, m),
+      algebra_op(u, A, m)(a, inverse(a)),
+      h,
+      algebra_sym(
+        u,
+        A,
+        algebra_op(u, A, m)(a, inverse(a)),
+        algebra_unit(u, A, m),
+        algebra_inverse_right(u, A, m, inverse, g, a)
+      )
+    )
+  )
+}

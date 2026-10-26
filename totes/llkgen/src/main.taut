@@ -217,10 +217,139 @@ fn lg_unswap(nb: List(u64)) -> List(u64) {
   lg_swap(nb)
 }
 
+// The first overlapping pair and tuple, in production and tuple order.
+// Alternative numbers are one-based production indices for the whole grammar.
+// LgSet keeps its tuples sorted, so intersection uses a merge walk.
+struct LgConflict { left: u64, right: u64, tuple: u64 }
+
+fn lg_common(xs: List(u64), ys: List(u64)) -> Option(u64) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match ys {
+      Nil => None
+      Cons(
+        y,
+        more
+      ) => if x == y { Some(x) } else if x < y { lg_common(rest, ys) } else { lg_common(xs, more) }
+    }
+  }
+}
+
+fn lg_conflict_with(x: Pair(u64, LgSet), ys: List(Pair(u64, LgSet))) -> Option(LgConflict) {
+  match ys {
+    Nil => None
+    Cons(y, rest) => match lg_common(x.snd.tuples, y.snd.tuples) {
+      Some(t) => Some(LgConflict { left: x.fst, right: y.fst, tuple: t })
+      None => lg_conflict_with(x, rest)
+    }
+  }
+}
+
+fn lg_conflict(xs: List(Pair(u64, LgSet))) -> Option(LgConflict) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => match lg_conflict_with(x, rest) {
+      Some(c) => Some(c)
+      None => lg_conflict(rest)
+    }
+  }
+}
+
+fn lg_name(names: List(Text), at: u64) -> Text {
+  match names {
+    Nil => text_concat_all(Cons("#", Cons(text_of_u64(at), Nil)))
+    Cons(n, rest) => if at == 0 { n } else { lg_name(rest, at - 1) }
+  }
+}
+
+fn lg_symbol_names(syms: List(LgSym), nts: List(Text), terms: List(Text)) -> List(Text) {
+  match syms {
+    Nil => Nil
+    Cons(sym, rest) => Cons(match sym {
+      LgN(n) => lg_name(nts, n)
+      LgT(t) => lg_name(terms, t)
+    }, lg_symbol_names(rest, nts, terms))
+  }
+}
+
+fn lg_terminal_names(ts: List(u64), terms: List(Text)) -> List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(
+      t,
+      rest
+    ) => Cons(if t == 255 { "epsilon" } else { lg_name(terms, t) }, lg_terminal_names(rest, terms))
+  }
+}
+
+fn lg_conflict_text(
+  g: LgGrammar,
+  cache: LgCache,
+  nt: u64,
+  k: u64,
+  nts: List(Text),
+  terms: List(Text)
+) -> Text {
+  let ready = lg_cache_upto(g, cache, k)
+  let prefix = text_concat_all(
+    Cons("LL(", Cons(text_of_u64(k), Cons(") conflict in rule ", Cons(lg_name(nts, nt), Nil))))
+  )
+  match lg_conflict(lg_tuples_of(g, ready, nt, k)) {
+    None => text_concat_all(Cons(prefix, Cons(": unable to distinguish alternatives", Nil)))
+    Some(
+      c
+    ) => text_concat_all(
+      Cons(
+        prefix,
+        Cons(
+          text_newline(),
+          Cons(
+            "  alternative #",
+            Cons(
+              text_of_u64(c.left + 1),
+              Cons(
+                ": ",
+                Cons(
+                  text_join(lg_symbol_names(lg_prod_at(g, c.left).rhs, nts, terms), " "),
+                  Cons(
+                    text_newline(),
+                    Cons(
+                      "  alternative #",
+                      Cons(
+                        text_of_u64(c.right + 1),
+                        Cons(
+                          ": ",
+                          Cons(
+                            text_join(lg_symbol_names(lg_prod_at(g, c.right).rhs, nts, terms), " "),
+                            Cons(
+                              text_newline(),
+                              Cons(
+                                "  common lookahead: ",
+                                Cons(
+                                  text_join(lg_terminal_names(kt_terms(c.tuple), terms), " "),
+                                  Nil
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
 struct LgRun { text: Text, max_k: u64, failed: Option(Text) }
 
 // The lookahead automata of all non-terminals.
-fn lg_lookahead(g: LgGrammar, max_k: u64) -> LgRun {
+fn lg_lookahead(g: LgGrammar, max_k: u64, nts: List(Text), terms: List(Text)) -> LgRun {
   var b = buf_new()
   var cache = LgCache { firsts: Nil, follows: Nil }
   var most: u64 = 0
@@ -232,7 +361,7 @@ fn lg_lookahead(g: LgGrammar, max_k: u64) -> LgRun {
   while nt < n_nts && lg_is_none_text(failed) {
     match lg_decide(g, cache, nt, max_k) {
       None => {
-        failed := Some("a non-terminal needs more lookahead")
+        failed := Some(lg_conflict_text(g, cache, nt, max_k, nts, terms))
       }
       Some(d) => {
         cache := d.cache
@@ -252,7 +381,7 @@ fn lg_lookahead(g: LgGrammar, max_k: u64) -> LgRun {
                 dfa := one
                 first := false
               } else if lg_dfa_unite(&mut dfa, &one) {
-                failed := Some("a conflict in the union of automata")
+                failed := Some(lg_conflict_text(g, cache, nt, d.k, nts, terms))
               }
               rest := more
             }
@@ -292,7 +421,12 @@ fn lg_one(path: Text) -> () {
         Cons(w, rest) => w
       })
       let g = lg_grammar_of(lg_find_line(lines, "productions"), n_nts, start)
-      let run = lg_lookahead(g, 3)
+      let run = lg_lookahead(
+        g,
+        3,
+        lg_line_names(lines, "non_terminals"),
+        lg_line_names(lines, "terminals")
+      )
       match run.failed {
         Some(why) => os_print(text_concat_all(Cons(why, Cons(text_newline(), Nil))))
         None => {
@@ -473,4 +607,11 @@ match os_args() {
   Cons("--rx", Cons(path, rest)) => lg_rx(path)
   Cons("--par", paths) => lg_par_each(paths)
   paths => lg_each(paths)
+}
+
+fn lg_line_names(lines: List(Text), name: Text) -> List(Text) {
+  match lg_find_line(lines, name) {
+    Nil => Nil
+    Cons(count, names) => names
+  }
 }

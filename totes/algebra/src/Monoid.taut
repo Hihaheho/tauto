@@ -1,0 +1,126 @@
+import "Equality.taut"
+
+def AlgebraOperation<u: Level>(A: Type(u)): Type(u) := (A, A) -> A
+
+// The carrier is a parameter, so distinct structures on one carrier are ordinary values.
+inductive AlgebraMonoid(u: Level, A: Type(u)): Type(u) {
+  algebra_monoid(
+    unit: A,
+    op: (A, A) -> A,
+    assoc: ∀ x: A. ∀ y: A. ∀ z: A. AlgebraEq(u, A, op(op(x, y), z), op(x, op(y, z))),
+    left: ∀ x: A. AlgebraEq(u, A, op(unit, x), x),
+    right: ∀ x: A. AlgebraEq(u, A, op(x, unit), x)
+  ): AlgebraMonoid(u, A)
+}
+
+def algebra_monoid_elim<u: Level>(): ∀ A: Type(
+  u
+). ∀ motive: (
+  AlgebraMonoid(u, A)
+) -> Type(
+  u
+). (
+  ∀ unit: A. ∀ op: (
+    A,
+    A
+  ) -> A. ∀ assoc: (
+    ∀ x: A. ∀ y: A. ∀ z: A. AlgebraEq(u, A, op(op(x, y), z), op(x, op(y, z)))
+  ). ∀ left: (
+    ∀ x: A. AlgebraEq(u, A, op(unit, x), x)
+  ). ∀ right: (
+    ∀ x: A. AlgebraEq(u, A, op(x, unit), x)
+  ). motive(algebra_monoid(u, A, unit, op, assoc, left, right))
+) -> (∀ structure: AlgebraMonoid(u, A). motive(structure)) := recursor(AlgebraMonoid(u), u)
+
+def algebra_unit<u: Level, A: Type(u)>(m: AlgebraMonoid(u, A)): A :=
+algebra_monoid_elim(u, A, structure => A, unit => op => assoc => left => right => unit, m)
+
+def algebra_op<u: Level, A: Type(u)>(m: AlgebraMonoid(u, A)): (A, A) -> A :=
+algebra_monoid_elim(
+  u,
+  A,
+  structure => AlgebraOperation(u, A),
+  unit => op => assoc => left => right => op,
+  m
+)
+
+theorem algebra_assoc<u: Level, A: Type(
+  u
+)>(
+  m: AlgebraMonoid(u, A),
+  x: A,
+  y: A,
+  z: A
+): AlgebraEq(
+  u,
+  A,
+  algebra_op(u, A, m)(algebra_op(u, A, m)(x, y), z),
+  algebra_op(u, A, m)(x, algebra_op(u, A, m)(y, z))
+) {
+  AlgebraMonoid_ind(
+    u,
+    A,
+    structure => AlgebraEq(
+      u,
+      A,
+      algebra_op(u, A, structure)(algebra_op(u, A, structure)(x, y), z),
+      algebra_op(u, A, structure)(x, algebra_op(u, A, structure)(y, z))
+    ),
+    unit => op => assoc => left => right => assoc(x, y, z),
+    m
+  )
+}
+
+theorem algebra_left_unit<u: Level, A: Type(
+  u
+)>(
+  m: AlgebraMonoid(u, A),
+  x: A
+): AlgebraEq(u, A, algebra_op(u, A, m)(algebra_unit(u, A, m), x), x) {
+  AlgebraMonoid_ind(
+    u,
+    A,
+    structure => AlgebraEq(u, A, algebra_op(u, A, structure)(algebra_unit(u, A, structure), x), x),
+    unit => op => assoc => left => right => left(x),
+    m
+  )
+}
+
+theorem algebra_right_unit<u: Level, A: Type(
+  u
+)>(
+  m: AlgebraMonoid(u, A),
+  x: A
+): AlgebraEq(u, A, algebra_op(u, A, m)(x, algebra_unit(u, A, m)), x) {
+  AlgebraMonoid_ind(
+    u,
+    A,
+    structure => AlgebraEq(u, A, algebra_op(u, A, structure)(x, algebra_unit(u, A, structure)), x),
+    unit => op => assoc => left => right => right(x),
+    m
+  )
+}
+
+theorem algebra_unit_unique<u: Level, A: Type(
+  u
+)>(
+  m: AlgebraMonoid(u, A),
+  candidate: A,
+  left: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(candidate, x), x)
+): AlgebraEq(u, A, candidate, algebra_unit(u, A, m)) {
+  algebra_trans(
+    u,
+    A,
+    candidate,
+    algebra_op(u, A, m)(candidate, algebra_unit(u, A, m)),
+    algebra_unit(u, A, m),
+    algebra_sym(
+      u,
+      A,
+      algebra_op(u, A, m)(candidate, algebra_unit(u, A, m)),
+      candidate,
+      algebra_right_unit(u, A, m, candidate)
+    ),
+    left(algebra_unit(u, A, m))
+  )
+}

@@ -1,0 +1,396 @@
+import "../../surface/src/surface.taut"
+import "../../kernel/src/kernel.taut"
+
+inductive ElabResult(A: Type): Type {
+  ElabOk(value: A): ElabResult(A)
+  ElabErr(message: Text): ElabResult(A)
+}
+
+// A local name denotes a fresh kernel atom, or an already checked let value.
+inductive ElabBinding(): Type {
+  elab_binding(name: Text, value: KernelTerm, ty: KernelTerm): ElabBinding
+}
+inductive ElabTyped(): Type {
+  elab_typed(value: KernelTerm, ty: KernelTerm): ElabTyped
+}
+
+fn elab_lookup(env: List(ElabBinding), name: Text) -> Option(ElabTyped) {
+  match env -> Option(ElabTyped) {
+    Nil => None
+    Cons(
+      b,
+      rest
+    ) => if b.name == name { Some(elab_typed(b.value, b.ty)) } else { elab_lookup(rest, name) }
+  }
+}
+
+fn elab_digits(k: Nat, n: Nat) -> List(Nat) {
+  match k -> List(Nat) {
+    zero => Nil
+    succ(j) => if n == 0 { Nil } else { Cons(nat_mod(n, 65536), elab_digits(j, nat_div(n, 65536))) }
+  }
+}
+
+fn elab_sort_number(name: Text) -> Option(Nat) {
+  match text_slice(name, 4, text_len(name)) -> Option(Nat) {
+    None => None
+    Some(suffix) => text_parse_u64(suffix)
+  }
+}
+
+fn elab_sort(name: Text) -> Option(KernelTerm) {
+  if name == "Prop" { Some(KernelSortTerm(KernelProp)) } else {
+    if name == "Type" { Some(KernelSortTerm(KernelType(kernel_level(0, Nil)))) } else {
+      if text_starts_with(name, "Type", 0) {
+        match elab_sort_number(name) -> Option(KernelTerm) {
+          None => None
+          Some(
+            n
+          ) => if n <= 1000 { Some(KernelSortTerm(KernelType(kernel_level(n, Nil)))) } else { None }
+        }
+      } else { None }
+    }
+  }
+}
+
+fn elab_result(
+  k: Nat,
+  &mut core: KernelCore,
+  value: KernelTerm,
+  expected: Option(KernelTerm)
+) -> ElabResult(ElabTyped) {
+  match expected -> ElabResult(ElabTyped) {
+    Some(
+      ty
+    ) => if kernel_check(
+      k,
+      &mut core,
+      value,
+      ty
+    ) { ElabOk(elab_typed(value, ty)) } else { ElabErr("type mismatch") }
+    None => match kernel_infer(k, &mut core, value) -> ElabResult(ElabTyped) {
+      None => ElabErr("cannot infer type")
+      Some(ty) => ElabOk(elab_typed(value, ty))
+    }
+  }
+}
+
+// Retain the bidirectional type of annotated lambdas and checked let values.
+// The independent kernel rechecks both that type and any outer expectation.
+fn elab_known(
+  k: Nat,
+  &mut core: KernelCore,
+  typed: ElabTyped,
+  expected: Option(KernelTerm)
+) -> ElabResult(ElabTyped) {
+  if kernel_check(k, &mut core, typed.value, typed.ty) {
+    match expected -> ElabResult(ElabTyped) {
+      None => ElabOk(typed)
+      Some(ty) => elab_result(k, &mut core, typed.value, Some(ty))
+    }
+  } else { ElabErr("invalid elaborated value") }
+}
+
+mutual {
+  fn elab_term(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    term: SurfaceTerm,
+    expected: Option(KernelTerm)
+  ) -> ElabResult(ElabTyped) {
+    match k -> ElabResult(ElabTyped) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match term.kind -> ElabResult(ElabTyped) {
+        SkVar(name) => match elab_lookup(env, name) -> ElabResult(ElabTyped) {
+          Some(local) => elab_known(j, &mut core, local, expected)
+          None => match kernel_global_get(core.globals, name) -> ElabResult(ElabTyped) {
+            Some(global) => elab_result(j, &mut core, KernelConst(name), expected)
+            None => match elab_sort(name) -> ElabResult(ElabTyped) {
+              Some(sort) => elab_result(j, &mut core, sort, expected)
+              None => elab_result(j, &mut core, KernelConst(name), expected)
+            }
+          }
+        }
+        SkNat(digits) => match text_parse_u64(digits) -> ElabResult(ElabTyped) {
+          None => ElabErr("natural literal is outside the elaborator range")
+          Some(n) => elab_result(j, &mut core, KernelLit(elab_digits(4, n)), expected)
+        }
+        SkBool(value) => elab_result(j, &mut core, KernelBool(value), expected)
+        SkPi(params, result, effects) => match effects -> ElabResult(ElabTyped) {
+          Some(es) => ElabErr("effect rows are unsupported")
+          None => match elab_pi(j, &mut core, env, params, result) -> ElabResult(ElabTyped) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(p) => elab_result(j, &mut core, p, expected)
+          }
+        }
+        SkLam(params, body) => match expected -> ElabResult(ElabTyped) {
+          None => ElabErr("lambda requires an expected type")
+          Some(ty) => elab_lambda(j, &mut core, env, params, body, ty)
+        }
+        SkApp(head, args) => match head.kind -> ElabResult(ElabTyped) {
+          SkVar(name) => if name == "the" {
+            match elab_lookup(env, name) -> ElabResult(ElabTyped) {
+              Some(local) => elab_application(j, &mut core, env, head, args, expected)
+              None => match kernel_global_get(core.globals, name) -> ElabResult(ElabTyped) {
+                Some(global) => elab_application(j, &mut core, env, head, args, expected)
+                None => elab_annotation(j, &mut core, env, args, expected)
+              }
+            }
+          } else { elab_application(j, &mut core, env, head, args, expected) }
+          _ => elab_application(j, &mut core, env, head, args, expected)
+        }
+        SkBlock(stmts) => elab_block(j, &mut core, env, stmts, expected)
+        SkHole(name) => ElabErr("proof hole is not a completed term")
+        _ => ElabErr("unsupported term form")
+      }
+    }
+  }
+
+  fn elab_type(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    term: SurfaceTerm
+  ) -> ElabResult(KernelTerm) {
+    match k -> ElabResult(KernelTerm) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match elab_term(j, &mut core, env, term, None) -> ElabResult(KernelTerm) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(
+          t
+        ) => match kernel_as_sort(kernel_whnf(j, &mut core, t.ty, yes)) -> ElabResult(KernelTerm) {
+          None => ElabErr("expected a type")
+          Some(s) => ElabOk(t.value)
+        }
+      }
+    }
+  }
+
+  fn elab_pi(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    params: List(SurfaceParam),
+    result: SurfaceTerm
+  ) -> ElabResult(KernelTerm) {
+    match k -> ElabResult(KernelTerm) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match params -> ElabResult(KernelTerm) {
+        Nil => elab_type(j, &mut core, env, result)
+        Cons(p, rest) => match elab_type(j, &mut core, env, p.ty) -> ElabResult(KernelTerm) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(domain) => {
+            let saved = core.locals
+            let atom = kernel_fresh(&mut core, domain)
+            let locals = match p.name -> List(ElabBinding) {
+              None => env
+              Some(name) => Cons(elab_binding(name, KernelFVar(atom), domain), env)
+            }
+            let body = elab_pi(j, &mut core, locals, rest, result)
+            kernel_set_to(&mut core.locals, saved)
+            match body -> ElabResult(KernelTerm) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(codomain) => ElabOk(KernelPi(domain, kernel_abstract_at(codomain, 0, atom)))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn elab_lambda(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    params: List(Text),
+    body: SurfaceTerm,
+    expected: KernelTerm
+  ) -> ElabResult(ElabTyped) {
+    match k -> ElabResult(ElabTyped) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match params -> ElabResult(ElabTyped) {
+        Nil => elab_term(j, &mut core, env, body, Some(expected))
+        Cons(
+          name,
+          rest
+        ) => match kernel_as_pi(kernel_whnf(j, &mut core, expected, yes)) -> ElabResult(ElabTyped) {
+          None => ElabErr("lambda expected a function type")
+          Some(p) => {
+            let saved = core.locals
+            let atom = kernel_fresh(&mut core, p.fst)
+            let tail = elab_lambda(
+              j,
+              &mut core,
+              Cons(elab_binding(name, KernelFVar(atom), p.fst), env),
+              rest,
+              body,
+              kernel_inst(p.snd, KernelFVar(atom))
+            )
+            kernel_set_to(&mut core.locals, saved)
+            match tail -> ElabResult(ElabTyped) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(
+                t
+              ) => elab_result(
+                j,
+                &mut core,
+                KernelLam(kernel_abstract_at(t.value, 0, atom)),
+                Some(expected)
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn elab_annotation(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    args: List(SurfaceTerm),
+    expected: Option(KernelTerm)
+  ) -> ElabResult(ElabTyped) {
+    match k -> ElabResult(ElabTyped) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match args -> ElabResult(ElabTyped) {
+        Cons(ty, rest) => match rest -> ElabResult(ElabTyped) {
+          Cons(value, more) => match more -> ElabResult(ElabTyped) {
+            Nil => match elab_type(j, &mut core, env, ty) -> ElabResult(ElabTyped) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(
+                written
+              ) => match elab_term(
+                j,
+                &mut core,
+                env,
+                value,
+                Some(written)
+              ) -> ElabResult(ElabTyped) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(t) => elab_known(j, &mut core, t, expected)
+              }
+            }
+            _ => ElabErr("the expects a type and a value")
+          }
+          _ => ElabErr("the expects a type and a value")
+        }
+        _ => ElabErr("the expects a type and a value")
+      }
+    }
+  }
+
+  fn elab_application(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    head: SurfaceTerm,
+    args: List(SurfaceTerm),
+    expected: Option(KernelTerm)
+  ) -> ElabResult(ElabTyped) {
+    match k -> ElabResult(ElabTyped) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match elab_term(j, &mut core, env, head, None) -> ElabResult(ElabTyped) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(t) => match elab_arguments(j, &mut core, env, t, args) -> ElabResult(ElabTyped) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(v) => elab_known(j, &mut core, v, expected)
+        }
+      }
+    }
+  }
+
+  fn elab_arguments(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    head: ElabTyped,
+    args: List(SurfaceTerm)
+  ) -> ElabResult(ElabTyped) {
+    match k -> ElabResult(ElabTyped) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match args -> ElabResult(ElabTyped) {
+        Nil => ElabOk(head)
+        Cons(
+          arg,
+          rest
+        ) => match kernel_as_pi(kernel_whnf(j, &mut core, head.ty, yes)) -> ElabResult(ElabTyped) {
+          None => ElabErr("application expects a function")
+          Some(p) => match elab_term(j, &mut core, env, arg, Some(p.fst)) -> ElabResult(ElabTyped) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(
+              v
+            ) => elab_arguments(
+              j,
+              &mut core,
+              env,
+              elab_typed(KernelApp(head.value, v.value), kernel_inst(p.snd, v.value)),
+              rest
+            )
+          }
+        }
+      }
+    }
+  }
+
+  fn elab_block(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    stmts: List(SurfaceStmt),
+    expected: Option(KernelTerm)
+  ) -> ElabResult(ElabTyped) {
+    match k -> ElabResult(ElabTyped) {
+      zero => { kernel_set_to(&mut core.exhausted, yes)
+        ElabErr("elaboration exhausted") }
+      succ(j) => match stmts -> ElabResult(ElabTyped) {
+        Nil => ElabErr("empty proof block")
+        Cons(stmt, rest) => match stmt -> ElabResult(ElabTyped) {
+          StExpr(value) => match rest -> ElabResult(ElabTyped) {
+            Nil => elab_term(j, &mut core, env, value, expected)
+            _ => ElabErr("only the last block expression produces a value")
+          }
+          StLet(
+            name,
+            annotation,
+            value,
+            borrow,
+            mutable
+          ) => if borrow || mutable { ElabErr("borrowed and mutable lets are unsupported") } else {
+            let want = match annotation -> ElabResult(Option(KernelTerm)) {
+              None => ElabOk(None)
+              Some(ty) => match elab_type(j, &mut core, env, ty) -> ElabResult(Option(KernelTerm)) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(t) => ElabOk(Some(t))
+              }
+            }
+            match want -> ElabResult(ElabTyped) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(ty) => match elab_term(j, &mut core, env, value, ty) -> ElabResult(ElabTyped) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(
+                  t
+                ) => elab_block(
+                  j,
+                  &mut core,
+                  Cons(elab_binding(name, t.value, t.ty), env),
+                  rest,
+                  expected
+                )
+              }
+            }
+          }
+          _ => ElabErr("unsupported proof block statement")
+        }
+      }
+    }
+  }
+}

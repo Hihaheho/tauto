@@ -1,0 +1,330 @@
+import "declare.taut"
+
+inductive RustgenSource(): Type {
+  rustgen_source(id: Text, contents: Text): RustgenSource
+}
+inductive RustgenSourceRange(): Type {
+  rustgen_source_range(id: Text, start: Nat, end: Nat): RustgenSourceRange
+}
+inductive RustgenGraph(): Type {
+  rustgen_graph(
+    source: Text,
+    stmts: List(SurfaceStmt),
+    files: List(RustgenSourceRange),
+    generated_files: List(Text)
+  ): RustgenGraph
+}
+inductive RustgenWire(): Type {
+  rustgen_wire(contents: Text, at: Nat): RustgenWire
+}
+
+fn rustgen_has_text(wanted: Text, names: List(Text)) -> Yn {
+  match names -> Yn {
+    Nil => no
+    Cons(name, more) => wanted == name || rustgen_has_text(wanted, more)
+  }
+}
+fn rustgen_path_parts(parts: List(Text), reverse: List(Text)) -> RustgenResult(Text) {
+  match parts -> RustgenResult(Text) {
+    Nil => if list_length(
+      reverse
+    ) == 0 { RustgenErr(
+      "empty module path"
+    ) } else { RustgenOk(text_join(list_reverse(reverse), "/")) }
+    Cons(part, rest) => if part == "" || part == "." {
+      rustgen_path_parts(rest, reverse)
+    } else if part == ".." {
+      match reverse -> RustgenResult(Text) {
+        Nil => RustgenErr("module path escapes bundle")
+        Cons(last, before) => rustgen_path_parts(rest, before)
+      }
+    } else { rustgen_path_parts(rest, Cons(part, reverse)) }
+  }
+}
+fn rustgen_path_valid(path: Text) -> Yn {
+  text_len(path) != 0 && text_slice_or_empty(path, 0, 1) != "/" &&
+  list_length(text_split(path, "\\")) == 1 && list_length(text_split(path, ":")) == 1 &&
+  list_length(text_split(path, "\n")) == 1 && list_length(text_split(path, "\r")) == 1 &&
+  list_length(text_split(path, "\t")) == 1 &&
+  list_length(text_split(path, text_of_code_point(0))) == 1
+}
+fn rustgen_path(path: Text) -> RustgenResult(Text) {
+  if rustgen_path_valid(
+    path
+  ) { rustgen_path_parts(text_split(path, "/"), Nil) } else { RustgenErr("invalid module path") }
+}
+fn rustgen_parent_parts(parts: List(Text)) -> List(Text) {
+  match parts -> List(Text) {
+    Nil => Nil
+    Cons(part, rest) => match rest -> List(Text) {
+      Nil => Nil
+      Cons(next, more) => Cons(part, rustgen_parent_parts(rest))
+    }
+  }
+}
+fn rustgen_relative(own: Text, path: Text) -> RustgenResult(Text) {
+  if rustgen_path_valid(path) {
+    rustgen_path(
+      text_join(list_append(rustgen_parent_parts(text_split(own, "/")), Cons(path, Nil)), "/")
+    )
+  } else { RustgenErr("invalid module path") }
+}
+fn rustgen_source_find(id: Text, files: List(RustgenSource)) -> Option(Text) {
+  match files -> Option(Text) {
+    Nil => None
+    Cons(
+      file,
+      more
+    ) => if file.id == id { Some(file.contents) } else { rustgen_source_find(id, more) }
+  }
+}
+fn rustgen_range_has(id: Text, files: List(RustgenSourceRange)) -> Yn {
+  match files -> Yn {
+    Nil => no
+    Cons(file, more) => file.id == id || rustgen_range_has(id, more)
+  }
+}
+fn rustgen_wire_line(w: RustgenWire) -> RustgenResult(Pair(Text, RustgenWire)) {
+  match text_find(w.contents, "\n", w.at) -> RustgenResult(Pair(Text, RustgenWire)) {
+    None => RustgenErr("truncated source bundle header")
+    Some(end) => RustgenOk(Pair {
+      fst: text_slice_or_empty(w.contents, w.at, end),
+      snd: rustgen_wire(w.contents, end + 1)
+    })
+  }
+}
+fn rustgen_wire_number(w: RustgenWire) -> RustgenResult(Pair(Nat, RustgenWire)) {
+  match rustgen_wire_line(w) -> RustgenResult(Pair(Nat, RustgenWire)) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(line) => match text_parse_u64(line.fst) -> RustgenResult(Pair(Nat, RustgenWire)) {
+      None => RustgenErr("invalid source bundle length")
+      Some(
+        n
+      ) => if n > 16777216 { RustgenErr(
+        "source bundle length exceeds limit"
+      ) } else { RustgenOk(Pair { fst: n, snd: line.snd }) }
+    }
+  }
+}
+fn rustgen_wire_files(
+  n: Nat,
+  w: RustgenWire,
+  done: List(RustgenSource)
+) -> RustgenResult(List(RustgenSource)) {
+  match n -> RustgenResult(List(RustgenSource)) {
+    zero => if w.at != text_len(
+      w.contents
+    ) { RustgenErr("trailing source bundle bytes") } else { RustgenOk(list_reverse(done)) }
+    succ(left) => match rustgen_wire_number(w) -> RustgenResult(List(RustgenSource)) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(
+        id_length
+      ) => match rustgen_wire_number(id_length.snd) -> RustgenResult(List(RustgenSource)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(source_length) => {
+          let start = source_length.snd.at
+          let middle = start + id_length.fst
+          let end = middle + source_length.fst
+          match text_slice(w.contents, start, middle) -> RustgenResult(List(RustgenSource)) {
+            None => RustgenErr("invalid source bundle path boundary")
+            Some(id) => match rustgen_path(id) -> RustgenResult(List(RustgenSource)) {
+              RustgenErr(message) => RustgenErr(message)
+              RustgenOk(normal) => if normal != id { RustgenErr("noncanonical bundle path") } else {
+                match rustgen_source_find(id, done) -> RustgenResult(List(RustgenSource)) {
+                  Some(old) => RustgenErr("duplicate bundle path")
+                  None => match text_slice(
+                    w.contents,
+                    middle,
+                    end
+                  ) -> RustgenResult(List(RustgenSource)) {
+                    None => RustgenErr("invalid source bundle contents boundary")
+                    Some(source) => if text_slice_or_empty(w.contents, end, end + 1) != "\n" {
+                      RustgenErr("truncated source bundle record")
+                    } else { rustgen_wire_files(
+                      left,
+                      rustgen_wire(w.contents, end + 1),
+                      Cons(rustgen_source(id, source), done)
+                    ) }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+fn rustgen_bundle(contents: Text) -> RustgenResult(List(RustgenSource)) {
+  if text_len(contents) > 16777216 { RustgenErr("source bundle exceeds limit") } else {
+    match rustgen_wire_line(rustgen_wire(contents, 0)) -> RustgenResult(List(RustgenSource)) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(
+        header
+      ) => if header.fst != "TAUTO-SOURCES-1" { RustgenErr("unknown source bundle format") } else {
+        match rustgen_wire_number(header.snd) -> RustgenResult(List(RustgenSource)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            count
+          ) => if count.fst > 4096 { RustgenErr(
+            "too many source bundle files"
+          ) } else { rustgen_wire_files(count.fst, count.snd, Nil) }
+        }
+      }
+    }
+  }
+}
+fn rustgen_nonimports(stmts: List(SurfaceStmt)) -> List(SurfaceStmt) {
+  match stmts -> List(SurfaceStmt) {
+    Nil => Nil
+    Cons(stmt, rest) => match stmt -> List(SurfaceStmt) {
+      StImport(path, start, end) => rustgen_nonimports(rest)
+      _ => Cons(stmt, rustgen_nonimports(rest))
+    }
+  }
+}
+mutual {
+  fn rustgen_visit(
+    k: u64,
+    tables: SyntaxTables,
+    files: List(RustgenSource),
+    id: Text,
+    stack: List(Text),
+    graph: RustgenGraph
+  ) -> RustgenResult(RustgenGraph) {
+    if k == 0 { RustgenErr("module import depth exceeds limit") } else {
+      let fuel = k - 1
+      if rustgen_range_has(
+        id,
+        graph.files
+      ) { RustgenOk(
+        graph
+      ) } else if rustgen_has_text(
+        id,
+        stack
+      ) { RustgenErr(
+        text_concat_all(Cons("import cycle: ", Cons(id, Nil)))
+      ) } else { match rustgen_source_find(id, files) -> RustgenResult(RustgenGraph) {
+          None => RustgenErr(text_concat_all(Cons("missing bundle module: ", Cons(id, Nil))))
+          Some(source) => match syntax_parse(tables, source) -> RustgenResult(RustgenGraph) {
+            None => RustgenErr(text_concat_all(Cons("cannot parse module: ", Cons(id, Nil))))
+            Some(root) => {
+              let stmts = surface_program_of(
+                SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(
+                  root
+                ) + 1 },
+                root
+              )
+              match rustgen_imports(
+                fuel,
+                tables,
+                files,
+                id,
+                Cons(id, stack),
+                stmts,
+                graph
+              ) -> RustgenResult(RustgenGraph) {
+                RustgenErr(message) => RustgenErr(message)
+                RustgenOk(next) => {
+                  let base = text_len(next.source)
+                  let parsed = surface_program_of(
+                    SurfaceCtx { source: source, base: base, classes: unicode_classes(), fuel: surface_size(
+                      root
+                    ) + 1 },
+                    root
+                  )
+                  RustgenOk(RustgenGraph {
+                  source: text_concat_all(Cons(next.source, Cons(source, Cons("\n", Nil)))),
+                  stmts: list_append(next.stmts, rustgen_nonimports(parsed)),
+                  files: list_append(next.files, Cons(RustgenSourceRange { id: id, start: base, end: base + text_len(source) }, Nil)),
+                  generated_files: if rustgen_generated(surface_size(root) + 1, Cons(root, Nil)) { list_append(next.generated_files, Cons(id, Nil)) } else { next.generated_files } })
+                }
+              }
+            }
+          }
+        } }
+    }
+  }
+  fn rustgen_imports(
+    k: u64,
+    tables: SyntaxTables,
+    files: List(RustgenSource),
+    id: Text,
+    stack: List(Text),
+    stmts: List(SurfaceStmt),
+    graph: RustgenGraph
+  ) -> RustgenResult(RustgenGraph) {
+    if k == 0 { RustgenErr("module import traversal exceeds limit") } else {
+      let fuel = k - 1
+      match stmts -> RustgenResult(RustgenGraph) {
+        Nil => RustgenOk(graph)
+        Cons(stmt, rest) => match stmt -> RustgenResult(RustgenGraph) {
+          StImport(
+            path,
+            start,
+            end
+          ) => match rustgen_relative(id, path) -> RustgenResult(RustgenGraph) {
+            RustgenErr(
+              message
+            ) => RustgenErr(text_concat_all(Cons(id, Cons(": ", Cons(message, Nil)))))
+            RustgenOk(
+              target
+            ) => match rustgen_visit(
+              fuel,
+              tables,
+              files,
+              target,
+              stack,
+              graph
+            ) -> RustgenResult(RustgenGraph) {
+              RustgenErr(message) => RustgenErr(message)
+              RustgenOk(next) => rustgen_imports(fuel, tables, files, id, stack, rest, next)
+            }
+          }
+          _ => rustgen_imports(fuel, tables, files, id, stack, rest, graph)
+        }
+      }
+    }
+  }
+}
+fn rustgen_load_bundle(contents: Text, entry: Text) -> RustgenResult(RustgenGraph) {
+  match rustgen_path(entry) -> RustgenResult(RustgenGraph) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(id) => match rustgen_bundle(contents) -> RustgenResult(RustgenGraph) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(files) => match syntax_tables() -> RustgenResult(RustgenGraph) {
+        None => RustgenErr("damaged syntax tables")
+        Some(
+          tables
+        ) => rustgen_visit(
+          256,
+          tables,
+          files,
+          id,
+          Nil,
+          RustgenGraph { source: "", stmts: Nil, files: Nil, generated_files: Nil }
+        )
+      }
+    }
+  }
+}
+fn rustgen_graph_lines(files: List(RustgenSourceRange)) -> List(Text) {
+  match files -> List(Text) {
+    Nil => Nil
+    Cons(
+      file,
+      rest
+    ) => Cons(
+      text_concat_all(
+        Cons(
+          file.id,
+          Cons(
+            "\t",
+            Cons(text_of_u64(file.start), Cons("\t", Cons(text_of_u64(file.end), Cons("\n", Nil))))
+          )
+        )
+      ),
+      rustgen_graph_lines(rest)
+    )
+  }
+}

@@ -67,3 +67,11 @@ Two things to know when reading the code:
 - A `&mut` parameter is never read as a whole and stored back into itself (the
   interpreter makes a cycle of that); a field is read through the borrow and
   written back with `set_to(&mut c.field, v)`.
+
+## Constructor resolution boundary
+
+The host checker resolves shared constructor names by the scrutinee or expected
+owning type. This tote's constructor table does not implement that resolution;
+its acceptance and report parity do not cover programs with shared constructor
+names. Its proof statements concern the tote's own checker, not the host's
+owner-directed resolver.

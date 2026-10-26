@@ -1,0 +1,312 @@
+import "emit.taut"
+import "data.taut"
+
+fn rustgen_no_borrows(borrows: List(Option(Yn))) -> Yn {
+  match borrows -> Yn {
+    Nil => yes
+
+    Cons(borrow, rest) => match borrow -> Yn {
+      None => rustgen_no_borrows(rest)
+
+      Some(mutable) => no
+    }
+  }
+}
+
+fn rustgen_no_effects(effects: Option(List(Text))) -> Yn {
+  match effects -> Yn {
+    None => yes
+
+    Some(names) => no
+  }
+}
+
+fn rustgen_parameters(
+  names: List(Text),
+  types: List(Option(SurfaceTerm)),
+  done: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match names -> RustgenResult(List(RustgenBinding)) {
+    Nil => match types -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenOk(list_reverse(done))
+
+      Cons(extra, rest) => RustgenErr("parameter lists differ")
+    }
+
+    Cons(name, more) => match rustgen_find(name, done) -> RustgenResult(List(RustgenBinding)) {
+
+      Some(existing) => RustgenErr("duplicate parameter")
+      None => match types -> RustgenResult(List(RustgenBinding)) {
+        Nil => RustgenErr("parameter type required")
+
+        Cons(written, rest) => match written -> RustgenResult(List(RustgenBinding)) {
+          None => RustgenErr("parameter type required")
+
+          Some(term) => match rustgen_written(term) -> RustgenResult(List(RustgenBinding)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(ty) => rustgen_parameters(more, rest, Cons(rustgen_binding(name, ty), done))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_no_bounds(bounds: List(Option(Text))) -> Yn {
+  match bounds -> Yn {
+    Nil => yes
+    Cons(b, rest) => match b -> Yn {
+      None => rustgen_no_bounds(rest)
+      Some(name) => no
+    }
+  }
+}
+fn rustgen_signature(f: SurfaceFn) -> RustgenResult(RustgenFunction) {
+  if rustgen_reserved(
+    f.name
+  ) { RustgenErr(
+    "reserved function name"
+  ) } else if !rustgen_names_unique(
+    f.generics,
+    Nil
+  ) || !rustgen_no_bounds(f.bounds) || list_length(f.wheres) != 0 {
+    RustgenErr("duplicate generic parameters or unsupported constraints")
+  } else if !rustgen_no_borrows(
+    f.borrows
+  ) || !rustgen_no_effects(f.effects) { RustgenErr("borrows and effects are unsupported") } else {
+    match f.result -> RustgenResult(RustgenFunction) {
+      None => RustgenErr("an explicit result type is required")
+      Some(written) => match rustgen_written(written) -> RustgenResult(RustgenFunction) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          raw_result
+        ) => match rustgen_vars(10000, raw_result, f.generics) -> RustgenResult(RustgenFunction) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            result
+          ) => match rustgen_parameters(
+            f.params,
+            f.param_types,
+            Nil
+          ) -> RustgenResult(RustgenFunction) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(
+              raw_params
+            ) => match rustgen_vars_bindings(
+              10000,
+              raw_params,
+              f.generics
+            ) -> RustgenResult(RustgenFunction) {
+              RustgenErr(message) => RustgenErr(message)
+              RustgenOk(
+                params
+              ) => RustgenOk(rustgen_function(f.name, params, result, f.body, 0, f.generics))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_declarations_in(
+  k: Nat,
+  stmts: List(SurfaceStmt),
+  done: List(RustgenFunction)
+) -> RustgenResult(List(RustgenFunction)) {
+  match k -> RustgenResult(List(RustgenFunction)) {
+    zero => RustgenErr("declaration depth exceeded")
+    succ(j) => match stmts -> RustgenResult(List(RustgenFunction)) {
+      Nil => RustgenOk(list_reverse(done))
+
+      Cons(stmt, rest) => match stmt -> RustgenResult(List(RustgenFunction)) {
+        StFn(
+          f
+        ) => match rustgen_find_function(f.name, done) -> RustgenResult(List(RustgenFunction)) {
+
+          Some(existing) => RustgenErr("duplicate function")
+          None => match rustgen_signature(f) -> RustgenResult(List(RustgenFunction)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(function) => rustgen_declarations_in(j, rest, Cons(function, done))
+          }
+        }
+        StLet(
+          unused0,
+          unused1,
+          unused2,
+          unused3,
+          unused4
+        ) => RustgenErr("unsupported declaration: StLet")
+        StVar(unused0, unused1, unused2, unused3) => RustgenErr("unsupported declaration: StVar")
+        StModule(
+          unused0,
+          unused1,
+          unused2,
+          unused3
+        ) => RustgenErr("unsupported declaration: StModule")
+        StAssign(unused0, unused1) => RustgenErr("unsupported declaration: StAssign")
+        StTheorem(unused0) => RustgenErr("unsupported declaration: StTheorem")
+        StDef(unused0) => RustgenErr("unsupported declaration: StDef")
+        StMutual(items, start, end) => rustgen_declarations_in(j, list_append(items, rest), done)
+        StImport(unused0, unused1, unused2) => RustgenErr("unsupported declaration: StImport")
+        StInductive(d) => match rustgen_inductive(d, done) -> RustgenResult(List(RustgenFunction)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(next) => rustgen_declarations_in(j, rest, next)
+        }
+        StEffect(unused0) => RustgenErr("unsupported declaration: StEffect")
+        StStruct(unused0) => RustgenErr("unsupported declaration: StStruct")
+        StEnum(unused0) => RustgenErr("unsupported declaration: StEnum")
+        StExtern(
+          unused0,
+          unused1,
+          unused2,
+          unused3
+        ) => RustgenErr("unsupported declaration: StExtern")
+        StClass(unused0) => RustgenErr("unsupported declaration: StClass")
+        StInstance(unused0) => RustgenErr("unsupported declaration: StInstance")
+        StWhile(unused0, unused1) => RustgenErr("unsupported declaration: StWhile")
+        StReturn(unused0) => RustgenErr("unsupported declaration: StReturn")
+        StExpr(unused0) => RustgenErr("unsupported declaration: StExpr")
+        StOther(unused0, unused1, unused2) => RustgenErr("unsupported declaration: StOther")
+        StMacro(unused0, unused1, unused2, unused3) => RustgenErr(
+          "unsupported declaration: StMacro"
+        )
+        StSyntax(
+          unused0,
+          unused1,
+          unused2,
+          unused3
+        ) => RustgenErr("unsupported declaration: StSyntax")
+      }
+    }
+  }
+}
+
+fn rustgen_declarations(
+  stmts: List(SurfaceStmt),
+  done: List(RustgenFunction)
+) -> RustgenResult(List(RustgenFunction)) { rustgen_declarations_in(10000, stmts, done) }
+
+fn rustgen_parameter_code(params: List(RustgenBinding)) -> List(Text) {
+  match params -> List(Text) {
+    Nil => Nil
+    Cons(
+      param,
+      rest
+    ) => Cons(
+      text_concat_all(
+        Cons(rustgen_ident(param.name), Cons(": ", Cons(rustgen_type_name(param.ty), Nil)))
+      ),
+      rustgen_parameter_code(rest)
+    )
+  }
+}
+
+fn rustgen_functions(
+  source: Text,
+  all: List(RustgenFunction),
+  remaining: List(RustgenFunction)
+) -> RustgenResult(List(Text)) {
+  match remaining -> RustgenResult(List(Text)) {
+    Nil => RustgenOk(Nil)
+    Cons(
+      f,
+      rest
+    ) => if !rustgen_signature_known(
+      f,
+      all
+    ) { RustgenErr("unknown declared type") } else if f.kind != 0 {
+      match rustgen_functions(source, all, rest) -> RustgenResult(List(Text)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(more) => RustgenOk(Cons(rustgen_data_code(f, all), more))
+      }
+    } else { match rustgen_expr(
+      10000,
+      source,
+      rustgen_with_scope(f.generics, all),
+      f.params,
+      f.body
+    ) -> RustgenResult(List(Text)) {
+        RustgenErr(
+          message
+        ) => RustgenErr(text_concat_all(Cons(f.name, Cons(": ", Cons(message, Nil)))))
+        RustgenOk(
+          value
+        ) => if !rustgen_fits(
+          value.ty,
+          f.result
+        ) { RustgenErr("function result type mismatch") } else {
+          match rustgen_functions(source, all, rest) -> RustgenResult(List(Text)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(
+              more
+            ) => RustgenOk(
+              Cons(
+                text_concat_all(
+                  Cons(
+                    "fn ",
+                    Cons(
+                      text_concat(rustgen_ident(f.name), rustgen_generics(f.generics, yes)),
+                      Cons(
+                        "(",
+                        Cons(
+                          text_join(rustgen_parameter_code(f.params), ", "),
+                          Cons(
+                            ") -> ",
+                            Cons(
+                              rustgen_type_name(f.result),
+                              Cons(
+                                " { tauto_rt::host_tick(",
+                                Cons(
+                                  rustgen_location(source, f.body.start),
+                                  Cons("); ", Cons(value.code, Cons(" }\n", Nil)))
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                ),
+                more
+              )
+            )
+          }
+        }
+      }
+    }
+  }
+
+}
+
+fn rustgen_program(source: Text, stmts: List(SurfaceStmt), entry: Text) -> RustgenResult(Text) {
+  match rustgen_declarations(stmts, rustgen_builtin_declarations()) -> RustgenResult(Text) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(functions) => match rustgen_find_function(entry, functions) -> RustgenResult(Text) {
+      None => RustgenErr("entry function not found")
+      Some(
+        f
+      ) => if f.kind != 0 || !rustgen_printable(
+        f.result
+      ) || list_length(f.params) != 0 { RustgenErr("entry function must have no parameters") } else {
+        match rustgen_functions(source, functions, functions) -> RustgenResult(Text) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            parts
+          ) => RustgenOk(
+            text_concat_all(
+              Cons(
+                text_concat_all(parts),
+                Cons(
+                  "fn main() -> std::process::ExitCode { tauto_rt::run_main(|| { println!(\"{}\", ",
+                  Cons(rustgen_ident(entry), Cons("()); }) }\n", Nil))
+                )
+              )
+            )
+          )
+        }
+      }
+    }
+  }
+}

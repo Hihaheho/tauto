@@ -1,0 +1,121 @@
+import "elaborate.taut"
+
+fn elab_params(params: List(SurfaceNamed)) -> List(SurfaceParam) {
+  match params -> List(SurfaceParam) {
+    Nil => Nil
+    Cons(p, rest) => Cons(surface_param_mk(Some(p.name), p.ty), elab_params(rest))
+  }
+}
+fn elab_names(params: List(SurfaceNamed)) -> List(Text) {
+  match params -> List(Text) {
+    Nil => Nil
+    Cons(p, rest) => Cons(p.name, elab_names(rest))
+  }
+}
+
+inductive ElabDeclaration(): Type {
+  elab_declaration(name: Text, ty: KernelTerm, value: KernelTerm, transparent: Yn): ElabDeclaration
+}
+
+// Check the written signature, elaborate with that expected type, then ask the
+// independent kernel to accept the closed declaration. Every failure restores
+// the complete environment, including atoms and exhaustion state.
+fn elab_declaration_inner(
+  k: Nat,
+  &mut core: KernelCore,
+  decl: SurfaceTheorem,
+  transparent: Yn
+) -> ElabResult(ElabDeclaration) {
+  if decl.implicit != 0 { ElabErr("implicit parameters are unsupported") } else {
+    match decl.body -> ElabResult(ElabDeclaration) {
+      None => ElabErr("a declaration must supply its body; axioms are unsupported")
+      Some(body) => {
+        let signature = surface_term_mk(
+          SkPi(elab_params(decl.params), decl.ty, None),
+          decl.start,
+          decl.end
+        )
+        match elab_type(k, &mut core, Nil, signature) -> ElabResult(ElabDeclaration) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(ty) => {
+            let value = surface_term_mk(SkLam(elab_names(decl.params), body), decl.start, decl.end)
+            match elab_term(k, &mut core, Nil, value, Some(ty)) -> ElabResult(ElabDeclaration) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(
+                t
+              ) => match kernel_execute(
+                k,
+                &mut core,
+                KernelDeclare(decl.name, ty, Some(t.value), transparent)
+              ) -> ElabResult(ElabDeclaration) {
+                KernelAccepted => ElabOk(elab_declaration(decl.name, ty, t.value, transparent))
+                KernelRejected => ElabErr("kernel rejected the elaborated declaration")
+                KernelExhausted => ElabErr("kernel exhausted")
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+fn elab_declaration_checked(
+  k: Nat,
+  &mut core: KernelCore,
+  decl: SurfaceTheorem,
+  transparent: Yn
+) -> ElabResult(ElabDeclaration) {
+  let saved = kernel_snapshot(core)
+  let result = elab_declaration_inner(k, &mut core, decl, transparent)
+  if core.exhausted {
+    kernel_set_to(&mut core, saved)
+    ElabErr("elaboration exhausted")
+  } else {
+    match result -> ElabResult(ElabDeclaration) {
+      ElabErr(e) => { kernel_set_to(&mut core, saved)
+        ElabErr(e) }
+      ElabOk(d) => ElabOk(d)
+    }
+  }
+}
+fn elab_program(
+  stmts: List(SurfaceStmt),
+  k: Nat,
+  &mut core: KernelCore
+) -> ElabResult(List(ElabDeclaration)) {
+  match stmts -> ElabResult(List(ElabDeclaration)) {
+    Nil => ElabOk(Nil)
+    Cons(stmt, rest) => {
+      let first = match stmt -> ElabResult(ElabDeclaration) {
+        StDef(d) => elab_declaration_checked(k, &mut core, d, yes)
+        StTheorem(d) => elab_declaration_checked(k, &mut core, d, no)
+        _ => ElabErr("only explicit def and theorem declarations are supported")
+      }
+      match first -> ElabResult(List(ElabDeclaration)) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(d) => match elab_program(rest, k, &mut core) -> ElabResult(List(ElabDeclaration)) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(ds) => ElabOk(Cons(d, ds))
+        }
+      }
+    }
+  }
+}
+
+// Surface currently omits attributes and generation clauses. Never silently
+// discard them. Unsupported declarations remain errors in elab_program.
+fn elab_unsupported(k: Nat, nodes: List(CstNode)) -> Yn {
+  match k -> Yn {
+    zero => yes
+    succ(j) => match nodes -> Yn {
+      Nil => no
+      Cons(
+        n,
+        rest
+      ) => n.name == "Attribute" || n.name == "Generates" || n.name == "Generated" || elab_unsupported(
+        j,
+        list_append(n.flat, rest)
+      )
+    }
+  }
+}

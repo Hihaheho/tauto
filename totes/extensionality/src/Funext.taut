@@ -1,0 +1,17 @@
+// An explicit assumption about pure dependent functions. Importing this file
+// makes the assumption available; only declarations that use it depend on it.
+axiom funext<A: Type, B: (
+  A
+) -> Type>(
+  f: ∀ x: A. B(x),
+  g: ∀ x: A. B(x),
+  pointwise: ∀ x: A. Eq(B(x), f(x), g(x))
+): Eq(∀ x: A. B(x), f, g)
+
+theorem funext_nondependent<A: Type, B: Type>(
+  f: (A) -> B,
+  g: (A) -> B,
+  pointwise: ∀ x: A. Eq(B, f(x), g(x))
+): Eq((A) -> B, f, g) {
+  funext(A, x => B, f, g, pointwise)
+}

@@ -1,0 +1,617 @@
+import "Setoid.taut"
+import "../../../std/Tactic.taut"
+
+// A representative denotes positive - negative, not a bounded machine integer.
+inductive AlgebraInteger(): Type {
+  algebra_integer(positive: Nat, negative: Nat): AlgebraInteger
+}
+
+fn integer_pos(x: AlgebraInteger) -> Nat {
+  match x -> Nat { algebra_integer(p, n) => p } }
+fn integer_neg_part(x: AlgebraInteger) -> Nat {
+  match x -> Nat { algebra_integer(p, n) => n } }
+
+def IntegerEq(x: AlgebraInteger, y: AlgebraInteger): Prop :=
+Eq(Nat, nat_add(integer_pos(x), integer_neg_part(y)), nat_add(integer_pos(y), integer_neg_part(x)))
+
+def integer_zero(): AlgebraInteger := algebra_integer(zero, zero)
+def integer_one(): AlgebraInteger := algebra_integer(succ(zero), zero)
+def integer_of_nat(n: Nat): AlgebraInteger := algebra_integer(n, zero)
+def integer_neg(
+  x: AlgebraInteger
+): AlgebraInteger := algebra_integer(integer_neg_part(x), integer_pos(x))
+def integer_add(x: AlgebraInteger, y: AlgebraInteger): AlgebraInteger :=
+algebra_integer(
+  nat_add(integer_pos(x), integer_pos(y)),
+  nat_add(integer_neg_part(x), integer_neg_part(y))
+)
+def integer_sub(
+  x: AlgebraInteger,
+  y: AlgebraInteger
+): AlgebraInteger := integer_add(x, integer_neg(y))
+def integer_scale(x: AlgebraInteger, n: Nat): AlgebraInteger :=
+algebra_integer(nat_mul(integer_pos(x), n), nat_mul(integer_neg_part(x), n))
+def integer_mul(x: AlgebraInteger, y: AlgebraInteger): AlgebraInteger :=
+integer_add(integer_scale(x, integer_pos(y)), integer_neg(integer_scale(x, integer_neg_part(y))))
+
+theorem integer_eq_refl(x: AlgebraInteger): IntegerEq(x, x) { refl() }
+theorem integer_eq_sym(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  h: IntegerEq(x, y)
+): IntegerEq(y, x) { Eq_sym(h) }
+
+theorem integer_nat_cancel(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  h: Eq(Nat, nat_add(a, c), nat_add(b, c))
+): Eq(Nat, a, b) {
+  match c -> Eq(Nat, a, b) {
+    zero => h
+    succ(k) => integer_nat_cancel(a, b, k, Eq_congr(nat_pred, h))
+  }
+}
+
+theorem integer_nat_add_congr(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  d: Nat,
+  h: Eq(Nat, a, b),
+  k: Eq(Nat, c, d)
+): Eq(Nat, nat_add(a, c), nat_add(b, d)) {
+  Eq_trans(Eq_congr((t: Nat) => nat_add(t, c), h), Eq_congr((t: Nat) => nat_add(b, t), k))
+}
+
+theorem integer_eq_trans(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger,
+  h: IntegerEq(x, y),
+  k: IntegerEq(y, z)
+): IntegerEq(x, z) {
+  let a: Nat = integer_pos(x);
+  let b: Nat = integer_neg_part(x);
+  let c: Nat = integer_pos(y);
+  let d: Nat = integer_neg_part(y);
+  let e: Nat = integer_pos(z);
+  let f: Nat = integer_neg_part(z);
+  let first: Eq(Nat, nat_add(nat_add(a, f), d), nat_add(nat_add(a, d), f)) = nat_add_swap(a, f, d);
+  let second: Eq(
+    Nat,
+    nat_add(nat_add(a, d), f),
+    nat_add(nat_add(c, b), f)
+  ) = Eq_congr((t: Nat) => nat_add(t, f), h);
+  let third: Eq(Nat, nat_add(nat_add(c, b), f), nat_add(nat_add(c, f), b)) = nat_add_swap(c, b, f);
+  let fourth: Eq(
+    Nat,
+    nat_add(nat_add(c, f), b),
+    nat_add(nat_add(e, d), b)
+  ) = Eq_congr((t: Nat) => nat_add(t, b), k);
+  let fifth: Eq(Nat, nat_add(nat_add(e, d), b), nat_add(nat_add(e, b), d)) = nat_add_swap(e, d, b);
+  integer_nat_cancel(
+    nat_add(a, f),
+    nat_add(e, b),
+    d,
+    Eq_trans(first, Eq_trans(second, Eq_trans(third, Eq_trans(fourth, fifth))))
+  )
+}
+
+theorem integer_neg_respects(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  h: IntegerEq(x, y)
+): IntegerEq(integer_neg(x), integer_neg(y)) {
+  Eq_trans(
+    nat_add_comm(integer_neg_part(x), integer_pos(y)),
+    Eq_trans(Eq_sym(h), nat_add_comm(integer_pos(x), integer_neg_part(y)))
+  )
+}
+
+theorem integer_add_respects(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger,
+  w: AlgebraInteger,
+  h: IntegerEq(x, y),
+  k: IntegerEq(z, w)
+): IntegerEq(integer_add(x, z), integer_add(y, w)) {
+  Eq_trans(
+    nat_add_shuffle(integer_pos(x), integer_pos(z), integer_neg_part(y), integer_neg_part(w)),
+    Eq_trans(
+      integer_nat_add_congr(
+        nat_add(integer_pos(x), integer_neg_part(y)),
+        nat_add(integer_pos(y), integer_neg_part(x)),
+        nat_add(integer_pos(z), integer_neg_part(w)),
+        nat_add(integer_pos(w), integer_neg_part(z)),
+        h,
+        k
+      ),
+      Eq_sym(
+        nat_add_shuffle(integer_pos(y), integer_pos(w), integer_neg_part(x), integer_neg_part(z))
+      )
+    )
+  )
+}
+
+theorem integer_scale_respects(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  n: Nat,
+  h: IntegerEq(x, y)
+): IntegerEq(integer_scale(x, n), integer_scale(y, n)) {
+  Eq_trans(
+    Eq_sym(nat_mul_add_distrib_right(integer_pos(x), integer_neg_part(y), n)),
+    Eq_trans(
+      Eq_congr((t: Nat) => nat_mul(t, n), h),
+      nat_mul_add_distrib_right(integer_pos(y), integer_neg_part(x), n)
+    )
+  )
+}
+
+theorem integer_mul_respects_left(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger,
+  h: IntegerEq(x, y)
+): IntegerEq(integer_mul(x, z), integer_mul(y, z)) {
+  integer_add_respects(
+    integer_scale(x, integer_pos(z)),
+    integer_scale(y, integer_pos(z)),
+    integer_neg(integer_scale(x, integer_neg_part(z))),
+    integer_neg(integer_scale(y, integer_neg_part(z))),
+    integer_scale_respects(x, y, integer_pos(z), h),
+    integer_neg_respects(
+      integer_scale(x, integer_neg_part(z)),
+      integer_scale(y, integer_neg_part(z)),
+      integer_scale_respects(x, y, integer_neg_part(z), h)
+    )
+  )
+}
+
+theorem integer_add_assoc(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger
+): IntegerEq(integer_add(integer_add(x, y), z), integer_add(x, integer_add(y, z))) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_add(nat_add(integer_pos(x), integer_pos(y)), integer_pos(z)),
+      nat_add(integer_neg_part(x), nat_add(integer_neg_part(y), integer_neg_part(z)))
+    ),
+    nat_add(
+      nat_add(integer_pos(x), nat_add(integer_pos(y), integer_pos(z))),
+      nat_add(nat_add(integer_neg_part(x), integer_neg_part(y)), integer_neg_part(z))
+    )
+  ) {}
+}
+
+theorem integer_add_comm(
+  x: AlgebraInteger,
+  y: AlgebraInteger
+): IntegerEq(integer_add(x, y), integer_add(y, x)) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_add(integer_pos(x), integer_pos(y)),
+      nat_add(integer_neg_part(y), integer_neg_part(x))
+    ),
+    nat_add(
+      nat_add(integer_pos(y), integer_pos(x)),
+      nat_add(integer_neg_part(x), integer_neg_part(y))
+    )
+  ) {}
+}
+
+theorem integer_add_zero(x: AlgebraInteger): IntegerEq(integer_add(x, integer_zero), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(nat_add(integer_pos(x), zero), integer_neg_part(x)),
+    nat_add(integer_pos(x), nat_add(integer_neg_part(x), zero))
+  ) {}
+}
+
+theorem integer_add_neg(
+  x: AlgebraInteger
+): IntegerEq(integer_add(x, integer_neg(x)), integer_zero) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(nat_add(integer_pos(x), integer_neg_part(x)), zero),
+    nat_add(zero, nat_add(integer_neg_part(x), integer_pos(x)))
+  ) {}
+}
+
+theorem integer_neg_neg(x: AlgebraInteger): IntegerEq(integer_neg(integer_neg(x)), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(integer_pos(x), integer_neg_part(x)),
+    nat_add(integer_pos(x), integer_neg_part(x))
+  ) {}
+}
+
+theorem integer_mul_comm(
+  x: AlgebraInteger,
+  y: AlgebraInteger
+): IntegerEq(integer_mul(x, y), integer_mul(y, x)) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_add(
+        nat_mul(integer_pos(x), integer_pos(y)),
+        nat_mul(integer_neg_part(x), integer_neg_part(y))
+      ),
+      nat_add(
+        nat_mul(integer_neg_part(y), integer_pos(x)),
+        nat_mul(integer_pos(y), integer_neg_part(x))
+      )
+    ),
+    nat_add(
+      nat_add(
+        nat_mul(integer_pos(y), integer_pos(x)),
+        nat_mul(integer_neg_part(y), integer_neg_part(x))
+      ),
+      nat_add(
+        nat_mul(integer_neg_part(x), integer_pos(y)),
+        nat_mul(integer_pos(x), integer_neg_part(y))
+      )
+    )
+  ) {}
+}
+
+theorem integer_mul_assoc(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger
+): IntegerEq(integer_mul(integer_mul(x, y), z), integer_mul(x, integer_mul(y, z))) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_add(
+        nat_mul(
+          nat_add(
+            nat_mul(integer_pos(x), integer_pos(y)),
+            nat_mul(integer_neg_part(x), integer_neg_part(y))
+          ),
+          integer_pos(z)
+        ),
+        nat_mul(
+          nat_add(
+            nat_mul(integer_neg_part(x), integer_pos(y)),
+            nat_mul(integer_pos(x), integer_neg_part(y))
+          ),
+          integer_neg_part(z)
+        )
+      ),
+      nat_add(
+        nat_mul(
+          integer_neg_part(x),
+          nat_add(
+            nat_mul(integer_pos(y), integer_pos(z)),
+            nat_mul(integer_neg_part(y), integer_neg_part(z))
+          )
+        ),
+        nat_mul(
+          integer_pos(x),
+          nat_add(
+            nat_mul(integer_neg_part(y), integer_pos(z)),
+            nat_mul(integer_pos(y), integer_neg_part(z))
+          )
+        )
+      )
+    ),
+    nat_add(
+      nat_add(
+        nat_mul(
+          integer_pos(x),
+          nat_add(
+            nat_mul(integer_pos(y), integer_pos(z)),
+            nat_mul(integer_neg_part(y), integer_neg_part(z))
+          )
+        ),
+        nat_mul(
+          integer_neg_part(x),
+          nat_add(
+            nat_mul(integer_neg_part(y), integer_pos(z)),
+            nat_mul(integer_pos(y), integer_neg_part(z))
+          )
+        )
+      ),
+      nat_add(
+        nat_mul(
+          nat_add(
+            nat_mul(integer_neg_part(x), integer_pos(y)),
+            nat_mul(integer_pos(x), integer_neg_part(y))
+          ),
+          integer_pos(z)
+        ),
+        nat_mul(
+          nat_add(
+            nat_mul(integer_pos(x), integer_pos(y)),
+            nat_mul(integer_neg_part(x), integer_neg_part(y))
+          ),
+          integer_neg_part(z)
+        )
+      )
+    )
+  ) {}
+}
+
+theorem integer_mul_one(x: AlgebraInteger): IntegerEq(integer_mul(x, integer_one), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_add(nat_mul(integer_pos(x), succ(zero)), nat_mul(integer_neg_part(x), zero)),
+      integer_neg_part(x)
+    ),
+    nat_add(
+      integer_pos(x),
+      nat_add(nat_mul(integer_neg_part(x), succ(zero)), nat_mul(integer_pos(x), zero))
+    )
+  ) {}
+}
+
+theorem integer_mul_zero(x: AlgebraInteger): IntegerEq(integer_mul(x, integer_zero), integer_zero) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(nat_add(nat_mul(integer_pos(x), zero), nat_mul(integer_neg_part(x), zero)), zero),
+    nat_add(zero, nat_add(nat_mul(integer_neg_part(x), zero), nat_mul(integer_pos(x), zero)))
+  ) {}
+}
+
+theorem integer_mul_add(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger
+): IntegerEq(integer_mul(x, integer_add(y, z)), integer_add(integer_mul(x, y), integer_mul(x, z))) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_add(
+        nat_mul(integer_pos(x), nat_add(integer_pos(y), integer_pos(z))),
+        nat_mul(integer_neg_part(x), nat_add(integer_neg_part(y), integer_neg_part(z)))
+      ),
+      nat_add(
+        nat_add(
+          nat_mul(integer_neg_part(x), integer_pos(y)),
+          nat_mul(integer_pos(x), integer_neg_part(y))
+        ),
+        nat_add(
+          nat_mul(integer_neg_part(x), integer_pos(z)),
+          nat_mul(integer_pos(x), integer_neg_part(z))
+        )
+      )
+    ),
+    nat_add(
+      nat_add(
+        nat_add(
+          nat_mul(integer_pos(x), integer_pos(y)),
+          nat_mul(integer_neg_part(x), integer_neg_part(y))
+        ),
+        nat_add(
+          nat_mul(integer_pos(x), integer_pos(z)),
+          nat_mul(integer_neg_part(x), integer_neg_part(z))
+        )
+      ),
+      nat_add(
+        nat_mul(integer_neg_part(x), nat_add(integer_pos(y), integer_pos(z))),
+        nat_mul(integer_pos(x), nat_add(integer_neg_part(y), integer_neg_part(z)))
+      )
+    )
+  ) {}
+}
+
+theorem integer_mul_respects(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger,
+  w: AlgebraInteger,
+  h: IntegerEq(x, y),
+  k: IntegerEq(z, w)
+): IntegerEq(integer_mul(x, z), integer_mul(y, w)) {
+  integer_eq_trans(
+    integer_mul(x, z),
+    integer_mul(y, z),
+    integer_mul(y, w),
+    integer_mul_respects_left(x, y, z, h),
+    integer_eq_trans(
+      integer_mul(y, z),
+      integer_mul(z, y),
+      integer_mul(y, w),
+      integer_mul_comm(y, z),
+      integer_eq_trans(
+        integer_mul(z, y),
+        integer_mul(w, y),
+        integer_mul(y, w),
+        integer_mul_respects_left(z, w, y, k),
+        integer_mul_comm(w, y)
+      )
+    )
+  )
+}
+
+theorem integer_sub_respects(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  z: AlgebraInteger,
+  w: AlgebraInteger,
+  h: IntegerEq(x, y),
+  k: IntegerEq(z, w)
+): IntegerEq(integer_sub(x, z), integer_sub(y, w)) {
+  integer_add_respects(x, y, integer_neg(z), integer_neg(w), h, integer_neg_respects(z, w, k))
+}
+
+theorem integer_of_nat_injective(
+  a: Nat,
+  b: Nat,
+  h: IntegerEq(integer_of_nat(a), integer_of_nat(b))
+): Eq(Nat, a, b) { h }
+
+theorem integer_of_nat_add(
+  a: Nat,
+  b: Nat
+): IntegerEq(
+  integer_of_nat(nat_add(a, b)),
+  integer_add(integer_of_nat(a), integer_of_nat(b))
+) { refl() }
+
+theorem integer_of_nat_mul(
+  a: Nat,
+  b: Nat
+): IntegerEq(integer_of_nat(nat_mul(a, b)), integer_mul(integer_of_nat(a), integer_of_nat(b))) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(nat_mul(a, b), nat_add(nat_mul(zero, b), nat_mul(a, zero))),
+    nat_add(nat_mul(a, b), nat_mul(zero, zero))
+  ) {}
+}
+
+// Adding the same natural to both parts does not change the integer.
+theorem integer_shift(
+  p: Nat,
+  n: Nat,
+  k: Nat
+): IntegerEq(algebra_integer(nat_add(p, k), nat_add(n, k)), algebra_integer(p, n)) {
+  Eq_trans(nat_add_swap(p, k, n), nat_add_assoc(p, n, k))
+}
+
+theorem integer_zero_representatives(
+  n: Nat
+): IntegerEq(algebra_integer(n, n), integer_zero) { refl() }
+
+theorem integer_setoid(): AlgebraSetoid(AlgebraInteger, IntegerEq) {
+  algebra_setoid(AlgebraInteger, IntegerEq, integer_eq_refl, integer_eq_sym, integer_eq_trans)
+}
+
+theorem integer_nat_zero_ne_succ(n: Nat, h: Eq(Nat, zero, succ(n))): False {
+  match h -> False {
+  }
+}
+
+theorem integer_nat_cancel_left(
+  c: Nat,
+  a: Nat,
+  b: Nat,
+  h: Eq(Nat, nat_add(c, a), nat_add(c, b))
+): Eq(Nat, a, b) {
+  integer_nat_cancel(a, b, c, Eq_trans(nat_add_comm(a, c), Eq_trans(h, nat_add_comm(c, b))))
+}
+
+theorem integer_nat_mul_cancel(
+  a: Nat,
+  b: Nat,
+  n: Nat,
+  h: Eq(Nat, nat_mul(a, succ(n)), nat_mul(b, succ(n)))
+): Eq(Nat, a, b) {
+  match a -> Eq(Nat, a, b) {
+    zero => match b -> Eq(Nat, zero, b) {
+      zero => refl()
+      succ(k) => False_elim(integer_nat_zero_ne_succ(nat_add(n, nat_mul(k, succ(n))), h))
+    }
+    succ(j) => match b -> Eq(Nat, succ(j), b) {
+      zero => False_elim(integer_nat_zero_ne_succ(nat_add(n, nat_mul(j, succ(n))), Eq_sym(h)))
+      succ(
+        k
+      ) => Eq_congr(
+        succ,
+        integer_nat_mul_cancel(
+          j,
+          k,
+          n,
+          integer_nat_cancel_left(succ(n), nat_mul(j, succ(n)), nat_mul(k, succ(n)), h)
+        )
+      )
+    }
+  }
+}
+
+theorem integer_scale_cancel(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  n: Nat,
+  h: IntegerEq(integer_scale(x, succ(n)), integer_scale(y, succ(n)))
+): IntegerEq(x, y) {
+  integer_nat_mul_cancel(
+    nat_add(integer_pos(x), integer_neg_part(y)),
+    nat_add(integer_pos(y), integer_neg_part(x)),
+    n,
+    Eq_trans(
+      nat_mul_add_distrib_right(integer_pos(x), integer_neg_part(y), succ(n)),
+      Eq_trans(h, Eq_sym(nat_mul_add_distrib_right(integer_pos(y), integer_neg_part(x), succ(n))))
+    )
+  )
+}
+
+theorem integer_scale_swap(
+  x: AlgebraInteger,
+  n: Nat,
+  m: Nat
+): IntegerEq(integer_scale(integer_scale(x, n), m), integer_scale(integer_scale(x, m), n)) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(nat_mul(nat_mul(integer_pos(x), n), m), nat_mul(nat_mul(integer_neg_part(x), m), n)),
+    nat_add(nat_mul(nat_mul(integer_pos(x), m), n), nat_mul(nat_mul(integer_neg_part(x), n), m))
+  ) {}
+}
+
+// A constructive sign view. The payload is a magnitude and an equation,
+// never a choice axiom or an assumed normal form.
+inductive IntegerSign(p: Nat, n: Nat): Type {
+  integer_sign_zero(equal: Eq(Nat, p, n)): IntegerSign(p, n)
+  integer_sign_positive(k: Nat, equal: Eq(Nat, p, nat_add(n, succ(k)))): IntegerSign(p, n)
+  integer_sign_negative(k: Nat, equal: Eq(Nat, n, nat_add(p, succ(k)))): IntegerSign(p, n)
+}
+
+fn integer_sign(p: Nat, n: Nat) -> IntegerSign(p, n) {
+  match p -> IntegerSign(p, n) {
+    zero => match n -> IntegerSign(zero, n) {
+      zero => integer_sign_zero(zero, zero, refl())
+      succ(k) => integer_sign_negative(zero, succ(k), k, refl())
+    }
+    succ(j) => match n -> IntegerSign(succ(j), n) {
+      zero => integer_sign_positive(succ(j), zero, j, refl())
+      succ(k) => match integer_sign(j, k) -> IntegerSign(succ(j), succ(k)) {
+        integer_sign_zero(h) => integer_sign_zero(succ(j), succ(k), Eq_congr(succ, h))
+        integer_sign_positive(m, h) => integer_sign_positive(succ(j), succ(k), m, Eq_congr(succ, h))
+        integer_sign_negative(m, h) => integer_sign_negative(succ(j), succ(k), m, Eq_congr(succ, h))
+      }
+    }
+  }
+}
+
+def IntegerNonzero(x: AlgebraInteger): Prop := ∀ h: IntegerEq(x, integer_zero). False
+
+theorem integer_scale_one(x: AlgebraInteger): IntegerEq(integer_scale(x, succ(zero)), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(nat_mul(integer_pos(x), succ(zero)), integer_neg_part(x)),
+    nat_add(integer_pos(x), nat_mul(integer_neg_part(x), succ(zero)))
+  ) {}
+}

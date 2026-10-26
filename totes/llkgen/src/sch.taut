@@ -244,45 +244,35 @@ fn sg_snoc_field(xs: List(SField), x: SField) -> List(SField) {
   }
 }
 
-fn sg_all_digits(t: Text) -> Bool {
-  var ok = text_len(t) > 0
-  var i: u64 = 0
-  while i < text_len(t) {
-    let c = text_byte_value(t, i)
-    if c < 48 || c > 57 {
-      ok := false
-    }
-    i := i + 1
-  }
-  ok
-}
-
-// A field name is `base` or `base_` and a number.
-fn sg_name_matches(f: Text, base: Text) -> Bool {
-  if f == base {
-    true
+// A field must be usable in declarations, projections and record patterns.
+// Contextual keywords are reserved too, so surrounding syntax cannot change it.
+fn sg_field_base(base: Text) -> Text {
+  if base == "" || base == "_" {
+    "field"
+  } else if base == "span" || base == "theorem" || base == "def" || base == "import" || base == "mutual" || base == "axiom" || base == "inductive" || base == "forall" || base == "exists" || base == "decreasing_by" || base == "as" || base == "by" || base == "let" || base == "var" || base == "fn" || base == "return" || base == "while" || base == "loop" || base == "break" || base == "continue" || base == "if" || base == "else" || base == "match" || base == "struct" || base == "enum" || base == "effect" || base == "handle" || base == "with" || base == "perform" || base == "budget" || base == "label" || base == "brand" || base == "copy" || base == "shared" || base == "affine" || base == "linear" || base == "view" || base == "resume" || base == "direct" || base == "mut" || base == "module" || base == "where" || base == "class" || base == "instance" || base == "law" || base == "extern" || base == "true" || base == "false" || base == "syntax" || base == "macro" || base == "quote" {
+    text_concat_all(Cons(base, Cons("_field", Nil)))
   } else {
-    let prefix = text_concat_all(Cons(base, Cons("_", Nil)))
-    text_len(
-      f
-    ) > text_len(
-      prefix
-    ) && text_slice_or_empty(
-      f,
-      0,
-      text_len(prefix)
-    ) == prefix && sg_all_digits(text_slice_or_empty(f, text_len(prefix), text_len(f)))
+    base
   }
 }
 
-fn sg_count_matching(xs: List(SField), base: Text) -> u64 {
+fn sg_field_used(xs: List(SField), name: Text) -> Bool {
   match xs {
-    Nil => 0
-    Cons(
-      x,
-      rest
-    ) => (if sg_name_matches(x.name, base) { 1 } else { 0 }) + sg_count_matching(rest, base)
+    Nil => false
+    Cons(x, rest) => x.name == name || sg_field_used(rest, name)
   }
+}
+
+// Choose the first unused spelling, not the count of matching prefixes:
+// grammar symbols can themselves end in numeric suffixes.
+fn sg_fresh_field(xs: List(SField), base: Text) -> Text {
+  var name = base
+  var n: u64 = 2
+  while sg_field_used(xs, name) {
+    name := text_concat_all(Cons(base, Cons("_", Cons(text_of_u64(n), Nil))))
+    n := n + 1
+  }
+  name
 }
 
 // The production of a repetition or option that has the items, and its right side without the repetition's own tail.
@@ -399,12 +389,7 @@ fn sg_fields(g: SGr, &mut cx: SCx, owner: u64, rhs: List(MSym)) -> List(SField) 
           }
         }
         if !skip {
-          let n = sg_count_matching(out, base)
-          let name = if n == 0 {
-            base
-          } else {
-            text_concat_all(Cons(base, Cons("_", Cons(text_of_u64(n + 1), Nil))))
-          }
+          let name = sg_fresh_field(out, sg_field_base(base))
           out := sg_snoc_field(out, SField { name: name, ty: ty })
         }
         rest := more

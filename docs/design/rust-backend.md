@@ -44,7 +44,7 @@
 | 再開量（quant） | 効果の宣言の `resume 0 / <=1 / 1 / ω`（OWN「宣言」）と `direct`（「`direct` 操作」）。 |
 | direct 操作 | 腕のどの経路も末尾の `k(e)` で終わる操作（「`direct` 操作」）。 |
 | 層（tier） | 生成する Rust の形。`S ⊑ A ⊑ O ⊑ M`（「層の決定と単相化」）。 |
-| 関数の実体（instance） | 一つの `fn` を「行変数を実体化した層」と「budget の下か」で単相化したもの（「単相化の鍵」）。Rust の関数一つに当たる。 |
+| 関数の実体（instance） | 一つの `fn` を「行変数を実体化した層」と「budget の下か」で単相化したもの（「単相化の鍵」）。通常の Rust の関数一つに当たる。再開しない budget には別の同期実体を生成できる（「再開しない budget の同期実体」）。 |
 | NIR | Nib IR。型・種・行・層が付いた A 正規形の中間表現（「NIR」）。 |
 | 証拠（evidence）、`Ev` | direct 操作の腕を探すための、実行時のハンドラの連鎖（「S 層と direct の操作（証拠 `Ev`）」）。 |
 | 入れ物（slot） | O 層で `perform` の要求と答えを置く、スレッドに一つの場所（「O 層（`resume <=1` と `resume 1`）」）。 |
@@ -641,7 +641,8 @@ pub fn add__s(ev: &Ev<'_>, p_0: P, q_1: &P) -> i64 {
 | `Arg::Mut(p)` | `&mut p`（`p` がすでに `&mut A` の借用の変数なら `&mut *p`） |
 
 - shared の値の **値としての使用は `.clone()`**。ただし **最後の使用は move** にする（`crates/tauto-nir/src/last_use.rs`）：関数の式を Rust の評価順に後ろ向きの生存解析で辿り、後で誰も読まない局所変数の clone を move に変える。追えないもの（閉包、`handle`、`budget`）は不透明で、中で触れる名前はすべて生きているものとし、中は変えない。これがないと、ループや再帰で辿るリストが一歩ごとに複製される。
-- これと 「struct と enum」の `Rc` の取り出し、「`var` の表現」のセルの読み出しが、clone を書いてよい **すべての** 場所。
+- これと 「struct と enum」の `Rc` の取り出し、「`var` の表現」のセルの読み出し、「`match`」の配列要素の所有束縛が、clone を書いてよい **すべての** 場所。
+- 引数の借用（`crates/tauto-nir/src/borrow.rs`：読むだけの再帰的な値を参照で受ける）と最後の使用の move は、環境変数で切れる。`TAUTO_KEEP_OWNED=1` ではすべての引数が所有のまま、`TAUTO_KEEP_CLONES=1` では clone がすべて残る。
 
 ### 一時値と Drop の順
 
@@ -671,6 +672,7 @@ OWN「Drop の時点と順序」：束縛は宣言の逆順に、ブロックの
 - 網羅的でない `match`（`exhaustive: false`）には最後に `_ => tauto_rt::no_arm(L…)` を足す。文は eval の「どの腕も合わない」ときの文（`messages.rs`）。
 - 借用の `match`（OWN「借用の `match`」）は `match &v { … }`（Rust の default binding modes で、パターン変数が `&` になる）。
 - 所有の `match` は値を消費する（Rust と同じ）。linear の値なら、腕の始めで `bomb.defuse()` する（パターンで `bomb` を束縛して）。
+- 直接生成する `match` の対象が純粋な `array_get` で、腕が所有の `Some` / `None` / `_` のパターンだけでガードを書いていなければ、配列要素の形を参照で調べる。配列と添字は元の順で一度ずつ評価し、配列の所有値を保持してから調べる。配列が単独所有なら通常の `array_get` と所有の `match` を実行し、再帰的なフィールドを move できる性質を保つ。ほかにも所有者がいる配列では、選ばれたパターンの束縛だけを clone して所有値にし、配列の保持を解いてから腕の本体を実行する。無視するフィールドは clone しない。束縛の型と公開 API は所有のままで、`array_get` 自体の `Option(A)` を返す契約は変わらない。分岐した腕の複製が増殖しないよう、腕の本体に別の `array_get` の `match` や `handle` を含む外側の `match` は通常の生成に従う。入れ子のパターン自体は参照で調べられる。`Option` 全体を束縛する腕、ガード、保存した取得結果、継続に分割する `match` も通常の生成に従う。
 
 ### 閉包
 
@@ -894,7 +896,7 @@ pub fn count__o<'a>(ev: &Ev<'a>, n_0: i64) -> Fut<'a, i64> {
 }
 ```
 
-- O 層の関数は **いつも** `Fut<'a, R>` を返す（`async fn` にしない、`impl Future` にしない）。再帰しても大きさが決まり、関数の値の型（「関数の型（呼び出し規約）」）とも揃う。箱を省く最適化はしない。
+- O 層の通常の実体は `Fut<'a, R>` を返す（`async fn` にしない、`impl Future` にしない）。再帰しても大きさが決まり、関数の値の型（「関数の型（呼び出し規約）」）とも揃う。再開しない budget の本体には、別の同期実体を使える（「再開しない budget の同期実体」）。
 - 借用の引数は `&'a T` で、Future の中に入る（「借用、lifetime、型変数」の一つの `'a`）。
 
 ### `handle`（本体が O 層のとき）
@@ -1068,7 +1070,9 @@ M 層のコードの `budget(steps: n) { body }` は、ハンドラの連鎖 `M`
 
 ### budget の下
 
-- `budget(steps: n) { body }` の本体から届く、行に `Div` を持つ関数は、`under_budget = true` の実体（O 層）で生成する。`Div` を持たない関数は budget の下でもそのまま（S / A）。
+- `budget(steps: n) { body }` の本体から届く、行に `Div` を持つ関数は、`under_budget = true` の実体（O 層）で生成する。`Div` を持たず、O 層以上の callback を受け取らない関数は budget の下でもそのまま（S / A）。
+- budget の内側で作る `Div` のある借用閉包は O 層の callback として渡す。行変数を持つ高階関数も、callback の行を O 層として単相化し、budget の文脈を転送する。`OFnMut` の呼び出しが借りる状態は Future が終わるまで保持し、`more` / `unbounded` は同じ Future を再開する。
+- 所有する `Div` 閉包と複数回再開する `Div` 閉包、budget の外で作った `Div` または抽象行の関数値を内側へ渡す経路、発散する名前付き関数を内側で値として渡す経路、発散する可能性のある callback を捕獲する局所関数は未対応として拒否する。外側の同期 ABI の関数値を内側で O 層と見なしたり、燃料の検査を省いたりはしない。抽象行の外側 callback は具体的には停止する場合でも拒否する。同期 ABI の既存の関数値を O 層の引数へ暗黙に変換する経路も拒否する。リテラルの借用閉包は引数の宣言する層で生成する。callback の層だけでは helper 自身の効果行に表れない中断を導入しない。そのような callback 引数や、効果行が発散の可能性を持つ計算済み関数値の呼び出しも未対応として拒否する。
 - `Tick` は `tauto_rt::budget::tick(at).await`。poll の最中の budget の連鎖（スレッドに一つのスタック。budget のドライバが本体を poll する間だけ自分の数を積む）のすべての数を一つ減らす。どれかが 0 を下回れば、入れ物に `Slot::Budget(id)` を置いて `Pending` を返す（`id` は 0 を下回った budget のうち一番内側のもの。`eval.rs` の `exceeded_budget` と同じ選び方）。
 - budget の式はドライバのループ（「`handle`（本体が O 層のとき）」のハンドラと同じ形）：
 
@@ -1086,6 +1090,73 @@ loop:
 - `exceeded(info), k` の腕の `info.more(m)` は、[`semantics.md`](semantics.md) の通り `k(more(info, m))` で、これを `k` に `BudgetAnswer::More(info, m)` を渡すことで実現する。`info.unbounded()` は `BudgetAnswer::Unbounded(info)`。`k(v)` は `BudgetAnswer::Value(v)`。つまり `Exceeded(T)` の操作の Rust での答えの型は `BudgetAnswer<'a, T>` で、tauto の `T` ではない。腕の中の `k(v)` の生成でこれを包む。
 - `Info<'a, T>` は affine（`Clone` しない）。本体の Future を持つ。`info.more` / `info.unbounded` は `info` を消費する（OWN「`budget`」）。
 - budget の位置（どこで燃料が切れるか）は観測の対象ではない（[`nib.md`](nib.md)「budget」、[`semantics.md`](semantics.md)）。Rust の燃料の数え方は eval と違ってよい。検証では budget を含むものの期待値を別に持つ（「検証の方針」）。
+
+
+### 再開しない budget の同期実体
+
+直下の budget を受ける無条件で全域の `exceeded` 腕が継続を使わず、本体と
+到達可能な呼び出しが以下の検査を通るとき、本体は同期コードで走れる。
+O 層の呼び出しには `Result<T, Interrupted>` を返す別の実体を使う。
+`Interrupted` は燃料切れと `resume 0` の要求を区別する。通常の実体と公開関数の
+型は保ち、外側の O ハンドラと元の腕が要求を処理する。同期実体が腕を直接呼ぶ
+ことはない。
+
+- 燃料検査だけを持つ本体に加え、`resume 0` の操作を扱う。操作ごとに、同じ
+  ペイロード型を受ける、ガードのない全域の腕が直近のハンドラに必要になる。
+  操作名・ペイロード・位置を保って `o::reraise` で要求を渡す。外へ抜ける操作、
+  条件付きの捕捉、direct 操作、再開する操作は通常の Future の経路を使う。
+- 共有借用 callback は、名前付き Tauto 関数か借用閉包の本体と、その推移的な
+  呼び出し先を検査できる場合に扱う。callback 自体は同期で、燃料検査や中断、
+  変更操作を持たない範囲に限る。補助関数の引数を経由する転送でも、実引数の
+  出自をその呼び出しの文脈に結び付ける。一つの呼び出しで確認した出自を、同じ
+  補助関数へ渡す未知の callback に流用しない。Rust から来る未知の `Fn` は、
+  共有借用や空の効果行だけではこの検査を通らない。
+- 値・局所変数・引数・フィールド・コンテナの要素を再帰的に調べる。linear、
+  extern に束縛された型、内容を確認できない型変数や標準型、所有する関数値、
+  `RcRefCell` の借用ガードを持ちうる式は対象外になる。生成された非 `Copy`
+  データ型、union、`Shown` も、埋込み側が独自の `Drop` を実装できるため、
+  通常の入口では対象外になる。埋込み全体の明示的な信頼契約がある入口では扱えるが、
+  データ型と union は内部の型も検査する。契約は他の型や借用の検査を省かない。
+- 同期的な巻き戻しは、通常の Future が腕の実行中まで保持する値を先に破棄する。
+  その差を観測させないため、`exceeded`・abort・return の腕とその推移的な
+  呼び出し先も別に検査する。暗黙の `Clone`・`Drop` を含む型の検査に加え、
+  動的な整数演算、全域性をこの検査で確認しない match、ループ、燃料検査など、panic hook
+  に到達しうる処理は非 panic の検査を通らない。検査された定数演算や既知の
+  非 panic builtin は扱う。腕だけで参照する関数を同期実体へ変えることはない。
+- 入れ子の budget・ハンドラ、追跡できない呼び出し、複数回再開する制御は対象外に
+  なる。extern は、rust-backend.md「非再開 budget の信頼契約」にある入口の契約と個別の
+  束縛の契約を両方必要とする。契約があっても同期の scalar 引数・結果に限る。
+
+呼び出し前・ループ本体の先頭という NIR の燃料検査の位置と消費量を保つ。
+燃料切れは同じ位置と `Info(T)` を持つ `Exceeded` 要求になり、元の腕が受ける。
+`steps` は経路を選ぶ前に一度だけ評価する。その評価が終わった時点で実行中の
+外側の budget があれば通常の Future の本体を使う。外側の budget の再開能力を、
+内側の腕だけから判断しない。
+
+燃料は `Rc<Cell<u64>>` で共有し、通常の poll と同期本体のどちらも、実行中だけ
+同じ `STACK` に登録する。実行中の Rust から再入して通常の `tick` が走る場合も、
+登録された外側の燃料を消費する。登録を持つ RAII ガードは正常終了と unwind の
+両方で元の深さまでスタックを戻す。Rust 側で panic を捕捉しても、終了した budget
+の登録を残さない。要求を元の腕へ渡す時点では本体の登録を外す。この実行時の
+仕組みは、未知の host callback の純粋性や破棄の観測不能性を証明するものではない。
+
+生成対象が `sync` の場合は静的に対象外になり、実際の `tauto-rt` が `sync` feature
+で作られている場合も `can_run_nonresuming` が通常経路を選ぶ。埋込み側の feature
+選択が生成時と異なっても、スレッド間で共有値を観測できる実体を同期化しない。
+
+CLI の `--explain-budget` は、トップレベルから呼ばれないライブラリ関数も下げて
+診断する。`rust.nonresuming.entries` を指定する場合もライブラリの入口を下げ、
+`rust.exports` の選択を適用してから契約を解決する。このモードは出力にもその関数を
+含めうるため、診断を付けない成果物とのバイト一致は要件ではない。どちらも指定
+しない CLI はトップレベルから到達する関数だけを下げる。
+
+`budget_diagnostics` は、生成器と同じ検査から budget の位置・関数の実体・入口の
+variant ごとの適格性と理由を返す。理由には機械可読な分類があり、通常の入口と
+契約付き入口を分けて報告する。`assumptions` は契約の種類・名前・宣言位置・版を
+記録し、コンパイラが検査した条件とは区別する。静的に適格であっても、実行時の
+スタックと feature の条件を通るとは限らない。テスト用の経路・燃料・呼び出し回数
+のカウンタはその実行を観測するためのもので、任意の Rust callback の契約を
+証明するものではない。
 
 ---
 
@@ -1174,7 +1245,10 @@ src/files.taut:5:3: error: the rust function std::fs::File::open does not fit th
 | 引数 `&x: Vec(A)` | `x`（`&Vec<A>`。`&[A]` を受ける関数には deref の型強制で通る） |
 | 引数 `&f: (A…) -> R`（S 層だけ） | `&mut |a…| f(ev, a…)`（tauto の借用閉包を Rust の `FnMut` にする包み） |
 | 結果 `Text` | `Text::from(…)`（`String`、`&str`、`Box<str>`、`Rc<str>` のどれからでも作れる） |
+| 結果の `Option` / `Result` / `Pair` / `Vec` 内の `Text` | 所有する要素を再帰的に `Text::from(…)` で変換する。`Result` は両側を対象にする |
 | それ以外 | 何もしない。型が合わなければ rustc が落とし、「extern の包み関数」のエラーになる |
+
+結果のコンテナ変換は借用・view・利用者のデータ型の中には入らない。`List` は生成される再帰的なデータ型であり、Rust の `Vec` ではない。橋渡しでは `Vec(Text)` または `Vec(Buf)` を返し、Tauto 側で必要な `List` に明示的に変換する。引数のコンテナにはこの変換を適用しない。
 
 `usize` と `u64` の変換は手書きの extern ではしない（`tauto bind` だけがする。「`usize` の変換」）。手書きで要るなら橋渡しクレートに関数を書く。
 
@@ -1283,14 +1357,78 @@ mod logic {
 - `compile` は「流れ」の手順で Rust のソースを一つのファイルにし、`$OUT_DIR/tauto_<package>.rs` に書く。各ソースについて `cargo:rerun-if-changed=…` を出す。
 - 利用者のクレートは `tauto-rt` に依存する（`Cargo.toml` に自分で書く）。
 - `rust.dependencies` の各名前が利用者の `Cargo.toml` の `[dependencies]` にあることを確かめ、なければエラー（`"error: Tauto.eure needs the rust dependency regex; add it to Cargo.toml"`）。版は利用者の `Cargo.toml` が決める。
+- `rust.exports` は Rust の facade (`generated::api`) に出す関数名の任意の一覧。省略時は以下の既定の規則、空の一覧では関数を出さない。指定した名前の重複、存在しない名前、ジェネリック関数、残る効果、Rust に写せない型はエラー。選ばなかった補助関数も検査・lowering するが、公開されないことの警告は出さない。データ型の公開は変えない。これはアクセス制御ではなく、raw generated モジュールの `pub` な内部項目を隠す保証ではない。
+- `SynDiag` と `SynSpan` は `Debug` で `Show` と同じ内容を表示できる。任意の生成 AST や外部型に `Debug` の制約を要求するものではない。
 - **公開する関数**：tauto の `pub` はない（「名前空間の規則」）ので、tote のトップレベルの `fn` のうち、型変数を持たず、引数と結果が 「型の写像」で Rust の型になるものを公開する。行によって形を変える：
 
 | 関数の行 | Rust に公開する形 |
 |---|---|
 | 空 | `pub fn f(args…) -> R`（中で空の `Ev` を作って `f__s` を呼ぶ） |
-| direct だけ | 効果の集まりごとに trait を生成し、それを受ける：`pub fn f(h: &mut impl Log, args…) -> R`（`trait Log { fn log(&mut self, t: Text); }`）。中で `h` を `DirectHandler` に包んで `Ev` に積む |
-| `resume 0` が残る | `pub fn f(…) -> Result<R, Failure>`（`enum Failure { Fail_IoError(IoError), … }` を生成） |
-| それ以外（O / M の効果が残る） | 公開しない。`cargo:warning=` で「f は中断する効果 ask を残すので公開しない。tauto の側でハンドラを張った関数を作ってください」と出す |
+| 空でない（direct、`Div`、`resume 0`、中断する効果を含む） | 公開しない。既定では関数名と残る効果を `cargo:warning=` で知らせる。`rust.exports` で指定した関数ならエラー。Tauto 側でハンドラを張り、行が空の関数を入口にする |
+
+### Rust から渡す借用 callback
+
+空の効果行を持つ関数の共有借用引数は、公開 facade では `&dyn Fn(…) -> R`
+になる。Rust のローカル変数を借りる closure を渡せる。`'static` は要求しない。
+facade 内の adapter が内部の evidence 引数を取り除き、借用は同期的な一回の
+公開関数呼び出しの中で終わる。callback を保存・返却する API ではない。
+
+callback の値引数と結果は整数、浮動小数点、Bool、Text、Buf、単位型、Never、
+それらを含む Option、Result、Pair、Vec、Array、HashMap、生成データ型を扱う。
+引数はこれらの共有借用でもよい。データのフィールドを含め、関数値と借用を
+内部に含む値、view 型、callback の借用結果は扱わない。
+Text は `tauto_rt::Text` であり、String との暗黙の再帰変換はしない。
+所有 callback、可変借用 callback、効果行の空でない callback は公開しない。
+callback の効果を関数内の handler で処理しても、この制限は変わらない。
+
+空の行は Tauto 側の型と呼び出し契約を表す。Rust の `Fn` は host の純粋性、
+Tauto への再入がないこと、panic しないこと、破棄や参照カウントを観測しないことを
+証明しない。通常の facade の型から、非再開 budget の信頼契約を推論しない。
+host は IO、内部可変性、panic などの振る舞いに責任を持つ。
+実行できる例と拒否例は `crates/tauto-build/tests/build_rs.rs` と
+`crates/tauto-build/tests/exports.rs` で検査する。
+
+### 非再開 budget の信頼契約
+
+`Tauto.eure` の `rust.nonresuming.entries` は、別名の契約付き Rust facade と、
+その入口になる選択済みの Tauto 公開関数を対応付ける。値は関数名だけであり、
+callback の引数名を列挙するものではない。callback を取らない関数も入口にできる。
+契約付き facade は先頭に `&tauto_rt::budget_contract::TrustedBudgetHost` を取り、
+残りの引数と結果は通常の facade と同じになる。元の facade と裸の `&dyn Fn` の
+ABI は変えない。契約付き実体は入口ごとに分け、通常の呼び出しへ契約を広げない。
+
+`TrustedBudgetHost::assert_contract` は、呼び出し元が `closed-host-v1` を明示的に
+引き受ける安全な Rust API である。token は callback や host の値を所有・検査せず、
+借用して渡す各呼び出しの入力と文脈について、埋込み全体の責任を表す。
+この契約はコンパイラの検査結果でもカーネルの証明でもなく、Rust のメモリ安全性の
+前提でもない。誤った宣言は最適化の下でプログラムの振る舞いを変えうるが、unsafe
+な生成コードを許すものではない。
+
+契約の範囲は callback と extern だけでなく、捕獲値、暗黙の変換、`Clone`・`Drop`、
+生成された非 `Copy` 型への埋込み側の実装、呼び出し中に働く hook や他の観測者まで
+含む。認める host 呼び出しは正常に戻り、発散・中断・panic・unwind・panic hook の
+起動を行わない。host は Tauto や実行時へ再入せず、渡された借用や callback を保存
+せず、参照カウント、破棄順序、値や借用の生存期間を観測したり結果に利用したり
+しない。戻り値以外の観測可能な host 効果も契約の対象外になる。プログラムの動作に
+影響せず観測もされない私的な scalar 計測は、そのような効果ではない。必要な入力の
+範囲や文脈は呼び出し元が確かめる。テストのカウンタで経路や呼び出し回数を観測しても、
+この信頼の前提を検証したことにはならない。
+
+extern には、さらに `rust.nonresuming.extern` で各 Tauto extern 名に
+`closed-host-v1` を明記する。個別の束縛だけでは通常の入口を適格にせず、入口の
+契約だけでも未宣言の extern を適格にしない。認める署名は同期で、引数と結果が
+整数・浮動小数点・Bool・単位型・Never のいずれかであるものに限る。Text、コンテナ、
+借用や外部型を含む署名は通常経路を使う。
+
+契約は主マニフェストからだけ読み、生成された bindings ファイルから取り込まない。
+未知の契約版、存在しない extern、選択されていない公開関数、Rust に公開できない
+入口、不正または変換後に衝突する facade 名は拒否する。静的診断では埋込み・callback・
+extern の前提とその宣言位置を明示する。
+
+契約付きの文脈で調べる budget は、選んだ入口自身の本体にあるものに限る。その
+budget 本体の callback を補助関数へ転送する出自は追跡するが、別の関数の内部にある
+budget へ入口の契約を転送しない。そのような budget が host の契約を必要とする
+場合や、対象の budget の内側に別の budget がある場合は通常の Future の経路を使う。
 
 ---
 

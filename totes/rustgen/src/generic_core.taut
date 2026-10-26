@@ -1,0 +1,490 @@
+// Declaration variables are rigid. Substitution replaces them simultaneously;
+// an inserted type is not substituted again in the same operation.
+mutual {
+  fn rustgen_substitute(
+    k: Nat,
+    ty: RustgenType,
+    bindings: List(RustgenBinding)
+  ) -> RustgenResult(RustgenType) {
+    match k -> RustgenResult(RustgenType) {
+      zero => RustgenErr("generic substitution fuel exhausted")
+      succ(j) => match ty -> RustgenResult(RustgenType) {
+        RustgenVar(name) => match rustgen_find(name, bindings) -> RustgenResult(RustgenType) {
+          None => RustgenOk(ty)
+          Some(value) => RustgenOk(value)
+        }
+        RustgenApply(
+          name,
+          args
+        ) => match rustgen_substitute_many(j, args, bindings) -> RustgenResult(RustgenType) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(values) => RustgenOk(RustgenApply(name, values))
+        }
+        RustgenNumber(id, value) => RustgenOk(ty)
+        RustgenInt => RustgenOk(ty)
+        RustgenBool => RustgenOk(ty)
+        RustgenText => RustgenOk(ty)
+        RustgenNat => RustgenOk(ty)
+        RustgenNamed(name) => RustgenOk(ty)
+        RustgenMeta(name) => RustgenOk(ty)
+      }
+    }
+  }
+  fn rustgen_substitute_many(
+    k: Nat,
+    types: List(RustgenType),
+    bindings: List(RustgenBinding)
+  ) -> RustgenResult(List(RustgenType)) {
+    match k -> RustgenResult(List(RustgenType)) {
+      zero => RustgenErr("generic substitution fuel exhausted")
+      succ(j) => match types -> RustgenResult(List(RustgenType)) {
+        Nil => RustgenOk(Nil)
+        Cons(
+          ty,
+          rest
+        ) => match rustgen_substitute(j, ty, bindings) -> RustgenResult(List(RustgenType)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            value
+          ) => match rustgen_substitute_many(j, rest, bindings) -> RustgenResult(List(RustgenType)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => RustgenOk(Cons(value, values))
+          }
+        }
+      }
+    }
+  }
+}
+
+// A substitution maps inference variables and numeric literals, never rigid type
+// variables. Cycles and insufficient fuel
+// are errors, rather than partially resolved types.
+mutual {
+  fn rustgen_resolve(
+    k: Nat,
+    ty: RustgenType,
+    subst: List(RustgenBinding)
+  ) -> RustgenResult(RustgenType) {
+    match k -> RustgenResult(RustgenType) {
+      zero => RustgenErr("generic resolution fuel exhausted")
+      succ(j) => match ty -> RustgenResult(RustgenType) {
+        RustgenMeta(name) => match rustgen_find(name, subst) -> RustgenResult(RustgenType) {
+          None => RustgenOk(ty)
+          Some(value) => rustgen_resolve(j, value, subst)
+        }
+        RustgenApply(
+          name,
+          args
+        ) => match rustgen_resolve_many(j, args, subst) -> RustgenResult(RustgenType) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(values) => RustgenOk(RustgenApply(name, values))
+        }
+        RustgenNumber(id, value) => match rustgen_find(id, subst) -> RustgenResult(RustgenType) {
+          None => RustgenOk(ty)
+          Some(value) => rustgen_resolve(j, value, subst)
+        }
+        RustgenInt => RustgenOk(ty)
+        RustgenBool => RustgenOk(ty)
+        RustgenText => RustgenOk(ty)
+        RustgenNat => RustgenOk(ty)
+        RustgenNamed(name) => RustgenOk(ty)
+        RustgenVar(name) => RustgenOk(ty)
+      }
+    }
+  }
+  fn rustgen_resolve_many(
+    k: Nat,
+    types: List(RustgenType),
+    subst: List(RustgenBinding)
+  ) -> RustgenResult(List(RustgenType)) {
+    match k -> RustgenResult(List(RustgenType)) {
+      zero => RustgenErr("generic resolution fuel exhausted")
+      succ(j) => match types -> RustgenResult(List(RustgenType)) {
+        Nil => RustgenOk(Nil)
+        Cons(ty, rest) => match rustgen_resolve(j, ty, subst) -> RustgenResult(List(RustgenType)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            value
+          ) => match rustgen_resolve_many(j, rest, subst) -> RustgenResult(List(RustgenType)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => RustgenOk(Cons(value, values))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_meta_name(ty: RustgenType) -> Option(Text) {
+  match ty -> Option(Text) {
+    RustgenMeta(name) => Some(name)
+    RustgenNumber(id, value) => None
+    RustgenInt => None
+    RustgenBool => None
+    RustgenText => None
+    RustgenNat => None
+    RustgenNamed(name) => None
+    RustgenVar(name) => None
+    RustgenApply(name, args) => None
+  }
+}
+
+// Exhausting the traversal conservatively reports occurrence.
+mutual {
+  fn rustgen_occurs(k: Nat, name: Text, ty: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => yes
+      succ(j) => match ty -> Yn {
+        RustgenMeta(found) => name == found
+        RustgenApply(owner, args) => rustgen_occurs_many(j, name, args)
+        RustgenNumber(id, value) => no
+        RustgenInt => no
+        RustgenBool => no
+        RustgenText => no
+        RustgenNat => no
+        RustgenNamed(owner) => no
+        RustgenVar(owner) => no
+      }
+    }
+  }
+  fn rustgen_occurs_many(k: Nat, name: Text, types: List(RustgenType)) -> Yn {
+    match k -> Yn {
+      zero => yes
+      succ(j) => match types -> Yn {
+        Nil => no
+        Cons(ty, rest) => rustgen_occurs(j, name, ty) || rustgen_occurs_many(j, name, rest)
+      }
+    }
+  }
+}
+
+fn rustgen_bind_meta(
+  k: Nat,
+  name: Text,
+  ty: RustgenType,
+  subst: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match rustgen_meta_name(ty) -> RustgenResult(List(RustgenBinding)) {
+    Some(other) => if name == other { RustgenOk(subst) } else {
+      RustgenOk(Cons(rustgen_binding(name, ty), subst))
+    }
+    None => if rustgen_occurs(k, name, ty) { RustgenErr("recursive generic type") } else {
+      RustgenOk(Cons(rustgen_binding(name, ty), subst))
+    }
+  }
+}
+
+fn rustgen_unify_number(
+  a: RustgenType,
+  b: RustgenType,
+  subst: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match a -> RustgenResult(List(RustgenBinding)) {
+    RustgenNumber(id, value) => match b -> RustgenResult(List(RustgenBinding)) {
+      RustgenInt => if value <= 9223372036854775807 { RustgenOk(
+        Cons(rustgen_binding(id, b), subst)
+      ) } else { RustgenErr("literal exceeds i64") }
+      RustgenNat => RustgenOk(Cons(rustgen_binding(id, b), subst))
+      RustgenNumber(
+        other,
+        magnitude
+      ) => if id == other { RustgenOk(
+        subst
+      ) } else { RustgenOk(Cons(rustgen_binding(id, b), subst)) }
+      RustgenBool => RustgenErr("numeric literal requires integer type")
+      RustgenText => RustgenErr("numeric literal requires integer type")
+      RustgenNamed(name) => RustgenErr("numeric literal requires integer type")
+      RustgenApply(name, args) => RustgenErr("numeric literal requires integer type")
+      RustgenVar(name) => RustgenErr("numeric literal cannot specialize a rigid type")
+      RustgenMeta(name) => RustgenErr("unresolved numeric constraint")
+    }
+    RustgenInt => match b -> RustgenResult(List(RustgenBinding)) {
+      RustgenNumber(
+        id,
+        value
+      ) => if value <= 9223372036854775807 { RustgenOk(
+        Cons(rustgen_binding(id, a), subst)
+      ) } else { RustgenErr("literal exceeds i64") }
+      RustgenInt => RustgenErr("expected numeric literal")
+      RustgenNat => RustgenErr("expected numeric literal")
+      RustgenBool => RustgenErr("expected numeric literal")
+      RustgenText => RustgenErr("expected numeric literal")
+      RustgenNamed(name) => RustgenErr("expected numeric literal")
+      RustgenApply(name, args) => RustgenErr("expected numeric literal")
+      RustgenVar(name) => RustgenErr("expected numeric literal")
+      RustgenMeta(name) => RustgenErr("expected numeric literal")
+    }
+    RustgenNat => match b -> RustgenResult(List(RustgenBinding)) {
+      RustgenNumber(id, value) => RustgenOk(Cons(rustgen_binding(id, a), subst))
+      RustgenInt => RustgenErr("expected numeric literal")
+      RustgenNat => RustgenErr("expected numeric literal")
+      RustgenBool => RustgenErr("expected numeric literal")
+      RustgenText => RustgenErr("expected numeric literal")
+      RustgenNamed(name) => RustgenErr("expected numeric literal")
+      RustgenApply(name, args) => RustgenErr("expected numeric literal")
+      RustgenVar(name) => RustgenErr("expected numeric literal")
+      RustgenMeta(name) => RustgenErr("expected numeric literal")
+    }
+    RustgenBool => RustgenErr("numeric literal requires integer type")
+    RustgenText => RustgenErr("numeric literal requires integer type")
+    RustgenNamed(name) => RustgenErr("numeric literal requires integer type")
+    RustgenApply(name, args) => RustgenErr("numeric literal requires integer type")
+    RustgenVar(name) => RustgenErr("numeric literal cannot specialize a rigid type")
+    RustgenMeta(name) => RustgenErr("unresolved numeric constraint")
+  }
+}
+
+mutual {
+  fn rustgen_unify(
+    k: Nat,
+    a: RustgenType,
+    b: RustgenType,
+    subst: List(RustgenBinding)
+  ) -> RustgenResult(List(RustgenBinding)) {
+    match k -> RustgenResult(List(RustgenBinding)) {
+      zero => RustgenErr("generic unification fuel exhausted")
+      succ(j) => match rustgen_resolve(j, a, subst) -> RustgenResult(List(RustgenBinding)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          left
+        ) => match rustgen_resolve(j, b, subst) -> RustgenResult(List(RustgenBinding)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(right) => match rustgen_meta_name(left) -> RustgenResult(List(RustgenBinding)) {
+            Some(name) => rustgen_bind_meta(j, name, right, subst)
+            None => match rustgen_meta_name(right) -> RustgenResult(List(RustgenBinding)) {
+              Some(name) => rustgen_bind_meta(j, name, left, subst)
+              None => if rustgen_type_tag(
+                left
+              ) == 8 || rustgen_type_tag(
+                right
+              ) == 8 { rustgen_unify_number(
+                left,
+                right,
+                subst
+              ) } else if rustgen_type_tag(
+                left
+              ) != rustgen_type_tag(
+                right
+              ) || rustgen_type_label(
+                left
+              ) != rustgen_type_label(right) { RustgenErr("generic type mismatch") } else {
+                rustgen_unify_many(j, rustgen_type_args(left), rustgen_type_args(right), subst)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  fn rustgen_unify_many(
+    k: Nat,
+    xs: List(RustgenType),
+    ys: List(RustgenType),
+    subst: List(RustgenBinding)
+  ) -> RustgenResult(List(RustgenBinding)) {
+    match k -> RustgenResult(List(RustgenBinding)) {
+      zero => RustgenErr("generic unification fuel exhausted")
+      succ(j) => match xs -> RustgenResult(List(RustgenBinding)) {
+        Nil => match ys -> RustgenResult(List(RustgenBinding)) {
+          Nil => RustgenOk(subst)
+          Cons(y, more) => RustgenErr("generic type arity mismatch")
+        }
+        Cons(x, rest) => match ys -> RustgenResult(List(RustgenBinding)) {
+          Nil => RustgenErr("generic type arity mismatch")
+          Cons(
+            y,
+            more
+          ) => match rustgen_unify(j, x, y, subst) -> RustgenResult(List(RustgenBinding)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(next) => rustgen_unify_many(j, rest, more, next)
+          }
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  fn rustgen_closed_in(k: Nat, ty: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match ty -> Yn {
+        RustgenMeta(name) => no
+        RustgenApply(name, args) => rustgen_closed_many(j, args)
+        RustgenNumber(id, value) => yes
+        RustgenInt => yes
+        RustgenBool => yes
+        RustgenText => yes
+        RustgenNat => yes
+        RustgenNamed(name) => yes
+        RustgenVar(name) => yes
+      }
+    }
+  }
+  fn rustgen_closed_many(k: Nat, types: List(RustgenType)) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match types -> Yn {
+        Nil => yes
+        Cons(ty, rest) => rustgen_closed_in(j, ty) && rustgen_closed_many(j, rest)
+      }
+    }
+  }
+}
+
+fn rustgen_closed(ty: RustgenType) -> Yn { rustgen_closed_in(10000, ty) }
+
+fn rustgen_generic_member(name: Text, names: List(Text)) -> Yn {
+  match names -> Yn {
+    Nil => no
+    Cons(first, rest) => name == first || rustgen_generic_member(name, rest)
+  }
+}
+
+mutual {
+  fn rustgen_vars(k: Nat, ty: RustgenType, names: List(Text)) -> RustgenResult(RustgenType) {
+    match k -> RustgenResult(RustgenType) {
+      zero => RustgenErr("generic declaration fuel exhausted")
+      succ(j) => match ty -> RustgenResult(RustgenType) {
+        RustgenNamed(
+          name
+        ) => if rustgen_generic_member(
+          name,
+          names
+        ) { RustgenOk(RustgenVar(name)) } else { RustgenOk(ty) }
+        RustgenApply(
+          name,
+          args
+        ) => if rustgen_generic_member(
+          name,
+          names
+        ) { RustgenErr("higher-kinded generic parameters are unsupported") } else {
+          match rustgen_vars_many(j, args, names) -> RustgenResult(RustgenType) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => RustgenOk(RustgenApply(name, values))
+          }
+        }
+        RustgenNumber(id, value) => RustgenOk(ty)
+        RustgenInt => RustgenOk(ty)
+        RustgenBool => RustgenOk(ty)
+        RustgenText => RustgenOk(ty)
+        RustgenNat => RustgenOk(ty)
+        RustgenVar(name) => RustgenOk(ty)
+        RustgenMeta(name) => RustgenErr("inference variable in declaration")
+      }
+    }
+  }
+  fn rustgen_vars_many(
+    k: Nat,
+    types: List(RustgenType),
+    names: List(Text)
+  ) -> RustgenResult(List(RustgenType)) {
+    match k -> RustgenResult(List(RustgenType)) {
+      zero => RustgenErr("generic declaration fuel exhausted")
+      succ(j) => match types -> RustgenResult(List(RustgenType)) {
+        Nil => RustgenOk(Nil)
+        Cons(ty, rest) => match rustgen_vars(j, ty, names) -> RustgenResult(List(RustgenType)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            value
+          ) => match rustgen_vars_many(j, rest, names) -> RustgenResult(List(RustgenType)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => RustgenOk(Cons(value, values))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_instantiate(prefix: Text, names: List(Text)) -> List(RustgenBinding) {
+  match names -> List(RustgenBinding) {
+    Nil => Nil
+    Cons(
+      name,
+      rest
+    ) => Cons(
+      rustgen_binding(name, RustgenMeta(text_concat(prefix, text_concat(":", name)))),
+      rustgen_instantiate(prefix, rest)
+    )
+  }
+}
+
+fn rustgen_substitute_bindings(
+  k: Nat,
+  params: List(RustgenBinding),
+  subst: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match k -> RustgenResult(List(RustgenBinding)) {
+    zero => RustgenErr("generic binding substitution fuel exhausted")
+    succ(j) => match params -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenOk(Nil)
+      Cons(
+        param,
+        rest
+      ) => match rustgen_substitute(j, param.ty, subst) -> RustgenResult(List(RustgenBinding)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          ty
+        ) => match rustgen_substitute_bindings(
+          j,
+          rest,
+          subst
+        ) -> RustgenResult(List(RustgenBinding)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(more) => RustgenOk(Cons(rustgen_binding(param.name, ty), more))
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_vars_bindings(
+  k: Nat,
+  params: List(RustgenBinding),
+  names: List(Text)
+) -> RustgenResult(List(RustgenBinding)) {
+  match k -> RustgenResult(List(RustgenBinding)) {
+    zero => RustgenErr("generic binding declaration fuel exhausted")
+    succ(j) => match params -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenOk(Nil)
+      Cons(
+        param,
+        rest
+      ) => match rustgen_vars(j, param.ty, names) -> RustgenResult(List(RustgenBinding)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          ty
+        ) => match rustgen_vars_bindings(j, rest, names) -> RustgenResult(List(RustgenBinding)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(more) => RustgenOk(Cons(rustgen_binding(param.name, ty), more))
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_resolve_bindings(
+  k: Nat,
+  params: List(RustgenBinding),
+  subst: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match k -> RustgenResult(List(RustgenBinding)) {
+    zero => RustgenErr("generic binding resolution fuel exhausted")
+    succ(j) => match params -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenOk(Nil)
+      Cons(
+        param,
+        rest
+      ) => match rustgen_resolve(j, param.ty, subst) -> RustgenResult(List(RustgenBinding)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          ty
+        ) => match rustgen_resolve_bindings(j, rest, subst) -> RustgenResult(List(RustgenBinding)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(more) => RustgenOk(Cons(rustgen_binding(param.name, ty), more))
+        }
+      }
+    }
+  }
+}

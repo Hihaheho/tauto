@@ -164,7 +164,7 @@ fn sc_block_comment(s: Text, e: Text) -> Text {
 }
 
 fn sc_pat(pattern: Text, terminal: u64) -> SPat {
-  SPat { pattern: pattern, terminal: terminal, priority: 0, la_kind: 0, la: "" }
+  SPat { context: "scanner directive", pattern: pattern, terminal: terminal, priority: 0, la_kind: 0, la: "" }
 }
 
 fn sc_has_state(xs: List(u64), s: u64) -> Bool {
@@ -179,6 +179,37 @@ fn sc_snoc_pat(xs: List(SPat), x: SPat) -> List(SPat) {
     Nil => Cons(x, Nil)
     Cons(y, rest) => Cons(y, sc_snoc_pat(rest, x))
   }
+}
+
+// All rules directly containing this terminal; shared patterns retain every owner.
+fn sc_has_terminal(rhs: List(MSym), terminal: u64) -> Bool {
+  match rhs {
+    Nil => false
+    Cons(sym, rest) => match sym {
+      MN(n) => sc_has_terminal(rest, terminal)
+      MT(t, clipped) => t == terminal || sc_has_terminal(rest, terminal)
+    }
+  }
+}
+
+fn sc_rule_names(ps: List(MProd), names: List(Text), terminal: u64) -> List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => if sc_has_terminal(p.rhs, terminal) {
+      md_insert(sc_rule_names(rest, names, terminal), sc_name_at(names, p.lhs))
+    } else { sc_rule_names(rest, names, terminal) }
+  }
+}
+
+fn sc_name_at(names: List(Text), i: u64) -> Text {
+  match names {
+    Nil => "<unknown>"
+    Cons(n, rest) => if i == 0 { n } else { sc_name_at(rest, i - 1) }
+  }
+}
+
+fn sc_rule_context(m: MModel, terminal: u64) -> Text {
+  text_concat("rule ", text_join(sc_rule_names(m.prods, m.nts, terminal), ", "))
 }
 
 // The patterns of the scanner
@@ -242,8 +273,9 @@ fn sc_patterns(m: MModel, state: u64, sc: PScanner) -> List(SPat) {
       Cons(t, more) => {
         if sc_has_state(t.states, state) {
           out := sc_snoc_pat(out, match t.la {
-            None => SPat { pattern: md_expand(t), terminal: 5 + i, priority: 0, la_kind: 0, la: "" }
+            None => SPat { context: sc_rule_context(m, 5 + i), pattern: md_expand(t), terminal: 5 + i, priority: 0, la_kind: 0, la: "" }
             Some(l) => SPat {
+              context: sc_rule_context(m, 5 + i)
               pattern: md_expand(t)
               terminal: 5 + i
               priority: 0

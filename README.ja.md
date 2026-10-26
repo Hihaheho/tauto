@@ -22,7 +22,7 @@ Nib は、Tauto から依存型と証明を除いた言語です。
 | `crates/tauto-kernel/src/prelude.taut` | カーネルのプレリュード：証明が宣言なしで使える型と定理（`Nat`、`Eq`、`And`、`Or`、`Not`、`Iff` など）。公理はない。Rust の実装のうち、ここで公開するのはこのファイルと `crates/tauto-parol/tauto.par` だけ |
 | `crates/tauto-parol/tauto.par` | Tauto の文法：読み込みが受け付けるすべての形。基本の規則のあとに、tauto 自身の規則（依存型と証明）が続く |
 | `docs/design/` | 設計文書：意味論、所有権、クラス、マクロとステップ、Lean による形式化、そして（まだ公開していない）実装のバックエンドと自己ホスティング |
-| `totes/` | Tauto で書いた道具の部分：プログラムの検査器（`nibcheck`）、構文の読み込み（`scan`、`llk`、`syntax`、`surface`）、構文リテラルの表の生成器（`llkgen`）、Rust のカーネルに渡した宣言を検査し直す独立カーネル（`kernel`）、フォーマッタ、マクロの衛生、テキストと順序つきの写像。それぞれ、何をするかの証明つき。同じ入力で Rust の実装と照らし合わせて確かめる |
+| `totes/` | Tauto で書いた道具の部分：プログラムの検査器（`nibcheck`）、構文の読み込み（`scan`、`llk`、`syntax`、`surface`）、構文リテラルの表の生成器（`llkgen`）、Rust のカーネルに渡した宣言を検査し直す独立カーネル（`kernel`）、表層構文からそのカーネルの項を作る精密化器（`elaborator`）、構文の宣言として書いた Tauto の文法（`grammar`）、Rust バックエンド（`rustgen`）、フォーマッタ、マクロの衛生、テキストと順序つきの写像。それぞれ、何をするかの証明つき。道具の部分は、同じ入力で Rust の実装と照らし合わせて確かめる。証明のライブラリ：法則を値として渡す代数（`algebra`、モノイドから有理数と行列まで）、import したファイルだけに見える公理としての関数外延性（`extensionality`）、単純化のステップ（`proof-search`） |
 | `examples/` | Tauto のプログラムと証明 |
 | `cases/` | 入力に対して実装が何を答えるべきかを定めるケースファイル（tauto とその Nib の部分） |
 | `Tauto.eure` | プロジェクトのマニフェスト（まだどのツールも読みません） |
@@ -147,6 +147,8 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
   - `examples/calc/`：文法から証明側の型も作る電卓。読んだ式をスタックマシンで計算すると、その式の値が残ることを証明。
   - `examples/regex/`：微分による、言語を判定するマッチャ。
   - `examples/wf/`：整礎再帰による関数。
+- `examples/universes.taut`：宇宙のレベルを指定した定義と定理。
+- `examples/certified-state/`：不変条件を証明した状態遷移。証明を消して実行する（`std/State.taut`）。
 - `examples/rust/`：生成したバインディングを通じて Rust のクレートを呼ぶ Tauto のプログラムと、
   スレッド上のタスク。
 - `examples/javascript/`：JavaScript バックエンドのプログラム。JavaScript の非同期関数と、Wasm に

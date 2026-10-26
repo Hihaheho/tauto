@@ -50,3 +50,35 @@ theorem kernel_rejection_restores_state(): Eq(
 ) {
   refl()
 }
+
+theorem kernel_recursor_unknown_restores_state(): Eq(
+  Mut1(KernelVerdict, KernelCore),
+  kernel_execute(10, kernel_new(), KernelRecursor("missing", 2)),
+  mut1(KernelRejected, kernel_new())
+) {
+  refl()
+}
+
+theorem kernel_recursor_motive_keeps_domain(): Eq(
+  Mut1(Option(KernelTerm), KernelCore),
+  kernel_motive_at(
+    10,
+    kernel_new(),
+    KernelPi(
+      KernelSortTerm(KernelType(kernel_level(3, Nil))),
+      KernelSortTerm(KernelType(kernel_level(1, Nil)))
+    ),
+    2
+  ),
+  mut1(
+    Some(
+      KernelPi(
+        KernelSortTerm(KernelType(kernel_level(3, Nil))),
+        KernelSortTerm(KernelType(kernel_level(2, Nil)))
+      )
+    ),
+    kernel_new()
+  )
+) {
+  refl()
+}

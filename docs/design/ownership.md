@@ -402,6 +402,7 @@ fn vec_clear<A>(&mut v: Vec(A)) -> ()                // 要素を捨てる：A �
 fn vec_each<A: linear, e>(&v: Vec(A), &f: (&x: A) -> () ! {e}) -> () ! {e}
 fn vec_consume<A, e: <=1>(v: Vec(A), &f: (x: A) -> () ! {e}) -> () ! {e}
 fn vec_sort_by<A: linear>(&mut v: Vec(A), &lt: (&a: A, &b: A) -> Bool) -> ()
+fn vec_into_array<A: shared>(v: Vec(A)) -> Array(A)
 fn vec_truncate<A>(&mut v: Vec(A), n: u64) -> ()
 fn vec_swap<A: linear>(&mut v: Vec(A), i: u64, j: u64) -> () ! {out_of_bounds}
 
@@ -414,6 +415,8 @@ fn hashmap_into_vec<K: linear, V: linear>(m: HashMap(K, V)) -> Vec(Pair(K, V))
 fn replace<A: linear>(&mut x: A, v: A) -> A          // &mut から move して出す唯一の方法
 ```
 
+- `vec_into_array` は `Vec` を消費し、順序を保って読み取り専用の `Array` に移す。要素は `shared` に限り、元の `Vec` の再利用や可変借用との併存は許さない。中間の `List` は構築しない。
+- Rust backend の再帰データは、走査だけでなく最後の所有者による破棄でもスタックを使う。`budget` はホストのスタック容量を制限しない。大きな平坦な列は `Vec` で構築し `Array` で共有できるが、要素自身が再帰データの場合の破棄まで保証するものではない。
 - `<A: linear>` を書くのは「要素を捨てない」関数。`vec_clear` は捨てるので既定の affine。
 - `vec_consume` は要素を一つずつ `f` に渡し、残りの要素が `f` の呼び出しを跨いで生きるので `e: <=1`。`vec_each` は借用しか渡さないので `e` は任意。
 - std の本体にも「制御フロー線形性（CFL）の規則」が掛かるので、署名は次のようになる：

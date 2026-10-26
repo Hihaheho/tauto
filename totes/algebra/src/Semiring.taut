@@ -1,0 +1,233 @@
+import "Monoid.taut"
+
+// The two operations are shared monoid values, not copied fields.
+inductive AlgebraSemiring(
+  R: Type,
+  addition: AlgebraMonoid(0, R),
+  multiplication: AlgebraMonoid(0, R)
+): Prop {
+  algebra_semiring(
+    comm: ∀ x: R. ∀ y: R. AlgebraEq(
+      0,
+      R,
+      algebra_op(0, R, addition)(x, y),
+      algebra_op(0, R, addition)(y, x)
+    ),
+    distribute_left: ∀ x: R. ∀ y: R. ∀ z: R. AlgebraEq(
+      0,
+      R,
+      algebra_op(0, R, multiplication)(x, algebra_op(0, R, addition)(y, z)),
+      algebra_op(
+        0,
+        R,
+        addition
+      )(algebra_op(0, R, multiplication)(x, y), algebra_op(0, R, multiplication)(x, z))
+    ),
+    distribute_right: ∀ x: R. ∀ y: R. ∀ z: R. AlgebraEq(
+      0,
+      R,
+      algebra_op(0, R, multiplication)(algebra_op(0, R, addition)(x, y), z),
+      algebra_op(
+        0,
+        R,
+        addition
+      )(algebra_op(0, R, multiplication)(x, z), algebra_op(0, R, multiplication)(y, z))
+    ),
+    annihilate_left: ∀ x: R. AlgebraEq(
+      0,
+      R,
+      algebra_op(0, R, multiplication)(algebra_unit(0, R, addition), x),
+      algebra_unit(0, R, addition)
+    ),
+    annihilate_right: ∀ x: R. AlgebraEq(
+      0,
+      R,
+      algebra_op(0, R, multiplication)(x, algebra_unit(0, R, addition)),
+      algebra_unit(0, R, addition)
+    )
+  ): AlgebraSemiring(R, addition, multiplication)
+}
+
+theorem algebra_add_comm<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  x: R,
+  y: R
+): AlgebraEq(0, R, algebra_op(0, R, addition)(x, y), algebra_op(0, R, addition)(y, x)) {
+  match laws -> AlgebraEq(0, R, algebra_op(0, R, addition)(x, y), algebra_op(0, R, addition)(y, x)) {
+    algebra_semiring(
+      comm,
+      distribute_left,
+      distribute_right,
+      annihilate_left,
+      annihilate_right
+    ) => comm(x, y)
+  }
+}
+
+theorem algebra_distribute_left<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  x: R,
+  y: R,
+  z: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_op(0, R, multiplication)(x, algebra_op(0, R, addition)(y, z)),
+  algebra_op(
+    0,
+    R,
+    addition
+  )(algebra_op(0, R, multiplication)(x, y), algebra_op(0, R, multiplication)(x, z))
+) {
+  match laws -> AlgebraEq(
+    0,
+    R,
+    algebra_op(0, R, multiplication)(x, algebra_op(0, R, addition)(y, z)),
+    algebra_op(
+      0,
+      R,
+      addition
+    )(algebra_op(0, R, multiplication)(x, y), algebra_op(0, R, multiplication)(x, z))
+  ) {
+    algebra_semiring(
+      comm,
+      distribute_left,
+      distribute_right,
+      annihilate_left,
+      annihilate_right
+    ) => distribute_left(x, y, z)
+  }
+}
+
+theorem algebra_distribute_right<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  x: R,
+  y: R,
+  z: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_op(0, R, multiplication)(algebra_op(0, R, addition)(x, y), z),
+  algebra_op(
+    0,
+    R,
+    addition
+  )(algebra_op(0, R, multiplication)(x, z), algebra_op(0, R, multiplication)(y, z))
+) {
+  match laws -> AlgebraEq(
+    0,
+    R,
+    algebra_op(0, R, multiplication)(algebra_op(0, R, addition)(x, y), z),
+    algebra_op(
+      0,
+      R,
+      addition
+    )(algebra_op(0, R, multiplication)(x, z), algebra_op(0, R, multiplication)(y, z))
+  ) {
+    algebra_semiring(
+      comm,
+      distribute_left,
+      distribute_right,
+      annihilate_left,
+      annihilate_right
+    ) => distribute_right(x, y, z)
+  }
+}
+
+theorem algebra_zero_mul<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  x: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_op(0, R, multiplication)(algebra_unit(0, R, addition), x),
+  algebra_unit(0, R, addition)
+) {
+  match laws -> AlgebraEq(
+    0,
+    R,
+    algebra_op(0, R, multiplication)(algebra_unit(0, R, addition), x),
+    algebra_unit(0, R, addition)
+  ) {
+    algebra_semiring(
+      comm,
+      distribute_left,
+      distribute_right,
+      annihilate_left,
+      annihilate_right
+    ) => annihilate_left(x)
+  }
+}
+
+theorem algebra_mul_zero<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  x: R
+): AlgebraEq(
+  0,
+  R,
+  algebra_op(0, R, multiplication)(x, algebra_unit(0, R, addition)),
+  algebra_unit(0, R, addition)
+) {
+  match laws -> AlgebraEq(
+    0,
+    R,
+    algebra_op(0, R, multiplication)(x, algebra_unit(0, R, addition)),
+    algebra_unit(0, R, addition)
+  ) {
+    algebra_semiring(
+      comm,
+      distribute_left,
+      distribute_right,
+      annihilate_left,
+      annihilate_right
+    ) => annihilate_right(x)
+  }
+}
+
+theorem algebra_chain<R: Type, a: R, b: R, c: R>(
+  first: AlgebraEq(0, R, a, b),
+  second: AlgebraEq(0, R, b, c)
+): AlgebraEq(0, R, a, c) {
+  algebra_trans(0, R, a, b, c, first, second)
+}
+
+theorem algebra_flip<R: Type, a: R, b: R>(equal: AlgebraEq(0, R, a, b)): AlgebraEq(0, R, b, a) {
+  algebra_sym(0, R, a, b, equal)
+}
+
+theorem algebra_apply<R: Type, S: Type, a: R, b: R>(
+  map: (R) -> S,
+  equal: AlgebraEq(0, R, a, b)
+): AlgebraEq(0, S, map(a), map(b)) {
+  algebra_congr(0, 0, R, S, a, b, map, equal)
+}

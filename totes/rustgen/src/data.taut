@@ -1,0 +1,928 @@
+import "generic.taut"
+
+fn rustgen_printable(ty: RustgenType) -> Yn {
+  match ty -> Yn {
+    RustgenNumber(id, value) => yes
+    RustgenInt => yes
+    RustgenBool => yes
+    RustgenText => yes
+    RustgenNat => yes
+    RustgenNamed(name) => no
+    RustgenApply(name, args) => no
+    RustgenVar(name) => no
+    RustgenMeta(name) => no
+  }
+}
+fn rustgen_reserved(name: Text) -> Yn {
+  name == "text_concat" || name == "zero" || name == "succ" || name == "Nat" || name == "i64" || name == "Bool" || name == "Yn" || name == "Text" || name == "yes" || name == "no"
+}
+fn rustgen_parameters_known(params: List(RustgenBinding), all: List(RustgenFunction)) -> Yn {
+  match params -> Yn {
+    Nil => yes
+    Cons(p, rest) => rustgen_known_type(p.ty, all) && rustgen_parameters_known(rest, all)
+  }
+}
+fn rustgen_signature_known(f: RustgenFunction, all: List(RustgenFunction)) -> Yn {
+  rustgen_known_type(f.result, all) && rustgen_parameters_known(f.params, all)
+}
+fn rustgen_names_unique(names: List(Text), seen: List(Text)) -> Yn {
+  match names -> Yn {
+    Nil => yes
+    Cons(
+      n,
+      rest
+    ) => !rustgen_reserved(
+      n
+    ) && !rustgen_generic_member(n, seen) && rustgen_names_unique(rest, Cons(n, seen))
+  }
+}
+fn rustgen_formals(params: List(SurfaceNamed)) -> RustgenResult(List(Text)) {
+  match params -> RustgenResult(List(Text)) {
+    Nil => RustgenOk(Nil)
+    Cons(p, rest) => match rustgen_call_name(p.ty) -> RustgenResult(List(Text)) {
+      None => RustgenErr("data parameters must be types")
+      Some(
+        name
+      ) => if name != "Type" { RustgenErr(
+        "indexed and higher-universe data are unsupported"
+      ) } else {
+        match rustgen_formals(rest) -> RustgenResult(List(Text)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            names
+          ) => if rustgen_generic_member(
+            p.name,
+            names
+          ) || rustgen_reserved(
+            p.name
+          ) { RustgenErr(
+            "duplicate or reserved type parameter"
+          ) } else { RustgenOk(Cons(p.name, names)) }
+        }
+      }
+    }
+  }
+}
+fn rustgen_formal_types(names: List(Text)) -> List(RustgenType) {
+  match names -> List(RustgenType) {
+    Nil => Nil
+    Cons(n, rest) => Cons(RustgenVar(n), rustgen_formal_types(rest))
+  }
+}
+fn rustgen_family(name: Text, args: List(RustgenType)) -> RustgenType {
+  match args -> RustgenType {
+    Nil => RustgenNamed(name)
+    Cons(t, rest) => RustgenApply(name, args)
+  }
+}
+fn rustgen_data_fields(
+  params: List(SurfaceNamed),
+  done: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match params -> RustgenResult(List(RustgenBinding)) {
+    Nil => RustgenOk(list_reverse(done))
+    Cons(p, rest) => match rustgen_find(p.name, done) -> RustgenResult(List(RustgenBinding)) {
+      Some(ty) => RustgenErr("duplicate constructor field")
+      None => match rustgen_written(p.ty) -> RustgenResult(List(RustgenBinding)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(ty) => rustgen_data_fields(rest, Cons(rustgen_binding(p.name, ty), done))
+      }
+    }
+  }
+}
+fn rustgen_constructors(
+  owner: Text,
+  generics: List(Text),
+  cs: List(SurfaceCtor),
+  done: List(RustgenFunction)
+) -> RustgenResult(List(RustgenFunction)) {
+  match cs -> RustgenResult(List(RustgenFunction)) {
+    Nil => RustgenOk(done)
+    Cons(
+      c,
+      rest
+    ) => if c.implicit != 0 || rustgen_reserved(
+      c.name
+    ) { RustgenErr("implicit or reserved constructor") } else {
+      match rustgen_find_function(c.name, done) -> RustgenResult(List(RustgenFunction)) {
+        Some(old) => RustgenErr("duplicate declaration name")
+        None => match rustgen_written(c.result) -> RustgenResult(List(RustgenFunction)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            raw
+          ) => match rustgen_vars(10000, raw, generics) -> RustgenResult(List(RustgenFunction)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(
+              result
+            ) => if !rustgen_same(
+              result,
+              rustgen_family(owner, rustgen_formal_types(generics))
+            ) { RustgenErr("constructor must return its family with unchanged parameters") } else {
+              match rustgen_data_fields(c.params, Nil) -> RustgenResult(List(RustgenFunction)) {
+                RustgenErr(message) => RustgenErr(message)
+                RustgenOk(
+                  raw_fields
+                ) => match rustgen_vars_bindings(
+                  10000,
+                  raw_fields,
+                  generics
+                ) -> RustgenResult(List(RustgenFunction)) {
+                  RustgenErr(message) => RustgenErr(message)
+                  RustgenOk(
+                    fields
+                  ) => rustgen_constructors(
+                    owner,
+                    generics,
+                    rest,
+                    Cons(rustgen_function(c.name, fields, result, c.result, 1, generics), done)
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+fn rustgen_inductive(
+  d: SurfaceInductive,
+  done: List(RustgenFunction)
+) -> RustgenResult(List(RustgenFunction)) {
+  if rustgen_reserved(
+    d.name
+  ) || list_length(d.constructors) == 0 { RustgenErr("reserved or empty datatype") } else {
+    match rustgen_call_name(d.sort) -> RustgenResult(List(RustgenFunction)) {
+      None => RustgenErr("data must live in Type")
+      Some(sort) => if sort != "Type" { RustgenErr("data must live in Type") } else {
+        match rustgen_find_function(d.name, done) -> RustgenResult(List(RustgenFunction)) {
+          Some(old) => RustgenErr("duplicate declaration name")
+          None => match rustgen_formals(d.params) -> RustgenResult(List(RustgenFunction)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(
+              generics
+            ) => rustgen_constructors(
+              d.name,
+              generics,
+              d.constructors,
+              Cons(
+                rustgen_function(
+                  d.name,
+                  Nil,
+                  rustgen_family(d.name, rustgen_formal_types(generics)),
+                  d.sort,
+                  2,
+                  generics
+                ),
+                done
+              )
+            )
+          }
+        }
+      }
+    }
+  }
+}
+fn rustgen_ctor_list(ty: RustgenType, all: List(RustgenFunction)) -> List(RustgenFunction) {
+  match all -> List(RustgenFunction) {
+    Nil => Nil
+    Cons(
+      f,
+      rest
+    ) => if f.kind == 1 && rustgen_type_label(
+      f.result
+    ) == rustgen_type_label(
+      ty
+    ) { Cons(f, rustgen_ctor_list(ty, rest)) } else { rustgen_ctor_list(ty, rest) }
+  }
+}
+fn rustgen_type_codes(params: List(RustgenBinding)) -> List(Text) {
+  match params -> List(Text) {
+    Nil => Nil
+    Cons(p, rest) => Cons(rustgen_type_name(p.ty), rustgen_type_codes(rest))
+  }
+}
+fn rustgen_name_codes(params: List(RustgenBinding)) -> List(Text) {
+  match params -> List(Text) {
+    Nil => Nil
+    Cons(p, rest) => Cons(rustgen_ident(p.name), rustgen_name_codes(rest))
+  }
+}
+fn rustgen_generic_codes(names: List(Text), bounds: Yn) -> List(Text) {
+  match names -> List(Text) {
+    Nil => Nil
+    Cons(n, rest) => {
+      let code: Text = if bounds { text_concat(
+        rustgen_ident(n),
+        ": Clone"
+      ) } else { rustgen_ident(n) }
+      Cons(code, rustgen_generic_codes(rest, bounds))
+    }
+  }
+}
+fn rustgen_generics(names: List(Text), bounds: Yn) -> Text {
+  match names -> Text {
+    Nil => ""
+    Cons(n, rest) => rustgen_wrapped("<", text_join(rustgen_generic_codes(names, bounds), ","), ">")
+  }
+}
+fn rustgen_phantom_types(names: List(Text), fields: List(Text)) -> List(Text) {
+  match names -> List(Text) {
+    Nil => fields
+    Cons(
+      n,
+      rest
+    ) => list_append(
+      fields,
+      Cons(
+        rustgen_wrapped(
+          "std::marker::PhantomData<(",
+          text_join(rustgen_generic_codes(names, no), ","),
+          ")>"
+        ),
+        Nil
+      )
+    )
+  }
+}
+fn rustgen_phantom_values(names: List(Text), values: List(Text), pattern: Yn) -> List(Text) {
+  match names -> List(Text) {
+    Nil => values
+    Cons(n, rest) => {
+      let code: Text = if pattern { "_" } else { "std::marker::PhantomData" }
+      list_append(values, Cons(code, Nil))
+    }
+  }
+}
+fn rustgen_param_codes(params: List(RustgenBinding)) -> List(Text) {
+  match params -> List(Text) {
+    Nil => Nil
+    Cons(
+      p,
+      rest
+    ) => Cons(
+      text_concat_all(Cons(rustgen_ident(p.name), Cons(": ", Cons(rustgen_type_name(p.ty), Nil)))),
+      rustgen_param_codes(rest)
+    )
+  }
+}
+fn rustgen_variants(cs: List(RustgenFunction)) -> List(Text) {
+  match cs -> List(Text) {
+    Nil => Nil
+    Cons(
+      c,
+      rest
+    ) => Cons(
+      text_concat(
+        rustgen_ident(c.name),
+        rustgen_wrapped(
+          "(",
+          text_join(rustgen_phantom_types(c.generics, rustgen_type_codes(c.params)), ","),
+          ")"
+        )
+      ),
+      rustgen_variants(rest)
+    )
+  }
+}
+fn rustgen_data_code(f: RustgenFunction, all: List(RustgenFunction)) -> Text {
+  let signature = text_concat(rustgen_ident(f.name), rustgen_generics(f.generics, yes))
+  if f.kind == 2 {
+    text_concat_all(
+      Cons(
+        "#[derive(Clone)] enum ",
+        Cons(
+          signature,
+          Cons(
+            " { ",
+            Cons(
+              text_join(rustgen_variants(rustgen_ctor_list(f.result, all)), ","),
+              Cons(" }\n", Nil)
+            )
+          )
+        )
+      )
+    )
+  } else {
+    let body = text_concat_all(
+      Cons(
+        rustgen_ident(rustgen_type_label(f.result)),
+        Cons(
+          "::",
+          Cons(
+            rustgen_ident(f.name),
+            Cons(
+              "(",
+              Cons(
+                text_join(
+                  rustgen_phantom_values(f.generics, rustgen_name_codes(f.params), no),
+                  ","
+                ),
+                Cons(")", Nil)
+              )
+            )
+          )
+        )
+      )
+    )
+    text_concat_all(
+      Cons(
+        "fn ",
+        Cons(
+          signature,
+          Cons(
+            "(",
+            Cons(
+              text_join(rustgen_param_codes(f.params), ","),
+              Cons(
+                ") -> ",
+                Cons(
+                  rustgen_type_name(f.result),
+                  Cons(" { std::rc::Rc::new(", Cons(body, Cons(") }\n", Nil)))
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+fn rustgen_pattern_name(pattern: SurfacePattern) -> Option(Text) {
+  match pattern -> Option(Text) {
+
+    PtBind(name) => Some(name)
+
+    PtCtor(name, args) => Some(name)
+
+    PtWild => None
+    PtInt(n, m) => None
+    PtBool(v) => None
+    PtText(v) => None
+    PtRecord(n, f) => None
+    PtOther(w) => None
+  }
+}
+
+fn rustgen_pattern_args(pattern: SurfacePattern) -> List(SurfacePattern) {
+  match pattern -> List(SurfacePattern) {
+
+    PtCtor(name, args) => args
+
+    PtBind(name) => Nil
+
+    PtWild => Nil
+    PtInt(n, m) => Nil
+    PtBool(v) => Nil
+    PtText(v) => Nil
+    PtRecord(n, f) => Nil
+    PtOther(w) => Nil
+  }
+}
+
+fn rustgen_constructor_name(name: Text, functions: List(RustgenFunction)) -> Yn {
+  if name == "yes" || name == "no" || name == "zero" || name == "succ" { yes } else {
+    match rustgen_find_function(name, functions) -> Yn {
+      None => no
+      Some(f) => f.kind == 1
+    }
+  }
+}
+
+fn rustgen_pattern_bindings_in(
+  patterns: List(SurfacePattern),
+  functions: List(RustgenFunction),
+  fields: List(RustgenBinding),
+  locals: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  match patterns -> RustgenResult(List(RustgenBinding)) {
+    Nil => match fields -> RustgenResult(List(RustgenBinding)) { Nil => RustgenOk(Nil)
+      Cons(f, rest) => RustgenErr("missing pattern fields") }
+
+    Cons(p, rest) => match fields -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenErr("too many pattern fields")
+
+      Cons(f, more) => match p -> RustgenResult(List(RustgenBinding)) {
+
+        PtBind(
+          name
+        ) => if rustgen_constructor_name(
+          name,
+          functions
+        ) { RustgenErr(
+          "nested constructor patterns are unsupported"
+        ) } else { match rustgen_find(name, locals) -> RustgenResult(List(RustgenBinding)) {
+
+            Some(old) => RustgenErr("duplicate field binder in pattern")
+            None => match rustgen_pattern_bindings_in(
+              rest,
+              functions,
+              more,
+              Cons(rustgen_binding(name, f.ty), locals)
+            ) -> RustgenResult(List(RustgenBinding)) {
+              RustgenErr(message) => RustgenErr(message)
+              RustgenOk(tail) => RustgenOk(Cons(rustgen_binding(name, f.ty), tail))
+            }
+          }
+
+        }
+        PtWild => RustgenErr("pattern fields require names")
+
+        PtCtor(n, a) => RustgenErr("nested patterns are unsupported")
+
+        PtInt(n, m) => RustgenErr("literal patterns are unsupported")
+
+        PtBool(v) => RustgenErr("literal patterns are unsupported")
+
+        PtText(v) => RustgenErr("literal patterns are unsupported")
+
+        PtRecord(n, fs) => RustgenErr("record patterns are unsupported")
+
+        PtOther(w) => RustgenErr("unsupported pattern")
+      }
+    }
+  }
+}
+
+fn rustgen_pattern_bindings(
+  patterns: List(SurfacePattern),
+  functions: List(RustgenFunction),
+  fields: List(RustgenBinding),
+  locals: List(RustgenBinding)
+) -> RustgenResult(List(RustgenBinding)) {
+  rustgen_pattern_bindings_in(patterns, functions, fields, Nil)
+}
+
+fn rustgen_bound_clones(bindings: List(RustgenBinding)) -> Text {
+  match bindings -> Text {
+    Nil => ""
+
+    Cons(
+      b,
+      rest
+    ) => text_concat_all(
+      Cons(
+        "let ",
+        Cons(
+          rustgen_ident(b.name),
+          Cons(
+            " = ",
+            Cons(
+              rustgen_clone(rustgen_ident(b.name)),
+              Cons("; ", Cons(rustgen_bound_clones(rest), Nil))
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+fn rustgen_member(name: Text, names: List(Text)) -> Yn {
+  match names -> Yn { Nil => no
+    Cons(n, rest) => name == n || rustgen_member(name, rest) }
+}
+
+fn rustgen_expected(
+  expected: Option(RustgenType),
+  actual: RustgenType
+) -> RustgenResult(RustgenType) {
+  match expected -> RustgenResult(RustgenType) {
+    None => RustgenOk(actual)
+    Some(ty) => match rustgen_unify(10000, ty, actual, Nil) -> RustgenResult(RustgenType) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(subst) => rustgen_resolve(10000, ty, subst)
+    }
+  }
+}
+
+fn rustgen_is_some<A>(value: Option(A)) -> Yn {
+  match value -> Yn {
+    None => no
+    Some(item) => yes
+  }
+}
+
+// SurfaceInductive omits generation clauses. Reject them on the concrete tree
+// rather than losing the request during lowering or scanning source strings.
+fn rustgen_generated(k: Nat, nodes: List(CstNode)) -> Yn {
+  match k -> Yn {
+    zero => yes
+    succ(j) => match nodes -> Yn {
+      Nil => no
+      Cons(
+        n,
+        rest
+      ) => n.name == "Generates" || n.name == "Generated" || rustgen_generated(
+        j,
+        list_append(n.flat, rest)
+      )
+    }
+  }
+}
+
+fn rustgen_binding_types(bindings: List(RustgenBinding)) -> List(RustgenType) {
+  match bindings -> List(RustgenType) {
+    Nil => Nil
+    Cons(b, rest) => Cons(b.ty, rustgen_binding_types(rest))
+  }
+}
+fn rustgen_value_types(values: List(RustgenValue)) -> List(RustgenType) {
+  match values -> List(RustgenType) {
+    Nil => Nil
+    Cons(v, rest) => Cons(v.ty, rustgen_value_types(rest))
+  }
+}
+fn rustgen_value_codes(values: List(RustgenValue)) -> List(Text) {
+  match values -> List(Text) {
+    Nil => Nil
+    Cons(v, rest) => Cons(v.code, rustgen_value_codes(rest))
+  }
+}
+fn rustgen_zip_types(
+  names: List(Text),
+  types: List(RustgenType)
+) -> RustgenResult(List(RustgenBinding)) {
+  match names -> RustgenResult(List(RustgenBinding)) {
+    Nil => match types -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenOk(Nil)
+      Cons(t, rest) => RustgenErr("too many type arguments")
+    }
+    Cons(n, rest) => match types -> RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenErr("missing type argument")
+      Cons(t, more) => match rustgen_zip_types(rest, more) -> RustgenResult(List(RustgenBinding)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(bindings) => RustgenOk(Cons(rustgen_binding(n, t), bindings))
+      }
+    }
+  }
+}
+fn rustgen_specialize(f: RustgenFunction, ty: RustgenType) -> RustgenResult(RustgenFunction) {
+  match rustgen_zip_types(f.generics, rustgen_type_args(ty)) -> RustgenResult(RustgenFunction) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(
+      bindings
+    ) => match rustgen_substitute_bindings(
+      10000,
+      f.params,
+      bindings
+    ) -> RustgenResult(RustgenFunction) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(
+        params
+      ) => RustgenOk(rustgen_function(f.name, params, ty, f.body, f.kind, f.generics))
+    }
+  }
+}
+mutual {
+  fn rustgen_pending_in_result(k: Nat, ty: RustgenType, result: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match ty -> Yn {
+        RustgenMeta(name) => rustgen_occurs(j, name, result)
+        RustgenApply(name, args) => rustgen_pending_list(j, args, result)
+        RustgenInt => yes
+        RustgenNat => yes
+        RustgenNumber(id, value) => yes
+        RustgenBool => yes
+        RustgenText => yes
+        RustgenNamed(name) => yes
+        RustgenVar(name) => yes
+      }
+    }
+  }
+  fn rustgen_pending_list(k: Nat, types: List(RustgenType), result: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match types -> Yn {
+        Nil => yes
+        Cons(
+          t,
+          rest
+        ) => rustgen_pending_in_result(j, t, result) && rustgen_pending_list(j, rest, result)
+      }
+    }
+  }
+}
+mutual {
+  fn rustgen_default_numbers(k: Nat, ty: RustgenType) -> RustgenResult(RustgenType) {
+    match k -> RustgenResult(RustgenType) {
+      zero => RustgenErr("type depth exceeded")
+      succ(j) => match ty -> RustgenResult(RustgenType) {
+        RustgenNumber(
+          id,
+          value
+        ) => if value <= 9223372036854775807 { RustgenOk(
+          RustgenInt
+        ) } else { RustgenErr("unannotated integer literal exceeds i64") }
+        RustgenApply(
+          name,
+          args
+        ) => match rustgen_default_many(j, args) -> RustgenResult(RustgenType) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(types) => RustgenOk(RustgenApply(name, types))
+        }
+        RustgenMeta(name) => RustgenErr("unresolved type requires an annotation")
+        RustgenInt => RustgenOk(ty)
+        RustgenNat => RustgenOk(ty)
+        RustgenBool => RustgenOk(ty)
+        RustgenText => RustgenOk(ty)
+        RustgenNamed(name) => RustgenOk(ty)
+        RustgenVar(name) => RustgenOk(ty)
+      }
+    }
+  }
+  fn rustgen_default_many(k: Nat, types: List(RustgenType)) -> RustgenResult(List(RustgenType)) {
+    match k -> RustgenResult(List(RustgenType)) {
+      zero => RustgenErr("type depth exceeded")
+      succ(j) => match types -> RustgenResult(List(RustgenType)) {
+        Nil => RustgenOk(Nil)
+        Cons(t, rest) => match rustgen_default_numbers(j, t) -> RustgenResult(List(RustgenType)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(ty) => match rustgen_default_many(j, rest) -> RustgenResult(List(RustgenType)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(more) => RustgenOk(Cons(ty, more))
+          }
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  fn rustgen_number_in_type(k: Nat, id: Text, ty: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => yes
+      succ(j) => match ty -> Yn {
+        RustgenNumber(other, value) => id == other
+        RustgenApply(name, args) => rustgen_number_in_list(j, id, args)
+        RustgenInt => no
+        RustgenNat => no
+        RustgenBool => no
+        RustgenText => no
+        RustgenNamed(name) => no
+        RustgenVar(name) => no
+        RustgenMeta(name) => no
+      }
+    }
+  }
+  fn rustgen_number_in_list(k: Nat, id: Text, types: List(RustgenType)) -> Yn {
+    match k -> Yn {
+      zero => yes
+      succ(j) => match types -> Yn {
+        Nil => no
+        Cons(t, rest) => rustgen_number_in_type(j, id, t) || rustgen_number_in_list(j, id, rest)
+      }
+    }
+  }
+  fn rustgen_numbers_shared(k: Nat, ty: RustgenType, result: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => yes
+      succ(j) => match ty -> Yn {
+        RustgenNumber(id, value) => rustgen_number_in_type(j, id, result)
+        RustgenApply(name, args) => rustgen_numbers_shared_list(j, args, result)
+        RustgenInt => no
+        RustgenNat => no
+        RustgenBool => no
+        RustgenText => no
+        RustgenNamed(name) => no
+        RustgenVar(name) => no
+        RustgenMeta(name) => no
+      }
+    }
+  }
+  fn rustgen_numbers_shared_list(k: Nat, types: List(RustgenType), result: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => yes
+      succ(j) => match types -> Yn {
+        Nil => no
+        Cons(
+          t,
+          rest
+        ) => rustgen_numbers_shared(j, t, result) || rustgen_numbers_shared_list(j, rest, result)
+      }
+    }
+  }
+}
+fn rustgen_call_generics(
+  types: List(RustgenType),
+  result: RustgenType
+) -> RustgenResult(List(RustgenType)) {
+  match types -> RustgenResult(List(RustgenType)) {
+    Nil => RustgenOk(Nil)
+    Cons(t, rest) => {
+      let adjusted: RustgenResult(
+        RustgenType
+      ) = if rustgen_closed(
+        t
+      ) && !rustgen_numbers_shared(
+        10000,
+        t,
+        result
+      ) { rustgen_default_numbers(10000, t) } else { RustgenOk(t) }
+      match adjusted -> RustgenResult(List(RustgenType)) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          ty
+        ) => match rustgen_call_generics(rest, result) -> RustgenResult(List(RustgenType)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(more) => RustgenOk(Cons(ty, more))
+        }
+      }
+    }
+  }
+}
+fn rustgen_emit_call(
+  f: RustgenFunction,
+  values: List(RustgenValue),
+  result: RustgenType,
+  instances: List(RustgenType)
+) -> RustgenResult(RustgenValue) {
+  match rustgen_call_generics(instances, result) -> RustgenResult(RustgenValue) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(types) => {
+      let type_args: Text = if list_length(
+        types
+      ) == 0 { "" } else { rustgen_wrapped(
+        "::<",
+        text_join(rustgen_type_names_in(10000, types), ","),
+        ">"
+      ) }
+      RustgenOk(
+        rustgen_value(
+          result,
+          text_concat_all(
+            Cons(
+              rustgen_ident(f.name),
+              Cons(
+                type_args,
+                Cons("(", Cons(text_join(rustgen_value_codes(values), ","), Cons(")", Nil)))
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+fn rustgen_infer_call(
+  f: RustgenFunction,
+  values: List(RustgenValue),
+  at: Nat
+) -> RustgenResult(RustgenValue) {
+  let fresh = rustgen_instantiate(text_of_nat(at), f.generics)
+  match rustgen_substitute_many(
+    10000,
+    rustgen_binding_types(f.params),
+    fresh
+  ) -> RustgenResult(RustgenValue) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(
+      params
+    ) => match rustgen_unify_many(
+      10000,
+      params,
+      rustgen_value_types(values),
+      Nil
+    ) -> RustgenResult(RustgenValue) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(
+        subst
+      ) => match rustgen_substitute(10000, f.result, fresh) -> RustgenResult(RustgenValue) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          raw_result
+        ) => match rustgen_resolve(10000, raw_result, subst) -> RustgenResult(RustgenValue) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            result
+          ) => match rustgen_resolve_many(
+            10000,
+            rustgen_binding_types(fresh),
+            subst
+          ) -> RustgenResult(RustgenValue) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(
+              instances
+            ) => if !rustgen_pending_list(
+              10000,
+              instances,
+              result
+            ) { RustgenErr("cannot infer a result-erased type parameter") } else {
+              rustgen_emit_call(f, values, result, instances)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+fn rustgen_with_scope(names: List(Text), all: List(RustgenFunction)) -> List(RustgenFunction) {
+  match names -> List(RustgenFunction) {
+    Nil => all
+    Cons(
+      n,
+      rest
+    ) => Cons(
+      rustgen_function(n, Nil, RustgenVar(n), surface_out("type parameter"), 3, Nil),
+      rustgen_with_scope(rest, all)
+    )
+  }
+}
+fn rustgen_scope_names(functions: List(RustgenFunction)) -> List(Text) {
+  match functions -> List(Text) {
+    Nil => Nil
+    Cons(
+      f,
+      rest
+    ) => if f.kind == 3 { Cons(
+      f.name,
+      rustgen_scope_names(rest)
+    ) } else { rustgen_scope_names(rest) }
+  }
+}
+
+fn rustgen_fits(actual: RustgenType, expected: RustgenType) -> Yn {
+  match rustgen_unify(10000, actual, expected, Nil) -> Yn {
+    RustgenErr(message) => no
+    RustgenOk(subst) => yes
+  }
+}
+
+fn rustgen_constructor_for(
+  name: Text,
+  ty: RustgenType,
+  functions: List(RustgenFunction)
+) -> RustgenResult(RustgenFunction) {
+  match rustgen_find_function(name, functions) -> RustgenResult(RustgenFunction) {
+    None => RustgenErr("unknown match constructor")
+    Some(
+      f
+    ) => if f.kind != 1 || rustgen_type_label(
+      f.result
+    ) != rustgen_type_label(
+      ty
+    ) { RustgenErr("constructor belongs to another type") } else { rustgen_specialize(f, ty) }
+  }
+}
+
+fn rustgen_builtin_declarations() -> List(RustgenFunction) {
+  let a = RustgenVar("A")
+  let names = Cons("A", Nil)
+  let list = RustgenApply("List", Cons(a, Nil))
+  let option = RustgenApply("Option", Cons(a, Nil))
+  let dummy = surface_out("builtin")
+  Cons(
+    rustgen_function("List", Nil, list, dummy, 2, names),
+    Cons(
+      rustgen_function("Nil", Nil, list, dummy, 1, names),
+      Cons(
+        rustgen_function(
+          "Cons",
+          Cons(rustgen_binding("head", a), Cons(rustgen_binding("tail", list), Nil)),
+          list,
+          dummy,
+          1,
+          names
+        ),
+        Cons(
+          rustgen_function("Option", Nil, option, dummy, 2, names),
+          Cons(
+            rustgen_function("None", Nil, option, dummy, 1, names),
+            Cons(
+              rustgen_function(
+                "Some",
+                Cons(rustgen_binding("value", a), Nil),
+                option,
+                dummy,
+                1,
+                names
+              ),
+              Nil
+            )
+          )
+        )
+      )
+    )
+  )
+}
+fn rustgen_named_arm(name: Text, arms: List(SurfaceArm)) -> Option(SurfaceArm) {
+  match arms -> Option(SurfaceArm) {
+    Nil => None
+    Cons(arm, rest) => match rustgen_pattern_name(arm.pattern) -> Option(SurfaceArm) {
+      None => rustgen_named_arm(name, rest)
+      Some(found) => if found == name { Some(arm) } else { rustgen_named_arm(name, rest) }
+    }
+  }
+}
+
+fn rustgen_context_code(code: Text, ty: RustgenType) -> Text {
+  text_concat_all(
+    Cons(
+      "{ let __rg_value: ",
+      Cons(rustgen_type_name(ty), Cons(" = ", Cons(code, Cons("; __rg_value }", Nil))))
+    )
+  )
+}

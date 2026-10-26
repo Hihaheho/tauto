@@ -3561,15 +3561,15 @@ mutual {
       zero => PtOther("fuel")
       succ(j) => match surface_simple_path(path) -> SurfacePattern {
         yes => surface_bind_pattern(surface_trim(c, surface_text(c, path)))
-        no => match surface_one(surface_all(path, "Ident")) -> SurfacePattern {
-          None => PtOther("path pattern")
-          Some(name) => match surface_first(path, "PatternArgs") -> SurfacePattern {
-            None => PtOther("path pattern")
+        no => {
+          let name = text_concat_all(surface_path_parts(c, path.flat))
+          match surface_first(path, "PatternArgs") -> SurfacePattern {
+            None => PtCtor(name, Nil)
             Some(a) => match surface_first(a, "FieldPatterns") -> SurfacePattern {
               Some(
                 list
               ) => PtRecord(
-                surface_text(c, name),
+                name,
                 surface_pattern_fields(
                   j,
                   c,
@@ -3582,10 +3582,7 @@ mutual {
                   )
                 )
               )
-              None => PtCtor(
-                surface_text(c, name),
-                surface_patterns(j, c, surface_all(a, "Pattern"))
-              )
+              None => PtCtor(name, surface_patterns(j, c, surface_all(a, "Pattern")))
             }
           }
         }

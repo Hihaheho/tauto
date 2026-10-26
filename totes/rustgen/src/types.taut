@@ -1,0 +1,97 @@
+inductive RustgenType(): Type {
+  RustgenNumber(id: Text, value: Nat): RustgenType
+  RustgenNat(): RustgenType
+  RustgenMeta(name: Text): RustgenType
+  RustgenInt(): RustgenType
+  RustgenBool(): RustgenType
+  RustgenText(): RustgenType
+  RustgenNamed(name: Text): RustgenType
+  RustgenApply(name: Text, args: List(RustgenType)): RustgenType
+  RustgenVar(name: Text): RustgenType
+}
+
+fn rustgen_type_tag(t: RustgenType) -> Nat {
+  match t -> Nat {
+    RustgenNumber(id, value) => 8
+    RustgenInt => 0
+    RustgenBool => 1
+    RustgenText => 2
+    RustgenNamed(n) => 3
+    RustgenApply(n, args) => 4
+    RustgenVar(n) => 5
+    RustgenNat => 6
+    RustgenMeta(n) => 7
+  }
+}
+fn rustgen_type_label(t: RustgenType) -> Text {
+  match t -> Text {
+    RustgenNumber(id, value) => ""
+    RustgenInt => ""
+    RustgenBool => ""
+    RustgenText => ""
+    RustgenNamed(n) => n
+    RustgenApply(n, args) => n
+    RustgenVar(n) => n
+    RustgenNat => ""
+    RustgenMeta(n) => n
+  }
+}
+fn rustgen_type_args(t: RustgenType) -> List(RustgenType) {
+  match t -> List(RustgenType) {
+    RustgenNumber(id, value) => Nil
+    RustgenInt => Nil
+    RustgenBool => Nil
+    RustgenText => Nil
+    RustgenNamed(n) => Nil
+    RustgenApply(n, args) => args
+    RustgenVar(n) => Nil
+    RustgenNat => Nil
+    RustgenMeta(n) => Nil
+  }
+}
+mutual {
+  fn rustgen_same_in(k: Nat, a: RustgenType, b: RustgenType) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(
+        j
+      ) => rustgen_type_tag(
+        a
+      ) == rustgen_type_tag(
+        b
+      ) && rustgen_type_label(
+        a
+      ) == rustgen_type_label(b) && rustgen_sames_in(j, rustgen_type_args(a), rustgen_type_args(b))
+    }
+  }
+  fn rustgen_sames_in(k: Nat, xs: List(RustgenType), ys: List(RustgenType)) -> Yn {
+    match k -> Yn {
+      zero => no
+      succ(j) => match xs -> Yn {
+        Nil => match ys -> Yn {
+          Nil => yes
+          Cons(y, more) => no
+        }
+        Cons(x, rest) => match ys -> Yn {
+          Nil => no
+          Cons(y, more) => rustgen_same_in(j, x, y) && rustgen_sames_in(j, rest, more)
+        }
+      }
+    }
+  }
+}
+fn rustgen_same(a: RustgenType, b: RustgenType) -> Yn { rustgen_same_in(10000, a, b) }
+
+fn rustgen_scalar_name(ty: RustgenType) -> Text {
+  match ty -> Text {
+    RustgenNumber(id, value) => "_"
+    RustgenNat => "u64"
+    RustgenMeta(n) => "_"
+    RustgenInt => "i64"
+    RustgenBool => "bool"
+    RustgenText => "String"
+    RustgenNamed(name) => name
+    RustgenApply(name, args) => name
+    RustgenVar(name) => name
+  }
+}

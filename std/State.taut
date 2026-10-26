@@ -1,0 +1,66 @@
+import "Data.taut"
+
+// The postcondition describes the exact state returned by the transition.
+def StateHoare(
+  S: Type,
+  C: Type,
+  step: (S, C) -> S,
+  pre: (S, C) -> Prop,
+  post: (S, C, S) -> Prop
+): Prop :=
+∀ s: S. ∀ c: C. ∀ h: pre(s, c). post(s, c, step(s, c))
+
+def StatePreserves(S: Type, C: Type, step: (S, C) -> S, invariant: (S) -> Prop): Prop :=
+∀ s: S. ∀ c: C. ∀ h: invariant(s). invariant(step(s, c))
+
+fn state_run<S, C>(step: (S, C) -> S, commands: List(C), state: S) -> S {
+  match commands -> S {
+    Nil => state
+    Cons(command, rest) => state_run(step, rest, step(state, command))
+  }
+}
+
+theorem state_run_preserves<S: Type, C: Type>(
+  step: (S, C) -> S,
+  invariant: (S) -> Prop,
+  safe: StatePreserves(S, C, step, invariant),
+  commands: List(C),
+  state: S,
+  valid: invariant(state)
+): invariant(state_run(step, commands, state)) {
+  match commands -> invariant(state_run(step, commands, state)) {
+    Nil => valid
+    Cons(
+      command,
+      rest
+    ) => state_run_preserves(
+      step,
+      invariant,
+      safe,
+      rest,
+      step(state, command),
+      safe(state, command, valid)
+    )
+  }
+}
+
+// The proof-bearing entry point erases to the same state interpreter.
+fn state_certified_run<S, C>(
+  step: (S, C) -> S,
+  invariant: (S) -> Prop,
+  safe: StatePreserves(S, C, step, invariant),
+  commands: List(C),
+  state: S,
+  valid: invariant(state)
+) -> S { state_run(step, commands, state) }
+
+theorem state_certified_run_preserves<S: Type, C: Type>(
+  step: (S, C) -> S,
+  invariant: (S) -> Prop,
+  safe: StatePreserves(S, C, step, invariant),
+  commands: List(C),
+  state: S,
+  valid: invariant(state)
+): invariant(state_certified_run(step, invariant, safe, commands, state, valid)) {
+  state_run_preserves(step, invariant, safe, commands, state, valid)
+}

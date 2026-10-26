@@ -2,8 +2,8 @@
 // once, moved, and read or changed through `&` and `&mut` borrows
 // (`docs/design/ownership.md`「標準ライブラリ」). The evaluator implements
 // the `extern` functions, and nothing checks their signatures against it:
-// they are trusted. `text_of` and `buf_of` are the only bridges to the ω
-// library.
+// they are trusted. Conversions to the shared library consume owned
+// containers; conversions from borrowed shared data copy it.
 
 affine struct Buf {}
 affine struct Vec<A> {}
@@ -35,6 +35,8 @@ extern {
   fn vec_swap<A: linear>(&mut v: Vec(A), i: u64, j: u64) -> () ! {out_of_bounds}
   // Every element, in order.
   fn vec_into_list<A: linear>(v: Vec(A)) -> List(A)
+  // Consume the builder without constructing an intermediate list.
+  fn vec_into_array<A: shared>(v: Vec(A)) -> Array(A)
 
   fn hashmap_new<K: linear, V: linear>() -> HashMap(K, V) where DecEq(K), Hash(K)
   fn hashmap_get<K: linear, V: linear>(

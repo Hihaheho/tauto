@@ -1,0 +1,22 @@
+// Parse each file with the parser made by the syntax declaration.
+fn grammar_parse_files(paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      match os_read_file(path) {
+        Err(read_error) => os_eprint(read_error)
+        Ok(source) => match tauto_parse(source) {
+          Ok(tree) => os_print("ok")
+          Err(diagnostic) => os_print("error")
+        }
+      }
+      match text_of_code_point(10) {
+        Some(newline) => os_print(newline)
+        None => ()
+      }
+      grammar_parse_files(rest)
+    }
+  }
+}
+
+grammar_parse_files(os_args())

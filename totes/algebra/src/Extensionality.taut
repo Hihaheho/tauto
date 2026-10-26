@@ -1,0 +1,32 @@
+import "Hom.taut"
+import "../../extensionality/src/Funext.taut"
+
+// This bridge is explicitly restricted to Type; the imported axiom is not universe-polymorphic.
+theorem algebra_maps_equal<A: Type, B: Type, source: AlgebraMonoid(
+  0,
+  A
+), target: AlgebraMonoid(
+  0,
+  B
+)>(
+  f: AlgebraHom(0, 0, A, B, source, target),
+  g: AlgebraHom(0, 0, A, B, source, target),
+  pointwise: ∀ x: A. AlgebraEq(
+    0,
+    B,
+    algebra_map(0, 0, A, B, source, target, f)(x),
+    algebra_map(0, 0, A, B, source, target, g)(x)
+  )
+): Eq(
+  (A) -> B,
+  algebra_map(0, 0, A, B, source, target, f),
+  algebra_map(0, 0, A, B, source, target, g)
+) {
+  funext(
+    A,
+    x => B,
+    algebra_map(0, 0, A, B, source, target, f),
+    algebra_map(0, 0, A, B, source, target, g),
+    x => algebra_to_eq(pointwise(x))
+  )
+}
