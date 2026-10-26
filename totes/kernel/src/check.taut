@@ -1,0 +1,783 @@
+import "data.taut"
+
+fn kernel_list_map_Text_Nat(f: (Text) -> Nat, xs: List(Text)) -> List(Nat) { list_map(f, xs) }
+
+fn kernel_list_foldl_Nat_Nat(
+  f: (Nat, Nat) -> Nat,
+  z: Nat,
+  xs: List(Nat)
+) -> Nat { list_foldl(f, z, xs) }
+
+fn kernel_list_map_KernelTerm_KernelTerm(
+  f: (KernelTerm) -> KernelTerm,
+  xs: List(KernelTerm)
+) -> List(KernelTerm) { list_map(f, xs) }
+
+fn kernel_term_or(o: Option(KernelTerm)) -> KernelTerm {
+  match o -> KernelTerm {
+    None => KernelBVar(0)
+    Some(t) => t }
+}
+
+fn kernel_ctor_count(c: KernelCore, name: Text) -> Nat {
+  match kernel_ind_get(c.inductives, name) -> Nat {
+    None => 0
+    Some(i) => list_length(i.constructors)
+  }
+}
+
+fn kernel_count_ctors(c: KernelCore, group: List(Text)) -> List(Nat) {
+  kernel_list_map_Text_Nat((name: Text) => kernel_ctor_count(c, name), group)
+}
+
+fn kernel_sum(ns: List(Nat)) -> Nat {
+  kernel_list_foldl_Nat_Nat((a: Nat, b: Nat) => a + b, 0, ns)
+}
+
+fn kernel_as_ctor(
+  c: KernelCore,
+  t: KernelTerm,
+  family: Text
+) -> Option(Pair(Text, List(KernelTerm))) {
+  match kernel_as_lit(t) -> Option(Pair(Text, List(KernelTerm))) {
+    Some(ds) => if family == "Nat" {
+      match kernel_lookup(c.constructors, "zero") -> Option(Pair(Text, List(KernelTerm))) {
+        None => None
+        Some(z) => if kernel_digits_eq(ds, Nil) { Some(Pair { fst: "zero", snd: Nil }) } else {
+          Some(
+            Pair { fst: "succ", snd: Cons(
+              KernelLit(kernel_digits_normal(kernel_digits_sub(ds, Cons(1, Nil), 0))),
+              Nil
+            ) }
+          )
+        }
+      }
+    } else { None }
+    None => { let sp = kernel_spine(t)
+      match kernel_as_const(sp.fst) -> Option(Pair(Text, List(KernelTerm))) {
+        None => None
+        Some(n) => match kernel_lookup(c.constructors, n) -> Option(Pair(Text, List(KernelTerm))) {
+          None => None
+          Some(ci) => if ci.fst == family { Some(Pair { fst: n, snd: sp.snd }) } else { None }
+        }
+      }
+    }
+  }
+}
+
+// Every recursive call in this group consumes one level of fuel. Exhaustion
+// is sticky, and a public operation reports it separately from rejection.
+mutual {
+  fn kernel_whnf(k: Nat, &mut c: KernelCore, t: KernelTerm, delta: Yn) -> KernelTerm {
+    match k -> KernelTerm {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        t }
+      succ(j) => {
+        let sp = kernel_spine(t)
+        match kernel_as_lam(sp.fst) -> KernelTerm {
+          Some(body) => match sp.snd -> KernelTerm {
+            Nil => t
+
+            Cons(
+              arg,
+              rest
+            ) => kernel_whnf(j, &mut c, kernel_apps(kernel_inst(body, arg), rest), delta)
+          }
+          None => match kernel_as_const(sp.fst) -> KernelTerm {
+            None => t
+            Some(name) => match kernel_unfold_head(c, t) -> KernelTerm {
+              Some(v) => if delta { kernel_whnf(j, &mut c, v, delta) } else { t }
+              None => match kernel_arith(j, &mut c, name, sp.snd) -> KernelTerm {
+                Some(v) => kernel_whnf(j, &mut c, v, delta)
+                None => match kernel_iota(j, &mut c, name, sp.snd) -> KernelTerm {
+                  Some(v) => kernel_whnf(j, &mut c, v, delta)
+                  None => t
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_arith(
+    k: Nat,
+    &mut c: KernelCore,
+    op: Text,
+    args: List(KernelTerm)
+  ) -> Option(KernelTerm) {
+    match k -> Option(KernelTerm) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        None }
+      succ(j) => if (op == "+" || op == "*" || op == "-") && 2 <= list_length(args) {
+        let a = kernel_whnf(j, &mut c, kernel_term_or(list_nth(args, 0)), yes)
+        let b = kernel_whnf(j, &mut c, kernel_term_or(list_nth(args, 1)), yes)
+        let rest = list_drop(2, args)
+        match kernel_as_lit(a) -> Option(KernelTerm) {
+          Some(xs) => match kernel_as_lit(b) -> Option(KernelTerm) {
+            Some(ys) => match kernel_digits_arith(op, xs, ys) -> Option(KernelTerm) {
+              None => None
+              Some(ds) => Some(kernel_apps(KernelLit(ds), rest))
+            }
+            None => kernel_arith_symbolic(j, &mut c, op, a, b, rest)
+          }
+          None => kernel_arith_symbolic(j, &mut c, op, a, b, rest)
+        }
+      } else { None }
+    }
+  }
+
+  fn kernel_arith_symbolic(
+    k: Nat,
+    &mut c: KernelCore,
+    op: Text,
+    a: KernelTerm,
+    b: KernelTerm,
+    rest: List(KernelTerm)
+  ) -> Option(KernelTerm) {
+    match k -> Option(KernelTerm) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        None }
+      succ(j) => if op == "-" { None } else {
+        match kernel_nat_view(a) -> Option(KernelTerm) {
+          Some(None) => {
+            let out: KernelTerm = if op == "+" { b } else { KernelLit(Nil) }
+            Some(kernel_apps(out, rest))
+          }
+          Some(Some(pred)) => {
+            let tail = kernel_apps(KernelConst(op), Cons(pred, Cons(b, Nil)))
+            let out: KernelTerm = if op == "+" { KernelApp(KernelConst("succ"), tail) } else {
+              kernel_apps(KernelConst("+"), Cons(b, Cons(tail, Nil)))
+            }
+            Some(kernel_apps(out, rest))
+          }
+          None => if op == "+" {
+            match kernel_nat_view(b) -> Option(KernelTerm) {
+              None => None
+              Some(None) => Some(kernel_apps(a, rest))
+
+              Some(
+                Some(pred)
+              ) => Some(
+                kernel_apps(
+                  KernelApp(
+                    KernelConst("succ"),
+                    kernel_apps(KernelConst("+"), Cons(a, Cons(pred, Nil)))
+                  ),
+                  rest
+                )
+              )
+            }
+          } else { None }
+        }
+      }
+    }
+  }
+
+  fn kernel_iota(
+    k: Nat,
+    &mut c: KernelCore,
+    rec: Text,
+    args: List(KernelTerm)
+  ) -> Option(KernelTerm) {
+    match k -> Option(KernelTerm) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        None }
+      succ(j) => match kernel_lookup(c.eliminators, rec) -> Option(KernelTerm) {
+        None => None
+        Some(family) => match kernel_ind_get(c.inductives, family) -> Option(KernelTerm) {
+          None => None
+          Some(ind) => {
+            let counts = kernel_count_ctors(c, ind.group)
+            let prefix = ind.params + list_length(ind.group) + kernel_sum(counts)
+            let major_at = prefix + ind.indices
+            match list_nth(args, major_at) -> Option(KernelTerm) {
+              None => None
+              Some(major) => {
+                let reduced = kernel_whnf(j, &mut c, major, yes)
+                let of = match ind.alias -> Text {
+                  None => family
+                  Some(alias) => alias.fst }
+                let found = kernel_as_ctor(c, reduced, of)
+                let chosen = match found -> Option(Pair(Text, List(KernelTerm))) {
+                  Some(pair) => Some(pair)
+                  None => match ind.k_like -> Option(Pair(Text, List(KernelTerm))) {
+                    None => None
+
+                    Some(
+                      want
+                    ) => if kernel_conv_indices(
+                      j,
+                      &mut c,
+                      kernel_list_map_KernelTerm_KernelTerm(
+                        (w: KernelTerm) => kernel_inst_many(w, list_take(ind.params, args)),
+                        want
+                      ),
+                      list_take(ind.indices, list_drop(prefix, args))
+                    ) {
+                      match list_head(ind.constructors) -> Option(Pair(Text, List(KernelTerm))) {
+                        None => None
+                        Some(ci) => Some(Pair { fst: ci.name, snd: list_take(ind.params, args) })
+                      }
+                    } else { None }
+                  }
+                }
+                match chosen -> Option(KernelTerm) {
+                  None => None
+                  Some(pair) => match kernel_lookup(c.constructors, pair.fst) -> Option(KernelTerm) {
+                    None => None
+
+                    Some(
+                      owner
+                    ) => match list_nth(ind.constructors, owner.snd) -> Option(KernelTerm) {
+                      None => None
+                      Some(ci) => {
+                        let cnp = match ind.alias -> Nat {
+                          None => ind.params
+                          Some(alias) => list_length(alias.snd) }
+                        if ci.name == pair.fst && list_length(pair.snd) == cnp + ci.nargs {
+                          let actual = list_drop(cnp, pair.snd)
+                          let minor_at = ind.params + list_length(
+                            ind.group
+                          ) + kernel_sum(list_take(ind.position, counts)) + owner.snd
+                          match list_nth(args, minor_at) -> Option(KernelTerm) {
+                            None => None
+                            Some(minor) => {
+                              let ihs = kernel_iota_ihs(
+                                j,
+                                &mut c,
+                                ci.recursive,
+                                ind,
+                                rec,
+                                args,
+                                prefix,
+                                actual
+                              )
+                              Some(
+                                kernel_apps(
+                                  kernel_apps(minor, list_append(actual, ihs)),
+                                  list_drop(succ(major_at), args)
+                                )
+                              )
+                            }
+                          }
+                        } else { None }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_iota_ihs(
+    k: Nat,
+    &mut c: KernelCore,
+    rs: List(KernelRecArg),
+    ind: KernelIndInfo,
+    rec: Text,
+    args: List(KernelTerm),
+    prefix: Nat,
+    actual: List(KernelTerm)
+  ) -> List(KernelTerm) {
+    match k -> List(KernelTerm) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        Nil }
+      succ(j) => match rs -> List(KernelTerm) {
+        Nil => Nil
+        Cons(r, rest) => {
+          let ys = kernel_fresh_many(j, &mut c, r.ys)
+          let yvars = list_map(KernelFVar, ys)
+          let env = list_append(list_take(ind.params, args), list_append(actual, yvars))
+          let indices = kernel_list_map_KernelTerm_KernelTerm(
+            (t: KernelTerm) => kernel_inst_many(t, env),
+            r.indices
+          )
+          let field = kernel_apps(kernel_term_or(list_nth(actual, r.arg)), yvars)
+          let suffix: Text = if text_slice_or_empty(
+            rec,
+            text_len(rec) - 4,
+            text_len(rec)
+          ) == "_rec" { "_rec" } else { "_ind" }
+          let target = match list_nth(ind.group, r.family) -> Text {
+            None => ""
+            Some(n) => text_concat(n, suffix) }
+          let ih = kernel_bind_lams(
+            ys,
+            kernel_apps(
+              KernelConst(target),
+              list_append(list_take(prefix, args), list_append(indices, Cons(field, Nil)))
+            )
+          )
+          Cons(ih, kernel_iota_ihs(j, &mut c, rest, ind, rec, args, prefix, actual))
+        }
+      }
+    }
+  }
+
+  fn kernel_fresh_many(k: Nat, &mut c: KernelCore, n: Nat) -> List(Nat) {
+    match k -> List(Nat) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        Nil }
+      succ(j) => match n -> List(Nat) {
+        zero => Nil
+        succ(m) => {
+          let x = kernel_fresh(&mut c, KernelSortTerm(KernelProp))
+          Cons(x, kernel_fresh_many(j, &mut c, m))
+        }
+      }
+    }
+  }
+
+  fn kernel_conv(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+
+      succ(
+        j
+      ) => if kernel_conv_plain(
+        j,
+        &mut c,
+        a,
+        b
+      ) { yes } else { kernel_conv_typed(j, &mut c, a, b, None) }
+    }
+  }
+
+  fn kernel_conv_plain(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => if kernel_term_eq(a, b) { yes } else {
+        let x = kernel_whnf(j, &mut c, a, no)
+        let y = kernel_whnf(j, &mut c, b, no)
+        if kernel_term_eq(x, y) { yes } else {
+          let sx = kernel_spine(x)
+          let sy = kernel_spine(y)
+          let same = match kernel_as_const(sx.fst) -> Yn {
+            None => no
+            Some(nx) => match kernel_as_const(sy.fst) -> Yn {
+              None => no
+
+              Some(
+                ny
+              ) => if nx == ny { kernel_conv_lists(j, &mut c, sx.snd, sy.snd, None) } else { no }
+            }
+          }
+          if same { yes } else {
+            let ux = kernel_unfold_head(c, x)
+            let uy = kernel_unfold_head(c, y)
+            match ux -> Yn {
+              Some(vx) => kernel_conv_plain(j, &mut c, vx, match uy -> KernelTerm {
+None => y
+Some(vy) => vy })
+              None => match uy -> Yn {
+                Some(vy) => kernel_conv_plain(j, &mut c, x, vy)
+                None => kernel_conv_shapes(j, &mut c, x, y, None, no)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_is_prop(k: Nat, &mut c: KernelCore, ty: KernelTerm) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => match kernel_infer(j, &mut c, ty) -> Yn {
+        None => no
+        Some(s) => kernel_term_eq(kernel_whnf(j, &mut c, s, yes), KernelSortTerm(KernelProp))
+      }
+    }
+  }
+
+  fn kernel_conv_typed(
+    k: Nat,
+    &mut c: KernelCore,
+    a: KernelTerm,
+    b: KernelTerm,
+    ty: Option(KernelTerm)
+  ) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => if kernel_conv_plain(j, &mut c, a, b) { yes } else {
+        let proof = match ty -> Yn {
+          None => no
+          Some(t) => kernel_is_prop(j, &mut c, t) }
+        if proof { yes } else {
+          let x = kernel_whnf(j, &mut c, a, yes)
+          let y = kernel_whnf(j, &mut c, b, yes)
+          kernel_conv_shapes(j, &mut c, x, y, ty, yes)
+        }
+      }
+    }
+  }
+
+  fn kernel_conv_shapes(
+    k: Nat,
+    &mut c: KernelCore,
+    a: KernelTerm,
+    b: KernelTerm,
+    ty: Option(KernelTerm),
+    typed: Yn
+  ) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => {
+        let al = match kernel_as_lit(a) -> Yn {
+          None => no
+          Some(ds) => yes }
+        let bl = match kernel_as_lit(b) -> Yn {
+          None => no
+          Some(ds) => yes }
+        let x: KernelTerm = if yn_eq(al, bl) { a } else { kernel_expand_lit(a) }
+        let y: KernelTerm = if yn_eq(al, bl) { b } else { kernel_expand_lit(b) }
+        match kernel_as_pi(x) -> Yn {
+          Some(px) => match kernel_as_pi(y) -> Yn {
+            None => no
+            Some(py) => if kernel_conv_part(j, &mut c, px.fst, py.fst, None, typed) {
+              let atom = kernel_fresh(&mut c, px.fst)
+              kernel_conv_part(
+                j,
+                &mut c,
+                kernel_inst(px.snd, KernelFVar(atom)),
+                kernel_inst(py.snd, KernelFVar(atom)),
+                None,
+                typed
+              )
+            } else { no }
+          }
+          None => {
+            let lx = kernel_as_lam(x)
+            let ly = kernel_as_lam(y)
+            match lx -> Yn {
+              Some(body) => kernel_conv_lambda(j, &mut c, body, y, ly, ty, typed)
+              None => match ly -> Yn {
+                Some(body) => kernel_conv_lambda(j, &mut c, body, x, None, ty, typed)
+                None => if typed {
+                  let sx = kernel_spine(x)
+                  let sy = kernel_spine(y)
+                  if 0 < list_length(
+                    sx.snd
+                  ) && list_length(
+                    sx.snd
+                  ) == list_length(sy.snd) && kernel_conv_plain(j, &mut c, sx.fst, sy.fst) {
+                    match kernel_infer(j, &mut c, sx.fst) -> Yn {
+                      None => no
+                      Some(ht) => kernel_conv_lists(j, &mut c, sx.snd, sy.snd, Some(ht))
+                    }
+                  } else { no }
+                } else { kernel_conv_atomic(j, &mut c, x, y) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_conv_part(
+    k: Nat,
+    &mut c: KernelCore,
+    a: KernelTerm,
+    b: KernelTerm,
+    ty: Option(KernelTerm),
+    typed: Yn
+  ) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+
+      succ(
+        j
+      ) => if typed { kernel_conv_typed(
+        j,
+        &mut c,
+        a,
+        b,
+        ty
+      ) } else { kernel_conv_plain(j, &mut c, a, b) }
+    }
+  }
+
+  fn kernel_conv_lambda(
+    k: Nat,
+    &mut c: KernelCore,
+    body: KernelTerm,
+    other: KernelTerm,
+    other_body: Option(KernelTerm),
+    ty: Option(KernelTerm),
+    typed: Yn
+  ) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => {
+        let pi = match ty -> Option(Pair(KernelTerm, KernelTerm)) {
+          None => None
+          Some(t) => kernel_as_pi(kernel_whnf(j, &mut c, t, yes))
+        }
+        if typed {
+          match pi -> Yn {
+            None => no
+            Some(p) => {
+              let atom = kernel_fresh(&mut c, p.fst)
+              let arg = KernelFVar(atom)
+              let rhs = match other_body -> KernelTerm {
+                None => KernelApp(other, arg)
+                Some(b) => kernel_inst(b, arg)
+              }
+              kernel_conv_typed(
+                j,
+                &mut c,
+                kernel_inst(body, arg),
+                rhs,
+                Some(kernel_inst(p.snd, arg))
+              )
+            }
+          }
+        } else {
+          let atom = kernel_fresh(&mut c, KernelSortTerm(KernelProp))
+          let arg = KernelFVar(atom)
+          let rhs = match other_body -> KernelTerm {
+            None => KernelApp(other, arg)
+            Some(b) => kernel_inst(b, arg) }
+          kernel_conv_plain(j, &mut c, kernel_inst(body, arg), rhs)
+        }
+      }
+    }
+  }
+
+  fn kernel_conv_atomic(k: Nat, &mut c: KernelCore, x: KernelTerm, y: KernelTerm) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => {
+        let sx = kernel_spine(x)
+        let sy = kernel_spine(y)
+        if 0 < list_length(sx.snd) && list_length(sx.snd) == list_length(sy.snd) {
+          kernel_conv_plain(
+            j,
+            &mut c,
+            sx.fst,
+            sy.fst
+          ) && kernel_conv_lists(j, &mut c, sx.snd, sy.snd, None)
+        } else { kernel_term_eq(x, y) }
+      }
+    }
+  }
+
+  fn kernel_conv_indices(
+    k: Nat,
+    &mut c: KernelCore,
+    xs: List(KernelTerm),
+    ys: List(KernelTerm)
+  ) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => match xs -> Yn {
+        Nil => match ys -> Yn { Nil => yes
+          Cons(y, tail) => no }
+        Cons(x, rest) => match ys -> Yn {
+          Nil => no
+          Cons(y, tail) => kernel_conv(j, &mut c, x, y) && kernel_conv_indices(
+            j,
+            &mut c,
+            rest,
+            tail
+          )
+        }
+      }
+    }
+  }
+
+  fn kernel_conv_lists(
+    k: Nat,
+    &mut c: KernelCore,
+    xs: List(KernelTerm),
+    ys: List(KernelTerm),
+    ty: Option(KernelTerm)
+  ) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => match xs -> Yn {
+        Nil => match ys -> Yn {
+          Nil => yes
+          Cons(y, tail) => no }
+        Cons(x, rest) => match ys -> Yn {
+          Nil => no
+          Cons(y, tail) => match ty -> Yn {
+            None => kernel_conv_plain(
+              j,
+              &mut c,
+              x,
+              y
+            ) && kernel_conv_lists(j, &mut c, rest, tail, None)
+            Some(ht) => match kernel_as_pi(kernel_whnf(j, &mut c, ht, yes)) -> Yn {
+              None => no
+
+              Some(
+                p
+              ) => kernel_conv_typed(
+                j,
+                &mut c,
+                x,
+                y,
+                Some(p.fst)
+              ) && kernel_conv_lists(j, &mut c, rest, tail, Some(kernel_inst(p.snd, x)))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_subtype(k: Nat, &mut c: KernelCore, a: KernelTerm, b: KernelTerm) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => {
+        let x = kernel_whnf(j, &mut c, a, yes)
+        let y = kernel_whnf(j, &mut c, b, yes)
+        match kernel_as_sort(x) -> Yn {
+          Some(s) => match kernel_as_sort(y) -> Yn {
+            None => kernel_conv(j, &mut c, x, y)
+            Some(t) => kernel_sort_le(s, t) }
+          None => match kernel_as_pi(x) -> Yn {
+            Some(px) => match kernel_as_pi(y) -> Yn {
+              None => kernel_conv(j, &mut c, x, y)
+              Some(py) => if kernel_conv(j, &mut c, px.fst, py.fst) {
+                let atom = kernel_fresh(&mut c, px.fst)
+                kernel_subtype(
+                  j,
+                  &mut c,
+                  kernel_inst(px.snd, KernelFVar(atom)),
+                  kernel_inst(py.snd, KernelFVar(atom))
+                )
+              } else { no }
+            }
+            None => kernel_conv(j, &mut c, x, y)
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_infer(k: Nat, &mut c: KernelCore, t: KernelTerm) -> Option(KernelTerm) {
+    match k -> Option(KernelTerm) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        None }
+      succ(j) => match t -> Option(KernelTerm) {
+        KernelBVar(i) => None
+        KernelFVar(x) => kernel_local_get(c.locals, x)
+        KernelSortTerm(s) => Some(KernelSortTerm(kernel_sort_next(s)))
+        KernelConst(n) => match kernel_global_get(c.globals, n) -> Option(KernelTerm) {
+          None => None
+          Some(g) => Some(g.ty) }
+        KernelLit(ds) => Some(KernelConst("Nat"))
+        KernelBool(v) => Some(KernelConst("Bool"))
+        KernelLam(body) => None
+        KernelPi(a, b) => match kernel_infer_sort(j, &mut c, a) -> Option(KernelTerm) {
+          None => None
+          Some(s) => {
+            let atom = kernel_fresh(&mut c, a)
+            match kernel_infer_sort(
+              j,
+              &mut c,
+              kernel_inst(b, KernelFVar(atom))
+            ) -> Option(KernelTerm) {
+              None => None
+              Some(u) => Some(KernelSortTerm(kernel_sort_pi(s, u)))
+            }
+          }
+        }
+        KernelApp(f, a) => {
+          let sp = kernel_spine(t)
+          match kernel_as_lam(sp.fst) -> Option(KernelTerm) {
+            Some(body) => if kernel_infer_args(j, &mut c, sp.snd) {
+              let reduced = kernel_whnf(j, &mut c, t, yes)
+              if kernel_term_eq(t, reduced) { None } else { kernel_infer(j, &mut c, reduced) }
+            } else { None }
+            None => match kernel_infer(j, &mut c, f) -> Option(KernelTerm) {
+              None => None
+              Some(ft) => match kernel_as_pi(kernel_whnf(j, &mut c, ft, yes)) -> Option(KernelTerm) {
+                None => None
+
+                Some(
+                  p
+                ) => if kernel_check(
+                  j,
+                  &mut c,
+                  a,
+                  p.fst
+                ) { Some(kernel_inst(p.snd, a)) } else { None }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn kernel_infer_args(k: Nat, &mut c: KernelCore, args: List(KernelTerm)) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => match args -> Yn {
+        Nil => yes
+        Cons(a, rest) => match kernel_infer(j, &mut c, a) -> Yn {
+          None => no
+          Some(t) => kernel_infer_args(j, &mut c, rest)
+        }
+      }
+    }
+  }
+
+  fn kernel_infer_sort(k: Nat, &mut c: KernelCore, t: KernelTerm) -> Option(KernelSort) {
+    match k -> Option(KernelSort) {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        None }
+      succ(j) => match kernel_infer(j, &mut c, t) -> Option(KernelSort) {
+        None => None
+        Some(ty) => kernel_as_sort(kernel_whnf(j, &mut c, ty, yes))
+      }
+    }
+  }
+
+  fn kernel_check(k: Nat, &mut c: KernelCore, t: KernelTerm, expected: KernelTerm) -> Yn {
+    match k -> Yn {
+      zero => { kernel_set_to(&mut c.exhausted, yes)
+        no }
+      succ(j) => match kernel_as_lam(t) -> Yn {
+        Some(body) => match kernel_as_pi(kernel_whnf(j, &mut c, expected, yes)) -> Yn {
+          None => no
+          Some(p) => {
+            let atom = kernel_fresh(&mut c, p.fst)
+            kernel_check(
+              j,
+              &mut c,
+              kernel_inst(body, KernelFVar(atom)),
+              kernel_inst(p.snd, KernelFVar(atom))
+            )
+          }
+        }
+        None => match kernel_infer(j, &mut c, t) -> Yn {
+          None => no
+          Some(actual) => kernel_subtype(j, &mut c, actual, expected)
+        }
+      }
+    }
+  }
+}

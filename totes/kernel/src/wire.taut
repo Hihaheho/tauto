@@ -1,0 +1,206 @@
+import "kernel.taut"
+import "../../text/src/text.taut"
+
+// The replay format is whitespace-separated prefix terms. Every list carries
+// its length. It contains elaborated terms, never a verdict or trusted metadata.
+inductive KernelInput(): Type {
+  kernel_input(tokens: List(Text), valid: Yn): KernelInput
+}
+
+fn kernel_token(&mut input: KernelInput) -> Text {
+  match input.tokens -> Text {
+    Nil => {
+      kernel_set_to(&mut input.valid, no)
+      ""
+    }
+    Cons(t, rest) => {
+      kernel_set_to(&mut input.tokens, rest)
+      t
+    }
+  }
+}
+
+fn kernel_number(&mut input: KernelInput) -> Nat {
+  match text_parse_u64(kernel_token(&mut input)) -> Nat {
+    None => {
+      kernel_set_to(&mut input.valid, no)
+      0
+    }
+    Some(n) => n
+  }
+}
+
+fn kernel_bit(&mut input: KernelInput) -> Yn {
+  let n = kernel_number(&mut input)
+  if n <= 1 {
+    n == 1
+  } else {
+    kernel_set_to(&mut input.valid, no)
+    no
+  }
+}
+
+mutual {
+  fn kernel_read_level_vars(k: Nat, &mut input: KernelInput, n: Nat) -> List(Pair(Text, Nat)) {
+    match k -> List(Pair(Text, Nat)) {
+      zero => { kernel_set_to(&mut input.valid, no)
+        Nil }
+      succ(j) => match n -> List(Pair(Text, Nat)) {
+        zero => Nil
+        succ(m) => {
+          let name = kernel_token(&mut input)
+          let offset = kernel_number(&mut input)
+          Cons(Pair { fst: name, snd: offset }, kernel_read_level_vars(j, &mut input, m))
+        }
+      }
+    }
+  }
+
+  fn kernel_read_sort(k: Nat, &mut input: KernelInput) -> KernelSort {
+    match k -> KernelSort {
+      zero => { kernel_set_to(&mut input.valid, no)
+        KernelProp }
+      succ(j) => {
+        let tag = kernel_token(&mut input)
+        if tag == "P" { KernelProp } else {
+          if tag == "T" {
+            let constant = kernel_number(&mut input)
+            let count = kernel_number(&mut input)
+            KernelType(kernel_level(constant, kernel_read_level_vars(j, &mut input, count)))
+          } else { kernel_set_to(&mut input.valid, no)
+            KernelProp }
+        }
+      }
+    }
+  }
+
+  fn kernel_read_digits(k: Nat, &mut input: KernelInput, n: Nat) -> List(Nat) {
+    match k -> List(Nat) {
+      zero => { kernel_set_to(&mut input.valid, no)
+        Nil }
+      succ(j) => match n -> List(Nat) {
+        zero => Nil
+        succ(m) => {
+          let digit = kernel_number(&mut input)
+          Cons(digit, kernel_read_digits(j, &mut input, m))
+        }
+      }
+    }
+  }
+
+  fn kernel_read_term(k: Nat, &mut input: KernelInput) -> KernelTerm {
+    match k -> KernelTerm {
+      zero => { kernel_set_to(&mut input.valid, no)
+        KernelBVar(0) }
+      succ(j) => {
+        let tag = kernel_token(&mut input)
+        if tag == "b" { KernelBVar(kernel_number(&mut input)) } else {
+          if tag == "f" { KernelFVar(kernel_number(&mut input)) } else {
+            if tag == "s" { KernelSortTerm(kernel_read_sort(j, &mut input)) } else {
+              if tag == "c" { KernelConst(kernel_token(&mut input)) } else {
+                if tag == "p" {
+                  let domain = kernel_read_term(j, &mut input)
+                  let codomain = kernel_read_term(j, &mut input)
+                  KernelPi(domain, codomain)
+                } else {
+                  if tag == "l" { KernelLam(kernel_read_term(j, &mut input)) } else {
+                    if tag == "a" {
+                      let function = kernel_read_term(j, &mut input)
+                      let argument = kernel_read_term(j, &mut input)
+                      KernelApp(function, argument)
+                    } else {
+                      if tag == "n" {
+                        let count = kernel_number(&mut input)
+                        KernelLit(kernel_read_digits(j, &mut input, count))
+                      } else {
+                        if tag == "z" { KernelBool(kernel_bit(&mut input)) } else {
+                          kernel_set_to(&mut input.valid, no)
+                          KernelBVar(0)
+                        } } } } } } } } }
+      }
+    }
+  }
+
+  fn kernel_read_optional(k: Nat, &mut input: KernelInput) -> Option(KernelTerm) {
+    match k -> Option(KernelTerm) {
+      zero => { kernel_set_to(&mut input.valid, no)
+        None }
+      succ(j) => if kernel_bit(&mut input) { Some(kernel_read_term(j, &mut input)) } else { None }
+    }
+  }
+
+  fn kernel_read_ctor_specs(
+    k: Nat,
+    &mut input: KernelInput,
+    n: Nat
+  ) -> List(Pair(Text, KernelTerm)) {
+    match k -> List(Pair(Text, KernelTerm)) {
+      zero => { kernel_set_to(&mut input.valid, no)
+        Nil }
+      succ(j) => match n -> List(Pair(Text, KernelTerm)) {
+        zero => Nil
+        succ(m) => {
+          let name = kernel_token(&mut input)
+          let ty = kernel_read_term(j, &mut input)
+          Cons(Pair { fst: name, snd: ty }, kernel_read_ctor_specs(j, &mut input, m))
+        }
+      }
+    }
+  }
+
+  fn kernel_read_families(k: Nat, &mut input: KernelInput, n: Nat) -> List(KernelFamily) {
+    match k -> List(KernelFamily) {
+      zero => { kernel_set_to(&mut input.valid, no)
+        Nil }
+      succ(j) => match n -> List(KernelFamily) {
+        zero => Nil
+        succ(m) => {
+          let name = kernel_token(&mut input)
+          let ty = kernel_read_term(j, &mut input)
+          let count = kernel_number(&mut input)
+          let ctors = kernel_read_ctor_specs(j, &mut input, count)
+          Cons(kernel_family(name, ty, ctors), kernel_read_families(j, &mut input, m))
+        }
+      }
+    }
+  }
+}
+
+fn kernel_read_command(k: Nat, &mut input: KernelInput) -> KernelCommand {
+  let tag = kernel_token(&mut input)
+  if tag == "D" {
+    let name = kernel_token(&mut input)
+    let ty = kernel_read_term(k, &mut input)
+    let value = kernel_read_optional(k, &mut input)
+    let transparent = kernel_bit(&mut input)
+    KernelDeclare(name, ty, value, transparent)
+  } else {
+    if tag == "C" {
+      let name = kernel_token(&mut input)
+      KernelConstant(name, kernel_read_term(k, &mut input))
+    } else {
+      if tag == "V" {
+        let name = kernel_token(&mut input)
+        KernelSetValue(name, kernel_read_term(k, &mut input))
+      } else {
+        if tag == "F" { KernelForget(kernel_token(&mut input)) } else {
+          if tag == "I" {
+            let params = kernel_number(&mut input)
+            let sort = kernel_read_sort(k, &mut input)
+            let count = kernel_number(&mut input)
+            KernelInductive(kernel_read_families(k, &mut input, count), params, sort)
+          } else {
+            if tag == "Q" {
+              let value = kernel_read_term(k, &mut input)
+              let ty = kernel_read_term(k, &mut input)
+              KernelCheck(value, ty)
+            } else {
+              if tag == "E" {
+                let left = kernel_read_term(k, &mut input)
+                let right = kernel_read_term(k, &mut input)
+                KernelConvert(left, right)
+              } else {
+                kernel_set_to(&mut input.valid, no)
+                KernelCheck(KernelBVar(0), KernelBVar(0))
+              } } } } } } }
+}

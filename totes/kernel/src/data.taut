@@ -1,0 +1,328 @@
+import "term.taut"
+
+inductive KernelGlobal(): Type {
+  kernel_global(name: Text, ty: KernelTerm, value: Option(KernelTerm)): KernelGlobal
+}
+
+inductive KernelRecArg(): Type {
+  kernel_rec_arg(arg: Nat, ys: Nat, family: Nat, indices: List(KernelTerm)): KernelRecArg
+}
+
+inductive KernelCtorInfo(): Type {
+  kernel_ctor_info(name: Text, nargs: Nat, recursive: List(KernelRecArg)): KernelCtorInfo
+}
+
+inductive KernelIndInfo(): Type {
+  kernel_ind_info(
+    name: Text,
+    params: Nat,
+    indices: Nat,
+    group: List(Text),
+    position: Nat,
+    constructors: List(KernelCtorInfo),
+    alias: Option(Pair(Text, List(KernelTerm))),
+    k_like: Option(List(KernelTerm))
+  ): KernelIndInfo
+}
+
+inductive KernelCore(): Type {
+  kernel_core(
+    globals: List(KernelGlobal),
+    inductives: List(KernelIndInfo),
+    constructors: List(Pair(Text, Pair(Text, Nat))),
+    eliminators: List(Pair(Text, Text)),
+    locals: List(Pair(Nat, KernelTerm)),
+    next: Nat,
+    exhausted: Yn
+  ): KernelCore
+}
+
+inductive KernelFamily(): Type {
+  kernel_family(
+    name: Text,
+    ty: KernelTerm,
+    constructors: List(Pair(Text, KernelTerm))
+  ): KernelFamily
+}
+
+inductive KernelCommand(): Type {
+  KernelForget(name: Text): KernelCommand
+  KernelDeclare(
+    name: Text,
+    ty: KernelTerm,
+    value: Option(KernelTerm),
+    transparent: Yn
+  ): KernelCommand
+  KernelConstant(name: Text, value: KernelTerm): KernelCommand
+  KernelSetValue(name: Text, value: KernelTerm): KernelCommand
+  KernelInductive(families: List(KernelFamily), params: Nat, sort: KernelSort): KernelCommand
+  KernelCheck(value: KernelTerm, ty: KernelTerm): KernelCommand
+  KernelConvert(left: KernelTerm, right: KernelTerm): KernelCommand
+}
+
+inductive KernelVerdict(): Type {
+  KernelAccepted(): KernelVerdict
+  KernelRejected(): KernelVerdict
+  KernelExhausted(): KernelVerdict
+}
+
+fn kernel_list_find_KernelGlobal_Yn(
+  f: (KernelGlobal) -> Yn,
+  xs: List(KernelGlobal)
+) -> Option(KernelGlobal) { list_find(f, xs) }
+
+fn kernel_list_find_KernelIndInfo_Yn(
+  f: (KernelIndInfo) -> Yn,
+  xs: List(KernelIndInfo)
+) -> Option(KernelIndInfo) { list_find(f, xs) }
+
+fn kernel_list_filter_KernelGlobal_Yn(
+  f: (KernelGlobal) -> Yn,
+  xs: List(KernelGlobal)
+) -> List(KernelGlobal) { list_filter(f, xs) }
+
+fn kernel_list_map_Text_KernelGlobal(
+  f: (Text) -> KernelGlobal,
+  xs: List(Text)
+) -> List(KernelGlobal) { list_map(f, xs) }
+
+fn kernel_list_all_Nat_Yn(f: (Nat) -> Yn, xs: List(Nat)) -> Yn { list_all(f, xs) }
+
+fn kernel_lookup<A>(entries: List(Pair(Text, A)), key: Text) -> Option(A) {
+  match entries -> Option(A) {
+    Nil => None
+    Cons(entry, rest) => if entry.fst == key { Some(entry.snd) } else { kernel_lookup(rest, key) }
+  }
+}
+
+fn kernel_global_named(g: KernelGlobal, name: Text) -> Yn { g.name == name }
+fn kernel_ind_named(i: KernelIndInfo, name: Text) -> Yn { i.name == name }
+
+fn kernel_global_get(gs: List(KernelGlobal), name: Text) -> Option(KernelGlobal) {
+  kernel_list_find_KernelGlobal_Yn((g: KernelGlobal) => kernel_global_named(g, name), gs)
+}
+
+fn kernel_ind_get(is: List(KernelIndInfo), name: Text) -> Option(KernelIndInfo) {
+  kernel_list_find_KernelIndInfo_Yn((i: KernelIndInfo) => kernel_ind_named(i, name), is)
+}
+
+fn kernel_local_get(ls: List(Pair(Nat, KernelTerm)), atom: Nat) -> Option(KernelTerm) {
+  match ls -> Option(KernelTerm) {
+    Nil => None
+
+    Cons(
+      entry,
+      rest
+    ) => if entry.fst == atom { Some(entry.snd) } else { kernel_local_get(rest, atom) }
+  }
+}
+
+fn kernel_set_to<A>(&mut slot: A, value: A) -> () {
+  slot := value
+}
+
+fn kernel_fresh(&mut c: KernelCore, ty: KernelTerm) -> Nat {
+  kernel_set_to(&mut c.next, succ(c.next))
+  kernel_set_to(&mut c.locals, Cons(Pair { fst: c.next, snd: ty }, c.locals))
+  c.next
+}
+
+fn kernel_put_global(
+  &mut c: KernelCore,
+  name: Text,
+  ty: KernelTerm,
+  value: Option(KernelTerm)
+) -> () {
+  kernel_set_to(
+    &mut c.globals,
+    Cons(
+      kernel_global(name, ty, value),
+      kernel_list_filter_KernelGlobal_Yn(
+        (g: KernelGlobal) => !kernel_global_named(g, name),
+        c.globals
+      )
+    )
+  )
+}
+
+fn kernel_fresh_name(c: KernelCore, name: Text) -> Yn {
+  match kernel_global_get(c.globals, name) -> Yn {
+    None => yes
+    Some(g) => no }
+}
+
+fn kernel_new() -> KernelCore {
+  let nat = KernelConst("Nat")
+  let binary = KernelPi(nat, KernelPi(nat, nat))
+  kernel_core(
+    Cons(
+      kernel_global("Bool", KernelSortTerm(KernelType(kernel_level(0, Nil))), None),
+      kernel_list_map_Text_KernelGlobal(
+        (op: Text) => kernel_global(op, binary, None),
+        Cons("+", Cons("*", Cons("-", Nil)))
+      )
+    ),
+    Nil,
+    Nil,
+    Nil,
+    Nil,
+    0,
+    no
+  )
+}
+
+fn kernel_closed(t: KernelTerm) -> Yn {
+  !kernel_has_loose(t, 0) && !kernel_mentions_fvar(t)
+}
+
+fn kernel_valid_digits(ds: List(Nat)) -> Yn {
+  list_length(
+    ds
+  ) <= 8 && kernel_list_all_Nat_Yn(
+    (d: Nat) => d < 65536,
+    ds
+  ) && kernel_digits_eq(ds, kernel_digits_normal(ds))
+}
+
+fn kernel_term_valid(t: KernelTerm, depth: Nat) -> Yn {
+  match t -> Yn {
+    KernelBVar(i) => i < depth
+    KernelFVar(x) => no
+    KernelSortTerm(s) => yes
+    KernelConst(n) => yes
+    KernelPi(a, b) => kernel_term_valid(a, depth) && kernel_term_valid(b, succ(depth))
+    KernelLam(b) => kernel_term_valid(b, succ(depth))
+    KernelApp(f, a) => kernel_term_valid(f, depth) && kernel_term_valid(a, depth)
+    KernelLit(ds) => kernel_valid_digits(ds)
+    KernelBool(v) => yes
+  }
+}
+
+fn kernel_as_pi(t: KernelTerm) -> Option(Pair(KernelTerm, KernelTerm)) {
+  match t -> Option(Pair(KernelTerm, KernelTerm)) {
+    KernelBVar(i) => None
+    KernelFVar(x) => None
+    KernelSortTerm(s) => None
+    KernelConst(n) => None
+    KernelPi(a, b) => Some(Pair { fst: a, snd: b })
+    KernelLam(b) => None
+    KernelApp(f, a) => None
+    KernelLit(ds) => None
+    KernelBool(v) => None
+  }
+}
+
+fn kernel_as_lam(t: KernelTerm) -> Option(KernelTerm) {
+  match t -> Option(KernelTerm) {
+    KernelBVar(i) => None
+    KernelFVar(x) => None
+    KernelSortTerm(s) => None
+    KernelConst(n) => None
+    KernelPi(a, b) => None
+    KernelLam(b) => Some(b)
+    KernelApp(f, a) => None
+    KernelLit(ds) => None
+    KernelBool(v) => None
+  }
+}
+
+fn kernel_as_const(t: KernelTerm) -> Option(Text) {
+  match t -> Option(Text) {
+    KernelBVar(i) => None
+    KernelFVar(x) => None
+    KernelSortTerm(s) => None
+    KernelConst(n) => Some(n)
+    KernelPi(a, b) => None
+    KernelLam(b) => None
+    KernelApp(f, a) => None
+    KernelLit(ds) => None
+    KernelBool(v) => None
+  }
+}
+
+fn kernel_as_sort(t: KernelTerm) -> Option(KernelSort) {
+  match t -> Option(KernelSort) {
+    KernelBVar(i) => None
+    KernelFVar(x) => None
+    KernelSortTerm(s) => Some(s)
+    KernelConst(n) => None
+    KernelPi(a, b) => None
+    KernelLam(b) => None
+    KernelApp(f, a) => None
+    KernelLit(ds) => None
+    KernelBool(v) => None
+  }
+}
+
+fn kernel_as_lit(t: KernelTerm) -> Option(List(Nat)) {
+  match t -> Option(List(Nat)) {
+    KernelBVar(i) => None
+    KernelFVar(x) => None
+    KernelSortTerm(s) => None
+    KernelConst(n) => None
+    KernelPi(a, b) => None
+    KernelLam(b) => None
+    KernelApp(f, a) => None
+    KernelLit(ds) => Some(ds)
+    KernelBool(v) => None
+  }
+}
+
+fn kernel_nat_view(t: KernelTerm) -> Option(Option(KernelTerm)) {
+  match kernel_as_lit(t) -> Option(Option(KernelTerm)) {
+    Some(ds) => if kernel_digits_eq(ds, Nil) { Some(None) } else {
+      Some(Some(KernelLit(kernel_digits_normal(kernel_digits_sub(ds, Cons(1, Nil), 0)))))
+    }
+    None => match kernel_as_const(t) -> Option(Option(KernelTerm)) {
+      Some(n) => if n == "zero" { Some(None) } else { None }
+      None => { let sp = kernel_spine(t)
+        match kernel_as_const(sp.fst) -> Option(Option(KernelTerm)) {
+          None => None
+
+          Some(
+            n
+          ) => if n == "succ" && list_length(sp.snd) == 1 { Some(list_head(sp.snd)) } else { None }
+        }
+      }
+    }
+  }
+}
+
+fn kernel_expand_lit(t: KernelTerm) -> KernelTerm {
+  match kernel_as_lit(t) -> KernelTerm {
+    None => t
+    Some(ds) => if kernel_digits_eq(ds, Nil) { KernelConst("zero") } else {
+      KernelApp(
+        KernelConst("succ"),
+        KernelLit(kernel_digits_normal(kernel_digits_sub(ds, Cons(1, Nil), 0)))
+      )
+    }
+  }
+}
+
+fn kernel_unfold_head(c: KernelCore, t: KernelTerm) -> Option(KernelTerm) {
+  let sp = kernel_spine(t)
+  match kernel_as_const(sp.fst) -> Option(KernelTerm) {
+    None => None
+    Some(n) => match kernel_global_get(c.globals, n) -> Option(KernelTerm) {
+      None => None
+      Some(g) => match g.value -> Option(KernelTerm) {
+        None => None
+        Some(v) => Some(kernel_apps(v, sp.snd))
+      }
+    }
+  }
+}
+
+fn kernel_bind_pis(xs: List(Pair(Nat, KernelTerm)), body: KernelTerm) -> KernelTerm {
+  match xs -> KernelTerm {
+    Nil => body
+    Cons(x, rest) => kernel_pi_over(x.fst, x.snd, kernel_bind_pis(rest, body))
+  }
+}
+
+fn kernel_bind_lams(xs: List(Nat), body: KernelTerm) -> KernelTerm {
+  match xs -> KernelTerm {
+    Nil => body
+    Cons(x, rest) => kernel_lam_over(x, kernel_bind_lams(rest, body)) }
+}

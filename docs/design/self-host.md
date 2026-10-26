@@ -10,7 +10,7 @@ kernel が検査する全域な層（`inductive` と total な `fn`）で書き�
 | --- | --- |
 | 何を書くか | Rust バックエンドを使わずに進められる部分だけ（「構成」）。実行は `eval.rs`（インタプリタ）で、遅くても正しければよい |
 | どこまで証明するか | 全域性と型（kernel が検査し、止まり、網羅的）に加え、要所の正しさの定理。全関数の仕様は書かない。ただし `totes/nibcheck` は検査器全体の健全性まで示す（「nibcheck の健全性（`totes/nibcheck/src/`）」） |
-| kernel | **変えない**（`check.rs`、`check/core.rs`）。精密化の糖衣（「精密化の糖衣」）は kernel の外にあり、kernel と `check/core.rs` が受け取る項の形は糖衣なしで書いたときと同じ |
+| kernel | 通常の検査には Rust の `check.rs` と `check/core.rs` を使う。独立カーネルの Tauto 実装 `totes/kernel` は、書き出した精密化済みの宣言を再検査する。精密化の糖衣（「精密化の糖衣」）は kernel の外にあり、kernel と `check/core.rs` が受け取る項の形は糖衣なしで書いたときと同じ |
 | 実行 | **Nib への extraction**（「extraction（`crates/tauto/src/extract.rs`）」）。生成した Nib が `eval.rs` で動き、[`rust-backend.md`](rust-backend.md) でネイティブにもなる |
 | OS IO | **薄い Nib の殻**として残す（「殻」） |
 | 確かめ方 | 同じ入力を Rust の実装と tauto の実装に与えて出力を比べる差分試験（「差分試験」）。比べる相手の Rust の実装は変えない |
@@ -27,6 +27,7 @@ kernel が検査する全域な層（`inductive` と total な `fn`）で書き�
 | `crates/tauto-surface/src/surface.rs`、`surface/program.rs` | `totes/surface` |
 | `crates/tauto-surface/src/macros/scope.rs` | `totes/macros` |
 | `crates/tauto-nibcheck/src/types.rs`、`rows.rs`、`lin.rs` | `totes/nibcheck` |
+| `crates/tauto-kernel/src/check/core.rs` の閉じた宣言の検査 | `totes/kernel`（[`totes/kernel/README.md`](../../totes/kernel/README.md)） |
 | `tauto-rt`、`tools/tauto-parol-gen` | Rust のまま（後者は Rust の表の生成器を動かす道具なので。`totes/llkgen` が同じ表を作る） |
 
 依存は一方向で、循環は tote の読み込みが拒否する。
