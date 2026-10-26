@@ -149,6 +149,8 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
   - `examples/wf/`：整礎再帰による関数。
 - `examples/rust/`：生成したバインディングを通じて Rust のクレートを呼ぶ Tauto のプログラムと、
   スレッド上のタスク。
+- `examples/javascript/`：JavaScript バックエンドのプログラム。JavaScript の非同期関数と、Wasm に
+  コンパイルした Rust の関数を呼び、効果を起こすコールバックと境界をまたぐ借用を使う。
 
 ## Lean による形式化
 

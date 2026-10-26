@@ -1,0 +1,36 @@
+extern {
+  fn get(url: Text) -> Text
+  fn apply(&f: (n: i64) -> i64) -> i64
+  fn identity<A>(value: A) -> A
+  fn rust_apply(&f: (n: i64) -> i64) -> i64
+  fn borrow_number(&mut value: i64) -> &mut i64
+  fn adder(n: i64) -> (i64) -> i64
+  fn absolute(n: i64) -> i64
+}
+effect http_get: (url: Text) -> Text resume 1
+effect ask: (n: i64) -> i64 resume 1
+
+let response = handle {
+  perform http_get("data:text/plain,hello")
+} with {
+  http_get(url), k => k(get(url))
+}
+perform show("response", response)
+let result = handle {
+  apply(&(n) => perform ask(n)) + 1
+} with {
+  ask(n), k => k(n * 10)
+}
+perform show("callback", result)
+perform show("wasm", absolute(0 - 42))
+
+perform show("generic", identity("hello"))
+var total = 40
+{ let &mut borrowed = borrow_number(&mut total); borrowed := borrowed + 2 }
+perform show("borrowed", total)
+let add = adder(40)
+perform show("function", add(2))
+let native = handle { rust_apply(&(n) => perform ask(n)) } with {
+  ask(n), k => { let text = get("data:text/plain,hello"); k(n + if text == "hello" { 5 } else { 0 }) }
+}
+perform show("native async", native)
