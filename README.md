@@ -169,6 +169,9 @@ written must be readable where it stands.
   - `examples/wf/`: functions by well-founded recursion.
 - `examples/rust/`: Tauto programs that call Rust crates through generated
   bindings, and tasks on threads.
+- `examples/javascript/`: a program for the JavaScript backend that calls
+  asynchronous JavaScript functions and Rust functions compiled to Wasm, with
+  callbacks that perform effects and borrows across the boundary.
 
 ## The Lean formalization
 
