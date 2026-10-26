@@ -2,7 +2,7 @@
 # Macro hygiene: scope sets and name resolution
 
 `docs/design/macro-semantics.md` A finite set of scopes is a `List Nat`
-read up to membership.
+read up to membership; no Mathlib.
 -/
 
 namespace Proto.Macro
