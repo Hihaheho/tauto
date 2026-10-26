@@ -1,0 +1,243 @@
+import "../src/Hom.taut"
+import "../../../std/Nat.taut"
+
+def natural_addition(): AlgebraMonoid(
+  0,
+  Nat
+) := algebra_monoid(
+  0,
+  Nat,
+  zero,
+  nat_add,
+  x => y => z => algebra_from_eq(nat_add_assoc(x, y, z)),
+  x => algebra_from_eq(nat_add_zero_left(x)),
+  x => algebra_refl(0, Nat, x)
+)
+
+def natural_multiplication(): AlgebraMonoid(
+  0,
+  Nat
+) := algebra_monoid(
+  0,
+  Nat,
+  succ(zero),
+  nat_mul,
+  x => y => z => algebra_from_eq(nat_mul_assoc(x, y, z)),
+  x => algebra_from_eq(nat_mul_one_left(x)),
+  x => algebra_from_eq(nat_mul_one_right(x))
+)
+
+theorem addition_unit(): AlgebraEq(
+  0,
+  Nat,
+  algebra_unit(0, Nat, natural_addition),
+  zero
+) { algebra_refl(0, Nat, zero) }
+theorem multiplication_unit(): AlgebraEq(
+  0,
+  Nat,
+  algebra_unit(0, Nat, natural_multiplication),
+  succ(zero)
+) { algebra_refl(0, Nat, succ(zero)) }
+
+def additive_zero_map(): AlgebraHom(
+  0,
+  0,
+  Nat,
+  Nat,
+  natural_addition,
+  natural_addition
+) := algebra_hom(
+  0,
+  0,
+  Nat,
+  Nat,
+  natural_addition,
+  natural_addition,
+  x => zero,
+  algebra_refl(0, Nat, zero),
+  x => y => algebra_refl(0, Nat, zero)
+)
+
+theorem compose_zero_identity(
+  n: Nat
+): AlgebraEq(
+  0,
+  Nat,
+  algebra_map(
+    0,
+    0,
+    Nat,
+    Nat,
+    natural_addition,
+    natural_addition,
+    algebra_compose(
+      0,
+      0,
+      0,
+      Nat,
+      Nat,
+      Nat,
+      natural_addition,
+      natural_addition,
+      natural_addition,
+      additive_zero_map,
+      algebra_identity(0, Nat, natural_addition)
+    )
+  )(n),
+  zero
+) { algebra_refl(0, Nat, zero) }
+
+import "../src/Linear.taut"
+
+theorem natural_semiring(): AlgebraSemiring(Nat, natural_addition, natural_multiplication) {
+  algebra_semiring(
+    Nat,
+    natural_addition,
+    natural_multiplication,
+    x => y => algebra_from_eq(nat_add_comm(x, y)),
+    x => y => z => algebra_from_eq(nat_mul_add_distrib(x, y, z)),
+    x => y => z => algebra_from_eq(nat_mul_add_distrib_right(x, y, z)),
+    x => algebra_from_eq(nat_mul_zero_left(x)),
+    x => algebra_from_eq(nat_mul_zero_right(x))
+  )
+}
+
+fn natural_matrix(
+  rows: Nat,
+  columns: Nat,
+  row: AlgebraFin(rows),
+  column: AlgebraFin(columns)
+) -> Nat {
+  succ(nat_add(algebra_fin_value(rows, row), algebra_fin_value(columns, column)))
+}
+
+theorem natural_rectangular_action(): AlgebraEq(
+  0,
+  Nat,
+  algebra_matrix_apply(
+    Nat,
+    natural_addition,
+    natural_multiplication,
+    2,
+    3,
+    row => column => natural_matrix(2, 3, row, column),
+    column => 1
+  )(algebra_next(1, algebra_first(0))),
+  9
+) {
+  algebra_refl(0, Nat, 9)
+}
+
+theorem natural_rectangular_product(): AlgebraEq(
+  0,
+  Nat,
+  algebra_matrix_product(
+    Nat,
+    natural_addition,
+    natural_multiplication,
+    2,
+    3,
+    4,
+    row => column => natural_matrix(2, 3, row, column),
+    row => column => natural_matrix(3, 4, row, column)
+  )(algebra_next(1, algebra_first(0)), algebra_next(3, algebra_next(2, algebra_first(1)))),
+  38
+) {
+  algebra_refl(0, Nat, 38)
+}
+
+theorem natural_empty_sum(): AlgebraEq(
+  0,
+  Nat,
+  algebra_sum(Nat, natural_addition, 0, index => 7),
+  0
+) {
+  algebra_refl(0, Nat, 0)
+}
+
+theorem natural_empty_inner_product(): AlgebraEq(
+  0,
+  Nat,
+  algebra_matrix_product(
+    Nat,
+    natural_addition,
+    natural_multiplication,
+    1,
+    0,
+    1,
+    row => column => 8,
+    row => column => 9
+  )(algebra_first(0), algebra_first(0)),
+  0
+) {
+  algebra_refl(0, Nat, 0)
+}
+
+theorem natural_matrix_is_linear(
+  rows: Nat,
+  columns: Nat
+): AlgebraLinear(
+  Nat,
+  natural_addition,
+  natural_multiplication,
+  columns,
+  rows,
+  values => algebra_matrix_apply(
+    Nat,
+    natural_addition,
+    natural_multiplication,
+    rows,
+    columns,
+    row => column => natural_matrix(rows, columns, row, column),
+    values
+  )
+) {
+  algebra_matrix_linear(
+    natural_semiring,
+    rows,
+    columns,
+    row => column => natural_matrix(rows, columns, row, column)
+  )
+}
+
+theorem natural_finite_sum(): AlgebraEq(
+  0,
+  Nat,
+  algebra_sum(Nat, natural_addition, 5, index => algebra_fin_value(5, index)),
+  10
+) {
+  algebra_refl(0, Nat, 10)
+}
+
+theorem natural_matrix_addition(): AlgebraEq(
+  0,
+  Nat,
+  algebra_matrix_add(
+    Nat,
+    natural_addition,
+    2,
+    3,
+    row => column => natural_matrix(2, 3, row, column),
+    row => column => natural_matrix(2, 3, row, column)
+  )(algebra_next(1, algebra_first(0)), algebra_next(2, algebra_next(1, algebra_first(0)))),
+  8
+) {
+  algebra_refl(0, Nat, 8)
+}
+
+theorem natural_matrix_scaling(): AlgebraEq(
+  0,
+  Nat,
+  algebra_matrix_scale(
+    Nat,
+    natural_multiplication,
+    2,
+    3,
+    row => column => natural_matrix(2, 3, row, column),
+    3
+  )(algebra_next(1, algebra_first(0)), algebra_next(2, algebra_next(1, algebra_first(0)))),
+  12
+) {
+  algebra_refl(0, Nat, 12)
+}

@@ -1,0 +1,88 @@
+import "Rational.taut"
+import "RelationSemiring.taut"
+
+theorem rational_add_left_zero(x: AlgebraRational): RationalEq(rational_add(rational_zero, x), x) {
+  rational_eq_trans(
+    rational_add(rational_zero, x),
+    rational_add(x, rational_zero),
+    x,
+    rational_add_comm(rational_zero, x),
+    rational_add_zero(x)
+  )
+}
+
+theorem rational_mul_left_zero(
+  x: AlgebraRational
+): RationalEq(rational_mul(rational_zero, x), rational_zero) {
+  rational_eq_trans(
+    rational_mul(rational_zero, x),
+    rational_mul(x, rational_zero),
+    rational_zero,
+    rational_mul_comm(rational_zero, x),
+    rational_mul_zero(x)
+  )
+}
+
+theorem rational_add_mul(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational
+): RationalEq(
+  rational_mul(rational_add(x, y), z),
+  rational_add(rational_mul(x, z), rational_mul(y, z))
+) {
+  rational_eq_trans(
+    rational_mul(rational_add(x, y), z),
+    rational_mul(z, rational_add(x, y)),
+    rational_add(rational_mul(x, z), rational_mul(y, z)),
+    rational_mul_comm(rational_add(x, y), z),
+    rational_eq_trans(
+      rational_mul(z, rational_add(x, y)),
+      rational_add(rational_mul(z, x), rational_mul(z, y)),
+      rational_add(rational_mul(x, z), rational_mul(y, z)),
+      rational_mul_add(z, x, y),
+      rational_add_respects(
+        rational_mul(z, x),
+        rational_mul(x, z),
+        rational_mul(z, y),
+        rational_mul(y, z),
+        rational_mul_comm(z, x),
+        rational_mul_comm(z, y)
+      )
+    )
+  )
+}
+
+// The relation, both operations and every compatibility law are given to
+// AlgebraRelationSemiring as arguments.
+theorem rational_relation_semiring(): AlgebraRelationSemiring(
+  AlgebraRational,
+  RationalEq,
+  rational_zero,
+  rational_one,
+  rational_add,
+  rational_mul
+) {
+  algebra_relation_semiring(
+    AlgebraRational,
+    RationalEq,
+    rational_zero,
+    rational_one,
+    rational_add,
+    rational_mul,
+    rational_setoid,
+    rational_add_respects,
+    rational_mul_respects,
+    rational_add_assoc,
+    rational_add_comm,
+    rational_add_left_zero,
+    rational_add_zero,
+    rational_mul_assoc,
+    rational_left_one,
+    rational_mul_one,
+    rational_mul_add,
+    rational_add_mul,
+    rational_mul_left_zero,
+    rational_mul_zero
+  )
+}

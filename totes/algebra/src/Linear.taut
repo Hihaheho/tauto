@@ -1,0 +1,581 @@
+import "Matrix.taut"
+
+// Maps preserve pointwise equality, not an assumed equality of functions.
+inductive AlgebraLinear(
+  R: Type,
+  addition: AlgebraMonoid(0, R),
+  multiplication: AlgebraMonoid(0, R),
+  source: Nat,
+  target: Nat,
+  map: (AlgebraVector(R, source)) -> AlgebraVector(R, target)
+): Prop {
+  algebra_linear(
+    respect: ∀ left: AlgebraVector(
+      R,
+      source
+    ). ∀ right: AlgebraVector(
+      R,
+      source
+    ). ∀ equal: AlgebraVectorEq(
+      R,
+      source,
+      left,
+      right
+    ). AlgebraVectorEq(R, target, map(left), map(right)),
+    preserve_zero: AlgebraVectorEq(
+      R,
+      target,
+      map(algebra_vector_zero(R, addition, source)),
+      algebra_vector_zero(R, addition, target)
+    ),
+    preserve_add: ∀ left: AlgebraVector(
+      R,
+      source
+    ). ∀ right: AlgebraVector(
+      R,
+      source
+    ). AlgebraVectorEq(
+      R,
+      target,
+      map(algebra_vector_add(R, addition, source, left, right)),
+      algebra_vector_add(R, addition, target, map(left), map(right))
+    ),
+    preserve_scale: ∀ values: AlgebraVector(
+      R,
+      source
+    ). ∀ scalar: R. AlgebraVectorEq(
+      R,
+      target,
+      map(algebra_vector_scale(R, multiplication, source, values, scalar)),
+      algebra_vector_scale(R, multiplication, target, map(values), scalar)
+    )
+  ): AlgebraLinear(R, addition, multiplication, source, target, map)
+}
+
+theorem algebra_linear_respect<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+), source: Nat, target: Nat, map: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  target
+)>(
+  laws: AlgebraLinear(R, addition, multiplication, source, target, map)
+): ∀ left: AlgebraVector(
+  R,
+  source
+). ∀ right: AlgebraVector(
+  R,
+  source
+). ∀ equal: AlgebraVectorEq(
+  R,
+  source,
+  left,
+  right
+). AlgebraVectorEq(R, target, map(left), map(right)) {
+  match laws -> ∀ left: AlgebraVector(
+    R,
+    source
+  ). ∀ right: AlgebraVector(
+    R,
+    source
+  ). ∀ equal: AlgebraVectorEq(
+    R,
+    source,
+    left,
+    right
+  ). AlgebraVectorEq(R, target, map(left), map(right)) {
+    algebra_linear(respect, preserve_zero, preserve_add, preserve_scale) => respect
+  }
+}
+
+theorem algebra_linear_preserve_zero<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+), source: Nat, target: Nat, map: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  target
+)>(
+  laws: AlgebraLinear(R, addition, multiplication, source, target, map)
+): AlgebraVectorEq(
+  R,
+  target,
+  map(algebra_vector_zero(R, addition, source)),
+  algebra_vector_zero(R, addition, target)
+) {
+  match laws -> AlgebraVectorEq(
+    R,
+    target,
+    map(algebra_vector_zero(R, addition, source)),
+    algebra_vector_zero(R, addition, target)
+  ) {
+    algebra_linear(respect, preserve_zero, preserve_add, preserve_scale) => preserve_zero
+  }
+}
+
+theorem algebra_linear_preserve_add<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+), source: Nat, target: Nat, map: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  target
+)>(
+  laws: AlgebraLinear(R, addition, multiplication, source, target, map)
+): ∀ left: AlgebraVector(
+  R,
+  source
+). ∀ right: AlgebraVector(
+  R,
+  source
+). AlgebraVectorEq(
+  R,
+  target,
+  map(algebra_vector_add(R, addition, source, left, right)),
+  algebra_vector_add(R, addition, target, map(left), map(right))
+) {
+  match laws -> ∀ left: AlgebraVector(
+    R,
+    source
+  ). ∀ right: AlgebraVector(
+    R,
+    source
+  ). AlgebraVectorEq(
+    R,
+    target,
+    map(algebra_vector_add(R, addition, source, left, right)),
+    algebra_vector_add(R, addition, target, map(left), map(right))
+  ) {
+    algebra_linear(respect, preserve_zero, preserve_add, preserve_scale) => preserve_add
+  }
+}
+
+theorem algebra_linear_preserve_scale<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+), source: Nat, target: Nat, map: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  target
+)>(
+  laws: AlgebraLinear(R, addition, multiplication, source, target, map)
+): ∀ values: AlgebraVector(
+  R,
+  source
+). ∀ scalar: R. AlgebraVectorEq(
+  R,
+  target,
+  map(algebra_vector_scale(R, multiplication, source, values, scalar)),
+  algebra_vector_scale(R, multiplication, target, map(values), scalar)
+) {
+  match laws -> ∀ values: AlgebraVector(
+    R,
+    source
+  ). ∀ scalar: R. AlgebraVectorEq(
+    R,
+    target,
+    map(algebra_vector_scale(R, multiplication, source, values, scalar)),
+    algebra_vector_scale(R, multiplication, target, map(values), scalar)
+  ) {
+    algebra_linear(respect, preserve_zero, preserve_add, preserve_scale) => preserve_scale
+  }
+}
+
+fn algebra_linear_identity<R: Type>(
+  n: Nat,
+  values: AlgebraVector(R, n)
+) -> AlgebraVector(R, n) { values }
+
+fn algebra_linear_compose<R: Type>(
+  source: Nat,
+  middle: Nat,
+  target: Nat,
+  first: (AlgebraVector(R, source)) -> AlgebraVector(R, middle),
+  second: (AlgebraVector(R, middle)) -> AlgebraVector(R, target),
+  values: AlgebraVector(R, source)
+) -> AlgebraVector(R, target) { second(first(values)) }
+
+theorem algebra_linear_identity_laws<R: Type>(
+  addition: AlgebraMonoid(0, R),
+  multiplication: AlgebraMonoid(0, R),
+  n: Nat
+): AlgebraLinear(R, addition, multiplication, n, n, input => algebra_linear_identity(R, n, input)) {
+  algebra_linear(
+    R,
+    addition,
+    multiplication,
+    n,
+    n,
+    input => algebra_linear_identity(R, n, input),
+    left => right => equal => equal,
+    index => algebra_refl(0, R, algebra_unit(0, R, addition)),
+    left => right => index => algebra_refl(
+      0,
+      R,
+      algebra_op(0, R, addition)(left(index), right(index))
+    ),
+    values => scalar => index => algebra_refl(
+      0,
+      R,
+      algebra_op(0, R, multiplication)(values(index), scalar)
+    )
+  )
+}
+
+theorem algebra_linear_compose_laws<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+), source: Nat, middle: Nat, target: Nat, first: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  middle
+), second: (
+  AlgebraVector(R, middle)
+) -> AlgebraVector(
+  R,
+  target
+)>(
+  first_laws: AlgebraLinear(R, addition, multiplication, source, middle, first),
+  second_laws: AlgebraLinear(R, addition, multiplication, middle, target, second)
+): AlgebraLinear(
+  R,
+  addition,
+  multiplication,
+  source,
+  target,
+  input => algebra_linear_compose(R, source, middle, target, first, second, input)
+) {
+  algebra_linear(
+    R,
+    addition,
+    multiplication,
+    source,
+    target,
+    input => algebra_linear_compose(R, source, middle, target, first, second, input),
+    left => right => equal => algebra_linear_respect(
+      R,
+      addition,
+      multiplication,
+      middle,
+      target,
+      second,
+      second_laws
+    )(
+      first(left),
+      first(right),
+      algebra_linear_respect(
+        R,
+        addition,
+        multiplication,
+        source,
+        middle,
+        first,
+        first_laws
+      )(left, right, equal)
+    ),
+    index => algebra_chain(
+      algebra_linear_respect(
+        R,
+        addition,
+        multiplication,
+        middle,
+        target,
+        second,
+        second_laws
+      )(
+        first(algebra_vector_zero(R, addition, source)),
+        algebra_vector_zero(R, addition, middle),
+        algebra_linear_preserve_zero(R, addition, multiplication, source, middle, first, first_laws)
+      )(index),
+      algebra_linear_preserve_zero(
+        R,
+        addition,
+        multiplication,
+        middle,
+        target,
+        second,
+        second_laws
+      )(index)
+    ),
+    left => right => index => algebra_chain(
+      algebra_linear_respect(
+        R,
+        addition,
+        multiplication,
+        middle,
+        target,
+        second,
+        second_laws
+      )(
+        first(algebra_vector_add(R, addition, source, left, right)),
+        algebra_vector_add(R, addition, middle, first(left), first(right)),
+        algebra_linear_preserve_add(
+          R,
+          addition,
+          multiplication,
+          source,
+          middle,
+          first,
+          first_laws
+        )(left, right)
+      )(index),
+      algebra_linear_preserve_add(
+        R,
+        addition,
+        multiplication,
+        middle,
+        target,
+        second,
+        second_laws
+      )(first(left), first(right))(index)
+    ),
+    values => scalar => index => algebra_chain(
+      algebra_linear_respect(
+        R,
+        addition,
+        multiplication,
+        middle,
+        target,
+        second,
+        second_laws
+      )(
+        first(algebra_vector_scale(R, multiplication, source, values, scalar)),
+        algebra_vector_scale(R, multiplication, middle, first(values), scalar),
+        algebra_linear_preserve_scale(
+          R,
+          addition,
+          multiplication,
+          source,
+          middle,
+          first,
+          first_laws
+        )(values, scalar)
+      )(index),
+      algebra_linear_preserve_scale(
+        R,
+        addition,
+        multiplication,
+        middle,
+        target,
+        second,
+        second_laws
+      )(first(values), scalar)(index)
+    )
+  )
+}
+
+theorem algebra_matrix_linear<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+)>(
+  laws: AlgebraSemiring(R, addition, multiplication),
+  rows: Nat,
+  columns: Nat,
+  matrix: AlgebraMatrix(R, rows, columns)
+): AlgebraLinear(
+  R,
+  addition,
+  multiplication,
+  columns,
+  rows,
+  input => algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, input)
+) {
+  algebra_linear(
+    R,
+    addition,
+    multiplication,
+    columns,
+    rows,
+    input => algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, input),
+    left => right => equal => row => algebra_matrix_apply_congr(
+      R,
+      addition,
+      multiplication,
+      rows,
+      columns,
+      matrix,
+      left,
+      right,
+      equal,
+      row
+    ),
+    row => algebra_matrix_apply_zero(laws, rows, columns, matrix, row),
+    left => right => row => algebra_matrix_apply_add(laws, rows, columns, matrix, left, right, row),
+    values => scalar => row => algebra_matrix_apply_scale(
+      laws,
+      rows,
+      columns,
+      matrix,
+      values,
+      scalar,
+      row
+    )
+  )
+}
+
+// Equality compares outputs at every coordinate for every input vector.
+def AlgebraLinearEq(
+  R: Type,
+  source: Nat,
+  target: Nat,
+  first: (AlgebraVector(R, source)) -> AlgebraVector(R, target),
+  second: (AlgebraVector(R, source)) -> AlgebraVector(R, target)
+): Prop :=
+∀ values: AlgebraVector(R, source). AlgebraVectorEq(R, target, first(values), second(values))
+
+theorem algebra_linear_identity_left<R: Type>(
+  source: Nat,
+  target: Nat,
+  map: (AlgebraVector(R, source)) -> AlgebraVector(R, target),
+  values: AlgebraVector(R, source),
+  index: AlgebraFin(target)
+): AlgebraEq(
+  0,
+  R,
+  algebra_linear_compose(
+    R,
+    source,
+    source,
+    target,
+    input => algebra_linear_identity(R, source, input),
+    map,
+    values
+  )(index),
+  map(values)(index)
+) {
+  algebra_refl(0, R, map(values)(index))
+}
+
+theorem algebra_linear_identity_right<R: Type>(
+  source: Nat,
+  target: Nat,
+  map: (AlgebraVector(R, source)) -> AlgebraVector(R, target),
+  values: AlgebraVector(R, source),
+  index: AlgebraFin(target)
+): AlgebraEq(
+  0,
+  R,
+  algebra_linear_compose(
+    R,
+    source,
+    target,
+    target,
+    map,
+    input => algebra_linear_identity(R, target, input),
+    values
+  )(index),
+  map(values)(index)
+) {
+  algebra_refl(0, R, map(values)(index))
+}
+
+theorem algebra_linear_compose_assoc<R: Type>(
+  a: Nat,
+  b: Nat,
+  c: Nat,
+  d: Nat,
+  first: (AlgebraVector(R, a)) -> AlgebraVector(R, b),
+  second: (AlgebraVector(R, b)) -> AlgebraVector(R, c),
+  third: (AlgebraVector(R, c)) -> AlgebraVector(R, d),
+  values: AlgebraVector(R, a),
+  index: AlgebraFin(d)
+): AlgebraEq(
+  0,
+  R,
+  algebra_linear_compose(
+    R,
+    a,
+    c,
+    d,
+    input => algebra_linear_compose(R, a, b, c, first, second, input),
+    third,
+    values
+  )(index),
+  algebra_linear_compose(
+    R,
+    a,
+    b,
+    d,
+    first,
+    input => algebra_linear_compose(R, b, c, d, second, third, input),
+    values
+  )(index)
+) {
+  algebra_refl(0, R, third(second(first(values)))(index))
+}
+
+theorem algebra_linear_compose_congr<R: Type, addition: AlgebraMonoid(
+  0,
+  R
+), multiplication: AlgebraMonoid(
+  0,
+  R
+), source: Nat, middle: Nat, target: Nat, first: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  middle
+), first_other: (
+  AlgebraVector(R, source)
+) -> AlgebraVector(
+  R,
+  middle
+), second: (
+  AlgebraVector(R, middle)
+) -> AlgebraVector(
+  R,
+  target
+), second_other: (
+  AlgebraVector(R, middle)
+) -> AlgebraVector(
+  R,
+  target
+)>(
+  second_laws: AlgebraLinear(R, addition, multiplication, middle, target, second),
+  first_equal: AlgebraLinearEq(R, source, middle, first, first_other),
+  second_equal: AlgebraLinearEq(R, middle, target, second, second_other),
+  values: AlgebraVector(R, source),
+  index: AlgebraFin(target)
+): AlgebraEq(
+  0,
+  R,
+  algebra_linear_compose(R, source, middle, target, first, second, values)(index),
+  algebra_linear_compose(R, source, middle, target, first_other, second_other, values)(index)
+) {
+  algebra_chain(
+    algebra_linear_respect(
+      R,
+      addition,
+      multiplication,
+      middle,
+      target,
+      second,
+      second_laws
+    )(first(values), first_other(values), first_equal(values))(index),
+    second_equal(first_other(values))(index)
+  )
+}

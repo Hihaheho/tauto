@@ -1,0 +1,112 @@
+import "../src/Group.taut"
+
+inductive AlgebraBit(): Type { bit_zero(): AlgebraBit
+  bit_one(): AlgebraBit }
+
+def bit_flip(x: AlgebraBit): AlgebraBit := AlgebraBit_rec(x => AlgebraBit, bit_one, bit_zero, x)
+def bit_xor(
+  x: AlgebraBit,
+  y: AlgebraBit
+): AlgebraBit := AlgebraBit_rec(x => AlgebraBit, y, bit_flip(y), x)
+
+theorem bit_assoc(
+  x: AlgebraBit,
+  y: AlgebraBit,
+  z: AlgebraBit
+): AlgebraEq(0, AlgebraBit, bit_xor(bit_xor(x, y), z), bit_xor(x, bit_xor(y, z))) {
+  match x -> AlgebraEq(0, AlgebraBit, bit_xor(bit_xor(x, y), z), bit_xor(x, bit_xor(y, z))) {
+    bit_zero => match y -> AlgebraEq(
+      0,
+      AlgebraBit,
+      bit_xor(bit_xor(bit_zero, y), z),
+      bit_xor(bit_zero, bit_xor(y, z))
+    ) {
+      bit_zero => match z -> AlgebraEq(
+        0,
+        AlgebraBit,
+        bit_xor(bit_xor(bit_zero, bit_zero), z),
+        bit_xor(bit_zero, bit_xor(bit_zero, z))
+      ) {
+        bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_zero, bit_zero), bit_zero))
+        bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_zero, bit_zero), bit_one))
+      }
+      bit_one => match z -> AlgebraEq(
+        0,
+        AlgebraBit,
+        bit_xor(bit_xor(bit_zero, bit_one), z),
+        bit_xor(bit_zero, bit_xor(bit_one, z))
+      ) {
+        bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_zero, bit_one), bit_zero))
+        bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_zero, bit_one), bit_one))
+      }
+    }
+    bit_one => match y -> AlgebraEq(
+      0,
+      AlgebraBit,
+      bit_xor(bit_xor(bit_one, y), z),
+      bit_xor(bit_one, bit_xor(y, z))
+    ) {
+      bit_zero => match z -> AlgebraEq(
+        0,
+        AlgebraBit,
+        bit_xor(bit_xor(bit_one, bit_zero), z),
+        bit_xor(bit_one, bit_xor(bit_zero, z))
+      ) {
+        bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_one, bit_zero), bit_zero))
+        bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_one, bit_zero), bit_one))
+      }
+      bit_one => match z -> AlgebraEq(
+        0,
+        AlgebraBit,
+        bit_xor(bit_xor(bit_one, bit_one), z),
+        bit_xor(bit_one, bit_xor(bit_one, z))
+      ) {
+        bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_one, bit_one), bit_zero))
+        bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_xor(bit_one, bit_one), bit_one))
+      }
+    }
+  }
+}
+
+theorem bit_left(x: AlgebraBit): AlgebraEq(0, AlgebraBit, bit_xor(bit_zero, x), x) {
+  match x -> AlgebraEq(0, AlgebraBit, bit_xor(bit_zero, x), x) {
+    bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_zero, bit_zero))
+    bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_zero, bit_one))
+  }
+}
+
+theorem bit_right(x: AlgebraBit): AlgebraEq(0, AlgebraBit, bit_xor(x, bit_zero), x) {
+  match x -> AlgebraEq(0, AlgebraBit, bit_xor(x, bit_zero), x) {
+    bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_zero, bit_zero))
+    bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_one, bit_zero))
+  }
+}
+
+theorem bit_inverse(x: AlgebraBit): AlgebraEq(0, AlgebraBit, bit_xor(x, x), bit_zero) {
+  match x -> AlgebraEq(0, AlgebraBit, bit_xor(x, x), bit_zero) {
+    bit_zero => algebra_refl(0, AlgebraBit, bit_xor(bit_zero, bit_zero))
+    bit_one => algebra_refl(0, AlgebraBit, bit_xor(bit_one, bit_one))
+  }
+}
+
+def bit_monoid(): AlgebraMonoid(
+  0,
+  AlgebraBit
+) := algebra_monoid(0, AlgebraBit, bit_zero, bit_xor, bit_assoc, bit_left, bit_right)
+theorem bit_group(): AlgebraGroup(
+  0,
+  AlgebraBit,
+  bit_monoid,
+  x => x
+) { algebra_group(0, AlgebraBit, bit_monoid, x => x, bit_inverse, bit_inverse) }
+theorem bit_cancel(
+  a: AlgebraBit,
+  b: AlgebraBit,
+  c: AlgebraBit,
+  h: AlgebraEq(0, AlgebraBit, bit_xor(a, b), bit_xor(a, c))
+): AlgebraEq(
+  0,
+  AlgebraBit,
+  b,
+  c
+) { algebra_cancel_left(0, AlgebraBit, bit_monoid, x => x, bit_group, a, b, c, h) }

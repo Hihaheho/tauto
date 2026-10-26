@@ -1,0 +1,1044 @@
+import "data.taut"
+
+fn rustgen_binary(
+  op: Text,
+  left: RustgenValue,
+  right: RustgenValue,
+  location: Text
+) -> RustgenResult(RustgenValue) {
+  match rustgen_unify(10000, left.ty, right.ty, Nil) -> RustgenResult(RustgenValue) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(subst) => match rustgen_resolve(10000, left.ty, subst) -> RustgenResult(RustgenValue) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(raw) => match rustgen_default_numbers(10000, raw) -> RustgenResult(RustgenValue) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(ty) => {
+          let left_code = rustgen_context_code(left.code, ty)
+          let right_code = rustgen_context_code(right.code, ty)
+          let integer = rustgen_same(ty, RustgenInt) || rustgen_same(ty, RustgenNat)
+          if op == "+" || op == "-" || op == "*" {
+            if !integer { RustgenErr("arithmetic requires an integer") } else {
+              if op == "-" && rustgen_same(ty, RustgenNat) {
+                RustgenOk(
+                  rustgen_value(
+                    ty,
+                    text_concat_all(
+                      Cons(
+                        "(",
+                        Cons(
+                          left.code,
+                          Cons(" as u64).saturating_sub(", Cons(right_code, Cons(")", Nil)))
+                        )
+                      )
+                    )
+                  )
+                )
+              } else {
+                let operation: Text = if op == "+" { "add_" } else if op == "-" { "sub_" } else { "mul_" }
+                let width: Text = if rustgen_same(ty, RustgenNat) { "u64" } else { "i64" }
+                RustgenOk(
+                  rustgen_value(
+                    ty,
+                    text_concat_all(
+                      Cons(
+                        "tauto_rt::int::",
+                        Cons(
+                          operation,
+                          Cons(
+                            width,
+                            Cons(
+                              "(",
+                              Cons(
+                                left.code,
+                                Cons(
+                                  ",",
+                                  Cons(right_code, Cons(",", Cons(location, Cons(")", Nil))))
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              }
+            }
+          } else if op == "&&" || op == "||" {
+            if !rustgen_same(
+              ty,
+              RustgenBool
+            ) { RustgenErr(
+              "logical operators require bool"
+            ) } else { RustgenOk(
+              rustgen_value(
+                RustgenBool,
+                text_concat_all(
+                  Cons("(", Cons(left_code, Cons(op, Cons(right_code, Cons(")", Nil)))))
+                )
+              )
+            ) }
+          } else if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
+            if integer || (
+              (op == "==" || op == "!=") && rustgen_printable(ty)
+            ) { RustgenOk(
+              rustgen_value(
+                RustgenBool,
+                text_concat_all(
+                  Cons("(", Cons(left_code, Cons(op, Cons(right_code, Cons(")", Nil)))))
+                )
+              )
+            ) } else { RustgenErr("unsupported comparison type") }
+          } else { RustgenErr("unsupported binary operator") }
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_unary_typed(
+  op: Text,
+  value: RustgenValue,
+  location: Text
+) -> RustgenResult(RustgenValue) {
+  if op == "!" && rustgen_same(value.ty, RustgenBool) {
+    RustgenOk(rustgen_value(RustgenBool, rustgen_wrapped("(!", value.code, ")")))
+  } else if op == "-" && rustgen_same(value.ty, RustgenInt) {
+    RustgenOk(
+      rustgen_value(
+        RustgenInt,
+        text_concat_all(
+          Cons(
+            "tauto_rt::int::neg_i64(",
+            Cons(value.code, Cons(", ", Cons(location, Cons(")", Nil))))
+          )
+        )
+      )
+    )
+  } else if op == "+" && rustgen_same(
+    value.ty,
+    RustgenInt
+  ) { RustgenOk(value) } else { RustgenErr("unsupported unary operator") }
+}
+
+fn rustgen_unary(op: Text, value: RustgenValue, location: Text) -> RustgenResult(RustgenValue) {
+  match rustgen_default_numbers(10000, value.ty) -> RustgenResult(RustgenValue) {
+    RustgenErr(message) => RustgenErr(message)
+    RustgenOk(ty) => rustgen_unary_typed(op, rustgen_value(ty, value.code), location)
+  }
+}
+fn rustgen_checked_annotation(
+  annotation: Option(SurfaceTerm),
+  actual: RustgenType,
+  functions: List(RustgenFunction)
+) -> RustgenResult(RustgenType) {
+  match annotation -> RustgenResult(RustgenType) {
+    None => rustgen_default_numbers(10000, actual)
+    Some(written) => match rustgen_written(written) -> RustgenResult(RustgenType) {
+      RustgenErr(message) => RustgenErr(message)
+      RustgenOk(
+        raw
+      ) => match rustgen_vars(
+        10000,
+        raw,
+        rustgen_scope_names(functions)
+      ) -> RustgenResult(RustgenType) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          expected
+        ) => if !rustgen_known_type(
+          expected,
+          functions
+        ) { RustgenErr("unknown annotation type") } else {
+          match rustgen_unify(10000, expected, actual, Nil) -> RustgenResult(RustgenType) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(subst) => RustgenOk(expected)
+          }
+        }
+      }
+    }
+  }
+}
+
+mutual {
+  fn rustgen_expr(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    term: SurfaceTerm
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("code generation fuel exhausted")
+      succ(j) => match term.kind -> RustgenResult(RustgenValue) {
+        SkVar(name) => match rustgen_find(name, locals) -> RustgenResult(RustgenValue) {
+          None => if name == "yes" { RustgenOk(
+            rustgen_value(RustgenBool, "true")
+          ) } else if name == "no" { RustgenOk(
+            rustgen_value(RustgenBool, "false")
+          ) } else if name == "zero" { RustgenOk(rustgen_value(RustgenNat, "0u64")) } else {
+            match rustgen_find_function(name, functions) -> RustgenResult(RustgenValue) {
+              None => RustgenErr(text_concat("unknown local: ", name))
+              Some(
+                f
+              ) => if f.kind == 1 { rustgen_infer_call(
+                f,
+                Nil,
+                term.start
+              ) } else { RustgenErr("function values require closure support") }
+            }
+          }
+
+          Some(ty) => RustgenOk(rustgen_value(ty, rustgen_clone(rustgen_ident(name))))
+        }
+        SkNat(digits) => match rustgen_number(digits) -> RustgenResult(RustgenValue) {
+          None => RustgenErr("unsupported integer literal")
+
+          Some(number) => if number <= 9223372036854775807 {
+            RustgenOk(
+              rustgen_value(
+                RustgenNumber(text_concat("literal:", text_of_nat(term.start)), number),
+                text_of_nat(number)
+              )
+            )
+          } else { RustgenErr("integer literal is outside the supported i64 range") }
+        }
+        SkBool(value) => {
+          let code: Text = if value { "true" } else { "false" }
+          RustgenOk(rustgen_value(RustgenBool, code))
+        }
+        SkApp(head, args) => rustgen_call(j, source, functions, locals, head, args, term.start)
+        SkIf(condition, then, otherwise) => match otherwise -> RustgenResult(RustgenValue) {
+          None => RustgenErr("if requires an else branch")
+          Some(
+            other
+          ) => match rustgen_expr(
+            j,
+            source,
+            functions,
+            locals,
+            condition
+          ) -> RustgenResult(RustgenValue) {
+            RustgenErr(condition_error) => RustgenErr(condition_error)
+            RustgenOk(
+              test
+            ) => if !rustgen_same(
+              test.ty,
+              RustgenBool
+            ) { RustgenErr("if condition requires bool") } else {
+              match rustgen_expr(j, source, functions, locals, then) -> RustgenResult(RustgenValue) {
+                RustgenErr(then_error) => RustgenErr(then_error)
+                RustgenOk(
+                  yes_value
+                ) => match rustgen_expr(
+                  j,
+                  source,
+                  functions,
+                  locals,
+                  other
+                ) -> RustgenResult(RustgenValue) {
+                  RustgenErr(else_error) => RustgenErr(else_error)
+                  RustgenOk(
+                    no_value
+                  ) => match rustgen_expected(
+                    Some(yes_value.ty),
+                    no_value.ty
+                  ) -> RustgenResult(RustgenValue) {
+                    RustgenErr(message) => RustgenErr(message)
+                    RustgenOk(
+                      joined
+                    ) => RustgenOk(
+                      rustgen_value(
+                        joined,
+                        text_concat_all(
+                          Cons(
+                            "(if ",
+                            Cons(
+                              test.code,
+                              Cons(
+                                " { ",
+                                Cons(
+                                  yes_value.code,
+                                  Cons(" } else { ", Cons(no_value.code, Cons(" })", Nil)))
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+        SkBlock(
+          stmts
+        ) => match rustgen_block(
+          j,
+          source,
+          functions,
+          locals,
+          stmts
+        ) -> RustgenResult(RustgenValue) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            value
+          ) => RustgenOk(rustgen_value(value.ty, rustgen_wrapped("{ ", value.code, " }")))
+        }
+        SkText(value) => RustgenOk(rustgen_value(RustgenText, rustgen_text(value)))
+        SkPi(params, result, effects) => RustgenErr("function types are unsupported")
+        SkExists(binder, domain, body) => RustgenErr("proof terms are unsupported")
+        SkLam(params, body) => RustgenErr("closures are unsupported")
+        SkUnion(parts) => RustgenErr("union types are unsupported")
+        SkTagged(tag, value) => RustgenErr("tags are unsupported")
+        SkField(value, name) => rustgen_field(j, source, functions, locals, value, name)
+        SkPerform(op, args) => RustgenErr("effects are unsupported")
+        SkHandle(body, handlers) => RustgenErr("handlers are unsupported")
+        SkBudget(amount, body) => RustgenErr("budgets are unsupported")
+        SkMatch(
+          scrutinee,
+          motive,
+          arms,
+          binder
+        ) => rustgen_match(j, source, functions, locals, scrutinee, motive, arms, binder)
+        SkHole(name) => RustgenErr("holes are unsupported")
+        SkRecord(name, fields) => RustgenErr("records are unsupported")
+        SkBorrow(mutable, value) => RustgenErr("borrows are unsupported")
+        SkFnKind(kind, ty) => RustgenErr("function kinds are unsupported")
+        SkBorrowLam(borrows, lam) => RustgenErr("borrowed closures are unsupported")
+        SkOther(what) => RustgenErr(text_concat("unsupported expression: ", what))
+        SkMacroCall(name, arg) => RustgenErr("macros are unsupported")
+        SkQuote(stmts_form, stmts) => RustgenErr("quotation is unsupported")
+        SkSplice(value) => RustgenErr("splicing is unsupported")
+        SkSyntaxLit(name, body) => RustgenErr("syntax literals are unsupported")
+        SkStep(
+          tactic,
+          arg,
+          call_start,
+          call_end,
+          before,
+          arms
+        ) => RustgenErr("proof steps are unsupported")
+      }
+    }
+  }
+
+  fn rustgen_values(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    args: List(SurfaceTerm)
+  ) -> RustgenResult(List(RustgenValue)) {
+    match k -> RustgenResult(List(RustgenValue)) {
+      zero => RustgenErr("code generation fuel exhausted")
+      succ(j) => match args -> RustgenResult(List(RustgenValue)) {
+        Nil => RustgenOk(Nil)
+        Cons(
+          arg,
+          rest
+        ) => match rustgen_expr(
+          j,
+          source,
+          functions,
+          locals,
+          arg
+        ) -> RustgenResult(List(RustgenValue)) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(
+            value
+          ) => match rustgen_values(
+            j,
+            source,
+            functions,
+            locals,
+            rest
+          ) -> RustgenResult(List(RustgenValue)) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => RustgenOk(Cons(value, values))
+          }
+        }
+      }
+    }
+  }
+
+  fn rustgen_operator(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    name: Text,
+    args: List(SurfaceTerm),
+    at: Nat
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("code generation fuel exhausted")
+      succ(j) => match args -> RustgenResult(RustgenValue) {
+        Nil => RustgenErr("operator has no operands")
+        Cons(
+          first,
+          rest
+        ) => match rustgen_expr(j, source, functions, locals, first) -> RustgenResult(RustgenValue) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(left) => match rest -> RustgenResult(RustgenValue) {
+            Nil => rustgen_unary(name, left, rustgen_location(source, at))
+
+            Cons(second, more) => match more -> RustgenResult(RustgenValue) {
+
+              Cons(extra, tail) => RustgenErr("too many operator operands")
+              Nil => match rustgen_expr(
+                j,
+                source,
+                functions,
+                locals,
+                second
+              ) -> RustgenResult(RustgenValue) {
+                RustgenErr(right_error) => RustgenErr(right_error)
+                RustgenOk(right) => rustgen_binary(name, left, right, rustgen_location(source, at))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn rustgen_call(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    head: SurfaceTerm,
+    args: List(SurfaceTerm),
+    at: Nat
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("code generation fuel exhausted")
+      succ(j) => match rustgen_call_name(head) -> RustgenResult(RustgenValue) {
+        None => RustgenErr("only direct function calls are supported")
+        Some(
+          name
+        ) => if rustgen_is_some(
+          rustgen_find(name, locals)
+        ) { RustgenErr("calling a local value is unsupported") } else if name == "succ" {
+          match rustgen_values(j, source, functions, locals, args) -> RustgenResult(RustgenValue) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => match values -> RustgenResult(RustgenValue) {
+              Nil => RustgenErr("succ requires one argument")
+              Cons(
+                value,
+                extra
+              ) => if list_length(
+                extra
+              ) != 0 || !rustgen_fits(
+                value.ty,
+                RustgenNat
+              ) { RustgenErr("succ requires Nat") } else {
+                RustgenOk(
+                  rustgen_value(
+                    RustgenNat,
+                    text_concat_all(
+                      Cons(
+                        "tauto_rt::int::add_u64(",
+                        Cons(
+                          value.code,
+                          Cons(",1u64,", Cons(rustgen_location(source, at), Cons(")", Nil)))
+                        )
+                      )
+                    )
+                  )
+                )
+              }
+            }
+          }
+        } else if name == "text_concat" {
+          match rustgen_values(j, source, functions, locals, args) -> RustgenResult(RustgenValue) {
+            RustgenErr(message) => RustgenErr(message)
+            RustgenOk(values) => match values -> RustgenResult(RustgenValue) {
+              Nil => RustgenErr("text_concat requires two Text arguments")
+              Cons(a, rest) => match rest -> RustgenResult(RustgenValue) {
+                Nil => RustgenErr("text_concat requires two Text arguments")
+                Cons(
+                  b,
+                  extra
+                ) => if list_length(
+                  extra
+                ) != 0 || !rustgen_same(
+                  a.ty,
+                  RustgenText
+                ) || !rustgen_same(
+                  b.ty,
+                  RustgenText
+                ) { RustgenErr("text_concat requires two Text arguments") } else {
+                  RustgenOk(
+                    rustgen_value(
+                      RustgenText,
+                      text_concat_all(
+                        Cons("(", Cons(a.code, Cons(" + &(", Cons(b.code, Cons("))", Nil)))))
+                      )
+                    )
+                  )
+                }
+              }
+            }
+          }
+        } else if name == "+" || name == "-" || name == "*" || name == "!" || name == "&&" || name == "||" || name == "==" || name == "!=" || name == "<" || name == ">" || name == "<=" || name == ">=" {
+          rustgen_operator(j, source, functions, locals, name, args, at)
+        } else {
+          match rustgen_find(name, locals) -> RustgenResult(RustgenValue) {
+
+            Some(local_type) => RustgenErr("calling a local value is unsupported")
+            None => match rustgen_find_function(name, functions) -> RustgenResult(RustgenValue) {
+              None => RustgenErr(text_concat("unknown or unsupported function: ", name))
+              Some(
+                function
+              ) => if function.kind == 2 || function.kind == 3 { RustgenErr(
+                "a type is not callable"
+              ) } else {
+                match rustgen_values(
+                  j,
+                  source,
+                  functions,
+                  locals,
+                  args
+                ) -> RustgenResult(RustgenValue) {
+                  RustgenErr(message) => RustgenErr(message)
+                  RustgenOk(values) => rustgen_infer_call(function, values, at)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+  }
+
+  fn rustgen_block(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    stmts: List(SurfaceStmt)
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("code generation fuel exhausted")
+      succ(j) => match stmts -> RustgenResult(RustgenValue) {
+        Nil => RustgenErr("a scalar result expression is required")
+
+        Cons(stmt, rest) => match stmt -> RustgenResult(RustgenValue) {
+          StExpr(value) => match rest -> RustgenResult(RustgenValue) {
+            Nil => rustgen_expr(j, source, functions, locals, value)
+
+            Cons(next, tail) => RustgenErr("only a final expression is supported")
+          }
+          StLet(
+            name,
+            annotation,
+            value,
+            borrow,
+            mutable
+          ) => if borrow || mutable { RustgenErr(
+            "mutable or borrowed bindings are unsupported"
+          ) } else {
+            match rustgen_find(name, locals) -> RustgenResult(RustgenValue) {
+
+              Some(existing) => RustgenErr("shadowed locals are unsupported")
+              None => match rustgen_expr(
+                j,
+                source,
+                functions,
+                locals,
+                value
+              ) -> RustgenResult(RustgenValue) {
+                RustgenErr(value_error) => RustgenErr(value_error)
+                RustgenOk(
+                  initial
+                ) => match rustgen_checked_annotation(
+                  annotation,
+                  initial.ty,
+                  functions
+                ) -> RustgenResult(RustgenValue) {
+                  RustgenErr(type_error) => RustgenErr(type_error)
+                  RustgenOk(
+                    ty
+                  ) => match rustgen_block(
+                    j,
+                    source,
+                    functions,
+                    Cons(rustgen_binding(name, ty), locals),
+                    rest
+                  ) -> RustgenResult(RustgenValue) {
+                    RustgenErr(tail_error) => RustgenErr(tail_error)
+                    RustgenOk(
+                      body
+                    ) => RustgenOk(
+                      rustgen_value(
+                        body.ty,
+                        text_concat_all(
+                          Cons(
+                            "let ",
+                            Cons(
+                              rustgen_ident(name),
+                              Cons(
+                                ": ",
+                                Cons(
+                                  rustgen_type_name(ty),
+                                  Cons(" = ", Cons(initial.code, Cons("; ", Cons(body.code, Nil))))
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  }
+                }
+              }
+            }
+          }
+          StVar(
+            unused0,
+            unused1,
+            unused2,
+            unused3
+          ) => RustgenErr("unsupported block statement: StVar")
+          StModule(
+            unused0,
+            unused1,
+            unused2,
+            unused3
+          ) => RustgenErr("unsupported block statement: StModule")
+          StAssign(unused0, unused1) => RustgenErr("unsupported block statement: StAssign")
+          StFn(unused0) => RustgenErr("unsupported block statement: StFn")
+          StTheorem(unused0) => RustgenErr("unsupported block statement: StTheorem")
+          StDef(unused0) => RustgenErr("unsupported block statement: StDef")
+          StMutual(unused0, unused1, unused2) => RustgenErr("unsupported block statement: StMutual")
+          StImport(unused0, unused1, unused2) => RustgenErr("unsupported block statement: StImport")
+          StInductive(unused0) => RustgenErr("unsupported block statement: StInductive")
+          StEffect(unused0) => RustgenErr("unsupported block statement: StEffect")
+          StStruct(unused0) => RustgenErr("unsupported block statement: StStruct")
+          StEnum(unused0) => RustgenErr("unsupported block statement: StEnum")
+          StExtern(
+            unused0,
+            unused1,
+            unused2,
+            unused3
+          ) => RustgenErr("unsupported block statement: StExtern")
+          StClass(unused0) => RustgenErr("unsupported block statement: StClass")
+          StInstance(unused0) => RustgenErr("unsupported block statement: StInstance")
+          StWhile(unused0, unused1) => RustgenErr("unsupported block statement: StWhile")
+          StReturn(unused0) => RustgenErr("unsupported block statement: StReturn")
+          StOther(unused0, unused1, unused2) => RustgenErr("unsupported block statement: StOther")
+          StMacro(
+            unused0,
+            unused1,
+            unused2,
+            unused3
+          ) => RustgenErr("unsupported block statement: StMacro")
+          StSyntax(
+            unused0,
+            unused1,
+            unused2,
+            unused3
+          ) => RustgenErr("unsupported block statement: StSyntax")
+        }
+      }
+    }
+  }
+  fn rustgen_match_arms(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    target: RustgenType,
+    arms: List(SurfaceArm),
+    seen: List(Text),
+    expected: Option(RustgenType)
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("match generation fuel exhausted")
+      succ(j) => match arms -> RustgenResult(RustgenValue) {
+        Nil => if list_length(
+          seen
+        ) != list_length(
+          rustgen_ctor_list(target, functions)
+        ) { RustgenErr("non-exhaustive match") } else {
+          match expected -> RustgenResult(RustgenValue) {
+            None => RustgenErr("empty match")
+            Some(ty) => RustgenOk(rustgen_value(ty, ""))
+          }
+        }
+        Cons(
+          arm,
+          rest
+        ) => if rustgen_is_some(
+          arm.guard
+        ) || rustgen_is_some(
+          arm.goal
+        ) { RustgenErr("guarded or dependent arms are unsupported") } else {
+          match rustgen_pattern_name(arm.pattern) -> RustgenResult(RustgenValue) {
+            None => RustgenErr("match requires explicit constructors")
+            Some(
+              name
+            ) => if rustgen_member(name, seen) { RustgenErr("duplicate match constructor") } else {
+              match rustgen_constructor_for(name, target, functions) -> RustgenResult(RustgenValue) {
+                RustgenErr(message) => RustgenErr(message)
+                RustgenOk(ctor) => {
+                  match rustgen_pattern_bindings(
+                    rustgen_pattern_args(arm.pattern),
+                    functions,
+                    ctor.params,
+                    locals
+                  ) -> RustgenResult(RustgenValue) {
+                    RustgenErr(message) => RustgenErr(message)
+                    RustgenOk(
+                      bindings
+                    ) => match rustgen_expr(
+                      j,
+                      source,
+                      functions,
+                      list_append(bindings, locals),
+                      arm.body
+                    ) -> RustgenResult(RustgenValue) {
+                      RustgenErr(message) => RustgenErr(message)
+                      RustgenOk(
+                        value
+                      ) => match rustgen_expected(
+                        expected,
+                        value.ty
+                      ) -> RustgenResult(RustgenValue) {
+                        RustgenErr(message) => RustgenErr(message)
+                        RustgenOk(
+                          ty
+                        ) => match rustgen_match_arms(
+                          j,
+                          source,
+                          functions,
+                          locals,
+                          target,
+                          rest,
+                          Cons(name, seen),
+                          Some(ty)
+                        ) -> RustgenResult(RustgenValue) {
+                          RustgenErr(message) => RustgenErr(message)
+                          RustgenOk(tail) => {
+                            let pattern = text_concat_all(
+                              Cons(
+                                rustgen_ident(rustgen_type_label(target)),
+                                Cons(
+                                  "::",
+                                  Cons(
+                                    rustgen_ident(name),
+                                    Cons(
+                                      "(",
+                                      Cons(
+                                        text_join(
+                                          rustgen_phantom_values(
+                                            ctor.generics,
+                                            rustgen_name_codes(bindings),
+                                            yes
+                                          ),
+                                          ","
+                                        ),
+                                        Cons(") => { ", Nil)
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                            let body = text_concat_all(
+                              Cons(
+                                rustgen_bound_clones(bindings),
+                                Cons(value.code, Cons(" },\n", Cons(tail.code, Nil)))
+                              )
+                            )
+                            RustgenOk(rustgen_value(ty, text_concat(pattern, body)))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn rustgen_match_nat(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    value: RustgenValue,
+    motive: Option(SurfaceTerm),
+    arms: List(SurfaceArm)
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("match fuel exhausted")
+      succ(j) => if list_length(arms) != 2 { RustgenErr("Nat match requires zero and succ") } else {
+        match rustgen_named_arm("zero", arms) -> RustgenResult(RustgenValue) {
+          None => RustgenErr("Nat match requires zero")
+          Some(z) => match rustgen_named_arm("succ", arms) -> RustgenResult(RustgenValue) {
+            None => RustgenErr("Nat match requires succ")
+            Some(
+              n
+            ) => if list_length(
+              rustgen_pattern_args(z.pattern)
+            ) != 0 || rustgen_is_some(
+              z.guard
+            ) || rustgen_is_some(
+              z.goal
+            ) || rustgen_is_some(
+              n.guard
+            ) || rustgen_is_some(n.goal) { RustgenErr("unsupported Nat match arm") } else {
+              match rustgen_pattern_bindings(
+                rustgen_pattern_args(n.pattern),
+                functions,
+                Cons(rustgen_binding("predecessor", RustgenNat), Nil),
+                locals
+              ) -> RustgenResult(RustgenValue) {
+                RustgenErr(message) => RustgenErr(message)
+                RustgenOk(
+                  bindings
+                ) => match rustgen_expr(
+                  j,
+                  source,
+                  functions,
+                  locals,
+                  z.body
+                ) -> RustgenResult(RustgenValue) {
+                  RustgenErr(message) => RustgenErr(message)
+                  RustgenOk(
+                    zero_value
+                  ) => match rustgen_expr(
+                    j,
+                    source,
+                    functions,
+                    list_append(bindings, locals),
+                    n.body
+                  ) -> RustgenResult(RustgenValue) {
+                    RustgenErr(message) => RustgenErr(message)
+                    RustgenOk(
+                      succ_value
+                    ) => match rustgen_expected(
+                      Some(zero_value.ty),
+                      succ_value.ty
+                    ) -> RustgenResult(RustgenValue) {
+                      RustgenErr(message) => RustgenErr(message)
+                      RustgenOk(
+                        raw_type
+                      ) => match rustgen_checked_annotation(
+                        motive,
+                        raw_type,
+                        functions
+                      ) -> RustgenResult(RustgenValue) {
+                        RustgenErr(message) => RustgenErr(message)
+                        RustgenOk(ty) => {
+                          let binding = text_join(rustgen_name_codes(bindings), "")
+                          let code = text_concat_all(
+                            Cons(
+                              "{ let __rg_nat: u64 = ",
+                              Cons(
+                                value.code,
+                                Cons(
+                                  "; if __rg_nat == 0u64 { ",
+                                  Cons(
+                                    zero_value.code,
+                                    Cons(
+                                      " } else { let ",
+                                      Cons(
+                                        binding,
+                                        Cons(
+                                          " = __rg_nat - 1u64; ",
+                                          Cons(succ_value.code, Cons(" } }", Nil))
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                          RustgenOk(rustgen_value(ty, code))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn rustgen_match(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    scrutinee: SurfaceTerm,
+    motive: Option(SurfaceTerm),
+    arms: List(SurfaceArm),
+    binder: Option(Text)
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("match generation fuel exhausted")
+      succ(
+        j
+      ) => if rustgen_is_some(
+        binder
+      ) { RustgenErr("dependent match binders are unsupported") } else {
+        match rustgen_expr(j, source, functions, locals, scrutinee) -> RustgenResult(RustgenValue) {
+          RustgenErr(message) => RustgenErr(message)
+          RustgenOk(value) => if rustgen_type_tag(value.ty) == 3 || rustgen_type_tag(value.ty) == 4 {
+            match rustgen_match_arms(
+              j,
+              source,
+              functions,
+              locals,
+              value.ty,
+              arms,
+              Nil,
+              None
+            ) -> RustgenResult(RustgenValue) {
+              RustgenErr(message) => RustgenErr(message)
+              RustgenOk(
+                body
+              ) => match rustgen_checked_annotation(
+                motive,
+                body.ty,
+                functions
+              ) -> RustgenResult(RustgenValue) {
+                RustgenErr(message) => RustgenErr(message)
+                RustgenOk(
+                  ty
+                ) => RustgenOk(
+                  rustgen_value(
+                    ty,
+                    text_concat_all(
+                      Cons(
+                        "match (",
+                        Cons(value.code, Cons(").as_ref() { ", Cons(body.code, Cons(" }", Nil))))
+                      )
+                    )
+                  )
+                )
+              }
+            }
+          } else if rustgen_same(
+            value.ty,
+            RustgenNat
+          ) { rustgen_match_nat(
+            j,
+            source,
+            functions,
+            locals,
+            value,
+            motive,
+            arms
+          ) } else { RustgenErr("match requires a named datatype") }
+        }
+      }
+    }
+  }
+
+  fn rustgen_field(
+    k: Nat,
+    source: Text,
+    functions: List(RustgenFunction),
+    locals: List(RustgenBinding),
+    receiver: SurfaceTerm,
+    name: Text
+  ) -> RustgenResult(RustgenValue) {
+    match k -> RustgenResult(RustgenValue) {
+      zero => RustgenErr("field generation fuel exhausted")
+      succ(
+        j
+      ) => match rustgen_expr(
+        j,
+        source,
+        functions,
+        locals,
+        receiver
+      ) -> RustgenResult(RustgenValue) {
+        RustgenErr(message) => RustgenErr(message)
+        RustgenOk(
+          value
+        ) => match rustgen_ctor_list(value.ty, functions) -> RustgenResult(RustgenValue) {
+          Nil => RustgenErr("field requires a record")
+          Cons(
+            raw_ctor,
+            more
+          ) => if list_length(
+            more
+          ) != 0 { RustgenErr("field requires a single-constructor type") } else {
+            match rustgen_specialize(raw_ctor, value.ty) -> RustgenResult(RustgenValue) {
+              RustgenErr(message) => RustgenErr(message)
+              RustgenOk(
+                ctor
+              ) => match rustgen_find(name, ctor.params) -> RustgenResult(RustgenValue) {
+                None => RustgenErr("unknown field")
+                Some(ty) => {
+                  let pattern = text_concat_all(
+                    Cons(
+                      rustgen_ident(rustgen_type_label(value.ty)),
+                      Cons(
+                        "::",
+                        Cons(
+                          rustgen_ident(ctor.name),
+                          Cons(
+                            "(",
+                            Cons(
+                              text_join(
+                                rustgen_phantom_values(
+                                  ctor.generics,
+                                  rustgen_name_codes(ctor.params),
+                                  yes
+                                ),
+                                ","
+                              ),
+                              Cons(") => ", Nil)
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                  RustgenOk(
+                    rustgen_value(
+                      ty,
+                      text_concat_all(
+                        Cons(
+                          "match (",
+                          Cons(
+                            value.code,
+                            Cons(
+                              ").as_ref() { ",
+                              Cons(
+                                pattern,
+                                Cons(rustgen_clone(rustgen_ident(name)), Cons(" }", Nil))
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

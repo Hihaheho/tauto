@@ -1,0 +1,71 @@
+import "loader.taut"
+
+fn rustgen_fail(message: Text) -> () {
+  os_eprint(text_concat_all(Cons("rustgen: ", Cons(message, Cons(text_newline(), Nil)))))
+  os_exit(1)
+}
+
+fn rustgen_main(path: Text, entry: Text) -> () {
+  match os_read_file(path) {
+    Err(message) => rustgen_fail(message)
+    Ok(source) => match syntax_tables() {
+      None => rustgen_fail("damaged syntax tables")
+
+      Some(tables) => match syntax_parse(tables, source) {
+        None => rustgen_fail("cannot parse source")
+
+        Some(root) => if rustgen_generated(surface_size(root) + 1, Cons(root, Nil)) {
+          rustgen_fail("generated declarations are unsupported")
+        } else {
+          let stmts = surface_program_of(
+            SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(
+              root
+            ) + 1 },
+            root
+          )
+          match rustgen_program(source, stmts, entry) {
+            RustgenErr(message) => rustgen_fail(message)
+            RustgenOk(code) => os_print(code)
+          }
+        }
+      }
+    }
+  }
+}
+
+fn rustgen_bundle_main(path: Text, module: Text, entry: Text, graph_only: Bool) -> () {
+  match os_read_file(path) {
+    Err(message) => rustgen_fail(message)
+    Ok(bundle) => match rustgen_load_bundle(bundle, module) {
+      RustgenErr(message) => rustgen_fail(message)
+      RustgenOk(graph) => if graph_only {
+        os_print(text_concat_all(rustgen_graph_lines(graph.files)))
+      } else { match graph.generated_files {
+          Cons(
+            id,
+            rest
+          ) => rustgen_fail(
+            text_concat_all(Cons("generated declarations unsupported in module: ", Cons(id, Nil)))
+          )
+          Nil => match rustgen_program(graph.source, graph.stmts, entry) {
+            RustgenErr(message) => rustgen_fail(message)
+            RustgenOk(code) => os_print(code)
+          }
+        } }
+    }
+  }
+}
+fn rustgen_usage() -> () {
+  rustgen_fail("usage: rustgen SOURCE ENTRY | --bundle BUNDLE MODULE ENTRY | --graph BUNDLE MODULE")
+}
+match os_args() {
+  Cons(mode, Cons(path, Cons(module, rest))) => if mode == "--graph" {
+    match rest { Nil => rustgen_bundle_main(path, module, "", true)
+      _ => rustgen_usage() }
+  } else if mode == "--bundle" {
+    match rest { Cons(entry, Nil) => rustgen_bundle_main(path, module, entry, false)
+      _ => rustgen_usage() }
+  } else { rustgen_usage() }
+  Cons(path, Cons(entry, Nil)) => rustgen_main(path, entry)
+  _ => rustgen_usage()
+}

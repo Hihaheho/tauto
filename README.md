@@ -24,7 +24,7 @@ parts of the toolchain written in Tauto itself.
 | `crates/tauto-kernel/src/prelude.taut` | The kernel's prelude: the types and theorems every proof may use without declaring them (`Nat`, `Eq`, `And`, `Or`, `Not`, `Iff`, …), with no axioms. With `crates/tauto-parol/tauto.par`, it is one of the two files of the Rust implementation published here |
 | `crates/tauto-parol/tauto.par` | The grammar of Tauto: every form the reader accepts, with the base rules first and tauto's own (dependent types and proofs) after them |
 | `docs/design/` | The design documents: the semantics, ownership, classes, macros and steps, the Lean formalization, and the backends and self-hosting of the implementation (which is not published yet) |
-| `totes/` | Parts of the toolchain written in Tauto: the checker of programs (`nibcheck`), the reader of Tauto's syntax (`scan`, `llk`, `syntax`, `surface`), the table generator of syntax literals (`llkgen`), the independent kernel that checks again the declarations the Rust kernel was given (`kernel`), the formatter, macro hygiene, text and an ordered map, with proofs of what they do. Each is checked against the Rust implementation on the same inputs |
+| `totes/` | Parts of the toolchain written in Tauto: the checker of programs (`nibcheck`), the reader of Tauto's syntax (`scan`, `llk`, `syntax`, `surface`), the table generator of syntax literals (`llkgen`), the independent kernel that checks again the declarations the Rust kernel was given (`kernel`), an elaborator from the surface syntax to that kernel's terms (`elaborator`), Tauto's grammar as a syntax declaration (`grammar`), a Rust backend (`rustgen`), the formatter, macro hygiene, text and an ordered map, with proofs of what they do. The tools are checked against the Rust implementation on the same inputs. Libraries of proofs: algebra with its laws passed as values, from monoids to rationals and matrices (`algebra`), function extensionality as an axiom that only an importer sees (`extensionality`), and a simplification step (`proof-search`) |
 | `examples/` | Programs and proofs in Tauto |
 | `cases/` | Case files that specify what the implementation answers for an input, for tauto and its Nib part |
 | `Tauto.eure` | The project manifest (not read by any tool yet) |
@@ -167,6 +167,9 @@ written must be readable where it stands.
     leave the value of what it reads on the stack machine.
   - `examples/regex/`: a matcher by derivatives that decides its language.
   - `examples/wf/`: functions by well-founded recursion.
+- `examples/universes.taut`: definitions and theorems at given universe levels.
+- `examples/certified-state/`: state transitions whose invariant is proved, run
+  with the proofs erased (`std/State.taut`).
 - `examples/rust/`: Tauto programs that call Rust crates through generated
   bindings, and tasks on threads.
 - `examples/javascript/`: a program for the JavaScript backend that calls

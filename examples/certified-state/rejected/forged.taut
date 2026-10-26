@@ -1,0 +1,16 @@
+import "../src/state.taut"
+
+// An increasing transition cannot claim the balance-capacity invariant.
+fn increasing(state: GateState, command: GateCommand) -> GateState {
+  gate_open(succ(gate_balance(state)))
+}
+fn forged(commands: List(GateCommand), capacity: Nat) -> GateState {
+  state_certified_run(
+    increasing,
+    (state: GateState) => GateInvariant(capacity, state),
+    (state: GateState, command: GateCommand, valid: GateInvariant(capacity, state)) => valid,
+    commands,
+    gate_closed(capacity),
+    nat_le_refl(capacity)
+  )
+}

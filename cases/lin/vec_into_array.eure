@@ -1,0 +1,34 @@
+@ cases.order-and-shared-reads
+source = ```nib
+var values = vec_new()
+vec_push(&mut values, "日本語")
+vec_push(&mut values, "two")
+let array = vec_into_array(values)
+perform show("length", array_len(array))
+perform show("first", array_get(array, 0))
+perform show("second", array_get(array, 1))
+perform show("missing", array_get(array, 2))
+```
+shows = ["length = 2", "first = Some(\"日本語\")", "second = Some(\"two\")", "missing = None"]
+
+@ cases.empty
+source = ```nib
+let array: Array(i64) = vec_into_array(vec_new())
+perform show("length", array_len(array))
+perform show("missing", array_get(array, 0))
+```
+shows = ["length = 0", "missing = None"]
+
+@ cases.large-flat
+source = ```nib
+var values = vec_new()
+var i: u64 = 0
+while i < 100000 {
+  vec_push(&mut values, i)
+  i := i + 1
+}
+let array = vec_into_array(values)
+perform show("length", array_len(array))
+perform show("last", array_get(array, 99999))
+```
+shows = ["length = 100000", "last = Some(99999)"]

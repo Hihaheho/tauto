@@ -1,0 +1,160 @@
+import "../../../std/State.taut"
+import "../../../std/Nat.taut"
+
+inductive GateState(): Type {
+  gate_closed(balance: Nat): GateState
+  gate_open(balance: Nat): GateState
+}
+inductive GateCommand(): Type {
+  gate_authorize(): GateCommand
+  gate_revoke(): GateCommand
+  gate_spend(): GateCommand
+}
+fn gate_balance(state: GateState) -> Nat {
+  match state -> Nat {
+    gate_closed(n) => n
+    gate_open(n) => n
+  }
+}
+fn gate_allowed(state: GateState) -> Yn {
+  match state -> Yn {
+    gate_closed(n) => no
+    gate_open(n) => yes
+  }
+}
+fn gate_step(state: GateState, command: GateCommand) -> GateState {
+  match command -> GateState {
+    gate_authorize => gate_open(gate_balance(state))
+    gate_revoke => gate_closed(gate_balance(state))
+    gate_spend => match state -> GateState {
+      gate_closed(n) => gate_closed(n)
+      gate_open(n) => gate_open(nat_pred(n))
+    }
+  }
+}
+def GateInvariant(capacity: Nat, state: GateState): Prop :=
+Eq(Yn, nat_le(gate_balance(state), capacity), yes)
+
+theorem gate_pred_bound(n: Nat): Eq(Yn, nat_le(nat_pred(n), n), yes) {
+  match n -> Eq(Yn, nat_le(nat_pred(n), n), yes) {
+    zero => refl()
+    succ(k) => nat_le_succ(k)
+  }
+}
+theorem gate_step_nonincreasing(
+  state: GateState,
+  command: GateCommand
+): Eq(Yn, nat_le(gate_balance(gate_step(state, command)), gate_balance(state)), yes) {
+  match command -> Eq(
+    Yn,
+    nat_le(gate_balance(gate_step(state, command)), gate_balance(state)),
+    yes
+  ) {
+    gate_authorize => nat_le_refl(gate_balance(state))
+    gate_revoke => nat_le_refl(gate_balance(state))
+    gate_spend => match state {
+      gate_closed(n) => nat_le_refl(n)
+      gate_open(n) => gate_pred_bound(n)
+    }
+  }
+}
+theorem gate_step_preserves(
+  capacity: Nat,
+  state: GateState,
+  command: GateCommand,
+  valid: GateInvariant(capacity, state)
+): GateInvariant(capacity, gate_step(state, command)) {
+  nat_le_trans(
+    gate_balance(gate_step(state, command)),
+    gate_balance(state),
+    capacity,
+    gate_step_nonincreasing(state, command),
+    valid
+  )
+}
+theorem gate_authorize_opens(
+  state: GateState
+): Eq(Yn, gate_allowed(gate_step(state, gate_authorize)), yes) {
+  refl()
+}
+theorem gate_revoke_closes(
+  state: GateState
+): Eq(Yn, gate_allowed(gate_step(state, gate_revoke)), no) {
+  refl()
+}
+theorem gate_spend_denied(
+  n: Nat
+): Eq(GateState, gate_step(gate_closed(n), gate_spend), gate_closed(n)) {
+  refl()
+}
+theorem gate_spend_authorized(
+  n: Nat
+): Eq(GateState, gate_step(gate_open(n), gate_spend), gate_open(nat_pred(n))) {
+  refl()
+}
+theorem gate_hoare(
+  capacity: Nat
+): StateHoare(
+  GateState,
+  GateCommand,
+  gate_step,
+  (state: GateState, command: GateCommand) => GateInvariant(capacity, state),
+  (before: GateState, command: GateCommand, after: GateState) => GateInvariant(capacity, after)
+) {
+  (state: GateState, command: GateCommand, valid: GateInvariant(capacity, state)) =>
+  gate_step_preserves(capacity, state, command, valid)
+}
+fn gate_run(commands: List(GateCommand), capacity: Nat) -> GateState {
+  state_certified_run(
+    gate_step,
+    (state: GateState) => GateInvariant(capacity, state),
+    (
+      state: GateState,
+      command: GateCommand,
+      valid: GateInvariant(capacity, state)
+    ) => gate_step_preserves(capacity, state, command, valid),
+    commands,
+    gate_closed(capacity),
+    nat_le_refl(capacity)
+  )
+}
+theorem gate_run_safe(
+  commands: List(GateCommand),
+  capacity: Nat
+): GateInvariant(capacity, gate_run(commands, capacity)) {
+  state_certified_run_preserves(
+    gate_step,
+    (state: GateState) => GateInvariant(capacity, state),
+    (
+      state: GateState,
+      command: GateCommand,
+      valid: GateInvariant(capacity, state)
+    ) => gate_step_preserves(capacity, state, command, valid),
+    commands,
+    gate_closed(capacity),
+    nat_le_refl(capacity)
+  )
+}
+
+fn gate_advance(commands: List(GateCommand), state: GateState) -> GateState {
+  state_run(gate_step, commands, state)
+}
+theorem gate_advance_safe(
+  capacity: Nat,
+  commands: List(GateCommand),
+  state: GateState,
+  valid: GateInvariant(capacity, state)
+): GateInvariant(capacity, gate_advance(commands, state)) {
+  state_run_preserves(
+    gate_step,
+    (current: GateState) => GateInvariant(capacity, current),
+    (
+      current: GateState,
+      command: GateCommand,
+      h: GateInvariant(capacity, current)
+    ) => gate_step_preserves(capacity, current, command, h),
+    commands,
+    state,
+    valid
+  )
+}

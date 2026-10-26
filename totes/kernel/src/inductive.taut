@@ -1316,3 +1316,145 @@ Some(rec) => Cons(rec, rs) })
     }
   }
 }
+
+// Only the terminal universe of a motive changes; its dependent telescope is preserved.
+fn kernel_motive_at(k: Nat, &mut c: KernelCore, t: KernelTerm, level: Nat) -> Option(KernelTerm) {
+  match k -> Option(KernelTerm) {
+    zero => {
+      kernel_set_to(&mut c.exhausted, yes)
+      None
+    }
+    succ(j) => match t -> Option(KernelTerm) {
+      KernelPi(a, b) => match kernel_motive_at(j, &mut c, b, level) -> Option(KernelTerm) {
+        None => None
+        Some(body) => Some(KernelPi(a, body))
+      }
+      KernelSortTerm(s) => match s -> Option(KernelTerm) {
+        KernelProp => None
+        KernelType(old) => Some(KernelSortTerm(KernelType(kernel_level(level, Nil))))
+      }
+      _ => None
+    }
+  }
+}
+
+fn kernel_recursor_type_at(
+  k: Nat,
+  &mut c: KernelCore,
+  t: KernelTerm,
+  skip: Nat,
+  motives: Nat,
+  level: Nat
+) -> Option(KernelTerm) {
+  match k -> Option(KernelTerm) {
+    zero => {
+      kernel_set_to(&mut c.exhausted, yes)
+      None
+    }
+    succ(j) => if skip == 0 && motives == 0 { Some(t) } else {
+      match t -> Option(KernelTerm) {
+        KernelPi(a, b) => if skip == 0 {
+          match kernel_motive_at(j, &mut c, a, level) -> Option(KernelTerm) {
+            None => None
+            Some(
+              domain
+            ) => match kernel_recursor_type_at(
+              j,
+              &mut c,
+              b,
+              0,
+              motives - 1,
+              level
+            ) -> Option(KernelTerm) {
+              None => None
+              Some(body) => Some(KernelPi(domain, body))
+            }
+          }
+        } else {
+          match kernel_recursor_type_at(
+            j,
+            &mut c,
+            b,
+            skip - 1,
+            motives,
+            level
+          ) -> Option(KernelTerm) {
+            None => None
+            Some(body) => Some(KernelPi(a, body))
+          }
+        }
+        _ => None
+      }
+    }
+  }
+}
+
+fn kernel_recursor_members(
+  k: Nat,
+  &mut c: KernelCore,
+  members: List(Text),
+  params: Nat,
+  motives: Nat,
+  level: Nat
+) -> Yn {
+  match k -> Yn {
+    zero => { kernel_set_to(&mut c.exhausted, yes)
+      no }
+    succ(j) => match members -> Yn {
+      Nil => yes
+      Cons(member, rest) => {
+        let original = text_concat(member, "_rec")
+        let name = text_concat(text_concat(original, "@"), text_of_nat(level))
+        match kernel_lookup(c.eliminators, original) -> Yn {
+          None => no
+          Some(owner) => if owner == member {
+            match kernel_lookup(c.eliminators, name) -> Yn {
+              Some(
+                existing
+              ) => existing == member && kernel_recursor_members(
+                j,
+                &mut c,
+                rest,
+                params,
+                motives,
+                level
+              )
+              None => if kernel_fresh_name(c, name) {
+                match kernel_global_get(c.globals, original) -> Yn {
+                  None => no
+                  Some(
+                    g
+                  ) => match kernel_recursor_type_at(j, &mut c, g.ty, params, motives, level) -> Yn {
+                    None => no
+                    Some(ty) => match kernel_infer_sort(j, &mut c, ty) -> Yn {
+                      None => no
+                      Some(s) => {
+                        kernel_put_global(&mut c, name, ty, None)
+                        kernel_set_to(
+                          &mut c.eliminators,
+                          Cons(Pair { fst: name, snd: member }, c.eliminators)
+                        )
+                        kernel_recursor_members(j, &mut c, rest, params, motives, level)
+                      }
+                    }
+                  }
+                }
+              } else { no }
+            }
+          } else { no }
+        }
+      }
+    }
+  }
+}
+
+fn kernel_recursor_at(k: Nat, &mut c: KernelCore, family: Text, level: Nat) -> Yn {
+  if level <= 65535 {
+    match kernel_ind_get(c.inductives, family) -> Yn {
+      None => no
+      Some(
+        ind
+      ) => kernel_recursor_members(k, &mut c, ind.group, ind.params, list_length(ind.group), level)
+    }
+  } else { no }
+}

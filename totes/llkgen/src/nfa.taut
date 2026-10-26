@@ -5,7 +5,7 @@
 // A pattern of a mode: the expression, the terminal it makes, its priority
 // (the place in the mode) and the lookahead, if any (`la_kind` 1 positive, 2
 // negative; the expression is `la`).
-struct SPat { pattern: Text, terminal: u64, priority: u64, la_kind: u64, la: Text }
+struct SPat { context: Text, pattern: Text, terminal: u64, priority: u64, la_kind: u64, la: Text }
 
 // A transition: `kind` 0 is an epsilon transition, 1 one on a leaf of the
 // expression (a character or a class), 2 one on a disjoint class `cc`.
@@ -284,7 +284,7 @@ fn nf_of_hir(h: RHir) -> Nfa {
 
 // The NFA of a pattern: it accepts at its end state.
 fn nf_build(p: SPat) -> Nfa {
-  let a = nf_of_hir(rx_parse(p.pattern))
+  let a = nf_of_hir(rx_parse_named(p.pattern, p.context))
   Nfa { states: nf_set_acc(a.states, a.end, p), n: a.n, start: a.start, end: a.end }
 }
 
@@ -303,7 +303,7 @@ fn nf_of_patterns(ps: List(SPat)) -> Nfa {
         a := nf_alt(
           a,
           nf_build(
-            SPat { pattern: p.pattern, terminal: p.terminal, priority: i, la_kind: p.la_kind, la: p.la }
+            SPat { context: p.context, pattern: p.pattern, terminal: p.terminal, priority: i, la_kind: p.la_kind, la: p.la }
           )
         )
         i := i + 1
@@ -316,5 +316,10 @@ fn nf_of_patterns(ps: List(SPat)) -> Nfa {
 
 // The NFA of the lookahead of a pattern.
 fn nf_lookahead(p: SPat) -> Nfa {
-  nf_build(SPat { pattern: p.la, terminal: 4294967295, priority: 0, la_kind: 0, la: "" })
+  nf_build(
+    SPat { context: text_concat(
+      "lookahead of ",
+      p.context
+    ), pattern: p.la, terminal: 4294967295, priority: 0, la_kind: 0, la: "" }
+  )
 }

@@ -1,0 +1,110 @@
+import "../src/generic.taut"
+fn rg_test_reject(a: RustgenType, b: RustgenType) -> Yn {
+  match rustgen_unify(100, a, b, Nil) -> Yn {
+    RustgenErr(message) => yes
+    RustgenOk(subst) => no
+  }
+}
+fn rg_test_resolution(a: RustgenType, b: RustgenType, wanted: RustgenType) -> Yn {
+  match rustgen_unify(100, a, b, Nil) -> Yn {
+    RustgenErr(message) => no
+    RustgenOk(subst) => match rustgen_resolve(100, a, subst) -> Yn {
+      RustgenErr(message) => no
+      RustgenOk(result) => rustgen_same(result, wanted)
+    }
+  }
+}
+fn rg_test_simultaneous() -> Yn {
+  let bindings = Cons(
+    rustgen_binding("A", RustgenVar("B")),
+    Cons(rustgen_binding("B", RustgenInt), Nil)
+  )
+  match rustgen_substitute(100, RustgenVar("A"), bindings) -> Yn {
+    RustgenErr(message) => no
+    RustgenOk(result) => rustgen_same(result, RustgenVar("B"))
+  }
+}
+fn rg_test_cycle_resolution() -> Yn {
+  let subst = Cons(
+    rustgen_binding("x", RustgenMeta("y")),
+    Cons(rustgen_binding("y", RustgenMeta("x")), Nil)
+  )
+  match rustgen_resolve(10, RustgenMeta("x"), subst) -> Yn {
+    RustgenErr(message) => yes
+    RustgenOk(value) => no
+  }
+}
+theorem rg_meta_binds(): Eq(
+  Yn,
+  rg_test_resolution(RustgenMeta("x"), RustgenInt, RustgenInt),
+  yes
+) { refl() }
+theorem rg_nested_binds(): Eq(
+  Yn,
+  rg_test_resolution(
+    RustgenApply("List", Cons(RustgenMeta("x"), Nil)),
+    RustgenApply("List", Cons(RustgenText, Nil)),
+    RustgenApply("List", Cons(RustgenText, Nil))
+  ),
+  yes
+) { refl() }
+theorem rg_occurs_reject(): Eq(
+  Yn,
+  rg_test_reject(RustgenMeta("x"), RustgenApply("List", Cons(RustgenMeta("x"), Nil))),
+  yes
+) { refl() }
+theorem rg_rigid_reject(): Eq(Yn, rg_test_reject(RustgenVar("A"), RustgenInt), yes) { refl() }
+theorem rg_arity_reject(): Eq(
+  Yn,
+  rg_test_reject(
+    RustgenApply("Pair", Cons(RustgenInt, Nil)),
+    RustgenApply("Pair", Cons(RustgenInt, Cons(RustgenInt, Nil)))
+  ),
+  yes
+) { refl() }
+theorem rg_simultaneous(): Eq(Yn, rg_test_simultaneous(), yes) { refl() }
+theorem rg_cycle(): Eq(Yn, rg_test_cycle_resolution(), yes) { refl() }
+fn rg_test_indirect_occurs() -> Yn {
+  match rustgen_unify(100, RustgenMeta("x"), RustgenMeta("y"), Nil) -> Yn {
+    RustgenErr(message) => no
+    RustgenOk(
+      subst
+    ) => match rustgen_unify(
+      100,
+      RustgenMeta("y"),
+      RustgenApply("List", Cons(RustgenMeta("x"), Nil)),
+      subst
+    ) -> Yn {
+      RustgenErr(message) => yes
+      RustgenOk(next) => no
+    }
+  }
+}
+fn rg_test_shared_constraint() -> Yn {
+  let left = Cons(RustgenMeta("x"), Cons(RustgenMeta("x"), Nil))
+  let right = Cons(RustgenInt, Cons(RustgenText, Nil))
+  match rustgen_unify_many(100, left, right, Nil) -> Yn {
+    RustgenErr(message) => yes
+    RustgenOk(next) => no
+  }
+}
+theorem rg_indirect_occurs(): Eq(Yn, rg_test_indirect_occurs(), yes) { refl() }
+theorem rg_shared_constraint(): Eq(Yn, rg_test_shared_constraint(), yes) { refl() }
+
+fn rg_test_numeric_refinement() -> Yn {
+  let xs = Cons(RustgenMeta("A"), Cons(RustgenMeta("A"), Nil))
+  let ys = Cons(RustgenNumber("literal:1", 1), Cons(RustgenNat, Nil))
+  match rustgen_unify_many(100, xs, ys, Nil) -> Yn {
+    RustgenErr(message) => no
+    RustgenOk(subst) => match rustgen_resolve(100, RustgenMeta("A"), subst) -> Yn {
+      RustgenErr(message) => no
+      RustgenOk(ty) => rustgen_same(ty, RustgenNat)
+    }
+  }
+}
+theorem rg_numeric_refinement(): Eq(Yn, rg_test_numeric_refinement(), yes) { refl() }
+theorem rg_numeric_bool_reject(): Eq(
+  Yn,
+  rg_test_reject(RustgenNumber("literal:2", 1), RustgenBool),
+  yes
+) { refl() }

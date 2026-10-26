@@ -1,0 +1,36 @@
+// Equality at an explicitly selected universe. This family has no axioms.
+inductive AlgebraEq(u: Level, A: Type(u), a: A): (A) -> Prop {
+  algebra_refl(): AlgebraEq(u, A, a, a)
+}
+
+theorem algebra_subst<u: Level, A: Type(
+  u
+), a: A, b: A>(P: (A) -> Prop, e: AlgebraEq(u, A, a, b), p: P(a)): P(b) {
+  AlgebraEq_ind(u, A, a, y => proof => P(y), p, b, e)
+}
+
+theorem algebra_sym<u: Level, A: Type(
+  u
+), a: A, b: A>(e: AlgebraEq(u, A, a, b)): AlgebraEq(u, A, b, a) {
+  algebra_subst(u, A, a, b, y => AlgebraEq(u, A, y, a), e, algebra_refl(u, A, a))
+}
+
+theorem algebra_trans<u: Level, A: Type(
+  u
+), a: A, b: A, c: A>(e1: AlgebraEq(u, A, a, b), e2: AlgebraEq(u, A, b, c)): AlgebraEq(u, A, a, c) {
+  algebra_subst(u, A, b, c, y => AlgebraEq(u, A, a, y), e2, e1)
+}
+
+theorem algebra_congr<u: Level, v: Level, A: Type(
+  u
+), B: Type(v), a: A, b: A>(f: (A) -> B, e: AlgebraEq(u, A, a, b)): AlgebraEq(v, B, f(a), f(b)) {
+  algebra_subst(u, A, a, b, y => AlgebraEq(v, B, f(a), f(y)), e, algebra_refl(v, B, f(a)))
+}
+
+theorem algebra_from_eq<A: Type, a: A, b: A>(e: Eq(A, a, b)): AlgebraEq(0, A, a, b) {
+  Eq_subst(A, a, b, y => AlgebraEq(0, A, a, y), e, algebra_refl(0, A, a))
+}
+
+theorem algebra_to_eq<A: Type, a: A, b: A>(e: AlgebraEq(0, A, a, b)): Eq(A, a, b) {
+  algebra_subst(0, A, a, b, y => Eq(A, a, y), e, refl(A, a))
+}

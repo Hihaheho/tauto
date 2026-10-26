@@ -1,0 +1,25 @@
+import "../src/Funext.taut"
+
+// The codomain can vary with the input.
+theorem dependent_extensionality<A: Type, B: (
+  A
+) -> Type>(
+  f: ∀ x: A. B(x),
+  g: ∀ x: A. B(x),
+  pointwise: ∀ x: A. Eq(B(x), f(x), g(x))
+): Eq(∀ x: A. B(x), f, g) {
+  funext(A, B, f, g, pointwise)
+}
+
+theorem functions_equal(
+  f: (Nat) -> Nat,
+  g: (Nat) -> Nat,
+  pointwise: ∀ x: Nat. Eq(Nat, f(x), g(x))
+): Eq((Nat) -> Nat, f, g) {
+  funext_nondependent(Nat, Nat, f, g, pointwise)
+}
+
+// Merely importing the library does not give this theorem an axiom dependency.
+theorem identity_is_identity(n: Nat): Eq(Nat, n, n) {
+  refl(Nat, n)
+}

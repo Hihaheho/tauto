@@ -181,6 +181,8 @@ RParen: ')';
 - 書ける指示：`%start`（一つ、必須）、`%title`、`%comment`、`%line_comment`、`%block_comment`、
   `%auto_newline_off`、`%auto_ws_off`、`%on … %enter/%push/%pop`、`%scanner`、終端記号の `^`（AST から落とす）、
   正規表現・文字列の終端記号、`?=`・`?!` の先読み。
+- 正規表現の `\d`・`\p{Nd}`・`\p{Decimal_Number}` は Unicode の十進数字を表す。
+  `\D`・`\P{Nd}`・`\P{Decimal_Number}` はその補集合を表す。`\p{N}` は十進数字以外の数も含む。
 - 書けない指示（エラー）：`%grammar_type`（LL(k) に決まっている）、`%user_type`・`%nt_type`・`%t_type`・
   `: Type` の注釈（型は 「型付き AST の生成規則」の規則でだけ決まる）、`%start` 以外の開始。
 - 先読みの最大は **3**（`tauto.par` の 2 より一つ多い。OQ-1）。`k > 3` が要る文法はエラー。
@@ -205,7 +207,11 @@ RParen: ')';
    - そうでなければ、選択肢の記号の名前を順につないだもの（`LParenSumRParen`）で、レコードの構成子
      `{ span: SynSpan, フィールド… }`。lint `syntax-unnamed-alternative` がこの形を知らせる。
 4. **フィールド**：選択肢の記号を左から順に、`^` で落としたものを除いて並べる。名前は記号の名前の
-   snake_case（`LParen` → `l_paren`）。同じ名前が二度目に出たら `_2`、三度目は `_3`。
+   snake_case。予約語（文脈依存のものを含む）と `span` には `_field` を付け、空の名前と `_` は
+   `field` にする。既に使った名前と衝突するときは `_2`、`_3` の順に、まだ使われていない名前を選ぶ。
+   この規則は表の schema に保存され、型の生成・リテラル・実行時パーサーで共通に使う。
+   文法の SHA が同じ既存の表は `syntax gen` では保持する。生成器の命名規則を適用して作り直す操作は
+   `tauto syntax gen --force DIR`、生成された型の確認は `tauto syntax show DIR NAME`。フィールド名が変わる表では利用側も合わせる。
 5. `[ β ]` → `Option(T)`、`{ β }` → `List(T)`。`T` は β が記号一つならその型、二つ以上なら
    生成した構造体 `S_N_Opt1`・`S_N_Rep1`（番号は N の中で出てきた順）。
 6. `( β | γ )` → 生成した列挙 `S_N_Group1`（構成子の名前は 3 と同じ規則）。
@@ -240,6 +246,12 @@ struct math_Paren { span: SynSpan, l_paren: SynToken, sum: math_Sum, r_paren: Sy
 - 「型付き AST の生成規則」の型。
 - `fn math_parse(t: Text) -> Result(math_Eqn, SynDiag)`：実行時にも使える解析関数（builtin
   `syn_parse` を表の番号で呼ぶ）。マクロでない使い方（設定ファイルを読む、など）もできる。
+  Rust backend は構文名・grammar SHA がリテラルの呼び出しを、検証済みの表を埋め込んだ解析関数に
+  lower する。生成 AST の型・再帰フィールド・`Option`・`List` と `SynDiag` は Rust からも読める。
+  実行ファイルは元の `.taut` や `.tauto-syntax` を読まない。診断のメッセージ・期待トークン・
+  UTF-8 バイト位置は evaluator と共通である。動的に構文名や SHA を選ぶ呼び出し、戻り型が
+  その構文の AST と一致しない呼び出し、`TautoExpr` の穴を含む実行時構文は build 時に拒否する。
+  `TautoExpr` を埋め込む用途ではコンパイル時の構文リテラルを使う。
 - **`inductive syntax math = …`**（実装済み）：上の Nib の型と `math_parse` に加えて、**証明側の `inductive` の型** を作る。
   カーネルは Nib の `struct` / `enum` を見ないので、これがないと生成された AST について定理を書けない。
   - 型は `math_Eqn_I` のように型名に `_I` を付ける。一つの `mutual` の塊で、リスト（`List`）を通した入れ子もそのまま書く。
@@ -276,6 +288,11 @@ DSL の中に tauto の式を書く場所が要る（``math!(`$n + 0 = $n`)``）
 - 中身にマクロの呼び出しがあってよい。展開は外のマクロの出力の中で行われる（「順序」、外側から）。
 
 ### `tauto.par` との共通性と self-host
+
+Tauto 自身の文法は `totes/grammar/src/grammar.taut` の `syntax tauto` で定義する。
+同 tote の `tauto_parse` を使って Tauto のソースを解析できる。`tauto syntax source DIR NAME` は
+表や生成された型を読み込まず文法の文字列をそのまま標準出力へ取り出す。bootstrap の
+`tauto.par` もこの宣言から生成する（[`totes/grammar`](../../totes/grammar/README.md)）。
 
 - 書き方は `tauto.par` と同じ（部分集合）。違いは 「`syntax` 宣言」の禁止だけ。
 - 表の形は `self-host.md` が `totes/syntax` のために決めた項目（終端記号の名前、非終端記号、先読み DFA、

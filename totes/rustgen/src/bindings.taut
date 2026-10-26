@@ -1,0 +1,22 @@
+inductive RustgenResult(A: Type): Type {
+  RustgenOk(value: A): RustgenResult(A)
+  RustgenErr(message: Text): RustgenResult(A)
+}
+
+inductive RustgenValue(): Type {
+  rustgen_value(ty: RustgenType, code: Text): RustgenValue
+}
+
+inductive RustgenBinding(): Type {
+  rustgen_binding(name: Text, ty: RustgenType): RustgenBinding
+}
+
+fn rustgen_find(name: Text, bindings: List(RustgenBinding)) -> Option(RustgenType) {
+  match bindings -> Option(RustgenType) {
+    Nil => None
+    Cons(
+      binding,
+      rest
+    ) => if name == binding.name { Some(binding.ty) } else { rustgen_find(name, rest) }
+  }
+}

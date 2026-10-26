@@ -19,6 +19,49 @@ a JavaScript callback that suspends through a Nib handler, and a Rust extern
 compiled to Wasm. Its data URL makes the example independent of an HTTP server.
 HTTP is not a language builtin.
 
+## Type declarations
+
+`build --backend javascript --declarations` writes `program.d.mts` beside
+`program.mjs` and `main.d.mts` beside the side-effect entry `main.mjs`.
+The declaration extension is `.d.mts`, rather than `.d.ts`, because the
+runtime modules use `.mjs`; module-aware type resolution pairs these files.
+When a Wasm bridge is present, `wasm.d.mts` describes `bindWasm`, its subset of
+extern bindings, and the resource release and disposal operations.
+The flag is valid only for JavaScript builds and does not change execution
+or introduce a runtime dependency. Rebuilding the same output directory without
+the flag removes generated declaration companions, so old signatures do not
+describe a different program.
+
+The declaration describes the module's `run` export, `RunOptions`, and the
+`Externs` object accepted by `run`. Internal Tauto functions are not module
+exports. A program with extern declarations requires the bindings argument;
+pass `undefined` for the default output callback. Every extern property uses
+its original binding name. Low-level `run` accepts values or thenables from
+externs independently of the target entry's manifest checks.
+
+Integer values are `bigint`, unit is `null`, and constructor values retain
+their literal tags, field-name tuples, field tuples, struct flag, and `owner` type name.
+The `owner` discriminator distinguishes identically named constructors from
+different types. Hand-written extern constructor values must supply `owner`
+as described by the generated declaration; preserving only the short `tag`
+is not sufficient. Pattern matching and equality reject constructor objects
+with a missing owner. Displayed constructor names remain unqualified. Referenced
+generic and recursive data definitions use generated `TautoData` aliases.
+Union values retain their union and variant indices. Direct extern callback
+parameters are callable and may return a value or a Promise, including when
+the callback parameter is borrowed. Borrow wrappers expose `get`, and mutable
+wrappers also expose `set`. Declarations do not enforce integer ranges,
+ownership, effects or borrow lifetimes; the runtime and host-binding rules
+still apply.
+
+Opaque data, standard runtime types without a declared host representation,
+unresolved internal types, and nested or returned functions are declaration
+generation errors. Only direct extern callback parameters are adapted to
+ordinary host callables; declarations do not describe internal continuation
+functions as ordinary functions. These restrictions apply to types reachable
+from the host boundary, not to unrelated internal definitions. Building without
+`--declarations` retains the JavaScript backend's usual supported scope.
+
 ## Host bindings
 
 A tote binds an extern to an ES module export through `javascript.extern`
@@ -151,3 +194,4 @@ generic specialization, returned borrows and functions, retained callbacks,
 reentrant calls, and concurrent calls. Opaque cloning and subsequent mutation
 are compared with the Rust backend, including the number of `Clone` calls.
 Arena tests include the same Rust source embedded in generated bridges.
+

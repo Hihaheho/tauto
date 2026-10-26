@@ -746,16 +746,29 @@ struct RSet { rs: List(RRange), at: u64 }
 // What follows a backslash: one character, or a set of them.
 struct REsc { single: Bool, ch: u64, rs: List(RRange), at: u64 }
 
-fn rx_die(why: Text) -> Never {
-  par_die(text_concat_all(Cons("a regular expression: ", Cons(why, Nil))))
+// Positions are one-based Unicode scalar positions in the regular expression.
+struct RInput { points: Array(u64), context: Text }
+
+fn rx_die(cs: RInput, at: u64, why: Text) -> Never {
+  par_die(
+    text_concat_all(
+      Cons(
+        "regular expression in ",
+        Cons(
+          cs.context,
+          Cons(" at character ", Cons(text_of_u64(at + 1), Cons(": ", Cons(why, Nil))))
+        )
+      )
+    )
+  )
 }
 
 fn rx_end() -> u64 {
   1114112
 }
 
-fn rx_peek(cs: Array(u64), i: u64) -> u64 {
-  match array_get(cs, i) {
+fn rx_peek(cs: RInput, i: u64) -> u64 {
+  match array_get(cs.points, i) {
     Some(c) => c
     None => rx_end()
   }
@@ -770,7 +783,7 @@ fn rx_code_points(p: Text) -> Array(u64) {
         out := Cons(d.fst, out)
         at := at + d.snd
       }
-      None => rx_die("not UTF-8")
+      None => par_die("a regular expression is not UTF-8")
     }
   }
   array_of_list(text_u64_reverse(out))
@@ -817,7 +830,7 @@ fn rx_is_alnum(c: u64) -> Bool {
 // A character code in `{…}` or of a fixed number of digits, from `at`.
 struct RNum { value: u64, at: u64 }
 
-fn rx_hex_digits(cs: Array(u64), i: u64, count: u64) -> RNum {
+fn rx_hex_digits(cs: RInput, i: u64, count: u64) -> RNum {
   var v: u64 = 0
   var at = i
   var n: u64 = 0
@@ -826,7 +839,7 @@ fn rx_hex_digits(cs: Array(u64), i: u64, count: u64) -> RNum {
       Some(d) => {
         v := v * 16 + d
       }
-      None => rx_die("a hexadecimal digit is missing")
+      None => rx_die(cs, at, "a hexadecimal digit is missing")
     }
     at := at + 1
     n := n + 1
@@ -834,7 +847,7 @@ fn rx_hex_digits(cs: Array(u64), i: u64, count: u64) -> RNum {
   RNum { value: v, at: at }
 }
 
-fn rx_hex_braced(cs: Array(u64), i: u64) -> RNum {
+fn rx_hex_braced(cs: RInput, i: u64) -> RNum {
   var v: u64 = 0
   var at = i + 1
   var n: u64 = 0
@@ -848,14 +861,14 @@ fn rx_hex_braced(cs: Array(u64), i: u64) -> RNum {
         Some(d) => {
           v := v * 16 + d
         }
-        None => rx_die("a hexadecimal digit is missing")
+        None => rx_die(cs, at, "a hexadecimal digit is missing")
       }
       n := n + 1
       at := at + 1
     }
   }
   if n == 0 || n > 8 || v > 1114111 || (v >= 55296 && v <= 57343) {
-    rx_die("not a character code")
+    rx_die(cs, i, "not a character code")
   } else {
     RNum { value: v, at: at + 1 }
   }
@@ -869,15 +882,15 @@ fn rx_set_esc(rs: List(RRange), at: u64) -> REsc {
   REsc { single: false, ch: 0, rs: rs, at: at }
 }
 
-// `\p{L}` and `\p{N}`; the name is at `i` (after `p` or `P`).
-fn rx_property(cs: Array(u64), i: u64, negated: Bool) -> REsc {
+// Unicode letter, number and identifier properties; the name is at `i` (after `p` or `P`).
+fn rx_property(cs: RInput, i: u64, negated: Bool) -> REsc {
   var name: List(u64) = Nil
   var at = i
   if rx_peek(cs, i) == 123 {
     at := i + 1
     while rx_peek(cs, at) != 125 {
       if rx_peek(cs, at) == rx_end() {
-        rx_die("an unfinished property")
+        rx_die(cs, at, "an unfinished property")
       }
       name := Cons(rx_peek(cs, at), name)
       at := at + 1
@@ -892,8 +905,14 @@ fn rx_property(cs: Array(u64), i: u64, negated: Bool) -> REsc {
     rx_table_ranges(rx_table_letter())
   } else if n == "N" || n == "Number" {
     rx_table_ranges(rx_table_number())
+  } else if n == "Nd" || n == "Decimal_Number" {
+    rx_table_ranges(rx_table_decimal_number())
+  } else if n == "XID_Start" {
+    rx_table_ranges(rx_table_xid_start())
+  } else if n == "XID_Continue" {
+    rx_table_ranges(rx_table_xid_continue())
   } else {
-    rx_die(text_concat_all(Cons("the property ", Cons(n, Cons(" is not supported", Nil)))))
+    rx_die(cs, i, text_concat_all(Cons("the property ", Cons(n, Cons(" is not supported", Nil)))))
   }
   rx_set_esc(if negated { rx_negate(rs) } else { rs }, at)
 }
@@ -922,7 +941,7 @@ fn rx_text_of(cps: List(u64)) -> Text {
 }
 
 // What follows the backslash at `i - 1`.
-fn rx_escape(cs: Array(u64), i: u64) -> REsc {
+fn rx_escape(cs: RInput, i: u64) -> REsc {
   let c = rx_peek(cs, i)
   if c == 110 {
     rx_single(10, i + 1)
@@ -960,6 +979,10 @@ fn rx_escape(cs: Array(u64), i: u64) -> REsc {
       let r = rx_hex_digits(cs, i + 1, 8)
       rx_single(r.value, r.at)
     }
+  } else if c == 100 {
+    rx_set_esc(rx_table_ranges(rx_table_decimal_number()), i + 1)
+  } else if c == 68 {
+    rx_set_esc(rx_negate(rx_table_ranges(rx_table_decimal_number())), i + 1)
   } else if c == 115 {
     rx_set_esc(rx_table_ranges(rx_table_space()), i + 1)
   } else if c == 112 {
@@ -969,18 +992,18 @@ fn rx_escape(cs: Array(u64), i: u64) -> REsc {
   } else if c < 128 && !rx_is_alnum(c) {
     rx_single(c, i + 1)
   } else {
-    rx_die("an escape that is not supported")
+    rx_die(cs, i, "an escape that is not supported")
   }
 }
 
 // Where an operator of a class (`--`, `&&`, `~~`) is.
-fn rx_class_op(cs: Array(u64), i: u64) -> Bool {
+fn rx_class_op(cs: RInput, i: u64) -> Bool {
   let c = rx_peek(cs, i)
   (c == 45 || c == 38 || c == 126) && rx_peek(cs, i + 1) == c
 }
 
 // The items of a class up to `]` or an operator.
-fn rx_class_run(cs: Array(u64), i: u64, first0: Bool) -> RSet {
+fn rx_class_run(cs: RInput, i: u64, first0: Bool) -> RSet {
   var acc: List(RRange) = Nil
   var at = i
   var first = first0
@@ -988,14 +1011,14 @@ fn rx_class_run(cs: Array(u64), i: u64, first0: Bool) -> RSet {
   while running {
     let c = rx_peek(cs, at)
     if c == rx_end() {
-      rx_die("an unfinished class")
+      rx_die(cs, at, "an unfinished class")
     } else if c == 93 && !first {
       running := false
     } else if rx_class_op(cs, at) && !first {
       running := false
     } else if c == 91 {
       if rx_peek(cs, at + 1) == 58 {
-        rx_die("an ASCII class is not supported")
+        rx_die(cs, at, "an ASCII class is not supported")
       }
       let inner = rx_bracket(cs, at + 1)
       acc := rx_append_ranges(inner.rs, acc)
@@ -1023,13 +1046,13 @@ fn rx_class_run(cs: Array(u64), i: u64, first0: Bool) -> RSet {
           if hi == 92 {
             let e = rx_escape(cs, next + 2)
             if !e.single {
-              rx_die("a range ends with a set")
+              rx_die(cs, next + 1, "a range ends with a set")
             }
             hi := e.ch
             after := e.at
           }
           if hi < lo {
-            rx_die("a range is backwards")
+            rx_die(cs, next + 1, "a range is backwards")
           }
           acc := Cons(RRange { lo: lo, hi: hi }, acc)
           next := after
@@ -1045,7 +1068,7 @@ fn rx_class_run(cs: Array(u64), i: u64, first0: Bool) -> RSet {
 }
 
 // The class after `[`: items, then operators with their right sides, and `]`.
-fn rx_bracket(cs: Array(u64), i: u64) -> RSet {
+fn rx_bracket(cs: RInput, i: u64) -> RSet {
   var negated = false
   var at = i
   if rx_peek(cs, at) == 94 {
@@ -1068,7 +1091,7 @@ fn rx_bracket(cs: Array(u64), i: u64) -> RSet {
     at := r.at
   }
   if rx_peek(cs, at) != 93 {
-    rx_die("an unfinished class")
+    rx_die(cs, at, "an unfinished class")
   }
   RSet { rs: if negated { rx_negate(acc) } else { acc }, at: at + 1 }
 }
@@ -1077,7 +1100,7 @@ fn rx_dot() -> RHir {
   rx_class(Cons(RRange { lo: 0, hi: 9 }, Cons(RRange { lo: 11, hi: rx_max_char() }, Nil)))
 }
 
-fn rx_atom(cs: Array(u64), i: u64) -> RPos {
+fn rx_atom(cs: RInput, i: u64) -> RPos {
   let c = rx_peek(cs, i)
   if c == 40 {
     var capture = true
@@ -1087,12 +1110,12 @@ fn rx_atom(cs: Array(u64), i: u64) -> RPos {
         capture := false
         at := at + 2
       } else {
-        rx_die("a group with flags is not supported")
+        rx_die(cs, at, "a group with flags is not supported")
       }
     }
     let inner = rx_alt(cs, at)
     if rx_peek(cs, inner.at) != 41 {
-      rx_die("an unclosed group")
+      rx_die(cs, inner.at, "an unclosed group")
     }
     RPos { hir: if capture { RhCap(inner.hir) } else { inner.hir }, at: inner.at + 1 }
   } else if c == 91 {
@@ -1108,19 +1131,19 @@ fn rx_atom(cs: Array(u64), i: u64) -> RPos {
       RPos { hir: rx_class(e.rs), at: e.at }
     }
   } else if c == 94 || c == 36 {
-    rx_die("an anchor is not supported")
+    rx_die(cs, i, "an anchor is not supported")
   } else if c == 42 || c == 43 || c == 63 {
-    rx_die("a repetition has nothing to repeat")
+    rx_die(cs, i, "a repetition has nothing to repeat")
   } else {
     RPos { hir: RhLit(Cons(c, Nil)), at: i + 1 }
   }
 }
 
-fn rx_number(cs: Array(u64), i: u64) -> RNum {
+fn rx_number(cs: RInput, i: u64) -> RNum {
   var v: u64 = 0
   var at = i
   if !rx_is_digit(rx_peek(cs, at)) {
-    rx_die("a count is missing")
+    rx_die(cs, at, "a count is missing")
   }
   while rx_is_digit(rx_peek(cs, at)) {
     v := v * 10 + (rx_peek(cs, at) - 48)
@@ -1129,7 +1152,7 @@ fn rx_number(cs: Array(u64), i: u64) -> RNum {
   RNum { value: v, at: at }
 }
 
-fn rx_rep(cs: Array(u64), i: u64) -> RPos {
+fn rx_rep(cs: RInput, i: u64) -> RPos {
   let a = rx_atom(cs, i)
   var h = a.hir
   var at = a.at
@@ -1159,23 +1182,23 @@ fn rx_rep(cs: Array(u64), i: u64) -> RPos {
         } else {
           let hi = rx_number(cs, lo.at + 1)
           if rx_peek(cs, hi.at) != 125 {
-            rx_die("an unclosed count")
+            rx_die(cs, hi.at, "an unclosed count")
           }
           if hi.value < lo.value {
-            rx_die("a count is backwards")
+            rx_die(cs, lo.at + 1, "a count is backwards")
           }
           max := Some(hi.value)
           at := hi.at + 1
         }
       } else {
-        rx_die("an unclosed count")
+        rx_die(cs, lo.at, "an unclosed count")
       }
     } else {
       is_rep := false
     }
     if is_rep {
       if rx_peek(cs, at) == 63 {
-        rx_die("a non-greedy repetition is not supported")
+        rx_die(cs, at, "a non-greedy repetition is not supported")
       }
       h := rx_repetition(h, min, max)
     } else {
@@ -1185,7 +1208,7 @@ fn rx_rep(cs: Array(u64), i: u64) -> RPos {
   RPos { hir: h, at: at }
 }
 
-fn rx_cat(cs: Array(u64), i: u64) -> RPos {
+fn rx_cat(cs: RInput, i: u64) -> RPos {
   var items: List(RHir) = Nil
   var at = i
   var running = true
@@ -1202,7 +1225,7 @@ fn rx_cat(cs: Array(u64), i: u64) -> RPos {
   RPos { hir: rx_concat(rx_rev_hirs(items)), at: at }
 }
 
-fn rx_alt(cs: Array(u64), i: u64) -> RPos {
+fn rx_alt(cs: RInput, i: u64) -> RPos {
   var alts: List(RHir) = Nil
   var at = i
   var running = true
@@ -1221,10 +1244,14 @@ fn rx_alt(cs: Array(u64), i: u64) -> RPos {
 
 // The tree of the regular expression of a pattern.
 fn rx_parse(p: Text) -> RHir {
-  let cs = rx_code_points(p)
+  rx_parse_named(p, "pattern")
+}
+
+fn rx_parse_named(p: Text, context: Text) -> RHir {
+  let cs = RInput { points: rx_code_points(p), context: context }
   let r = rx_alt(cs, 0)
-  if r.at != array_len(cs) {
-    rx_die("an unbalanced )")
+  if r.at != array_len(cs.points) {
+    rx_die(cs, r.at, "an unbalanced )")
   }
   r.hir
 }

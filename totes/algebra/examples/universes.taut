@@ -1,0 +1,250 @@
+import "../src/Hom.taut"
+
+inductive AlgebraOne(u: Level): Type(u) { algebra_one(): AlgebraOne(u) }
+
+theorem one_unique<u: Level>(x: AlgebraOne(u)): AlgebraEq(u, AlgebraOne(u), algebra_one(u), x) {
+  AlgebraOne_ind(
+    u,
+    y => AlgebraEq(u, AlgebraOne(u), algebra_one(u), y),
+    algebra_refl(u, AlgebraOne(u), algebra_one(u)),
+    x
+  )
+}
+
+def one_monoid<u: Level>(): AlgebraMonoid(
+  u,
+  AlgebraOne(u)
+) := algebra_monoid(
+  u,
+  AlgebraOne(u),
+  algebra_one(u),
+  x => y => algebra_one(u),
+  x => y => z => algebra_refl(u, AlgebraOne(u), algebra_one(u)),
+  one_unique(u),
+  one_unique(u)
+)
+
+def one_cross_universe(): AlgebraHom(
+  1,
+  2,
+  AlgebraOne(1),
+  AlgebraOne(2),
+  one_monoid(1),
+  one_monoid(2)
+) := algebra_hom(
+  1,
+  2,
+  AlgebraOne(1),
+  AlgebraOne(2),
+  one_monoid(1),
+  one_monoid(2),
+  x => algebra_one(2),
+  algebra_refl(2, AlgebraOne(2), algebra_one(2)),
+  x => y => algebra_refl(2, AlgebraOne(2), algebra_one(2))
+)
+
+theorem high_unit(): AlgebraEq(
+  2,
+  AlgebraOne(2),
+  algebra_unit(2, AlgebraOne(2), one_monoid(2)),
+  algebra_one(2)
+) { algebra_refl(2, AlgebraOne(2), algebra_one(2)) }
+
+theorem high_map(): AlgebraEq(
+  2,
+  AlgebraOne(2),
+  algebra_map(
+    1,
+    2,
+    AlgebraOne(1),
+    AlgebraOne(2),
+    one_monoid(1),
+    one_monoid(2),
+    one_cross_universe
+  )(algebra_one(1)),
+  algebra_one(2)
+) { algebra_refl(2, AlgebraOne(2), algebra_one(2)) }
+
+theorem equality_of_types(): AlgebraEq(2, Type1, Type, Type) { algebra_refl(2, Type1, Type) }
+
+import "../src/Group.taut"
+
+theorem one_group<u: Level>(): AlgebraGroup(u, AlgebraOne(u), one_monoid(u), x => x) {
+  algebra_group(
+    u,
+    AlgebraOne(u),
+    one_monoid(u),
+    x => x,
+    x => algebra_refl(u, AlgebraOne(u), algebra_one(u)),
+    x => algebra_refl(u, AlgebraOne(u), algebra_one(u))
+  )
+}
+
+theorem high_cancel(
+  a: AlgebraOne(2),
+  b: AlgebraOne(2),
+  c: AlgebraOne(2)
+): AlgebraEq(2, AlgebraOne(2), b, c) {
+  algebra_cancel_left(
+    2,
+    AlgebraOne(2),
+    one_monoid(2),
+    x => x,
+    one_group(2),
+    a,
+    b,
+    c,
+    algebra_refl(2, AlgebraOne(2), algebra_one(2))
+  )
+}
+
+theorem high_inverse_unique(a: AlgebraOne(2), b: AlgebraOne(2)): AlgebraEq(2, AlgebraOne(2), b, a) {
+  algebra_inverse_unique(
+    2,
+    AlgebraOne(2),
+    one_monoid(2),
+    x => x,
+    one_group(2),
+    a,
+    b,
+    algebra_refl(2, AlgebraOne(2), algebra_one(2))
+  )
+}
+
+theorem high_composition(
+  x: AlgebraOne(1)
+): AlgebraEq(
+  2,
+  AlgebraOne(2),
+  algebra_map(
+    1,
+    2,
+    AlgebraOne(1),
+    AlgebraOne(2),
+    one_monoid(1),
+    one_monoid(2),
+    algebra_compose(
+      1,
+      2,
+      2,
+      AlgebraOne(1),
+      AlgebraOne(2),
+      AlgebraOne(2),
+      one_monoid(1),
+      one_monoid(2),
+      one_monoid(2),
+      one_cross_universe,
+      algebra_identity(2, AlgebraOne(2), one_monoid(2))
+    )
+  )(x),
+  algebra_map(
+    1,
+    2,
+    AlgebraOne(1),
+    AlgebraOne(2),
+    one_monoid(1),
+    one_monoid(2),
+    one_cross_universe
+  )(x)
+) {
+  algebra_identity_right(
+    1,
+    2,
+    AlgebraOne(1),
+    AlgebraOne(2),
+    one_monoid(1),
+    one_monoid(2),
+    one_cross_universe,
+    x
+  )
+}
+
+theorem high_associativity(
+  x: AlgebraOne(1)
+): AlgebraEq(
+  2,
+  AlgebraOne(2),
+  algebra_map(
+    1,
+    2,
+    AlgebraOne(1),
+    AlgebraOne(2),
+    one_monoid(1),
+    one_monoid(2),
+    algebra_compose(
+      1,
+      2,
+      2,
+      AlgebraOne(1),
+      AlgebraOne(2),
+      AlgebraOne(2),
+      one_monoid(1),
+      one_monoid(2),
+      one_monoid(2),
+      algebra_compose(
+        1,
+        2,
+        2,
+        AlgebraOne(1),
+        AlgebraOne(2),
+        AlgebraOne(2),
+        one_monoid(1),
+        one_monoid(2),
+        one_monoid(2),
+        one_cross_universe,
+        algebra_identity(2, AlgebraOne(2), one_monoid(2))
+      ),
+      algebra_identity(2, AlgebraOne(2), one_monoid(2))
+    )
+  )(x),
+  algebra_map(
+    1,
+    2,
+    AlgebraOne(1),
+    AlgebraOne(2),
+    one_monoid(1),
+    one_monoid(2),
+    algebra_compose(
+      1,
+      2,
+      2,
+      AlgebraOne(1),
+      AlgebraOne(2),
+      AlgebraOne(2),
+      one_monoid(1),
+      one_monoid(2),
+      one_monoid(2),
+      one_cross_universe,
+      algebra_compose(
+        2,
+        2,
+        2,
+        AlgebraOne(2),
+        AlgebraOne(2),
+        AlgebraOne(2),
+        one_monoid(2),
+        one_monoid(2),
+        one_monoid(2),
+        algebra_identity(2, AlgebraOne(2), one_monoid(2)),
+        algebra_identity(2, AlgebraOne(2), one_monoid(2))
+      )
+    )
+  )(x)
+) { algebra_compose_assoc(
+  1,
+  2,
+  2,
+  2,
+  AlgebraOne(1),
+  AlgebraOne(2),
+  AlgebraOne(2),
+  AlgebraOne(2),
+  one_monoid(1),
+  one_monoid(2),
+  one_monoid(2),
+  one_monoid(2),
+  one_cross_universe,
+  algebra_identity(2, AlgebraOne(2), one_monoid(2)),
+  algebra_identity(2, AlgebraOne(2), one_monoid(2)),
+  x
+) }

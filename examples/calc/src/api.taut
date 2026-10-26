@@ -1,0 +1,47 @@
+enum CalcFailure {
+  CalcParseFailed(SynDiag)
+  CalcBudgetExceeded
+}
+
+fn calc_read(text: Text, steps: i64) -> Result(Expr, CalcFailure) {
+  if steps <= 0 { Err(CalcBudgetExceeded) } else {
+    handle {
+      budget(steps: steps) {
+        match calc_parse(text) {
+          Ok(tree) => Ok(calc_expr_lower(calc_Expr_to_i(tree)))
+          Err(diagnostic) => Err(CalcParseFailed(diagnostic))
+        }
+      }
+    } with {
+      exceeded(info), continuation => Err(CalcBudgetExceeded)
+      return value => value
+    }
+  }
+}
+
+fn calc_fold_bounded(expression: Expr, steps: i64) -> Result(Expr, CalcFailure) {
+  if steps <= 0 { Err(CalcBudgetExceeded) } else {
+    handle { budget(steps: steps) { Ok(fold_expr(expression)) } } with {
+      exceeded(info), continuation => Err(CalcBudgetExceeded)
+      return value => value
+    }
+  }
+}
+
+fn calc_eval_bounded(expression: Expr, steps: i64) -> Result(u64, CalcFailure) {
+  if steps <= 0 { Err(CalcBudgetExceeded) } else {
+    handle { budget(steps: steps) { Ok(eval_expr(expression)) } } with {
+      exceeded(info), continuation => Err(CalcBudgetExceeded)
+      return value => value
+    }
+  }
+}
+
+fn calc_run_bounded(expression: Expr, steps: i64) -> Result(Option(List(u64)), CalcFailure) {
+  if steps <= 0 { Err(CalcBudgetExceeded) } else {
+    handle { budget(steps: steps) { Ok(run_code(compile_expr(expression), Nil)) } } with {
+      exceeded(info), continuation => Err(CalcBudgetExceeded)
+      return value => value
+    }
+  }
+}

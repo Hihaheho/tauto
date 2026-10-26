@@ -190,17 +190,20 @@ fn kernel_read_command(k: Nat, &mut input: KernelInput) -> KernelCommand {
             let count = kernel_number(&mut input)
             KernelInductive(kernel_read_families(k, &mut input, count), params, sort)
           } else {
-            if tag == "Q" {
-              let value = kernel_read_term(k, &mut input)
-              let ty = kernel_read_term(k, &mut input)
-              KernelCheck(value, ty)
-            } else {
-              if tag == "E" {
-                let left = kernel_read_term(k, &mut input)
-                let right = kernel_read_term(k, &mut input)
-                KernelConvert(left, right)
+            if tag == "R" {
+              let family = kernel_token(&mut input)
+              KernelRecursor(family, kernel_number(&mut input))
+            } else { if tag == "Q" {
+                let value = kernel_read_term(k, &mut input)
+                let ty = kernel_read_term(k, &mut input)
+                KernelCheck(value, ty)
               } else {
-                kernel_set_to(&mut input.valid, no)
-                KernelCheck(KernelBVar(0), KernelBVar(0))
-              } } } } } } }
+                if tag == "E" {
+                  let left = kernel_read_term(k, &mut input)
+                  let right = kernel_read_term(k, &mut input)
+                  KernelConvert(left, right)
+                } else {
+                  kernel_set_to(&mut input.valid, no)
+                  KernelCheck(KernelBVar(0), KernelBVar(0))
+                } } } } } } } }
 }

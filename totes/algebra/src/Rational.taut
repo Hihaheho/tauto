@@ -1,0 +1,1417 @@
+import "Integer.taut"
+
+def NaturalNonzero(n: Nat): Prop := ∀ h: Eq(Nat, n, zero). False
+
+theorem natural_succ_nonzero(n: Nat, h: Eq(Nat, succ(n), zero)): False {
+  integer_nat_zero_ne_succ(n, Eq_sym(h))
+}
+
+theorem natural_one_nonzero(): NaturalNonzero(succ(zero)) { natural_succ_nonzero(zero) }
+
+theorem natural_mul_nonzero(
+  a: Nat,
+  b: Nat,
+  ha: NaturalNonzero(a),
+  hb: NaturalNonzero(b)
+): NaturalNonzero(nat_mul(a, b)) {
+  match b -> NaturalNonzero(nat_mul(a, b)) {
+    zero => h => False_elim(hb(refl()))
+    succ(k) => h => ha(integer_nat_mul_cancel(a, zero, k, h))
+  }
+}
+
+// The denominator is a natural together with a proof that it is not zero.
+// Fractions need not be reduced; equality is cross multiplication in IntegerEq.
+inductive AlgebraRational(): Type {
+  algebra_rational(
+    numerator: AlgebraInteger,
+    denominator: Nat,
+    nonzero: NaturalNonzero(denominator)
+  ): AlgebraRational
+}
+
+fn rational_num(x: AlgebraRational) -> AlgebraInteger {
+  match x -> AlgebraInteger { algebra_rational(n, d, h) => n }
+}
+fn rational_den(x: AlgebraRational) -> Nat {
+  match x -> Nat { algebra_rational(n, d, h) => d }
+}
+theorem rational_den_nonzero(x: AlgebraRational): NaturalNonzero(rational_den(x)) {
+  match x -> NaturalNonzero(rational_den(x)) { algebra_rational(n, d, h) => h }
+}
+
+def RationalEq(x: AlgebraRational, y: AlgebraRational): Prop :=
+IntegerEq(
+  integer_scale(rational_num(x), rational_den(y)),
+  integer_scale(rational_num(y), rational_den(x))
+)
+
+def rational_of_integer(
+  x: AlgebraInteger
+): AlgebraRational := algebra_rational(x, succ(zero), natural_one_nonzero)
+def rational_zero(): AlgebraRational := rational_of_integer(integer_zero)
+def rational_one(): AlgebraRational := rational_of_integer(integer_one)
+def rational_neg(
+  x: AlgebraRational
+): AlgebraRational := algebra_rational(
+  integer_neg(rational_num(x)),
+  rational_den(x),
+  rational_den_nonzero(x)
+)
+def rational_add(x: AlgebraRational, y: AlgebraRational): AlgebraRational :=
+algebra_rational(
+  integer_add(
+    integer_scale(rational_num(x), rational_den(y)),
+    integer_scale(rational_num(y), rational_den(x))
+  ),
+  nat_mul(rational_den(x), rational_den(y)),
+  natural_mul_nonzero(
+    rational_den(x),
+    rational_den(y),
+    rational_den_nonzero(x),
+    rational_den_nonzero(y)
+  )
+)
+def rational_sub(
+  x: AlgebraRational,
+  y: AlgebraRational
+): AlgebraRational := rational_add(x, rational_neg(y))
+def rational_mul(x: AlgebraRational, y: AlgebraRational): AlgebraRational :=
+algebra_rational(
+  integer_mul(rational_num(x), rational_num(y)),
+  nat_mul(rational_den(x), rational_den(y)),
+  natural_mul_nonzero(
+    rational_den(x),
+    rational_den(y),
+    rational_den_nonzero(x),
+    rational_den_nonzero(y)
+  )
+)
+
+theorem rational_eq_refl(
+  x: AlgebraRational
+): RationalEq(x, x) { integer_eq_refl(integer_scale(rational_num(x), rational_den(x))) }
+theorem rational_eq_sym(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  h: RationalEq(x, y)
+): RationalEq(y, x) {
+  integer_eq_sym(
+    integer_scale(rational_num(x), rational_den(y)),
+    integer_scale(rational_num(y), rational_den(x)),
+    h
+  )
+}
+
+theorem rational_cancel_scale(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  d: Nat,
+  hd: NaturalNonzero(d),
+  h: IntegerEq(integer_scale(x, d), integer_scale(y, d))
+): IntegerEq(x, y) {
+  match d -> IntegerEq(x, y) {
+    zero => False_elim(hd(refl()))
+    succ(k) => integer_scale_cancel(x, y, k, h)
+  }
+}
+
+theorem rational_eq_trans(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  h: RationalEq(x, y),
+  k: RationalEq(y, z)
+): RationalEq(x, z) {
+  let a: AlgebraInteger = rational_num(x);
+  let b: AlgebraInteger = rational_num(y);
+  let c: AlgebraInteger = rational_num(z);
+  let d: Nat = rational_den(x);
+  let e: Nat = rational_den(y);
+  let f: Nat = rational_den(z);
+  let first: IntegerEq(
+    integer_scale(integer_scale(a, f), e),
+    integer_scale(integer_scale(a, e), f)
+  ) = integer_scale_swap(a, f, e);
+  let second: IntegerEq(
+    integer_scale(integer_scale(a, e), f),
+    integer_scale(integer_scale(b, d), f)
+  ) = integer_scale_respects(integer_scale(a, e), integer_scale(b, d), f, h);
+  let third: IntegerEq(
+    integer_scale(integer_scale(b, d), f),
+    integer_scale(integer_scale(b, f), d)
+  ) = integer_scale_swap(b, d, f);
+  let fourth: IntegerEq(
+    integer_scale(integer_scale(b, f), d),
+    integer_scale(integer_scale(c, e), d)
+  ) = integer_scale_respects(integer_scale(b, f), integer_scale(c, e), d, k);
+  let fifth: IntegerEq(
+    integer_scale(integer_scale(c, e), d),
+    integer_scale(integer_scale(c, d), e)
+  ) = integer_scale_swap(c, e, d);
+  rational_cancel_scale(
+    integer_scale(a, f),
+    integer_scale(c, d),
+    e,
+    rational_den_nonzero(y),
+    integer_eq_trans(
+      integer_scale(integer_scale(a, f), e),
+      integer_scale(integer_scale(a, e), f),
+      integer_scale(integer_scale(c, d), e),
+      first,
+      integer_eq_trans(
+        integer_scale(integer_scale(a, e), f),
+        integer_scale(integer_scale(b, d), f),
+        integer_scale(integer_scale(c, d), e),
+        second,
+        integer_eq_trans(
+          integer_scale(integer_scale(b, d), f),
+          integer_scale(integer_scale(b, f), d),
+          integer_scale(integer_scale(c, d), e),
+          third,
+          integer_eq_trans(
+            integer_scale(integer_scale(b, f), d),
+            integer_scale(integer_scale(c, e), d),
+            integer_scale(integer_scale(c, d), e),
+            fourth,
+            fifth
+          )
+        )
+      )
+    )
+  )
+}
+
+theorem rational_setoid(): AlgebraSetoid(AlgebraRational, RationalEq) {
+  algebra_setoid(AlgebraRational, RationalEq, rational_eq_refl, rational_eq_sym, rational_eq_trans)
+}
+
+theorem rational_add_cross_left(
+  a: AlgebraInteger,
+  c: AlgebraInteger,
+  d: Nat,
+  e: Nat,
+  f: Nat
+): IntegerEq(
+  integer_scale(integer_add(integer_scale(a, f), integer_scale(c, d)), nat_mul(e, f)),
+  integer_add(
+    integer_scale(integer_scale(a, e), nat_mul(f, f)),
+    integer_scale(c, nat_mul(nat_mul(d, e), f))
+  )
+) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(nat_add(nat_mul(integer_pos(a), f), nat_mul(integer_pos(c), d)), nat_mul(e, f)),
+      nat_add(
+        nat_mul(nat_mul(integer_neg_part(a), e), nat_mul(f, f)),
+        nat_mul(integer_neg_part(c), nat_mul(nat_mul(d, e), f))
+      )
+    ),
+    nat_add(
+      nat_add(
+        nat_mul(nat_mul(integer_pos(a), e), nat_mul(f, f)),
+        nat_mul(integer_pos(c), nat_mul(nat_mul(d, e), f))
+      ),
+      nat_mul(
+        nat_add(nat_mul(integer_neg_part(a), f), nat_mul(integer_neg_part(c), d)),
+        nat_mul(e, f)
+      )
+    )
+  ) {}
+}
+
+theorem rational_add_cross_right(
+  b: AlgebraInteger,
+  c: AlgebraInteger,
+  d: Nat,
+  e: Nat,
+  f: Nat
+): IntegerEq(
+  integer_scale(integer_add(integer_scale(b, f), integer_scale(c, e)), nat_mul(d, f)),
+  integer_add(
+    integer_scale(integer_scale(b, d), nat_mul(f, f)),
+    integer_scale(c, nat_mul(nat_mul(d, e), f))
+  )
+) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(nat_add(nat_mul(integer_pos(b), f), nat_mul(integer_pos(c), e)), nat_mul(d, f)),
+      nat_add(
+        nat_mul(nat_mul(integer_neg_part(b), d), nat_mul(f, f)),
+        nat_mul(integer_neg_part(c), nat_mul(nat_mul(d, e), f))
+      )
+    ),
+    nat_add(
+      nat_add(
+        nat_mul(nat_mul(integer_pos(b), d), nat_mul(f, f)),
+        nat_mul(integer_pos(c), nat_mul(nat_mul(d, e), f))
+      ),
+      nat_mul(
+        nat_add(nat_mul(integer_neg_part(b), f), nat_mul(integer_neg_part(c), e)),
+        nat_mul(d, f)
+      )
+    )
+  ) {}
+}
+
+theorem rational_mul_cross(
+  a: AlgebraInteger,
+  c: AlgebraInteger,
+  e: Nat,
+  f: Nat
+): IntegerEq(
+  integer_scale(integer_mul(a, c), nat_mul(e, f)),
+  integer_mul(integer_scale(a, e), integer_scale(c, f))
+) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(a), integer_pos(c)),
+          nat_mul(integer_neg_part(a), integer_neg_part(c))
+        ),
+        nat_mul(e, f)
+      ),
+      nat_add(
+        nat_mul(nat_mul(integer_neg_part(a), e), nat_mul(integer_pos(c), f)),
+        nat_mul(nat_mul(integer_pos(a), e), nat_mul(integer_neg_part(c), f))
+      )
+    ),
+    nat_add(
+      nat_add(
+        nat_mul(nat_mul(integer_pos(a), e), nat_mul(integer_pos(c), f)),
+        nat_mul(nat_mul(integer_neg_part(a), e), nat_mul(integer_neg_part(c), f))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(a), integer_pos(c)),
+          nat_mul(integer_pos(a), integer_neg_part(c))
+        ),
+        nat_mul(e, f)
+      )
+    )
+  ) {}
+}
+
+theorem rational_add_respects_left(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  h: RationalEq(x, y)
+): RationalEq(rational_add(x, z), rational_add(y, z)) {
+  let a: AlgebraInteger = rational_num(x);
+  let b: AlgebraInteger = rational_num(y);
+  let c: AlgebraInteger = rational_num(z);
+  let d: Nat = rational_den(x);
+  let e: Nat = rational_den(y);
+  let f: Nat = rational_den(z);
+  let common: AlgebraInteger = integer_scale(c, nat_mul(nat_mul(d, e), f));
+  let left: AlgebraInteger = integer_add(integer_scale(integer_scale(a, e), nat_mul(f, f)), common);
+  let right: AlgebraInteger = integer_add(
+    integer_scale(integer_scale(b, d), nat_mul(f, f)),
+    common
+  );
+  integer_eq_trans(
+    integer_scale(rational_num(rational_add(x, z)), rational_den(rational_add(y, z))),
+    left,
+    integer_scale(rational_num(rational_add(y, z)), rational_den(rational_add(x, z))),
+    rational_add_cross_left(a, c, d, e, f),
+    integer_eq_trans(
+      left,
+      right,
+      integer_scale(rational_num(rational_add(y, z)), rational_den(rational_add(x, z))),
+      integer_add_respects(
+        integer_scale(integer_scale(a, e), nat_mul(f, f)),
+        integer_scale(integer_scale(b, d), nat_mul(f, f)),
+        common,
+        common,
+        integer_scale_respects(integer_scale(a, e), integer_scale(b, d), nat_mul(f, f), h),
+        integer_eq_refl(common)
+      ),
+      integer_eq_sym(
+        integer_scale(rational_num(rational_add(y, z)), rational_den(rational_add(x, z))),
+        right,
+        rational_add_cross_right(b, c, d, e, f)
+      )
+    )
+  )
+}
+
+theorem rational_mul_respects_left(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  h: RationalEq(x, y)
+): RationalEq(rational_mul(x, z), rational_mul(y, z)) {
+  let a: AlgebraInteger = rational_num(x);
+  let b: AlgebraInteger = rational_num(y);
+  let c: AlgebraInteger = rational_num(z);
+  let d: Nat = rational_den(x);
+  let e: Nat = rational_den(y);
+  let f: Nat = rational_den(z);
+  let left: AlgebraInteger = integer_mul(integer_scale(a, e), integer_scale(c, f));
+  let right: AlgebraInteger = integer_mul(integer_scale(b, d), integer_scale(c, f));
+  integer_eq_trans(
+    integer_scale(integer_mul(a, c), nat_mul(e, f)),
+    left,
+    integer_scale(integer_mul(b, c), nat_mul(d, f)),
+    rational_mul_cross(a, c, e, f),
+    integer_eq_trans(
+      left,
+      right,
+      integer_scale(integer_mul(b, c), nat_mul(d, f)),
+      integer_mul_respects_left(integer_scale(a, e), integer_scale(b, d), integer_scale(c, f), h),
+      integer_eq_sym(
+        integer_scale(integer_mul(b, c), nat_mul(d, f)),
+        right,
+        rational_mul_cross(b, c, d, f)
+      )
+    )
+  )
+}
+
+theorem rational_add_assoc(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational
+): RationalEq(rational_add(rational_add(x, y), z), rational_add(x, rational_add(y, z))) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(
+            nat_add(
+              nat_mul(integer_pos(rational_num(x)), rational_den(y)),
+              nat_mul(integer_pos(rational_num(y)), rational_den(x))
+            ),
+            rational_den(z)
+          ),
+          nat_mul(integer_pos(rational_num(z)), nat_mul(rational_den(x), rational_den(y)))
+        ),
+        nat_mul(rational_den(x), nat_mul(rational_den(y), rational_den(z)))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), nat_mul(rational_den(y), rational_den(z))),
+          nat_mul(
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(y)), rational_den(z)),
+              nat_mul(integer_neg_part(rational_num(z)), rational_den(y))
+            ),
+            rational_den(x)
+          )
+        ),
+        nat_mul(nat_mul(rational_den(x), rational_den(y)), rational_den(z))
+      )
+    ),
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), nat_mul(rational_den(y), rational_den(z))),
+          nat_mul(
+            nat_add(
+              nat_mul(integer_pos(rational_num(y)), rational_den(z)),
+              nat_mul(integer_pos(rational_num(z)), rational_den(y))
+            ),
+            rational_den(x)
+          )
+        ),
+        nat_mul(nat_mul(rational_den(x), rational_den(y)), rational_den(z))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(x)), rational_den(y)),
+              nat_mul(integer_neg_part(rational_num(y)), rational_den(x))
+            ),
+            rational_den(z)
+          ),
+          nat_mul(integer_neg_part(rational_num(z)), nat_mul(rational_den(x), rational_den(y)))
+        ),
+        nat_mul(rational_den(x), nat_mul(rational_den(y), rational_den(z)))
+      )
+    )
+  ) {}
+}
+
+theorem rational_add_comm(
+  x: AlgebraRational,
+  y: AlgebraRational
+): RationalEq(rational_add(x, y), rational_add(y, x)) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), rational_den(y)),
+          nat_mul(integer_pos(rational_num(y)), rational_den(x))
+        ),
+        nat_mul(rational_den(y), rational_den(x))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(y)), rational_den(x)),
+          nat_mul(integer_neg_part(rational_num(x)), rational_den(y))
+        ),
+        nat_mul(rational_den(x), rational_den(y))
+      )
+    ),
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(y)), rational_den(x)),
+          nat_mul(integer_pos(rational_num(x)), rational_den(y))
+        ),
+        nat_mul(rational_den(x), rational_den(y))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), rational_den(y)),
+          nat_mul(integer_neg_part(rational_num(y)), rational_den(x))
+        ),
+        nat_mul(rational_den(y), rational_den(x))
+      )
+    )
+  ) {}
+}
+
+theorem rational_add_zero(x: AlgebraRational): RationalEq(rational_add(x, rational_zero), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(nat_mul(integer_pos(rational_num(x)), succ(zero)), nat_mul(zero, rational_den(x))),
+        rational_den(x)
+      ),
+      nat_mul(integer_neg_part(rational_num(x)), nat_mul(rational_den(x), succ(zero)))
+    ),
+    nat_add(
+      nat_mul(integer_pos(rational_num(x)), nat_mul(rational_den(x), succ(zero))),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), succ(zero)),
+          nat_mul(zero, rational_den(x))
+        ),
+        rational_den(x)
+      )
+    )
+  ) {}
+}
+
+theorem rational_add_neg(
+  x: AlgebraRational
+): RationalEq(rational_add(x, rational_neg(x)), rational_zero) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), rational_den(x)),
+          nat_mul(integer_neg_part(rational_num(x)), rational_den(x))
+        ),
+        succ(zero)
+      ),
+      nat_mul(zero, nat_mul(rational_den(x), rational_den(x)))
+    ),
+    nat_add(
+      nat_mul(zero, nat_mul(rational_den(x), rational_den(x))),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), rational_den(x)),
+          nat_mul(integer_pos(rational_num(x)), rational_den(x))
+        ),
+        succ(zero)
+      )
+    )
+  ) {}
+}
+
+theorem rational_neg_neg(x: AlgebraRational): RationalEq(rational_neg(rational_neg(x)), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(integer_pos(rational_num(x)), rational_den(x)),
+      nat_mul(integer_neg_part(rational_num(x)), rational_den(x))
+    ),
+    nat_add(
+      nat_mul(integer_pos(rational_num(x)), rational_den(x)),
+      nat_mul(integer_neg_part(rational_num(x)), rational_den(x))
+    )
+  ) {}
+}
+
+theorem rational_mul_comm(
+  x: AlgebraRational,
+  y: AlgebraRational
+): RationalEq(rational_mul(x, y), rational_mul(y, x)) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), integer_pos(rational_num(y))),
+          nat_mul(integer_neg_part(rational_num(x)), integer_neg_part(rational_num(y)))
+        ),
+        nat_mul(rational_den(y), rational_den(x))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(y)), integer_pos(rational_num(x))),
+          nat_mul(integer_pos(rational_num(y)), integer_neg_part(rational_num(x)))
+        ),
+        nat_mul(rational_den(x), rational_den(y))
+      )
+    ),
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(y)), integer_pos(rational_num(x))),
+          nat_mul(integer_neg_part(rational_num(y)), integer_neg_part(rational_num(x)))
+        ),
+        nat_mul(rational_den(x), rational_den(y))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), integer_pos(rational_num(y))),
+          nat_mul(integer_pos(rational_num(x)), integer_neg_part(rational_num(y)))
+        ),
+        nat_mul(rational_den(y), rational_den(x))
+      )
+    )
+  ) {}
+}
+
+theorem rational_mul_assoc(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational
+): RationalEq(rational_mul(rational_mul(x, y), z), rational_mul(x, rational_mul(y, z))) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(
+            nat_add(
+              nat_mul(integer_pos(rational_num(x)), integer_pos(rational_num(y))),
+              nat_mul(integer_neg_part(rational_num(x)), integer_neg_part(rational_num(y)))
+            ),
+            integer_pos(rational_num(z))
+          ),
+          nat_mul(
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(x)), integer_pos(rational_num(y))),
+              nat_mul(integer_pos(rational_num(x)), integer_neg_part(rational_num(y)))
+            ),
+            integer_neg_part(rational_num(z))
+          )
+        ),
+        nat_mul(rational_den(x), nat_mul(rational_den(y), rational_den(z)))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(
+            integer_neg_part(rational_num(x)),
+            nat_add(
+              nat_mul(integer_pos(rational_num(y)), integer_pos(rational_num(z))),
+              nat_mul(integer_neg_part(rational_num(y)), integer_neg_part(rational_num(z)))
+            )
+          ),
+          nat_mul(
+            integer_pos(rational_num(x)),
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(y)), integer_pos(rational_num(z))),
+              nat_mul(integer_pos(rational_num(y)), integer_neg_part(rational_num(z)))
+            )
+          )
+        ),
+        nat_mul(nat_mul(rational_den(x), rational_den(y)), rational_den(z))
+      )
+    ),
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(
+            integer_pos(rational_num(x)),
+            nat_add(
+              nat_mul(integer_pos(rational_num(y)), integer_pos(rational_num(z))),
+              nat_mul(integer_neg_part(rational_num(y)), integer_neg_part(rational_num(z)))
+            )
+          ),
+          nat_mul(
+            integer_neg_part(rational_num(x)),
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(y)), integer_pos(rational_num(z))),
+              nat_mul(integer_pos(rational_num(y)), integer_neg_part(rational_num(z)))
+            )
+          )
+        ),
+        nat_mul(nat_mul(rational_den(x), rational_den(y)), rational_den(z))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(x)), integer_pos(rational_num(y))),
+              nat_mul(integer_pos(rational_num(x)), integer_neg_part(rational_num(y)))
+            ),
+            integer_pos(rational_num(z))
+          ),
+          nat_mul(
+            nat_add(
+              nat_mul(integer_pos(rational_num(x)), integer_pos(rational_num(y))),
+              nat_mul(integer_neg_part(rational_num(x)), integer_neg_part(rational_num(y)))
+            ),
+            integer_neg_part(rational_num(z))
+          )
+        ),
+        nat_mul(rational_den(x), nat_mul(rational_den(y), rational_den(z)))
+      )
+    )
+  ) {}
+}
+
+theorem rational_mul_one(x: AlgebraRational): RationalEq(rational_mul(x, rational_one), x) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), succ(zero)),
+          nat_mul(integer_neg_part(rational_num(x)), zero)
+        ),
+        rational_den(x)
+      ),
+      nat_mul(integer_neg_part(rational_num(x)), nat_mul(rational_den(x), succ(zero)))
+    ),
+    nat_add(
+      nat_mul(integer_pos(rational_num(x)), nat_mul(rational_den(x), succ(zero))),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), succ(zero)),
+          nat_mul(integer_pos(rational_num(x)), zero)
+        ),
+        rational_den(x)
+      )
+    )
+  ) {}
+}
+
+theorem rational_mul_zero(
+  x: AlgebraRational
+): RationalEq(rational_mul(x, rational_zero), rational_zero) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), zero),
+          nat_mul(integer_neg_part(rational_num(x)), zero)
+        ),
+        succ(zero)
+      ),
+      nat_mul(zero, nat_mul(rational_den(x), succ(zero)))
+    ),
+    nat_add(
+      nat_mul(zero, nat_mul(rational_den(x), succ(zero))),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), zero),
+          nat_mul(integer_pos(rational_num(x)), zero)
+        ),
+        succ(zero)
+      )
+    )
+  ) {}
+}
+
+theorem rational_mul_add(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational
+): RationalEq(
+  rational_mul(x, rational_add(y, z)),
+  rational_add(rational_mul(x, y), rational_mul(x, z))
+) {
+  by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(
+            integer_pos(rational_num(x)),
+            nat_add(
+              nat_mul(integer_pos(rational_num(y)), rational_den(z)),
+              nat_mul(integer_pos(rational_num(z)), rational_den(y))
+            )
+          ),
+          nat_mul(
+            integer_neg_part(rational_num(x)),
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(y)), rational_den(z)),
+              nat_mul(integer_neg_part(rational_num(z)), rational_den(y))
+            )
+          )
+        ),
+        nat_mul(
+          nat_mul(rational_den(x), rational_den(y)),
+          nat_mul(rational_den(x), rational_den(z))
+        )
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(x)), integer_pos(rational_num(y))),
+              nat_mul(integer_pos(rational_num(x)), integer_neg_part(rational_num(y)))
+            ),
+            nat_mul(rational_den(x), rational_den(z))
+          ),
+          nat_mul(
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(x)), integer_pos(rational_num(z))),
+              nat_mul(integer_pos(rational_num(x)), integer_neg_part(rational_num(z)))
+            ),
+            nat_mul(rational_den(x), rational_den(y))
+          )
+        ),
+        nat_mul(rational_den(x), nat_mul(rational_den(y), rational_den(z)))
+      )
+    ),
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(
+            nat_add(
+              nat_mul(integer_pos(rational_num(x)), integer_pos(rational_num(y))),
+              nat_mul(integer_neg_part(rational_num(x)), integer_neg_part(rational_num(y)))
+            ),
+            nat_mul(rational_den(x), rational_den(z))
+          ),
+          nat_mul(
+            nat_add(
+              nat_mul(integer_pos(rational_num(x)), integer_pos(rational_num(z))),
+              nat_mul(integer_neg_part(rational_num(x)), integer_neg_part(rational_num(z)))
+            ),
+            nat_mul(rational_den(x), rational_den(y))
+          )
+        ),
+        nat_mul(rational_den(x), nat_mul(rational_den(y), rational_den(z)))
+      ),
+      nat_mul(
+        nat_add(
+          nat_mul(
+            integer_neg_part(rational_num(x)),
+            nat_add(
+              nat_mul(integer_pos(rational_num(y)), rational_den(z)),
+              nat_mul(integer_pos(rational_num(z)), rational_den(y))
+            )
+          ),
+          nat_mul(
+            integer_pos(rational_num(x)),
+            nat_add(
+              nat_mul(integer_neg_part(rational_num(y)), rational_den(z)),
+              nat_mul(integer_neg_part(rational_num(z)), rational_den(y))
+            )
+          )
+        ),
+        nat_mul(
+          nat_mul(rational_den(x), rational_den(y)),
+          nat_mul(rational_den(x), rational_den(z))
+        )
+      )
+    )
+  ) {}
+}
+
+theorem rational_neg_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  h: RationalEq(x, y)
+): RationalEq(rational_neg(x), rational_neg(y)) {
+  integer_neg_respects(
+    integer_scale(rational_num(x), rational_den(y)),
+    integer_scale(rational_num(y), rational_den(x)),
+    h
+  )
+}
+
+theorem rational_add_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  w: AlgebraRational,
+  h: RationalEq(x, y),
+  k: RationalEq(z, w)
+): RationalEq(rational_add(x, z), rational_add(y, w)) {
+  rational_eq_trans(
+    rational_add(x, z),
+    rational_add(y, z),
+    rational_add(y, w),
+    rational_add_respects_left(x, y, z, h),
+    rational_eq_trans(
+      rational_add(y, z),
+      rational_add(z, y),
+      rational_add(y, w),
+      rational_add_comm(y, z),
+      rational_eq_trans(
+        rational_add(z, y),
+        rational_add(w, y),
+        rational_add(y, w),
+        rational_add_respects_left(z, w, y, k),
+        rational_add_comm(w, y)
+      )
+    )
+  )
+}
+
+theorem rational_mul_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  w: AlgebraRational,
+  h: RationalEq(x, y),
+  k: RationalEq(z, w)
+): RationalEq(rational_mul(x, z), rational_mul(y, w)) {
+  rational_eq_trans(
+    rational_mul(x, z),
+    rational_mul(y, z),
+    rational_mul(y, w),
+    rational_mul_respects_left(x, y, z, h),
+    rational_eq_trans(
+      rational_mul(y, z),
+      rational_mul(z, y),
+      rational_mul(y, w),
+      rational_mul_comm(y, z),
+      rational_eq_trans(
+        rational_mul(z, y),
+        rational_mul(w, y),
+        rational_mul(y, w),
+        rational_mul_respects_left(z, w, y, k),
+        rational_mul_comm(w, y)
+      )
+    )
+  )
+}
+
+theorem rational_sub_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  w: AlgebraRational,
+  h: RationalEq(x, y),
+  k: RationalEq(z, w)
+): RationalEq(rational_sub(x, z), rational_sub(y, w)) {
+  rational_add_respects(x, y, rational_neg(z), rational_neg(w), h, rational_neg_respects(z, w, k))
+}
+
+def RationalNonzero(x: AlgebraRational): Prop := IntegerNonzero(rational_num(x))
+
+fn rational_inverse_sign(
+  x: AlgebraRational,
+  nonzero: RationalNonzero(x),
+  s: IntegerSign(integer_pos(rational_num(x)), integer_neg_part(rational_num(x)))
+) -> AlgebraRational {
+  match s -> AlgebraRational {
+    integer_sign_zero(h) => match nonzero(h) -> AlgebraRational {
+    }
+    integer_sign_positive(
+      k,
+      h
+    ) => algebra_rational(integer_of_nat(rational_den(x)), succ(k), natural_succ_nonzero(k))
+    integer_sign_negative(
+      k,
+      h
+    ) => algebra_rational(
+      integer_neg(integer_of_nat(rational_den(x))),
+      succ(k),
+      natural_succ_nonzero(k)
+    )
+  }
+}
+
+def rational_inverse(x: AlgebraRational, nonzero: RationalNonzero(x)): AlgebraRational :=
+rational_inverse_sign(
+  x,
+  nonzero,
+  integer_sign(integer_pos(rational_num(x)), integer_neg_part(rational_num(x)))
+)
+
+def rational_div(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  nonzero: RationalNonzero(y)
+): AlgebraRational := rational_mul(x, rational_inverse(y, nonzero))
+
+theorem rational_inverse_positive(
+  x: AlgebraRational,
+  k: Nat,
+  h: Eq(Nat, integer_pos(rational_num(x)), nat_add(integer_neg_part(rational_num(x)), succ(k)))
+): RationalEq(
+  rational_mul(
+    x,
+    algebra_rational(integer_of_nat(rational_den(x)), succ(k), natural_succ_nonzero(k))
+  ),
+  rational_one
+) {
+  let normalized: Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(nat_add(integer_neg_part(rational_num(x)), succ(k)), rational_den(x)),
+          nat_mul(integer_neg_part(rational_num(x)), zero)
+        ),
+        succ(zero)
+      ),
+      nat_mul(zero, nat_mul(rational_den(x), succ(k)))
+    ),
+    nat_add(
+      nat_mul(succ(zero), nat_mul(rational_den(x), succ(k))),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), rational_den(x)),
+          nat_mul(nat_add(integer_neg_part(rational_num(x)), succ(k)), zero)
+        ),
+        succ(zero)
+      )
+    )
+  ) = by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(nat_add(integer_neg_part(rational_num(x)), succ(k)), rational_den(x)),
+          nat_mul(integer_neg_part(rational_num(x)), zero)
+        ),
+        succ(zero)
+      ),
+      nat_mul(zero, nat_mul(rational_den(x), succ(k)))
+    ),
+    nat_add(
+      nat_mul(succ(zero), nat_mul(rational_den(x), succ(k))),
+      nat_mul(
+        nat_add(
+          nat_mul(integer_neg_part(rational_num(x)), rational_den(x)),
+          nat_mul(nat_add(integer_neg_part(rational_num(x)), succ(k)), zero)
+        ),
+        succ(zero)
+      )
+    )
+  ) {};
+  Eq_subst(
+    Nat,
+    nat_add(integer_neg_part(rational_num(x)), succ(k)),
+    integer_pos(rational_num(x)),
+    (
+      t: Nat
+    ) => Eq(
+      Nat,
+      nat_add(
+        nat_mul(
+          nat_add(nat_mul(t, rational_den(x)), nat_mul(integer_neg_part(rational_num(x)), zero)),
+          succ(zero)
+        ),
+        nat_mul(zero, nat_mul(rational_den(x), succ(k)))
+      ),
+      nat_add(
+        nat_mul(succ(zero), nat_mul(rational_den(x), succ(k))),
+        nat_mul(
+          nat_add(nat_mul(integer_neg_part(rational_num(x)), rational_den(x)), nat_mul(t, zero)),
+          succ(zero)
+        )
+      )
+    ),
+    Eq_sym(h),
+    normalized
+  )
+}
+
+theorem rational_inverse_negative(
+  x: AlgebraRational,
+  k: Nat,
+  h: Eq(Nat, integer_neg_part(rational_num(x)), nat_add(integer_pos(rational_num(x)), succ(k)))
+): RationalEq(
+  rational_mul(
+    x,
+    algebra_rational(integer_neg(integer_of_nat(rational_den(x))), succ(k), natural_succ_nonzero(k))
+  ),
+  rational_one
+) {
+  let normalized: Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), zero),
+          nat_mul(nat_add(integer_pos(rational_num(x)), succ(k)), rational_den(x))
+        ),
+        succ(zero)
+      ),
+      nat_mul(zero, nat_mul(rational_den(x), succ(k)))
+    ),
+    nat_add(
+      nat_mul(succ(zero), nat_mul(rational_den(x), succ(k))),
+      nat_mul(
+        nat_add(
+          nat_mul(nat_add(integer_pos(rational_num(x)), succ(k)), zero),
+          nat_mul(integer_pos(rational_num(x)), rational_den(x))
+        ),
+        succ(zero)
+      )
+    )
+  ) = by nat_norm!(
+    ()
+  ) -> Eq(
+    Nat,
+    nat_add(
+      nat_mul(
+        nat_add(
+          nat_mul(integer_pos(rational_num(x)), zero),
+          nat_mul(nat_add(integer_pos(rational_num(x)), succ(k)), rational_den(x))
+        ),
+        succ(zero)
+      ),
+      nat_mul(zero, nat_mul(rational_den(x), succ(k)))
+    ),
+    nat_add(
+      nat_mul(succ(zero), nat_mul(rational_den(x), succ(k))),
+      nat_mul(
+        nat_add(
+          nat_mul(nat_add(integer_pos(rational_num(x)), succ(k)), zero),
+          nat_mul(integer_pos(rational_num(x)), rational_den(x))
+        ),
+        succ(zero)
+      )
+    )
+  ) {};
+  Eq_subst(
+    Nat,
+    nat_add(integer_pos(rational_num(x)), succ(k)),
+    integer_neg_part(rational_num(x)),
+    (
+      t: Nat
+    ) => Eq(
+      Nat,
+      nat_add(
+        nat_mul(
+          nat_add(nat_mul(integer_pos(rational_num(x)), zero), nat_mul(t, rational_den(x))),
+          succ(zero)
+        ),
+        nat_mul(zero, nat_mul(rational_den(x), succ(k)))
+      ),
+      nat_add(
+        nat_mul(succ(zero), nat_mul(rational_den(x), succ(k))),
+        nat_mul(
+          nat_add(nat_mul(t, zero), nat_mul(integer_pos(rational_num(x)), rational_den(x))),
+          succ(zero)
+        )
+      )
+    ),
+    Eq_sym(h),
+    normalized
+  )
+}
+
+theorem rational_inverse_sign_law(
+  x: AlgebraRational,
+  nonzero: RationalNonzero(x),
+  s: IntegerSign(integer_pos(rational_num(x)), integer_neg_part(rational_num(x)))
+): RationalEq(rational_mul(x, rational_inverse_sign(x, nonzero, s)), rational_one) {
+  match s -> RationalEq(rational_mul(x, rational_inverse_sign(x, nonzero, s)), rational_one) {
+    integer_sign_zero(h) => False_elim(nonzero(h))
+    integer_sign_positive(k, h) => rational_inverse_positive(x, k, h)
+    integer_sign_negative(k, h) => rational_inverse_negative(x, k, h)
+  }
+}
+
+theorem rational_inverse_law(
+  x: AlgebraRational,
+  nonzero: RationalNonzero(x)
+): RationalEq(rational_mul(x, rational_inverse(x, nonzero)), rational_one) {
+  rational_inverse_sign_law(
+    x,
+    nonzero,
+    integer_sign(integer_pos(rational_num(x)), integer_neg_part(rational_num(x)))
+  )
+}
+
+theorem rational_left_one(x: AlgebraRational): RationalEq(rational_mul(rational_one, x), x) {
+  rational_eq_trans(
+    rational_mul(rational_one, x),
+    rational_mul(x, rational_one),
+    x,
+    rational_mul_comm(rational_one, x),
+    rational_mul_one(x)
+  )
+}
+
+theorem rational_inverse_unique(
+  x: AlgebraRational,
+  a: AlgebraRational,
+  b: AlgebraRational,
+  ha: RationalEq(rational_mul(x, a), rational_one),
+  hb: RationalEq(rational_mul(x, b), rational_one)
+): RationalEq(a, b) {
+  let first: RationalEq(
+    a,
+    rational_mul(a, rational_one)
+  ) = rational_eq_sym(rational_mul(a, rational_one), a, rational_mul_one(a));
+  let second: RationalEq(rational_mul(a, rational_one), rational_mul(a, rational_mul(x, b))) =
+  rational_mul_respects(
+    a,
+    a,
+    rational_one,
+    rational_mul(x, b),
+    rational_eq_refl(a),
+    rational_eq_sym(rational_mul(x, b), rational_one, hb)
+  );
+  let third: RationalEq(rational_mul(a, rational_mul(x, b)), rational_mul(rational_mul(a, x), b)) =
+  rational_eq_sym(
+    rational_mul(rational_mul(a, x), b),
+    rational_mul(a, rational_mul(x, b)),
+    rational_mul_assoc(a, x, b)
+  );
+  let fourth: RationalEq(rational_mul(rational_mul(a, x), b), rational_mul(rational_mul(x, a), b)) =
+  rational_mul_respects_left(rational_mul(a, x), rational_mul(x, a), b, rational_mul_comm(a, x));
+  let fifth: RationalEq(
+    rational_mul(rational_mul(x, a), b),
+    rational_mul(rational_one, b)
+  ) = rational_mul_respects_left(rational_mul(x, a), rational_one, b, ha);
+  rational_eq_trans(
+    a,
+    rational_mul(a, rational_one),
+    b,
+    first,
+    rational_eq_trans(
+      rational_mul(a, rational_one),
+      rational_mul(a, rational_mul(x, b)),
+      b,
+      second,
+      rational_eq_trans(
+        rational_mul(a, rational_mul(x, b)),
+        rational_mul(rational_mul(a, x), b),
+        b,
+        third,
+        rational_eq_trans(
+          rational_mul(rational_mul(a, x), b),
+          rational_mul(rational_mul(x, a), b),
+          b,
+          fourth,
+          rational_eq_trans(
+            rational_mul(rational_mul(x, a), b),
+            rational_mul(rational_one, b),
+            b,
+            fifth,
+            rational_left_one(b)
+          )
+        )
+      )
+    )
+  )
+}
+
+theorem rational_nonzero_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  h: RationalEq(x, y),
+  nx: RationalNonzero(x)
+): RationalNonzero(y) {
+  hy => nx(
+    rational_cancel_scale(
+      rational_num(x),
+      integer_zero,
+      rational_den(y),
+      rational_den_nonzero(y),
+      integer_eq_trans(
+        integer_scale(rational_num(x), rational_den(y)),
+        integer_scale(rational_num(y), rational_den(x)),
+        integer_zero,
+        h,
+        integer_scale_respects(rational_num(y), integer_zero, rational_den(x), hy)
+      )
+    )
+  )
+}
+
+theorem rational_inverse_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  nx: RationalNonzero(x),
+  ny: RationalNonzero(y),
+  h: RationalEq(x, y)
+): RationalEq(rational_inverse(x, nx), rational_inverse(y, ny)) {
+  rational_inverse_unique(
+    y,
+    rational_inverse(x, nx),
+    rational_inverse(y, ny),
+    rational_eq_trans(
+      rational_mul(y, rational_inverse(x, nx)),
+      rational_mul(x, rational_inverse(x, nx)),
+      rational_one,
+      rational_mul_respects_left(y, x, rational_inverse(x, nx), rational_eq_sym(x, y, h)),
+      rational_inverse_law(x, nx)
+    ),
+    rational_inverse_law(y, ny)
+  )
+}
+
+theorem rational_div_respects(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  z: AlgebraRational,
+  w: AlgebraRational,
+  nz: RationalNonzero(z),
+  nw: RationalNonzero(w),
+  h: RationalEq(x, y),
+  k: RationalEq(z, w)
+): RationalEq(rational_div(x, z, nz), rational_div(y, w, nw)) {
+  rational_mul_respects(
+    x,
+    y,
+    rational_inverse(z, nz),
+    rational_inverse(w, nw),
+    h,
+    rational_inverse_respects(z, w, nz, nw, k)
+  )
+}
+
+theorem rational_of_integer_respects(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  h: IntegerEq(x, y)
+): RationalEq(rational_of_integer(x), rational_of_integer(y)) {
+  integer_scale_respects(x, y, succ(zero), h)
+}
+
+theorem rational_of_integer_injective(
+  x: AlgebraInteger,
+  y: AlgebraInteger,
+  h: RationalEq(rational_of_integer(x), rational_of_integer(y))
+): IntegerEq(x, y) {
+  integer_scale_cancel(x, y, zero, h)
+}
+
+theorem rational_of_integer_add(
+  x: AlgebraInteger,
+  y: AlgebraInteger
+): RationalEq(
+  rational_of_integer(integer_add(x, y)),
+  rational_add(rational_of_integer(x), rational_of_integer(y))
+) {
+  integer_scale_respects(
+    integer_add(x, y),
+    integer_add(integer_scale(x, succ(zero)), integer_scale(y, succ(zero))),
+    succ(zero),
+    integer_add_respects(
+      x,
+      integer_scale(x, succ(zero)),
+      y,
+      integer_scale(y, succ(zero)),
+      integer_eq_sym(integer_scale(x, succ(zero)), x, integer_scale_one(x)),
+      integer_eq_sym(integer_scale(y, succ(zero)), y, integer_scale_one(y))
+    )
+  )
+}
+
+theorem rational_of_integer_mul(
+  x: AlgebraInteger,
+  y: AlgebraInteger
+): RationalEq(
+  rational_of_integer(integer_mul(x, y)),
+  rational_mul(rational_of_integer(x), rational_of_integer(y))
+) {
+  integer_eq_refl(integer_scale(integer_mul(x, y), succ(zero)))
+}
+
+theorem rational_nonzero_not_zero(
+  x: AlgebraRational,
+  nx: RationalNonzero(x),
+  h: RationalEq(x, rational_zero)
+): False {
+  nx(rational_of_integer_injective(rational_num(x), integer_zero, h))
+}
+
+theorem rational_nonzero_of_not_zero(
+  x: AlgebraRational,
+  h: ∀ e: RationalEq(x, rational_zero). False
+): RationalNonzero(x) {
+  n => h(integer_scale_respects(rational_num(x), integer_zero, succ(zero), n))
+}
+
+theorem rational_zero_ne_one(h: RationalEq(rational_zero, rational_one)): False {
+  integer_nat_zero_ne_succ(zero, rational_of_integer_injective(integer_zero, integer_one, h))
+}
+
+theorem rational_div_cancel(
+  x: AlgebraRational,
+  y: AlgebraRational,
+  ny: RationalNonzero(y)
+): RationalEq(rational_mul(rational_div(x, y, ny), y), x) {
+  rational_eq_trans(
+    rational_mul(rational_div(x, y, ny), y),
+    rational_mul(x, rational_mul(rational_inverse(y, ny), y)),
+    x,
+    rational_mul_assoc(x, rational_inverse(y, ny), y),
+    rational_eq_trans(
+      rational_mul(x, rational_mul(rational_inverse(y, ny), y)),
+      rational_mul(x, rational_mul(y, rational_inverse(y, ny))),
+      x,
+      rational_mul_respects(
+        x,
+        x,
+        rational_mul(rational_inverse(y, ny), y),
+        rational_mul(y, rational_inverse(y, ny)),
+        rational_eq_refl(x),
+        rational_mul_comm(rational_inverse(y, ny), y)
+      ),
+      rational_eq_trans(
+        rational_mul(x, rational_mul(y, rational_inverse(y, ny))),
+        rational_mul(x, rational_one),
+        x,
+        rational_mul_respects(
+          x,
+          x,
+          rational_mul(y, rational_inverse(y, ny)),
+          rational_one,
+          rational_eq_refl(x),
+          rational_inverse_law(y, ny)
+        ),
+        rational_mul_one(x)
+      )
+    )
+  )
+}
