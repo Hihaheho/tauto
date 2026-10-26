@@ -1,0 +1,40 @@
+// Each input file is a fresh kernel. Each line is one replay command.
+fn kernel_main_lines(&mut c: KernelCore, lines: List(Text)) -> () {
+  match lines {
+    Nil => ()
+    Cons(line, rest) => {
+      if text_len(line) != 0 {
+        var input: KernelInput = KernelInput { tokens: text_split(line, " "), valid: true }
+        let command = kernel_read_command(2000, &mut input)
+        if input.valid && list_length(input.tokens) == 0 {
+          match kernel_execute(2000, &mut c, command) {
+            KernelAccepted => os_print(text_concat("accepted", text_newline()))
+            KernelRejected => os_print(text_concat("rejected", text_newline()))
+            KernelExhausted => os_print(text_concat("exhausted", text_newline()))
+          }
+        } else {
+          os_print(text_concat("malformed", text_newline()))
+        }
+      }
+      kernel_main_lines(&mut c, rest)
+    }
+  }
+}
+
+fn kernel_main_files(paths: List(Text)) -> () {
+  match paths {
+    Nil => ()
+    Cons(path, rest) => {
+      match os_read_file(path) {
+        Err(e) => os_print(text_concat("unreadable", text_newline()))
+        Ok(source) => {
+          var c: KernelCore = kernel_new()
+          kernel_main_lines(&mut c, text_split(source, text_newline()))
+        }
+      }
+      kernel_main_files(rest)
+    }
+  }
+}
+
+kernel_main_files(os_args())

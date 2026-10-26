@@ -1,0 +1,52 @@
+import "kernel.taut"
+
+// These are computations of the implementation, checked with no axioms.
+fn kernel_result_verdict(result: Mut1(KernelVerdict, KernelCore)) -> KernelVerdict {
+  match result -> KernelVerdict {
+    mut1(verdict, state) => verdict
+  }
+}
+
+theorem kernel_inst_identity(
+  value: KernelTerm
+): Eq(KernelTerm, kernel_inst(KernelBVar(0), value), value) {
+  refl()
+}
+
+theorem kernel_inst_under_binder(
+  value: KernelTerm
+): Eq(KernelTerm, kernel_inst(KernelLam(KernelBVar(1)), value), KernelLam(value)) {
+  refl()
+}
+
+theorem kernel_exhaustion_restores_state(): Eq(
+  Mut1(KernelVerdict, KernelCore),
+  kernel_execute(
+    0,
+    kernel_new(),
+    KernelDeclare("unfinished", KernelSortTerm(KernelProp), None, no)
+  ),
+  mut1(KernelExhausted, kernel_new())
+) {
+  refl()
+}
+
+theorem kernel_wide_checked_rejects_overflow(): Eq(
+  Option(List(Nat)),
+  kernel_digits_checked(list_replicate(9, 1)),
+  None
+) {
+  refl()
+}
+
+theorem kernel_wide_carry_zero(): Eq(List(Nat), kernel_digits_carry(Nil, 1), Cons(1, Nil)) {
+  refl()
+}
+
+theorem kernel_rejection_restores_state(): Eq(
+  Mut1(KernelVerdict, KernelCore),
+  kernel_execute(10, kernel_new(), KernelDeclare("invalid", KernelBVar(0), None, no)),
+  mut1(KernelRejected, kernel_new())
+) {
+  refl()
+}

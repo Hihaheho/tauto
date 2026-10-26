@@ -1,0 +1,138 @@
+import "level.taut"
+
+// A natural literal is at most eight little-endian base-65536 digits, without
+// high zeroes. Intermediate digit arithmetic fits in the extraction's u64.
+
+fn kernel_digits_normal(ds: List(Nat)) -> List(Nat) {
+  list_reverse(list_drop_while((d: Nat) => nat_eq(d, 0), list_reverse(ds)))
+}
+
+fn kernel_digits_carry(ds: List(Nat), carry: Nat) -> List(Nat) {
+  match ds -> List(Nat) {
+    Nil => if carry == 0 { Nil } else { Cons(carry, Nil) }
+
+    Cons(
+      x,
+      xs
+    ) => Cons(nat_mod(x + carry, 65536), kernel_digits_carry(xs, nat_div(x + carry, 65536)))
+  }
+}
+
+fn kernel_digits_add(a: List(Nat), b: List(Nat), carry: Nat) -> List(Nat) {
+  match a -> List(Nat) {
+    Nil => kernel_digits_carry(b, carry)
+    Cons(x, xs) => match b -> List(Nat) {
+      Nil => Cons(nat_mod(x + carry, 65536), kernel_digits_add(xs, Nil, nat_div(x + carry, 65536)))
+
+      Cons(
+        y,
+        ys
+      ) => Cons(
+        nat_mod(x + y + carry, 65536),
+        kernel_digits_add(xs, ys, nat_div(x + y + carry, 65536))
+      )
+    }
+  }
+}
+
+fn kernel_digits_scale(a: List(Nat), x: Nat, carry: Nat) -> List(Nat) {
+  match a -> List(Nat) {
+    Nil => if carry == 0 { Nil } else { Cons(carry, Nil) }
+
+    Cons(
+      y,
+      ys
+    ) => Cons(
+      nat_mod(x * y + carry, 65536),
+      kernel_digits_scale(ys, x, nat_div(x * y + carry, 65536))
+    )
+  }
+}
+
+fn kernel_digits_mul(a: List(Nat), b: List(Nat)) -> List(Nat) {
+  match a -> List(Nat) {
+    Nil => Nil
+
+    Cons(
+      x,
+      xs
+    ) => kernel_digits_add(kernel_digits_scale(b, x, 0), Cons(0, kernel_digits_mul(xs, b)), 0)
+  }
+}
+
+fn kernel_borrow(x: Nat, y: Nat) -> Nat { if x < y { 1 } else { 0 } }
+
+fn kernel_digits_sub(a: List(Nat), b: List(Nat), borrow: Nat) -> List(Nat) {
+  match a -> List(Nat) {
+    Nil => Nil
+    Cons(x, xs) => match b -> List(Nat) {
+      Nil => Cons(
+        nat_mod(65536 + x - borrow, 65536),
+        kernel_digits_sub(xs, Nil, kernel_borrow(x, borrow))
+      )
+
+      Cons(
+        y,
+        ys
+      ) => Cons(
+        nat_mod(65536 + x - (y + borrow), 65536),
+        kernel_digits_sub(xs, ys, kernel_borrow(x, y + borrow))
+      )
+    }
+  }
+}
+
+fn kernel_digits_cmp(a: List(Nat), b: List(Nat)) -> Ordering {
+  match a -> Ordering {
+    Nil => match b -> Ordering {
+      Nil => Equal
+      Cons(y, ys) => Less }
+    Cons(x, xs) => match b -> Ordering {
+      Nil => Greater
+
+      Cons(
+        y,
+        ys
+      ) => if x < y { Less } else { if y < x { Greater } else { kernel_digits_cmp(xs, ys) } }
+    }
+  }
+}
+
+fn kernel_digits_le(a: List(Nat), b: List(Nat)) -> Yn {
+  let na = list_length(a)
+  let nb = list_length(b)
+  if na < nb { yes } else { if nb < na { no } else {
+      match kernel_digits_cmp(list_reverse(a), list_reverse(b)) -> Yn {
+        Less => yes
+        Equal => yes
+        Greater => no
+      }
+    } }
+}
+
+fn kernel_digits_eq(a: List(Nat), b: List(Nat)) -> Yn {
+  match a -> Yn {
+    Nil => match b -> Yn {
+      Nil => yes
+      Cons(y, ys) => no }
+    Cons(x, xs) => match b -> Yn {
+      Nil => no
+      Cons(y, ys) => x == y && kernel_digits_eq(xs, ys) }
+  }
+}
+
+fn kernel_digits_checked(ds: List(Nat)) -> Option(List(Nat)) {
+  let ns = kernel_digits_normal(ds)
+  if list_length(ns) <= 8 { Some(ns) } else { None }
+}
+
+fn kernel_digits_arith(op: Text, a: List(Nat), b: List(Nat)) -> Option(List(Nat)) {
+  if op == "+" { kernel_digits_checked(kernel_digits_add(a, b, 0)) } else {
+    if op == "*" { kernel_digits_checked(kernel_digits_mul(a, b)) } else {
+      if kernel_digits_le(
+        b,
+        a
+      ) { Some(kernel_digits_normal(kernel_digits_sub(a, b, 0))) } else { Some(Nil) }
+    }
+  }
+}

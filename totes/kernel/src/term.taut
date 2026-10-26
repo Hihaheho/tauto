@@ -1,0 +1,281 @@
+import "wide.taut"
+
+// Locally nameless terms. Binder hints carry no semantic information.
+inductive KernelTerm(): Type {
+  KernelBVar(i: Nat): KernelTerm
+  KernelFVar(x: Nat): KernelTerm
+  KernelSortTerm(s: KernelSort): KernelTerm
+  KernelConst(name: Text): KernelTerm
+  KernelPi(domain: KernelTerm, codomain: KernelTerm): KernelTerm
+  KernelLam(body: KernelTerm): KernelTerm
+  KernelApp(function: KernelTerm, argument: KernelTerm): KernelTerm
+  KernelLit(digits: List(Nat)): KernelTerm
+  KernelBool(value: Yn): KernelTerm
+}
+
+fn kernel_list_foldl_KernelTerm_KernelTerm(
+  f: (KernelTerm, KernelTerm) -> KernelTerm,
+  z: KernelTerm,
+  xs: List(KernelTerm)
+) -> KernelTerm { list_foldl(f, z, xs) }
+
+fn kernel_inst_at(t: KernelTerm, depth: Nat, value: KernelTerm) -> KernelTerm {
+  match t -> KernelTerm {
+    KernelBVar(
+      i
+    ) => if i == depth { value } else { if depth < i { KernelBVar(i - 1) } else { KernelBVar(i) } }
+    KernelFVar(x) => KernelFVar(x)
+    KernelSortTerm(s) => KernelSortTerm(s)
+    KernelConst(n) => KernelConst(n)
+    KernelPi(
+      a,
+      b
+    ) => KernelPi(kernel_inst_at(a, depth, value), kernel_inst_at(b, succ(depth), value))
+    KernelLam(b) => KernelLam(kernel_inst_at(b, succ(depth), value))
+    KernelApp(f, a) => KernelApp(kernel_inst_at(f, depth, value), kernel_inst_at(a, depth, value))
+    KernelLit(ds) => KernelLit(ds)
+    KernelBool(v) => KernelBool(v)
+  }
+}
+
+fn kernel_abstract_at(t: KernelTerm, depth: Nat, atom: Nat) -> KernelTerm {
+  match t -> KernelTerm {
+    KernelBVar(i) => KernelBVar(i)
+    KernelFVar(x) => if x == atom { KernelBVar(depth) } else { KernelFVar(x) }
+    KernelSortTerm(s) => KernelSortTerm(s)
+    KernelConst(n) => KernelConst(n)
+    KernelPi(
+      a,
+      b
+    ) => KernelPi(kernel_abstract_at(a, depth, atom), kernel_abstract_at(b, succ(depth), atom))
+    KernelLam(b) => KernelLam(kernel_abstract_at(b, succ(depth), atom))
+    KernelApp(
+      f,
+      a
+    ) => KernelApp(kernel_abstract_at(f, depth, atom), kernel_abstract_at(a, depth, atom))
+    KernelLit(ds) => KernelLit(ds)
+    KernelBool(v) => KernelBool(v)
+  }
+}
+
+fn kernel_has_loose(t: KernelTerm, depth: Nat) -> Yn {
+  match t -> Yn {
+    KernelBVar(i) => depth <= i
+    KernelFVar(x) => no
+    KernelSortTerm(s) => no
+    KernelConst(n) => no
+    KernelPi(a, b) => kernel_has_loose(a, depth) || kernel_has_loose(b, succ(depth))
+    KernelLam(b) => kernel_has_loose(b, succ(depth))
+    KernelApp(f, a) => kernel_has_loose(f, depth) || kernel_has_loose(a, depth)
+    KernelLit(ds) => no
+    KernelBool(v) => no
+  }
+}
+
+fn kernel_mentions_fvar(t: KernelTerm) -> Yn {
+  match t -> Yn {
+    KernelBVar(i) => no
+    KernelFVar(x) => yes
+    KernelSortTerm(s) => no
+    KernelConst(n) => no
+    KernelPi(a, b) => kernel_mentions_fvar(a) || kernel_mentions_fvar(b)
+    KernelLam(b) => kernel_mentions_fvar(b)
+    KernelApp(f, a) => kernel_mentions_fvar(f) || kernel_mentions_fvar(a)
+    KernelLit(ds) => no
+    KernelBool(v) => no
+  }
+}
+
+fn kernel_mentions_const(t: KernelTerm, names: List(Text)) -> Yn {
+  match t -> Yn {
+    KernelBVar(i) => no
+    KernelFVar(x) => no
+    KernelSortTerm(s) => no
+    KernelConst(n) => list_contains(text_eq, n, names)
+    KernelPi(a, b) => kernel_mentions_const(a, names) || kernel_mentions_const(b, names)
+    KernelLam(b) => kernel_mentions_const(b, names)
+    KernelApp(f, a) => kernel_mentions_const(f, names) || kernel_mentions_const(a, names)
+    KernelLit(ds) => no
+    KernelBool(v) => no
+  }
+}
+
+fn kernel_term_eq(t: KernelTerm, u: KernelTerm) -> Yn {
+  match t -> Yn {
+    KernelBVar(i) => match u -> Yn {
+      KernelBVar(ii) => i == ii
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelFVar(x) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => x == xx
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelSortTerm(s) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => kernel_sort_eq(s, ss)
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelConst(n) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => n == nn
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelPi(a, b) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => kernel_term_eq(a, aa) && kernel_term_eq(b, bb)
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelLam(b) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => kernel_term_eq(b, bb)
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelApp(f, a) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => kernel_term_eq(f, ff) && kernel_term_eq(a, aa)
+      KernelLit(dds) => no
+      KernelBool(vv) => no
+    }
+    KernelLit(ds) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => kernel_digits_eq(ds, dds)
+      KernelBool(vv) => no
+    }
+    KernelBool(v) => match u -> Yn {
+      KernelBVar(ii) => no
+      KernelFVar(xx) => no
+      KernelSortTerm(ss) => no
+      KernelConst(nn) => no
+      KernelPi(aa, bb) => no
+      KernelLam(bb) => no
+      KernelApp(ff, aa) => no
+      KernelLit(dds) => no
+      KernelBool(vv) => yn_eq(v, vv)
+    }
+  }
+}
+
+fn kernel_terms_eq(ts: List(KernelTerm), us: List(KernelTerm)) -> Yn {
+  match ts -> Yn {
+    Nil => match us -> Yn {
+      Nil => yes
+      Cons(u, rest) => no }
+    Cons(t, tail) => match us -> Yn {
+      Nil => no
+      Cons(u, rest) => kernel_term_eq(t, u) && kernel_terms_eq(tail, rest) }
+  }
+}
+
+fn kernel_apps(head: KernelTerm, args: List(KernelTerm)) -> KernelTerm {
+  kernel_list_foldl_KernelTerm_KernelTerm(
+    (f: KernelTerm, a: KernelTerm) => KernelApp(f, a),
+    head,
+    args
+  )
+}
+
+fn kernel_spine_in(t: KernelTerm, args: List(KernelTerm)) -> Pair(KernelTerm, List(KernelTerm)) {
+  match t -> Pair(KernelTerm, List(KernelTerm)) {
+    KernelBVar(i) => Pair { fst: t, snd: args }
+    KernelFVar(x) => Pair { fst: t, snd: args }
+    KernelSortTerm(s) => Pair { fst: t, snd: args }
+    KernelConst(n) => Pair { fst: t, snd: args }
+    KernelPi(a, b) => Pair { fst: t, snd: args }
+    KernelLam(b) => Pair { fst: t, snd: args }
+    KernelApp(f, a) => kernel_spine_in(f, Cons(a, args))
+    KernelLit(ds) => Pair { fst: t, snd: args }
+    KernelBool(v) => Pair { fst: t, snd: args }
+  }
+}
+
+fn kernel_spine(t: KernelTerm) -> Pair(KernelTerm, List(KernelTerm)) {
+  kernel_spine_in(t, Nil)
+}
+
+fn kernel_inst(body: KernelTerm, value: KernelTerm) -> KernelTerm {
+  kernel_inst_at(body, 0, value)
+}
+
+fn kernel_pi_over(atom: Nat, domain: KernelTerm, body: KernelTerm) -> KernelTerm {
+  KernelPi(domain, kernel_abstract_at(body, 0, atom))
+}
+
+fn kernel_lam_over(atom: Nat, body: KernelTerm) -> KernelTerm {
+  KernelLam(kernel_abstract_at(body, 0, atom))
+}
+
+fn kernel_abstract_many_in(xs: List(Nat), t: KernelTerm, depth: Nat) -> KernelTerm {
+  match xs -> KernelTerm {
+    Nil => t
+    Cons(x, rest) => kernel_abstract_many_in(rest, kernel_abstract_at(t, depth, x), succ(depth))
+  }
+}
+
+fn kernel_abstract_many(t: KernelTerm, xs: List(Nat)) -> KernelTerm {
+  kernel_abstract_many_in(list_reverse(xs), t, 0)
+}
+
+fn kernel_inst_many_in(values: List(KernelTerm), t: KernelTerm) -> KernelTerm {
+  match values -> KernelTerm {
+    Nil => t
+    Cons(v, rest) => kernel_inst_many_in(rest, kernel_inst_at(t, list_length(rest), v))
+  }
+}
+
+fn kernel_term_at(ts: List(KernelTerm), i: Nat) -> Option(KernelTerm) {
+  list_nth(ts, i)
+}
+
+fn kernel_inst_many(
+  t: KernelTerm,
+  values: List(KernelTerm)
+) -> KernelTerm { kernel_inst_many_in(values, t) }

@@ -1,0 +1,129 @@
+import "../../../std/List.taut"
+import "../../../std/Text.taut"
+
+// Universe levels of crates/tauto-kernel/src/check/level.rs. Variable offsets
+// are compared by name; their list order does not affect the level.
+inductive KernelLevel(): Type {
+  kernel_level(constant: Nat, variables: List(Pair(Text, Nat))): KernelLevel
+}
+
+inductive KernelSort(): Type {
+  KernelProp(): KernelSort
+  KernelType(level: KernelLevel): KernelSort
+}
+
+fn kernel_list_foldl_Pair_Text_Nat_Nat(
+  f: (Nat, Pair(Text, Nat)) -> Nat,
+  z: Nat,
+  xs: List(Pair(Text, Nat))
+) -> Nat { list_foldl(f, z, xs) }
+
+fn kernel_list_all_Pair_Text_Nat_Yn(
+  f: (Pair(Text, Nat)) -> Yn,
+  xs: List(Pair(Text, Nat))
+) -> Yn { list_all(f, xs) }
+
+fn kernel_list_map_Pair_Text_Nat_Pair_Text_Nat(
+  f: (Pair(Text, Nat)) -> Pair(Text, Nat),
+  xs: List(Pair(Text, Nat))
+) -> List(Pair(Text, Nat)) { list_map(f, xs) }
+
+fn kernel_list_filter_Pair_Text_Nat_Yn(
+  f: (Pair(Text, Nat)) -> Yn,
+  xs: List(Pair(Text, Nat))
+) -> List(Pair(Text, Nat)) { list_filter(f, xs) }
+
+fn kernel_level_var_name(v: Pair(Text, Nat)) -> Text { v.fst }
+fn kernel_level_var_offset(v: Pair(Text, Nat)) -> Nat { v.snd }
+
+fn kernel_level_offset(name: Text, vs: List(Pair(Text, Nat))) -> Option(Nat) {
+  match vs -> Option(Nat) {
+    Nil => None
+
+    Cons(
+      v,
+      rest
+    ) => if name == kernel_level_var_name(
+      v
+    ) { Some(kernel_level_var_offset(v)) } else { kernel_level_offset(name, rest) }
+  }
+}
+
+fn kernel_level_floor(l: KernelLevel) -> Nat {
+  kernel_list_foldl_Pair_Text_Nat_Nat(
+    (n: Nat, v: Pair(Text, Nat)) => nat_max(n, kernel_level_var_offset(v)),
+    l.constant,
+    l.variables
+  )
+}
+
+fn kernel_level_le(a: KernelLevel, b: KernelLevel) -> Yn {
+  a.constant <= kernel_level_floor(b) && kernel_list_all_Pair_Text_Nat_Yn((v: Pair(Text, Nat)) => match kernel_level_offset(kernel_level_var_name(v), b.variables) -> Yn {
+None => no
+Some(n) => kernel_level_var_offset(v) <= n
+    },
+    a.variables
+  )
+}
+
+fn kernel_level_next(l: KernelLevel) -> KernelLevel {
+  kernel_level(
+    succ(l.constant),
+    kernel_list_map_Pair_Text_Nat_Pair_Text_Nat(
+      (
+        v: Pair(Text, Nat)
+      ) => Pair { fst: kernel_level_var_name(v), snd: succ(kernel_level_var_offset(v)) },
+      l.variables
+    )
+  )
+}
+
+fn kernel_level_join(a: KernelLevel, b: KernelLevel) -> KernelLevel {
+  kernel_level(
+    nat_max(a.constant, b.constant),
+    list_append(
+      kernel_list_map_Pair_Text_Nat_Pair_Text_Nat((v: Pair(Text, Nat)) => Pair {
+        fst: kernel_level_var_name(v),
+        snd: match kernel_level_offset(kernel_level_var_name(v), b.variables) -> Nat {
+None => kernel_level_var_offset(v)
+Some(n) => nat_max(kernel_level_var_offset(v), n)
+        }
+      }, a.variables),
+      kernel_list_filter_Pair_Text_Nat_Yn((v: Pair(Text, Nat)) => match kernel_level_offset(kernel_level_var_name(v), a.variables) -> Yn {
+None => yes
+Some(n) => no
+      }, b.variables)
+    )
+  )
+}
+
+fn kernel_sort_next(s: KernelSort) -> KernelSort {
+  match s -> KernelSort {
+    KernelProp => KernelType(kernel_level(0, Nil))
+    KernelType(l) => KernelType(kernel_level_next(l))
+  }
+}
+
+fn kernel_sort_le(a: KernelSort, b: KernelSort) -> Yn {
+  match a -> Yn {
+    KernelProp => yes
+    KernelType(l) => match b -> Yn {
+      KernelProp => no
+      KernelType(m) => kernel_level_le(l, m)
+    }
+  }
+}
+
+fn kernel_sort_eq(a: KernelSort, b: KernelSort) -> Yn {
+  kernel_sort_le(a, b) && kernel_sort_le(b, a)
+}
+
+fn kernel_sort_pi(a: KernelSort, b: KernelSort) -> KernelSort {
+  match b -> KernelSort {
+    KernelProp => KernelProp
+    KernelType(m) => match a -> KernelSort {
+      KernelProp => b
+      KernelType(l) => KernelType(kernel_level_join(l, m))
+    }
+  }
+}
