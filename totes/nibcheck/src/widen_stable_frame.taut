@@ -1,0 +1,439 @@
+import "widen_frame.taut"
+import "stable_ordered_frame.taut"
+
+pub theorem widen_store_frame_stable(
+  c: Checker,
+  rv: Nat,
+  value: Ty,
+  occurs: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_store(c, rv, value, occurs)) {
+  match occurs: StableOrderedFrame(c, widen_store(c, rv, value, occurs)) {
+    false => stable_ordered_return(c, Star, ordered)
+    true => stable_ordered_rewrap(
+      c,
+      ck_set_subst(c, rv, value),
+      ck_set_subst_stable_ordered(c, rv, value, ordered)
+    )
+  }
+}
+
+pub theorem widen_store_true_frame_stable(
+  c: Checker,
+  rv: Nat,
+  value: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_store_true(c, rv, value)) {
+  stable_ordered_bind(
+    Unit,
+    Bool,
+    c,
+    (ignored: Unit, c1: Checker) => mut1(true, c1),
+    widen_store(c, rv, value, not(ck_occurs(c, rv, value))),
+    widen_store_frame_stable(c, rv, value, not(ck_occurs(c, rv, value)), ordered),
+    ignored => c1 => o_c1 => stable_ordered_return(c1, true, o_c1)
+  )
+}
+
+pub theorem widen_attempt_frame_stable(
+  c: Checker,
+  rv: Nat,
+  wide: Ty,
+  success: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_attempt(c, rv, wide, success)) {
+  match success: StableOrderedFrame(c, widen_attempt(c, rv, wide, success)) {
+    true => widen_store_true_frame_stable(c, rv, ck_resolve(c, wide), ordered)
+    false => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_fn_allowed_frame_stable(
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  rv: Nat,
+  allowed: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+  match allowed: StableOrderedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+    true => stable_ordered_bind(
+      Bool,
+      Bool,
+      c,
+      (success: Bool, c1: Checker) => widen_attempt(c1, rv, TyFn(pb, rb, kind_join(ka, kb)), success),
+      ck_attempt_unify(c, TyFn(pa, ra, kind_join(ka, kb)), TyFn(pb, rb, kind_join(ka, kb))),
+      ck_attempt_unify_stable_ordered(
+        c,
+        TyFn(pa, ra, kind_join(ka, kb)),
+        TyFn(pb, rb, kind_join(ka, kb)),
+        ordered
+      ),
+      success => c1 => o_c1 => widen_attempt_frame_stable(
+        c1,
+        rv,
+        TyFn(pb, rb, kind_join(ka, kb)),
+        success,
+        o_c1
+      )
+    )
+    false => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_fn_current_frame_stable(
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  rv: Nat,
+  current: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+  match current: StableOrderedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+    TyInt(w) => stable_ordered_return(c, false, ordered)
+    TyBool => stable_ordered_return(c, false, ordered)
+    TyText => stable_ordered_return(c, false, ordered)
+    TyUnit => stable_ordered_return(c, false, ordered)
+    TyNever => stable_ordered_return(c, false, ordered)
+    TyDecimal => stable_ordered_return(c, false, ordered)
+    TyFloat => stable_ordered_return(c, false, ordered)
+    TyFn(pb, rb, kb) => widen_fn_allowed_frame_stable(
+      c,
+      pa,
+      ra,
+      ka,
+      pb,
+      rb,
+      kb,
+      rv,
+      Bool::and(Nat::eq(list_len(pa), list_len(pb)), not(kind_eq(ka, kb))),
+      ordered
+    )
+    TyUnion(members) => stable_ordered_return(c, false, ordered)
+    TyProduct(members) => stable_ordered_return(c, false, ordered)
+    TyTagged(tags, inner) => stable_ordered_return(c, false, ordered)
+    TyNamed(name, args) => stable_ordered_return(c, false, ordered)
+    TyParam(name, bound) => stable_ordered_return(c, false, ordered)
+    TyInfo(inner) => stable_ordered_return(c, false, ordered)
+    TyBorrow(inner, mutable) => stable_ordered_return(c, false, ordered)
+    TyVar(v) => stable_ordered_return(c, false, ordered)
+    TyPoly(generics, inner) => stable_ordered_return(c, false, ordered)
+    TyApp(head, arg) => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_fn_arm_frame_stable(
+  c: Checker,
+  current: Ty,
+  rv: Nat,
+  arm: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_fn_arm(c, current, rv, arm)) {
+  match arm: StableOrderedFrame(c, widen_fn_arm(c, current, rv, arm)) {
+    TyInt(w) => stable_ordered_return(c, false, ordered)
+    TyBool => stable_ordered_return(c, false, ordered)
+    TyText => stable_ordered_return(c, false, ordered)
+    TyUnit => stable_ordered_return(c, false, ordered)
+    TyNever => stable_ordered_return(c, false, ordered)
+    TyDecimal => stable_ordered_return(c, false, ordered)
+    TyFloat => stable_ordered_return(c, false, ordered)
+    TyFn(pa, ra, ka) => widen_fn_current_frame_stable(c, pa, ra, ka, rv, current, ordered)
+    TyUnion(members) => stable_ordered_return(c, false, ordered)
+    TyProduct(members) => stable_ordered_return(c, false, ordered)
+    TyTagged(tags, inner) => stable_ordered_return(c, false, ordered)
+    TyNamed(name, args) => stable_ordered_return(c, false, ordered)
+    TyParam(name, bound) => stable_ordered_return(c, false, ordered)
+    TyInfo(inner) => stable_ordered_return(c, false, ordered)
+    TyBorrow(inner, mutable) => stable_ordered_return(c, false, ordered)
+    TyVar(v) => stable_ordered_return(c, false, ordered)
+    TyPoly(generics, inner) => stable_ordered_return(c, false, ordered)
+    TyApp(head, arg) => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem ck_widen_fn_run_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_widen_fn(c, a, current, rv)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => StableOrderedFrame(c, z),
+    Eq::sym(widen_fn_unf(c, a, current, rv)),
+    widen_fn_arm_frame_stable(c, current, rv, ck_resolve(c, a), ordered)
+  )
+}
+
+pub theorem widen_fits_if_frame_stable(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  allowed: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_fits_if(c, a, b, allowed)) {
+  match allowed: StableOrderedFrame(c, widen_fits_if(c, a, b, allowed)) {
+    true => stable_ordered_rewrap(
+      c,
+      ck_attempt_fits(c, a, b),
+      ck_attempt_fits_stable_ordered(c, a, b, ordered)
+    )
+    false => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_borrow_current_frame_stable(
+  c: Checker,
+  a: Ty,
+  rv: Nat,
+  current: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_borrow_current(c, a, rv, current)) {
+  match current: StableOrderedFrame(c, widen_borrow_current(c, a, rv, current)) {
+    TyInt(w) => stable_ordered_return(c, false, ordered)
+    TyBool => stable_ordered_return(c, false, ordered)
+    TyText => stable_ordered_return(c, false, ordered)
+    TyUnit => stable_ordered_return(c, false, ordered)
+    TyNever => stable_ordered_return(c, false, ordered)
+    TyDecimal => stable_ordered_return(c, false, ordered)
+    TyFloat => stable_ordered_return(c, false, ordered)
+    TyFn(params, result, kind) => stable_ordered_return(c, false, ordered)
+    TyUnion(members) => stable_ordered_return(c, false, ordered)
+    TyProduct(members) => stable_ordered_return(c, false, ordered)
+    TyTagged(tags, inner) => stable_ordered_return(c, false, ordered)
+    TyNamed(name, args) => stable_ordered_return(c, false, ordered)
+    TyParam(name, bound) => stable_ordered_return(c, false, ordered)
+    TyInfo(inner) => stable_ordered_return(c, false, ordered)
+    TyBorrow(x, m) => stable_ordered_bind(
+      Bool,
+      Bool,
+      c,
+      (success: Bool, c1: Checker) => widen_attempt(c1, rv, x, success),
+      widen_fits_if(
+        c,
+        a,
+        x,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, x)))
+      ),
+      widen_fits_if_frame_stable(
+        c,
+        a,
+        x,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, x))),
+        ordered
+      ),
+      success => c1 => o_c1 => widen_attempt_frame_stable(c1, rv, x, success, o_c1)
+    )
+    TyVar(v) => stable_ordered_return(c, false, ordered)
+    TyPoly(generics, inner) => stable_ordered_return(c, false, ordered)
+    TyApp(head, arg) => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem ck_widen_borrowed_current_run_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_widen_borrowed_current(c, a, current, rv)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => StableOrderedFrame(c, z),
+    Eq::sym(widen_borrow_current_unf(c, a, current, rv)),
+    widen_borrow_current_frame_stable(c, a, rv, current, ordered)
+  )
+}
+
+pub theorem widen_borrow_arm_frame_stable(
+  c: Checker,
+  current: Ty,
+  arm: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_borrow_arm(c, current, arm)) {
+  match arm: StableOrderedFrame(c, widen_borrow_arm(c, current, arm)) {
+    TyInt(w) => stable_ordered_return(c, false, ordered)
+    TyBool => stable_ordered_return(c, false, ordered)
+    TyText => stable_ordered_return(c, false, ordered)
+    TyUnit => stable_ordered_return(c, false, ordered)
+    TyNever => stable_ordered_return(c, false, ordered)
+    TyDecimal => stable_ordered_return(c, false, ordered)
+    TyFloat => stable_ordered_return(c, false, ordered)
+    TyFn(params, result, kind) => stable_ordered_return(c, false, ordered)
+    TyUnion(members) => stable_ordered_return(c, false, ordered)
+    TyProduct(members) => stable_ordered_return(c, false, ordered)
+    TyTagged(tags, inner) => stable_ordered_return(c, false, ordered)
+    TyNamed(name, args) => stable_ordered_return(c, false, ordered)
+    TyParam(name, bound) => stable_ordered_return(c, false, ordered)
+    TyInfo(inner) => stable_ordered_return(c, false, ordered)
+    TyBorrow(x, m) => widen_fits_if_frame_stable(
+      c,
+      x,
+      current,
+      Bool::and(not(ty_is_borrow(current)), kind_dup(ck_kind(c, x))),
+      ordered
+    )
+    TyVar(v) => stable_ordered_return(c, false, ordered)
+    TyPoly(generics, inner) => stable_ordered_return(c, false, ordered)
+    TyApp(head, arg) => stable_ordered_return(c, false, ordered)
+  }
+}
+
+pub theorem ck_widen_borrowed_arm_run_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_widen_borrowed_arm(c, a, current)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => StableOrderedFrame(c, z),
+    Eq::sym(widen_borrow_arm_unf(c, a, current)),
+    widen_borrow_arm_frame_stable(c, current, ck_resolve(c, a), ordered)
+  )
+}
+
+pub theorem widen_final_fits_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+  match failed: StableOrderedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+    true => stable_ordered_rewrap(
+      c,
+      ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
+      ck_set_subst_stable_ordered(
+        c,
+        rv,
+        ty_union(Cons(current, Cons(ck_resolve(c, a), Nil))),
+        ordered
+      )
+    )
+    false => stable_ordered_return(c, Star, ordered)
+  }
+}
+
+pub theorem widen_after_arm_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+  match failed: StableOrderedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+    true => stable_ordered_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, c1: Checker) => widen_final_fits(c1, a, current, rv, not(success)),
+      ck_attempt_fits(c, a, current),
+      ck_attempt_fits_stable_ordered(c, a, current, ordered),
+      success => c1 => o_c1 => widen_final_fits_frame_stable(
+        c1,
+        a,
+        current,
+        rv,
+        not(success),
+        o_c1
+      )
+    )
+    false => stable_ordered_return(c, Star, ordered)
+  }
+}
+
+pub theorem widen_after_current_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_after_current(c, a, current, rv, failed)) {
+  match failed: StableOrderedFrame(c, widen_after_current(c, a, current, rv, failed)) {
+    true => stable_ordered_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
+      ck_widen_borrowed_arm(c, a, current),
+      ck_widen_borrowed_arm_run_frame_stable(c, a, current, ordered),
+      success => c1 => o_c1 => widen_after_arm_frame_stable(
+        c1,
+        a,
+        current,
+        rv,
+        not(success),
+        o_c1
+      )
+    )
+    false => stable_ordered_return(c, Star, ordered)
+  }
+}
+
+pub theorem widen_after_fn_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+  match failed: StableOrderedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+    true => stable_ordered_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, c1: Checker) => widen_after_current(c1, a, current, rv, not(success)),
+      ck_widen_borrowed_current(c, a, current, rv),
+      ck_widen_borrowed_current_run_frame_stable(c, a, current, rv, ordered),
+      success => c1 => o_c1 => widen_after_current_frame_stable(
+        c1,
+        a,
+        current,
+        rv,
+        not(success),
+        o_c1
+      )
+    )
+    false => stable_ordered_return(c, Star, ordered)
+  }
+}
+
+pub theorem widen_handle_frame_stable(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, widen_handle(c, a, current, rv)) {
+  stable_ordered_bind(
+    Bool,
+    Unit,
+    c,
+    (success: Bool, c1: Checker) => widen_after_fn(c1, a, current, rv, not(success)),
+    ck_widen_fn(c, a, current, rv),
+    ck_widen_fn_run_frame_stable(c, a, current, rv, ordered),
+    success => c1 => o_c1 => widen_after_fn_frame_stable(c1, a, current, rv, not(success), o_c1)
+  )
+}
+
+pub theorem ck_handle_widen_run_frame_stable(
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_handle_widen(c, a, result, rv)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => StableOrderedFrame(c, z),
+    Eq::sym(widen_handle_unf(c, a, result, rv)),
+    widen_handle_frame_stable(c, a, ck_resolve(c, result), rv, ordered)
+  )
+}

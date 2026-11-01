@@ -1,0 +1,281 @@
+import "finish_frame.taut"
+
+// A successful diagnostic-only check leaves the entire checker unchanged.
+// This lets later final checks justify the obligations recorded earlier.
+pub def DiagnosticClean(c: Checker): Prop := decl_names_errors(c) = Nil
+pub def DiagnosticIdentity(
+  c: Checker,
+  m: Mut1(Unit, Checker)
+): Prop := ∀ clean: DiagnosticClean(ck_st(m)). m = mut1(Star, c)
+
+pub theorem diagnostic_error_impossible(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  clean: DiagnosticClean(ck_st(ck_error(c, message, span)))
+): False {
+  false_ne_true(Eq::congr(decl_names_empty, clean))
+}
+pub theorem diagnostic_if_sound(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  take: Bool,
+  clean: DiagnosticClean(ck_st(frame_error_if(c, message, span, take)))
+): And(
+  take = false,
+  frame_error_if(c, message, span, take) = mut1(Star, c)
+) {
+  match take: And(
+    take = false,
+    frame_error_if(c, message, span, take) = mut1(Star, c)
+  ) {
+    true => False::elim(diagnostic_error_impossible(c, message, span, clean))
+    false => AndIntro(Refl, Refl)
+  }
+}
+pub theorem diagnostic_if_identity(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  take: Bool
+): DiagnosticIdentity(c, frame_error_if(c, message, span, take)) {
+  clean => And::right(diagnostic_if_sound(c, message, span, take, clean))
+}
+pub theorem diagnostic_before(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  identity: DiagnosticIdentity(c, m),
+  clean: DiagnosticClean(ck_st(m))
+): DiagnosticClean(c) {
+  Eq::subst(DiagnosticClean, Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), identity(clean)), clean)
+}
+pub theorem diagnostic_not_no(a: Bool, h: not(a) = false): a = true {
+  match a: a = true {
+    true => Refl
+    false => False::elim(false_ne_true(Eq::sym(h)))
+  }
+}
+
+pub def DiagnosticBound(
+  c: Checker,
+  b: TyBound
+): Prop := And(
+  ck_is_view(c, finish_bound_ty(b)) = false,
+  kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true
+)
+
+pub theorem diagnostic_bound_step(
+  c: Checker,
+  b: TyBound,
+  r#view: Bool,
+  clean: DiagnosticClean(ck_st(finish_bound(c, b, r#view)))
+): And(
+  Eq(Bool, r#view, false),
+  And(
+    kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true,
+    finish_bound(c, b, r#view) = mut1(Star, c)
+  )
+) {
+  match r#view: And(
+    Eq(Bool, r#view, false),
+    And(
+      kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true,
+      finish_bound(c, b, r#view) = mut1(Star, c)
+    )
+  ) {
+    true => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "a view cannot be a type argument",
+        finish_bound_span(b),
+        clean
+      )
+    )
+    false => {
+      let accepted: And(
+        not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b))) = false,
+        frame_error_if(
+            c,
+            cat5(
+              kind_name(ck_kind(c, finish_bound_ty(b))),
+              " does not fit ",
+              kind_name(finish_bound_kind(b)),
+              ": ",
+              cat2(ty_show(ck_shown(c, finish_bound_ty(b))), " for a type parameter")
+            ),
+            finish_bound_span(b),
+            not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)))
+          ) = mut1(Star, c)
+      ) := diagnostic_if_sound(
+        c,
+        cat5(
+          kind_name(ck_kind(c, finish_bound_ty(b))),
+          " does not fit ",
+          kind_name(finish_bound_kind(b)),
+          ": ",
+          cat2(ty_show(ck_shown(c, finish_bound_ty(b))), " for a type parameter")
+        ),
+        finish_bound_span(b),
+        not(kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b))),
+        clean
+      )
+      AndIntro(
+        Refl,
+        AndIntro(
+          diagnostic_not_no(
+            kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)),
+            And::left(accepted)
+          ),
+          And::right(accepted)
+        )
+      )
+    }
+  }
+}
+pub theorem ck_check_bound_accepts(
+  c: Checker,
+  b: TyBound,
+  clean: DiagnosticClean(ck_st(ck_check_bound(c, b)))
+): And(DiagnosticBound(c, b), ck_check_bound(c, b) = mut1(Star, c)) {
+  let accepted: And(
+    ck_is_view(c, finish_bound_ty(b)) = false,
+    And(
+      kind_fits(ck_kind(c, finish_bound_ty(b)), finish_bound_kind(b)) = true,
+      finish_bound(c, b, ck_is_view(c, finish_bound_ty(b))) = mut1(Star, c)
+    )
+  ) := diagnostic_bound_step(
+    c,
+    b,
+    ck_is_view(c, finish_bound_ty(b)),
+    Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), finish_bound_unf(c, b), clean)
+  )
+  AndIntro(
+    AndIntro(And::left(accepted), And::left(And::right(accepted))),
+    Eq::trans(finish_bound_unf(c, b), And::right(And::right(accepted)))
+  )
+}
+pub theorem ck_check_bound_identity(
+  c: Checker,
+  b: TyBound
+): DiagnosticIdentity(c, ck_check_bound(c, b)) {
+  clean => And::right(ck_check_bound_accepts(c, b, clean))
+}
+
+pub theorem diagnostic_rewrap_identity(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  h: DiagnosticIdentity(c, m)
+): DiagnosticIdentity(c, ck_rewrap1(m)) {
+  clean => Eq::trans(
+    ck_rewrap1_id(m),
+    h(Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), ck_rewrap1_id(m), clean))
+  )
+}
+pub(open) inductive DiagnosticBounds(c: Checker): (List(TyBound)) -> Prop {
+  DiagnosticBoundsNil: DiagnosticBounds(c, Nil)
+  DiagnosticBoundsCons<b: TyBound, rest: List(
+    TyBound
+  )>(
+    head: DiagnosticBound(c, b),
+    tail: DiagnosticBounds(c, rest)
+  ): DiagnosticBounds(c, Cons(b, rest))
+}
+pub def DiagnosticBoundsResult(
+  bs: List(TyBound),
+  c: Checker,
+  m: Mut1(Unit, Checker)
+): Prop := And(DiagnosticBounds(c, bs), m = mut1(Star, c))
+pub def DiagnosticBoundsIH(
+  bs: List(TyBound)
+): Prop := ∀ c: Checker. ∀ clean: DiagnosticClean(
+  ck_st(ck_check_bounds(bs, c))
+). DiagnosticBoundsResult(bs, c, ck_check_bounds(bs, c))
+pub fn diagnostic_bounds_after(rest: List(TyBound), m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) { mut1(v, next) => ck_rewrap1(ck_check_bounds(rest, next)) }
+}
+pub theorem diagnostic_bounds_cons_accepts(
+  b: TyBound,
+  rest: List(TyBound),
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). And(DiagnosticBound(c, b), m = mut1(Star, c)),
+  ih: DiagnosticBoundsIH(rest),
+  clean: DiagnosticClean(ck_st(diagnostic_bounds_after(rest, m)))
+): DiagnosticBoundsResult(Cons(b, rest), c, diagnostic_bounds_after(rest, m)) {
+  match m: DiagnosticBoundsResult(Cons(b, rest), c, diagnostic_bounds_after(rest, m)) {
+    mut1(v, next) => {
+      let remaining: DiagnosticBoundsResult(
+        rest,
+        next,
+        ck_check_bounds(rest, next)
+      ) := ih(
+        next,
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          ck_rewrap1_id(ck_check_bounds(rest, next)),
+          clean
+        )
+      )
+      let tail_equal: ck_rewrap1(ck_check_bounds(rest, next)) = mut1(Star, next) := Eq::trans(ck_rewrap1_id(ck_check_bounds(rest, next)), And::right(remaining))
+      let clean_next: DiagnosticClean(
+        next
+      ) := Eq::subst(
+        DiagnosticClean,
+        Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), tail_equal),
+        clean
+      )
+      let head: And(
+        DiagnosticBound(c, b),
+        mut1(v, next) = mut1(Star, c)
+      ) := first(clean_next)
+      let same: next = c := Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), And::right(head))
+      AndIntro(
+        DiagnosticBoundsCons(
+          And::left(head),
+          Eq::subst((state: Checker) => DiagnosticBounds(state, rest), same, And::left(remaining))
+        ),
+        Eq::trans(tail_equal, Eq::congr((state: Checker) => mut1(Star, state), same))
+      )
+    }
+  }
+}
+pub theorem diagnostic_bounds_unf(
+  b: TyBound,
+  rest: List(TyBound),
+  c: Checker
+): ck_check_bounds(Cons(b, rest), c) = diagnostic_bounds_after(rest, ck_check_bound(c, b)) { Refl }
+pub theorem ck_check_bounds_accepts(
+  bs: List(TyBound),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_bounds(bs, c)))
+): DiagnosticBoundsResult(bs, c, ck_check_bounds(bs, c)) {
+  match bs: DiagnosticBoundsResult(bs, c, ck_check_bounds(bs, c)) {
+    Nil => AndIntro(DiagnosticBoundsNil, Refl)
+    Cons(b, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticBoundsResult(Cons(b, rest), c, z),
+      Eq::sym(diagnostic_bounds_unf(b, rest, c)),
+      diagnostic_bounds_cons_accepts(
+        b,
+        rest,
+        c,
+        ck_check_bound(c, b),
+        h => ck_check_bound_accepts(c, b, h),
+        next => h => ck_check_bounds_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_bounds_unf(b, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem ck_check_bounds_identity(
+  bs: List(TyBound),
+  c: Checker
+): DiagnosticIdentity(c, ck_check_bounds(bs, c)) {
+  clean => And::right(ck_check_bounds_accepts(bs, c, clean))
+}

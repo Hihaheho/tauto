@@ -1,0 +1,100 @@
+import "instantiation_obligations.taut"
+import "rules_kind_bindings.taut"
+import "final_kind_sound.taut"
+import "literal_typing_sound.taut"
+
+pub theorem final_instance_scalar_bound(
+  c: Checker,
+  g: Pair(Text, Kind),
+  value: Ty,
+  span: TySpan,
+  member: Mem(TyBound, instance_scalar_bound(g, value, span), finish_bounds(c)),
+  final: FinalDiagnostics0(c)
+): DiagnosticBound(c, instance_scalar_bound(g, value, span)) {
+  diagnostic_items_member(
+    member,
+    diagnostic_items_unreverse(
+      DiagnosticBound,
+      c,
+      finish_bounds(c),
+      diagnostic_bounds_to_items(
+        c,
+        List::reverse(finish_bounds(c)),
+        And::left(And::right(And::right(And::right(final))))
+      )
+    )
+  )
+}
+pub theorem final_instance_constructor_bound(
+  c: Checker,
+  g: Pair(Text, Kind),
+  value: Ty,
+  name: Text,
+  span: TySpan,
+  arg: Kind,
+  member: Mem(
+    TyCtorBound,
+    instance_constructor_bound(g, value, name, span, arg),
+    finish_ctor_bounds(c)
+  ),
+  final: FinalDiagnostics0(c)
+): DiagnosticConstructor(c, instance_constructor_bound(g, value, name, span, arg)) {
+  diagnostic_items_member(
+    member,
+    diagnostic_items_unreverse(
+      DiagnosticConstructor,
+      c,
+      finish_ctor_bounds(c),
+      And::left(And::right(And::right(And::right(And::right(final)))))
+    )
+  )
+}
+pub theorem final_instantiation_bindings<gs: List(
+  Pair(Text, Kind)
+), initial: Ordmap(
+  Text,
+  Ty
+), result: Ordmap(
+  Text,
+  Ty
+)>(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  recorded: RecordedInstantiation(c, Nil, name, span, gs, initial, result),
+  final: FinalDiagnostics0(c)
+): InstanceKindBindings(ck_subst_of(c), ck_datas_of(c), gs, initial, result) {
+  match recorded: InstanceKindBindings(ck_subst_of(c), ck_datas_of(c), gs, initial, result) {
+    RecordedInstantiationNil(map) => InstanceKindBindingsNil(map)
+    RecordedInstantiationCons(
+      g,
+      value,
+      rest,
+      before,
+      after,
+      bound,
+      tail
+    ) => InstanceKindBindingsCons(
+      g,
+      value,
+      ck_resolve(c, value),
+      rest,
+      before,
+      after,
+      ty_resolve_eq(
+        ck_steps_of(c),
+        ck_subst_of(c),
+        (generics: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+          ck_subst_of(c),
+          generics,
+          rigid,
+          left,
+          right
+        ),
+        value
+      ),
+      And::right(final_instance_scalar_bound(c, g, value, span, bound, final)),
+      final_instantiation_bindings(c, name, span, tail, final)
+    )
+  }
+}

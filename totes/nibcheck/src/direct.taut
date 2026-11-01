@@ -1,147 +1,151 @@
 import "freevars.taut"
+import "../../surface/src/surface.taut"
 
 // The syntax of a `direct` operation's arm (`direct.rs`), in the proof
 // language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」): every path of the arm ends in one call
 // `k(e)`, and `k` is nowhere else.
 
-fn dir_assigns(stmts: List(SurfaceStmt), name: Text) -> Yn {
-  match stmts -> Yn {
-    Nil => no
-    Cons(s, rest) => match s -> Yn {
-      StAssign(n, v) => n == name || dir_assigns(rest, name)
+pub fn dir_assigns(stmts: List(SurfaceStmt), name: Text): Bool {
+  match stmts: Bool {
+    Nil => false
+    Cons(s, rest) => match s: Bool {
+      StAssign(n, n_place, v) => n == name || dir_assigns(rest, name)
       _ => dir_assigns(rest, name)
     }
   }
 }
 
-fn dir_here_mentions(t: SurfaceTerm, name: Text) -> Yn {
-  match t.kind -> Yn {
+pub fn dir_here_mentions(t: SurfaceTerm, name: Text): Bool {
+  match t.kind: Bool {
     SkVar(n) => n == name
     SkBlock(stmts) => dir_assigns(stmts, name)
-    _ => no
+    _ => false
   }
 }
 
-fn dir_any_mentions(ts: List(SurfaceTerm), name: Text) -> Yn {
-  match ts -> Yn {
-    Nil => no
+pub fn dir_any_mentions(ts: List(SurfaceTerm), name: Text): Bool {
+  match ts: Bool {
+    Nil => false
     Cons(t, rest) => dir_here_mentions(t, name) || dir_any_mentions(rest, name)
   }
 }
 
 // Whether the name occurs in `t`, assigned or read.
-fn dir_mentions(t: SurfaceTerm, name: Text) -> Yn {
+pub fn dir_mentions(t: SurfaceTerm, name: Text): Bool {
   dir_any_mentions(subterms(t, Nil), name)
 }
 
-fn dir_stmt_mentions(s: SurfaceStmt, name: Text) -> Yn {
-  dir_mentions(SurfaceTerm { kind: SkBlock(Cons(s, Nil)), start: 0, end: 0 }, name)
+pub fn dir_stmt_mentions(s: SurfaceStmt, name: Text): Bool {
+  dir_mentions(
+    SurfaceTerm { occurrence: None, kind: SkBlock(Cons(s, Nil)), start: 0, end: 0 },
+    name
+  )
 }
 
-fn dir_init_mentions(stmts: List(SurfaceStmt), name: Text) -> Yn {
-  match stmts -> Yn {
-    Nil => no
+pub fn dir_init_mentions(stmts: List(SurfaceStmt), name: Text): Bool {
+  match stmts: Bool {
+    Nil => false
     Cons(s, rest) => dir_stmt_mentions(s, name) || dir_init_mentions(rest, name)
   }
 }
 
-fn dir_guard_ok(guard: Option(SurfaceTerm), k: Text) -> Yn {
-  match guard -> Yn {
-    Some(g) => !dir_mentions(g, k)
-    None => yes
+pub fn dir_guard_ok(guard: Option(SurfaceTerm), k: Text): Bool {
+  match guard: Bool {
+    Some(g) => not(dir_mentions(g, k))
+    None => true
   }
 }
 
 // A call `k(e)` where `e` does not mention `k`.
-fn dir_is_call(f: SurfaceTerm, args: List(SurfaceTerm), k: Text) -> Yn {
-  match f.kind -> Yn {
-    SkVar(n) => n == k && match args -> Yn {
-      Cons(a, more) => match more -> Yn {
-        Nil => !dir_mentions(a, k)
-        Cons(x, y) => no
+pub fn dir_is_call(f: SurfaceTerm, args: List(SurfaceTerm), k: Text): Bool {
+  match f.kind: Bool {
+    SkVar(n) => n == k && match args: Bool {
+      Cons(a, more) => match more: Bool {
+        Nil => not(dir_mentions(a, k))
+        Cons(x, y) => false
       }
-      Nil => no
+      Nil => false
     }
-    _ => no
+    _ => false
   }
 }
 
 // Whether `body` is a tail form for the continuation `k`.
 mutual {
-  fn dir_is_tail(body: SurfaceTerm, k: Text) -> Yn {
-    match body -> Yn {
-      surface_term_mk(sk, start, end) => dir_kind_tail(sk, k)
+  pub fn dir_is_tail(body: SurfaceTerm, k: Text): Bool {
+    match body: Bool {
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => dir_kind_tail(sk, k)
     }
   }
 
-  fn dir_kind_tail(sk: SurfaceKind, k: Text) -> Yn {
-    match sk -> Yn {
+  pub fn dir_kind_tail(sk: SurfaceKind, k: Text): Bool {
+    match sk: Bool {
       SkApp(f, args) => dir_is_call(f, args, k)
       SkBlock(stmts) => dir_block_tail(stmts, k)
-      SkIf(c, th, el) => !dir_mentions(c, k) && dir_is_tail(th, k) && dir_else_tail(el, k)
-      SkMatch(s, mk, arms, hb) => !dir_mentions(s, k) && dir_arms_tail(arms, k)
-      _ => no
+      SkIf(c, th, el) => not(dir_mentions(c, k)) && dir_is_tail(th, k) && dir_else_tail(el, k)
+      SkMatch(s, mk, arms, hb) => not(dir_mentions(s, k)) && dir_arms_tail(arms, k)
+      _ => false
     }
   }
 
-  fn dir_else_tail(el: Option(SurfaceTerm), k: Text) -> Yn {
-    match el -> Yn {
+  pub fn dir_else_tail(el: Option(SurfaceTerm), k: Text): Bool {
+    match el: Bool {
       Some(o) => dir_is_tail(o, k)
-      None => no
+      None => false
     }
   }
 
   // The last statement is a tail form, the ones before it do not mention `k`.
-  fn dir_block_tail(stmts: List(SurfaceStmt), k: Text) -> Yn {
-    match stmts -> Yn {
-      Nil => no
-      Cons(s, rest) => match rest -> Yn {
+  pub fn dir_block_tail(stmts: List(SurfaceStmt), k: Text): Bool {
+    match stmts: Bool {
+      Nil => false
+      Cons(s, rest) => match rest: Bool {
         Nil => dir_last_tail(s, k)
-        Cons(x, y) => !dir_stmt_mentions(s, k) && dir_block_tail(rest, k)
+        Cons(x, y) => not(dir_stmt_mentions(s, k)) && dir_block_tail(rest, k)
       }
     }
   }
 
-  fn dir_last_tail(s: SurfaceStmt, k: Text) -> Yn {
-    match s -> Yn {
+  pub fn dir_last_tail(s: SurfaceStmt, k: Text): Bool {
+    match s: Bool {
       StExpr(e) => dir_is_tail(e, k)
-      _ => no
+      _ => false
     }
   }
 
-  fn dir_arms_tail(arms: List(SurfaceArm), k: Text) -> Yn {
-    match arms -> Yn {
-      Nil => yes
+  pub fn dir_arms_tail(arms: List(SurfaceArm), k: Text): Bool {
+    match arms: Bool {
+      Nil => true
       Cons(arm, rest) => dir_arm_tail(arm, k) && dir_arms_tail(rest, k)
     }
   }
 
-  fn dir_arm_tail(arm: SurfaceArm, k: Text) -> Yn {
-    match arm -> Yn {
-      surface_arm_mk(pattern, guard, goal, body) => dir_guard_ok(guard, k) && dir_is_tail(body, k)
+  pub fn dir_arm_tail(arm: SurfaceArm, k: Text): Bool {
+    match arm: Bool {
+      SurfaceArmMk(pattern, guard, goal, body) => dir_guard_ok(guard, k) && dir_is_tail(body, k)
     }
   }
 }
 
-fn dir_here_lends(t: SurfaceTerm, name: Text) -> Yn {
-  match t.kind -> Yn {
-    SkBorrow(m, x) => m && match lin_place(x) -> Yn {
-      Some(p) => p.fst == name
-      None => no
+pub fn dir_here_lends(t: SurfaceTerm, name: Text): Bool {
+  match t.kind: Bool {
+    SkBorrow(m, x) => m && match lin_place(x): Bool {
+      Some(p) => (p: Text) == name
+      None => false
     }
     SkBlock(stmts) => dir_assigns(stmts, name)
-    _ => no
+    _ => false
   }
 }
 
-fn dir_any_lends(ts: List(SurfaceTerm), name: Text) -> Yn {
-  match ts -> Yn {
-    Nil => no
+pub fn dir_any_lends(ts: List(SurfaceTerm), name: Text): Bool {
+  match ts: Bool {
+    Nil => false
     Cons(t, rest) => dir_here_lends(t, name) || dir_any_lends(rest, name)
   }
 }
 
 // Whether `t` lends `name` mutably (`&mut name…`) or assigns it.
-fn dir_lends_mutably(t: SurfaceTerm, name: Text) -> Yn {
+pub fn dir_lends_mutably(t: SurfaceTerm, name: Text): Bool {
   dir_any_lends(subterms(t, Nil), name)
 }

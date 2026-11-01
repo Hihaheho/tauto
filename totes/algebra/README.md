@@ -46,7 +46,7 @@
 この構成は数学の証明ライブラリであり、任意精度の実行時整数・有理数実装の保証ではない。
 `examples/rational.taut` は非標準の正負の分数、逆数、ゼロ代表、埋め込みを検査する。
 
-`cargo test --locked -p tauto --test rational` は整数・有理数の全数学宣言の公理依存、
+`cargo run --locked -p tauto-cli -- test cases/check/rational.eure` は整数・有理数の全数学宣言の公理依存、
 不正な分母・非零証明・偽の等式・生の代表の誤った同一視の拒否を検査する。
 
 ## 宇宙と論理的前提
@@ -55,16 +55,16 @@
 外延性を除くモジュールと例は公理なしで検査される。型クラス、カーネル、
 標準ライブラリの等式や変換規則を変更しない。
 
-`src/Extensionality.taut` だけは既存の `funext` を明示的に import し、
+`src/Extensionality.taut` だけは `std.Quot` の `funext` を import し、
 宇宙 0 の準同型の写像について、各点の等式から関数の等式を導く。
-この定理の検査結果には `funext` が記録される。高い宇宙の関数外延性、
+この定理の検査結果には `funext` が使う公理 `Quot::sound` が記録される。高い宇宙の関数外延性、
 準同型の束全体の等式、証明の同一視を仮定しない。
 
 AlgebraEq を使うモノイド・群の層は、商型・setoid・古典公理・一般の環や体の階層・補題の自動探索を提供しない。
 
 ## 検査
 
-`cargo test --locked -p tauto --test algebra` は実例の全宣言、公理依存、
+`cargo run --locked -p tauto-cli -- test cases/check/algebra.eure` は実例の全宣言、公理依存、
 誤った法則・準同型・宇宙の拒否を検査する。
 
 ## 有限和・行列・線形写像
@@ -105,7 +105,7 @@ AlgebraEq を使うモノイド・群の層は、商型・setoid・古典公理�
 
 既存の `examples/natural.taut` は加法・乗法モノイドを再利用して自然数半環を作り、
 長方形行列の積と作用、零寸法、任意寸法の線形性を検査する。
-`cargo test --locked -p tauto --test algebra` は一般的な定理と実例の公理なし検査に加え、
+`cargo run --locked -p tauto-cli -- test cases/check/algebra.eure` は一般的な定理と実例の公理なし検査に加え、
 不正な添字、寸法の不一致、誤った演算構造、偽の線形性・行列計算の拒否を検査する。
 
 この半環の法則は carrier の `AlgebraEq` を使う。代表元どうしの別の同値関係で
@@ -135,7 +135,7 @@ AlgebraEq を使うモノイド・群の層は、商型・setoid・古典公理�
 係数と入力ベクトルに使う。任意の寸法で代表独立性を検査し、正負・零の係数を含む
 具体的な行列の作用と積も計算して確かめる。
 
-`cargo test --locked -p tauto --test relation_matrix` は全数学宣言の公理なし検査、
+`cargo run --locked -p tauto-cli -- test cases/check/relation-matrix.eure` は全数学宣言の公理なし検査、
 寸法の不一致・不正な同値証明・生の代表の誤った同一視・誤った計算値の拒否を検査する。
 積の実装を加法に変える mutation も、既存 API との一致証明によって拒否される。
 代表独立性だけでは演算が意図した積であることの保証にならない点を区別する。

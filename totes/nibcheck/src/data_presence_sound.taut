@@ -1,0 +1,299 @@
+import "summary_sound.taut"
+
+// Presence is independent of the summary stored for a declaration.
+pub(open) inductive DataPresent(m: Ordmap(Text, Data), n: Text): Prop {
+  Mk(
+    value: Data,
+    found: Ordmap::get(m, n, Ordmap::compare_text) = Some(value)
+  ): DataPresent(m, n)
+}
+pub def DataDomainExtends(
+  a: Ordmap(Text, Data),
+  b: Ordmap(Text, Data)
+): Prop := ∀ n: Text. ∀ h: DataPresent(a, n). DataPresent(b, n)
+
+pub theorem data_presence_insert_other(
+  m: Ordmap(Text, Data),
+  k: Text,
+  v: Data,
+  n: Text,
+  o: Ordering,
+  ne: (o = Equal) -> False,
+  eo: Ordmap::compare_text(n, k) = o,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text),
+  h: DataPresent(m, n)
+): DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  match h: DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+    Mk(value, found) => DataPresent::Mk(
+      value,
+      Eq::trans(
+        Ordmap::get_insert_other(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          m,
+          k,
+          v,
+          n,
+          o,
+          ne,
+          eo,
+          ordered
+        ),
+        found
+      )
+    )
+  }
+}
+
+pub theorem data_presence_insert_k(
+  m: Ordmap(Text, Data),
+  k: Text,
+  v: Data,
+  n: Text,
+  o: Ordering,
+  eo: Ordmap::compare_text(n, k) = o,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text),
+  h: DataPresent(m, n)
+): DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  match o: DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+    Equal => Eq::subst(
+      (z: Text) => DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), z),
+      Eq::sym(Ordmap::compare_text_eq(n, k, eo)),
+      DataPresent::Mk(v, Ordmap::text_get_insert_same(m, k, v, ordered))
+    )
+    Less => data_presence_insert_other(m, k, v, n, Less, q => less_ne_equal(q), eo, ordered, h)
+    Greater => data_presence_insert_other(
+      m,
+      k,
+      v,
+      n,
+      Greater,
+      q => greater_ne_equal(q),
+      eo,
+      ordered,
+      h
+    )
+  }
+}
+
+pub theorem data_presence_insert(
+  m: Ordmap(Text, Data),
+  k: Text,
+  v: Data,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text)
+): DataDomainExtends(m, Ordmap::insert(m, k, v, Ordmap::compare_text)) {
+  n => h => data_presence_insert_k(m, k, v, n, Ordmap::compare_text(n, k), Refl, ordered, h)
+}
+
+pub theorem data_presence_map(
+  es: List(Pair(Text, Data)),
+  f: (Data) -> Data,
+  m: Ordmap(Text, Data),
+  ordered: Ordmap::ordered(m, Ordmap::compare_text)
+): And(
+  Ordmap::ordered(datas_map_decls(es, f, m), Ordmap::compare_text),
+  DataDomainExtends(m, datas_map_decls(es, f, m))
+) {
+  match es: And(
+    Ordmap::ordered(datas_map_decls(es, f, m), Ordmap::compare_text),
+    DataDomainExtends(m, datas_map_decls(es, f, m))
+  ) {
+    Nil => AndIntro(ordered, n => h => h)
+    Cons(e, rest) => {
+      let next: Ordmap(Text, Data) := Ordmap::insert(m, e.fst, f(e.snd), Ordmap::compare_text)
+      let result: And(
+        Ordmap::ordered(datas_map_decls(rest, f, next), Ordmap::compare_text),
+        DataDomainExtends(next, datas_map_decls(rest, f, next))
+      ) := data_presence_map(
+        rest,
+        f,
+        next,
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          m,
+          e.fst,
+          f(e.snd),
+          ordered
+        )
+      )
+      AndIntro(
+        And::left(result),
+        n => h => And::right(result)(n, data_presence_insert(m, e.fst, f(e.snd), ordered)(n, h))
+      )
+    }
+  }
+}
+
+pub theorem data_presence_update(
+  d: Datas,
+  n: Text,
+  data: Data,
+  ordered: SummaryOrdered(d)
+): DataDomainExtends(summary_decls(d), summary_decls(summary_update(d, n, data))) {
+  let r: Pair(
+    Kind,
+    List(Text)
+  ) := ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })
+  data_presence_insert(
+    summary_decls(d),
+    n,
+    data_with_summary(data, kind_join(dbase(data), pfst(r)), psnd(r)),
+    ordered
+  )
+}
+
+pub def DataRoundPresence(
+  d: Datas,
+  result: Pair(Datas, Bool)
+): Prop := DataDomainExtends(summary_decls(d), summary_decls(summary_result(result)))
+
+pub theorem data_presence_round_test(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Bool,
+  n: Text,
+  data: Data,
+  b: Bool,
+  ordered: SummaryOrdered(d),
+  ih: ∀ next: Datas. ∀ flag: Bool. ∀ ready: SummaryReady(
+    next
+  ). DataRoundPresence(next, datas_round(rest, next, flag)),
+  ready: SummaryReady(d),
+  found: datas_decl(d, n) = Some(data)
+): DataRoundPresence(d, summary_round_test(rest, d, grew, n, data, b)) {
+  match b: DataRoundPresence(d, summary_round_test(rest, d, grew, n, data, b)) {
+    true => ih(d, grew, ready)
+    false => key => h => ih(
+      summary_update(d, n, data),
+      true,
+      summary_update_ready(d, n, data, ready, found)
+    )(key, data_presence_update(d, n, data, ordered)(key, h))
+  }
+}
+
+pub theorem data_presence_round_decl(
+  rest: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Bool,
+  n: Text,
+  o: Option(Data),
+  found: datas_decl(d, n) = o,
+  ready: SummaryReady(d),
+  ih: ∀ next: Datas. ∀ flag: Bool. ∀ good: SummaryReady(
+    next
+  ). DataRoundPresence(next, datas_round(rest, next, flag))
+): DataRoundPresence(d, summary_round_decl(rest, d, grew, n, o)) {
+  match o: DataRoundPresence(d, summary_round_decl(rest, d, grew, n, o)) {
+    None => ih(d, grew, ready)
+    Some(data) => data_presence_round_test(
+      rest,
+      d,
+      grew,
+      n,
+      data,
+      summary_test(d, data),
+      And::left(ready),
+      ih,
+      ready,
+      found
+    )
+  }
+}
+
+pub theorem data_presence_round(
+  es: List(Pair(Text, Data)),
+  d: Datas,
+  grew: Bool,
+  ready: SummaryReady(d)
+): DataRoundPresence(d, datas_round(es, d, grew)) {
+  match es: DataRoundPresence(d, datas_round(es, d, grew)) {
+    Nil => n => h => h
+    Cons(e, rest) => Eq::subst(
+      (r: Pair(Datas, Bool)) => DataRoundPresence(d, r),
+      Eq::sym(summary_round_unf(e, rest, d, grew)),
+      data_presence_round_decl(
+        rest,
+        d,
+        grew,
+        summary_key(e),
+        datas_decl(d, summary_key(e)),
+        Refl,
+        ready,
+        next => flag => good => data_presence_round(rest, next, flag, good)
+      )
+    )
+  }
+}
+
+pub def DataSummaryPresence(
+  d: Datas,
+  next: Datas
+): Prop := DataDomainExtends(summary_decls(d), summary_decls(next))
+
+pub theorem data_presence_choice(
+  j: Nat,
+  d: Datas,
+  b: Bool,
+  next: DataSummaryPresence(d, datas_rounds(j, d))
+): DataSummaryPresence(d, summary_rounds_choice(j, d, b)) {
+  match b: DataSummaryPresence(d, summary_rounds_choice(j, d, b)) {
+    true => next
+    false => n => h => h
+  }
+}
+
+pub theorem data_presence_rounds(
+  k: Nat,
+  d: Datas,
+  ready: SummaryReady(d)
+): DataSummaryPresence(d, datas_rounds(k, d)) {
+  match k: DataSummaryPresence(d, datas_rounds(k, d)) {
+    Zero => And::right(
+      data_presence_map(
+        Ordmap::entries(summary_decls(d)),
+        data_top,
+        summary_decls(d),
+        And::left(ready)
+      )
+    )
+    Succ(j) => {
+      let r: Pair(Datas, Bool) := datas_round(Ordmap::entries(summary_decls(d)), d, false)
+      let next: DataSummaryPresence(
+        summary_result(r),
+        summary_rounds_choice(j, summary_result(r), summary_grew(r))
+      ) := data_presence_choice(
+        j,
+        summary_result(r),
+        summary_grew(r),
+        data_presence_rounds(
+          j,
+          summary_result(r),
+          summary_round_ready(Ordmap::entries(summary_decls(d)), d, false, ready)
+        )
+      )
+      Eq::subst(
+        (z: Datas) => DataSummaryPresence(d, z),
+        Eq::sym(summary_rounds_unf(j, d)),
+        n => h => next(n, data_presence_round(Ordmap::entries(summary_decls(d)), d, false, ready)(n, h))
+      )
+    }
+  }
+}
+
+// The conservative fallback also retains every registered declaration.
+pub theorem datas_summarize_preserves_declarations(
+  d: Datas,
+  ordered: SummaryOrdered(d)
+): DataSummaryPresence(d, datas_summarize(d)) {
+  n => h => data_presence_rounds(
+    summary_steps(d),
+    summary_initial(d),
+    summary_initial_ready(d, ordered)
+  )(
+    n,
+    And::right(
+      data_presence_map(Ordmap::entries(summary_decls(d)), data_least, summary_decls(d), ordered)
+    )(n, h)
+  )
+}

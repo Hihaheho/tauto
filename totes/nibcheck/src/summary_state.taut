@@ -1,29 +1,30 @@
 import "summary_sound.taut"
 import "join_sound.taut"
 import "types_decl.taut"
+import "../../surface/src/surface.taut"
 
 // The summary invariant carried by the checker after data finalization.
-def CkSummaryOk(c: Checker): Prop := SummaryOk(ck_datas_of(c))
+pub def CkSummaryOk(c: Checker): Prop := SummaryOk(ck_datas_of(c))
 
-theorem ck_summary_fixed(
+pub theorem ck_summary_fixed(
   c: Checker,
   next: Checker,
   ok: CkSummaryOk(c),
   fixed: CkFixed(c, next)
 ): CkSummaryOk(next) {
-  Eq_subst(SummaryOk, and_left(fixed), ok)
+  Eq::subst(SummaryOk, And::left(fixed), ok)
 }
 
-theorem ck_summary_grows(
+pub theorem ck_summary_grows(
   c: Checker,
   next: Checker,
   ok: CkSummaryOk(c),
   grows: Grows(c, next)
 ): CkSummaryOk(next) {
-  ck_summary_fixed(c, next, ok, and_right(and_right(and_right(grows))))
+  ck_summary_fixed(c, next, ok, And::right(And::right(And::right(grows))))
 }
 
-fn summary_replace(c: Checker, d: Datas) -> Checker {
+pub fn summary_replace(c: Checker, d: Datas): Checker {
   Checker {
     classes: c.classes,
     instances: c.instances,
@@ -47,50 +48,49 @@ fn summary_replace(c: Checker, d: Datas) -> Checker {
     kept: c.kept,
     assume: c.assume,
     pending: c.pending,
+    constructor_uses: c.constructor_uses,
     locals: c.locals,
     terms: c.terms,
     closure_results: c.closure_results,
+    product_checks: c.product_checks,
     hint: c.hint,
     under_borrow: c.under_borrow,
+    type_params: c.type_params,
     steps: c.steps
   }
 }
 
-fn summary_mark_k(d: Datas, n: Text, o: Option(Data)) -> Datas {
-  match o -> Datas {
+pub fn summary_mark_k(d: Datas, n: Text, o: Option(Data)): Datas {
+  match o: Datas {
     None => d
-    Some(
-      data
-    ) => datas_with_decls(
+    Some(data) => datas_with_decls(
       d,
-      ordmap_insert(
+      Ordmap::insert(
         summary_decls(d),
         n,
         data_with_recursive(data, datas_reaches_from(d, n, n)),
-        ordmap_compare_text
+        Ordmap::compare_text
       )
     )
   }
 }
 
-theorem summary_mark_unf(
+pub theorem summary_mark_unf(
   d: Datas,
   n: Text
-): Eq(Datas, datas_mark_recursive(d, n), summary_mark_k(d, n, datas_decl(d, n))) { refl() }
+): datas_mark_recursive(d, n) = summary_mark_k(d, n, datas_decl(d, n)) { Refl }
 
-theorem summary_mark_ordered_k(
+pub theorem summary_mark_ordered_k(
   d: Datas,
   n: Text,
   o: Option(Data),
   ordered: SummaryOrdered(d)
 ): SummaryOrdered(summary_mark_k(d, n, o)) {
-  match o -> SummaryOrdered(summary_mark_k(d, n, o)) {
+  match o: SummaryOrdered(summary_mark_k(d, n, o)) {
     None => ordered
-    Some(
-      data
-    ) => ordmap_insert_ordered(
-      ordmap_compare_text,
-      ordmap_compare_text_law(),
+    Some(data) => Ordmap::insert_ordered(
+      Ordmap::compare_text,
+      Ordmap::compare_text_law(),
       summary_decls(d),
       n,
       data_with_recursive(data, datas_reaches_from(d, n, n)),
@@ -99,47 +99,40 @@ theorem summary_mark_ordered_k(
   }
 }
 
-theorem summary_mark_ordered(
+pub theorem summary_mark_ordered(
   d: Datas,
   n: Text,
   ordered: SummaryOrdered(d)
 ): SummaryOrdered(datas_mark_recursive(d, n)) {
-  Eq_subst(
+  Eq::subst(
     SummaryOrdered,
-    Eq_sym(summary_mark_unf(d, n)),
+    Eq::sym(summary_mark_unf(d, n)),
     summary_mark_ordered_k(d, n, datas_decl(d, n), ordered)
   )
 }
 
-theorem summary_mark_step(
+pub theorem summary_mark_step(
   e: Pair(Text, Data),
   rest: List(Pair(Text, Data)),
   c: Checker
-): Eq(
-  Mut1(Unit, Checker),
-  ck_mark_recursive(Cons(e, rest), c),
-  ck_rewrap1(
+): ck_mark_recursive(Cons(e, rest), c) = ck_rewrap1(
     ck_mark_recursive(
       rest,
       summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
     )
-  )
-) { refl() }
+  ) { Refl }
 
-theorem ck_mark_summary_ordered(
+pub theorem ck_mark_summary_ordered(
   es: List(Pair(Text, Data)),
   c: Checker,
   ordered: SummaryOrdered(ck_datas_of(c))
 ): SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
-  match es -> SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+  match es: SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
     Nil => ordered
-    Cons(
-      e,
-      rest
-    ) => Eq_subst(
+    Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => SummaryOrdered(ck_datas_of(ck_st(z))),
-      Eq_sym(
-        Eq_trans(
+      Eq::sym(
+        Eq::trans(
           summary_mark_step(e, rest, c),
           ck_rewrap1_id(
             ck_mark_recursive(
@@ -158,116 +151,106 @@ theorem ck_mark_summary_ordered(
   }
 }
 
-fn summary_finish_decl_k(c: Checker, d: SurfaceData, o: Option(Text)) -> Mut1(Unit, Checker) {
-  match o -> Mut1(Unit, Checker) {
-    None => mut1(star(), c)
+pub fn summary_finish_decl_k(c: Checker, d: SurfaceData, o: Option(Text)): Mut1(Unit, Checker) {
+  match o: Mut1(Unit, Checker) {
+    None => mut1(Star, c)
     Some(m) => ck_rewrap1(ck_error(c, m, TySpan { start: d.start, end: d.end }))
   }
 }
 
-theorem summary_finish_decl_unf(
+pub theorem summary_finish_decl_unf(
   c: Checker,
   d: SurfaceData
-): Eq(
-  Mut1(Unit, Checker),
-  ck_finish_decl(c, d),
-  summary_finish_decl_k(c, d, ck_finish_message(ck_datas_of(c), d))
-) { refl() }
+): ck_finish_decl(c, d) = summary_finish_decl_k(c, d, ck_finish_message(ck_datas_of(c), d)) { Refl }
 
-theorem summary_finish_decl_k_same(
+pub theorem summary_finish_decl_k_same(
   c: Checker,
   d: SurfaceData,
   o: Option(Text)
-): Eq(Datas, ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))), ck_datas_of(c)) {
-  match o -> Eq(Datas, ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))), ck_datas_of(c)) {
-    None => refl()
-    Some(m) => refl()
+): ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) {
+  match o: ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) {
+    None => Refl
+    Some(m) => Refl
   }
 }
 
-theorem ck_finish_decl_datas(
+pub theorem ck_finish_decl_datas(
   c: Checker,
   d: SurfaceData
-): Eq(Datas, ck_datas_of(ck_st(ck_finish_decl(c, d))), ck_datas_of(c)) {
-  Eq_trans(
-    Eq_congr((z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)), summary_finish_decl_unf(c, d)),
+): ck_datas_of(ck_st(ck_finish_decl(c, d))) = ck_datas_of(c) {
+  Eq::trans(
+    Eq::congr((z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)), summary_finish_decl_unf(c, d)),
     summary_finish_decl_k_same(c, d, ck_finish_message(ck_datas_of(c), d))
   )
 }
 
-theorem ck_finish_stmt_datas(
+pub theorem ck_finish_stmt_datas(
   c: Checker,
   s: SurfaceStmt
-): Eq(Datas, ck_datas_of(ck_st(ck_finish_stmt(c, s))), ck_datas_of(c)) {
-  match s -> Eq(Datas, ck_datas_of(ck_st(ck_finish_stmt(c, s))), ck_datas_of(c)) {
-    StLet(n, ty, v, b, m) => refl()
-    StVar(n, ty, v, b) => refl()
-    StModule(n, ss, start, end) => refl()
-    StAssign(n, v) => refl()
-    StFn(f) => refl()
-    StTheorem(t) => refl()
-    StDef(t) => refl()
-    StMutual(ss, start, end) => refl()
-    StImport(path, start, end) => refl()
-    StInductive(i) => refl()
-    StEffect(e) => refl()
-    StStruct(
-      d
-    ) => Eq_trans(
-      Eq_congr(
+): ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) {
+  match s: ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) {
+    StLet(n, ty, v, b, m) => Refl
+    StVar(n, ty, v, b) => Refl
+    StModule(n, ss, start, end) => Refl
+    StAssign(n, n_place, v) => Refl
+    StCalled(n_generates, v) => Refl
+    StFn(f) => Refl
+    StTheorem(t) => Refl
+    StDef(t) => Refl
+    StMutual(ss, start, end) => Refl
+    StImport(path, start, end) => Refl
+    StInductive(i) => Refl
+    StEffect(e) => Refl
+    StStruct(d) => Eq::trans(
+      Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
         ck_rewrap1_id(ck_finish_decl(c, d))
       ),
       ck_finish_decl_datas(c, d)
     )
-    StEnum(
-      d
-    ) => Eq_trans(
-      Eq_congr(
+    StEnum(d) => Eq::trans(
+      Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
         ck_rewrap1_id(ck_finish_decl(c, d))
       ),
       ck_finish_decl_datas(c, d)
     )
-    StExtern(abi, fs, start, end) => refl()
-    StClass(cl) => refl()
-    StInstance(i) => refl()
-    StWhile(cond, body) => refl()
-    StReturn(v) => refl()
-    StExpr(v) => refl()
-    StOther(what, start, end) => refl()
-    StMacro(n, f, start, end) => refl()
-    StSyntax(n, grammar, start, end) => refl()
+    StExtern(abi, fs, start, end) => Refl
+    StClass(cl) => Refl
+    StInstance(i) => Refl
+    StWhile(cond, body) => Refl
+    StReturn(v) => Refl
+    StExpr(v) => Refl
+    StOther(what, start, end) => Refl
+    StMacro(n, f, start, end) => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
+    StSyntax(n, grammar, start, end) => Refl
   }
 }
 
-fn summary_finish_stmts_k(rest: List(SurfaceStmt), m: Mut1(Unit, Checker)) -> Mut1(Unit, Checker) {
-  match m -> Mut1(Unit, Checker) {
+pub fn summary_finish_stmts_k(
+  rest: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) {
     mut1(v, next) => ck_rewrap1(ck_finish_stmts(rest, next))
   }
 }
 
-theorem summary_finish_stmts_unf(
+pub theorem summary_finish_stmts_unf(
   s: SurfaceStmt,
   rest: List(SurfaceStmt),
   c: Checker
-): Eq(
-  Mut1(Unit, Checker),
-  ck_finish_stmts(Cons(s, rest), c),
-  summary_finish_stmts_k(rest, ck_finish_stmt(c, s))
-) { refl() }
+): ck_finish_stmts(Cons(s, rest), c) = summary_finish_stmts_k(rest, ck_finish_stmt(c, s)) { Refl }
 
-theorem summary_finish_stmts_k_same(
+pub theorem summary_finish_stmts_k_same(
   rest: List(SurfaceStmt),
   m: Mut1(Unit, Checker),
-  ih: ∀ c: Checker. Eq(Datas, ck_datas_of(ck_st(ck_finish_stmts(rest, c))), ck_datas_of(c))
-): Eq(Datas, ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))), ck_datas_of(ck_st(m))) {
-  match m -> Eq(Datas, ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))), ck_datas_of(ck_st(m))) {
-    mut1(
-      v,
-      next
-    ) => Eq_trans(
-      Eq_congr(
+  ih: ∀ c: Checker. ck_datas_of(ck_st(ck_finish_stmts(rest, c))) = ck_datas_of(c)
+): ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) {
+  match m: ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) {
+    mut1(v, next) => Eq::trans(
+      Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
         ck_rewrap1_id(ck_finish_stmts(rest, next))
       ),
@@ -276,21 +259,18 @@ theorem summary_finish_stmts_k_same(
   }
 }
 
-theorem ck_finish_stmts_datas(
+pub theorem ck_finish_stmts_datas(
   ss: List(SurfaceStmt),
   c: Checker
-): Eq(Datas, ck_datas_of(ck_st(ck_finish_stmts(ss, c))), ck_datas_of(c)) {
-  match ss -> Eq(Datas, ck_datas_of(ck_st(ck_finish_stmts(ss, c))), ck_datas_of(c)) {
-    Nil => refl()
-    Cons(
-      s,
-      rest
-    ) => Eq_trans(
-      Eq_congr(
+): ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) {
+  match ss: ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) {
+    Nil => Refl
+    Cons(s, rest) => Eq::trans(
+      Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
         summary_finish_stmts_unf(s, rest, c)
       ),
-      Eq_trans(
+      Eq::trans(
         summary_finish_stmts_k_same(
           rest,
           ck_finish_stmt(c, s),
@@ -302,46 +282,36 @@ theorem ck_finish_stmts_datas(
   }
 }
 
-fn summary_finish_datas_k(
+pub fn summary_finish_datas_k(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
-) -> Mut1(Unit, Checker) {
-  match m -> Mut1(Unit, Checker) {
-    mut1(
-      v,
-      next
-    ) => ck_rewrap1(
+): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) {
+    mut1(v, next) => ck_rewrap1(
       ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
     )
   }
 }
 
-theorem summary_finish_datas_unf(
+pub theorem summary_finish_datas_unf(
   c: Checker,
   program: List(SurfaceStmt)
-): Eq(
-  Mut1(Unit, Checker),
-  ck_finish_datas(c, program),
-  summary_finish_datas_k(
+): ck_finish_datas(c, program) = summary_finish_datas_k(
     program,
-    ck_mark_recursive(ordmap_entries(summary_decls(ck_datas_of(c))), c)
-  )
-) { refl() }
+    ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c)
+  ) { Refl }
 
-theorem summary_finish_datas_k_ok(
+pub theorem summary_finish_datas_k_ok(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker),
   ordered: SummaryOrdered(ck_datas_of(ck_st(m)))
 ): CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) {
-  match m -> CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) {
-    mut1(
-      v,
-      next
-    ) => Eq_subst(
+  match m: CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) {
+    mut1(v, next) => Eq::subst(
       SummaryOk,
-      Eq_sym(
-        Eq_trans(
-          Eq_congr(
+      Eq::sym(
+        Eq::trans(
+          Eq::congr(
             (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
             ck_rewrap1_id(
               ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
@@ -355,18 +325,18 @@ theorem summary_finish_datas_k_ok(
   }
 }
 
-theorem ck_finish_datas_summary_ok(
+pub theorem ck_finish_datas_summary_ok(
   c: Checker,
   program: List(SurfaceStmt),
   ordered: SummaryOrdered(ck_datas_of(c))
 ): CkSummaryOk(ck_st(ck_finish_datas(c, program))) {
-  Eq_subst(
+  Eq::subst(
     (z: Mut1(Unit, Checker)) => CkSummaryOk(ck_st(z)),
-    Eq_sym(summary_finish_datas_unf(c, program)),
+    Eq::sym(summary_finish_datas_unf(c, program)),
     summary_finish_datas_k_ok(
       program,
-      ck_mark_recursive(ordmap_entries(summary_decls(ck_datas_of(c))), c),
-      ck_mark_summary_ordered(ordmap_entries(summary_decls(ck_datas_of(c))), c, ordered)
+      ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c),
+      ck_mark_summary_ordered(Ordmap::entries(summary_decls(ck_datas_of(c))), c, ordered)
     )
   )
 }
@@ -374,32 +344,32 @@ theorem ck_finish_datas_summary_ok(
 // `ck_unify` keeps the summaries good: the state after it extends the one
 // before (`ck_unify_ok`), which leaves the declarations as they were
 // (`ck_summary_grows`).
-theorem ck_unify_summary_ok(
+pub theorem ck_unify_summary_ok(
   c: Checker,
   a: Ty,
   b: Ty,
   ordered: CkOrdered(c),
   ok: CkSummaryOk(c)
 ): CkSummaryOk(ck_st(ck_unify(c, a, b))) {
-  ck_summary_grows(c, ck_st(ck_unify(c, a, b)), ok, and_left(ck_unify_ok(c, a, b)(ordered)))
+  ck_summary_grows(c, ck_st(ck_unify(c, a, b)), ok, And::left(ck_unify_ok(c, a, b)(ordered)))
 }
 
-theorem ck_fits_summary_ok(
+pub theorem ck_fits_summary_ok(
   c: Checker,
   a: Ty,
   b: Ty,
   ordered: CkOrdered(c),
   ok: CkSummaryOk(c)
 ): CkSummaryOk(ck_st(ck_fits(c, a, b))) {
-  ck_summary_grows(c, ck_st(ck_fits(c, a, b)), ok, and_left(ck_fits_ok(c, a, b)(ordered)))
+  ck_summary_grows(c, ck_st(ck_fits(c, a, b)), ok, And::left(ck_fits_ok(c, a, b)(ordered)))
 }
 
-theorem ck_join_summary_ok(
+pub theorem ck_join_summary_ok(
   c: Checker,
   a: Ty,
   b: Ty,
   ordered: CkOrdered(c),
   ok: CkSummaryOk(c)
 ): CkSummaryOk(ck_st(ck_join(c, a, b))) {
-  ck_summary_grows(c, ck_st(ck_join(c, a, b)), ok, and_left(ck_join_ok(c, a, b)(ordered)))
+  ck_summary_grows(c, ck_st(ck_join(c, a, b)), ok, And::left(ck_join_ok(c, a, b)(ordered)))
 }

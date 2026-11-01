@@ -6,42 +6,42 @@ import "fits_sound.taut"
 
 // ----- the steps of `ck_join`, as the `&mut` desugaring writes them -----
 
-fn ck_join_my(c: Checker, a0: Ty, b0: Ty, y: Yn) -> Mut1(Yn, Checker) {
-  match y -> Mut1(Yn, Checker) {
-    yes => ck_rewrap1(ck_attempt_unify(c, a0, b0))
-    no => mut1(no, c)
+pub fn ck_join_my(c: Checker, a0: Ty, b0: Ty, y: Bool): Mut1(Bool, Checker) {
+  match y: Mut1(Bool, Checker) {
+    true => ck_rewrap1(ck_attempt_unify(c, a0, b0))
+    false => mut1(false, c)
   }
 }
 
-fn ck_join_e2(a: Ty, b: Ty, m: Mut1(Option(Ty), Checker)) -> Mut1(Ty, Checker) {
-  match m -> Mut1(Ty, Checker) {
-    mut1(o, c2) => match o -> Mut1(Ty, Checker) {
+pub fn ck_join_e2(a: Ty, b: Ty, m: Mut1(Option(Ty), Checker)): Mut1(Ty, Checker) {
+  match m: Mut1(Ty, Checker) {
+    mut1(o, c2) => match o: Mut1(Ty, Checker) {
       Some(t) => mut1(t, c2)
       None => mut1(ty_union(Cons(a, Cons(b, Nil))), c2)
     }
   }
 }
 
-fn ck_join_e1z(c: Checker, a: Ty, b: Ty, z: Yn) -> Mut1(Ty, Checker) {
-  match z -> Mut1(Ty, Checker) {
-    yes => mut1(b, c)
-    no => ck_join_e2(a, b, ck_join_borrowed(c, a, b))
+pub fn ck_join_e1z(c: Checker, a: Ty, b: Ty, z: Bool): Mut1(Ty, Checker) {
+  match z: Mut1(Ty, Checker) {
+    true => mut1(b, c)
+    false => ck_join_e2(a, b, ck_join_borrowed(c, a, b))
   }
 }
 
-fn ck_join_e1y(c: Checker, a: Ty, b: Ty, y: Yn) -> Mut1(Ty, Checker) {
-  match y -> Mut1(Ty, Checker) {
-    yes => mut1(a, c)
-    no => ck_join_e1z(c, a, b, ty_is_never(a))
+pub fn ck_join_e1y(c: Checker, a: Ty, b: Ty, y: Bool): Mut1(Ty, Checker) {
+  match y: Mut1(Ty, Checker) {
+    true => mut1(a, c)
+    false => ck_join_e1z(c, a, b, ty_is_never(a))
   }
 }
 
-fn ck_join_e(c: Checker, a0: Ty, b0: Ty) -> Mut1(Ty, Checker) {
+pub fn ck_join_e(c: Checker, a0: Ty, b0: Ty): Mut1(Ty, Checker) {
   ck_join_e1y(
     c,
     ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
     ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
-    yn_or(
+    Bool::or(
       ty_eq(
         ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
         ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0)
@@ -51,81 +51,73 @@ fn ck_join_e(c: Checker, a0: Ty, b0: Ty) -> Mut1(Ty, Checker) {
   )
 }
 
-fn ck_join_k(a0: Ty, b0: Ty, m: Mut1(Yn, Checker)) -> Mut1(Ty, Checker) {
-  match m -> Mut1(Ty, Checker) {
-    mut1(v, c2) => match v -> Mut1(Ty, Checker) {
-      yes => mut1(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), a0), c2)
-      no => ck_join_e(c2, a0, b0)
+pub fn ck_join_k(a0: Ty, b0: Ty, m: Mut1(Bool, Checker)): Mut1(Ty, Checker) {
+  match m: Mut1(Ty, Checker) {
+    mut1(v, c2) => match v: Mut1(Ty, Checker) {
+      true => mut1(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), a0), c2)
+      false => ck_join_e(c2, a0, b0)
     }
   }
 }
 
-theorem join_unf(
+pub theorem join_unf(
   c: Checker,
   a0: Ty,
   b0: Ty
-): Eq(
-  Mut1(Ty, Checker),
-  ck_join(c, a0, b0),
-  ck_join_k(a0, b0, ck_join_my(c, a0, b0, yn_or(ck_has_vars(c, a0), ck_has_vars(c, b0))))
-) {
-  refl()
+): ck_join(c, a0, b0) = ck_join_k(a0, b0, ck_join_my(c, a0, b0, Bool::or(ck_has_vars(c, a0), ck_has_vars(c, b0)))) {
+  Refl
 }
 
-fn ck_jb_k(x: Ty, m: Mut1(Yn, Checker)) -> Mut1(Option(Ty), Checker) {
-  match m -> Mut1(Option(Ty), Checker) {
-    mut1(v, c2) => match v -> Mut1(Option(Ty), Checker) {
-      yes => mut1(Some(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), x)), c2)
-      no => mut1(None(), c2)
+pub fn ck_jb_k(x: Ty, m: Mut1(Bool, Checker)): Mut1(Option(Ty), Checker) {
+  match m: Mut1(Option(Ty), Checker) {
+    mut1(v, c2) => match v: Mut1(Option(Ty), Checker) {
+      true => mut1(Some(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), x)), c2)
+      false => mut1(None, c2)
     }
   }
 }
 
-fn ck_jb2y(c: Checker, a: Ty, x: Ty, y: Yn) -> Mut1(Option(Ty), Checker) {
-  match y -> Mut1(Option(Ty), Checker) {
-    yes => ck_jb_k(x, ck_attempt_unify(c, x, a))
-    no => mut1(None(), c)
+pub fn ck_jb2y(c: Checker, a: Ty, x: Ty, y: Bool): Mut1(Option(Ty), Checker) {
+  match y: Mut1(Option(Ty), Checker) {
+    true => ck_jb_k(x, ck_attempt_unify(c, x, a))
+    false => mut1(None, c)
   }
 }
 
-fn ck_jb2(c: Checker, a: Ty, b: Ty) -> Mut1(Option(Ty), Checker) {
-  match b -> Mut1(Option(Ty), Checker) {
-    TyBorrow(x, m) => ck_jb2y(c, a, x, yn_and(yn_not(ty_is_borrow(a)), kind_dup(ck_kind(c, x))))
-    _ => mut1(None(), c)
+pub fn ck_jb2(c: Checker, a: Ty, b: Ty): Mut1(Option(Ty), Checker) {
+  match b: Mut1(Option(Ty), Checker) {
+    TyBorrow(x, m) => ck_jb2y(c, a, x, Bool::and(not(ty_is_borrow(a)), kind_dup(ck_kind(c, x))))
+    _ => mut1(None, c)
   }
 }
 
-theorem jb2_unf(
+pub theorem jb2_unf(
   c: Checker,
   a: Ty,
   b: Ty
-): Eq(Mut1(Option(Ty), Checker), ck_join_borrowed_second(c, a, b), ck_jb2(c, a, b)) {
-  refl()
+): ck_join_borrowed_second(c, a, b) = ck_jb2(c, a, b) {
+  Refl
 }
 
-fn ck_jb1y(c: Checker, x: Ty, m: Yn, b: Ty, y: Yn) -> Mut1(Option(Ty), Checker) {
-  match y -> Mut1(Option(Ty), Checker) {
-    yes => ck_jb_k(x, ck_attempt_unify(c, x, b))
-    no => ck_rewrap1(ck_join_borrowed_second(c, TyBorrow(x, m), b))
+pub fn ck_jb1y(c: Checker, x: Ty, m: Bool, b: Ty, y: Bool): Mut1(Option(Ty), Checker) {
+  match y: Mut1(Option(Ty), Checker) {
+    true => ck_jb_k(x, ck_attempt_unify(c, x, b))
+    false => ck_rewrap1(ck_join_borrowed_second(c, TyBorrow(x, m), b))
   }
 }
 
-theorem jb1_borrow(
+pub theorem jb1_borrow(
   c: Checker,
   x: Ty,
-  m: Yn,
+  m: Bool,
   b: Ty
-): Eq(
-  Mut1(Option(Ty), Checker),
-  ck_join_borrowed(c, TyBorrow(x, m), b),
-  ck_jb1y(c, x, m, b, yn_and(yn_not(ty_is_borrow(b)), kind_dup(ck_kind(c, x))))
-) {
-  refl()
+): ck_join_borrowed(c, TyBorrow(x, m), b) = ck_jb1y(c, x, m, b, Bool::and(not(ty_is_borrow(b)), kind_dup(ck_kind(c, x)))) {
+  Refl
 }
 
 // ----- what each step gives -----
 
-def JoinOk(
+pub def JoinOk(
   c: Checker,
   m: Mut1(Ty, Checker),
   a0: Ty,
@@ -135,7 +127,7 @@ def JoinOk(
 ) -> And(Grows(c, ck_st(m)), And(SubAt(ck_st(m), a0, ck_val(m)), SubAt(ck_st(m), b0, ck_val(m))))
 
 // The type found for two, if any, and that both fit it.
-def OptOk(
+pub def OptOk(
   c: Checker,
   m: Mut1(Option(Ty), Checker),
   a: Ty,
@@ -144,11 +136,11 @@ def OptOk(
   CkOrdered(c)
 ) -> And(
   Grows(c, ck_st(m)),
-  ∀ t: Ty. (Eq(Option(Ty), ck_val(m), Some(t))) -> And(SubAt(ck_st(m), a, t), SubAt(ck_st(m), b, t))
+  ∀ t: Ty. (ck_val(m) = Some(t)) -> And(SubAt(ck_st(m), a, t), SubAt(ck_st(m), b, t))
 )
 
 // The same, with both the same type as it.
-def OptEq(
+pub def OptEq(
   c: Checker,
   m: Mut1(Option(Ty), Checker),
   a: Ty,
@@ -158,36 +150,36 @@ def OptEq(
 ) -> And(
   Grows(c, ck_st(m)),
   ∀ t: Ty. (
-    Eq(Option(Ty), ck_val(m), Some(t))
+    ck_val(m) = Some(t)
   ) -> And(TyEqAt(ck_st(m), a, t), TyEqAt(ck_st(m), b, t))
 )
 
-fn jn_is_some(o: Option(Ty)) -> Yn {
-  match o -> Yn {
-    Some(t) => yes
-    None => no
+pub fn jn_is_some(o: Option(Ty)): Bool {
+  match o: Bool {
+    Some(t) => true
+    None => false
   }
 }
 
-theorem jn_none_ne_some(t: Ty, e: Eq(Option(Ty), None(), Some(t))): False {
-  no_ne_yes(Eq_subst((z: Option(Ty)) => Eq(Yn, no, jn_is_some(z)), e, refl()))
+pub theorem jn_none_ne_some(t: Ty, e: None = Some(t)): False {
+  false_ne_true(Eq::subst((z: Option(Ty)) => false = jn_is_some(z), e, Refl))
 }
 
-theorem jn_or_yes(
-  x: Yn,
-  y: Yn,
+pub theorem jn_or_true(
+  x: Bool,
+  y: Bool,
   p: Prop,
-  e: Eq(Yn, yn_or(x, y), yes),
-  f1: (Eq(Yn, x, yes)) -> p,
-  f2: (Eq(Yn, y, yes)) -> p
+  e: Bool::or(x, y) = true,
+  f1: (x = true) -> p,
+  f2: (y = true) -> p
 ): p {
-  match x -> (Eq(Yn, yn_or(x, y), yes)) -> ((Eq(Yn, x, yes)) -> p) -> p {
-    yes => (e2: Eq(Yn, yes, yes)) => (g: (Eq(Yn, yes, yes)) -> p) => g(refl())
-    no => (e2: Eq(Yn, y, yes)) => (g: (Eq(Yn, no, yes)) -> p) => f2(e2)
+  match x: (Bool::or(x, y) = true) -> ((x = true) -> p) -> p {
+    true => (e2: true = true) => (g: (true = true) -> p) => g(Refl)
+    false => (e2: y = true) => (g: (false = true) -> p) => f2(e2)
   }(e, f1)
 }
 
-theorem attempt_unify_eq(
+pub theorem attempt_unify_eq(
   c: Checker,
   a: Ty,
   b: Ty
@@ -197,19 +189,19 @@ theorem attempt_unify_eq(
     ck_attempt_unify(c, a, b),
     ck_attempt_k(c, ck_unify(c, a, b)),
     (c2: Checker) => TyEqAt(c2, a, b),
-    refl(),
+    Refl,
     post_attempt(c, ck_unify(c, a, b), (c2: Checker) => TyEqAt(c2, a, b), ck_unify_ok(c, a, b))
   )
 }
 
-theorem join_my_ok(
+pub theorem join_my_ok(
   c: Checker,
   a0: Ty,
   b0: Ty,
-  y: Yn
+  y: Bool
 ): Post(c, ck_join_my(c, a0, b0, y), (c2: Checker) => TyEqAt(c2, a0, b0)) {
-  match y -> Post(c, ck_join_my(c, a0, b0, y), (c2: Checker) => TyEqAt(c2, a0, b0)) {
-    yes => post_map(
+  match y: Post(c, ck_join_my(c, a0, b0, y), (c2: Checker) => TyEqAt(c2, a0, b0)) {
+    true => post_map(
       c,
       ck_attempt_unify(c, a0, b0),
       (c2: Checker) => TyEqAt(c2, a0, b0),
@@ -217,11 +209,11 @@ theorem join_my_ok(
       (c2: Checker, h: TyEqAt(c2, a0, b0)) => h,
       attempt_unify_eq(c, a0, b0)
     )
-    no => post_no(c, (c2: Checker) => TyEqAt(c2, a0, b0))
+    false => post_false(c, (c2: Checker) => TyEqAt(c2, a0, b0))
   }
 }
 
-theorem join_after(
+pub theorem join_after(
   c: Checker,
   c2: Checker,
   m: Mut1(Ty, Checker),
@@ -230,21 +222,19 @@ theorem join_after(
   g: (CkOrdered(c)) -> Grows(c, c2),
   h: JoinOk(c2, m, a0, b0)
 ): JoinOk(c, m, a0, b0) {
-  (
-    o: CkOrdered(c)
-  ) => and_intro(
-    grows_trans(c, c2, ck_st(m), g(o), and_left(h(and_left(g(o))))),
-    and_right(h(and_left(g(o))))
+  (o: CkOrdered(c)) => AndIntro(
+    grows_trans(c, c2, ck_st(m), g(o), And::left(h(And::left(g(o))))),
+    And::right(h(And::left(g(o))))
   )
 }
 
-theorem jn_never_sub(
+pub theorem jn_never_sub(
   c: Checker,
   x0: Ty,
   x: Ty,
   d: Ty,
   hx: TyEqAt(c, x0, x),
-  e: Eq(Yn, ty_is_never(x), yes)
+  e: ty_is_never(x) = true
 ): SubAt(c, x0, d) {
   sub_trans_at(
     c,
@@ -252,70 +242,61 @@ theorem jn_never_sub(
     x,
     d,
     sub_of_eq(c, x0, x, hx),
-    Eq_subst((z: Ty) => SubAt(c, z, d), Eq_sym(ck_never_of(x, e)), sub_never_at(c, d))
+    Eq::subst((z: Ty) => SubAt(c, z, d), Eq::sym(ck_never_of(x, e)), sub_never_at(c, d))
   )
 }
 
 // ----- the type found for a borrow and a value -----
 
-theorem opt_none(c: Checker, a: Ty, b: Ty): OptOk(c, mut1(None(), c), a, b) {
-  (
-    o: CkOrdered(c)
-  ) => and_intro(
+pub theorem opt_none(c: Checker, a: Ty, b: Ty): OptOk(c, mut1(None, c), a, b) {
+  (o: CkOrdered(c)) => AndIntro(
     grows_refl(c, o),
-    (t: Ty, e: Eq(Option(Ty), None(), Some(t))) => False_elim(jn_none_ne_some(t, e))
+    (t: Ty, e: None = Some(t)) => False::elim(jn_none_ne_some(t, e))
   )
 }
 
-theorem jbk_ok(
+pub theorem jbk_ok(
   c: Checker,
   x: Ty,
   y: Ty,
-  m: Mut1(Yn, Checker),
+  m: Mut1(Bool, Checker),
   h: Post(c, m, (c2: Checker) => TyEqAt(c2, x, y))
 ): OptEq(c, ck_jb_k(x, m), x, y) {
-  match m -> (Post(c, m, (c2: Checker) => TyEqAt(c2, x, y))) -> OptEq(c, ck_jb_k(x, m), x, y) {
-    mut1(
-      v,
-      c2
-    ) => match v -> (
+  match m: (Post(c, m, (c2: Checker) => TyEqAt(c2, x, y))) -> OptEq(c, ck_jb_k(x, m), x, y) {
+    mut1(v, c2) => match v: (
       Post(c, mut1(v, c2), (c3: Checker) => TyEqAt(c3, x, y))
     ) -> OptEq(c, ck_jb_k(x, mut1(v, c2)), x, y) {
-      yes => (
-        h1: Post(c, mut1(yes, c2), (c3: Checker) => TyEqAt(c3, x, y))
-      ) => (
+      true => (h1: Post(c, mut1(true, c2), (c3: Checker) => TyEqAt(c3, x, y))) => (
         o: CkOrdered(c)
-      ) => and_intro(
-        and_left(h1(o)),
+      ) => AndIntro(
+        And::left(h1(o)),
         (
           t: Ty,
-          e: Eq(Option(Ty), Some(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), x)), Some(t))
-        ) => Eq_subst(
+          e: Some(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), x)) = Some(t)
+        ) => Eq::subst(
           (z: Ty) => And(TyEqAt(c2, x, z), TyEqAt(c2, y, z)),
           ck_some_inj(ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), x), t, e),
-          and_intro(
+          AndIntro(
             ty_resolve_eq(ck_steps_of(c2), ck_subst_of(c2), KeptOk(ck_kept_of(c2)), x),
-            tyeq_trans(
-              tyeq_sym(and_right(h1(o))(refl())),
+            TyeqTrans(
+              TyeqSym(And::right(h1(o))(Refl)),
               ty_resolve_eq(ck_steps_of(c2), ck_subst_of(c2), KeptOk(ck_kept_of(c2)), x)
             )
           )
         )
       )
-      no => (
-        h1: Post(c, mut1(no, c2), (c3: Checker) => TyEqAt(c3, x, y))
-      ) => (
+      false => (h1: Post(c, mut1(false, c2), (c3: Checker) => TyEqAt(c3, x, y))) => (
         o: CkOrdered(c)
-      ) => and_intro(
-        and_left(h1(o)),
-        (t: Ty, e: Eq(Option(Ty), None(), Some(t))) => False_elim(jn_none_ne_some(t, e))
+      ) => AndIntro(
+        And::left(h1(o)),
+        (t: Ty, e: None = Some(t)) => False::elim(jn_none_ne_some(t, e))
       )
     }
   }(h)
 }
 
 // From the same type to fitting it: a borrow fits what its value is.
-theorem opt_of_eq(
+pub theorem opt_of_eq(
   c: Checker,
   m: Mut1(Option(Ty), Checker),
   x: Ty,
@@ -326,29 +307,24 @@ theorem opt_of_eq(
   fb: ∀ c2: Checker. ∀ t: Ty. (TyEqAt(c2, x, t)) -> (TyEqAt(c2, y, t)) -> SubAt(c2, b, t),
   h: OptEq(c, m, x, y)
 ): OptOk(c, m, a, b) {
-  (
-    o: CkOrdered(c)
-  ) => and_intro(
-    and_left(h(o)),
-    (
-      t: Ty,
-      e: Eq(Option(Ty), ck_val(m), Some(t))
-    ) => and_intro(
-      fa(ck_st(m), t, and_left(and_right(h(o))(t, e)), and_right(and_right(h(o))(t, e))),
-      fb(ck_st(m), t, and_left(and_right(h(o))(t, e)), and_right(and_right(h(o))(t, e)))
+  (o: CkOrdered(c)) => AndIntro(
+    And::left(h(o)),
+    (t: Ty, e: ck_val(m) = Some(t)) => AndIntro(
+      fa(ck_st(m), t, And::left(And::right(h(o))(t, e)), And::right(And::right(h(o))(t, e))),
+      fb(ck_st(m), t, And::left(And::right(h(o))(t, e)), And::right(And::right(h(o))(t, e)))
     )
   )
 }
 
-theorem jb2y_ok(
+pub theorem jb2y_ok(
   c: Checker,
   a: Ty,
   x: Ty,
-  mm: Yn,
-  y: Yn
+  mm: Bool,
+  y: Bool
 ): OptOk(c, ck_jb2y(c, a, x, y), a, TyBorrow(x, mm)) {
-  match y -> OptOk(c, ck_jb2y(c, a, x, y), a, TyBorrow(x, mm)) {
-    yes => opt_of_eq(
+  match y: OptOk(c, ck_jb2y(c, a, x, y), a, TyBorrow(x, mm)) {
+    true => opt_of_eq(
       c,
       ck_jb_k(x, ck_attempt_unify(c, x, a)),
       x,
@@ -356,81 +332,80 @@ theorem jb2y_ok(
       a,
       TyBorrow(x, mm),
       (c2: Checker, t: Ty, hx: TyEqAt(c2, x, t), hy: TyEqAt(c2, a, t)) => sub_of_eq(c2, a, t, hy),
-      (
-        c2: Checker,
-        t: Ty,
-        hx: TyEqAt(c2, x, t),
-        hy: TyEqAt(c2, a, t)
-      ) => sub_unborrow_at(c2, x, t, mm, sub_of_eq(c2, x, t, hx)),
+      (c2: Checker, t: Ty, hx: TyEqAt(c2, x, t), hy: TyEqAt(c2, a, t)) => sub_unborrow_at(
+        c2,
+        x,
+        t,
+        mm,
+        sub_of_eq(c2, x, t, hx)
+      ),
       jbk_ok(c, x, a, ck_attempt_unify(c, x, a), attempt_unify_eq(c, x, a))
     )
-    no => opt_none(c, a, TyBorrow(x, mm))
+    false => opt_none(c, a, TyBorrow(x, mm))
   }
 }
 
-theorem jb2_cases(
+pub theorem jb2_cases(
   c: Checker,
   a: Ty,
   b1: Ty,
   b: Ty,
-  eb: Eq(Ty, b1, b)
+  eb: b1 = b
 ): OptOk(c, ck_jb2(c, a, b), a, b1) {
-  match b -> OptOk(c, ck_jb2(c, a, b), a, b1) {
-    TyBorrow(
-      x,
-      mm
-    ) => Eq_subst(
+  match b: OptOk(c, ck_jb2(c, a, b), a, b1) {
+    TyBorrow(x, mm) => Eq::subst(
       (z: Ty) => OptOk(c, ck_jb2(c, a, TyBorrow(x, mm)), a, z),
-      Eq_sym(eb),
-      jb2y_ok(c, a, x, mm, yn_and(yn_not(ty_is_borrow(a)), kind_dup(ck_kind(c, x))))
+      Eq::sym(eb),
+      jb2y_ok(c, a, x, mm, Bool::and(not(ty_is_borrow(a)), kind_dup(ck_kind(c, x))))
     )
     _ => opt_none(c, a, b1)
   }
 }
 
-theorem second_ok(c: Checker, a: Ty, b: Ty): OptOk(c, ck_join_borrowed_second(c, a, b), a, b) {
-  Eq_subst(
+pub theorem second_ok(c: Checker, a: Ty, b: Ty): OptOk(c, ck_join_borrowed_second(c, a, b), a, b) {
+  Eq::subst(
     (z: Mut1(Option(Ty), Checker)) => OptOk(c, z, a, b),
-    Eq_sym(jb2_unf(c, a, b)),
-    jb2_cases(c, a, b, b, refl())
+    Eq::sym(jb2_unf(c, a, b)),
+    jb2_cases(c, a, b, b, Refl)
   )
 }
 
-theorem opt_rewrap(
+pub theorem opt_rewrap(
   c: Checker,
   m: Mut1(Option(Ty), Checker),
   a: Ty,
   b: Ty,
   h: OptOk(c, m, a, b)
 ): OptOk(c, ck_rewrap1(m), a, b) {
-  Eq_subst((z: Mut1(Option(Ty), Checker)) => OptOk(c, z, a, b), Eq_sym(ck_rewrap1_id(m)), h)
+  Eq::subst((z: Mut1(Option(Ty), Checker)) => OptOk(c, z, a, b), Eq::sym(ck_rewrap1_id(m)), h)
 }
 
-theorem jb1y_ok(
+pub theorem jb1y_ok(
   c: Checker,
   x: Ty,
-  mm: Yn,
+  mm: Bool,
   b: Ty,
-  y: Yn
+  y: Bool
 ): OptOk(c, ck_jb1y(c, x, mm, b, y), TyBorrow(x, mm), b) {
-  match y -> OptOk(c, ck_jb1y(c, x, mm, b, y), TyBorrow(x, mm), b) {
-    yes => opt_of_eq(
+  match y: OptOk(c, ck_jb1y(c, x, mm, b, y), TyBorrow(x, mm), b) {
+    true => opt_of_eq(
       c,
       ck_jb_k(x, ck_attempt_unify(c, x, b)),
       x,
       b,
       TyBorrow(x, mm),
       b,
-      (
-        c2: Checker,
-        t: Ty,
-        hx: TyEqAt(c2, x, t),
-        hy: TyEqAt(c2, b, t)
-      ) => sub_unborrow_at(c2, x, t, mm, sub_of_eq(c2, x, t, hx)),
+      (c2: Checker, t: Ty, hx: TyEqAt(c2, x, t), hy: TyEqAt(c2, b, t)) => sub_unborrow_at(
+        c2,
+        x,
+        t,
+        mm,
+        sub_of_eq(c2, x, t, hx)
+      ),
       (c2: Checker, t: Ty, hx: TyEqAt(c2, x, t), hy: TyEqAt(c2, b, t)) => sub_of_eq(c2, b, t, hy),
       jbk_ok(c, x, b, ck_attempt_unify(c, x, b), attempt_unify_eq(c, x, b))
     )
-    no => opt_rewrap(
+    false => opt_rewrap(
       c,
       ck_join_borrowed_second(c, TyBorrow(x, mm), b),
       TyBorrow(x, mm),
@@ -441,41 +416,38 @@ theorem jb1y_ok(
 }
 
 // A step at a type a wildcard arm cannot name: `x` is found from `ex`.
-theorem opt_cases<x: Ty>(
+pub theorem opt_cases<x: Ty>(
   c: Checker,
   f: (Ty) -> Mut1(Option(Ty), Checker),
   g: (Ty) -> Mut1(Option(Ty), Checker),
   a1: Ty,
   b: Ty,
-  ex: Eq(Ty, a1, x),
-  e: Eq(Mut1(Option(Ty), Checker), f(x), g(x)),
+  ex: a1 = x,
+  e: f(x) = g(x),
   h: OptOk(c, g(a1), a1, b)
 ): OptOk(c, f(x), a1, b) {
-  Eq_subst(
+  Eq::subst(
     (z: Mut1(Option(Ty), Checker)) => OptOk(c, z, a1, b),
-    Eq_sym(e),
-    Eq_subst((w: Ty) => OptOk(c, g(w), a1, b), ex, h)
+    Eq::sym(e),
+    Eq::subst((w: Ty) => OptOk(c, g(w), a1, b), ex, h)
   )
 }
 
-theorem jb1_cases(
+pub theorem jb1_cases(
   c: Checker,
   a1: Ty,
   a: Ty,
   b: Ty,
-  ea: Eq(Ty, a1, a)
+  ea: a1 = a
 ): OptOk(c, ck_join_borrowed(c, a, b), a1, b) {
-  match a -> OptOk(c, ck_join_borrowed(c, a, b), a1, b) {
-    TyBorrow(
-      x,
-      mm
-    ) => Eq_subst(
+  match a: OptOk(c, ck_join_borrowed(c, a, b), a1, b) {
+    TyBorrow(x, mm) => Eq::subst(
       (z: Ty) => OptOk(c, ck_join_borrowed(c, TyBorrow(x, mm), b), z, b),
-      Eq_sym(ea),
-      Eq_subst(
+      Eq::sym(ea),
+      Eq::subst(
         (z: Mut1(Option(Ty), Checker)) => OptOk(c, z, TyBorrow(x, mm), b),
-        Eq_sym(jb1_borrow(c, x, mm, b)),
-        jb1y_ok(c, x, mm, b, yn_and(yn_not(ty_is_borrow(b)), kind_dup(ck_kind(c, x))))
+        Eq::sym(jb1_borrow(c, x, mm, b)),
+        jb1y_ok(c, x, mm, b, Bool::and(not(ty_is_borrow(b)), kind_dup(ck_kind(c, x))))
       )
     )
     _ => opt_cases(
@@ -485,19 +457,19 @@ theorem jb1_cases(
       a1,
       b,
       ea,
-      refl(),
+      Refl,
       opt_rewrap(c, ck_join_borrowed_second(c, a1, b), a1, b, second_ok(c, a1, b))
     )
   }
 }
 
-theorem borrowed_ok(c: Checker, a: Ty, b: Ty): OptOk(c, ck_join_borrowed(c, a, b), a, b) {
-  jb1_cases(c, a, a, b, refl())
+pub theorem borrowed_ok(c: Checker, a: Ty, b: Ty): OptOk(c, ck_join_borrowed(c, a, b), a, b) {
+  jb1_cases(c, a, a, b, Refl)
 }
 
 // ----- the join -----
 
-theorem join_e2_some(
+pub theorem join_e2_some(
   c: Checker,
   c2: Checker,
   a0: Ty,
@@ -510,14 +482,14 @@ theorem join_e2_some(
   hb: TyEqAt(c, b0, b),
   h: And(SubAt(c2, a, t), SubAt(c2, b, t))
 ): And(SubAt(c2, a0, t), SubAt(c2, b0, t)) {
-  and_intro(
+  AndIntro(
     sub_trans_at(
       c2,
       a0,
       a,
       t,
       sub_of_eq(c2, a0, a, tyeq_at_move(c, c2, g, a0, a, ha)),
-      and_left(h)
+      And::left(h)
     ),
     sub_trans_at(
       c2,
@@ -525,12 +497,12 @@ theorem join_e2_some(
       b,
       t,
       sub_of_eq(c2, b0, b, tyeq_at_move(c, c2, g, b0, b, hb)),
-      and_right(h)
+      And::right(h)
     )
   )
 }
 
-theorem join_union(
+pub theorem join_union(
   c: Checker,
   x0: Ty,
   x: Ty,
@@ -557,7 +529,7 @@ theorem join_union(
   )
 }
 
-theorem join_e2_ok(
+pub theorem join_e2_ok(
   c: Checker,
   a0: Ty,
   b0: Ty,
@@ -568,39 +540,26 @@ theorem join_e2_ok(
   m: Mut1(Option(Ty), Checker),
   h: OptOk(c, m, a, b)
 ): JoinOk(c, ck_join_e2(a, b, m), a0, b0) {
-  match m -> (OptOk(c, m, a, b)) -> JoinOk(c, ck_join_e2(a, b, m), a0, b0) {
-    mut1(
-      o2,
-      c2
-    ) => match o2 -> (
+  match m: (OptOk(c, m, a, b)) -> JoinOk(c, ck_join_e2(a, b, m), a0, b0) {
+    mut1(o2, c2) => match o2: (
       OptOk(c, mut1(o2, c2), a, b)
     ) -> JoinOk(c, ck_join_e2(a, b, mut1(o2, c2)), a0, b0) {
-      Some(
-        t
-      ) => (
-        h1: OptOk(c, mut1(Some(t), c2), a, b)
-      ) => (
-        o: CkOrdered(c)
-      ) => and_intro(
-        and_left(h1(o)),
-        join_e2_some(c, c2, a0, b0, a, b, t, and_left(h1(o)), ha, hb, and_right(h1(o))(t, refl()))
+      Some(t) => (h1: OptOk(c, mut1(Some(t), c2), a, b)) => (o: CkOrdered(c)) => AndIntro(
+        And::left(h1(o)),
+        join_e2_some(c, c2, a0, b0, a, b, t, And::left(h1(o)), ha, hb, And::right(h1(o))(t, Refl))
       )
-      None => (
-        h1: OptOk(c, mut1(None(), c2), a, b)
-      ) => (
-        o: CkOrdered(c)
-      ) => and_intro(
-        and_left(h1(o)),
-        and_intro(
+      None => (h1: OptOk(c, mut1(None, c2), a, b)) => (o: CkOrdered(c)) => AndIntro(
+        And::left(h1(o)),
+        AndIntro(
           join_union(
             c2,
             a0,
             a,
             ty_union(Cons(a, Cons(b, Nil))),
             Cons(a, Cons(b, Nil)),
-            tyeq_at_move(c, c2, and_left(h1(o)), a0, a, ha),
-            tysub_any_here(Cons(b, Nil), sub_of_eq(c2, a, a, tyeq_refl(a))),
-            tyeq_union_norm(Cons(a, Cons(b, Nil)))
+            tyeq_at_move(c, c2, And::left(h1(o)), a0, a, ha),
+            TysubAnyHere(Cons(b, Nil), sub_of_eq(c2, a, a, TyeqRefl(a))),
+            TyeqUnionNorm(Cons(a, Cons(b, Nil)))
           ),
           join_union(
             c2,
@@ -608,9 +567,9 @@ theorem join_e2_ok(
             b,
             ty_union(Cons(a, Cons(b, Nil))),
             Cons(a, Cons(b, Nil)),
-            tyeq_at_move(c, c2, and_left(h1(o)), b0, b, hb),
-            tysub_any_there(a, tysub_any_here(Nil, sub_of_eq(c2, b, b, tyeq_refl(b)))),
-            tyeq_union_norm(Cons(a, Cons(b, Nil)))
+            tyeq_at_move(c, c2, And::left(h1(o)), b0, b, hb),
+            TysubAnyThere(a, TysubAnyHere(Nil, sub_of_eq(c2, b, b, TyeqRefl(b)))),
+            TyeqUnionNorm(Cons(a, Cons(b, Nil)))
           )
         )
       )
@@ -618,7 +577,7 @@ theorem join_e2_ok(
   }(h)
 }
 
-theorem join_e1z_ok(
+pub theorem join_e1z_ok(
   c: Checker,
   a0: Ty,
   b0: Ty,
@@ -626,25 +585,29 @@ theorem join_e1z_ok(
   b: Ty,
   ha: TyEqAt(c, a0, a),
   hb: TyEqAt(c, b0, b),
-  z: Yn,
-  ez: Eq(Yn, ty_is_never(a), z)
+  z: Bool,
+  ez: ty_is_never(a) = z
 ): JoinOk(c, ck_join_e1z(c, a, b, z), a0, b0) {
-  match z -> (Eq(Yn, ty_is_never(a), z)) -> JoinOk(c, ck_join_e1z(c, a, b, z), a0, b0) {
-    yes => (
-      e: Eq(Yn, ty_is_never(a), yes)
-    ) => (
-      o: CkOrdered(c)
-    ) => and_intro(
+  match z: (ty_is_never(a) = z) -> JoinOk(c, ck_join_e1z(c, a, b, z), a0, b0) {
+    true => (e: ty_is_never(a) = true) => (o: CkOrdered(c)) => AndIntro(
       grows_refl(c, o),
-      and_intro(jn_never_sub(c, a0, a, b, ha, e), sub_of_eq(c, b0, b, hb))
+      AndIntro(jn_never_sub(c, a0, a, b, ha, e), sub_of_eq(c, b0, b, hb))
     )
-    no => (
-      e: Eq(Yn, ty_is_never(a), no)
-    ) => join_e2_ok(c, a0, b0, a, b, ha, hb, ck_join_borrowed(c, a, b), borrowed_ok(c, a, b))
+    false => (e: ty_is_never(a) = false) => join_e2_ok(
+      c,
+      a0,
+      b0,
+      a,
+      b,
+      ha,
+      hb,
+      ck_join_borrowed(c, a, b),
+      borrowed_ok(c, a, b)
+    )
   }(ez)
 }
 
-theorem join_e1y_ok(
+pub theorem join_e1y_ok(
   c: Checker,
   a0: Ty,
   b0: Ty,
@@ -652,44 +615,46 @@ theorem join_e1y_ok(
   b: Ty,
   ha: TyEqAt(c, a0, a),
   hb: TyEqAt(c, b0, b),
-  y: Yn,
-  ey: Eq(Yn, yn_or(ty_eq(a, b), ty_is_never(b)), y)
+  y: Bool,
+  ey: Bool::or(ty_eq(a, b), ty_is_never(b)) = y
 ): JoinOk(c, ck_join_e1y(c, a, b, y), a0, b0) {
-  match y -> (
-    Eq(Yn, yn_or(ty_eq(a, b), ty_is_never(b)), y)
+  match y: (
+    Bool::or(ty_eq(a, b), ty_is_never(b)) = y
   ) -> JoinOk(c, ck_join_e1y(c, a, b, y), a0, b0) {
-    yes => (
-      e: Eq(Yn, yn_or(ty_eq(a, b), ty_is_never(b)), yes)
-    ) => (
-      o: CkOrdered(c)
-    ) => and_intro(
+    true => (e: Bool::or(ty_eq(a, b), ty_is_never(b)) = true) => (o: CkOrdered(c)) => AndIntro(
       grows_refl(c, o),
-      and_intro(
+      AndIntro(
         sub_of_eq(c, a0, a, ha),
-        jn_or_yes(
+        jn_or_true(
           ty_eq(a, b),
           ty_is_never(b),
           SubAt(c, b0, a),
           e,
-          (
-            q: Eq(Yn, ty_eq(a, b), yes)
-          ) => sub_of_eq(
+          (q: ty_eq(a, b) = true) => sub_of_eq(
             c,
             b0,
             a,
-            Eq_subst((w: Ty) => TyEqAt(c, b0, w), Eq_sym(ty_eq_sound(a, b, q)), hb)
+            Eq::subst((w: Ty) => TyEqAt(c, b0, w), Eq::sym(ty_eq_sound(a, b, q)), hb)
           ),
-          (q: Eq(Yn, ty_is_never(b), yes)) => jn_never_sub(c, b0, b, a, hb, q)
+          (q: ty_is_never(b) = true) => jn_never_sub(c, b0, b, a, hb, q)
         )
       )
     )
-    no => (
-      e: Eq(Yn, yn_or(ty_eq(a, b), ty_is_never(b)), no)
-    ) => join_e1z_ok(c, a0, b0, a, b, ha, hb, ty_is_never(a), refl())
+    false => (e: Bool::or(ty_eq(a, b), ty_is_never(b)) = false) => join_e1z_ok(
+      c,
+      a0,
+      b0,
+      a,
+      b,
+      ha,
+      hb,
+      ty_is_never(a),
+      Refl
+    )
   }(ey)
 }
 
-theorem join_e_ok(c: Checker, a0: Ty, b0: Ty): JoinOk(c, ck_join_e(c, a0, b0), a0, b0) {
+pub theorem join_e_ok(c: Checker, a0: Ty, b0: Ty): JoinOk(c, ck_join_e(c, a0, b0), a0, b0) {
   join_e1y_ok(
     c,
     a0,
@@ -698,40 +663,35 @@ theorem join_e_ok(c: Checker, a0: Ty, b0: Ty): JoinOk(c, ck_join_e(c, a0, b0), a
     ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0),
     ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), a0),
     ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), b0),
-    yn_or(
+    Bool::or(
       ty_eq(
         ty_resolve_in(ck_steps_of(c), ck_subst_of(c), a0),
         ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0)
       ),
       ty_is_never(ty_resolve_in(ck_steps_of(c), ck_subst_of(c), b0))
     ),
-    refl()
+    Refl
   )
 }
 
-theorem join_k_ok(
+pub theorem join_k_ok(
   c: Checker,
   a0: Ty,
   b0: Ty,
-  m: Mut1(Yn, Checker),
+  m: Mut1(Bool, Checker),
   h: Post(c, m, (c2: Checker) => TyEqAt(c2, a0, b0))
 ): JoinOk(c, ck_join_k(a0, b0, m), a0, b0) {
-  match m -> (
+  match m: (
     Post(c, m, (c2: Checker) => TyEqAt(c2, a0, b0))
   ) -> JoinOk(c, ck_join_k(a0, b0, m), a0, b0) {
-    mut1(
-      v,
-      c2
-    ) => match v -> (
+    mut1(v, c2) => match v: (
       Post(c, mut1(v, c2), (c3: Checker) => TyEqAt(c3, a0, b0))
     ) -> JoinOk(c, ck_join_k(a0, b0, mut1(v, c2)), a0, b0) {
-      yes => (
-        h1: Post(c, mut1(yes, c2), (c3: Checker) => TyEqAt(c3, a0, b0))
-      ) => (
+      true => (h1: Post(c, mut1(true, c2), (c3: Checker) => TyEqAt(c3, a0, b0))) => (
         o: CkOrdered(c)
-      ) => and_intro(
-        and_left(h1(o)),
-        and_intro(
+      ) => AndIntro(
+        And::left(h1(o)),
+        AndIntro(
           sub_of_eq(
             c2,
             a0,
@@ -742,38 +702,36 @@ theorem join_k_ok(
             c2,
             b0,
             ty_resolve_in(ck_steps_of(c2), ck_subst_of(c2), a0),
-            tyeq_trans(
-              tyeq_sym(and_right(h1(o))(refl())),
+            TyeqTrans(
+              TyeqSym(And::right(h1(o))(Refl)),
               ty_resolve_eq(ck_steps_of(c2), ck_subst_of(c2), KeptOk(ck_kept_of(c2)), a0)
             )
           )
         )
       )
-      no => (
-        h1: Post(c, mut1(no, c2), (c3: Checker) => TyEqAt(c3, a0, b0))
-      ) => join_after(
+      false => (h1: Post(c, mut1(false, c2), (c3: Checker) => TyEqAt(c3, a0, b0))) => join_after(
         c,
         c2,
         ck_join_e(c2, a0, b0),
         a0,
         b0,
-        (o: CkOrdered(c)) => and_left(h1(o)),
+        (o: CkOrdered(c)) => And::left(h1(o)),
         join_e_ok(c2, a0, b0)
       )
     }
   }(h)
 }
 
-theorem ck_join_ok(c: Checker, a0: Ty, b0: Ty): JoinOk(c, ck_join(c, a0, b0), a0, b0) {
-  Eq_subst(
+pub theorem ck_join_ok(c: Checker, a0: Ty, b0: Ty): JoinOk(c, ck_join(c, a0, b0), a0, b0) {
+  Eq::subst(
     (z: Mut1(Ty, Checker)) => JoinOk(c, z, a0, b0),
-    Eq_sym(join_unf(c, a0, b0)),
+    Eq::sym(join_unf(c, a0, b0)),
     join_k_ok(
       c,
       a0,
       b0,
-      ck_join_my(c, a0, b0, yn_or(ck_has_vars(c, a0), ck_has_vars(c, b0))),
-      join_my_ok(c, a0, b0, yn_or(ck_has_vars(c, a0), ck_has_vars(c, b0)))
+      ck_join_my(c, a0, b0, Bool::or(ck_has_vars(c, a0), ck_has_vars(c, b0))),
+      join_my_ok(c, a0, b0, Bool::or(ck_has_vars(c, a0), ck_has_vars(c, b0)))
     )
   )
 }

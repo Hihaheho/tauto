@@ -1,0 +1,102 @@
+import "function_reference_sound.taut"
+import "inference_value_fact.taut"
+
+pub theorem ck_infer_term_monomorphic_sound(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  declared: Ty,
+  ctors: List(Pair(Text, Kind)),
+  missing: env_find(env, name) = None,
+  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors)),
+  clean: DiagnosticClean(
+    ck_st(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+  )
+): MonomorphicFunctionTyping(
+  ck_subst_of(c),
+  env,
+  leaf_functions(c),
+  surface_term_mk(SkVar(name), start, end),
+  ck_val(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+) {
+  match k: MonomorphicFunctionTyping(
+    ck_subst_of(c),
+    env,
+    leaf_functions(c),
+    surface_term_mk(SkVar(name), start, end),
+    ck_val(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+  ) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan {start: 0, end: 0},
+        clean
+      )
+    )
+    Succ(j) => Eq::subst(
+      Mut1(Ty, Checker),
+      ck_lookup(c, name, env, TySpan {start: start, end: end}),
+      ck_rewrap1(ck_lookup(c, name, env, TySpan {start: start, end: end})),
+      (m: Mut1(Ty, Checker)) => MonomorphicFunctionTyping(
+        ck_subst_of(c),
+        env,
+        leaf_functions(c),
+        surface_term_mk(SkVar(name), start, end),
+        ck_val(m)
+      ),
+      Eq::sym(ck_rewrap1_id(ck_lookup(c, name, env, TySpan {start: start, end: end}))),
+      ck_lookup_monomorphic_sound(c, name, env, start, end, declared, ctors, missing, found)
+    )
+  }
+}
+pub theorem ck_infer_monomorphic_sound(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  declared: Ty,
+  ctors: List(Pair(Text, Kind)),
+  missing: env_find(env, name) = None,
+  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors)),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkVar(name), start, end), env)))
+): MonomorphicFunctionTyping(
+  ck_subst_of(c),
+  env,
+  leaf_functions(c),
+  surface_term_mk(SkVar(name), start, end),
+  ck_val(ck_infer_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+) {
+  ck_infer_value_fact(
+    (ty: Ty) => MonomorphicFunctionTyping(
+      ck_subst_of(c),
+      env,
+      leaf_functions(c),
+      surface_term_mk(SkVar(name), start, end),
+      ty
+    ),
+    k,
+    c,
+    surface_term_mk(SkVar(name), start, end),
+    env,
+    fuel => accepted => ck_infer_term_monomorphic_sound(
+      fuel,
+      c,
+      name,
+      start,
+      end,
+      env,
+      declared,
+      ctors,
+      missing,
+      found,
+      accepted
+    ),
+    clean
+  )
+}

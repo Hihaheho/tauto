@@ -1,0 +1,351 @@
+import "rules_registered_signatures.taut"
+import "program_function_table_preserved.taut"
+import "function_name_fresh.taut"
+import "../../surface/src/surface.taut"
+
+pub(open) inductive FunctionBeforeRest(
+  rest: List(SurfaceStmt)
+): (Option(Pair(SurfaceFn, Scheme))) -> Prop {
+  FunctionBeforeNone: FunctionBeforeRest(rest, None)
+  FunctionBeforeSome(
+    source: SurfaceFn,
+    scheme: Scheme,
+    apart: FunctionNameAbsent(signature_name(source), types_function_decls(rest))
+  ): FunctionBeforeRest(rest, Some(Pair {fst: source, snd: scheme}))
+}
+
+pub theorem fnt_some_registered(
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker),
+  found: fnt_lookup(ck_st(m), signature_name(source)) = Some(ck_val(m))
+): RegisteredOptionalSignature(
+  fnt_table(ck_st(signature_some_after(source, m))),
+  ck_val(signature_some_after(source, m))
+) {
+  match m: RegisteredOptionalSignature(
+    fnt_table(ck_st(signature_some_after(source, m))),
+    ck_val(signature_some_after(source, m))
+  ) {
+    mut1(scheme, next) => RegisteredOptionalSome(source, scheme, found)
+  }
+}
+pub theorem fnt_none_registered(
+  m: Mut1(Unit, Checker)
+): RegisteredOptionalSignature(
+  fnt_table(ck_st(signature_none_after(m))),
+  ck_val(signature_none_after(m))
+) {
+  match m: RegisteredOptionalSignature(
+    fnt_table(ck_st(signature_none_after(m))),
+    ck_val(signature_none_after(m))
+  ) {
+    mut1(ignored, next) => RegisteredOptionalNone
+  }
+}
+pub theorem fnt_some_before(
+  source: SurfaceFn,
+  rest: List(SurfaceStmt),
+  m: Mut1(Scheme, Checker),
+  absent: FunctionNameAbsent(signature_name(source), types_function_decls(rest))
+): FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) {
+  match m: FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) {
+    mut1(scheme, next) => FunctionBeforeSome(source, scheme, absent)
+  }
+}
+pub theorem fnt_none_before(
+  rest: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): FunctionBeforeRest(rest, ck_val(signature_none_after(m))) {
+  match m: FunctionBeforeRest(rest, ck_val(signature_none_after(m))) {
+    mut1(ignored, next) => FunctionBeforeNone
+  }
+}
+
+pub theorem ck_program_decl_registered(
+  stmt: SurfaceStmt,
+  c: Checker,
+  ordered: CkFnsOrdered(c)
+): RegisteredOptionalSignature(
+  fnt_table(ck_st(ck_program_decl(c, Stmt))),
+  ck_val(ck_program_decl(c, Stmt))
+) {
+  match Stmt: RegisteredOptionalSignature(
+    fnt_table(ck_st(ck_program_decl(c, Stmt))),
+    ck_val(ck_program_decl(c, Stmt))
+  ) {
+    StLet(name, ty, value, borrow, mutable) => RegisteredOptionalNone
+    StVar(name, ty, value, borrow) => RegisteredOptionalNone
+    StModule(name, stmts, start, end) => RegisteredOptionalNone
+    StAssign(name, name_place, value) => RegisteredOptionalNone
+    StCalled(name_generates, value) => RegisteredOptionalNone
+    StFn(f) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredOptionalSignature(
+        fnt_table(ck_st(result)),
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decl_StFn_unf(f, c)),
+      fnt_some_registered(f, ck_add_fn(c, f), ck_add_fn_lookup(c, f, ordered))
+    )
+    StTheorem(t) => RegisteredOptionalNone
+    StDef(t) => RegisteredOptionalNone
+    StMutual(stmts, start, end) => RegisteredOptionalNone
+    StImport(path, start, end) => RegisteredOptionalNone
+    StInductive(i) => RegisteredOptionalNone
+    StEffect(e) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredOptionalSignature(
+        fnt_table(ck_st(result)),
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decl_StEffect_unf(e, c)),
+      fnt_none_registered(ck_declare_effect(c, e))
+    )
+    StStruct(d) => RegisteredOptionalNone
+    StEnum(d) => RegisteredOptionalNone
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredOptionalSignature(
+        fnt_table(ck_st(result)),
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      fnt_none_registered(ck_extern_fns(fns, c))
+    )
+    StClass(class_decl) => RegisteredOptionalNone
+    StInstance(i) => RegisteredOptionalNone
+    StWhile(cond, body) => RegisteredOptionalNone
+    StReturn(value) => RegisteredOptionalNone
+    StExpr(value) => RegisteredOptionalNone
+    StOther(what, start, end) => RegisteredOptionalNone
+    StMacro(name, function, start, end) => RegisteredOptionalNone
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => RegisteredOptionalNone
+    StSyntax(name, grammar, start, end) => RegisteredOptionalNone
+  }
+}
+
+pub theorem ck_program_decl_before(
+  stmt: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  seen: List(Text),
+  fresh: FreshFunctionNames(types_function_decls(Cons(stmt, rest)), seen)
+): FunctionBeforeRest(rest, ck_val(ck_program_decl(c, Stmt))) {
+  match Stmt: FunctionBeforeRest(rest, ck_val(ck_program_decl(c, Stmt))) {
+    StLet(name, ty, value, borrow, mutable) => FunctionBeforeNone
+    StVar(name, ty, value, borrow) => FunctionBeforeNone
+    StModule(name, stmts, start, end) => FunctionBeforeNone
+    StAssign(name, name_place, value) => FunctionBeforeNone
+    StCalled(name_generates, value) => FunctionBeforeNone
+    StFn(f) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => FunctionBeforeRest(
+        rest,
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decl_StFn_unf(f, c)),
+      fnt_some_before(
+        f,
+        rest,
+        ck_add_fn(c, f),
+        fresh_function_absent(
+          types_function_decls(rest),
+          Cons(signature_name(f), seen),
+          fresh_function_tail(f, types_function_decls(rest), seen, Fresh),
+          signature_name(f),
+          MemHere(seen)
+        )
+      )
+    )
+    StTheorem(t) => FunctionBeforeNone
+    StDef(t) => FunctionBeforeNone
+    StMutual(stmts, start, end) => FunctionBeforeNone
+    StImport(path, start, end) => FunctionBeforeNone
+    StInductive(i) => FunctionBeforeNone
+    StEffect(e) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => FunctionBeforeRest(
+        rest,
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decl_StEffect_unf(e, c)),
+      fnt_none_before(rest, ck_declare_effect(c, e))
+    )
+    StStruct(d) => FunctionBeforeNone
+    StEnum(d) => FunctionBeforeNone
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => FunctionBeforeRest(
+        rest,
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      fnt_none_before(rest, ck_extern_fns(fns, c))
+    )
+    StClass(class_decl) => FunctionBeforeNone
+    StInstance(i) => FunctionBeforeNone
+    StWhile(cond, body) => FunctionBeforeNone
+    StReturn(value) => FunctionBeforeNone
+    StExpr(value) => FunctionBeforeNone
+    StOther(what, start, end) => FunctionBeforeNone
+    StMacro(name, function, start, end) => FunctionBeforeNone
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => FunctionBeforeNone
+    StSyntax(name, grammar, start, end) => FunctionBeforeNone
+  }
+}
+
+// Earlier body schemes remain in the map because source names are distinct.
+pub theorem fnt_option_after_rest<first: Option(
+  Pair(SurfaceFn, Scheme)
+)>(
+  rest: List(SurfaceStmt),
+  c: Checker,
+  ordered: CkFnsOrdered(c),
+  before: FunctionBeforeRest(rest, first),
+  registered: RegisteredOptionalSignature(fnt_table(c), first)
+): RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) {
+  match before: RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) {
+    FunctionBeforeNone => RegisteredOptionalNone
+    FunctionBeforeSome(source, scheme, absent) => match registered: RegisteredOptionalSignature(
+      fnt_table(ck_st(ck_program_decls(rest, c))),
+      Some(Pair {fst: source, snd: scheme})
+    ) {
+      RegisteredOptionalSome(stored_source, stored_scheme, found) => RegisteredOptionalSome(
+        source,
+        scheme,
+        Eq::trans(
+          And::right(ck_program_decls_preserved(rest, c, signature_name(source), absent))(ordered),
+          found
+        )
+      )
+    }
+  }
+}
+pub theorem fnt_registered_opt_cons<table: Ordmap(
+  Text,
+  Scheme
+), first: Option(
+  Pair(SurfaceFn, Scheme)
+)>(
+  registered: RegisteredOptionalSignature(table, first),
+  rest: List(Pair(SurfaceFn, Scheme)),
+  remaining: RegisteredSignatures(table, rest)
+): RegisteredSignatures(table, opt_cons(first, rest)) {
+  match registered: RegisteredSignatures(table, opt_cons(first, rest)) {
+    RegisteredOptionalNone => remaining
+    RegisteredOptionalSome(source, scheme, found) => RegisteredSignaturesCons(
+      source,
+      scheme,
+      rest,
+      found,
+      remaining
+    )
+  }
+}
+pub fn fnt_cons_after_tail(
+  first: Option(Pair(SurfaceFn, Scheme)),
+  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)
+): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    List(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    (tail: List(Pair(SurfaceFn, Scheme)), next: Checker) => mut1(opt_cons(first, tail), next),
+    m
+  )
+}
+pub theorem fnt_after_tail_registered(
+  first: Option(Pair(SurfaceFn, Scheme)),
+  m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  head: RegisteredOptionalSignature(fnt_table(ck_st(m)), first),
+  tail: RegisteredSignatures(fnt_table(ck_st(m)), ck_val(m))
+): RegisteredSignatures(
+  fnt_table(ck_st(fnt_cons_after_tail(first, m))),
+  ck_val(fnt_cons_after_tail(first, m))
+) {
+  match m: RegisteredSignatures(
+    fnt_table(ck_st(fnt_cons_after_tail(first, m))),
+    ck_val(fnt_cons_after_tail(first, m))
+  ) {
+    mut1(schemes, next) => fnt_registered_opt_cons(head, schemes, tail)
+  }
+}
+pub fn fnt_cons_after_head(
+  rest: List(SurfaceStmt),
+  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)
+): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    (first: Option(Pair(SurfaceFn, Scheme)), next: Checker) => fnt_cons_after_tail(
+      first,
+      ck_program_decls(rest, next)
+    ),
+    m
+  )
+}
+pub theorem fnt_after_head_registered(
+  rest: List(SurfaceStmt),
+  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  ordered: CkFnsOrdered(ck_st(m)),
+  registered: RegisteredOptionalSignature(fnt_table(ck_st(m)), ck_val(m)),
+  before: FunctionBeforeRest(rest, ck_val(m)),
+  ih: ∀ next: Checker. ∀ next_ordered: CkFnsOrdered(
+    next
+  ). RegisteredSignatures(
+    fnt_table(ck_st(ck_program_decls(rest, next))),
+    ck_val(ck_program_decls(rest, next))
+  )
+): RegisteredSignatures(
+  fnt_table(ck_st(fnt_cons_after_head(rest, m))),
+  ck_val(fnt_cons_after_head(rest, m))
+) {
+  match m: RegisteredSignatures(
+    fnt_table(ck_st(fnt_cons_after_head(rest, m))),
+    ck_val(fnt_cons_after_head(rest, m))
+  ) {
+    mut1(first, next) => fnt_after_tail_registered(
+      first,
+      ck_program_decls(rest, next),
+      fnt_option_after_rest(rest, next, ordered, before, registered),
+      ih(next, ordered)
+    )
+  }
+}
+
+pub theorem ck_program_decls_registered(
+  program: List(SurfaceStmt),
+  c: Checker,
+  seen: List(Text),
+  ordered: CkFnsOrdered(c),
+  fresh: FreshFunctionNames(types_function_decls(program), seen)
+): RegisteredSignatures(
+  fnt_table(ck_st(ck_program_decls(program, c))),
+  ck_val(ck_program_decls(program, c))
+) {
+  match program: RegisteredSignatures(
+    fnt_table(ck_st(ck_program_decls(program, c))),
+    ck_val(ck_program_decls(program, c))
+  ) {
+    Nil => RegisteredSignaturesNil
+    Cons(Stmt, rest) => Eq::subst(
+      (result: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredSignatures(
+        fnt_table(ck_st(result)),
+        ck_val(result)
+      ),
+      Eq::sym(signature_program_decls_cons_unf(Stmt, rest, c)),
+      fnt_after_head_registered(
+        rest,
+        ck_program_decl(c, Stmt),
+        ck_program_decl_ordered(c, Stmt, ordered),
+        ck_program_decl_registered(Stmt, c, ordered),
+        ck_program_decl_before(Stmt, rest, c, seen, Fresh),
+        next => next_ordered => ck_program_decls_registered(
+          rest,
+          next,
+          seen,
+          next_ordered,
+          fresh_function_append_tail(
+            types_stmt_functions(Stmt),
+            types_function_decls(rest),
+            seen,
+            Fresh
+          )
+        )
+      )
+    )
+  }
+}

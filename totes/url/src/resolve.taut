@@ -1,0 +1,113 @@
+import "parse.taut"
+
+// Parsing against a base URL (URL Standard, "URL parsing" with a base): an
+// input with its own scheme is parsed on its own; otherwise it is resolved
+// against the base, whose path must not be opaque unless the input is only a
+// fragment.
+
+pub fn init(ss: List(List(Nat))): List(List(Nat)) {
+  match ss: List(List(Nat)) {
+    Nil => Nil
+    Cons(s, rest) => match rest: List(List(Nat)) {
+      Nil => Nil
+      Cons(s2, more) => Cons(s, init(rest))
+    }
+  }
+}
+
+pub fn base_segments(p: UrlPath): Option(List(List(Nat))) {
+  match p: Option(List(List(Nat))) {
+    Opaque(o) => None
+    Segments(ss) => Some(ss)
+  }
+}
+
+pub fn with_fragment(u: Url, f: Option(List(Nat))): Url {
+  match u: Url {
+    MkUrl(s, a, p, q, f0) => MkUrl(s, a, p, q, f)
+  }
+}
+
+// The hierarchical part of a relative reference, the base's scheme and
+// authority kept as far as the reference does not replace them.
+pub fn relative_hier(
+  s: List(Nat),
+  special: Bool,
+  a: Option(Authority),
+  base: List(List(Nat)),
+  bq: Option(List(Nat)),
+  t: Tail,
+  h: List(Nat)
+): Option(Url) {
+  match h: Option(Url) {
+    Nil => Some(
+      MkUrl(
+        s,
+        a,
+        Segments(base),
+        match t.query: Option(List(Nat)) {
+          None => bq
+          Some(q) => Some(q)
+        },
+        t.fragment
+      )
+    )
+    Cons(b, rest) => match Nat::eq(b, 47): Option(Url) {
+      false => Some(MkUrl(s, a, Segments(path_of(init(base), h)), t.query, t.fragment))
+      true => match starts_with(47, rest): Option(Url) {
+        false => Some(MkUrl(s, a, Segments(path_of(Nil, rest)), t.query, t.fragment))
+        true => match special: Option(Url) {
+          true => mk(s, auth_path(true, default_port(s), drop_slashes(rest)), t)
+          false => mk(s, auth_path(false, None, List::tail(rest)), t)
+        }
+      }
+    }
+  }
+}
+
+pub fn relative(base: Url, l: List(Nat)): Option(Url) {
+  match base: Option(Url) {
+    MkUrl(s, a, p, q, f) => match base_segments(p): Option(Url) {
+      None => match cut(35, l): Option(Url) {
+        None => None
+        Some(c) => match is_empty(c.fst): Option(Url) {
+          false => None
+          true => Some(with_fragment(base, Some(pct_encode(fragment_set, c.snd))))
+        }
+      }
+      Some(ss) => relative_tail(s, a, ss, q, tail_of(query_set_of(s), l))
+    }
+  }
+}
+
+pub fn relative_tail(
+  s: List(Nat),
+  a: Option(Authority),
+  ss: List(List(Nat)),
+  q: Option(List(Nat)),
+  t: Tail
+): Option(Url) {
+  match is_special(s): Option(Url) {
+    true => relative_hier(s, true, a, ss, q, t, List::map(backslash_to_slash, t.hier))
+    false => relative_hier(s, false, a, ss, q, t, t.hier)
+  }
+}
+
+// With the same special scheme as the base and no slash after `:`, the
+// input is relative (`http:x` against `http://a/b` is `http://a/x`).
+pub fn resolve_bytes(base: Url, l: List(Nat)): Option(Url) {
+  match scheme_of(l): Option(Url) {
+    None => relative(base, l)
+    Some(p) => match Bool::and(
+      is_special(p.fst),
+      Bool::and(bytes_eq(p.fst, base.scheme), not(starts_with(47, List::map(backslash_to_slash, p.snd))))
+    ): Option(Url) {
+      true => relative(base, p.snd)
+      false => parse_after_scheme(p.fst, p.snd)
+    }
+  }
+}
+
+pub fn url_resolve(base: Url, t: Text): Option(Url) {
+  resolve_bytes(base, preprocess(Text::bytes(t)))
+}

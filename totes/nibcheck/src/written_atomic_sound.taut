@@ -1,0 +1,220 @@
+import "rules_written_atomic.taut"
+import "written_name_sound.taut"
+import "declaration_arity_sound.taut"
+
+pub fn written_name_contains(o: Option(Ty)): Bool {
+  match o: Bool {
+    None => false
+    Some(t) => true
+  }
+}
+pub theorem written_name_unbound(
+  generics: Ordmap(Text, Ty),
+  name: Text,
+  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None
+): Ordmap::contains(generics, name, Ordmap::compare_text) = false { Eq::congr(written_name_contains, unbound) }
+
+pub theorem written_return_state<A: Type>(
+  value: A,
+  m: Mut1(Unit, Checker)
+): ck_st(frame_return(value, m)) = ck_st(m) {
+  match m: ck_st(frame_return(value, m)) = ck_st(m) {
+    mut1(v, next) => Refl
+  }
+}
+
+pub theorem ck_written_nominal_arity(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  data: Data,
+  ordinary: primitive_type_name(name) = None,
+  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
+  value_position: frame_constructor_position(c) = false,
+  declared: datas_decl(ck_datas_of(c), name) = Some(data),
+  clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
+): DeclaredArity(data, Nil) {
+  let unfolded: DiagnosticClean(
+    ck_st(
+      frame_written_var_k(
+        c,
+        name,
+        generics,
+        span,
+        ck_written_name(name, generics),
+        ck_written_name(name, generics)
+      )
+    )
+  ) := Eq::subst(
+    (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+    frame_written_var_unf(c, name, generics, span),
+    clean
+  )
+  let nominal: DiagnosticClean(
+    ck_st(frame_written_var_k(c, name, generics, span, TyNamed(name, Nil), TyNamed(name, Nil)))
+  ) := Eq::subst(
+    (t: Ty) => DiagnosticClean(ck_st(frame_written_var_k(c, name, generics, span, t, t))),
+    written_name_nominal_value(name, generics, ordinary, unbound),
+    unfolded
+  )
+  let checked: DiagnosticClean(
+    ck_st(frame_return(TyNamed(name, Nil), ck_arity(c, name, 0, span)))
+  ) := Eq::subst(
+    (found: Bool) => DiagnosticClean(
+      ck_st(frame_written_var_named(c, name, span, TyNamed(name, Nil), found))
+    ),
+    written_name_unbound(generics, name, unbound),
+    nominal
+  )
+  ck_declared_arity_sound(
+    c,
+    name,
+    Nil,
+    span,
+    data,
+    value_position,
+    declared,
+    Eq::subst(
+      DiagnosticClean,
+      written_return_state(TyNamed(name, Nil), ck_arity(c, name, 0, span)),
+      checked
+    )
+  )
+}
+
+pub theorem written_return_value<A: Type>(
+  value: A,
+  m: Mut1(Unit, Checker)
+): ck_val(frame_return(value, m)) = value {
+  match m: ck_val(frame_return(value, m)) = value {
+    mut1(v, next) => Refl
+  }
+}
+pub theorem written_var_named_value(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  t: Ty,
+  found: Bool
+): ck_val(frame_written_var_named(c, name, span, t, found)) = t {
+  match found: ck_val(frame_written_var_named(c, name, span, t, found)) = t {
+    true => Refl
+    false => written_return_value(t, ck_arity(c, name, 0, span))
+  }
+}
+pub theorem written_var_k_value(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  original: Ty,
+  t: Ty
+): ck_val(frame_written_var_k(c, name, generics, span, original, t)) = original {
+  match t: ck_val(frame_written_var_k(c, name, generics, span, original, t)) = original {
+    TyInt(width) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(params, result, kind) => Refl
+    TyUnion(members) => Refl
+    TyProduct(members) => Refl
+    TyTagged(tags, inner) => Refl
+    TyNamed(n, args) => written_var_named_value(
+      c,
+      name,
+      span,
+      original,
+      Ordmap::contains(generics, name, Ordmap::compare_text)
+    )
+    TyParam(n, bound) => Refl
+    TyInfo(inner) => Refl
+    TyBorrow(inner, mutable) => Refl
+    TyVar(index) => Refl
+    TyPoly(gs, inner) => Refl
+    TyApp(head, arg) => Refl
+  }
+}
+
+pub theorem ck_written_var_value(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan
+): ck_val(ck_written_var(c, name, generics, span)) = ck_written_name(name, generics) {
+  Eq::trans(
+    Eq::congr((m: Mut1(Ty, Checker)) => ck_val(m), frame_written_var_unf(c, name, generics, span)),
+    written_var_k_value(
+      c,
+      name,
+      generics,
+      span,
+      ck_written_name(name, generics),
+      ck_written_name(name, generics)
+    )
+  )
+}
+
+pub theorem written_atomic_from_name(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  t: Ty,
+  meaning: WrittenTypeName(generics, name, t),
+  value_position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
+): WrittenAtomicType(ck_datas_of(c), generics, name, t) {
+  match meaning: WrittenAtomicType(ck_datas_of(c), generics, name, t) {
+    WrittenNamePrimitive(ty, builtin) => AtomicPrimitive(ty, builtin)
+    WrittenNameParameter(ty, ordinary, bound) => AtomicParameter(ty, ordinary, bound)
+    WrittenNameNominal(ordinary, unbound) => AtomicNominal(
+      ordinary,
+      unbound,
+      data => found => ck_written_nominal_arity(
+        c,
+        name,
+        generics,
+        span,
+        data,
+        ordinary,
+        unbound,
+        value_position,
+        found,
+        clean
+      )
+    )
+  }
+}
+
+pub theorem ck_written_var_sound(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  value_position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
+): WrittenAtomicType(
+  ck_datas_of(c),
+  generics,
+  name,
+  ck_val(ck_written_var(c, name, generics, span))
+) {
+  Eq::subst(
+    (t: Ty) => WrittenAtomicType(ck_datas_of(c), generics, name, t),
+    Eq::sym(ck_written_var_value(c, name, generics, span)),
+    written_atomic_from_name(
+      c,
+      name,
+      generics,
+      span,
+      ck_written_name(name, generics),
+      ck_written_name_sound(name, generics),
+      value_position,
+      clean
+    )
+  )
+}

@@ -1,0 +1,979 @@
+import std::Base
+
+// The syntax of Project Fluent (FTL) as this library reads it, on bytes. A resource is a list of
+// messages and terms; a value is a pattern, a list of text and placeables; a placeable holds an
+// expression, and a select expression holds variants whose values are patterns again.
+
+// ---- the tree -----------------------------------------------------------------
+
+// The key of a variant: `[one]` or `[3]`.
+pub(open) inductive Key: Type {
+  KeyId(name: List(Nat)): Key
+  KeyNum(n: Nat): Key
+}
+
+// A literal, the only thing an argument of a term can be.
+pub(open) inductive Lit: Type {
+  LitStr(bytes: List(Nat)): Lit
+  LitNum(n: Nat): Lit
+}
+
+// `name: literal` in `-term(name: literal)`.
+pub(open) inductive NamedArg: Type {
+  Named(name: List(Nat), value: Lit): NamedArg
+}
+
+mutual {
+  pub(open) inductive Elem: Type {
+    ElText(bytes: List(Nat)): Elem
+    ElPlace(e: Expr): Elem
+  }
+
+  pub(open) inductive Expr: Type {
+    // `"text"`
+    ExStr(bytes: List(Nat)): Expr
+    // `42`
+    ExNum(n: Nat): Expr
+    // `$name`
+    ExVar(name: List(Nat)): Expr
+    // `message` or `message.attribute`
+    ExMsg(id: List(Nat), attr: Option(List(Nat))): Expr
+    // `-term`, `-term.attribute` (only as a selector) or `-term(name: "value")`
+    ExTerm(id: List(Nat), attr: Option(List(Nat)), args: List(NamedArg)): Expr
+    // `{ selector -> [key] pattern … *[key] pattern }`: the variants that are not the default, in
+    // order, and the default, which every select expression has.
+    ExSelect(sel: Expr, others: List(Variant), dkey: Key, dpat: List(Elem)): Expr
+  }
+
+  pub(open) inductive Variant: Type {
+    Mk(key: Key, pat: List(Elem)): Variant
+  }
+}
+
+pub(open) inductive Attr: Type {
+  Mk(id: List(Nat), pat: List(Elem)): Attr
+}
+
+pub(open) inductive Entry: Type {
+  // A message has a value, attributes, or both.
+  Message(id: List(Nat), value: Option(List(Elem)), attrs: List(Attr)): Entry
+  // A term always has a value.
+  Term(id: List(Nat), value: List(Elem), attrs: List(Attr)): Entry
+}
+
+// The entries read, and the text of each entry that could not be read (junk), in order.
+pub(open) inductive Resource: Type {
+  Mk(entries: List(Entry), junk: List(List(Nat))): Resource
+}
+
+// ---- bytes --------------------------------------------------------------------
+
+pub fn in_range(lo: Nat, c: Nat, hi: Nat): Bool {
+  Bool::and(Nat::le(lo, c), Nat::le(c, hi))
+}
+
+pub fn is_alpha(c: Nat): Bool {
+  Bool::or(in_range(65, c, 90), in_range(97, c, 122))
+}
+
+pub fn is_digit(c: Nat): Bool {
+  in_range(48, c, 57)
+}
+
+pub fn is_id_char(c: Nat): Bool {
+  Bool::or(Bool::or(is_alpha(c), is_digit(c)), Bool::or(Nat::eq(c, 95), Nat::eq(c, 45)))
+}
+
+pub fn byte_list_eq(a: List(Nat), b: List(Nat)): Bool {
+  match a: Bool {
+    Nil => match b: Bool {
+      Nil => true
+      Cons(d, u) => false
+    }
+    Cons(c, t) => match b: Bool {
+      Nil => false
+      Cons(d, u) => Bool::and(Nat::eq(c, d), byte_list_eq(t, u))
+    }
+  }
+}
+
+// Spaces dropped.
+pub fn skip_inline(s: List(Nat)): List(Nat) {
+  match s: List(Nat) {
+    Nil => Nil
+    Cons(c, t) => match Nat::eq(c, 32): List(Nat) {
+      true => skip_inline(t)
+      false => s
+    }
+  }
+}
+
+// Spaces and line ends dropped.
+pub fn skip_blank(s: List(Nat)): List(Nat) {
+  match s: List(Nat) {
+    Nil => Nil
+    Cons(c, t) => match Bool::or(Nat::eq(c, 32), Nat::eq(c, 10)): List(Nat) {
+      true => skip_blank(t)
+      false => s
+    }
+  }
+}
+
+// What follows the next line end.
+pub fn skip_line(s: List(Nat)): List(Nat) {
+  match s: List(Nat) {
+    Nil => Nil
+    Cons(c, t) => match Nat::eq(c, 10): List(Nat) {
+      true => t
+      false => skip_line(t)
+    }
+  }
+}
+
+// CRLF read as LF.
+pub fn strip_cr(s: List(Nat)): List(Nat) {
+  match s: List(Nat) {
+    Nil => Nil
+    Cons(c, t) => match Nat::eq(c, 13): List(Nat) {
+      true => match t: List(Nat) {
+        Nil => Cons(c, Nil)
+        Cons(d, u) => match Nat::eq(d, 10): List(Nat) {
+          true => strip_cr(t)
+          false => Cons(c, strip_cr(t))
+        }
+      }
+      false => Cons(c, strip_cr(t))
+    }
+  }
+}
+
+// ---- reading one piece --------------------------------------------------------
+
+// A value read and the bytes after it, or nothing read.
+pub(open) inductive Got(A: Type): Type {
+  MkGot(v: A, rest: List(Nat)): Got(A)
+  Bad: Got(A)
+}
+
+pub fn cons_got(c: Nat, g: Got(List(Nat))): Got(List(Nat)) {
+  match g: Got(List(Nat)) {
+    MkGot(v, r) => MkGot(Cons(c, v), r)
+    Bad => Bad
+  }
+}
+
+pub fn ident_tail(s: List(Nat)): Got(List(Nat)) {
+  match s: Got(List(Nat)) {
+    Nil => MkGot(Nil, Nil)
+    Cons(c, t) => match is_id_char(c): Got(List(Nat)) {
+      true => cons_got(c, ident_tail(t))
+      false => MkGot(Nil, s)
+    }
+  }
+}
+
+// `[a-zA-Z][a-zA-Z0-9_-]*`
+pub fn ident(s: List(Nat)): Got(List(Nat)) {
+  match s: Got(List(Nat)) {
+    Nil => Bad
+    Cons(c, t) => match is_alpha(c): Got(List(Nat)) {
+      true => cons_got(c, ident_tail(t))
+      false => Bad
+    }
+  }
+}
+
+pub fn number_tail(s: List(Nat), acc: Nat): Got(Nat) {
+  match s: Got(Nat) {
+    Nil => MkGot(acc, Nil)
+    Cons(c, t) => match is_digit(c): Got(Nat) {
+      true => number_tail(t, Nat::add(Nat::mul(acc, 10), Nat::sub(c, 48)))
+      false => match Nat::eq(c, 46): Got(Nat) {
+        // a fraction is not read (numbers are whole and not negative)
+        true => Bad
+        false => MkGot(acc, s)
+      }
+    }
+  }
+}
+
+// `[0-9]+`
+pub fn number(s: List(Nat)): Got(Nat) {
+  match s: Got(Nat) {
+    Nil => Bad
+    Cons(c, t) => match is_digit(c): Got(Nat) {
+      true => number_tail(t, Nat::sub(c, 48))
+      false => Bad
+    }
+  }
+}
+
+// The bytes of a string literal up to its closing `"`; `\"` and `\\` are escapes.
+pub fn string_tail(s: List(Nat)): Got(List(Nat)) {
+  match s: Got(List(Nat)) {
+    Nil => Bad
+    Cons(c, t) => match Nat::eq(c, 34): Got(List(Nat)) {
+      true => MkGot(Nil, t)
+      false => match Nat::eq(c, 10): Got(List(Nat)) {
+        true => Bad
+        false => match Nat::eq(c, 92): Got(List(Nat)) {
+          false => cons_got(c, string_tail(t))
+          true => match t: Got(List(Nat)) {
+            Nil => Bad
+            Cons(d, u) => match Bool::or(Nat::eq(d, 34), Nat::eq(d, 92)): Got(List(Nat)) {
+              true => cons_got(d, string_tail(u))
+              false => Bad
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `.attribute` when it is there.
+pub fn attr_opt(s: List(Nat)): Got(Option(List(Nat))) {
+  match s: Got(Option(List(Nat))) {
+    Nil => MkGot(None, Nil)
+    Cons(c, t) => match Nat::eq(c, 46): Got(Option(List(Nat))) {
+      false => MkGot(None, s)
+      true => match ident(t): Got(Option(List(Nat))) {
+        MkGot(a, r) => MkGot(Some(a), r)
+        Bad => Bad
+      }
+    }
+  }
+}
+
+pub fn literal(s: List(Nat)): Got(Lit) {
+  match s: Got(Lit) {
+    Nil => Bad
+    Cons(c, t) => match Nat::eq(c, 34): Got(Lit) {
+      true => match string_tail(t): Got(Lit) {
+        MkGot(v, r) => MkGot(LitStr(v), r)
+        Bad => Bad
+      }
+      false => match number(s): Got(Lit) {
+        MkGot(n, r) => MkGot(LitNum(n), r)
+        Bad => Bad
+      }
+    }
+  }
+}
+
+pub fn cons_arg(a: NamedArg, g: Got(List(NamedArg))): Got(List(NamedArg)) {
+  match g: Got(List(NamedArg)) {
+    MkGot(v, r) => MkGot(Cons(a, v), r)
+    Bad => Bad
+  }
+}
+
+mutual {
+  // After a named argument: `,` and more, or the closing `)`.
+  pub fn args_more(fuel: Nat, s: List(Nat)): Got(List(NamedArg)) {
+    match fuel: Got(List(NamedArg)) {
+      Zero => Bad
+      Succ(j) => match skip_blank(s): Got(List(NamedArg)) {
+        Nil => Bad
+        Cons(c, t) => match Nat::eq(c, 41): Got(List(NamedArg)) {
+          true => MkGot(Nil, t)
+          false => match Nat::eq(c, 44): Got(List(NamedArg)) {
+            true => args_list(j, t)
+            false => Bad
+          }
+        }
+      }
+    }
+  }
+
+  // `name: literal, …)`, or just `)`.
+  pub fn args_list(fuel: Nat, s: List(Nat)): Got(List(NamedArg)) {
+    match fuel: Got(List(NamedArg)) {
+      Zero => Bad
+      Succ(j) => match skip_blank(s): Got(List(NamedArg)) {
+        Nil => Bad
+        Cons(c, t) => match Nat::eq(c, 41): Got(List(NamedArg)) {
+          true => MkGot(Nil, t)
+          false => match ident(Cons(c, t)): Got(List(NamedArg)) {
+            Bad => Bad
+            MkGot(name, r) => match skip_blank(r): Got(List(NamedArg)) {
+              Nil => Bad
+              Cons(d, u) => match Nat::eq(d, 58): Got(List(NamedArg)) {
+                false => Bad
+                true => match literal(skip_blank(u)): Got(List(NamedArg)) {
+                  Bad => Bad
+                  MkGot(v, r2) => cons_arg(Named(name, v), args_more(j, r2))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `(…)` after a term, when it is there.
+pub fn args_opt(s: List(Nat)): Got(List(NamedArg)) {
+  match s: Got(List(NamedArg)) {
+    Nil => MkGot(Nil, Nil)
+    Cons(c, t) => match Nat::eq(c, 40): Got(List(NamedArg)) {
+      true => args_list(Succ(List::length(t)), t)
+      false => MkGot(Nil, s)
+    }
+  }
+}
+
+pub fn term_ref(s: List(Nat)): Got(Expr) {
+  match ident(s): Got(Expr) {
+    Bad => Bad
+    MkGot(id, r) => match attr_opt(r): Got(Expr) {
+      Bad => Bad
+      MkGot(a, r2) => match args_opt(r2): Got(Expr) {
+        Bad => Bad
+        MkGot(args, r3) => MkGot(ExTerm(id, a, args), r3)
+      }
+    }
+  }
+}
+
+pub fn message_ref(s: List(Nat)): Got(Expr) {
+  match ident(s): Got(Expr) {
+    Bad => Bad
+    MkGot(id, r) => match r: Got(Expr) {
+      Nil => MkGot(ExMsg(id, None), Nil)
+      Cons(c, t) => match Nat::eq(c, 40): Got(Expr) {
+        // a function call such as `NUMBER($n)` is not read
+        true => Bad
+        false => match attr_opt(r): Got(Expr) {
+          Bad => Bad
+          MkGot(a, r2) => MkGot(ExMsg(id, a), r2)
+        }
+      }
+    }
+  }
+}
+
+// An expression that is not a select expression.
+pub fn inline_expr(s: List(Nat)): Got(Expr) {
+  match s: Got(Expr) {
+    Nil => Bad
+    Cons(c, t) => match Nat::eq(c, 34): Got(Expr) {
+      true => match string_tail(t): Got(Expr) {
+        MkGot(v, r) => MkGot(ExStr(v), r)
+        Bad => Bad
+      }
+      false => match is_digit(c): Got(Expr) {
+        true => match number(s): Got(Expr) {
+          MkGot(n, r) => MkGot(ExNum(n), r)
+          Bad => Bad
+        }
+        false => match Nat::eq(c, 36): Got(Expr) {
+          true => match ident(t): Got(Expr) {
+            MkGot(v, r) => MkGot(ExVar(v), r)
+            Bad => Bad
+          }
+          false => match Nat::eq(c, 45): Got(Expr) {
+            true => term_ref(t)
+            false => message_ref(s)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn key(s: List(Nat)): Got(Key) {
+  match s: Got(Key) {
+    Nil => Bad
+    Cons(c, t) => match is_digit(c): Got(Key) {
+      true => match number(s): Got(Key) {
+        MkGot(n, r) => MkGot(KeyNum(n), r)
+        Bad => Bad
+      }
+      false => match ident(s): Got(Key) {
+        MkGot(v, r) => MkGot(KeyId(v), r)
+        Bad => Bad
+      }
+    }
+  }
+}
+
+// ---- patterns -----------------------------------------------------------------
+
+// A variant as read, with whether it is marked `*`.
+pub(open) inductive RawVariant: Type {
+  Raw(default: Bool, key: Key, pat: List(Elem)): RawVariant
+}
+
+pub fn push_char(c: Nat, g: Got(List(Elem))): Got(List(Elem)) {
+  match g: Got(List(Elem)) {
+    Bad => Bad
+    MkGot(es, r) => match es: Got(List(Elem)) {
+      Nil => MkGot(Cons(ElText(Cons(c, Nil)), Nil), r)
+      Cons(e, rest) => match e: Got(List(Elem)) {
+        ElText(bs) => MkGot(Cons(ElText(Cons(c, bs)), rest), r)
+        ElPlace(x) => MkGot(Cons(ElText(Cons(c, Nil)), es), r)
+      }
+    }
+  }
+}
+
+pub fn push_elem(e: Elem, g: Got(List(Elem))): Got(List(Elem)) {
+  match g: Got(List(Elem)) {
+    Bad => Bad
+    MkGot(es, r) => MkGot(Cons(e, es), r)
+  }
+}
+
+// A blank line inside a pattern is kept as a line end when the pattern goes on after it.
+pub fn blank_line(started: Bool, g: Got(List(Elem))): Got(List(Elem)) {
+  match g: Got(List(Elem)) {
+    Bad => Bad
+    MkGot(es, r) => match es: Got(List(Elem)) {
+      Nil => g
+      Cons(e, rest) => match started: Got(List(Elem)) {
+        true => push_char(10, g)
+        false => g
+      }
+    }
+  }
+}
+
+// Whether a line whose first byte after its indentation is `c` ends the pattern before it:
+// `.` begins an attribute, `[` and `*` a variant, and `}` closes a select expression.
+pub fn ends_pattern(c: Nat): Bool {
+  Bool::or(Bool::or(Nat::eq(c, 46), Nat::eq(c, 91)), Bool::or(Nat::eq(c, 42), Nat::eq(c, 125)))
+}
+
+pub fn cons_raw(v: RawVariant, g: Got(List(RawVariant))): Got(List(RawVariant)) {
+  match g: Got(List(RawVariant)) {
+    MkGot(vs, r) => MkGot(Cons(v, vs), r)
+    Bad => Bad
+  }
+}
+
+// A selector is a literal, a variable or an attribute of a term.
+pub fn valid_selector(e: Expr): Bool {
+  match e: Bool {
+    ExStr(b) => true
+    ExNum(n) => true
+    ExVar(v) => true
+    ExMsg(i, a) => false
+    ExTerm(i, a, args) => match a: Bool {
+      None => false
+      Some(x) => true
+    }
+    ExSelect(s, o, k, p) => false
+  }
+}
+
+// The trailing spaces of a pattern dropped.
+pub fn trim_bytes(bs: List(Nat)): List(Nat) {
+  List::reverse(skip_inline(List::reverse(bs)))
+}
+
+pub fn trim_rev(es: List(Elem)): List(Elem) {
+  match es: List(Elem) {
+    Nil => Nil
+    Cons(e, rest) => match e: List(Elem) {
+      ElPlace(x) => es
+      ElText(bs) => match trim_bytes(bs): List(Elem) {
+        Nil => rest
+        Cons(c, t) => Cons(ElText(Cons(c, t)), rest)
+      }
+    }
+  }
+}
+
+pub fn trim_end(es: List(Elem)): List(Elem) {
+  List::reverse(trim_rev(List::reverse(es)))
+}
+
+// ---- indentation --------------------------------------------------------------
+//
+// The lines of a pattern after its first keep only the indentation beyond what all of them
+// share, as the Fluent spec has it: a line indented more than the others keeps the extra.
+// A pattern that begins on the line of its `=` (or `]`) has no indentation on that line, so
+// only the lines of the pattern that are indented count. Blank lines do not count.
+
+// The smaller of the indentation found so far and `n`, a line's indentation (never zero).
+pub fn min_indent(m: Option(Nat), n: Nat): Option(Nat) {
+  match n: Option(Nat) {
+    Zero => m
+    Succ(x) => match m: Option(Nat) {
+      None => Some(n)
+      Some(k) => match Nat::le(k, n): Option(Nat) {
+        true => Some(k)
+        false => Some(n)
+      }
+    }
+  }
+}
+
+// The least indentation of the lines in `bs`; `lead` is whether the bytes begin a line's
+// indentation, `run` how many spaces of it were read.
+pub fn indent_bytes(bs: List(Nat), lead: Bool, run: Nat, m: Option(Nat)): Option(Nat) {
+  match bs: Option(Nat) {
+    Nil => match lead: Option(Nat) {
+      // the text ends in indentation: a placeable begins the line
+      true => min_indent(m, run)
+      false => m
+    }
+    Cons(c, t) => match Nat::eq(c, 10): Option(Nat) {
+      true => indent_bytes(t, true, 0, m)
+      false => match Bool::and(lead, Nat::eq(c, 32)): Option(Nat) {
+        true => indent_bytes(t, true, Succ(run), m)
+        false => match lead: Option(Nat) {
+          true => indent_bytes(t, false, 0, min_indent(m, run))
+          false => indent_bytes(t, false, 0, m)
+        }
+      }
+    }
+  }
+}
+
+// A text element always ends before a placeable or the end of the pattern, so only the first
+// one can begin with indentation without a line end before it.
+pub fn indent_elems(es: List(Elem), first: Bool, m: Option(Nat)): Option(Nat) {
+  match es: Option(Nat) {
+    Nil => m
+    Cons(e, rest) => match e: Option(Nat) {
+      ElPlace(x) => indent_elems(rest, false, m)
+      ElText(bs) => indent_elems(rest, false, indent_bytes(bs, first, 0, m))
+    }
+  }
+}
+
+// `bs` with up to `k` spaces taken off the beginning of each line; `d` is how many were taken
+// off the line being read.
+pub fn dedent_bytes(bs: List(Nat), k: Nat, lead: Bool, d: Nat): List(Nat) {
+  match bs: List(Nat) {
+    Nil => Nil
+    Cons(c, t) => match Nat::eq(c, 10): List(Nat) {
+      true => Cons(c, dedent_bytes(t, k, true, 0))
+      false => match Bool::and(Bool::and(lead, Nat::eq(c, 32)), Nat::lt(d, k)): List(Nat) {
+        true => dedent_bytes(t, k, true, Succ(d))
+        false => Cons(c, dedent_bytes(t, k, false, d))
+      }
+    }
+  }
+}
+
+pub fn dedent_elems(es: List(Elem), k: Nat, first: Bool): List(Elem) {
+  match es: List(Elem) {
+    Nil => Nil
+    Cons(e, rest) => match e: List(Elem) {
+      ElPlace(x) => Cons(e, dedent_elems(rest, k, false))
+      ElText(bs) => match dedent_bytes(bs, k, first, 0): List(Elem) {
+        Nil => dedent_elems(rest, k, false)
+        Cons(c, t) => Cons(ElText(Cons(c, t)), dedent_elems(rest, k, false))
+      }
+    }
+  }
+}
+
+pub fn dedent(es: List(Elem)): List(Elem) {
+  match indent_elems(es, true, None): List(Elem) {
+    None => es
+    Some(k) => dedent_elems(es, k, true)
+  }
+}
+
+// A pattern as read, without its trailing spaces and its common indentation.
+pub fn finish(es: List(Elem)): List(Elem) {
+  dedent(trim_end(es))
+}
+
+// The variants not marked `*`, in order.
+pub fn plain_variants(vs: List(RawVariant)): List(Variant) {
+  match vs: List(Variant) {
+    Nil => Nil
+    Cons(v, rest) => match v: List(Variant) {
+      Raw(d, k, p) => match d: List(Variant) {
+        true => plain_variants(rest)
+        false => Cons(Variant::Mk(k, p), plain_variants(rest))
+      }
+    }
+  }
+}
+
+pub fn default_count(vs: List(RawVariant)): Nat {
+  match vs: Nat {
+    Nil => 0
+    Cons(v, rest) => match v: Nat {
+      Raw(d, k, p) => match d: Nat {
+        true => Succ(default_count(rest))
+        false => default_count(rest)
+      }
+    }
+  }
+}
+
+pub fn default_of(sel: Expr, all: List(RawVariant), vs: List(RawVariant)): Option(Expr) {
+  match vs: Option(Expr) {
+    Nil => None
+    Cons(v, rest) => match v: Option(Expr) {
+      Raw(d, k, p) => match d: Option(Expr) {
+        true => Some(ExSelect(sel, plain_variants(all), k, p))
+        false => default_of(sel, all, rest)
+      }
+    }
+  }
+}
+
+// A select expression needs a valid selector, at least one variant and exactly one default.
+pub fn make_select(sel: Expr, vs: List(RawVariant)): Option(Expr) {
+  match Bool::and(valid_selector(sel), Nat::eq(default_count(vs), 1)): Option(Expr) {
+    false => None
+    true => default_of(sel, vs, vs)
+  }
+}
+
+pub fn select_got(sel: Expr, g: Got(List(RawVariant))): Got(Expr) {
+  match g: Got(Expr) {
+    Bad => Bad
+    MkGot(vs, r) => match make_select(sel, vs): Got(Expr) {
+      None => Bad
+      Some(e) => MkGot(e, r)
+    }
+  }
+}
+
+// A term attribute is private: it can only be a selector.
+pub fn placeable_ok(e: Expr): Bool {
+  match e: Bool {
+    ExTerm(i, a, args) => match a: Bool {
+      None => true
+      Some(x) => false
+    }
+    ExStr(b) => true
+    ExNum(n) => true
+    ExVar(v) => true
+    ExMsg(i, a) => true
+    ExSelect(s, o, k, p) => true
+  }
+}
+
+mutual {
+  // Text, placeables and continued lines, up to where the pattern ends. `started` is whether
+  // anything of the pattern has been read (a line end before the first text is not kept).
+  pub fn p_text(fuel: Nat, s: List(Nat), started: Bool): Got(List(Elem)) {
+    match fuel: Got(List(Elem)) {
+      Zero => Bad
+      Succ(j) => match s: Got(List(Elem)) {
+        Nil => MkGot(Nil, Nil)
+        Cons(c, t) => match Nat::eq(c, 10): Got(List(Elem)) {
+          true => p_line(j, t, started)
+          false => match Nat::eq(c, 123): Got(List(Elem)) {
+            true => match p_place(j, t): Got(List(Elem)) {
+              Bad => Bad
+              MkGot(e, r) => push_elem(ElPlace(e), p_text(j, r, true))
+            }
+            false => match Nat::eq(c, 125): Got(List(Elem)) {
+              true => MkGot(Nil, s)
+              false => push_char(c, p_text(j, t, true))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Just after a line end: the pattern goes on when the line is indented and does not begin
+  // with `.`, `[`, `*` or `}`. Otherwise it ends, and the rest is that whole line. The
+  // indentation is kept here; `dedent` takes off the part the lines have in common.
+  pub fn p_line(fuel: Nat, s: List(Nat), started: Bool): Got(List(Elem)) {
+    match fuel: Got(List(Elem)) {
+      Zero => Bad
+      Succ(j) => match skip_inline(s): Got(List(Elem)) {
+        Nil => MkGot(Nil, Nil)
+        Cons(c, t) => match Nat::eq(c, 10): Got(List(Elem)) {
+          true => blank_line(started, p_line(j, t, started))
+          false => match s: Got(List(Elem)) {
+            Nil => MkGot(Nil, Nil)
+            Cons(c0, t0) => match Bool::and(Nat::eq(c0, 32), not(ends_pattern(c))): Got(List(Elem)) {
+              false => MkGot(Nil, s)
+              true => match started: Got(List(Elem)) {
+                true => push_char(10, p_text(j, s, true))
+                false => p_text(j, s, true)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // After `{`: an expression and `}`, or a selector, `->`, the variants and `}`.
+  pub fn p_place(fuel: Nat, s: List(Nat)): Got(Expr) {
+    match fuel: Got(Expr) {
+      Zero => Bad
+      Succ(j) => match inline_expr(skip_blank(s)): Got(Expr) {
+        Bad => Bad
+        MkGot(e, r) => match skip_blank(r): Got(Expr) {
+          Nil => Bad
+          Cons(c, t) => match Nat::eq(c, 125): Got(Expr) {
+            true => match placeable_ok(e): Got(Expr) {
+              true => MkGot(e, t)
+              false => Bad
+            }
+            false => match Nat::eq(c, 45): Got(Expr) {
+              false => Bad
+              true => match t: Got(Expr) {
+                Nil => Bad
+                Cons(d, u) => match Nat::eq(d, 62): Got(Expr) {
+                  false => Bad
+                  true => select_got(e, p_variants(j, u))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Variants up to the closing `}`.
+  pub fn p_variants(fuel: Nat, s: List(Nat)): Got(List(RawVariant)) {
+    match fuel: Got(List(RawVariant)) {
+      Zero => Bad
+      Succ(j) => match skip_blank(s): Got(List(RawVariant)) {
+        Nil => Bad
+        Cons(c, t) => match Nat::eq(c, 125): Got(List(RawVariant)) {
+          true => MkGot(Nil, t)
+          false => match Nat::eq(c, 91): Got(List(RawVariant)) {
+            true => p_variant(j, t, false)
+            false => match Nat::eq(c, 42): Got(List(RawVariant)) {
+              false => Bad
+              true => match t: Got(List(RawVariant)) {
+                Nil => Bad
+                Cons(d, u) => match Nat::eq(d, 91): Got(List(RawVariant)) {
+                  true => p_variant(j, u, true)
+                  false => Bad
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // After `[`: the key, `]`, the variant's pattern and the variants after it.
+  pub fn p_variant(fuel: Nat, s: List(Nat), d: Bool): Got(List(RawVariant)) {
+    match fuel: Got(List(RawVariant)) {
+      Zero => Bad
+      Succ(j) => match key(skip_blank(s)): Got(List(RawVariant)) {
+        Bad => Bad
+        MkGot(k, r) => match skip_blank(r): Got(List(RawVariant)) {
+          Nil => Bad
+          Cons(c, t) => match Nat::eq(c, 93): Got(List(RawVariant)) {
+            false => Bad
+            true => match p_text(j, skip_inline(t), false): Got(List(RawVariant)) {
+              Bad => Bad
+              MkGot(p, r2) => cons_raw(Raw(d, k, finish(p)), p_variants(j, r2))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- entries ------------------------------------------------------------------
+
+pub fn fuel_of(s: List(Nat)): Nat {
+  Succ(Nat::mul(2, List::length(s)))
+}
+
+// A pattern after `=`: `None` when it reads nothing, and the rest must begin a line.
+pub fn pattern(s: List(Nat)): Got(Option(List(Elem))) {
+  match p_text(fuel_of(s), skip_inline(s), false): Got(Option(List(Elem))) {
+    Bad => Bad
+    MkGot(p, r) => match r: Got(Option(List(Elem))) {
+      Cons(c, t) => match Nat::eq(c, 125): Got(Option(List(Elem))) {
+        true => Bad
+        false => match finish(p): Got(Option(List(Elem))) {
+          Nil => MkGot(None, r)
+          Cons(e, es) => MkGot(Some(Cons(e, es)), r)
+        }
+      }
+      Nil => match finish(p): Got(Option(List(Elem))) {
+        Nil => MkGot(None, r)
+        Cons(e, es) => MkGot(Some(Cons(e, es)), r)
+      }
+    }
+  }
+}
+
+// `=` and a pattern.
+pub fn equals_pattern(s: List(Nat)): Got(Option(List(Elem))) {
+  match skip_inline(s): Got(Option(List(Elem))) {
+    Nil => Bad
+    Cons(c, t) => match Nat::eq(c, 61): Got(Option(List(Elem))) {
+      true => pattern(t)
+      false => Bad
+    }
+  }
+}
+
+pub fn cons_attr(a: Attr, g: Got(List(Attr))): Got(List(Attr)) {
+  match g: Got(List(Attr)) {
+    MkGot(v, r) => MkGot(Cons(a, v), r)
+    Bad => Bad
+  }
+}
+
+// Indented `.attribute = pattern` lines.
+pub fn attrs(fuel: Nat, s: List(Nat)): Got(List(Attr)) {
+  match fuel: Got(List(Attr)) {
+    Zero => Bad
+    Succ(j) => match s: Got(List(Attr)) {
+      Nil => MkGot(Nil, Nil)
+      Cons(c0, t0) => match Nat::eq(c0, 32): Got(List(Attr)) {
+        false => MkGot(Nil, s)
+        true => match skip_inline(s): Got(List(Attr)) {
+          Nil => MkGot(Nil, Nil)
+          Cons(c, t) => match Nat::eq(c, 46): Got(List(Attr)) {
+            false => MkGot(Nil, s)
+            true => match ident(t): Got(List(Attr)) {
+              Bad => Bad
+              MkGot(id, r) => match equals_pattern(r): Got(List(Attr)) {
+                Bad => Bad
+                MkGot(p, r2) => match p: Got(List(Attr)) {
+                  None => Bad
+                  Some(pat) => cons_attr(Attr::Mk(id, pat), attrs(j, r2))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn make_entry(
+  is_term: Bool,
+  id: List(Nat),
+  v: Option(List(Elem)),
+  a: List(Attr)
+): Option(Entry) {
+  match is_term: Option(Entry) {
+    true => match v: Option(Entry) {
+      None => None
+      Some(p) => Some(Term(id, p, a))
+    }
+    false => match v: Option(Entry) {
+      Some(p) => Some(Message(id, v, a))
+      None => match a: Option(Entry) {
+        Nil => None
+        Cons(x, xs) => Some(Message(id, None, a))
+      }
+    }
+  }
+}
+
+pub fn entry_after_id(is_term: Bool, g: Got(List(Nat))): Got(Entry) {
+  match g: Got(Entry) {
+    Bad => Bad
+    MkGot(id, r) => match equals_pattern(r): Got(Entry) {
+      Bad => Bad
+      MkGot(v, r2) => match attrs(fuel_of(r2), r2): Got(Entry) {
+        Bad => Bad
+        MkGot(a, r3) => match make_entry(is_term, id, v, a): Got(Entry) {
+          None => Bad
+          Some(e) => MkGot(e, r3)
+        }
+      }
+    }
+  }
+}
+
+// A message `id = …` or a term `-id = …`, from the start of a line.
+pub fn entry(s: List(Nat)): Got(Entry) {
+  match s: Got(Entry) {
+    Nil => Bad
+    Cons(c, t) => match Nat::eq(c, 45): Got(Entry) {
+      true => entry_after_id(true, ident(t))
+      false => entry_after_id(false, ident(s))
+    }
+  }
+}
+
+// Junk runs to the next line that begins an entry or a comment, the line itself included.
+pub fn junk_lines(fuel: Nat, s: List(Nat)): List(Nat) {
+  match fuel: List(Nat) {
+    Zero => s
+    Succ(j) => match s: List(Nat) {
+      Nil => Nil
+      Cons(c, t) => match Bool::or(Nat::eq(c, 32), Nat::eq(c, 10)): List(Nat) {
+        true => junk_lines(j, skip_line(s))
+        false => match Bool::or(Nat::eq(c, 125), Bool::or(Nat::eq(c, 91), Nat::eq(c, 42))): List(Nat) {
+          true => junk_lines(j, skip_line(s))
+          false => s
+        }
+      }
+    }
+  }
+}
+
+pub fn bytes_before(s: List(Nat), r: List(Nat)): List(Nat) {
+  List::take(Nat::sub(List::length(s), List::length(r)), s)
+}
+
+pub fn add_entry(e: Entry, r: Resource): Resource {
+  match r: Resource {
+    Mk(es, js) => Resource::Mk(Cons(e, es), js)
+  }
+}
+
+pub fn add_junk(j: List(Nat), r: Resource): Resource {
+  match r: Resource {
+    Mk(es, js) => Resource::Mk(es, Cons(j, js))
+  }
+}
+
+mutual {
+  pub fn entries(fuel: Nat, s: List(Nat)): Resource {
+    match fuel: Resource {
+      Zero => Resource::Mk(Nil, Nil)
+      Succ(j) => match s: Resource {
+        Nil => Resource::Mk(Nil, Nil)
+        Cons(c, t) => match Bool::or(Nat::eq(c, 10), Nat::eq(c, 35)): Resource {
+          // blank lines and comments
+          true => entries(j, skip_line(s))
+          false => match Nat::eq(c, 32): Resource {
+            true => match skip_inline(s): Resource {
+              Nil => Resource::Mk(Nil, Nil)
+              Cons(d, u) => match Nat::eq(d, 10): Resource {
+                true => entries(j, u)
+                false => junk_at(j, s)
+              }
+            }
+            false => match entry(s): Resource {
+              MkGot(e, r) => add_entry(e, entries(j, r))
+              Bad => junk_at(j, s)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn junk_at(fuel: Nat, s: List(Nat)): Resource {
+    match fuel: Resource {
+      Zero => Resource::Mk(Nil, Nil)
+      Succ(j) => add_junk(
+        bytes_before(s, junk_lines(fuel_of(s), skip_line(s))),
+        entries(j, junk_lines(fuel_of(s), skip_line(s)))
+      )
+    }
+  }
+}
+
+// The messages and terms of FTL bytes, and the junk that could not be read.
+pub fn parse_bytes(s: List(Nat)): Resource {
+  entries(fuel_of(strip_cr(s)), strip_cr(s))
+}

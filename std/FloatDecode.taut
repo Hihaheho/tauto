@@ -1,0 +1,630 @@
+import "FloatReal.taut"
+import "RatLaws.taut"
+import "NatDiv.taut"
+
+// What the bits `float_encode` writes stand for: `±c 2^(t - 4000)`, read
+// back by `float_val` (`float_val_encode`).
+
+// ---- powers of two ---------------------------------------------------------------
+
+pub theorem nat_pow2_add(
+  a: Nat,
+  b: Nat
+): Nat::pow2(a + b) = Nat::pow2(a) * Nat::pow2(b) {
+  match b: Nat::pow2(a + b) = Nat::pow2(a) * Nat::pow2(b) {
+    Zero => Eq::sym(Nat::mul_one_right(Nat::pow2(a)))
+    Succ(k) => Eq::trans(
+      Eq::congr(⟦2 * □⟧, nat_pow2_add(a, k)),
+      by nat_norm!(): 2 * (Nat::pow2(a) * Nat::pow2(k)) = Nat::pow2(a) * (2 * Nat::pow2(k)) {}
+    )
+  }
+}
+
+// `2^a = 2^(a - 1) + 2^(a - 1)` written as `2^a` is a successor.
+pub theorem nat_pow2_succ(a: Nat): Nat::pow2(a) = Succ(Nat::pow2(a) - 1) {
+  match a: Nat::pow2(a) = Succ(Nat::pow2(a) - 1) {
+    Zero => Refl
+    Succ(k) => nat_pow2_succ_step(Nat::pow2(k), nat_pow2_succ(k))
+  }
+}
+
+pub theorem nat_pow2_succ_step(
+  p: Nat,
+  h: p = Succ(p - 1)
+): 2 * p = Succ(2 * p - 1) {
+  Eq::subst((z: Nat) => 2 * z = Succ(2 * z - 1), Eq::sym(h), Refl)
+}
+
+// ---- the three fields of the bits -------------------------------------------------
+
+// The bits with sign `s`, exponent field `E` and fraction `f`.
+pub fn float_bits_of(s: Nat, E: Nat, f: Nat): Nat {
+  9223372036854775808 * s + (4503599627370496 * E + f)
+}
+
+pub theorem float_bits_split(
+  s: Nat,
+  E: Nat,
+  f: Nat
+): float_bits_of(s, E, f) = 4503599627370496 * (2048 * s + E) + f {
+  by nat_norm!(): 9223372036854775808 * s + (4503599627370496 * E + f) = 4503599627370496 * (2048 * s + E) + f {}
+}
+
+pub theorem float_bits_sign_split(
+  s: Nat,
+  E: Nat,
+  f: Nat
+): float_bits_of(s, E, f) = 9223372036854775808 * s + (4503599627370496 * E + f) {
+  by nat_norm!(): 9223372036854775808 * s + (4503599627370496 * E + f) = 9223372036854775808 * s + (4503599627370496 * E + f) {}
+}
+
+// The fields of bits with `E < 2047`, `f < 2^52` and `s <= 1`.
+pub def FieldsOk(
+  s: Nat,
+  E: Nat,
+  f: Nat
+): Prop := And(
+  E < 2047 = true,
+  And(f < 4503599627370496 = true, s < 2 = true)
+)
+
+pub theorem float_frac_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::frac_of(float_bits_of(s, E, f)) = f {
+  match h: Float::frac_of(float_bits_of(s, E, f)) = f {
+    AndIntro(hE, rest) => match rest: Float::frac_of(float_bits_of(s, E, f)) = f {
+      AndIntro(hf, hs) => Eq::trans(
+        Eq::congr(⟦Nat::rem_nz(□, 4503599627370496, Nat::ne_zero(4503599627370496, Refl))⟧, float_bits_split(s, E, f)),
+        Nat::mod_of(2048 * s + E, f, 4503599627370495, hf)
+      )
+    }
+  }
+}
+
+pub theorem float_expo_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::expo_of(float_bits_of(s, E, f)) = E {
+  match h: Float::expo_of(float_bits_of(s, E, f)) = E {
+    AndIntro(hE, rest) => match rest: Float::expo_of(float_bits_of(s, E, f)) = E {
+      AndIntro(hf, hs) => Eq::trans(
+        Eq::congr(
+          ⟦Nat::rem_nz(□, 2048, Nat::ne_zero(2048, Refl))⟧,
+          Eq::trans(
+            Eq::congr(⟦Nat::div_nz(□, 4503599627370496, Nat::ne_zero(4503599627370496, Refl))⟧, float_bits_split(s, E, f)),
+            Nat::div_of(2048 * s + E, f, 4503599627370495, hf)
+          )
+        ),
+        Nat::mod_of(s, E, 2047, nat_lt_trans_2047(E, hE))
+      )
+    }
+  }
+}
+
+pub theorem nat_lt_trans_2047(
+  E: Nat,
+  h: E < 2047 = true
+): E < 2048 = true {
+  Nat::le_trans(Succ(E), 2047, 2048, h, Refl)
+}
+
+pub theorem float_sign_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::sign_of(float_bits_of(s, E, f)) = s {
+  match h: Float::sign_of(float_bits_of(s, E, f)) = s {
+    AndIntro(hE, rest) => match rest: Float::sign_of(float_bits_of(s, E, f)) = s {
+      AndIntro(hf, hs) => Eq::trans(
+        Eq::congr(⟦Nat::div_nz(□, 9223372036854775808, Nat::ne_zero(9223372036854775808, Refl))⟧, float_bits_sign_split(s, E, f)),
+        Nat::div_of(
+          s,
+          4503599627370496 * E + f,
+          9223372036854775807,
+          float_mag_lt(E, f, hE, hf)
+        )
+      )
+    }
+  }
+}
+
+// `E 2^52 + f < 2^63`.
+pub theorem float_mag_lt(
+  E: Nat,
+  f: Nat,
+  hE: E < 2047 = true,
+  hf: f < 4503599627370496 = true
+): 4503599627370496 * E + f < 9223372036854775808 = true {
+  yn_of_nat_le(
+    Succ(4503599627370496 * E + f),
+    9223372036854775808,
+    Int::le_trans(
+      IntOfNat(Succ(4503599627370496 * E + f)),
+      IntOfNat(4503599627370496 * E + 4503599627370496),
+      IntOfNat(9223372036854775808),
+      int_le_lin(
+        IntOfNat(Succ(f)),
+        IntOfNat(4503599627370496),
+        1,
+        IntOfNat(4503599627370496 * E),
+        IntOfNat(Succ(4503599627370496 * E + f)),
+        IntOfNat(4503599627370496 * E + 4503599627370496),
+        nat_le_of_yn(Succ(f), 4503599627370496, hf),
+        float_mag_shape_a(E, f),
+        float_mag_shape_b(E)
+      ),
+      Int::le_trans(
+        IntOfNat(4503599627370496 * E + 4503599627370496),
+        IntOfNat(9218868437227405312),
+        IntOfNat(9223372036854775808),
+        int_le_lin(
+          IntOfNat(Succ(E)),
+          IntOfNat(2047),
+          4503599627370496,
+          IntOfNat(0),
+          IntOfNat(4503599627370496 * E + 4503599627370496),
+          IntOfNat(9218868437227405312),
+          nat_le_of_yn(Succ(E), 2047, hE),
+          float_mag_shape_c(E),
+          Refl
+        ),
+        int_le_by(
+          IntOfNat(9218868437227405312),
+          IntOfNat(9223372036854775808),
+          4503599627370496,
+          Refl
+        )
+      )
+    )
+  )
+}
+
+pub theorem float_mag_shape_a(
+  E: Nat,
+  f: Nat
+): Int::add(Int::mul(IntOfNat(Succ(f)), 1), IntOfNat(4503599627370496 * E)) = IntOfNat(Succ(4503599627370496 * E + f)) {
+  by int_norm!(): Int::add(Int::mul(IntOfNat(Succ(f)), IntOfNat(1)), IntOfNat(4503599627370496 * E)) = IntOfNat(Succ(4503599627370496 * E + f)) {}
+}
+
+pub theorem float_mag_shape_b(
+  E: Nat
+): Int::add( Int::mul(4503599627370496, 1), IntOfNat(4503599627370496 * E) ) = IntOfNat(4503599627370496 * E + 4503599627370496) {
+  by int_norm!(): Int::add( Int::mul(IntOfNat(4503599627370496), IntOfNat(1)), IntOfNat(4503599627370496 * E) ) = IntOfNat(4503599627370496 * E + 4503599627370496) {}
+}
+
+pub theorem float_mag_shape_c(
+  E: Nat
+): Int::add(Int::mul(IntOfNat(Succ(E)), 4503599627370496), 0) = IntOfNat(4503599627370496 * E + 4503599627370496) {
+  by int_norm!(): Int::add(Int::mul(IntOfNat(Succ(E)), IntOfNat(4503599627370496)), IntOfNat(0)) = IntOfNat(4503599627370496 * E + 4503599627370496) {}
+}
+
+// ---- reading the bits back -------------------------------------------------------------
+
+pub fn float_raw_by(o: Bool, v: Nat): Nat {
+  match o: Nat {
+    true => Float::nan_raw()
+    false => v
+  }
+}
+
+pub fn float_val_by(o: Bool, raw: Nat): Option(Rat) {
+  match o: Option(Rat) {
+    true => None
+    false => Some(Float::val_of(raw))
+  }
+}
+
+pub theorem float_bits_lt64(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): float_bits_of(s, E, f) < 18446744073709551616 = true {
+  match h: float_bits_of(s, E, f) < 18446744073709551616 = true {
+    AndIntro(hE, rest) => match rest: float_bits_of(s, E, f) < 18446744073709551616 = true {
+      AndIntro(hf, hs) => yn_of_nat_le(
+        Succ(float_bits_of(s, E, f)),
+        18446744073709551616,
+        Int::le_trans(
+          IntOfNat(Succ(float_bits_of(s, E, f))),
+          IntOfNat(9223372036854775808 * s + 9223372036854775808),
+          IntOfNat(18446744073709551616),
+          int_le_lin(
+            IntOfNat(Succ(4503599627370496 * E + f)),
+            IntOfNat(9223372036854775808),
+            1,
+            IntOfNat(9223372036854775808 * s),
+            IntOfNat(Succ(float_bits_of(s, E, f))),
+            IntOfNat(9223372036854775808 * s + 9223372036854775808),
+            nat_le_of_yn(
+              Succ(4503599627370496 * E + f),
+              9223372036854775808,
+              float_mag_lt(E, f, hE, hf)
+            ),
+            float_lt64_shape_a(s, E, f),
+            float_lt64_shape_b(s)
+          ),
+          int_le_lin(
+            IntOfNat(Succ(s)),
+            IntOfNat(2),
+            9223372036854775808,
+            IntOfNat(0),
+            IntOfNat(9223372036854775808 * s + 9223372036854775808),
+            IntOfNat(18446744073709551616),
+            nat_le_of_yn(Succ(s), 2, hs),
+            float_lt64_shape_c(s),
+            Refl
+          )
+        )
+      )
+    }
+  }
+}
+
+pub theorem float_lt64_shape_a(
+  s: Nat,
+  E: Nat,
+  f: Nat
+): Int::add( Int::mul(IntOfNat(Succ(4503599627370496 * E + f)), 1), IntOfNat(9223372036854775808 * s) ) = IntOfNat( Succ(9223372036854775808 * s + (4503599627370496 * E + f)) ) {
+  by int_norm!(): Int::add( Int::mul(IntOfNat(Succ(4503599627370496 * E + f)), IntOfNat(1)), IntOfNat(9223372036854775808 * s) ) = IntOfNat( Succ(9223372036854775808 * s + (4503599627370496 * E + f)) ) {}
+}
+
+pub theorem float_lt64_shape_b(
+  s: Nat
+): Int::add( Int::mul(9223372036854775808, 1), IntOfNat(9223372036854775808 * s) ) = IntOfNat(9223372036854775808 * s + 9223372036854775808) {
+  by int_norm!(): Int::add( Int::mul(IntOfNat(9223372036854775808), IntOfNat(1)), IntOfNat(9223372036854775808 * s) ) = IntOfNat(9223372036854775808 * s + 9223372036854775808) {}
+}
+
+pub theorem float_lt64_shape_c(
+  s: Nat
+): Int::add(Int::mul(IntOfNat(Succ(s)), 9223372036854775808), 0) = IntOfNat(9223372036854775808 * s + 9223372036854775808) {
+  by int_norm!(): Int::add(Int::mul(IntOfNat(Succ(s)), IntOfNat(9223372036854775808)), IntOfNat(0)) = IntOfNat(9223372036854775808 * s + 9223372036854775808) {}
+}
+
+pub theorem nat_mod_small64(
+  B: Nat,
+  hB: B < 18446744073709551616 = true
+): Nat::rem_nz(B, 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) = B {
+  Eq::trans(
+    Eq::congr(⟦Nat::rem_nz(□, 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))⟧, Eq::sym(Nat::add_zero_left(B))),
+    Nat::mod_of(0, B, 18446744073709551615, hB)
+  )
+}
+
+pub theorem float_nan_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::nan_of(float_bits_of(s, E, f)) = false {
+  Eq::subst(
+    (o: Bool) => o && not(Nat::eq(Float::frac_of(float_bits_of(s, E, f)), 0)) = false,
+    Eq::sym(float_expo_ne(s, E, f, h)),
+    Refl
+  )
+}
+
+pub theorem float_inf_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::inf_of(float_bits_of(s, E, f)) = false {
+  Eq::subst(
+    (o: Bool) => o && Nat::eq(Float::frac_of(float_bits_of(s, E, f)), 0) = false,
+    Eq::sym(float_expo_ne(s, E, f, h)),
+    Refl
+  )
+}
+
+pub theorem float_expo_ne(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Nat::eq(Float::expo_of(float_bits_of(s, E, f)), 2047) = false {
+  match h: Nat::eq(Float::expo_of(float_bits_of(s, E, f)), 2047) = false {
+    AndIntro(hE, rest) => Eq::trans(
+      Eq::congr(⟦Nat::eq(□, 2047)⟧, float_expo_of_bits(s, E, f, AndIntro(hE, rest))),
+      Nat::ne_of_lt(E, 2047, hE)
+    )
+  }
+}
+
+pub theorem float_raw_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::raw(Float::of_raw(float_bits_of(s, E, f))) = float_bits_of(s, E, f) {
+  Eq::subst(
+    (z: Nat) => float_raw_by(Float::nan_of(z), z) = float_bits_of(s, E, f),
+    Eq::sym(nat_mod_small64(float_bits_of(s, E, f), float_bits_lt64(s, E, f, h))),
+    Eq::subst(
+      (o: Bool) => float_raw_by(o, float_bits_of(s, E, f)) = float_bits_of(s, E, f),
+      Eq::sym(float_nan_of_bits(s, E, f, h)),
+      Refl
+    )
+  )
+}
+
+// Bits with an exponent field below 2047 stand for a number.
+pub theorem float_val_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Eq(
+  Option(Rat),
+  Float::val(Float::of_raw(float_bits_of(s, E, f))),
+  Some(Float::val_of(float_bits_of(s, E, f)))
+) {
+  Eq::subst(
+    (z: Nat) => Eq(
+      Option(Rat),
+      float_val_by(Float::nan_of(z) || Float::inf_of(z), z),
+      Some(Float::val_of(float_bits_of(s, E, f)))
+    ),
+    Eq::sym(float_raw_bits(s, E, f, h)),
+    Eq::subst(
+      (o: Bool) => Eq(
+        Option(Rat),
+        float_val_by(o || Float::inf_of(float_bits_of(s, E, f)), float_bits_of(s, E, f)),
+        Some(Float::val_of(float_bits_of(s, E, f)))
+      ),
+      Eq::sym(float_nan_of_bits(s, E, f, h)),
+      Eq::subst(
+        (o: Bool) => Eq(
+          Option(Rat),
+          float_val_by(false || o, float_bits_of(s, E, f)),
+          Some(Float::val_of(float_bits_of(s, E, f)))
+        ),
+        Eq::sym(float_inf_of_bits(s, E, f, h)),
+        Refl
+      )
+    )
+  )
+}
+
+// ---- the number the bits stand for ---------------------------------------------------
+
+// `±M 2^(e - Z)` (`Z` is 4000), as `float_val_of` writes it once the test is given.
+pub fn float_val_of_byz(Z: Nat, o: Bool, sg: Nat, M: Nat, e: Nat): Rat {
+  match o: Rat {
+    true => Rat::of_int(Float::signed(sg, M * Nat::pow2(e - Z)))
+    false => Rat::Mk(Float::signed(sg, M), Nat::pow2(Z - e) - 1)
+  }
+}
+
+// `±M 2^e / 2^Z`, one form for every exponent.
+pub fn float_scaledz(Z: Nat, sg: Nat, M: Nat, e: Nat): Rat {
+  Rat::Mk(Float::signed(sg, M * Nat::pow2(e)), Nat::pow2(Z) - 1)
+}
+
+pub theorem float_signed_mul(
+  sg: Nat,
+  a: Nat,
+  b: Nat
+): Int::mul(Float::signed(sg, a), IntOfNat(b)) = Float::signed(sg, a * b) {
+  match sg: Int::mul(Float::signed(sg, a), IntOfNat(b)) = Float::signed(sg, a * b) {
+    Zero => Refl
+    Succ(k) => float_signed_neg_mul(a, b)
+  }
+}
+
+pub theorem float_signed_neg_mul(
+  a: Nat,
+  b: Nat
+): Int::mul(Int::neg(IntOfNat(a)), IntOfNat(b)) = Int::neg(IntOfNat(a * b)) {
+  by int_norm!(): Int::mul(Int::neg(IntOfNat(a)), IntOfNat(b)) = Int::neg(IntOfNat(a * b)) {}
+}
+
+pub theorem float_val_of_uniform(
+  Z: Nat,
+  o: Bool,
+  sg: Nat,
+  M: Nat,
+  e: Nat,
+  eo: Z <= e = o
+): Rat::equiv(float_val_of_byz(Z, o, sg, M, e), float_scaledz(Z, sg, M, e)) {
+  match o: Rat::equiv(float_val_of_byz(Z, o, sg, M, e), float_scaledz(Z, sg, M, e)) {
+    true => float_val_of_high(Z, sg, M, e, e - Z, Nat::le_gap(Z, e, eo))
+    false => float_val_of_low(
+      Z,
+      sg,
+      M,
+      e,
+      Z - e,
+      Nat::le_gap(
+        e,
+        Z,
+        yn_of_nat_le(
+          e,
+          Z,
+          int_le_of_lt(IntOfNat(e), IntOfNat(Z), nat_ge_of_not_lt(Z, Succ(e), eo))
+        )
+      )
+    )
+  }
+}
+
+// `e = Z + d`: `±M 2^d / 1` is `±M 2^e / 2^Z`.
+pub theorem float_val_of_high(
+  Z: Nat,
+  sg: Nat,
+  M: Nat,
+  e: Nat,
+  d: Nat,
+  he: e = Z + d
+): Rat::equiv(Rat::of_int(Float::signed(sg, M * Nat::pow2(d))), float_scaledz(Z, sg, M, e)) {
+  Eq::subst(
+    (z: Nat) => Int::mul(Float::signed(sg, M * Nat::pow2(d)), IntOfNat(z)) = Int::mul(Float::signed(sg, M * Nat::pow2(e)), 1),
+    nat_pow2_succ(Z),
+    Eq::trans(
+      float_signed_mul(sg, M * Nat::pow2(d), Nat::pow2(Z)),
+      Eq::trans(
+        Eq::congr(
+          ⟦Float::signed(sg, □)⟧,
+          Eq::trans(
+            nat_mul_pow2_swap(M, d, Z),
+            Eq::congr(
+              ⟦M * □⟧,
+              Eq::sym(Eq::trans(Eq::congr(Nat::pow2, he), nat_pow2_add(Z, d)))
+            )
+          )
+        ),
+        Eq::sym(
+          Eq::trans(
+            float_signed_mul(sg, M * Nat::pow2(e), 1),
+            Eq::congr(⟦Float::signed(sg, □)⟧, Nat::mul_one_right(M * Nat::pow2(e)))
+          )
+        )
+      )
+    )
+  )
+}
+
+pub theorem nat_mul_pow2_swap(
+  M: Nat,
+  d: Nat,
+  a: Nat
+): M * Nat::pow2(d) * Nat::pow2(a) = M * (Nat::pow2(a) * Nat::pow2(d)) {
+  by nat_norm!(): M * Nat::pow2(d) * Nat::pow2(a) = M * (Nat::pow2(a) * Nat::pow2(d)) {}
+}
+
+// `Z = e + d`: `±M / 2^d` is `±M 2^e / 2^Z`.
+pub theorem float_val_of_low(
+  Z: Nat,
+  sg: Nat,
+  M: Nat,
+  e: Nat,
+  d: Nat,
+  he: Z = e + d
+): Rat::equiv(Rat::Mk(Float::signed(sg, M), Nat::pow2(d) - 1), float_scaledz(Z, sg, M, e)) {
+  Eq::subst(
+    (z: Nat) => Int::mul(Float::signed(sg, M), IntOfNat(z)) = Int::mul(Float::signed(sg, M * Nat::pow2(e)), IntOfNat(Succ(Nat::pow2(d) - 1))),
+    nat_pow2_succ(Z),
+    Eq::subst(
+      (z: Nat) => Int::mul(Float::signed(sg, M), IntOfNat(Nat::pow2(Z))) = Int::mul(Float::signed(sg, M * Nat::pow2(e)), IntOfNat(z)),
+      nat_pow2_succ(d),
+      Eq::trans(
+        float_signed_mul(sg, M, Nat::pow2(Z)),
+        Eq::trans(
+          Eq::congr(
+            ⟦Float::signed(sg, □)⟧,
+            Eq::trans(
+              Eq::congr(
+                ⟦M * □⟧,
+                Eq::trans(Eq::congr(Nat::pow2, he), nat_pow2_add(e, d))
+              ),
+              nat_mul_assoc_sym(M, Nat::pow2(e), Nat::pow2(d))
+            )
+          ),
+          Eq::sym(float_signed_mul(sg, M * Nat::pow2(e), Nat::pow2(d)))
+        )
+      )
+    )
+  )
+}
+
+pub theorem nat_mul_assoc_sym(
+  a: Nat,
+  b: Nat,
+  c: Nat
+): a * (b * c) = a * b * c {
+  by nat_norm!(): a * (b * c) = a * b * c {}
+}
+
+// ---- the fields as numbers -----------------------------------------------------------
+
+pub fn float_m_by(o: Bool, frac: Nat): Nat {
+  match o: Nat {
+    true => frac
+    false => frac + 4503599627370496
+  }
+}
+
+pub fn float_e_by(o: Bool, expo: Nat): Nat {
+  match o: Nat {
+    true => 2926
+    false => expo + 2925
+  }
+}
+
+pub theorem float_m_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::m_of(float_bits_of(s, E, f)) = float_m_by(Nat::eq(E, 0), f) {
+  Eq::subst(
+    (z: Nat) => float_m_by(Nat::eq(z, 0), Float::frac_of(float_bits_of(s, E, f))) = float_m_by(Nat::eq(E, 0), f),
+    Eq::sym(float_expo_of_bits(s, E, f, h)),
+    Eq::congr(⟦float_m_by(Nat::eq(E, 0), □)⟧, float_frac_of_bits(s, E, f, h))
+  )
+}
+
+pub theorem float_e_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Float::e_of(float_bits_of(s, E, f)) = float_e_by(Nat::eq(E, 0), E) {
+  Eq::subst(
+    (z: Nat) => float_e_by(Nat::eq(z, 0), z) = float_e_by(Nat::eq(E, 0), E),
+    Eq::sym(float_expo_of_bits(s, E, f, h)),
+    Refl
+  )
+}
+
+// The number bits with fields `s`, `E`, `f` stand for, as `±M 2^e / 2^4000`.
+pub theorem float_val_of_bits(
+  s: Nat,
+  E: Nat,
+  f: Nat,
+  h: FieldsOk(s, E, f)
+): Rat::equiv(
+  Float::val_of(float_bits_of(s, E, f)),
+  float_scaledz(4000, s, float_m_by(Nat::eq(E, 0), f), float_e_by(Nat::eq(E, 0), E))
+) {
+  Eq::subst(
+    (z: Nat) => Rat::equiv(
+      Float::val_of(float_bits_of(s, E, f)),
+      float_scaledz(4000, z, float_m_by(Nat::eq(E, 0), f), float_e_by(Nat::eq(E, 0), E))
+    ),
+    float_sign_of_bits(s, E, f, h),
+    Eq::subst(
+      (z: Nat) => Rat::equiv(
+        Float::val_of(float_bits_of(s, E, f)),
+        float_scaledz(4000, Float::sign_of(float_bits_of(s, E, f)), z, float_e_by(Nat::eq(E, 0), E))
+      ),
+      float_m_of_bits(s, E, f, h),
+      Eq::subst(
+        (z: Nat) => Rat::equiv(
+          Float::val_of(float_bits_of(s, E, f)),
+          float_scaledz(
+            4000,
+            Float::sign_of(float_bits_of(s, E, f)),
+            Float::m_of(float_bits_of(s, E, f)),
+            z
+          )
+        ),
+        float_e_of_bits(s, E, f, h),
+        float_val_of_uniform(
+          4000,
+          4000 <= Float::e_of(float_bits_of(s, E, f)),
+          Float::sign_of(float_bits_of(s, E, f)),
+          Float::m_of(float_bits_of(s, E, f)),
+          Float::e_of(float_bits_of(s, E, f)),
+          Refl
+        )
+      )
+    )
+  )
+}

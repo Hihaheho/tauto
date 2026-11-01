@@ -1,0 +1,123 @@
+import "registration_metadata_sound.taut"
+import "program_data_presence_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub def NoDeclarationName(
+  n: Text,
+  ss: List(SurfaceStmt)
+): Prop := ∀ d: SurfaceData. ∀ member: DeclaresData(
+  ss,
+  d
+). (n = registration_name(d)) -> False
+
+pub theorem ck_program_data_one_protected(
+  n: Text,
+  expected: Option(Data),
+  c: Checker,
+  s: SurfaceStmt,
+  ordered: ProtectedData(n, expected, c),
+  rest: List(SurfaceStmt),
+  no_name: NoDeclarationName(n, Cons(s, rest))
+): ProtectedData(n, expected, ck_st(ck_program_data_one(c, s))) {
+  match s: ProtectedData(n, expected, ck_st(ck_program_data_one(c, s))) {
+    StLet(name, ty, value, borrow, mutable) => ordered
+    StVar(name, ty, value, borrow) => ordered
+    StModule(name, stmts, start, end) => ordered
+    StAssign(name, name_place, value) => ordered
+    StCalled(name_generates, value) => ordered
+    StFn(f) => ordered
+    StTheorem(t) => ordered
+    StDef(t) => ordered
+    StMutual(stmts, start, end) => ordered
+    StImport(path, start, end) => ordered
+    StInductive(i) => ordered
+    StEffect(e) => ordered
+    StStruct(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => ProtectedData(n, expected, ck_st(z)),
+      Eq::sym(registration_program_StStruct_unf(d, c)),
+      registration_rewrap_protected(
+        n,
+        expected,
+        ck_declare_data(c, d, true, false),
+        ck_declare_data_protected(
+          n,
+          expected,
+          c,
+          d,
+          true,
+          false,
+          ordered,
+          no_name(d, DeclaresDataStruct(d, rest))
+        )
+      )
+    )
+    StEnum(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => ProtectedData(n, expected, ck_st(z)),
+      Eq::sym(registration_program_StEnum_unf(d, c)),
+      registration_rewrap_protected(
+        n,
+        expected,
+        ck_declare_data(c, d, false, false),
+        ck_declare_data_protected(
+          n,
+          expected,
+          c,
+          d,
+          false,
+          false,
+          ordered,
+          no_name(d, DeclaresDataEnum(d, rest))
+        )
+      )
+    )
+    StExtern(abi, fns, start, end) => ordered
+    StClass(cls) => ordered
+    StInstance(i) => ordered
+    StWhile(cond, body) => ordered
+    StReturn(value) => ordered
+    StExpr(value) => ordered
+    StOther(what, start, end) => ordered
+    StMacro(name, function, start, end) => ordered
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered
+    StSyntax(name, grammar, start, end) => ordered
+  }
+}
+
+pub theorem ck_program_data_protected(
+  n: Text,
+  expected: Option(Data),
+  ss: List(SurfaceStmt),
+  c: Checker,
+  ready: ProtectedData(n, expected, c),
+  no_name: NoDeclarationName(n, ss)
+): ProtectedData(n, expected, ck_st(ck_program_data(ss, c))) {
+  match ss: ProtectedData(n, expected, ck_st(ck_program_data(ss, c))) {
+    Nil => ready
+    Cons(s, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => ProtectedData(n, expected, ck_st(m)),
+      Eq::sym(registration_program_unf(s, rest, c)),
+      registration_bind_protected(
+        Unit,
+        Unit,
+        n,
+        expected,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s),
+        ck_program_data_one_protected(n, expected, c, s, ready, rest, no_name),
+        ignored => next => stable => registration_rewrap_protected(
+          n,
+          expected,
+          ck_program_data(rest, next),
+          ck_program_data_protected(
+            n,
+            expected,
+            rest,
+            next,
+            stable,
+            decl => member => no_name(decl, DeclaresDataLater(s, rest, decl, member))
+          )
+        )
+      )
+    )
+  }
+}

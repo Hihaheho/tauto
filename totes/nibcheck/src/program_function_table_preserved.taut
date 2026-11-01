@@ -1,0 +1,225 @@
+import "program_function_table_ordered.taut"
+import "function_name_absence.taut"
+import "../../surface/src/surface.taut"
+
+pub fn fnt_extern_after(rest: List(SurfaceFn), m: Mut1(Scheme, Checker)): Mut1(Unit, Checker) {
+  frame_bind(
+    Scheme,
+    Unit,
+    (scheme: Scheme, next: Checker) => ck_rewrap1(ck_extern_fns(rest, next)),
+    m
+  )
+}
+pub theorem fnt_extern_after_preserved(
+  name: Text,
+  c: Checker,
+  rest: List(SurfaceFn),
+  m: Mut1(Scheme, Checker),
+  head: CkFnPreserved(name, c, m),
+  ih: ∀ next: Checker. CkFnPreserved(name, next, ck_extern_fns(rest, next))
+): CkFnPreserved(name, c, fnt_extern_after(rest, m)) {
+  fnt_preserved_bind(
+    Scheme,
+    Unit,
+    name,
+    c,
+    (scheme: Scheme, next: Checker) => ck_rewrap1(ck_extern_fns(rest, next)),
+    m,
+    head,
+    scheme => next => fnt_preserved_rewrap(name, next, ck_extern_fns(rest, next), ih(next))
+  )
+}
+pub theorem ck_extern_fns_preserved(
+  fs: List(SurfaceFn),
+  c: Checker,
+  name: Text,
+  absent: FunctionNameAbsent(name, fs)
+): CkFnPreserved(name, c, ck_extern_fns(fs, c)) {
+  match fs: CkFnPreserved(name, c, ck_extern_fns(fs, c)) {
+    Nil => fnt_preserved_return(name, c, Star)
+    Cons(source, rest) => Eq::subst(
+      (result: Mut1(Unit, Checker)) => CkFnPreserved(name, c, result),
+      Eq::sym(signature_extern_fns_unf(source, rest, c)),
+      fnt_extern_after_preserved(
+        name,
+        c,
+        rest,
+        ck_add_fn(c, source),
+        ck_add_fn_preserved(name, c, source, fnt_absent_head(name, source, rest, absent)),
+        next => ck_extern_fns_preserved(
+          rest,
+          next,
+          name,
+          fnt_absent_tail(name, source, rest, absent)
+        )
+      )
+    )
+  }
+}
+pub theorem fnt_preserved_none(
+  name: Text,
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  kept: CkFnPreserved(name, c, m)
+): CkFnPreserved(name, c, signature_none_after(m)) {
+  fnt_preserved_bind(
+    Unit,
+    Option(Pair(SurfaceFn, Scheme)),
+    name,
+    c,
+    (ignored: Unit, next: Checker) => mut1(None, next),
+    m,
+    Kept,
+    ignored => next => fnt_preserved_return(name, next, None)
+  )
+}
+pub theorem fnt_preserved_some(
+  name: Text,
+  c: Checker,
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker),
+  kept: CkFnPreserved(name, c, m)
+): CkFnPreserved(name, c, signature_some_after(source, m)) {
+  fnt_preserved_bind(
+    Scheme,
+    Option(Pair(SurfaceFn, Scheme)),
+    name,
+    c,
+    (scheme: Scheme, next: Checker) => mut1(Some(Pair {fst: source, snd: scheme}), next),
+    m,
+    Kept,
+    scheme => next => fnt_preserved_return(name, next, Some(Pair {fst: source, snd: scheme}))
+  )
+}
+
+pub theorem ck_program_decl_preserved(
+  stmt: SurfaceStmt,
+  c: Checker,
+  query: Text,
+  absent: FunctionNameAbsent(query, types_stmt_functions(stmt))
+): CkFnPreserved(query, c, ck_program_decl(c, Stmt)) {
+  match Stmt: CkFnPreserved(query, c, ck_program_decl(c, Stmt)) {
+    StLet(name, ty, value, borrow, mutable) => fnt_preserved_return(query, c, None)
+    StVar(name, ty, value, borrow) => fnt_preserved_return(query, c, None)
+    StModule(name, stmts, start, end) => fnt_preserved_return(query, c, None)
+    StAssign(name, name_place, value) => fnt_preserved_return(query, c, None)
+    StCalled(name_generates, value) => fnt_preserved_return(query, c, None)
+    StFn(f) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnPreserved(query, c, result),
+      Eq::sym(signature_program_decl_StFn_unf(f, c)),
+      fnt_preserved_some(
+        query,
+        c,
+        f,
+        ck_add_fn(c, f),
+        ck_add_fn_preserved(query, c, f, fnt_absent_head(query, f, Nil, absent))
+      )
+    )
+    StTheorem(t) => fnt_preserved_return(query, c, None)
+    StDef(t) => fnt_preserved_return(query, c, None)
+    StMutual(stmts, start, end) => fnt_preserved_return(query, c, None)
+    StImport(path, start, end) => fnt_preserved_return(query, c, None)
+    StInductive(i) => fnt_preserved_return(query, c, None)
+    StEffect(e) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnPreserved(query, c, result),
+      Eq::sym(signature_program_decl_StEffect_unf(e, c)),
+      fnt_preserved_none(
+        query,
+        c,
+        ck_declare_effect(c, e),
+        fnt_preserved_read(query, c, ck_declare_effect(c, e), fnt_ck_declare_effect_frame(c, e))
+      )
+    )
+    StStruct(d) => fnt_preserved_return(query, c, None)
+    StEnum(d) => fnt_preserved_return(query, c, None)
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (result: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnPreserved(query, c, result),
+      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      fnt_preserved_none(
+        query,
+        c,
+        ck_extern_fns(fns, c),
+        ck_extern_fns_preserved(fns, c, query, absent)
+      )
+    )
+    StClass(class_decl) => fnt_preserved_return(query, c, None)
+    StInstance(i) => fnt_preserved_return(query, c, None)
+    StWhile(cond, body) => fnt_preserved_return(query, c, None)
+    StReturn(value) => fnt_preserved_return(query, c, None)
+    StExpr(value) => fnt_preserved_return(query, c, None)
+    StOther(what, start, end) => fnt_preserved_return(query, c, None)
+    StMacro(name, function, start, end) => fnt_preserved_return(query, c, None)
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => fnt_preserved_return(
+      query,
+      c,
+      None
+    )
+    StSyntax(name, grammar, start, end) => fnt_preserved_return(query, c, None)
+  }
+}
+
+pub theorem signature_program_decls_cons_preserved(
+  stmt: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  name: Text,
+  head: CkFnPreserved(name, c, ck_program_decl(c, stmt)),
+  ih: ∀ next: Checker. CkFnPreserved(name, next, ck_program_decls(rest, next))
+): CkFnPreserved(name, c, signature_program_decls_cons(Stmt, rest, c)) {
+  fnt_preserved_bind(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    name,
+    c,
+    (first: Option(Pair(SurfaceFn, Scheme)), next: Checker) => frame_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      (tail: List(Pair(SurfaceFn, Scheme)), last: Checker) => mut1(opt_cons(first, tail), last),
+      ck_program_decls(rest, next)
+    ),
+    ck_program_decl(c, Stmt),
+    head,
+    first => next => fnt_preserved_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      name,
+      next,
+      (tail: List(Pair(SurfaceFn, Scheme)), last: Checker) => mut1(opt_cons(first, tail), last),
+      ck_program_decls(rest, next),
+      ih(next),
+      tail => last => fnt_preserved_return(name, last, opt_cons(first, tail))
+    )
+  )
+}
+pub theorem ck_program_decls_preserved(
+  program: List(SurfaceStmt),
+  c: Checker,
+  name: Text,
+  absent: FunctionNameAbsent(name, types_function_decls(program))
+): CkFnPreserved(name, c, ck_program_decls(program, c)) {
+  match program: CkFnPreserved(name, c, ck_program_decls(program, c)) {
+    Nil => fnt_preserved_return(name, c, Nil)
+    Cons(Stmt, rest) => Eq::subst(
+      (result: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkFnPreserved(name, c, result),
+      Eq::sym(signature_program_decls_cons_unf(Stmt, rest, c)),
+      signature_program_decls_cons_preserved(
+        Stmt,
+        rest,
+        c,
+        name,
+        ck_program_decl_preserved(
+          Stmt,
+          c,
+          name,
+          fnt_absent_prefix(name, types_stmt_functions(Stmt), types_function_decls(rest), absent)
+        ),
+        next => ck_program_decls_preserved(
+          rest,
+          next,
+          name,
+          fnt_absent_suffix(name, types_stmt_functions(Stmt), types_function_decls(rest), absent)
+        )
+      )
+    )
+  }
+}

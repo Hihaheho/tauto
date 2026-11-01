@@ -1,0 +1,99 @@
+import "binding_freshness.taut"
+
+// Syntactic variable scope, independent of whether a variable is solved.
+mutual {
+  pub fn TypeAllocated(limit: Nat, ty: Ty): Prop {
+    match ty: Prop {
+      TyInt(width) => True
+      TyBool => True
+      TyText => True
+      TyUnit => True
+      TyNever => True
+      TyDecimal => True
+      TyFloat => True
+      TyParam(name, kind) => True
+      TyVar(index) => Nat::le(Succ(index), limit) = true
+      TyFn(params, result, kind) => And(
+        TypeListAllocated(limit, params),
+        TypeAllocated(limit, result)
+      )
+      TyUnion(members) => TypeListAllocated(limit, members)
+      TyProduct(members) => TypeListAllocated(limit, members)
+      TyNamed(name, params) => TypeListAllocated(limit, params)
+      TyTagged(tags, inner) => TypeAllocated(limit, inner)
+      TyInfo(inner) => TypeAllocated(limit, inner)
+      TyBorrow(inner, mutable) => TypeAllocated(limit, inner)
+      TyPoly(gs, inner) => TypeAllocated(limit, inner)
+      TyApp(head, arg) => And(TypeAllocated(limit, head), TypeAllocated(limit, arg))
+    }
+  }
+  pub fn TypeListAllocated(limit: Nat, types: List(Ty)): Prop {
+    match types: Prop {
+      Nil => True
+      Cons(head, tail) => And(TypeAllocated(limit, head), TypeListAllocated(limit, tail))
+    }
+  }
+}
+mutual {
+  pub theorem type_allocated_weaken(
+    ty: Ty,
+    before: Nat,
+    after: Nat,
+    advanced: Nat::le(before, after) = true,
+    h: TypeAllocated(before, ty)
+  ): TypeAllocated(after, ty) {
+    match ty: TypeAllocated(after, ty) {
+      TyInt(width) => Trivial
+      TyBool => Trivial
+      TyText => Trivial
+      TyUnit => Trivial
+      TyNever => Trivial
+      TyDecimal => Trivial
+      TyFloat => Trivial
+      TyParam(name, kind) => Trivial
+      TyVar(index) => Nat::le_trans(Succ(index), before, after, h, advanced)
+      TyFn(params, result, kind) => AndIntro(
+        type_list_allocated_weaken(params, before, after, advanced, And::left(h)),
+        type_allocated_weaken(result, before, after, advanced, And::right(h))
+      )
+      TyUnion(members) => type_list_allocated_weaken(members, before, after, advanced, h)
+      TyProduct(members) => type_list_allocated_weaken(members, before, after, advanced, h)
+      TyNamed(name, params) => type_list_allocated_weaken(params, before, after, advanced, h)
+      TyTagged(tags, inner) => type_allocated_weaken(inner, before, after, advanced, h)
+      TyInfo(inner) => type_allocated_weaken(inner, before, after, advanced, h)
+      TyBorrow(inner, mutable) => type_allocated_weaken(inner, before, after, advanced, h)
+      TyPoly(gs, inner) => type_allocated_weaken(inner, before, after, advanced, h)
+      TyApp(head, arg) => AndIntro(
+        type_allocated_weaken(head, before, after, advanced, And::left(h)),
+        type_allocated_weaken(arg, before, after, advanced, And::right(h))
+      )
+    }
+  }
+  pub theorem type_list_allocated_weaken(
+    types: List(Ty),
+    before: Nat,
+    after: Nat,
+    advanced: Nat::le(before, after) = true,
+    h: TypeListAllocated(before, types)
+  ): TypeListAllocated(after, types) {
+    match types: TypeListAllocated(after, types) {
+      Nil => Trivial
+      Cons(head, tail) => AndIntro(
+        type_allocated_weaken(head, before, after, advanced, And::left(h)),
+        type_list_allocated_weaken(tail, before, after, advanced, And::right(h))
+      )
+    }
+  }
+}
+pub theorem ck_fresh_type_allocated(
+  c: Checker
+): TypeAllocated(
+  ck_next_of(ck_st(ck_fresh(c))),
+  ck_val(ck_fresh(c))
+) { Nat::le_refl(Succ(ck_next_of(c))) }
+pub theorem ck_fresh_int_type_allocated(
+  c: Checker
+): TypeAllocated(
+  ck_next_of(ck_st(ck_fresh_int(c))),
+  ck_val(ck_fresh_int(c))
+) { Nat::le_refl(Succ(ck_next_of(c))) }

@@ -1,0 +1,1207 @@
+import "Nat.taut"
+
+// Unsigned integers of a fixed width, as the proofs see them: a `Nat` with a
+// proof that it is below `2^w`. Extraction maps `U8`, `U32` and `U64` onto
+// Nib's `u8`, `u32` and `u64`, and the functions marked "Mapped" onto its
+// operators; their definitions here say what those operators do, so a proof
+// about them holds of the program that runs.
+//
+// The arithmetic comes in two kinds:
+//
+// * `U64::add(a, b, h)` takes a proof `h` that the result fits. Its value is
+//   the exact sum, and it never fails at run time.
+// * `U64::checked_add(a, b)` decides: `Some` of the exact sum when it fits,
+//   `None` when it does not.
+//
+// * `U64::wrapping_add(a, b)` is the sum modulo `2^64`, said so in its
+//   name: a wrap is never silent.
+// * `U64::add_or_overflow(a, b)` performs `overflow` when it does not fit.
+//   A handler of `overflow` cannot resume (its answer is `Never`), so the
+//   value is the exact sum or nothing.
+//
+// Nothing here wraps silently.
+
+// The type with no values: what `overflow` answers.
+pub(open) inductive Never: Type {
+}
+
+module Never {
+  pub fn elim<A>(n: Never): A {
+    match n: A {
+    }
+  }
+}
+
+// A result that does not fit its width.
+pub(open) effect overflow(): Never
+
+// A division by 0: what `Nat::div`, `Int::tdiv`, `U8::div`, … perform when
+// the divisor is 0. Each also has a form without the effect that takes a
+// proof that the divisor is not 0 (`Nat::div_nz`, `Int::tdiv_nz`, …).
+pub(open) effect DivZero(): Never
+
+// The value in `o`, or `DivZero` when it is `None`. `Nat::div`, `U8::div`,
+// `Int::tdiv`, … are this of `Nat::checked_div`, `U8::checked_div`,
+// `Int::checked_tdiv`, …: those decide whether the divisor is 0 and give
+// `div_nz` its proof, and the kernel checks them; the kernel does not check
+// a function that performs an effect, and such code cannot give a proof.
+pub fn or_div_zero<A>(o: Option(A)): A ! {DivZero} {
+  match o: A {
+    Some(x) => x
+    None => Never::elim(perform DivZero())
+  }
+}
+
+module Nat {
+  // ---- division ----------------------------------------------------------------
+
+  // `div`, or `None` when `b` is 0.
+  pub fn checked_div(a: Nat, b: Nat): Option(Nat) {
+    match b == 0 eqn h: Option(Nat) {
+      false => Some(Nat::div_nz(a, b, Nat::ne_zero(b, h)))
+      true => None
+    }
+  }
+
+  // `a div b`, rounded down, or `DivZero` when `b` is 0.
+  pub fn div(a: Nat, b: Nat): Nat ! {DivZero} {
+    or_div_zero(checked_div(a, b))
+  }
+
+  // `rem`, or `None` when `b` is 0.
+  pub fn checked_rem(a: Nat, b: Nat): Option(Nat) {
+    match b == 0 eqn h: Option(Nat) {
+      false => Some(Nat::rem_nz(a, b, Nat::ne_zero(b, h)))
+      true => None
+    }
+  }
+
+  // The remainder of `div`, or `DivZero` when `b` is 0.
+  pub fn rem(a: Nat, b: Nat): Nat ! {DivZero} {
+    or_div_zero(checked_rem(a, b))
+  }
+
+  // ---- order lemmas the widths share ------------------------------------------
+
+  pub theorem le_lt_trans(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    h1: a <= b = true,
+    h2: b < c = true
+  ): a < c = true {
+    Nat::le_trans(Succ(a), Succ(b), c, h1, h2)
+  }
+
+  pub theorem pred_le(n: Nat): Nat::pred(n) <= n = true {
+    match n: Nat::pred(n) <= n = true {
+      Zero => Refl
+      Succ(k) => Nat::le_succ(k)
+    }
+  }
+
+  // `a - b` (cut off at 0) is at most `a`.
+  pub theorem sub_le(a: Nat, b: Nat): a - b <= a = true {
+    match b: a - b <= a = true {
+      Zero => Nat::le_refl(a)
+      Succ(k) => Nat::le_trans(
+        Nat::pred(a - k),
+        a - k,
+        a,
+        pred_le(a - k),
+        sub_le(a, k)
+      )
+    }
+  }
+
+  // ---- bits --------------------------------------------------------------------
+  //
+  // The bits of a word, written on its value: the low `w` bits of `a` and `b`
+  // one at a time, by `Nat::rem_nz(_, 2, _)` and `Nat::div_nz(_, 2, _)`. The kernel computes
+  // those on numerals at once, so `Refl` decides an equation between words
+  // (a hash's test vector) without unfolding `Nat` to unary.
+
+  // `a` and `b` in each of the low `w` bits.
+  pub fn bits_and(w: Nat, a: Nat, b: Nat): Nat {
+    match w: Nat {
+      Zero => Zero
+      Succ(k) => Nat::add(
+        Nat::mul(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
+        Nat::mul(2, bits_and(k, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))))
+      )
+    }
+  }
+
+  // `a` or `b` in each of the low `w` bits.
+  pub fn bits_or(w: Nat, a: Nat, b: Nat): Nat {
+    match w: Nat {
+      Zero => Zero
+      Succ(k) => Nat::add(
+        Nat::add(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))) - Nat::mul(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
+        Nat::mul(2, bits_or(k, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))))
+      )
+    }
+  }
+
+  // `a` or `b` but not both, in each of the low `w` bits.
+  pub fn bits_xor(w: Nat, a: Nat, b: Nat): Nat {
+    match w: Nat {
+      Zero => Zero
+      Succ(k) => Nat::add(
+        Nat::rem_nz(Nat::add(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))), 2, Nat::ne_zero(2, Refl)),
+        Nat::mul(2, bits_xor(k, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))))
+      )
+    }
+  }
+
+  // `2^n`.
+  pub fn pow2(n: Nat): Nat {
+    match n: Nat {
+      Zero => 1
+      Succ(k) => Nat::mul(2, pow2(k))
+    }
+  }
+
+  // Twice a number that is not 0 is not 0.
+  pub theorem double_ne_zero(x: Nat, h: x == 0 = false): Nat::mul(2, x) == 0 = false {
+    match x: Nat::mul(2, x) == 0 = false {
+      Zero => match true_ne_false(h): Nat::mul(2, Zero) == 0 = false {
+      }
+      Succ(y) => Refl
+    }
+  }
+
+  pub theorem pow2_eq_zero(n: Nat): pow2(n) == 0 = false {
+    match n: pow2(n) == 0 = false {
+      Zero => Refl
+      Succ(k) => double_ne_zero(pow2(k), pow2_eq_zero(k))
+    }
+  }
+
+  // `2^n` is not 0: the divisor of a shift.
+  pub theorem pow2_ne_zero(n: Nat): ¬(pow2(n) = 0) {
+    Nat::ne_zero(pow2(n), pow2_eq_zero(n))
+  }
+}
+
+// ---- U8 ---------------------------------------------------------------------
+
+pub(open) inductive U8: Type {
+  Mk(val: Nat, ok: val < 256 = true): U8
+}
+
+module U8 {
+  // Mapped: the number a `u8` is.
+  pub fn val(x: U8): Nat {
+    match x: Nat {
+      Mk(v, h) => v
+    }
+  }
+
+  pub theorem ok(x: U8): val(x) < 256 = true {
+    match x: val(x) < 256 = true {
+      Mk(v, h) => h
+    }
+  }
+
+  // Mapped: `n` as a `u8` when `o`, the decision of `n < 2^8`, says it fits.
+  pub fn of_decided(n: Nat, o: Bool, h: n < 256 = o): Option(U8) {
+    match o: Option(U8) {
+      false => None
+      true => Some(U8::Mk(n, h))
+    }
+  }
+
+  // Mapped: `n` as a `u8`, or `None` when it is `2^8` or more.
+  pub fn of_nat_checked(n: Nat): Option(U8) {
+    of_decided(n, n < 256, Refl)
+  }
+
+  // Mapped: `a + b`, which `h` says fits.
+  pub fn add(a: U8, b: U8, h: Nat::add(val(a), val(b)) < 256 = true): U8 {
+    U8::Mk(Nat::add(val(a), val(b)), h)
+  }
+
+  // Mapped: `a - b`, where `h` says `b <= a`.
+  pub fn sub(a: U8, b: U8, h: val(b) <= val(a) = true): U8 {
+    U8::Mk(
+      val(a) - val(b),
+      Nat::le_lt_trans(
+        val(a) - val(b),
+        val(a),
+        256,
+        Nat::sub_le(val(a), val(b)),
+        ok(a)
+      )
+    )
+  }
+
+  // Mapped: `a * b`, which `h` says fits.
+  pub fn mul(a: U8, b: U8, h: Nat::mul(val(a), val(b)) < 256 = true): U8 {
+    U8::Mk(Nat::mul(val(a), val(b)), h)
+  }
+
+  // Mapped: `a + b`, or `None` when it does not fit.
+  pub fn checked_add(a: U8, b: U8): Option(U8) {
+    of_nat_checked(Nat::add(val(a), val(b)))
+  }
+
+  // Mapped: `a - b`, or `None` when `b` is larger.
+  pub fn checked_sub(a: U8, b: U8): Option(U8) {
+    match val(a) < val(b): Option(U8) {
+      false => of_nat_checked(val(a) - val(b))
+      true => None
+    }
+  }
+
+  // Mapped: `a * b`, or `None` when it does not fit.
+  pub fn checked_mul(a: U8, b: U8): Option(U8) {
+    of_nat_checked(Nat::mul(val(a), val(b)))
+  }
+
+  // Mapped: the comparisons.
+  pub fn lt(a: U8, b: U8): Bool {
+    val(a) < val(b)
+  }
+
+  pub fn le(a: U8, b: U8): Bool {
+    val(a) <= val(b)
+  }
+
+  pub fn eq(a: U8, b: U8): Bool {
+    val(a) == val(b)
+  }
+
+  // Mapped: `a + b` modulo `2^8`.
+  pub fn wrapping_add(a: U8, b: U8): U8 {
+    U8::Mk(
+      Nat::rem_nz(Nat::add(val(a), val(b)), 256, Nat::ne_zero(256, Refl)),
+      Nat::mod_lt(Nat::add(val(a), val(b)), 256, Refl)
+    )
+  }
+
+  // Mapped: `a - b` modulo `2^8`.
+  pub fn wrapping_sub(a: U8, b: U8): U8 {
+    U8::Mk(
+      Nat::rem_nz(Nat::add(val(a), 256) - val(b), 256, Nat::ne_zero(256, Refl)),
+      Nat::mod_lt(Nat::add(val(a), 256) - val(b), 256, Refl)
+    )
+  }
+
+  // Mapped: `a * b` modulo `2^8`.
+  pub fn wrapping_mul(a: U8, b: U8): U8 {
+    U8::Mk(
+      Nat::rem_nz(Nat::mul(val(a), val(b)), 256, Nat::ne_zero(256, Refl)),
+      Nat::mod_lt(Nat::mul(val(a), val(b)), 256, Refl)
+    )
+  }
+
+  pub theorem wrapping_add_val(
+    a: U8,
+    b: U8
+  ): val(wrapping_add(a, b)) = Nat::rem_nz(Nat::add(val(a), val(b)), 256, Nat::ne_zero(256, Refl)) {
+    Refl
+  }
+
+  pub theorem wrapping_mul_val(
+    a: U8,
+    b: U8
+  ): val(wrapping_mul(a, b)) = Nat::rem_nz(Nat::mul(val(a), val(b)), 256, Nat::ne_zero(256, Refl)) {
+    Refl
+  }
+
+  // Mapped: the value in `o`, or `overflow`.
+  pub fn or_overflow(o: Option(U8)): U8 ! {overflow} {
+    match o: U8 {
+      Some(x) => x
+      None => Never::elim(perform overflow())
+    }
+  }
+
+  pub fn add_or_overflow(a: U8, b: U8): U8 ! {overflow} {
+    or_overflow(checked_add(a, b))
+  }
+
+  pub fn sub_or_overflow(a: U8, b: U8): U8 ! {overflow} {
+    or_overflow(checked_sub(a, b))
+  }
+
+  pub fn mul_or_overflow(a: U8, b: U8): U8 ! {overflow} {
+    or_overflow(checked_mul(a, b))
+  }
+
+  // `a / b` rounded down, for a `b` that `h` says is not 0. The
+  // quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+  // never reached.
+  pub fn div_nz(a: U8, b: U8, h: ¬(val(b) = 0)): U8 {
+    match of_nat_checked(Nat::div_nz(val(a), val(b), h)): U8 {
+      Some(q) => q
+      None => a
+    }
+  }
+
+  // The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+  pub fn rem_nz(a: U8, b: U8, h: ¬(val(b) = 0)): U8 {
+    match of_nat_checked(Nat::rem_nz(val(a), val(b), h)): U8 {
+      Some(r) => r
+      None => a
+    }
+  }
+
+  // `div`, or `None` when `b` is 0.
+  pub fn checked_div(a: U8, b: U8): Option(U8) {
+    match val(b) == 0 eqn h: Option(U8) {
+      false => Some(div_nz(a, b, Nat::ne_zero(val(b), h)))
+      true => None
+    }
+  }
+
+  // `a / b` rounded down, or `DivZero` when `b` is 0.
+  pub fn div(a: U8, b: U8): U8 ! {DivZero} {
+    or_div_zero(checked_div(a, b))
+  }
+
+  // `rem`, or `None` when `b` is 0.
+  pub fn checked_rem(a: U8, b: U8): Option(U8) {
+    match val(b) == 0 eqn h: Option(U8) {
+      false => Some(rem_nz(a, b, Nat::ne_zero(val(b), h)))
+      true => None
+    }
+  }
+
+  // The remainder of `div`, or `DivZero` when `b` is 0.
+  pub fn rem(a: U8, b: U8): U8 ! {DivZero} {
+    or_div_zero(checked_rem(a, b))
+  }
+
+  // `overflow` caught as `None`.
+  pub fn catch(o: Option(U8)): Option(U8) {
+    handle { Some(or_overflow(o)) } with {
+      overflow(), k => None
+    }
+  }
+
+  // Catching `overflow` gives back the decision: the effect says no more and
+  // no less than the `Option`.
+  pub theorem catch_is(o: Option(U8)): catch(o) = o {
+    match o: catch(o) = o {
+      Some(x) => Refl
+      None => Refl
+    }
+  }
+
+  pub theorem add_val(
+    a: U8,
+    b: U8,
+    h: Nat::add(val(a), val(b)) < 256 = true
+  ): val(add(a, b, h)) = Nat::add(val(a), val(b)) {
+    Refl
+  }
+
+  pub theorem sub_val(
+    a: U8,
+    b: U8,
+    h: val(b) <= val(a) = true
+  ): val(sub(a, b, h)) = val(a) - val(b) {
+    Refl
+  }
+
+  pub theorem mul_val(
+    a: U8,
+    b: U8,
+    h: Nat::mul(val(a), val(b)) < 256 = true
+  ): val(mul(a, b, h)) = Nat::mul(val(a), val(b)) {
+    Refl
+  }
+}
+
+// ---- U32 ---------------------------------------------------------------------
+
+pub(open) inductive U32: Type {
+  Mk(val: Nat, ok: val < 4294967296 = true): U32
+}
+
+module U32 {
+  // Mapped: the number a `u32` is.
+  pub fn val(x: U32): Nat {
+    match x: Nat {
+      Mk(v, h) => v
+    }
+  }
+
+  pub theorem ok(x: U32): val(x) < 4294967296 = true {
+    match x: val(x) < 4294967296 = true {
+      Mk(v, h) => h
+    }
+  }
+
+  // Mapped: `n` as a `u32` when `o`, the decision of `n < 2^32`, says it fits.
+  pub fn of_decided(n: Nat, o: Bool, h: n < 4294967296 = o): Option(U32) {
+    match o: Option(U32) {
+      false => None
+      true => Some(U32::Mk(n, h))
+    }
+  }
+
+  // Mapped: `n` as a `u32`, or `None` when it is `2^32` or more.
+  pub fn of_nat_checked(n: Nat): Option(U32) {
+    of_decided(n, n < 4294967296, Refl)
+  }
+
+  // Mapped: `a + b`, which `h` says fits.
+  pub fn add(a: U32, b: U32, h: Nat::add(val(a), val(b)) < 4294967296 = true): U32 {
+    U32::Mk(Nat::add(val(a), val(b)), h)
+  }
+
+  // Mapped: `a - b`, where `h` says `b <= a`.
+  pub fn sub(a: U32, b: U32, h: val(b) <= val(a) = true): U32 {
+    U32::Mk(
+      val(a) - val(b),
+      Nat::le_lt_trans(
+        val(a) - val(b),
+        val(a),
+        4294967296,
+        Nat::sub_le(val(a), val(b)),
+        ok(a)
+      )
+    )
+  }
+
+  // Mapped: `a * b`, which `h` says fits.
+  pub fn mul(a: U32, b: U32, h: Nat::mul(val(a), val(b)) < 4294967296 = true): U32 {
+    U32::Mk(Nat::mul(val(a), val(b)), h)
+  }
+
+  // Mapped: `a + b`, or `None` when it does not fit.
+  pub fn checked_add(a: U32, b: U32): Option(U32) {
+    of_nat_checked(Nat::add(val(a), val(b)))
+  }
+
+  // Mapped: `a - b`, or `None` when `b` is larger.
+  pub fn checked_sub(a: U32, b: U32): Option(U32) {
+    match val(a) < val(b): Option(U32) {
+      false => of_nat_checked(val(a) - val(b))
+      true => None
+    }
+  }
+
+  // Mapped: `a * b`, or `None` when it does not fit.
+  pub fn checked_mul(a: U32, b: U32): Option(U32) {
+    of_nat_checked(Nat::mul(val(a), val(b)))
+  }
+
+  // Mapped: the comparisons.
+  pub fn lt(a: U32, b: U32): Bool {
+    val(a) < val(b)
+  }
+
+  pub fn le(a: U32, b: U32): Bool {
+    val(a) <= val(b)
+  }
+
+  pub fn eq(a: U32, b: U32): Bool {
+    val(a) == val(b)
+  }
+
+  // Mapped: `a + b` modulo `2^32`.
+  pub fn wrapping_add(a: U32, b: U32): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::add(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::add(val(a), val(b)), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: `a - b` modulo `2^32`.
+  pub fn wrapping_sub(a: U32, b: U32): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::add(val(a), 4294967296) - val(b), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::add(val(a), 4294967296) - val(b), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: `a * b` modulo `2^32`.
+  pub fn wrapping_mul(a: U32, b: U32): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::mul(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::mul(val(a), val(b)), 4294967296, Refl)
+    )
+  }
+
+  pub theorem wrapping_add_val(
+    a: U32,
+    b: U32
+  ): val(wrapping_add(a, b)) = Nat::rem_nz(Nat::add(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  pub theorem wrapping_mul_val(
+    a: U32,
+    b: U32
+  ): val(wrapping_mul(a, b)) = Nat::rem_nz(Nat::mul(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  // Mapped: the value in `o`, or `overflow`.
+  pub fn or_overflow(o: Option(U32)): U32 ! {overflow} {
+    match o: U32 {
+      Some(x) => x
+      None => Never::elim(perform overflow())
+    }
+  }
+
+  pub fn add_or_overflow(a: U32, b: U32): U32 ! {overflow} {
+    or_overflow(checked_add(a, b))
+  }
+
+  pub fn sub_or_overflow(a: U32, b: U32): U32 ! {overflow} {
+    or_overflow(checked_sub(a, b))
+  }
+
+  pub fn mul_or_overflow(a: U32, b: U32): U32 ! {overflow} {
+    or_overflow(checked_mul(a, b))
+  }
+
+  // `a / b` rounded down, for a `b` that `h` says is not 0. The
+  // quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+  // never reached.
+  pub fn div_nz(a: U32, b: U32, h: ¬(val(b) = 0)): U32 {
+    match of_nat_checked(Nat::div_nz(val(a), val(b), h)): U32 {
+      Some(q) => q
+      None => a
+    }
+  }
+
+  // The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+  pub fn rem_nz(a: U32, b: U32, h: ¬(val(b) = 0)): U32 {
+    match of_nat_checked(Nat::rem_nz(val(a), val(b), h)): U32 {
+      Some(r) => r
+      None => a
+    }
+  }
+
+  // `div`, or `None` when `b` is 0.
+  pub fn checked_div(a: U32, b: U32): Option(U32) {
+    match val(b) == 0 eqn h: Option(U32) {
+      false => Some(div_nz(a, b, Nat::ne_zero(val(b), h)))
+      true => None
+    }
+  }
+
+  // `a / b` rounded down, or `DivZero` when `b` is 0.
+  pub fn div(a: U32, b: U32): U32 ! {DivZero} {
+    or_div_zero(checked_div(a, b))
+  }
+
+  // `rem`, or `None` when `b` is 0.
+  pub fn checked_rem(a: U32, b: U32): Option(U32) {
+    match val(b) == 0 eqn h: Option(U32) {
+      false => Some(rem_nz(a, b, Nat::ne_zero(val(b), h)))
+      true => None
+    }
+  }
+
+  // The remainder of `div`, or `DivZero` when `b` is 0.
+  pub fn rem(a: U32, b: U32): U32 ! {DivZero} {
+    or_div_zero(checked_rem(a, b))
+  }
+
+  // `overflow` caught as `None`.
+  pub fn catch(o: Option(U32)): Option(U32) {
+    handle { Some(or_overflow(o)) } with {
+      overflow(), k => None
+    }
+  }
+
+  // Catching `overflow` gives back the decision: the effect says no more and
+  // no less than the `Option`.
+  pub theorem catch_is(o: Option(U32)): catch(o) = o {
+    match o: catch(o) = o {
+      Some(x) => Refl
+      None => Refl
+    }
+  }
+
+  pub theorem add_val(
+    a: U32,
+    b: U32,
+    h: Nat::add(val(a), val(b)) < 4294967296 = true
+  ): val(add(a, b, h)) = Nat::add(val(a), val(b)) {
+    Refl
+  }
+
+  pub theorem sub_val(
+    a: U32,
+    b: U32,
+    h: val(b) <= val(a) = true
+  ): val(sub(a, b, h)) = val(a) - val(b) {
+    Refl
+  }
+
+  pub theorem mul_val(
+    a: U32,
+    b: U32,
+    h: Nat::mul(val(a), val(b)) < 4294967296 = true
+  ): val(mul(a, b, h)) = Nat::mul(val(a), val(b)) {
+    Refl
+  }
+}
+
+// ---- U64 ---------------------------------------------------------------------
+
+pub(open) inductive U64: Type {
+  Mk(val: Nat, ok: val < 18446744073709551616 = true): U64
+}
+
+module U64 {
+  // Mapped: the number a `u64` is.
+  pub fn val(x: U64): Nat {
+    match x: Nat {
+      Mk(v, h) => v
+    }
+  }
+
+  pub theorem ok(x: U64): val(x) < 18446744073709551616 = true {
+    match x: val(x) < 18446744073709551616 = true {
+      Mk(v, h) => h
+    }
+  }
+
+  // Mapped: `n` as a `u64` when `o`, the decision of `n < 2^64`, says it fits.
+  pub fn of_decided(n: Nat, o: Bool, h: n < 18446744073709551616 = o): Option(U64) {
+    match o: Option(U64) {
+      false => None
+      true => Some(U64::Mk(n, h))
+    }
+  }
+
+  // Mapped: `n` as a `u64`, or `None` when it is `2^64` or more.
+  pub fn of_nat_checked(n: Nat): Option(U64) {
+    of_decided(n, n < 18446744073709551616, Refl)
+  }
+
+  // Mapped: `a + b`, which `h` says fits.
+  pub fn add(
+    a: U64,
+    b: U64,
+    h: Nat::add(val(a), val(b)) < 18446744073709551616 = true
+  ): U64 {
+    U64::Mk(Nat::add(val(a), val(b)), h)
+  }
+
+  // Mapped: `a - b`, where `h` says `b <= a`.
+  pub fn sub(a: U64, b: U64, h: val(b) <= val(a) = true): U64 {
+    U64::Mk(
+      val(a) - val(b),
+      Nat::le_lt_trans(
+        val(a) - val(b),
+        val(a),
+        18446744073709551616,
+        Nat::sub_le(val(a), val(b)),
+        ok(a)
+      )
+    )
+  }
+
+  // Mapped: `a * b`, which `h` says fits.
+  pub fn mul(
+    a: U64,
+    b: U64,
+    h: Nat::mul(val(a), val(b)) < 18446744073709551616 = true
+  ): U64 {
+    U64::Mk(Nat::mul(val(a), val(b)), h)
+  }
+
+  // Mapped: `a + b`, or `None` when it does not fit.
+  pub fn checked_add(a: U64, b: U64): Option(U64) {
+    of_nat_checked(Nat::add(val(a), val(b)))
+  }
+
+  // Mapped: `a - b`, or `None` when `b` is larger.
+  pub fn checked_sub(a: U64, b: U64): Option(U64) {
+    match val(a) < val(b): Option(U64) {
+      false => of_nat_checked(val(a) - val(b))
+      true => None
+    }
+  }
+
+  // Mapped: `a * b`, or `None` when it does not fit.
+  pub fn checked_mul(a: U64, b: U64): Option(U64) {
+    of_nat_checked(Nat::mul(val(a), val(b)))
+  }
+
+  // Mapped: the comparisons.
+  pub fn lt(a: U64, b: U64): Bool {
+    val(a) < val(b)
+  }
+
+  pub fn le(a: U64, b: U64): Bool {
+    val(a) <= val(b)
+  }
+
+  pub fn eq(a: U64, b: U64): Bool {
+    val(a) == val(b)
+  }
+
+  // `n` modulo `2^64`.
+  pub fn of_nat_mod(n: Nat): U64 {
+    U64::Mk(Nat::rem_nz(n, 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)), Nat::mod_lt(n, 18446744073709551616, Refl))
+  }
+
+  // Mapped: `a + b` modulo `2^64`.
+  pub fn wrapping_add(a: U64, b: U64): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::add(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::add(val(a), val(b)), 18446744073709551616, Refl)
+    )
+  }
+
+  // Mapped: `a - b` modulo `2^64`.
+  pub fn wrapping_sub(a: U64, b: U64): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::add(val(a), 18446744073709551616) - val(b), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(
+        Nat::add(val(a), 18446744073709551616) - val(b),
+        18446744073709551616,
+        Refl
+      )
+    )
+  }
+
+  // Mapped: `a * b` modulo `2^64`.
+  pub fn wrapping_mul(a: U64, b: U64): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::mul(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::mul(val(a), val(b)), 18446744073709551616, Refl)
+    )
+  }
+
+  pub theorem wrapping_add_val(
+    a: U64,
+    b: U64
+  ): val(wrapping_add(a, b)) = Nat::rem_nz(Nat::add(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  pub theorem wrapping_mul_val(
+    a: U64,
+    b: U64
+  ): val(wrapping_mul(a, b)) = Nat::rem_nz(Nat::mul(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  // Mapped: the value in `o`, or `overflow`.
+  pub fn or_overflow(o: Option(U64)): U64 ! {overflow} {
+    match o: U64 {
+      Some(x) => x
+      None => Never::elim(perform overflow())
+    }
+  }
+
+  pub fn add_or_overflow(a: U64, b: U64): U64 ! {overflow} {
+    or_overflow(checked_add(a, b))
+  }
+
+  pub fn sub_or_overflow(a: U64, b: U64): U64 ! {overflow} {
+    or_overflow(checked_sub(a, b))
+  }
+
+  pub fn mul_or_overflow(a: U64, b: U64): U64 ! {overflow} {
+    or_overflow(checked_mul(a, b))
+  }
+
+  // `a / b` rounded down, for a `b` that `h` says is not 0. The
+  // quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
+  // never reached.
+  pub fn div_nz(a: U64, b: U64, h: ¬(val(b) = 0)): U64 {
+    match of_nat_checked(Nat::div_nz(val(a), val(b), h)): U64 {
+      Some(q) => q
+      None => a
+    }
+  }
+
+  // The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
+  pub fn rem_nz(a: U64, b: U64, h: ¬(val(b) = 0)): U64 {
+    match of_nat_checked(Nat::rem_nz(val(a), val(b), h)): U64 {
+      Some(r) => r
+      None => a
+    }
+  }
+
+  // `div`, or `None` when `b` is 0.
+  pub fn checked_div(a: U64, b: U64): Option(U64) {
+    match val(b) == 0 eqn h: Option(U64) {
+      false => Some(div_nz(a, b, Nat::ne_zero(val(b), h)))
+      true => None
+    }
+  }
+
+  // `a / b` rounded down, or `DivZero` when `b` is 0.
+  pub fn div(a: U64, b: U64): U64 ! {DivZero} {
+    or_div_zero(checked_div(a, b))
+  }
+
+  // `rem`, or `None` when `b` is 0.
+  pub fn checked_rem(a: U64, b: U64): Option(U64) {
+    match val(b) == 0 eqn h: Option(U64) {
+      false => Some(rem_nz(a, b, Nat::ne_zero(val(b), h)))
+      true => None
+    }
+  }
+
+  // The remainder of `div`, or `DivZero` when `b` is 0.
+  pub fn rem(a: U64, b: U64): U64 ! {DivZero} {
+    or_div_zero(checked_rem(a, b))
+  }
+
+  // `overflow` caught as `None`.
+  pub fn catch(o: Option(U64)): Option(U64) {
+    handle { Some(or_overflow(o)) } with {
+      overflow(), k => None
+    }
+  }
+
+  // Catching `overflow` gives back the decision: the effect says no more and
+  // no less than the `Option`.
+  pub theorem catch_is(o: Option(U64)): catch(o) = o {
+    match o: catch(o) = o {
+      Some(x) => Refl
+      None => Refl
+    }
+  }
+
+  pub theorem add_val(
+    a: U64,
+    b: U64,
+    h: Nat::add(val(a), val(b)) < 18446744073709551616 = true
+  ): val(add(a, b, h)) = Nat::add(val(a), val(b)) {
+    Refl
+  }
+
+  pub theorem sub_val(
+    a: U64,
+    b: U64,
+    h: val(b) <= val(a) = true
+  ): val(sub(a, b, h)) = val(a) - val(b) {
+    Refl
+  }
+
+  pub theorem mul_val(
+    a: U64,
+    b: U64,
+    h: Nat::mul(val(a), val(b)) < 18446744073709551616 = true
+  ): val(mul(a, b, h)) = Nat::mul(val(a), val(b)) {
+    Refl
+  }
+
+  // ---- bits of U64 ------------------------------------------------------------
+
+  // Mapped: the bits set in both `a` and `b`.
+  pub fn and(a: U64, b: U64): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::bits_and(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::bits_and(64, val(a), val(b)), 18446744073709551616, Refl)
+    )
+  }
+
+  // Mapped: the bits set in `a` or `b`.
+  pub fn or(a: U64, b: U64): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::bits_or(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::bits_or(64, val(a), val(b)), 18446744073709551616, Refl)
+    )
+  }
+
+  // Mapped: the bits set in one of `a` and `b`.
+  pub fn xor(a: U64, b: U64): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::bits_xor(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::bits_xor(64, val(a), val(b)), 18446744073709551616, Refl)
+    )
+  }
+
+  // Mapped: `a` shifted left by `s` modulo 64, the bits past the top dropped.
+  pub fn shl(a: U64, s: Nat): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Refl)
+    )
+  }
+
+  // Mapped: `a` shifted right by `s` modulo 64.
+  pub fn shr(a: U64, s: Nat): U64 {
+    U64::Mk(
+      Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Refl)
+    )
+  }
+
+  // Mapped: `a` rotated left by `s` modulo 64.
+  pub fn rotl(a: U64, s: Nat): U64 {
+    U64::Mk(
+      Nat::rem_nz(
+        Nat::add(
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+          Nat::div_nz(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))))
+        ),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::add(
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+          Nat::div_nz(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))))
+        ),
+        18446744073709551616,
+        Refl
+      )
+    )
+  }
+
+  // Mapped: `a` rotated right by `s` modulo 64.
+  pub fn rotr(a: U64, s: Nat): U64 {
+    U64::Mk(
+      Nat::rem_nz(
+        Nat::add(
+          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+        ),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::add(
+          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+        ),
+        18446744073709551616,
+        Refl
+      )
+    )
+  }
+
+  pub theorem and_val(
+    a: U64,
+    b: U64
+  ): val(and(a, b)) = Nat::rem_nz(Nat::bits_and(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  pub theorem or_val(
+    a: U64,
+    b: U64
+  ): val(or(a, b)) = Nat::rem_nz(Nat::bits_or(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  pub theorem xor_val(
+    a: U64,
+    b: U64
+  ): val(xor(a, b)) = Nat::rem_nz(Nat::bits_xor(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  pub theorem shl_val(
+    a: U64,
+    s: Nat
+  ): val(
+    shl(a, s)
+  ) = Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  pub theorem shr_val(
+    a: U64,
+    s: Nat
+  ): val(
+    shr(a, s)
+  ) = Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+    Refl
+  }
+
+  pub theorem rotl_val(
+    a: U64,
+    s: Nat
+  ): val(
+    rotl(a, s)
+  ) = Nat::rem_nz(
+    Nat::add(
+      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::div_nz(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))))
+    ),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
+    Refl
+  }
+
+  pub theorem rotr_val(
+    a: U64,
+    s: Nat
+  ): val(
+    rotr(a, s)
+  ) = Nat::rem_nz(
+    Nat::add(
+      Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+    ),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
+    Refl
+  }
+}
+
+module U32 {
+  // ---- bits of U32 ------------------------------------------------------------
+
+  // Mapped: the bits set in both `a` and `b`.
+  pub fn and(a: U32, b: U32): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::bits_and(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::bits_and(32, val(a), val(b)), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: the bits set in `a` or `b`.
+  pub fn or(a: U32, b: U32): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::bits_or(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::bits_or(32, val(a), val(b)), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: the bits set in one of `a` and `b`.
+  pub fn xor(a: U32, b: U32): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::bits_xor(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::bits_xor(32, val(a), val(b)), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: `a` shifted left by `s` modulo 32, the bits past the top dropped.
+  pub fn shl(a: U32, s: Nat): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: `a` shifted right by `s` modulo 32.
+  pub fn shr(a: U32, s: Nat): U32 {
+    U32::Mk(
+      Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Refl)
+    )
+  }
+
+  // Mapped: `a` rotated left by `s` modulo 32.
+  pub fn rotl(a: U32, s: Nat): U32 {
+    U32::Mk(
+      Nat::rem_nz(
+        Nat::add(
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
+          Nat::div_nz(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))))
+        ),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::add(
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
+          Nat::div_nz(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))))
+        ),
+        4294967296,
+        Refl
+      )
+    )
+  }
+
+  // Mapped: `a` rotated right by `s` modulo 32.
+  pub fn rotr(a: U32, s: Nat): U32 {
+    U32::Mk(
+      Nat::rem_nz(
+        Nat::add(
+          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl))
+        ),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::add(
+          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl))
+        ),
+        4294967296,
+        Refl
+      )
+    )
+  }
+
+  pub theorem and_val(
+    a: U32,
+    b: U32
+  ): val(and(a, b)) = Nat::rem_nz(Nat::bits_and(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  pub theorem or_val(
+    a: U32,
+    b: U32
+  ): val(or(a, b)) = Nat::rem_nz(Nat::bits_or(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  pub theorem xor_val(
+    a: U32,
+    b: U32
+  ): val(xor(a, b)) = Nat::rem_nz(Nat::bits_xor(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  pub theorem shl_val(
+    a: U32,
+    s: Nat
+  ): val(shl(a, s)) = Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  pub theorem shr_val(
+    a: U32,
+    s: Nat
+  ): val(shr(a, s)) = Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+    Refl
+  }
+
+  pub theorem rotl_val(
+    a: U32,
+    s: Nat
+  ): val(
+    rotl(a, s)
+  ) = Nat::rem_nz(
+    Nat::add(
+      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::div_nz(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))))
+    ),
+    4294967296,
+    Nat::ne_zero(4294967296, Refl)
+  ) {
+    Refl
+  }
+
+  pub theorem rotr_val(
+    a: U32,
+    s: Nat
+  ): val(
+    rotr(a, s)
+  ) = Nat::rem_nz(
+    Nat::add(
+      Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl))
+    ),
+    4294967296,
+    Nat::ne_zero(4294967296, Refl)
+  ) {
+    Refl
+  }
+}

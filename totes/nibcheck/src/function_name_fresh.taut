@@ -1,0 +1,109 @@
+import "function_name_absence.taut"
+
+pub theorem fresh_function_head_absent(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  seen: List(Text),
+  fresh: FreshFunctionNames(Cons(f, rest), seen),
+  present: Mem(Text, signature_name(f), seen)
+): False {
+  match fresh: False {
+    FreshFunctionsCons(head, tail, previous, absent, remaining) => absent(present)
+  }
+}
+
+pub theorem fresh_function_tail(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  seen: List(Text),
+  fresh: FreshFunctionNames(Cons(f, rest), seen)
+): FreshFunctionNames(rest, Cons(signature_name(f), seen)) {
+  match fresh: FreshFunctionNames(rest, Cons(signature_name(f), seen)) {
+    FreshFunctionsCons(head, tail, previous, absent, remaining) => remaining
+  }
+}
+
+pub theorem fresh_function_excludes<d: SurfaceFn, fs: List(
+  SurfaceFn
+)>(
+  member: Mem(SurfaceFn, d, fs),
+  seen: List(Text),
+  fresh: FreshFunctionNames(fs, seen),
+  n: Text,
+  already: Mem(Text, n, seen),
+  equal: n = signature_name(d)
+): False {
+  match member: False {
+    MemHere(rest) => fresh_function_head_absent(
+      d,
+      rest,
+      seen,
+      fresh,
+      Eq::subst((key: Text) => Mem(Text, key, seen), equal, already)
+    )
+    MemThere(first, rest, tail) => fresh_function_excludes(
+      tail,
+      Cons(signature_name(first), seen),
+      fresh_function_tail(first, rest, seen, fresh),
+      n,
+      MemThere(signature_name(first), seen, already),
+      equal
+    )
+  }
+}
+
+pub theorem fresh_function_weaken<fs: List(
+  SurfaceFn
+), seen: List(
+  Text
+)>(
+  fresh: FreshFunctionNames(fs, seen),
+  smaller: List(Text),
+  sub: Sub(Text, smaller, seen)
+): FreshFunctionNames(fs, smaller) {
+  match fresh: FreshFunctionNames(fs, smaller) {
+    FreshFunctionsNil(previous) => FreshFunctionsNil(smaller)
+    FreshFunctionsCons(first, rest, previous, absent, remaining) => FreshFunctionsCons(
+      first,
+      rest,
+      smaller,
+      member => absent(sub(signature_name(first), member)),
+      fresh_function_weaken(
+        remaining,
+        Cons(signature_name(first), smaller),
+        n => member => data_seen_cons_sub(signature_name(first), smaller, previous, sub, n, member)
+      )
+    )
+  }
+}
+
+pub theorem fresh_function_append_tail(
+  prefix: List(SurfaceFn),
+  suffix: List(SurfaceFn),
+  seen: List(Text),
+  fresh: FreshFunctionNames(List::append(prefix, suffix), seen)
+): FreshFunctionNames(suffix, seen) {
+  match prefix: FreshFunctionNames(suffix, seen) {
+    Nil => fresh
+    Cons(first, rest) => fresh_function_weaken(
+      fresh_function_append_tail(
+        rest,
+        suffix,
+        Cons(signature_name(first), seen),
+        fresh_function_tail(first, List::append(rest, suffix), seen, fresh)
+      ),
+      seen,
+      n => member => MemThere(signature_name(first), seen, member)
+    )
+  }
+}
+
+pub theorem fresh_function_absent(
+  fs: List(SurfaceFn),
+  seen: List(Text),
+  fresh: FreshFunctionNames(fs, seen),
+  name: Text,
+  already: Mem(Text, name, seen)
+): FunctionNameAbsent(name, fs) {
+  source => member => equal => fresh_function_excludes(member, seen, fresh, name, already, equal)
+}

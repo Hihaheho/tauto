@@ -1,0 +1,305 @@
+import "registration_presence_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub def ExistingData(
+  n: Text,
+  c: Checker
+): Prop := And(CkDatasOrdered(c), DataPresent(summary_decls(ck_datas_of(c)), n))
+
+pub theorem existing_data_read<A: Type>(
+  n: Text,
+  c: Checker,
+  m: Mut1(A, Checker),
+  frame: CkReadFrame(c, m),
+  h: ExistingData(n, c)
+): ExistingData(n, ck_st(m)) {
+  AndIntro(
+    frame_ordered(c, m, frame, And::left(h)),
+    Eq::subst(
+      (d: Datas) => DataPresent(summary_decls(d), n),
+      Eq::sym(Eq::congr(frame_read_datas, frame)),
+      And::right(h)
+    )
+  )
+}
+pub theorem existing_data_ctors(
+  n: Text,
+  cs: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  i: Nat,
+  h: ExistingData(n, c)
+): ExistingData(n, ck_st(ck_register_ctors(cs, c, dname, i))) {
+  AndIntro(
+    ck_register_ctors_ordered(cs, c, dname, i, And::left(h)),
+    Eq::subst(
+      (m: Ordmap(Text, Data)) => DataPresent(m, n),
+      Eq::sym(ck_register_ctors_decls(cs, c, dname, i)),
+      And::right(h)
+    )
+  )
+}
+pub theorem existing_data_insert(
+  n: Text,
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  h: ExistingData(n, c)
+): ExistingData(n, ck_st(registration_insert(c, d, is_struct, builtin, constructors))) {
+  AndIntro(
+    registration_insert_ordered(c, d, is_struct, builtin, constructors, And::left(h)),
+    data_presence_insert(
+      summary_decls(ck_datas_of(c)),
+      registration_name(d),
+      registration_data(d, is_struct, builtin, constructors),
+      And::left(h)
+    )(n, And::right(h))
+  )
+}
+pub theorem registration_bind_existing<A: Type, B: Type>(
+  n: Text,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: ExistingData(n, ck_st(m)),
+  hk: ∀ v: A. ∀ next: Checker. (ExistingData(n, next)) -> ExistingData(n, ck_st(k(v, next)))
+): ExistingData(n, ck_st(frame_bind(k, m))) {
+  match m: ExistingData(n, ck_st(frame_bind(k, m))) {
+    mut1(v, next) => hk(v, next, hm)
+  }
+}
+
+pub theorem registration_declare_existing(
+  n: Text,
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: ExistingData(n, c)
+): ExistingData(n, ck_st(registration_declare(c, d, is_struct, builtin))) {
+  registration_bind_existing(
+    Unit,
+    Unit,
+    n,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      Bool::and(
+        surface_data_is_view(d),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    existing_data_read(
+      n,
+      c,
+      frame_error_if(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      frame_error_if_ok(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      ordered
+    ),
+    ignored => c1 => o1 => registration_bind_existing(
+      List(DataCtor),
+      Unit,
+      n,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      ),
+      existing_data_read(
+        n,
+        c1,
+        ck_data_ctors(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        ck_data_ctors_frame(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        o1
+      ),
+      constructors => c2 => o2 => registration_bind_existing(
+        Unit,
+        Unit,
+        n,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0),
+        existing_data_ctors(n, constructors, c2, registration_name(d), 0, o2),
+        ignored2 => c3 => o3 => existing_data_insert(n, c3, d, is_struct, builtin, constructors, o3)
+      )
+    )
+  )
+}
+
+pub theorem ck_declare_data_existing(
+  n: Text,
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: ExistingData(n, c)
+): ExistingData(n, ck_st(ck_declare_data(c, d, is_struct, builtin))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => ExistingData(n, ck_st(z)),
+    Eq::sym(registration_declare_unf(c, d, is_struct, builtin)),
+    registration_declare_existing(n, c, d, is_struct, builtin, ordered)
+  )
+}
+
+pub theorem registration_rewrap_existing<A: Type>(
+  n: Text,
+  m: Mut1(A, Checker),
+  h: ExistingData(n, ck_st(m))
+): ExistingData(n, ck_st(ck_rewrap1(m))) {
+  Eq::subst((z: Mut1(A, Checker)) => ExistingData(n, ck_st(z)), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub theorem registration_if_existing(
+  n: Text,
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  take: Bool,
+  ordered: ExistingData(n, c),
+  hm: ExistingData(n, ck_st(m))
+): ExistingData(n, ck_st(registration_if(c, m, take))) {
+  match take: ExistingData(n, ck_st(registration_if(c, m, take))) {
+    true => registration_rewrap_existing(n, m, hm)
+    false => ordered
+  }
+}
+
+pub theorem ck_program_data_one_existing(
+  n: Text,
+  c: Checker,
+  s: SurfaceStmt,
+  ordered: ExistingData(n, c)
+): ExistingData(n, ck_st(ck_program_data_one(c, s))) {
+  match s: ExistingData(n, ck_st(ck_program_data_one(c, s))) {
+    StLet(name, ty, value, borrow, mutable) => ordered
+    StVar(name, ty, value, borrow) => ordered
+    StModule(name, stmts, start, end) => ordered
+    StAssign(name, name_place, value) => ordered
+    StCalled(name_generates, value) => ordered
+    StFn(f) => ordered
+    StTheorem(t) => ordered
+    StDef(t) => ordered
+    StMutual(stmts, start, end) => ordered
+    StImport(path, start, end) => ordered
+    StInductive(i) => ordered
+    StEffect(e) => ordered
+    StStruct(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => ExistingData(n, ck_st(z)),
+      Eq::sym(registration_program_StStruct_unf(d, c)),
+      registration_rewrap_existing(
+        n,
+        ck_declare_data(c, d, true, false),
+        ck_declare_data_existing(n, c, d, true, false, ordered)
+      )
+    )
+    StEnum(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => ExistingData(n, ck_st(z)),
+      Eq::sym(registration_program_StEnum_unf(d, c)),
+      registration_rewrap_existing(
+        n,
+        ck_declare_data(c, d, false, false),
+        ck_declare_data_existing(n, c, d, false, false, ordered)
+      )
+    )
+    StExtern(abi, fns, start, end) => ordered
+    StClass(c) => ordered
+    StInstance(i) => ordered
+    StWhile(cond, body) => ordered
+    StReturn(value) => ordered
+    StExpr(value) => ordered
+    StOther(what, start, end) => ordered
+    StMacro(name, function, start, end) => ordered
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered
+    StSyntax(name, grammar, start, end) => ordered
+  }
+}
+
+pub theorem ck_program_data_existing(
+  n: Text,
+  ss: List(SurfaceStmt),
+  c: Checker,
+  ordered: ExistingData(n, c)
+): ExistingData(n, ck_st(ck_program_data(ss, c))) {
+  match ss: ExistingData(n, ck_st(ck_program_data(ss, c))) {
+    Nil => ordered
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => ExistingData(n, ck_st(z)),
+      Eq::sym(registration_program_unf(s, rest, c)),
+      registration_bind_existing(
+        Unit,
+        Unit,
+        n,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s),
+        ck_program_data_one_existing(n, c, s, ordered),
+        ignored => next => hn => registration_rewrap_existing(
+          n,
+          ck_program_data(rest, next),
+          ck_program_data_existing(n, rest, next, hn)
+        )
+      )
+    )
+  }
+}

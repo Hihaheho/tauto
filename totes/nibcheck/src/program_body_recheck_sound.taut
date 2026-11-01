@@ -1,0 +1,158 @@
+import "prepare_data_body_sound.taut"
+
+pub theorem body_registered_recheck(
+  c: Checker,
+  source: SurfaceData,
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(
+    ck_st(
+      ck_recheck_ctors(
+        body_source_ctors(source),
+        c,
+        ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty())
+      )
+    )
+  )
+): DataBodyChecked(ck_datas_of(c), source) {
+  match registered: DataBodyChecked(ck_datas_of(c), source) {
+    Mk(constructors, found, known) => DataBodyChecked::Mk(
+      constructors,
+      found,
+      data_body_recheck(known, c, ordinary, position, clean)
+    )
+  }
+}
+pub fn body_recheck_after(rest: List(SurfaceData), m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
+    m
+  )
+}
+pub theorem body_recheck_head_clean(
+  rest: List(SurfaceData),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(body_recheck_after(rest, m)))
+): DiagnosticClean(ck_st(m)) {
+  written_bind_input_clean(
+    Unit,
+    Unit,
+    m,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
+    ignored => next => error_frame_rewrap(
+      next,
+      ck_recheck_datas(rest, next),
+      ck_recheck_datas_frame_errors(rest, next)
+    ),
+    clean
+  )
+}
+pub theorem body_recheck_tail(
+  rest: List(SurfaceData),
+  source: SurfaceData,
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  read: CkReadFrame(c, m),
+  context: written_context(ck_st(m)) = written_context(c),
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  ih: ∀ next: Checker. ∀ present: DataBodyRegistered(
+    ck_datas_of(next),
+    source
+  ). ∀ ordinary_next: frame_under_borrow(next) = false. ∀ position_next: frame_constructor_position(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_recheck_datas(rest, next))
+  ). DataBodyChecked(ck_datas_of(next), source),
+  clean: DiagnosticClean(ck_st(body_recheck_after(rest, m)))
+): DataBodyChecked(ck_datas_of(c), source) {
+  match m: DataBodyChecked(ck_datas_of(c), source) {
+    mut1(ignored, next) => Eq::subst(
+      (env: Datas) => DataBodyChecked(env, source),
+      Eq::congr(frame_read_datas, read),
+      ih(
+        next,
+        Eq::subst(
+          (env: Datas) => DataBodyRegistered(env, source),
+          Eq::sym(Eq::congr(frame_read_datas, read)),
+          registered
+        ),
+        Eq::trans(Eq::congr(written_context_borrow, context), ordinary),
+        Eq::trans(Eq::congr(written_context_position, context), position),
+        recheck_clean_unwrap(ck_recheck_datas(rest, next), clean)
+      )
+    )
+  }
+}
+pub theorem ck_recheck_datas_body<datas: List(
+  SurfaceData
+), source: SurfaceData>(
+  member: Mem(SurfaceData, source, datas),
+  c: Checker,
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(ck_recheck_datas(datas, c)))
+): DataBodyChecked(ck_datas_of(c), source) {
+  match member: DataBodyChecked(ck_datas_of(c), source) {
+    MemHere(rest) => body_registered_recheck(
+      c,
+      source,
+      registered,
+      ordinary,
+      position,
+      body_recheck_head_clean(
+        rest,
+        ck_recheck_ctors(
+          body_source_ctors(source),
+          c,
+          ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty())
+        ),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          recheck_datas_cons_unf(source, rest, c),
+          clean
+        )
+      )
+    )
+    MemThere(first, rest, tail) => body_recheck_tail(
+      rest,
+      source,
+      c,
+      ck_recheck_ctors(
+        body_source_ctors(first),
+        c,
+        ck_param_generics(body_source_generics(first), KindLinear, Ordmap::empty())
+      ),
+      ck_recheck_ctors_frame(
+        body_source_ctors(first),
+        c,
+        ck_param_generics(body_source_generics(first), KindLinear, Ordmap::empty())
+      ),
+      ck_recheck_ctors_frame_context(
+        body_source_ctors(first),
+        c,
+        ck_param_generics(body_source_generics(first), KindLinear, Ordmap::empty()),
+        ordinary
+      ),
+      registered,
+      ordinary,
+      position,
+      next => present => ordinary_next => position_next => inner_clean => ck_recheck_datas_body(
+        tail,
+        next,
+        present,
+        ordinary_next,
+        position_next,
+        inner_clean
+      ),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        recheck_datas_cons_unf(first, rest, c),
+        clean
+      )
+    )
+  }
+}

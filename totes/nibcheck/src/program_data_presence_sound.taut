@@ -1,0 +1,269 @@
+import "existing_data_sound.taut"
+import "../../surface/src/surface.taut"
+
+// A declaration occurs among the program's top-level statements.
+pub(open) inductive DeclaresData: (List(SurfaceStmt), SurfaceData) -> Prop {
+  DeclaresDataStruct(
+    d: SurfaceData,
+    rest: List(SurfaceStmt)
+  ): DeclaresData(Cons(StStruct(d), rest), d)
+  DeclaresDataEnum(d: SurfaceData, rest: List(SurfaceStmt)): DeclaresData(Cons(StEnum(d), rest), d)
+  DeclaresDataLater(
+    s: SurfaceStmt,
+    rest: List(SurfaceStmt),
+    d: SurfaceData,
+    tail: DeclaresData(rest, d)
+  ): DeclaresData(Cons(s, rest), d)
+}
+
+pub def RegisteredData(
+  d: SurfaceData,
+  c: Checker
+): Prop := DataPresent(summary_decls(ck_datas_of(c)), registration_name(d))
+
+pub theorem registered_after_prefix(
+  rest: List(SurfaceStmt),
+  d: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  present: RegisteredData(d, ck_st(m))
+): RegisteredData(
+  d,
+  ck_st(
+    frame_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+      m
+    )
+  )
+) {
+  match m: RegisteredData(
+    d,
+    ck_st(
+      frame_bind(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        m
+      )
+    )
+  ) {
+    mut1(v, next) => And::right(
+      registration_rewrap_existing(
+        registration_name(d),
+        ck_program_data(rest, next),
+        ck_program_data_existing(registration_name(d), rest, next, AndIntro(ordered, present))
+      )
+    )
+  }
+}
+
+pub theorem registered_struct(
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c)
+): RegisteredData(d, ck_st(ck_program_data_one(c, StStruct(d)))) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(m)),
+    Eq::sym(
+      Eq::trans(
+        registration_program_StStruct_unf(d, c),
+        ck_rewrap1_id(ck_declare_data(c, d, true, false))
+      )
+    ),
+    ck_declare_data_present(c, d, true, false, ordered)
+  )
+}
+
+pub theorem registered_enum(
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c)
+): RegisteredData(d, ck_st(ck_program_data_one(c, StEnum(d)))) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(m)),
+    Eq::sym(
+      Eq::trans(registration_program_StEnum_unf(d, c), ck_rewrap1_id(ck_declare_data(c, d, false, false)))
+    ),
+    ck_declare_data_present(c, d, false, false, ordered)
+  )
+}
+
+pub def RegisterRest(
+  rest: List(SurfaceStmt)
+): Prop := ∀ next: Checker. ∀ d: SurfaceData. ∀ ordered: CkDatasOrdered(
+  next
+). ∀ h: DeclaresData(rest, d). RegisteredData(d, ck_st(ck_program_data(rest, next)))
+
+pub theorem registered_tail(
+  stmt: SurfaceStmt,
+  tail: List(SurfaceStmt),
+  c: Checker,
+  decl: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  member: DeclaresData(tail, decl),
+  ih: RegisterRest(tail)
+): RegisteredData(
+  decl,
+  ck_st(
+    frame_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
+      ck_program_data_one(c, stmt)
+    )
+  )
+) {
+  registration_bind_present(
+    Unit,
+    Unit,
+    registration_name(decl),
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
+    ck_program_data_one(c, stmt),
+    ck_program_data_one_ordered(c, stmt, ordered),
+    ignored => next => ord => Eq::subst(
+      (m: Mut1(Unit, Checker)) => RegisteredData(decl, ck_st(m)),
+      Eq::sym(ck_rewrap1_id(ck_program_data(tail, next))),
+      ih(next, decl, ord, member)
+    )
+  )
+}
+
+pub theorem registered_cons(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  h: DeclaresData(Cons(s, rest), d),
+  ih: RegisterRest(rest)
+): RegisteredData(
+  d,
+  ck_st(
+    frame_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+      ck_program_data_one(c, s)
+    )
+  )
+) {
+  match h: RegisteredData(
+    d,
+    ck_st(
+      frame_bind(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s)
+      )
+    )
+  ) {
+    DeclaresDataStruct(decl, tail) => registered_after_prefix(
+      tail,
+      decl,
+      ck_program_data_one(c, StStruct(decl)),
+      ck_program_data_one_ordered(c, StStruct(decl), ordered),
+      registered_struct(c, decl, ordered)
+    )
+    DeclaresDataEnum(decl, tail) => registered_after_prefix(
+      tail,
+      decl,
+      ck_program_data_one(c, StEnum(decl)),
+      ck_program_data_one_ordered(c, StEnum(decl), ordered),
+      registered_enum(c, decl, ordered)
+    )
+    DeclaresDataLater(stmt, tail, decl, member) => registered_tail(
+      stmt,
+      tail,
+      c,
+      decl,
+      ordered,
+      member,
+      ih
+    )
+  }
+}
+
+pub theorem ck_program_data_registers(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  h: DeclaresData(ss, d)
+): RegisteredData(d, ck_st(ck_program_data(ss, c))) {
+  match ss: RegisteredData(d, ck_st(ck_program_data(ss, c))) {
+    Nil => match h: RegisteredData(d, ck_st(ck_program_data(Nil, c))) {
+    }
+    Cons(s, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(m)),
+      Eq::sym(registration_program_unf(s, rest, c)),
+      registered_cons(
+        s,
+        rest,
+        c,
+        d,
+        ordered,
+        h,
+        next => decl => ord => member => ck_program_data_registers(rest, next, decl, ord, member)
+      )
+    )
+  }
+}
+
+pub theorem registration_finish_after_present(
+  program: List(SurfaceStmt),
+  d: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  present: RegisteredData(d, ck_st(m))
+): RegisteredData(d, ck_st(registration_finish_after(program, m))) {
+  match m: RegisteredData(d, ck_st(registration_finish_after(program, m))) {
+    mut1(ignored, next) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(z)),
+      Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
+      ck_finish_datas_preserves_declarations(next, program, ordered)(registration_name(d), present)
+    )
+  }
+}
+
+pub theorem registration_program_after_present(
+  program: List(SurfaceStmt),
+  d: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  h: DeclaresData(program, d)
+): RegisteredData(d, ck_st(registration_program_after(program, m))) {
+  match m: RegisteredData(d, ck_st(registration_program_after(program, m))) {
+    mut1(ignored, next) => registration_finish_after_present(
+      program,
+      d,
+      ck_program_data(program, next),
+      ck_program_data_ordered(program, next, ordered),
+      ck_program_data_registers(program, next, d, ordered, h)
+    )
+  }
+}
+
+pub theorem ck_prepare_datas_registers(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  h: DeclaresData(program, d)
+): RegisteredData(d, ck_st(ck_prepare_datas(c, prelude, program, own))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(z)),
+    Eq::sym(registration_prepare_unf(c, prelude, program, own)),
+    registration_program_after_present(
+      program,
+      d,
+      ck_prelude_data(prelude, c, own),
+      ck_prelude_data_ordered(prelude, c, own, ordered),
+      h
+    )
+  )
+}

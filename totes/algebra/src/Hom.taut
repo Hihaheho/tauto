@@ -1,8 +1,8 @@
 import "Monoid.taut"
 
-def AlgebraFunction<u: Level, v: Level>(A: Type(u), B: Type(v)): Type(max(u, v)) := (A) -> B
+pub def AlgebraFunction<u: Level, v: Level>(A: Type(u), B: Type(v)): Type(max(u, v)) := (A) -> B
 
-inductive AlgebraHom(
+pub(open) inductive AlgebraHom(
   u: Level,
   v: Level,
   A: Type(u),
@@ -10,7 +10,7 @@ inductive AlgebraHom(
   source: AlgebraMonoid(u, A),
   target: AlgebraMonoid(v, B)
 ): Type(max(u, v)) {
-  algebra_hom(
+  Mk(
     map: (A) -> B,
     unit: AlgebraEq(v, B, map(algebra_unit(u, A, source)), algebra_unit(v, B, target)),
     mul: ∀ x: A. ∀ y: A. AlgebraEq(
@@ -22,7 +22,7 @@ inductive AlgebraHom(
   ): AlgebraHom(u, v, A, B, source, target)
 }
 
-def algebra_hom_elim<u: Level, v: Level>(): ∀ A: Type(
+pub def algebra_hom_elim<u: Level, v: Level>(): ∀ A: Type(
   u
 ). ∀ B: Type(
   v
@@ -51,12 +51,12 @@ def algebra_hom_elim<u: Level, v: Level>(): ∀ A: Type(
       map(algebra_op(u, A, source)(x, y)),
       algebra_op(v, B, target)(map(x), map(y))
     )
-  ). motive(algebra_hom(u, v, A, B, source, target, map, unit, mul))
+  ). motive(AlgebraHom::Mk(u, v, A, B, source, target, map, unit, mul))
 ) -> (
   ∀ h: AlgebraHom(u, v, A, B, source, target). motive(h)
 ) := recursor(AlgebraHom(u, v), max(u, v))
 
-def algebra_map<u: Level, v: Level, A: Type(
+pub def algebra_map<u: Level, v: Level, A: Type(
   u
 ), B: Type(
   v
@@ -82,7 +82,7 @@ def algebra_map<u: Level, v: Level, A: Type(
   h
 )
 
-theorem algebra_map_unit<u: Level, v: Level, A: Type(
+pub theorem algebra_map_unit<u: Level, v: Level, A: Type(
   u
 ), B: Type(
   v
@@ -100,7 +100,7 @@ theorem algebra_map_unit<u: Level, v: Level, A: Type(
   algebra_map(u, v, A, B, source, target, h)(algebra_unit(u, A, source)),
   algebra_unit(v, B, target)
 ) {
-  AlgebraHom_ind(
+  AlgebraHom::ind(
     u,
     v,
     A,
@@ -118,7 +118,7 @@ theorem algebra_map_unit<u: Level, v: Level, A: Type(
   )
 }
 
-theorem algebra_map_mul<u: Level, v: Level, A: Type(
+pub theorem algebra_map_mul<u: Level, v: Level, A: Type(
   u
 ), B: Type(
   v
@@ -142,7 +142,7 @@ theorem algebra_map_mul<u: Level, v: Level, A: Type(
     target
   )(algebra_map(u, v, A, B, source, target, h)(x), algebra_map(u, v, A, B, source, target, h)(y))
 ) {
-  AlgebraHom_ind(
+  AlgebraHom::ind(
     u,
     v,
     A,
@@ -167,7 +167,7 @@ theorem algebra_map_mul<u: Level, v: Level, A: Type(
   )
 }
 
-def algebra_identity<u: Level, A: Type(
+pub def algebra_identity<u: Level, A: Type(
   u
 )>(
   m: AlgebraMonoid(u, A)
@@ -178,7 +178,7 @@ def algebra_identity<u: Level, A: Type(
   A,
   m,
   m
-) := algebra_hom(
+) := AlgebraHom::Mk(
   u,
   u,
   A,
@@ -186,11 +186,11 @@ def algebra_identity<u: Level, A: Type(
   m,
   m,
   x => x,
-  algebra_refl(u, A, algebra_unit(u, A, m)),
-  x => y => algebra_refl(u, A, algebra_op(u, A, m)(x, y))
+  AlgebraRefl(u, A, algebra_unit(u, A, m)),
+  x => y => AlgebraRefl(u, A, algebra_op(u, A, m)(x, y))
 )
 
-def algebra_compose<u: Level, v: Level, w: Level, A: Type(
+pub def algebra_compose<u: Level, v: Level, w: Level, A: Type(
   u
 ), B: Type(
   v
@@ -215,7 +215,7 @@ def algebra_compose<u: Level, v: Level, w: Level, A: Type(
   C,
   source,
   target
-) := algebra_hom(
+) := AlgebraHom::Mk(
   u,
   w,
   A,
@@ -320,7 +320,7 @@ def algebra_compose<u: Level, v: Level, w: Level, A: Type(
 
 // Laws compare maps pointwise; equality of bundled proof fields is not assumed.
 
-theorem algebra_identity_right<u: Level, v: Level, A: Type(
+pub theorem algebra_identity_right<u: Level, v: Level, A: Type(
   u
 ), B: Type(
   v
@@ -346,9 +346,9 @@ theorem algebra_identity_right<u: Level, v: Level, A: Type(
     algebra_compose(u, v, v, A, B, B, source, target, target, f, algebra_identity(v, B, target))
   )(x),
   algebra_map(u, v, A, B, source, target, f)(x)
-) { algebra_refl(v, B, algebra_map(u, v, A, B, source, target, f)(x)) }
+) { AlgebraRefl(v, B, algebra_map(u, v, A, B, source, target, f)(x)) }
 
-theorem algebra_identity_left<u: Level, v: Level, A: Type(
+pub theorem algebra_identity_left<u: Level, v: Level, A: Type(
   u
 ), B: Type(
   v
@@ -374,9 +374,9 @@ theorem algebra_identity_left<u: Level, v: Level, A: Type(
     algebra_compose(u, u, v, A, A, B, source, source, target, algebra_identity(u, A, source), f)
   )(x),
   algebra_map(u, v, A, B, source, target, f)(x)
-) { algebra_refl(v, B, algebra_map(u, v, A, B, source, target, f)(x)) }
+) { AlgebraRefl(v, B, algebra_map(u, v, A, B, source, target, f)(x)) }
 
-theorem algebra_compose_assoc<u: Level, v: Level, w: Level, t: Level, A: Type(
+pub theorem algebra_compose_assoc<u: Level, v: Level, w: Level, t: Level, A: Type(
   u
 ), B: Type(
   v
@@ -446,28 +446,30 @@ theorem algebra_compose_assoc<u: Level, v: Level, w: Level, t: Level, A: Type(
       algebra_compose(v, w, t, B, C, D, mb, mc, md, g, h)
     )
   )(x)
-) { algebra_refl(
-  t,
-  D,
-  algebra_map(
-    u,
+) {
+  AlgebraRefl(
     t,
-    A,
     D,
-    ma,
-    md,
-    algebra_compose(
+    algebra_map(
       u,
-      w,
       t,
       A,
-      C,
       D,
       ma,
-      mc,
       md,
-      algebra_compose(u, v, w, A, B, C, ma, mb, mc, f, g),
-      h
-    )
-  )(x)
-) }
+      algebra_compose(
+        u,
+        w,
+        t,
+        A,
+        C,
+        D,
+        ma,
+        mc,
+        md,
+        algebra_compose(u, v, w, A, B, C, ma, mb, mc, f, g),
+        h
+      )
+    )(x)
+  )
+}

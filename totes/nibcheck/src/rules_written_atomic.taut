@@ -1,0 +1,24 @@
+import "rules_written_name.taut"
+import "rules_data_kind.taut"
+
+// Atomic written types in an ordinary value-type position.
+pub(open) inductive WrittenAtomicType(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  name: Text
+): (Ty) -> Prop {
+  AtomicPrimitive(
+    t: Ty,
+    builtin: primitive_type_name(name) = Some(t)
+  ): WrittenAtomicType(env, generics, name, t)
+  AtomicParameter(
+    t: Ty,
+    ordinary: primitive_type_name(name) = None,
+    bound: Ordmap::get(generics, name, Ordmap::compare_text) = Some(t)
+  ): WrittenAtomicType(env, generics, name, t)
+  AtomicNominal(
+    ordinary: primitive_type_name(name) = None,
+    unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
+    arity: ∀ data: Data. ∀ found: datas_decl(env, name) = Some(data). DeclaredArity(data, Nil)
+  ): WrittenAtomicType(env, generics, name, TyNamed(name, Nil))
+}

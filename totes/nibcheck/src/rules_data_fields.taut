@@ -1,0 +1,48 @@
+import "rules_written.taut"
+
+// Field and constructor elaboration; declaration well-formedness additionally
+// checks admissible kinds, borrow restrictions, and declaration-name conditions.
+pub(open) inductive WrittenDataFields(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool
+): (List(SurfaceDataField), List(DataField)) -> Prop {
+  WrittenDataFieldsNil: WrittenDataFields(env, generics, partial, Nil, Nil)
+  WrittenDataFieldsCons(
+    name: Option(Text),
+    body: SurfaceTerm,
+    rest: List(SurfaceDataField),
+    t: Ty,
+    types: List(DataField),
+    head: WrittenTerm(env, generics, partial, false, body, t),
+    tail: WrittenDataFields(env, generics, partial, rest, types)
+  ): WrittenDataFields(
+    env,
+    generics,
+    partial,
+    Cons(surface_data_field_mk(name, body), rest),
+    Cons(DataFieldMk(name, t), types)
+  )
+}
+pub(open) inductive WrittenDataCtors(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool
+): (List(SurfaceDataCtor), List(DataCtor)) -> Prop {
+  WrittenDataCtorsNil: WrittenDataCtors(env, generics, partial, Nil, Nil)
+  WrittenDataCtorsCons(
+    name: Text,
+    fields: List(SurfaceDataField),
+    rest: List(SurfaceDataCtor),
+    types: List(DataField),
+    ctors: List(DataCtor),
+    head: WrittenDataFields(env, generics, partial, fields, types),
+    tail: WrittenDataCtors(env, generics, partial, rest, ctors)
+  ): WrittenDataCtors(
+    env,
+    generics,
+    partial,
+    Cons(surface_data_ctor_mk(name, fields), rest),
+    Cons(DataCtorMk(name, types), ctors)
+  )
+}

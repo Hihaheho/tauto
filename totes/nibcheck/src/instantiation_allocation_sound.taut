@@ -1,0 +1,266 @@
+import "pending_allocation_frame.taut"
+
+pub theorem generic_map_allocation_empty(
+  limit: Nat
+): GenericMapAllocated(
+  limit,
+  Ordmap::empty()
+) { name => value => found => False::elim(ck_none_ne_some(value, found)) }
+pub theorem ck_instantiate_allocation(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  ty: Ty,
+  span: TySpan,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), ty)
+): AllocationResult(c, ck_instantiate(c, gs, ty, span)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(instantiation_ck_instantiate_unf(c, gs, ty, span)),
+    allocation_result_map_bind(
+      c,
+      (map: Ordmap(Text, Ty), next: Checker) => mut1(ty_substitute(ty, map), next),
+      ck_instantiate_map(gs, c, span, Ordmap::empty()),
+      ck_instantiate_map_allocation(
+        gs,
+        c,
+        span,
+        Ordmap::empty(),
+        state,
+        Trivial,
+        generic_map_allocation_empty(ck_next_of(c))
+      ),
+      map => next => advanced => current => ordered => values => allocation_result_return(
+        next,
+        ty_substitute(ty, map),
+        current,
+        allocated_substitute(
+          ty,
+          ck_next_of(next),
+          map,
+          ordered,
+          values,
+          type_allocated_weaken(ty, ck_next_of(c), ck_next_of(next), advanced, bounded)
+        )
+      )
+    )
+  )
+}
+pub theorem ck_instantiate_scheme_allocation(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), instantiation_scheme_ty(scheme))
+): AllocationResult(c, ck_instantiate_scheme(c, name, scheme, span)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(instantiation_scheme_unf(c, name, scheme, span)),
+    allocation_result_map_bind(
+      c,
+      (map: Ordmap(Text, Ty), next: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (ignored: Unit, last: Checker) => mut1(
+          ty_substitute(instantiation_scheme_ty(scheme), map),
+          last
+        ),
+        ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span)
+      ),
+      ck_instantiate_map_ctors(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty()
+      ),
+      ck_instantiate_map_ctors_allocation(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty(),
+        state,
+        Trivial,
+        generic_map_allocation_empty(ck_next_of(c))
+      ),
+      map => next => advanced => current => ordered => values => allocation_result_bind(
+        Unit,
+        next,
+        (ignored: Unit, last: Checker) => mut1(
+          ty_substitute(instantiation_scheme_ty(scheme), map),
+          last
+        ),
+        ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
+        allocation_advance_fixed(
+          next,
+          ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
+          allocation_same_run(
+            next,
+            ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
+            ck_pend_preds_allocation_same(
+              instantiation_scheme_preds(scheme),
+              next,
+              map,
+              name,
+              span
+            ),
+            current
+          )
+        ),
+        ignored => last => further => final_state => allocation_result_return(
+          last,
+          ty_substitute(instantiation_scheme_ty(scheme), map),
+          final_state,
+          allocated_substitute(
+            instantiation_scheme_ty(scheme),
+            ck_next_of(last),
+            map,
+            ordered,
+            generic_map_allocation_weaken(ck_next_of(next), ck_next_of(last), map, further, values),
+            type_allocated_weaken(
+              instantiation_scheme_ty(scheme),
+              ck_next_of(c),
+              ck_next_of(last),
+              Nat::le_trans(ck_next_of(c), ck_next_of(next), ck_next_of(last), advanced, further),
+              bounded
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub def NamedInstantiationAllocationIH(
+  rest: List(Text)
+): Prop := ∀ next: Checker. ∀ map: Ordmap(
+  Text,
+  Ty
+). ∀ state: CheckerAllocation(
+  next
+). ∀ ordered: Ordmap::ordered(
+  map,
+  Ordmap::compare_text
+). ∀ values: GenericMapAllocated(
+  ck_next_of(next),
+  map
+). InstanceAllocation(next, ck_instantiate_named_map(rest, next, map))
+pub theorem instantiation_named_cons_allocation(
+  name: Text,
+  rest: List(Text),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  state: CheckerAllocation(c),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(ck_next_of(c), map),
+  ih: NamedInstantiationAllocationIH(rest)
+): InstanceAllocation(c, instantiation_named_cons(name, rest, c, map)) {
+  map_allocation_fresh_bind(
+    c,
+    (value: Ty, next: Checker) => ck_rewrap1(
+      ck_instantiate_named_map(rest, next, Ordmap::insert(map, name, value, Ordmap::compare_text))
+    ),
+    state,
+    value => next => advanced => current => bounded => map_allocation_rewrap(
+      next,
+      ck_instantiate_named_map(rest, next, Ordmap::insert(map, name, value, Ordmap::compare_text)),
+      ih(
+        next,
+        Ordmap::insert(map, name, value, Ordmap::compare_text),
+        current,
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          map,
+          name,
+          value,
+          ordered
+        ),
+        generic_map_insert_allocated(
+          ck_next_of(next),
+          map,
+          name,
+          value,
+          ordered,
+          bounded,
+          generic_map_allocation_weaken(ck_next_of(c), ck_next_of(next), map, advanced, values)
+        )
+      )
+    )
+  )
+}
+pub theorem ck_instantiate_named_map_allocation(
+  gs: List(Text),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  state: CheckerAllocation(c),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(ck_next_of(c), map)
+): InstanceAllocation(c, ck_instantiate_named_map(gs, c, map)) {
+  match gs: InstanceAllocation(c, ck_instantiate_named_map(gs, c, map)) {
+    Nil => AndIntro(Nat::le_refl(ck_next_of(c)), AndIntro(state, AndIntro(ordered, values)))
+    Cons(name, rest) => Eq::subst(
+      (result: Mut1(Ordmap(Text, Ty), Checker)) => InstanceAllocation(c, result),
+      Eq::sym(instantiation_named_cons_unf(name, rest, c, map)),
+      instantiation_named_cons_allocation(
+        name,
+        rest,
+        c,
+        map,
+        state,
+        ordered,
+        values,
+        next => more => current => order => bounded => ck_instantiate_named_map_allocation(
+          rest,
+          next,
+          more,
+          current,
+          order,
+          bounded
+        )
+      )
+    )
+  }
+}
+pub theorem ck_instantiate_named_allocation(
+  c: Checker,
+  gs: List(Text),
+  ty: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), ty)
+): AllocationResult(c, ck_instantiate_named(c, gs, ty)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(instantiation_ck_instantiate_named_unf(c, gs, ty)),
+    allocation_result_map_bind(
+      c,
+      (map: Ordmap(Text, Ty), next: Checker) => mut1(ty_substitute(ty, map), next),
+      ck_instantiate_named_map(gs, c, Ordmap::empty()),
+      ck_instantiate_named_map_allocation(
+        gs,
+        c,
+        Ordmap::empty(),
+        state,
+        Trivial,
+        generic_map_allocation_empty(ck_next_of(c))
+      ),
+      map => next => advanced => current => ordered => values => allocation_result_return(
+        next,
+        ty_substitute(ty, map),
+        current,
+        allocated_substitute(
+          ty,
+          ck_next_of(next),
+          map,
+          ordered,
+          values,
+          type_allocated_weaken(ty, ck_next_of(c), ck_next_of(next), advanced, bounded)
+        )
+      )
+    )
+  )
+}

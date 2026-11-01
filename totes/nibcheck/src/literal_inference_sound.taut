@@ -1,0 +1,136 @@
+import "literal_typing_sound.taut"
+import "inference_value_fact.taut"
+
+// The literal's obligation is tied to the exact type returned by inference.
+pub def NaturalInferenceRecord(
+  value: Text,
+  start: Nat,
+  end: Nat,
+  m: Mut1(Ty, Checker)
+): Prop := NaturalRecorded(
+  value,
+  TySpan { start: start, end: end },
+  ck_val(m),
+  finish_literals(ck_st(m))
+)
+pub theorem natural_record_rewrap(
+  value: Text,
+  start: Nat,
+  end: Nat,
+  m: Mut1(Ty, Checker),
+  recorded: NaturalInferenceRecord(value, start, end, m)
+): NaturalInferenceRecord(value, start, end, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => NaturalInferenceRecord(value, start, end, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    recorded
+  )
+}
+pub theorem ck_infer_term_natural_recorded(
+  k: Nat,
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticClean(
+    ck_st(ck_infer_term_in(k, c, surface_term_mk(SkNat(value), start, end), env))
+  )
+): NaturalInferenceRecord(
+  value,
+  start,
+  end,
+  ck_infer_term_in(k, c, surface_term_mk(SkNat(value), start, end), env)
+) {
+  match k: NaturalInferenceRecord(
+    value,
+    start,
+    end,
+    ck_infer_term_in(k, c, surface_term_mk(SkNat(value), start, end), env)
+  ) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan { start: 0, end: 0 },
+        clean
+      )
+    )
+    Succ(j) => natural_record_rewrap(
+      value,
+      start,
+      end,
+      ck_nat_literal(c, value, TySpan { start: start, end: end }),
+      ck_nat_literal_recorded(
+        c,
+        value,
+        TySpan { start: start, end: end },
+        Eq::subst(
+          (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+          ck_rewrap1_id(ck_nat_literal(c, value, TySpan { start: start, end: end })),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem inference_record_natural(
+  value: Text,
+  start: Nat,
+  end: Nat,
+  term: SurfaceTerm,
+  m: Mut1(Ty, Checker),
+  derived: ∀ clean: DiagnosticClean(ck_st(m)). NaturalInferenceRecord(value, start, end, m),
+  clean: DiagnosticClean(ck_st(inference_record_after(term, m)))
+): NaturalInferenceRecord(value, start, end, inference_record_after(term, m)) {
+  match m: NaturalInferenceRecord(value, start, end, inference_record_after(term, m)) {
+    mut1(ty, next) => derived(clean)
+  }
+}
+pub theorem ck_infer_natural_recorded(
+  k: Nat,
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)))
+): NaturalInferenceRecord(
+  value,
+  start,
+  end,
+  ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)
+) {
+  match k: NaturalInferenceRecord(
+    value,
+    start,
+    end,
+    ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)
+  ) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan { start: 0, end: 0 },
+        clean
+      )
+    )
+    Succ(j) => Eq::subst(
+      (m: Mut1(Ty, Checker)) => NaturalInferenceRecord(value, start, end, m),
+      Eq::sym(inference_unf_ck_infer_in(j, c, surface_term_mk(SkNat(value), start, end), env)),
+      inference_record_natural(
+        value,
+        start,
+        end,
+        surface_term_mk(SkNat(value), start, end),
+        ck_infer_term_in(j, c, surface_term_mk(SkNat(value), start, end), env),
+        accepted => ck_infer_term_natural_recorded(j, c, value, start, end, env, accepted),
+        Eq::subst(
+          (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+          inference_unf_ck_infer_in(j, c, surface_term_mk(SkNat(value), start, end), env),
+          clean
+        )
+      )
+    )
+  }
+}

@@ -1,0 +1,112 @@
+import "rules_scheme_kind_instance.taut"
+import "tracked_instantiation_sound.taut"
+import "finish_instantiation_bindings.taut"
+
+pub theorem final_scheme_kind_instance(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ty, Checker),
+  recorded: SchemeInstanceObligations(c, name, scheme, span, m),
+  scalar: instantiation_scheme_ctors(scheme) = Nil,
+  final: FinalDiagnostics0(ck_st(m))
+): SchemeKindInstance(
+  ck_subst_of(ck_st(m)),
+  ck_datas_of(ck_st(m)),
+  instantiation_scheme_generics(scheme),
+  instantiation_scheme_ty(scheme),
+  ck_val(m)
+) {
+  match recorded: SchemeKindInstance(
+    ck_subst_of(ck_st(m)),
+    ck_datas_of(ck_st(m)),
+    instantiation_scheme_generics(scheme),
+    instantiation_scheme_ty(scheme),
+    ck_val(m)
+  ) {
+    Mk(
+      map,
+      covered,
+      substituted,
+      predicates,
+      requirements
+    ) => SchemeKindInstance::Mk(
+      map,
+      final_instantiation_bindings(
+        ck_st(m),
+        name,
+        span,
+        Eq::subst(
+          (ctors: List(Pair(Text, Kind))) => RecordedInstantiation(
+            ck_st(m),
+            ctors,
+            name,
+            span,
+            instantiation_scheme_generics(scheme),
+            Ordmap::empty(),
+            map
+          ),
+          scalar,
+          requirements
+        ),
+        final
+      ),
+      substituted
+    )
+  }
+}
+pub theorem ck_signature_instance_continued_kinds(
+  declaration: Checker,
+  source: SurfaceFn,
+  use_site: Checker,
+  name: Text,
+  span: TySpan,
+  next: Checker,
+  declared: DiagnosticClean(ck_st(ck_signature(declaration, source))),
+  scalar: instantiation_scheme_ctors(ck_val(ck_signature(declaration, source))) = Nil,
+  retained: TrackedState(
+    ck_st(ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span)),
+    next
+  ),
+  clean: DiagnosticReportClean(ck_finish(next))
+): SchemeKindInstance(
+  ck_subst_of(ck_st(ck_finish(next))),
+  ck_datas_of(ck_st(ck_finish(next))),
+  instantiation_scheme_generics(ck_val(ck_signature(declaration, source))),
+  instantiation_scheme_ty(ck_val(ck_signature(declaration, source))),
+  ck_val(ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span))
+) {
+  final_scheme_kind_instance(
+    use_site,
+    name,
+    ck_val(ck_signature(declaration, source)),
+    span,
+    mut1(
+      ck_val(
+        ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span)
+      ),
+      ck_st(ck_finish(next))
+    ),
+    tracked_scheme_instance_obligations(
+      use_site,
+      name,
+      ck_val(ck_signature(declaration, source)),
+      span,
+      ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span),
+      ck_st(ck_finish(next)),
+      ck_signature_instantiation_obligations(declaration, source, use_site, name, span, declared),
+      tracked_state_trans(
+        ck_st(
+          ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span)
+        ),
+        next,
+        ck_st(ck_finish(next)),
+        retained,
+        ck_finish_tracked(next, clean)
+      )
+    ),
+    scalar,
+    ck_finish_obligations(next, clean)
+  )
+}

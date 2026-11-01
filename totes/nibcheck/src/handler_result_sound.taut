@@ -1,0 +1,182 @@
+import "handler_result_checked.taut"
+import "expect_sound.taut"
+
+pub theorem handler_any_empty(c: Checker, a: Ty, h: SubAnyAt(c, a, Nil)): False { match h: False {
+  } }
+
+pub theorem handler_any_single(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  h: SubAnyAt(c, a, Cons(b, Nil))
+): SubAt(c, a, b) {
+  match h: SubAt(c, a, b) {
+    TysubAnyHere(a1, b1, rest, fit) => fit
+    TysubAnyThere(a1, rest, b1, tail) => False::elim(handler_any_empty(c, a1, tail))
+  }
+}
+pub theorem handler_any_union(
+  c: Checker,
+  a: Ty,
+  ys: List(Ty),
+  h: SubAnyAt(c, a, Cons(TyUnion(ys), ys))
+): SubAt(c, a, TyUnion(ys)) {
+  match h: SubAt(c, a, TyUnion(ys)) {
+    TysubAnyHere(a1, b1, rest, fit) => fit
+    TysubAnyThere(a1, rest, b1, tail) => sub_union_r_at(c, a1, ys, tail)
+  }
+}
+pub theorem handler_choices_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  h: SubAnyAt(c, a, ck_handle_result_choices(b))
+): SubAt(c, a, b) {
+  match b: SubAt(c, a, b) {
+    TyInt(w) => handler_any_single(c, a, TyInt(w), h)
+    TyBool => handler_any_single(c, a, TyBool, h)
+    TyText => handler_any_single(c, a, TyText, h)
+    TyUnit => handler_any_single(c, a, TyUnit, h)
+    TyNever => handler_any_single(c, a, TyNever, h)
+    TyDecimal => handler_any_single(c, a, TyDecimal, h)
+    TyFloat => handler_any_single(c, a, TyFloat, h)
+    TyFn(ps, result, kind) => handler_any_single(c, a, TyFn(ps, result, kind), h)
+    TyUnion(ys) => handler_any_union(c, a, ys, h)
+    TyProduct(ys) => handler_any_single(c, a, TyProduct(ys), h)
+    TyTagged(tags, inner) => handler_any_single(c, a, TyTagged(tags, inner), h)
+    TyNamed(name, args) => handler_any_single(c, a, TyNamed(name, args), h)
+    TyParam(name, bound) => handler_any_single(c, a, TyParam(name, bound), h)
+    TyInfo(inner) => handler_any_single(c, a, TyInfo(inner), h)
+    TyBorrow(inner, mutable) => handler_any_single(c, a, TyBorrow(inner, mutable), h)
+    TyVar(v) => handler_any_single(c, a, TyVar(v), h)
+    TyPoly(gs, inner) => handler_any_single(c, a, TyPoly(gs, inner), h)
+    TyApp(head, arg) => handler_any_single(c, a, TyApp(head, arg), h)
+  }
+}
+pub theorem handler_choices_post(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(
+  c,
+  ck_fits_any_in(ck_steps_of(c), c, a, ck_handle_result_choices(ck_resolve(c, b))),
+  (next: Checker) => SubAt(next, a, b)
+) {
+  post_sub_resolve(c, ck_fits_any_in(ck_steps_of(c), c, a, ck_handle_result_choices(ck_resolve(c, b))), a, b, a, ck_resolve(c, b), TyeqRefl(a), ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), b), ordered => {
+  let h: Post(c, ck_fits_any_in(ck_steps_of(c), c, a, ck_handle_result_choices(ck_resolve(c, b))), (next: Checker) => SubAnyAt(next, a, ck_handle_result_choices(ck_resolve(c, b)))) := handler_fits_any_ok(ck_steps_of(c), c, a, ck_handle_result_choices(ck_resolve(c, b)))
+  AndIntro(And::left(h(ordered)), success => handler_choices_sound(ck_st(ck_fits_any_in(ck_steps_of(c), c, a, ck_handle_result_choices(ck_resolve(c, b)))), a, ck_resolve(c, b), And::right(h(ordered))(success)))
+ })
+}
+
+pub theorem handler_validate_after_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  fits: Bool,
+  h: ExpectFits(c, a, b, fits),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(handler_validate_after(c, a, b, span, fits)))
+): SubAt(ck_st(handler_validate_after(c, a, b, span, fits)), a, b) {
+  match fits: SubAt(ck_st(handler_validate_after(c, a, b, span, fits)), a, b) {
+    true => h(Refl)
+    false => {
+      let unwrapped: DiagnosticClean(
+        ck_st(ck_expect(c, a, b, span, "a handler arm"))
+      ) := Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        ck_rewrap1_id(ck_expect(c, a, b, span, "a handler arm")),
+        clean
+      )
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => SubAt(ck_st(m), a, b),
+        Eq::sym(ck_rewrap1_id(ck_expect(c, a, b, span, "a handler arm"))),
+        ck_expect_sound(c, a, b, span, "a handler arm", ordered, unwrapped)
+      )
+    }
+  }
+}
+pub theorem handler_validate_bind_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  m: Mut1(Bool, Checker),
+  h: Post(c, m, (next: Checker) => SubAt(next, a, b)),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(
+    ck_st(
+      frame_bind(
+        Bool,
+        Unit,
+        (fits: Bool, next: Checker) => handler_validate_after(next, a, b, span, fits),
+        m
+      )
+    )
+  )
+): SubAt(
+  ck_st(
+    frame_bind(
+      Bool,
+      Unit,
+      (fits: Bool, next: Checker) => handler_validate_after(next, a, b, span, fits),
+      m
+    )
+  ),
+  a,
+  b
+) {
+  match m: SubAt(
+    ck_st(
+      frame_bind(
+        Bool,
+        Unit,
+        (fits: Bool, next: Checker) => handler_validate_after(next, a, b, span, fits),
+        m
+      )
+    ),
+    a,
+    b
+  ) {
+    mut1(value, state) => handler_validate_after_sound(
+      state,
+      a,
+      b,
+      span,
+      value,
+      And::right(h(ordered)),
+      And::left(And::left(h(ordered))),
+      clean
+    )
+  }
+}
+pub theorem ck_handle_validate_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_handle_validate(c, a, b, span)))
+): SubAt(ck_st(ck_handle_validate(c, a, b, span)), a, b) {
+  let expanded: DiagnosticClean(
+    ck_st(handler_validate_unfolded(c, a, b, span))
+  ) := Eq::subst(
+    (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+    handler_validate_unf(c, a, b, span),
+    clean
+  )
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => SubAt(ck_st(m), a, b),
+    Eq::sym(handler_validate_unf(c, a, b, span)),
+    handler_validate_bind_sound(
+      c,
+      a,
+      b,
+      span,
+      ck_fits_any_in(ck_steps_of(c), c, a, ck_handle_result_choices(ck_resolve(c, b))),
+      handler_choices_post(c, a, b),
+      ordered,
+      expanded
+    )
+  )
+}

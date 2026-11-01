@@ -1,0 +1,135 @@
+import "rules_program_signature_sources.taut"
+import "program_signature_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem signature_none_source(
+  m: Mut1(Unit, Checker)
+): (signature_option_source(ck_val(signature_none_after(m))) = None) {
+  match m: (signature_option_source(ck_val(signature_none_after(m))) = None) {
+    mut1(ignored, next) => Refl
+  }
+}
+pub theorem signature_some_source(
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker)
+): signature_option_source(ck_val(signature_some_after(source, m))) = Some(source) {
+  match m: signature_option_source(ck_val(signature_some_after(source, m))) = Some(source) {
+    mut1(scheme, next) => Refl
+  }
+}
+pub theorem ck_program_decl_source(
+  stmt: SurfaceStmt,
+  c: Checker
+): signature_option_source(ck_val(ck_program_decl(c, Stmt))) = signature_statement_source(Stmt) {
+  match Stmt: signature_option_source(ck_val(ck_program_decl(c, Stmt))) = signature_statement_source(Stmt) {
+    StLet(name, ty, value, borrow, mutable) => Refl
+    StVar(name, ty, value, borrow) => Refl
+    StModule(name, stmts, start, end) => Refl
+    StAssign(name, name_place, value) => Refl
+    StCalled(name_generates, value) => Refl
+    StFn(f) => Eq::trans(
+      Eq::congr(
+        (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => signature_option_source(ck_val(m)),
+        signature_program_decl_StFn_unf(f, c)
+      ),
+      signature_some_source(f, ck_add_fn(c, f))
+    )
+    StTheorem(t) => Refl
+    StDef(t) => Refl
+    StMutual(stmts, start, end) => Refl
+    StImport(path, start, end) => Refl
+    StInductive(i) => Refl
+    StEffect(e) => Eq::trans(
+      Eq::congr(
+        (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => signature_option_source(ck_val(m)),
+        signature_program_decl_StEffect_unf(e, c)
+      ),
+      signature_none_source(ck_declare_effect(c, e))
+    )
+    StExtern(abi, fns, start, end) => Eq::trans(
+      Eq::congr(
+        (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => signature_option_source(ck_val(m)),
+        signature_program_decl_StExtern_unf(abi, fns, start, end, c)
+      ),
+      signature_none_source(ck_extern_fns(fns, c))
+    )
+    StClass(klass) => Refl
+    StInstance(i) => Refl
+    StWhile(cond, body) => Refl
+    StReturn(value) => Refl
+    StExpr(value) => Refl
+    StOther(what, start, end) => Refl
+    StMacro(name, function, start, end) => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
+    StSyntax(name, grammar, start, end) => Refl
+    StStruct(d) => Refl
+    StEnum(d) => Refl
+  }
+}
+pub theorem signature_opt_cons_sources(
+  item: Option(Pair(SurfaceFn, Scheme)),
+  rest: List(Pair(SurfaceFn, Scheme))
+): signature_list_sources(opt_cons(item, rest)) = opt_cons(signature_option_source(item), signature_list_sources(rest)) {
+  match item: signature_list_sources(opt_cons(item, rest)) = opt_cons(signature_option_source(item), signature_list_sources(rest)) {
+    None => Refl
+    Some(entry) => Refl
+  }
+}
+pub theorem signature_program_after_sources(
+  stmt: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  head: signature_option_source(ck_val(m)) = signature_statement_source(stmt),
+  ih: ∀ next: Checker. signature_list_sources(ck_val(ck_program_decls(rest, next))) = signature_program_sources(rest)
+): signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(Stmt, rest)) {
+  match m: signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(Stmt, rest)) {
+    mut1(item, next) => Eq::trans(
+      Eq::congr(
+        signature_list_sources,
+        written_map_value(
+          List(Pair(SurfaceFn, Scheme)),
+          List(Pair(SurfaceFn, Scheme)),
+          (tail: List(Pair(SurfaceFn, Scheme))) => opt_cons(item, tail),
+          ck_program_decls(rest, next)
+        )
+      ),
+      Eq::trans(
+        signature_opt_cons_sources(item, ck_val(ck_program_decls(rest, next))),
+        Eq::trans(
+          Eq::congr(
+            (first: Option(SurfaceFn)) => opt_cons(
+              first,
+              signature_list_sources(ck_val(ck_program_decls(rest, next)))
+            ),
+            head
+          ),
+          Eq::congr(
+            (tail: List(SurfaceFn)) => opt_cons(signature_statement_source(Stmt), tail),
+            ih(next)
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem ck_program_decls_sources(
+  program: List(SurfaceStmt),
+  c: Checker
+): signature_list_sources(ck_val(ck_program_decls(program, c))) = signature_program_sources(program) {
+  match program: signature_list_sources(ck_val(ck_program_decls(program, c))) = signature_program_sources(program) {
+    Nil => Refl
+    Cons(Stmt, rest) => Eq::trans(
+      Eq::congr(
+        (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => signature_list_sources(ck_val(m)),
+        signature_program_decls_cons_unf(Stmt, rest, c)
+      ),
+      signature_program_after_sources(
+        Stmt,
+        rest,
+        ck_program_decl(c, Stmt),
+        ck_program_decl_source(Stmt, c),
+        next => ck_program_decls_sources(rest, next)
+      )
+    )
+  }
+}

@@ -1,0 +1,110 @@
+import "expect_sound.taut"
+
+pub theorem expect_after_identity(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  fits: Bool,
+  clean: DiagnosticClean(ck_st(run_expect_after(c, a, b, span, what, fits)))
+): run_expect_after(c, a, b, span, what, fits) = mut1(Star, c) {
+  match fits: run_expect_after(c, a, b, span, what, fits) = mut1(Star, c) {
+    true => Refl
+    false => False::elim(
+      diagnostic_error_impossible(
+        c,
+        ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
+        span,
+        clean
+      )
+    )
+  }
+}
+pub theorem expect_bind_grows(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  m: Mut1(Bool, Checker),
+  grows: Grows(c, ck_st(m)),
+  clean: DiagnosticClean(
+    ck_st(
+      frame_bind(
+        Bool,
+        Unit,
+        (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+        m
+      )
+    )
+  )
+): Grows(
+  c,
+  ck_st(
+    frame_bind(
+      Bool,
+      Unit,
+      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+      m
+    )
+  )
+) {
+  match m: Grows(
+    c,
+    ck_st(
+      frame_bind(
+        Bool,
+        Unit,
+        (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+        m
+      )
+    )
+  ) {
+    mut1(value, state) => Eq::subst(
+      (next: Checker) => Grows(c, next),
+      Eq::sym(
+        Eq::congr(
+          Mut1(Unit, Checker),
+          Checker,
+          run_expect_after(state, a, b, span, what, value),
+          mut1(Star, state),
+          (result: Mut1(Unit, Checker)) => ck_st(result),
+          expect_after_identity(state, a, b, span, what, value, clean)
+        )
+      ),
+      grows
+    )
+  }
+}
+pub theorem ck_expect_grows(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_expect(c, a, b, span, what)))
+): Grows(c, ck_st(ck_expect(c, a, b, span, what))) {
+  let expanded: DiagnosticClean(
+    ck_st(run_expect(c, a, b, span, what))
+  ) := Eq::subst(
+    (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+    run_expect_unf(c, a, b, span, what),
+    clean
+  )
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => Grows(c, ck_st(m)),
+    Eq::sym(run_expect_unf(c, a, b, span, what)),
+    expect_bind_grows(
+      c,
+      a,
+      b,
+      span,
+      what,
+      ck_fits(c, a, b),
+      And::left(ck_fits_ok(c, a, b)(ordered)),
+      expanded
+    )
+  )
+}

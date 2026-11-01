@@ -1,0 +1,1105 @@
+import "error_frame.taut"
+
+pub theorem written_error_changed<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  same: decl_names_errors(next) = decl_names_errors(c),
+  h: CkErrorFrame(next, m)
+): CkErrorFrame(c, m) {
+  clean_errors => Eq::trans(Eq::sym(same), h(clean_errors))
+}
+pub theorem written_error_return<A: Type, B: Type>(
+  c: Checker,
+  v: B,
+  m: Mut1(A, Checker),
+  h: CkErrorFrame(c, m)
+): CkErrorFrame(c, frame_return(v, m)) {
+  match m: CkErrorFrame(c, frame_return(v, m)) { mut1(value, next) => h }
+}
+pub theorem ck_error_frame_errors(
+  c: Checker,
+  message: Text,
+  span: TySpan
+): CkErrorFrame(
+  c,
+  ck_error(c, message, span)
+) { (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))) }
+pub theorem ck_fresh_frame_errors(
+  c: Checker
+): CkErrorFrame(c, ck_fresh(c)) { (clean_errors => clean_errors) }
+pub theorem ck_written_bad_frame_errors(
+  c: Checker,
+  span: TySpan
+): CkErrorFrame(
+  c,
+  ck_written_bad(c, span)
+) { (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))) }
+pub theorem ck_written_ctor_arity_frame_errors(
+  c: Checker,
+  n: Text,
+  span: TySpan
+): CkErrorFrame(
+  c,
+  ck_written_ctor_arity(c, n, span)
+) { (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))) }
+
+pub theorem frame_arity_small_ok_errors(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  data: Data,
+  small: Bool
+): CkErrorFrame(c, frame_arity_small(c, n, span, data, small)) {
+  match small: CkErrorFrame(c, frame_arity_small(c, n, span, data, small)) {
+    true => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    false => (clean_errors => clean_errors)
+  }
+}
+
+pub theorem frame_arity_decl_ok_errors(
+  c: Checker,
+  n: Text,
+  given: Nat,
+  span: TySpan,
+  o: Option(Data)
+): CkErrorFrame(c, frame_arity_decl(c, n, given, span, o)) {
+  match o: CkErrorFrame(c, frame_arity_decl(c, n, given, span, o)) {
+    None => (clean_errors => clean_errors)
+    Some(data) => frame_arity_small_ok_errors(
+      c,
+      n,
+      span,
+      data,
+      not(Nat::eq(given, list_len(dgen(data))))
+    )
+  }
+}
+
+pub theorem frame_arity_k_ok_errors(
+  c: Checker,
+  n: Text,
+  given: Nat,
+  span: TySpan,
+  constructor: Bool
+): CkErrorFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
+  match Constructor: CkErrorFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
+    true => frame_arity_decl_ok_errors(c, n, given, span, datas_decl(ck_datas_of(c), n))
+    false => (clean_errors => clean_errors)
+  }
+}
+
+pub theorem ck_arity_frame_errors(
+  c: Checker,
+  n: Text,
+  given: Nat,
+  span: TySpan
+): CkErrorFrame(c, ck_arity(c, n, given, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(frame_arity_unf(c, n, given, span)),
+    frame_arity_k_ok_errors(c, n, given, span, not(frame_constructor_position(c)))
+  )
+}
+
+pub theorem frame_written_var_named_ok_errors(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  t: Ty,
+  found: Bool
+): CkErrorFrame(c, frame_written_var_named(c, n, span, t, found)) {
+  match found: CkErrorFrame(c, frame_written_var_named(c, n, span, t, found)) {
+    true => (clean_errors => clean_errors)
+    false => written_error_return(c, t, ck_arity(c, n, 0, span), ck_arity_frame_errors(c, n, 0, span))
+  }
+}
+
+pub theorem frame_written_var_k_ok_errors(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  original: Ty,
+  t: Ty
+): CkErrorFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
+  match t: CkErrorFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
+    TyNamed(name, args) => frame_written_var_named_ok_errors(
+      c,
+      n,
+      span,
+      original,
+      Ordmap::contains(generics, n, Ordmap::compare_text)
+    )
+    TyInt(width) => (clean_errors => clean_errors)
+    TyBool => (clean_errors => clean_errors)
+    TyText => (clean_errors => clean_errors)
+    TyUnit => (clean_errors => clean_errors)
+    TyNever => (clean_errors => clean_errors)
+    TyDecimal => (clean_errors => clean_errors)
+    TyFloat => (clean_errors => clean_errors)
+    TyFn(params, result, kind) => (clean_errors => clean_errors)
+    TyUnion(members) => (clean_errors => clean_errors)
+    TyProduct(members) => (clean_errors => clean_errors)
+    TyTagged(tags, inner) => (clean_errors => clean_errors)
+    TyParam(name, bound) => (clean_errors => clean_errors)
+    TyInfo(inner) => (clean_errors => clean_errors)
+    TyBorrow(inner, mutable) => (clean_errors => clean_errors)
+    TyVar(index) => (clean_errors => clean_errors)
+    TyPoly(generics0, inner) => (clean_errors => clean_errors)
+    TyApp(head, arg) => (clean_errors => clean_errors)
+  }
+}
+
+pub theorem ck_written_var_frame_errors(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan
+): CkErrorFrame(c, ck_written_var(c, n, generics, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(frame_written_var_unf(c, n, generics, span)),
+    frame_written_var_k_ok_errors(
+      c,
+      n,
+      generics,
+      span,
+      ck_written_name(n, generics),
+      ck_written_name(n, generics)
+    )
+  )
+}
+
+pub theorem ck_written_fn_kind_frame_errors(
+  w: Ty,
+  c: Checker,
+  fk: Text,
+  span: TySpan
+): CkErrorFrame(c, ck_written_fn_kind(w, c, fk, span)) {
+  match w: CkErrorFrame(c, ck_written_fn_kind(w, c, fk, span)) {
+    TyFn(ps, r, k) => (clean_errors => clean_errors)
+    TyInt(width) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyBool => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyText => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyUnit => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyNever => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyDecimal => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyFloat => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyUnion(members) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyProduct(members) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyTagged(tags, inner) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyNamed(name, args) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyParam(name, bound) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyInfo(inner) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyBorrow(inner, mutable) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyVar(index) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyPoly(generics0, inner) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyApp(head, arg) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+  }
+}
+
+pub theorem frame_set_constructor_position_same_errors(
+  c: Checker,
+  b: Bool
+): decl_names_errors(frame_set_constructor_position(c, b)) = decl_names_errors(c) { Refl }
+
+pub theorem frame_set_under_borrow_same_errors(
+  c: Checker,
+  b: Bool
+): decl_names_errors(frame_set_under_borrow(c, b)) = decl_names_errors(c) { Refl }
+
+pub theorem frame_error_if_ok_errors(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  b: Bool
+): CkErrorFrame(c, frame_error_if(c, message, span, b)) {
+  match b: CkErrorFrame(c, frame_error_if(c, message, span, b)) {
+    true => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    false => (clean_errors => clean_errors)
+  }
+}
+
+pub theorem frame_app_nested_ok_errors(
+  c: Checker,
+  span: TySpan,
+  after: List(Ty),
+  inner: Ty
+): CkErrorFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
+  match inner: CkErrorFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
+    TyNamed(n, before) => written_error_return(
+      c,
+      TyNamed(n, List::append(before, MkAfter)),
+      ck_arity(c, n, list_len(List::append(before, MkAfter)), span),
+      ck_arity_frame_errors(c, n, list_len(List::append(before, MkAfter)), span)
+    )
+    TyInt(width) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyBool => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyText => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyUnit => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyNever => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyDecimal => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyFloat => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyFn(params, result, kind) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyUnion(members) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyProduct(members) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyTagged(tags, _) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyParam(name, bound) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyInfo(_) => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    TyBorrow(_, mutable) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyVar(index) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyPoly(generics0, _) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+    TyApp(head, arg) => (
+      clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))
+    )
+  }
+}
+
+pub theorem frame_app_info_ok_errors(
+  c: Checker,
+  args: List(Ty)
+): CkErrorFrame(c, frame_app_info(c, args)) {
+  match args: CkErrorFrame(c, frame_app_info(c, args)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(a, rest) => (clean_errors => clean_errors)
+  }
+}
+pub theorem frame_app_generic_ok_errors(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  args: List(Ty)
+): CkErrorFrame(c, frame_app_generic(c, n, generics, span, args)) {
+  match args: CkErrorFrame(c, frame_app_generic(c, n, generics, span, args)) {
+    Nil => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    Cons(x, more) => (clean_errors => clean_errors)
+  }
+}
+
+pub theorem frame_app_generic_count_ok_errors(
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  n: Text,
+  one: Bool,
+  iheach: ∀ next: Checker. CkErrorFrame(next, ck_written_each(arguments, next, generics))
+): CkErrorFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
+  match one: CkErrorFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
+    true => error_frame_bind(
+      List(Ty),
+      Ty,
+      c,
+      (ws: List(Ty), c1: Checker) => frame_app_generic(c1, n, generics, span, ws),
+      ck_written_each(arguments, c, generics),
+      iheach(c),
+      ws => c1 => frame_app_generic_ok_errors(c1, n, generics, span, ws)
+    )
+    false => error_frame_rewrap(
+      c,
+      ck_written_ctor_arity(c, n, span),
+      ck_written_ctor_arity_frame_errors(c, n, span)
+    )
+  }
+}
+
+pub theorem frame_app_kind_ok_errors(
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  under_borrow: Bool,
+  app: WrittenApp,
+  iheach: ∀ next: Checker. CkErrorFrame(next, ck_written_each(arguments, next, generics))
+): CkErrorFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
+  match app: CkErrorFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
+    WrittenUnit => (clean_errors => clean_errors)
+    WrittenInfo => error_frame_bind(
+      List(Ty),
+      Ty,
+      c,
+      (ws: List(Ty), c1: Checker) => frame_app_info(c1, ws),
+      ck_written_each(arguments, c, generics),
+      iheach(c),
+      ws => c1 => frame_app_info_ok_errors(c1, ws)
+    )
+    WrittenNamed(n) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => frame_bind(
+        List(Ty),
+        Ty,
+        (ws: List(Ty), c2: Checker) => frame_return(
+          TyNamed(n, ws),
+          ck_arity(c2, n, list_len(ws), span)
+        ),
+        ck_written_each(arguments, c1, generics)
+      ),
+      frame_error_if(
+        c,
+        "Slice(A) can only be borrowed",
+        span,
+        Bool::and(Text::eq(n, "Slice"), not(under_borrow))
+      ),
+      frame_error_if_ok_errors(
+        c,
+        "Slice(A) can only be borrowed",
+        span,
+        Bool::and(Text::eq(n, "Slice"), not(under_borrow))
+      ),
+      ignored => c1 => error_frame_bind(
+        List(Ty),
+        Ty,
+        c1,
+        (ws: List(Ty), c2: Checker) => frame_return(
+          TyNamed(n, ws),
+          ck_arity(c2, n, list_len(ws), span)
+        ),
+        ck_written_each(arguments, c1, generics),
+        iheach(c1),
+        ws => c2 => written_error_return(
+          c2,
+          TyNamed(n, ws),
+          ck_arity(c2, n, list_len(ws), span),
+          ck_arity_frame_errors(c2, n, list_len(ws), span)
+        )
+      )
+    )
+    WrittenGeneric(n) => frame_app_generic_count_ok_errors(
+      c,
+      arguments,
+      generics,
+      span,
+      n,
+      Nat::eq(list_len(arguments), 1),
+      iheach
+    )
+    WrittenBad => error_frame_rewrap(
+      c,
+      ck_written_bad(c, span),
+      ck_written_bad_frame_errors(c, span)
+    )
+  }
+}
+
+pub theorem frame_written_app_ok_errors(
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  function: SurfaceTerm,
+  under_borrow: Bool,
+  nested: Bool,
+  ihterm: ∀ next: Checker. CkErrorFrame(next, ck_written_in(function, next, generics)),
+  iheach: ∀ next: Checker. CkErrorFrame(next, ck_written_each(arguments, next, generics))
+): CkErrorFrame(c, frame_written_app(c, arguments, generics, span, function, under_borrow, nested)) {
+  match nested: CkErrorFrame(
+    c,
+    frame_written_app(c, arguments, generics, span, function, under_borrow, nested)
+  ) {
+    true => written_error_changed(
+      c,
+      frame_set_constructor_position(c, true),
+      frame_bind(
+        Ty,
+        Ty,
+        (before: Ty, c1: Checker) => frame_bind(
+          List(Ty),
+          Ty,
+          (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+          ck_written_each(
+            arguments,
+            frame_set_constructor_position(c1, frame_constructor_position(c)),
+            generics
+          )
+        ),
+        ck_written_in(function, frame_set_constructor_position(c, true), generics)
+      ),
+      frame_set_constructor_position_same_errors(c, true),
+      error_frame_bind(
+        Ty,
+        Ty,
+        frame_set_constructor_position(c, true),
+        (before: Ty, c1: Checker) => frame_bind(
+          List(Ty),
+          Ty,
+          (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+          ck_written_each(
+            arguments,
+            frame_set_constructor_position(c1, frame_constructor_position(c)),
+            generics
+          )
+        ),
+        ck_written_in(function, frame_set_constructor_position(c, true), generics),
+        ihterm(frame_set_constructor_position(c, true)),
+        before => c1 => written_error_changed(
+          c1,
+          frame_set_constructor_position(c1, frame_constructor_position(c)),
+          frame_bind(
+            List(Ty),
+            Ty,
+            (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+            ck_written_each(
+              arguments,
+              frame_set_constructor_position(c1, frame_constructor_position(c)),
+              generics
+            )
+          ),
+          frame_set_constructor_position_same_errors(c1, frame_constructor_position(c)),
+          error_frame_bind(
+            List(Ty),
+            Ty,
+            frame_set_constructor_position(c1, frame_constructor_position(c)),
+            (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+            ck_written_each(
+              arguments,
+              frame_set_constructor_position(c1, frame_constructor_position(c)),
+              generics
+            ),
+            iheach(frame_set_constructor_position(c1, frame_constructor_position(c))),
+            after => c2 => frame_app_nested_ok_errors(c2, span, after, before)
+          )
+        )
+      )
+    )
+    false => frame_app_kind_ok_errors(
+      c,
+      arguments,
+      generics,
+      span,
+      under_borrow,
+      written_app(function, list_len(arguments), generics),
+      iheach
+    )
+  }
+}
+
+pub theorem frame_written_each_cons_ok_errors(
+  t: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  iht: ∀ next: Checker. CkErrorFrame(next, ck_written_in(t, next, generics)),
+  ihr: ∀ next: Checker. CkErrorFrame(next, ck_written_each(rest, next, generics))
+): CkErrorFrame(c, frame_written_each_cons(t, rest, c, generics)) {
+  error_frame_bind(
+    Ty,
+    List(Ty),
+    c,
+    (head: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_written_each(rest, c1, generics)
+    ),
+    ck_written_in(t, c, generics),
+    iht(c),
+    head => c1 => error_frame_bind(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_written_each(rest, c1, generics),
+      ihr(c1),
+      tail => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem frame_written_params_cons_ok_errors(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  skip: Nat,
+  ihp: ∀ next: Checker. CkErrorFrame(next, ck_written_param(p, next, generics)),
+  ihr: ∀ next: Checker. ∀ count: Nat. CkErrorFrame(
+    next,
+    ck_written_params(rest, next, generics, count)
+  )
+): CkErrorFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
+  match skip: CkErrorFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
+    Zero => error_frame_bind(
+      Ty,
+      List(Ty),
+      c,
+      (head: Ty, c1: Checker) => frame_bind(
+        List(Ty),
+        List(Ty),
+        (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+        ck_written_params(rest, c1, generics, 0)
+      ),
+      ck_written_param(p, c, generics),
+      ihp(c),
+      head => c1 => error_frame_bind(
+        List(Ty),
+        List(Ty),
+        c1,
+        (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+        ck_written_params(rest, c1, generics, 0),
+        ihr(c1, 0),
+        tail => c2 => (clean_errors => clean_errors)
+      )
+    )
+    Succ(n) => error_frame_rewrap(c, ck_written_params(rest, c, generics, n), ihr(c, n))
+  }
+}
+
+pub theorem frame_written_pi_ok_errors(
+  params: List(SurfaceParam),
+  result: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ihps: ∀ next: Checker. CkErrorFrame(
+    next,
+    ck_written_params(
+      params,
+      next,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params))
+    )
+  ),
+  ihr: ∀ next: Checker. CkErrorFrame(
+    next,
+    ck_written_in(result, next, frame_pi_generics(params, generics))
+  )
+): CkErrorFrame(c, frame_written_pi(params, result, c, generics)) {
+  error_frame_bind(
+    List(Ty),
+    Ty,
+    c,
+    (ps: List(Ty), c1: Checker) => frame_bind(
+      Ty,
+      Ty,
+      (r: Ty, c2: Checker) => mut1(
+        ty_poly_of(frame_pi_binders(params), TyFn(ps, r, KindShared)),
+        c2
+      ),
+      ck_written_in(result, c1, frame_pi_generics(params, generics))
+    ),
+    ck_written_params(
+      params,
+      c,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params))
+    ),
+    ihps(c),
+    ps => c1 => error_frame_bind(
+      Ty,
+      Ty,
+      c1,
+      (r: Ty, c2: Checker) => mut1(
+        ty_poly_of(frame_pi_binders(params), TyFn(ps, r, KindShared)),
+        c2
+      ),
+      ck_written_in(result, c1, frame_pi_generics(params, generics)),
+      ihr(c1),
+      r => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem frame_written_fnkind_ok_errors(
+  fk: Text,
+  ty: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_written_in(ty, next, generics))
+): CkErrorFrame(c, frame_written_fnkind(fk, ty, c, generics, span)) {
+  error_frame_bind(
+    Ty,
+    Ty,
+    c,
+    (w: Ty, c1: Checker) => ck_rewrap1(ck_written_fn_kind(w, c1, fk, span)),
+    ck_written_in(ty, c, generics),
+    ih(c),
+    w => c1 => error_frame_rewrap(
+      c1,
+      ck_written_fn_kind(w, c1, fk, span),
+      ck_written_fn_kind_frame_errors(w, c1, fk, span)
+    )
+  )
+}
+
+pub theorem frame_written_borrow_ok_errors(
+  mutable: Bool,
+  x: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_written_in(x, next, generics))
+): CkErrorFrame(c, frame_written_borrow(mutable, x, c, generics)) {
+  written_error_changed(
+    c,
+    frame_set_under_borrow(c, true),
+    frame_bind(
+      Ty,
+      Ty,
+      (w: Ty, c1: Checker) => mut1(TyBorrow(w, mutable), c1),
+      ck_written_in(x, frame_set_under_borrow(c, true), generics)
+    ),
+    frame_set_under_borrow_same_errors(c, true),
+    error_frame_bind(
+      Ty,
+      Ty,
+      frame_set_under_borrow(c, true),
+      (w: Ty, c1: Checker) => mut1(TyBorrow(w, mutable), c1),
+      ck_written_in(x, frame_set_under_borrow(c, true), generics),
+      ih(frame_set_under_borrow(c, true)),
+      w => c1 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem frame_written_union_ok_errors(
+  ts: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_written_each(ts, next, generics))
+): CkErrorFrame(c, frame_written_union(ts, c, generics)) {
+  error_frame_bind(
+    List(Ty),
+    Ty,
+    c,
+    (w: List(Ty), c1: Checker) => mut1(ty_union(w), c1),
+    ck_written_each(ts, c, generics),
+    ih(c),
+    w => c1 => (clean_errors => clean_errors)
+  )
+}
+
+pub theorem frame_written_product_ok_errors(
+  ts: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_written_each(ts, next, generics))
+): CkErrorFrame(c, frame_written_product(ts, c, generics)) {
+  error_frame_bind(
+    List(Ty),
+    Ty,
+    c,
+    (w: List(Ty), c1: Checker) => mut1(ty_product(w), c1),
+    ck_written_each(ts, c, generics),
+    ih(c),
+    w => c1 => (clean_errors => clean_errors)
+  )
+}
+
+pub theorem frame_written_tagged_ok_errors(
+  tag: Text,
+  x: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_written_in(x, next, generics))
+): CkErrorFrame(c, frame_written_tagged(tag, x, c, generics)) {
+  error_frame_bind(
+    Ty,
+    Ty,
+    c,
+    (w: Ty, c1: Checker) => mut1(ty_tagged(Cons(tag, Nil), w), c1),
+    ck_written_in(x, c, generics),
+    ih(c),
+    w => c1 => (clean_errors => clean_errors)
+  )
+}
+
+pub theorem written_invalid_errors(
+  c: Checker,
+  span: TySpan
+): CkErrorFrame(
+  c,
+  frame_written_invalid(c, span)
+) { (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors)))) }
+
+mutual {
+  pub theorem ck_written_in_frame_errors(
+    t: SurfaceTerm,
+    c: Checker,
+    generics: Ordmap(Text, Ty)
+  ): CkErrorFrame(c, ck_written_in(t, c, generics)) {
+    match t: CkErrorFrame(c, ck_written_in(t, c, generics)) {
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_written_in_unf(ast_occurrence, sk, start, end, c, generics)),
+        error_frame_rewrap(
+          c,
+          ck_written_kind(
+            sk,
+            frame_set_under_borrow(c, false),
+            generics,
+            TySpan { start: start, end: end },
+            frame_under_borrow(c)
+          ),
+          written_error_changed(
+            c,
+            frame_set_under_borrow(c, false),
+            ck_written_kind(
+              sk,
+              frame_set_under_borrow(c, false),
+              generics,
+              TySpan { start: start, end: end },
+              frame_under_borrow(c)
+            ),
+            frame_set_under_borrow_same_errors(c, false),
+            ck_written_kind_frame_errors(
+              sk,
+              frame_set_under_borrow(c, false),
+              generics,
+              TySpan { start: start, end: end },
+              frame_under_borrow(c)
+            )
+          )
+        )
+      )
+    }
+  }
+  pub theorem ck_written_kind_frame_errors(
+    sk: SurfaceKind,
+    c: Checker,
+    generics: Ordmap(Text, Ty),
+    span: TySpan,
+    under_borrow: Bool
+  ): CkErrorFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
+    match sk: CkErrorFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
+      SkVar(n) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkVar(n, c, generics, span, under_borrow)),
+        error_frame_rewrap(
+          c,
+          ck_written_var(c, n, generics, span),
+          ck_written_var_frame_errors(c, n, generics, span)
+        )
+      )
+      SkApp(function, arguments) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkApp(function, arguments, c, generics, span, under_borrow)),
+        frame_written_app_ok_errors(
+          c,
+          arguments,
+          generics,
+          span,
+          function,
+          under_borrow,
+          written_nested(function),
+          next => ck_written_in_frame_errors(function, next, generics),
+          next => ck_written_each_frame_errors(arguments, next, generics)
+        )
+      )
+      SkPi(params, result, effects) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkPi(params, result, effects, c, generics, span, under_borrow)),
+        frame_written_pi_ok_errors(
+          params,
+          result,
+          c,
+          generics,
+          next => ck_written_params_frame_errors(
+            params,
+            next,
+            frame_pi_generics(params, generics),
+            list_len(frame_pi_binders(params))
+          ),
+          next => ck_written_in_frame_errors(result, next, frame_pi_generics(params, generics))
+        )
+      )
+      SkFnKind(fk, ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkFnKind(fk, ty, c, generics, span, under_borrow)),
+        frame_written_fnkind_ok_errors(
+          fk,
+          ty,
+          c,
+          generics,
+          span,
+          next => ck_written_in_frame_errors(ty, next, generics)
+        )
+      )
+      SkBorrow(mutable, x) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkBorrow(mutable, x, c, generics, span, under_borrow)),
+        frame_written_borrow_ok_errors(
+          mutable,
+          x,
+          c,
+          generics,
+          next => ck_written_in_frame_errors(x, next, generics)
+        )
+      )
+      SkUnion(ts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkUnion(ts, c, generics, span, under_borrow)),
+        frame_written_union_ok_errors(
+          ts,
+          c,
+          generics,
+          next => ck_written_each_frame_errors(ts, next, generics)
+        )
+      )
+      SkProduct(ts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkProduct(ts, c, generics, span, under_borrow)),
+        frame_written_product_ok_errors(
+          ts,
+          c,
+          generics,
+          next => ck_written_each_frame_errors(ts, next, generics)
+        )
+      )
+      SkTagged(tag, x) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkTagged(tag, x, c, generics, span, under_borrow)),
+        frame_written_tagged_ok_errors(
+          tag,
+          x,
+          c,
+          generics,
+          next => ck_written_in_frame_errors(x, next, generics)
+        )
+      )
+      SkNat(digits) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkNat(digits, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkText(value) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkText(value, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkBool(value) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkBool(value, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkExists(binder, domain, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkExists(binder, domain, body, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkLam(params, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkLam(params, body, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkIf(cond, then, otherwise) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkIf(cond, then, otherwise, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkField(value, name) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkField(value, name, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkBlock(stmts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkBlock(stmts, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkPerform(op, args) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkPerform(op, args, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkHandle(body, handlers) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkHandle(body, handlers, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkBudget(amount_memory, amount, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkBudget(amount_memory, amount, body, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkMatch(scrutinee, motive, arms, binder) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkHole(name) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkHole(name, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkRecord(name, fields) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkRecord(name, fields, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkBorrowLam(borrows, lam) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkBorrowLam(borrows, lam, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkOther(what) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkOther(what, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkRow(what_effects) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkRow(what_effects, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkFloat(what) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkFloat(what, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkProject(what, what_ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkProject(what, what_ty, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkMacroCall(name, arg) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkMacroCall(name, arg, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkQuote(stmts_form, stmts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkQuote(stmts_form, stmts, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkSplice(value) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkSplice(value, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkSyntaxLit(name, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_unf_SkSyntaxLit(name, body, c, generics, span, under_borrow)),
+        written_invalid_errors(c, span)
+      )
+      SkStep(tactic, arg, call_start, CallEnd, before, arms) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(
+          frame_unf_SkStep(
+            tactic,
+            arg,
+            call_start,
+            CallEnd,
+            before,
+            arms,
+            c,
+            generics,
+            span,
+            under_borrow
+          )
+        ),
+        written_invalid_errors(c, span)
+      )
+    }
+  }
+  pub theorem ck_written_each_frame_errors(
+    ts: List(SurfaceTerm),
+    c: Checker,
+    generics: Ordmap(Text, Ty)
+  ): CkErrorFrame(c, ck_written_each(ts, c, generics)) {
+    match ts: CkErrorFrame(c, ck_written_each(ts, c, generics)) {
+      Nil => (clean_errors => clean_errors)
+      Cons(t, rest) => Eq::subst(
+        (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_written_each_unf(t, rest, c, generics)),
+        frame_written_each_cons_ok_errors(
+          t,
+          rest,
+          c,
+          generics,
+          next => ck_written_in_frame_errors(t, next, generics),
+          next => ck_written_each_frame_errors(rest, next, generics)
+        )
+      )
+    }
+  }
+  pub theorem ck_written_params_frame_errors(
+    ps: List(SurfaceParam),
+    c: Checker,
+    generics: Ordmap(Text, Ty),
+    skip: Nat
+  ): CkErrorFrame(c, ck_written_params(ps, c, generics, skip)) {
+    match ps: CkErrorFrame(c, ck_written_params(ps, c, generics, skip)) {
+      Nil => (clean_errors => clean_errors)
+      Cons(p, rest) => Eq::subst(
+        (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_written_params_unf(p, rest, c, generics, skip)),
+        frame_written_params_cons_ok_errors(
+          p,
+          rest,
+          c,
+          generics,
+          skip,
+          next => ck_written_param_frame_errors(p, next, generics),
+          next => count => ck_written_params_frame_errors(rest, next, generics, count)
+        )
+      )
+    }
+  }
+  pub theorem ck_written_param_frame_errors(
+    p: SurfaceParam,
+    c: Checker,
+    generics: Ordmap(Text, Ty)
+  ): CkErrorFrame(c, ck_written_param(p, c, generics)) {
+    match p: CkErrorFrame(c, ck_written_param(p, c, generics)) {
+      SurfaceParamMk(name, ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+        Eq::sym(frame_written_param_unf(name, ty, c, generics)),
+        error_frame_rewrap(
+          c,
+          ck_written_in(ty, c, generics),
+          ck_written_in_frame_errors(ty, c, generics)
+        )
+      )
+    }
+  }
+}
+pub theorem ck_written_frame_errors(
+  c: Checker,
+  t: SurfaceTerm,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_written(c, t, generics)) {
+  error_frame_rewrap(c, ck_written_in(t, c, generics), ck_written_in_frame_errors(t, c, generics))
+}

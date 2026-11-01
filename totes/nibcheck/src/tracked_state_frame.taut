@@ -1,0 +1,108 @@
+import "stable_state_frame.taut"
+import "obligation_state_frame.taut"
+
+// Expressions may append literal obligations; they must retain earlier ones
+// and preserve the function table used to type references.
+pub def TrackedState(
+  c: Checker,
+  next: Checker
+): Prop := And(
+  Sub(TyLiteral, stable_literals(c), stable_literals(next)),
+  And(
+    stable_functions(next) = stable_functions(c),
+    ObligationState(c, next)
+  )
+)
+pub def TrackedFrame<A: Type>(c: Checker, m: Mut1(A, Checker)): Prop := TrackedState(c, ck_st(m))
+pub theorem tracked_state_refl(
+  c: Checker
+): TrackedState(
+  c,
+  c
+) { AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))) }
+pub theorem tracked_state_trans(
+  c: Checker,
+  next: Checker,
+  last: Checker,
+  first: TrackedState(c, next),
+  tail: TrackedState(next, last)
+): TrackedState(c, last) {
+  AndIntro(
+    item => member => And::left(tail)(item, And::left(first)(item, member)),
+    AndIntro(
+      Eq::trans(And::left(And::right(tail)), And::left(And::right(first))),
+      obligation_state_trans(c, next, last, And::right(And::right(first)), And::right(And::right(tail)))
+    )
+  )
+}
+pub theorem tracked_frame_stable<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  stable: StableStateFrame(c, m),
+  obligations: ObligationFrame(c, m)
+): TrackedFrame(c, m) {
+  AndIntro(
+    item => member => Eq::subst(
+      (items: List(TyLiteral)) => Mem(TyLiteral, item, items),
+      Eq::sym(stable_frame_literals(c, m, stable)),
+      member
+    ),
+    AndIntro(stable_frame_functions(c, m, stable), obligations)
+  )
+}
+pub theorem tracked_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: TrackedFrame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. TrackedFrame(next, k(value, next))
+): TrackedFrame(c, frame_bind(A, B, k, m)) {
+  match m: TrackedFrame(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => tracked_state_trans(
+      c,
+      next,
+      ck_st(k(value, next)),
+      first,
+      tail(value, next)
+    )
+  }
+}
+pub theorem tracked_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  frame: TrackedFrame(c, m)
+): TrackedFrame(c, ck_rewrap1(m)) {
+  Eq::subst((result: Mut1(A, Checker)) => TrackedFrame(c, result), Eq::sym(ck_rewrap1_id(m)), frame)
+}
+pub theorem tracked_return<A: Type, B: Type>(
+  c: Checker,
+  value: B,
+  m: Mut1(A, Checker),
+  frame: TrackedFrame(c, m)
+): TrackedFrame(c, frame_return(value, m)) {
+  match m: TrackedFrame(c, frame_return(value, m)) { mut1(ignored, next) => frame }
+}
+pub theorem tracked_changed<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  same: TrackedState(c, next),
+  frame: TrackedFrame(next, m)
+): TrackedFrame(c, m) {
+  tracked_state_trans(c, next, ck_st(m), same, frame)
+}
+pub theorem tracked_under_borrow(
+  c: Checker,
+  b: Bool
+): TrackedState(
+  c,
+  frame_set_under_borrow(c, b)
+) { AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))) }
+
+pub theorem tracked_constructor_position(
+  c: Checker,
+  b: Bool
+): TrackedState(
+  c,
+  frame_set_constructor_position(c, b)
+) { AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))) }

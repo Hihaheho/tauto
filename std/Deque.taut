@@ -1,0 +1,236 @@
+import "List.taut"
+
+// A double-ended queue, persistent: a front list and a back list kept in
+// reverse, so that both ends are a list head. Its elements are
+// `Deque::to_list`; the theorems say what each operation does to that list.
+// Taking from an end whose list is empty reverses the other list into it.
+
+pub(open) inductive Deque(A: Type): Type {
+  // The elements are `front` followed by `back` reversed.
+  Mk(front: List(A), back: List(A)): Deque(A)
+}
+
+module Deque {
+  pub fn new<A>(): Deque(A) {
+    Deque::Mk(Nil, Nil)
+  }
+
+  // The elements, front to back.
+  pub fn to_list<A>(d: Deque(A)): List(A) {
+    match d: List(A) {
+      Mk(f, b) => List::append(f, List::reverse(b))
+    }
+  }
+
+  pub fn of_list<A>(l: List(A)): Deque(A) {
+    Deque::Mk(l, Nil)
+  }
+
+  pub fn len<A>(d: Deque(A)): Nat {
+    match d: Nat {
+      Mk(f, b) => List::length(f) + List::length(b)
+    }
+  }
+
+  pub fn is_empty<A>(d: Deque(A)): Bool {
+    match d: Bool {
+      Mk(f, b) => match f: Bool {
+        Nil => match b: Bool {
+          Nil => true
+          Cons(_, _) => false
+        }
+        Cons(_, _) => false
+      }
+    }
+  }
+
+  pub fn push_front<A>(d: Deque(A), x: A): Deque(A) {
+    match d: Deque(A) {
+      Mk(f, b) => Deque::Mk(Cons(x, f), b)
+    }
+  }
+
+  pub fn push_back<A>(d: Deque(A), x: A): Deque(A) {
+    match d: Deque(A) {
+      Mk(f, b) => Deque::Mk(f, Cons(x, b))
+    }
+  }
+
+  // The same elements in the other order: the front list and the back list
+  // change places.
+  pub fn flip<A>(d: Deque(A)): Deque(A) {
+    match d: Deque(A) {
+      Mk(f, b) => Deque::Mk(b, f)
+    }
+  }
+
+  // The first element of `l` and a deque of the rest.
+  pub fn take_head<A>(l: List(A)): Option(A × Deque(A)) {
+    match l: Option(A × Deque(A)) {
+      Nil => None
+      Cons(x, rest) => Some(#(x, Deque::Mk(rest, Nil)))
+    }
+  }
+
+  // The front element and the deque without it, or none when it is empty.
+  pub fn pop_front<A>(d: Deque(A)): Option(A × Deque(A)) {
+    match d: Option(A × Deque(A)) {
+      Mk(f, b) => match f: Option(A × Deque(A)) {
+        Nil => take_head(List::reverse(b))
+        Cons(x, rest) => Some(#(x, Deque::Mk(rest, b)))
+      }
+    }
+  }
+
+  pub fn flip_popped<A>(o: Option(A × Deque(A))): Option(A × Deque(A)) {
+    match o: Option(A × Deque(A)) {
+      None => None
+      Some(p) => Some(#((p: A), flip((p: Deque(A)))))
+    }
+  }
+
+  // The back element and the deque without it, or none when it is empty.
+  pub fn pop_back<A>(d: Deque(A)): Option(A × Deque(A)) {
+    flip_popped(pop_front(flip(d)))
+  }
+
+  pub fn peek_front<A>(d: Deque(A)): Option(A) {
+    match pop_front(d): Option(A) {
+      None => None
+      Some(p) => Some((p: A))
+    }
+  }
+
+  pub fn peek_back<A>(d: Deque(A)): Option(A) {
+    match pop_back(d): Option(A) {
+      None => None
+      Some(p) => Some((p: A))
+    }
+  }
+
+  // ---- the elements -----------------------------------------------------------
+
+  // A popped element with the elements of the deque that is left.
+  pub fn popped_list<A>(o: Option(A × Deque(A))): Option(A × List(A)) {
+    match o: Option(A × List(A)) {
+      None => None
+      Some(p) => Some(#((p: A), to_list((p: Deque(A)))))
+    }
+  }
+
+  // The head of a list and its tail.
+  pub fn list_uncons<A>(l: List(A)): Option(A × List(A)) {
+    match l: Option(A × List(A)) {
+      Nil => None
+      Cons(x, rest) => Some(#(x, rest))
+    }
+  }
+
+  // What the reversed list is to a popped element: the rest reversed back.
+  pub fn reverse_rest<A>(o: Option(A × List(A))): Option(A × List(A)) {
+    match o: Option(A × List(A)) {
+      None => None
+      Some(p) => Some(#((p: A), List::reverse((p: List(A)))))
+    }
+  }
+
+  pub theorem new_to_list<A: Type>(): to_list(Deque::new(A)) = Nil {
+    Refl
+  }
+
+  pub theorem of_list_to_list<A: Type>(l: List(A)): to_list(of_list(l)) = l {
+    List::append_nil(l)
+  }
+
+  pub theorem len_to_list<A: Type>(d: Deque(A)): len(d) = List::length(to_list(d)) {
+    match d: len(d) = List::length(to_list(d)) {
+      Mk(f, b) => calc List::length(f) + List::length(b) {
+        = List::length(f) + List::length(List::reverse(b)) from Eq::congr(⟦Nat::add(List::length(f), □)⟧, Eq::sym(List::length_reverse(b)))
+        = List::length(List::append(f, List::reverse(b))) from Eq::sym(List::length_append(f, List::reverse(b)))
+      }
+    }
+  }
+
+  pub theorem push_front_to_list<A: Type>(
+    d: Deque(A),
+    x: A
+  ): to_list(push_front(d, x)) = Cons(x, to_list(d)) {
+    match d: to_list(push_front(d, x)) = Cons(x, to_list(d)) {
+      Mk(_, _) => Refl
+    }
+  }
+
+  pub theorem push_back_to_list<A: Type>(
+    d: Deque(A),
+    x: A
+  ): to_list(push_back(d, x)) = List::append(to_list(d), Cons(x, Nil)) {
+    match d: to_list(push_back(d, x)) = List::append(to_list(d), Cons(x, Nil)) {
+      Mk(f, b) => calc List::append(f, List::reverse(Cons(x, b))) {
+        = List::append(f, List::append(List::reverse(b), Cons(x, Nil))) from Eq::congr(⟦List::append(f, □)⟧, List::reverse_cons(x, b))
+        = List::append(List::append(f, List::reverse(b)), Cons(x, Nil)) from Eq::sym(List::append_assoc(f, List::reverse(b), Cons(x, Nil)))
+      }
+    }
+  }
+
+  pub theorem flip_to_list<A: Type>(
+    d: Deque(A)
+  ): to_list(flip(d)) = List::reverse(to_list(d)) {
+    match d: to_list(flip(d)) = List::reverse(to_list(d)) {
+      Mk(f, b) => Eq::sym(
+        Eq::trans(
+          List::reverse_append(f, List::reverse(b)),
+          Eq::congr(⟦List::append(□, List::reverse(f))⟧, List::reverse_reverse(b))
+        )
+      )
+    }
+  }
+
+  pub theorem take_head_list<A: Type>(
+    l: List(A)
+  ): popped_list(take_head(l)) = list_uncons(l) {
+    match l: popped_list(take_head(l)) = list_uncons(l) {
+      Nil => Refl
+      Cons(x, rest) => Eq::congr(⟦Some(#(x, □))⟧, List::append_nil(rest))
+    }
+  }
+
+  // Popping the front takes the head of the elements.
+  pub theorem pop_front_list<A: Type>(
+    d: Deque(A)
+  ): popped_list(pop_front(d)) = list_uncons(to_list(d)) {
+    match d: popped_list(pop_front(d)) = list_uncons(to_list(d)) {
+      Mk(f, b) => match f: popped_list(
+        pop_front(Deque::Mk(f, b))
+      ) = list_uncons(to_list(Deque::Mk(f, b))) {
+        Nil => take_head_list(List::reverse(b))
+        Cons(_, _) => Refl
+      }
+    }
+  }
+
+  pub theorem flip_popped_list<A: Type>(
+    o: Option(A × Deque(A))
+  ): popped_list(flip_popped(o)) = reverse_rest(popped_list(o)) {
+    match o: popped_list(flip_popped(o)) = reverse_rest(popped_list(o)) {
+      None => Refl
+      Some(p) => Eq::congr(
+        ⟦Some(#((p: A), □))⟧,
+        flip_to_list((p: Deque(A)))
+      )
+    }
+  }
+
+  // Popping the back takes the head of the elements reversed: the element is
+  // the last one, and the rest reversed back are the elements before it.
+  pub theorem pop_back_list<A: Type>(
+    d: Deque(A)
+  ): popped_list(
+    pop_back(d)
+  ) = reverse_rest(list_uncons(List::reverse(to_list(d)))) {
+    calc popped_list(flip_popped(pop_front(flip(d)))) {
+      = reverse_rest(popped_list(pop_front(flip(d)))) from flip_popped_list(pop_front(flip(d)))
+      = reverse_rest(list_uncons(to_list(flip(d)))) from Eq::congr(⟦reverse_rest(□)⟧, pop_front_list(flip(d)))
+      = reverse_rest(list_uncons(List::reverse(to_list(d)))) from Eq::congr(⟦reverse_rest(list_uncons(□))⟧, flip_to_list(d))
+    }
+  }
+}

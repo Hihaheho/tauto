@@ -1,0 +1,770 @@
+import "pattern_read_error_sound.taut"
+import "expr_checks_frame.taut"
+import "written_error_sound.taut"
+import "signature_error_sound.taut"
+import "expr_leaf_error_sound.taut"
+
+pub theorem ck_record_op_frame_errors(
+  c: Checker,
+  a: Ty,
+  span: TySpan,
+  occurrence: Option(TermOccurrence)
+): CkErrorFrame(c, ck_record_op(c, a, span, occurrence)) { (clean_errors => clean_errors) }
+
+pub theorem ck_add_int_frame_errors(
+  c: Checker,
+  v: Nat
+): CkErrorFrame(c, ck_add_int(c, v)) { (clean_errors => clean_errors) }
+
+pub theorem leaf_ck_field_missing_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  t: Ty,
+  name: Text
+): CkErrorFrame(c, leaf_ck_field_missing(c, term, t, name)) {
+  error_frame_bind(
+    Unit,
+    Ty,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+    ck_error(c, cat4(ty_show(t), " has no field `", name, "`"), span_of(term)),
+    ck_error_frame_errors(c, cat4(ty_show(t), " has no field `", name, "`"), span_of(term)),
+    ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
+  )
+}
+
+pub theorem ck_field_missing_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  t: Ty,
+  name: Text
+): CkErrorFrame(c, ck_field_missing(c, term, t, name)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_ck_field_missing_unf(c, term, t, name)),
+    leaf_ck_field_missing_frame_errors(c, term, t, name)
+  )
+}
+
+pub theorem leaf_ck_operator_bad_frame_errors(
+  c: Checker,
+  op: Text,
+  span: TySpan
+): CkErrorFrame(c, leaf_ck_operator_bad(c, op, span)) {
+  error_frame_bind(
+    Unit,
+    Ty,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+    ck_error(c, cat3("`", op, "` takes other operands"), span),
+    ck_error_frame_errors(c, cat3("`", op, "` takes other operands"), span),
+    ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
+  )
+}
+
+pub theorem ck_operator_bad_frame_errors(
+  c: Checker,
+  op: Text,
+  span: TySpan
+): CkErrorFrame(c, ck_operator_bad(c, op, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_ck_operator_bad_unf(c, op, span)),
+    leaf_ck_operator_bad_frame_errors(c, op, span)
+  )
+}
+
+pub theorem leaf_ck_clone_bad_frame_errors(
+  c: Checker,
+  span: TySpan
+): CkErrorFrame(c, leaf_ck_clone_bad(c, span)) {
+  error_frame_bind(
+    Unit,
+    Ty,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+    ck_error(c, "`clone` takes one borrow, `clone(&x)`", span),
+    ck_error_frame_errors(c, "`clone` takes one borrow, `clone(&x)`", span),
+    ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
+  )
+}
+
+pub theorem ck_clone_bad_frame_errors(
+  c: Checker,
+  span: TySpan
+): CkErrorFrame(c, ck_clone_bad(c, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_ck_clone_bad_unf(c, span)),
+    leaf_ck_clone_bad_frame_errors(c, span)
+  )
+}
+
+pub theorem leaf_ck_check_lend_frame_errors(
+  c: Checker,
+  mutable: Bool,
+  inner: SurfaceTerm,
+  env: List(Local),
+  span: TySpan
+): CkErrorFrame(c, leaf_ck_check_lend(c, mutable, inner, env, span)) {
+  frame_error_if_ok_errors(
+    c,
+    cat2(leaf_lend_name(inner), " is not a var: only a var lends `&mut`"),
+    span,
+    Bool::and(mutable, not(ck_mutable_place(inner, c, env)))
+  )
+}
+
+pub theorem ck_check_lend_frame_errors(
+  c: Checker,
+  mutable: Bool,
+  inner: SurfaceTerm,
+  env: List(Local),
+  span: TySpan
+): CkErrorFrame(c, ck_check_lend(c, mutable, inner, env, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_ck_check_lend_unf(c, mutable, inner, env, span)),
+    leaf_ck_check_lend_frame_errors(c, mutable, inner, env, span)
+  )
+}
+
+pub theorem leaf_ck_check_covers_frame_errors(
+  c: Checker,
+  s: Ty,
+  arms: List(SurfaceArm),
+  span: TySpan
+): CkErrorFrame(c, leaf_ck_check_covers(c, s, arms, span)) {
+  frame_error_if_ok_errors(
+    c,
+    "the `match` does not cover every value",
+    span,
+    not(covers(ck_datas_of(c), ck_resolve(c, s), open_patterns(arms)))
+  )
+}
+
+pub theorem ck_check_covers_frame_errors(
+  c: Checker,
+  s: Ty,
+  arms: List(SurfaceArm),
+  span: TySpan
+): CkErrorFrame(c, ck_check_covers(c, s, arms, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_ck_check_covers_unf(c, s, arms, span)),
+    leaf_ck_check_covers_frame_errors(c, s, arms, span)
+  )
+}
+
+pub theorem leaf_ck_stored_borrow_frame_errors(
+  c: Checker,
+  name: Text,
+  resolved: Ty,
+  value: SurfaceTerm
+): CkErrorFrame(c, leaf_ck_stored_borrow(c, name, resolved, value)) {
+  error_frame_rewrap(
+    c,
+    ck_error(
+      c,
+      cat4("a borrow cannot be stored: `", name, "` would hold ", ty_show(ck_shown(c, resolved))),
+      span_of(value)
+    ),
+    ck_error_frame_errors(
+      c,
+      cat4("a borrow cannot be stored: `", name, "` would hold ", ty_show(ck_shown(c, resolved))),
+      span_of(value)
+    )
+  )
+}
+
+pub theorem ck_stored_borrow_frame_errors(
+  c: Checker,
+  name: Text,
+  resolved: Ty,
+  value: SurfaceTerm
+): CkErrorFrame(c, ck_stored_borrow(c, name, resolved, value)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_ck_stored_borrow_unf(c, name, resolved, value)),
+    leaf_ck_stored_borrow_frame_errors(c, name, resolved, value)
+  )
+}
+
+pub theorem leaf_number_frame_errors(
+  c: Checker,
+  original: Ty,
+  span: TySpan,
+  op: Text,
+  r: Ty
+): CkErrorFrame(c, leaf_number(c, original, span, op, r)) {
+  match r: CkErrorFrame(c, leaf_number(c, original, span, op, r)) {
+    TyInt(w) => (clean_errors => clean_errors)
+    TyBool => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyText => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyUnit => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyNever => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyDecimal => (clean_errors => clean_errors)
+    TyFloat => (clean_errors => clean_errors)
+    TyFn(params, result, kind) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyUnion(members) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyProduct(members) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyTagged(tags, inner) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyNamed(name, args) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyParam(name, bound) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyInfo(inner) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyBorrow(inner, mutable) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyVar(v) => error_frame_rewrap(c, ck_add_int(c, v), ck_add_int_frame_errors(c, v))
+    TyPoly(generics, inner) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+    TyApp(typehead, typearg) => error_frame_rewrap(
+      c,
+      ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span),
+      ck_error_frame_errors(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
+    )
+  }
+}
+
+pub theorem ck_number_frame_errors(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  op: Text
+): CkErrorFrame(c, ck_number(c, t, span, op)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_number_unf(c, t, span, op)),
+    leaf_number_frame_errors(c, ck_resolve(c, t), span, op, ck_resolve(c, t))
+  )
+}
+
+pub theorem leaf_div_var_frame_errors(
+  c: Checker,
+  span: TySpan,
+  v: Nat,
+  unknown: Bool
+): CkErrorFrame(c, leaf_div_var(c, span, v, unknown)) {
+  match unknown: CkErrorFrame(c, leaf_div_var(c, span, v, unknown)) {
+    true => error_frame_rewrap(
+      c,
+      ck_error(c, "the operands of `/` have no known type: write it", span),
+      ck_error_frame_errors(c, "the operands of `/` have no known type: write it", span)
+    )
+    false => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+  }
+}
+
+pub theorem leaf_divide_frame_errors(
+  c: Checker,
+  span: TySpan,
+  t: Ty
+): CkErrorFrame(c, leaf_divide(c, span, t)) {
+  match t: CkErrorFrame(c, leaf_divide(c, span, t)) {
+    TyInt(w) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyBool => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyText => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyUnit => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyNever => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyDecimal => (clean_errors => clean_errors)
+    TyFloat => (clean_errors => clean_errors)
+    TyFn(params, result, kind) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyUnion(members) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyProduct(members) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyTagged(tags, inner) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyNamed(name, args) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyParam(name, bound) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyInfo(inner) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyBorrow(inner, mutable) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyVar(v) => leaf_div_var_frame_errors(c, span, v, not(ck_is_int(c, v)))
+    TyPoly(generics, inner) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+    TyApp(typehead, typearg) => error_frame_rewrap(
+      c,
+      ck_error(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      ),
+      ck_error_frame_errors(
+        c,
+        "integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)",
+        span
+      )
+    )
+  }
+}
+
+pub theorem ck_divide_frame_errors(
+  c: Checker,
+  a: Ty,
+  span: TySpan
+): CkErrorFrame(c, ck_divide(c, a, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_divide_unf(c, a, span)),
+    leaf_divide_frame_errors(c, span, ck_resolve(c, a))
+  )
+}
+
+pub theorem leaf_clone_target_frame_errors(
+  c: Checker,
+  original: Ty,
+  arg: SurfaceTerm,
+  t: Ty
+): CkErrorFrame(c, leaf_clone_target(c, original, arg, t)) {
+  match t: CkErrorFrame(c, leaf_clone_target(c, original, arg, t)) {
+    TyInt(w) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyBool => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyText => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyUnit => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyNever => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyDecimal => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyFloat => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyFn(params, result, kind) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyUnion(members) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyProduct(members) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyTagged(tags, inner) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyNamed(name, args) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyParam(name, bound) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyInfo(inner) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyBorrow(x, m) => (clean_errors => clean_errors)
+    TyVar(v) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyPoly(generics, inner) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+    TyApp(typehead, typearg) => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(original, c1),
+      ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ck_error_frame_errors(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+  }
+}
+
+pub theorem ck_clone_target_frame_errors(
+  c: Checker,
+  t: Ty,
+  arg: SurfaceTerm
+): CkErrorFrame(c, ck_clone_target(c, t, arg)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_clone_target_unf(c, t, arg)),
+    leaf_clone_target_frame_errors(c, ck_resolve(c, t), arg, ck_resolve(c, t))
+  )
+}
+
+pub theorem leaf_clone_why_frame_errors(
+  c: Checker,
+  span: TySpan,
+  why: Option(Text)
+): CkErrorFrame(c, leaf_clone_why(c, span, why)) {
+  match why: CkErrorFrame(c, leaf_clone_why(c, span, why)) {
+    None => (clean_errors => clean_errors)
+    Some(message) => error_frame_rewrap(
+      c,
+      ck_error(c, message, span),
+      ck_error_frame_errors(c, message, span)
+    )
+  }
+}
+
+pub theorem leaf_clone_frame_errors(
+  c: Checker,
+  t0: Ty,
+  arg: SurfaceTerm,
+  span: TySpan
+): CkErrorFrame(c, leaf_clone(c, t0, arg, span)) {
+  error_frame_bind(
+    Ty,
+    Ty,
+    c,
+    (t: Ty, c1: Checker) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c2: Checker) => mut1(t, c2),
+      leaf_clone_why(c1, span, datas_no_clone(ck_datas_of(c1), t))
+    ),
+    ck_clone_target(c, t0, arg),
+    ck_clone_target_frame_errors(c, t0, arg),
+    t => c1 => error_frame_bind(
+      Unit,
+      Ty,
+      c1,
+      (ignored: Unit, c2: Checker) => mut1(t, c2),
+      leaf_clone_why(c1, span, datas_no_clone(ck_datas_of(c1), t)),
+      leaf_clone_why_frame_errors(c1, span, datas_no_clone(ck_datas_of(c1), t)),
+      ignored => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem ck_clone_value_frame_errors(
+  c: Checker,
+  t0: Ty,
+  arg: SurfaceTerm,
+  span: TySpan
+): CkErrorFrame(c, ck_clone_value(c, t0, arg, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(leaf_clone_unf(c, t0, arg, span)),
+    leaf_clone_frame_errors(c, t0, arg, span)
+  )
+}

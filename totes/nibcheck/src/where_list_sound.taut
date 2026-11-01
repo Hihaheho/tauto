@@ -1,0 +1,287 @@
+import "where_constraint_sound.taut"
+
+pub def WhereClassFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := where_classes(ck_st(m)) = where_classes(c)
+pub theorem signature_pred_duplicate_classes(
+  c: Checker,
+  w: SurfaceConstraint,
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Bool
+): WhereClassFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+  match dup: WhereClassFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+    true => Refl
+    false => Refl
+  }
+}
+pub theorem signature_pred_generic_classes(
+  c: Checker,
+  w: SurfaceConstraint,
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  o: Option(Text)
+): WhereClassFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+  match o: WhereClassFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+    None => Refl
+    Some(g) => signature_pred_duplicate_classes(
+      c,
+      w,
+      preds,
+      g,
+      preds_have(preds, signature_constraint_class(w), g)
+    )
+  }
+}
+pub theorem signature_pred_missing_classes(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  missing: Bool
+): WhereClassFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+  match missing: WhereClassFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+    true => Refl
+    false => signature_pred_generic_classes(
+      c,
+      w,
+      name,
+      preds,
+      constraint_generic(signature_constraint_type(w), gs)
+    )
+  }
+}
+pub theorem ck_where_pred_classes(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): WhereClassFrame(c, ck_where_pred(c, w, gs, name, preds)) {
+  Eq::subst(
+    (z: Mut1(List(Pair(Text, Text)), Checker)) => WhereClassFrame(c, z),
+    Eq::sym(signature_pred_unf(c, w, gs, name, preds)),
+    signature_pred_missing_classes(c, w, gs, name, preds, signature_class_missing(c, w))
+  )
+}
+
+pub fn where_constraints_after(
+  rest: List(SurfaceConstraint),
+  generics: List(Pair(Text, Kind)),
+  function: Text,
+  m: Mut1(List(Pair(Text, Text)), Checker)
+): Mut1(List(Pair(Text, Text)), Checker) {
+  frame_bind(
+    List(Pair(Text, Text)),
+    List(Pair(Text, Text)),
+    (preds: List(Pair(Text, Text)), next: Checker) => ck_rewrap1(
+      ck_where_preds(rest, next, generics, function, preds)
+    ),
+    m
+  )
+}
+pub theorem where_constraints_after_sound(
+  c: Checker,
+  source: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  generics: List(Pair(Text, Kind)),
+  function: Text,
+  previous: List(Pair(Text, Text)),
+  m: Mut1(List(Pair(Text, Text)), Checker),
+  classes: WhereClassFrame(c, m),
+  head: ∀ accepted: DiagnosticClean(
+    ck_st(m)
+  ). WhereConstraint(where_classes(c), generics, source, previous, ck_val(m)),
+  ih: ∀ next: Checker. ∀ preds: List(
+    Pair(Text, Text)
+  ). ∀ accepted: DiagnosticClean(
+    ck_st(ck_where_preds(rest, next, generics, function, preds))
+  ). WhereConstraints(
+    where_classes(next),
+    generics,
+    rest,
+    preds,
+    ck_val(ck_where_preds(rest, next, generics, function, preds))
+  ),
+  clean: DiagnosticClean(ck_st(where_constraints_after(rest, generics, function, m)))
+): WhereConstraints(
+  where_classes(c),
+  generics,
+  Cons(source, rest),
+  previous,
+  ck_val(where_constraints_after(rest, generics, function, m))
+) {
+  match m: WhereConstraints(
+    where_classes(c),
+    generics,
+    Cons(source, rest),
+    previous,
+    ck_val(where_constraints_after(rest, generics, function, m))
+  ) {
+    mut1(preds, next) => {
+      let accepted: DiagnosticClean(
+        ck_st(ck_where_preds(rest, next, generics, function, preds))
+      ) := Eq::subst(
+        (r: Mut1(List(Pair(Text, Text)), Checker)) => DiagnosticClean(ck_st(r)),
+        ck_rewrap1_id(ck_where_preds(rest, next, generics, function, preds)),
+        clean
+      )
+      Eq::subst(
+        (r: Mut1(List(Pair(Text, Text)), Checker)) => WhereConstraints(
+          where_classes(c),
+          generics,
+          Cons(source, rest),
+          previous,
+          ck_val(r)
+        ),
+        Eq::sym(ck_rewrap1_id(ck_where_preds(rest, next, generics, function, preds))),
+        WhereConstraintsCons(
+          source,
+          rest,
+          previous,
+          preds,
+          ck_val(ck_where_preds(rest, next, generics, function, preds)),
+          head(ck_where_preds_frame_errors(rest, next, generics, function, preds, accepted)),
+          Eq::subst(
+            (cs: Ordmap(Text, ClassInfo)) => WhereConstraints(
+              cs,
+              generics,
+              rest,
+              preds,
+              ck_val(ck_where_preds(rest, next, generics, function, preds))
+            ),
+            classes,
+            ih(next, preds, accepted)
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_where_preds_sound(
+  sources: List(SurfaceConstraint),
+  c: Checker,
+  generics: List(Pair(Text, Kind)),
+  function: Text,
+  previous: List(Pair(Text, Text)),
+  clean: DiagnosticClean(ck_st(ck_where_preds(sources, c, generics, function, previous)))
+): WhereConstraints(
+  where_classes(c),
+  generics,
+  sources,
+  previous,
+  ck_val(ck_where_preds(sources, c, generics, function, previous))
+) {
+  match sources: WhereConstraints(
+    where_classes(c),
+    generics,
+    sources,
+    previous,
+    ck_val(ck_where_preds(sources, c, generics, function, previous))
+  ) {
+    Nil => WhereConstraintsNil(previous)
+    Cons(source, rest) => Eq::subst(
+      (m: Mut1(List(Pair(Text, Text)), Checker)) => WhereConstraints(
+        where_classes(c),
+        generics,
+        Cons(source, rest),
+        previous,
+        ck_val(m)
+      ),
+      Eq::sym(signature_preds_unf(source, rest, c, generics, function, previous)),
+      where_constraints_after_sound(
+        c,
+        source,
+        rest,
+        generics,
+        function,
+        previous,
+        ck_where_pred(c, source, generics, function, previous),
+        ck_where_pred_classes(c, source, generics, function, previous),
+        accepted => ck_where_pred_sound(c, source, generics, function, previous, accepted),
+        next => preds => accepted => ck_where_preds_sound(
+          rest,
+          next,
+          generics,
+          function,
+          preds,
+          accepted
+        ),
+        Eq::subst(
+          (m: Mut1(List(Pair(Text, Text)), Checker)) => DiagnosticClean(ck_st(m)),
+          signature_preds_unf(source, rest, c, generics, function, previous),
+          clean
+        )
+      )
+    )
+  }
+}
+
+pub theorem where_classes_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  before: WhereClassFrame(c, m),
+  after: ∀ value: A. ∀ next: Checker. WhereClassFrame(next, k(value, next))
+): WhereClassFrame(c, frame_bind(A, B, k, m)) {
+  match m: WhereClassFrame(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => Eq::trans(after(value, next), before)
+  }
+}
+pub theorem where_classes_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  classes: WhereClassFrame(c, m)
+): WhereClassFrame(c, ck_rewrap1(m)) {
+  Eq::trans(Eq::congr((r: Mut1(A, Checker)) => where_classes(ck_st(r)), ck_rewrap1_id(m)), classes)
+}
+pub theorem signature_preds_cons_classes(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). WhereClassFrame(next, ck_where_preds(rest, next, gs, name, ps))
+): WhereClassFrame(c, signature_preds_cons(w, rest, c, gs, name, preds)) {
+  where_classes_bind(
+    List(Pair(Text, Text)),
+    List(Pair(Text, Text)),
+    c,
+    (head: List(Pair(Text, Text)), c1: Checker) => ck_rewrap1(
+      ck_where_preds(rest, c1, gs, name, head)
+    ),
+    ck_where_pred(c, w, gs, name, preds),
+    ck_where_pred_classes(c, w, gs, name, preds),
+    head => c1 => where_classes_rewrap(c1, ck_where_preds(rest, c1, gs, name, head), ih(c1, head))
+  )
+}
+
+pub theorem ck_where_preds_classes(
+  ws: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): WhereClassFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+  match ws: WhereClassFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+    Nil => Refl
+    Cons(w, rest) => Eq::subst(
+      (z: Mut1(List(Pair(Text, Text)), Checker)) => WhereClassFrame(c, z),
+      Eq::sym(signature_preds_unf(w, rest, c, gs, name, preds)),
+      signature_preds_cons_classes(
+        w,
+        rest,
+        c,
+        gs,
+        name,
+        preds,
+        next => ps => ck_where_preds_classes(rest, next, gs, name, ps)
+      )
+    )
+  }
+}

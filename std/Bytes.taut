@@ -1,0 +1,128 @@
+import "Text.taut"
+import "UInt.taut"
+
+// Byte sequences as the proofs see them: a list of `U8`. Extraction maps
+// `Bytes` onto Nib's `Bytes`, whose slices share the storage they are cut
+// from, and the functions marked "Mapped" onto its builtins; their
+// definitions here say what those builtins do.
+
+pub(open) inductive Bytes: Type {
+  Mk(items: List(U8)): Bytes
+}
+
+module Bytes {
+  // Mapped: the bytes of a list.
+  pub fn of_list(l: List(U8)): Bytes {
+    Bytes::Mk(l)
+  }
+
+  // Mapped: the bytes, in order.
+  pub fn to_list(b: Bytes): List(U8) {
+    match b: List(U8) {
+      Mk(l) => l
+    }
+  }
+
+  // The numbers the bytes are.
+  pub fn values(b: Bytes): List(Nat) {
+    List::map((x: U8) => U8::val(x), to_list(b))
+  }
+
+  // Mapped: the number of bytes.
+  pub fn len(b: Bytes): Nat {
+    List::length(to_list(b))
+  }
+
+  // Mapped: the byte at `i`.
+  pub fn get(b: Bytes, i: Nat): Option(U8) {
+    List::nth(to_list(b), i)
+  }
+
+  // Mapped: the bytes from `start` to `end`, when `start <= end <= len`.
+  pub fn slice(b: Bytes, start: Nat, end: Nat): Option(Bytes) {
+    match start <= end && end <= len(b): Option(Bytes) {
+      false => None
+      true => Some(Bytes::Mk(List::take(end - start, List::drop(start, to_list(b)))))
+    }
+  }
+
+  // Mapped: the bytes of `a`, then those of `b`.
+  pub fn concat(a: Bytes, b: Bytes): Bytes {
+    Bytes::Mk(List::append(to_list(a), to_list(b)))
+  }
+
+  // Mapped: whether the two are the same bytes.
+  pub fn eq(a: Bytes, b: Bytes): Bool {
+    match compare(values(a), values(b)): Bool {
+      Less => false
+      Equal => true
+      Greater => false
+    }
+  }
+}
+
+module U8 {
+  // `n` as a byte, modulo 256.
+  pub fn of_byte(n: Nat): U8 {
+    U8::Mk(Nat::rem_nz(n, 256, Nat::ne_zero(256, Refl)), Nat::mod_lt(n, 256, Refl))
+  }
+}
+
+module Bytes {
+  // Mapped: the UTF-8 bytes of `t`. The bytes of a text are below 256, so
+  // taking each modulo 256 changes none of them; it only makes the definition
+  // total.
+  pub fn of_text(t: Text): Bytes {
+    Bytes::Mk(List::map((n: Nat) => U8::of_byte(n), Text::bytes(t)))
+  }
+
+  pub theorem len_of_list(l: List(U8)): len(of_list(l)) = List::length(l) {
+    Refl
+  }
+
+  pub theorem to_list_of_list(l: List(U8)): to_list(of_list(l)) = l {
+    Refl
+  }
+
+  pub theorem get_of_list(
+    l: List(U8),
+    i: Nat
+  ): get(of_list(l), i) = List::nth(l, i) {
+    Refl
+  }
+
+  pub theorem slice_whole_ab(): slice(
+    of_text("ab"),
+    0,
+    2
+  ) = Some(of_text("ab")) {
+    Refl
+  }
+
+  pub theorem slice_past_the_end(): slice(of_text("ab"), 1, 3) = None {
+    Refl
+  }
+}
+
+module Text {
+  // Mapped: the text the bytes encode, when they are well-formed UTF-8.
+  pub fn of_bytes(b: Bytes): Option(Text) {
+    of_utf8(Bytes::values(b))
+  }
+
+  pub theorem of_bytes_of_text_e_acute(): of_bytes(Bytes::of_text("é")) = Some("é") {
+    Refl
+  }
+
+  // A cut through the middle of a character is bytes, not text.
+  pub theorem of_bytes_half_a_character(): match Bytes::slice(
+    Bytes::of_text("é"),
+    0,
+    1
+  ): Option(Text) {
+    None => None
+    Some(b) => of_bytes(b)
+  } = None {
+    Refl
+  }
+}

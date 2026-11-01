@@ -62,9 +62,9 @@ counts the depth of the parse, and no limit is set.
 
 ## What it gives
 
-`llk_parsed()`, with the events left on the stack the parse was given: the
+`LlkParsed`, with the events left on the stack the parse was given: the
 calls that build the tree, in order: open a non-terminal (by number; the root is the number after the last),
-close, token (terminal, start, end). Or `llk_failed(error)`.
+close, token (terminal, start, end). Or `LlkFailed(error)`.
 
 ## What is proved
 

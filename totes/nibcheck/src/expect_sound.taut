@@ -1,0 +1,111 @@
+import "checker_frame.taut"
+import "diagnostic_sound.taut"
+
+pub def ExpectFits(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  fits: Bool
+): Prop := (fits = true) -> SubAt(c, a, b)
+
+pub theorem expect_after_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  fits: Bool,
+  h: ExpectFits(c, a, b, fits),
+  clean: DiagnosticClean(ck_st(run_expect_after(c, a, b, span, what, fits)))
+): SubAt(ck_st(run_expect_after(c, a, b, span, what, fits)), a, b) {
+  match fits: SubAt(ck_st(run_expect_after(c, a, b, span, what, fits)), a, b) {
+    true => h(Refl)
+    false => False::elim(
+      diagnostic_error_impossible(
+        c,
+        ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
+        span,
+        clean
+      )
+    )
+  }
+}
+
+pub theorem expect_bind_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  m: Mut1(Bool, Checker),
+  h: Post(c, m, (next: Checker) => SubAt(next, a, b)),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(
+    ck_st(
+      frame_bind(
+        Bool,
+        Unit,
+        (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+        m
+      )
+    )
+  )
+): SubAt(
+  ck_st(
+    frame_bind(
+      Bool,
+      Unit,
+      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+      m
+    )
+  ),
+  a,
+  b
+) {
+  match m: SubAt(
+    ck_st(
+      frame_bind(
+        Bool,
+        Unit,
+        (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+        m
+      )
+    ),
+    a,
+    b
+  ) {
+    mut1(value, state) => expect_after_sound(
+      state,
+      a,
+      b,
+      span,
+      what,
+      value,
+      And::right(h(ordered)),
+      clean
+    )
+  }
+}
+
+pub theorem ck_expect_sound(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_expect(c, a, b, span, what)))
+): SubAt(ck_st(ck_expect(c, a, b, span, what)), a, b) {
+  let expanded: DiagnosticClean(
+    ck_st(run_expect(c, a, b, span, what))
+  ) := Eq::subst(
+    (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+    run_expect_unf(c, a, b, span, what),
+    clean
+  )
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => SubAt(ck_st(m), a, b),
+    Eq::sym(run_expect_unf(c, a, b, span, what)),
+    expect_bind_sound(c, a, b, span, what, ck_fits(c, a, b), ck_fits_ok(c, a, b), ordered, expanded)
+  )
+}

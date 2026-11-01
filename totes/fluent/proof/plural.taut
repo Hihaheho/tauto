@@ -1,0 +1,48 @@
+import "../src/plural.taut"
+
+// What the plural rules say for every number, not just the ones computed in the examples.
+
+// Japanese (and every language with the rule `r_other`) never distinguishes numbers.
+theorem ja_always_other(n: Nat): plural(Cons(106, Cons(97, Nil)), n) = COther {
+  Refl
+}
+
+// A language CLDR has no rules for is treated as the root locale.
+theorem unknown_always_other(n: Nat): plural(Cons(120, Cons(120, Nil)), n) = COther {
+  Refl
+}
+
+theorem en_one(): plural(Cons(101, Cons(110, Nil)), 1) = COne {
+  Refl
+}
+
+// English: every number but 1 is `other`.
+theorem en_other(
+  n: Nat,
+  h: Nat::eq(n, 1) = false
+): plural(Cons(101, Cons(110, Nil)), n) = COther {
+  Eq::subst(
+    Bool,
+    false,
+    Nat::eq(n, 1),
+    (y: Bool) => one_or_other(y) = COther,
+    Eq::sym(h),
+    Refl
+  )
+}
+
+theorem slavic_not_other(a: Bool, b: Bool): is_other(slavic(a, b)) = false {
+  match a: is_other(slavic(a, b)) = false {
+    true => Refl
+    false => match b: is_other(slavic(false, b)) = false {
+      true => Refl
+      false => Refl
+    }
+  }
+}
+
+// Russian has no `other` for whole numbers: every one is `one`, `few` or `many`, so a message
+// for Russian needs those three variants.
+theorem ru_never_other(n: Nat): is_other(plural(Cons(114, Cons(117, Nil)), n)) = false {
+  slavic_not_other(ends_in_one(n), few_slavic(n))
+}

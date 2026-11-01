@@ -1,0 +1,186 @@
+// Sorting and merging lists of numbers, which the grammar, the scanners and
+// the lookahead analysis share.
+
+// Merges two sorted lists without repeats into one.
+pub fn lg_union(xs: List(u64), ys: List(u64)): List(u64) {
+  var out: List(u64) := Nil
+  var a := xs
+  var b := ys
+  var running := true
+  while running {
+    match a {
+      Nil => {
+        out := lg_rev_onto(out, b)
+        running := false
+      }
+      Cons(x, rest) => match b {
+        Nil => {
+          out := lg_rev_onto(out, a)
+          running := false
+        }
+        Cons(y, more) => if x == y {
+          out := Cons(x, out)
+          a := rest
+          b := more
+        } else if x < y {
+          out := Cons(x, out)
+          a := rest
+        } else {
+          out := Cons(y, out)
+          b := more
+        }
+      }
+    }
+  }
+  out
+}
+
+// A list sorted, without repeats.
+pub fn lg_sort(xs: List(u64)): List(u64) {
+  let n := lg_len(xs)
+  if n < 2 {
+    xs
+  } else {
+    let half := div(n, 2)
+    lg_union(lg_sort(lg_take(xs, half)), lg_sort(lg_drop(xs, half)))
+  }
+}
+
+// Sorted, repeats kept.
+pub fn lg_sort_keep(xs: List(u64)): List(u64) {
+  let n := lg_len(xs)
+  if n < 2 {
+    xs
+  } else {
+    let half := div(n, 2)
+    lg_merge_keep(lg_sort_keep(lg_take(xs, half)), lg_sort_keep(lg_drop(xs, half)))
+  }
+}
+
+pub fn lg_merge_keep(xs: List(u64), ys: List(u64)): List(u64) {
+  var out: List(u64) := Nil
+  var a := xs
+  var b := ys
+  var running := true
+  while running {
+    match a {
+      Nil => {
+        out := lg_rev_onto(out, b)
+        running := false
+      }
+      Cons(x, rest) => match b {
+        Nil => {
+          out := lg_rev_onto(out, a)
+          running := false
+        }
+        Cons(y, more) => if x <= y {
+          out := Cons(x, out)
+          a := rest
+        } else {
+          out := Cons(y, out)
+          b := more
+        }
+      }
+    }
+  }
+  out
+}
+
+pub fn lg_len(xs: List(u64)): u64 {
+  var n: u64 := 0
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        n := n + 1
+        rest := more
+      }
+    }
+  }
+  n
+}
+
+// The reverse of `rev`, then `tail`.
+pub fn lg_rev_onto(rev: List(u64), tail: List(u64)): List(u64) {
+  var out := tail
+  var rest := rev
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+pub fn lg_take(xs: List(u64), n: u64): List(u64) {
+  var out: List(u64) := Nil
+  var rest := xs
+  var left := n
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => if left == 0 {
+        running := false
+      } else {
+        out := Cons(x, out)
+        rest := more
+        left := left - 1
+      }
+    }
+  }
+  lg_rev(out)
+}
+
+pub fn lg_drop(xs: List(u64), n: u64): List(u64) {
+  var rest := xs
+  var left := n
+  var running := true
+  while running {
+    if left == 0 {
+      running := false
+    } else {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(x, more) => {
+          rest := more
+          left := left - 1
+        }
+      }
+    }
+  }
+  rest
+}
+
+pub fn lg_rev(xs: List(u64)): List(u64) {
+  var out: List(u64) := Nil
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}

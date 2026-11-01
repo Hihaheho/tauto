@@ -1,0 +1,40 @@
+# JavaScript バックエンド (`tauto-jsgen`) のメッセージ: プログラムを
+# JavaScript として書けない理由。名前・チャンク・型は変数で、そのまま書く。
+
+jsgen-unsupported = javascript バックエンドは未対応: { $what }
+jsgen-what-host-type-in-extern = extern のシグネチャで別の型の中にあるホスト型
+jsgen-what-borrowed-host-return = 借用したホスト型を返す extern
+jsgen-what-secret-words = 秘密のワード (定数時間で実行できない)
+jsgen-what-builtin = 組み込み { $name }
+jsgen-what-integer-division = 整数の `/`
+jsgen-what-syn-parse-without-tables = 表のない Syn::parse
+jsgen-extern-retain-owner = javascript extern { $name } はコールバックを保持するので、それを所有するホスト値が必要だ
+jsgen-extern-retain-callbacks = javascript extern { $name } はコールバックを保持するので、各コールバックは値渡しで、show 以外の効果を起こさないこと
+jsgen-export-not-function = javascript export { $name } はジェネリクスのないプログラムの関数ではない
+jsgen-export-performs = javascript export { $name } は { $effect } を起こすが、インスタンスのどのハンドラも答えない
+jsgen-export-signature = javascript export { $name } のシグネチャに { $what } があるが、インスタンスは渡せない
+jsgen-what-mutable-borrow = 可変借用
+jsgen-what-function-by-value = 値渡しの関数
+jsgen-what-borrow = 借用
+jsgen-what-host-type-inside = 別の型の中にあるホスト型
+jsgen-what-effectful-function-result = show 以外の効果を起こす関数の結果
+jsgen-chunks-need-modules = プログラムに javascript チャンクがある。各モジュールを書くこと
+jsgen-chunk-bad-name = javascript チャンク { $chunk } の名前は英数字・`_`・`-` でなければならない
+jsgen-chunk-no-entry = javascript チャンク { $chunk } にエントリ関数がない
+jsgen-chunk-not-function = javascript チャンク { $chunk } が挙げる { $name } はジェネリクスのないプログラムの関数ではない
+jsgen-chunk-names-start = javascript チャンク { $chunk } が挙げる { $name } はプログラム開始時に実行される
+jsgen-chunk-entry-twice = { $name } は javascript チャンク { $other } と { $chunk } の両方のエントリだ
+jsgen-declarations-opaque-data = javascript 宣言: 不透明なデータ型 { $name } には宣言された JavaScript の表現がない
+jsgen-declarations-missing-entry = javascript 宣言: エントリ関数 { $id } がない
+jsgen-declarations-unknown-data = javascript 宣言: 未知のデータ型 { $name }
+jsgen-declarations-type-argument-count = javascript 宣言: { $name } の型引数の数が違う
+jsgen-declarations-unknown-union = javascript 宣言: 未知の共用体 { $id }
+jsgen-declarations-unbound-parameter = javascript 宣言: 束縛されていない型パラメータ { $name }
+jsgen-declarations-function = javascript 宣言: 関数は extern のコールバック引数として直接渡す場合だけ対応する。入れ子の関数や返される関数は内部のランタイム呼び出し規約を使う
+jsgen-declarations-standard-type = javascript 宣言: 標準型 { $name } には宣言されたホストの表現がない
+jsgen-declarations-internal-type = javascript 宣言: 内部の、または未解決の境界型 { $ty }
+jsgen-syntax-data-not-retained = ランタイムの構文データ { $data } が保持されていない
+jsgen-syntax-schema-constructor = スキーマのコンストラクタ { $data }::{ $ctor }
+jsgen-syntax-schema-fields = スキーマのコンストラクタ { $data }::{ $ctor } はフィールドが違う
+jsgen-syntax-expression-hole = ランタイムの式の穴
+jsgen-syntax-no-start-type = 開始型のない構文

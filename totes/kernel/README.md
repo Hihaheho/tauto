@@ -10,9 +10,9 @@
 | `wide.taut` | 最大128ビットの数値リテラルの桁演算とオーバーフロー判定 |
 | `term.taut` | 束縛変数・自由な原子を分けた項、置換、抽象化、適用の分解 |
 | `data.taut` | 宣言環境、帰納型と除去子の情報 |
-| `check.taut` | β・δ・ι・算術の簡約、η と証明の無関係性を含む変換、双方向型検査 |
+| `check.taut` | β・δ・ι・商の計算規則・算術の簡約、η と証明の無関係性を含む変換、双方向型検査 |
 | `inductive.taut` | 一様なパラメータ、厳密な正値性、宇宙、相互・入れ子帰納型、大きな除去、除去子生成 |
-| `kernel.taut` | 宣言の登録、値の設定、拒否時の環境復元 |
+| `kernel.taut` | 宣言の登録（商の定数は決まった型で値なしのときだけ）、値の設定、拒否時の環境復元 |
 | `wire.taut` | 精密化済み宣言の再生用入力の読み取り |
 | `laws.taut` | 置換、拒否・燃料切れ、桁演算の計算結果についての定理 |
 | `main.taut` | ファイル入出力の殻 |
@@ -34,10 +34,10 @@ Rust 側が計算した正値性、再帰引数、除去子の型などは入力
 `totes/kernel` はそれらを自分で検査・生成する。Rust 側の期待する判定は別の出力で比較する。
 
 ```sh
-cargo run --locked -p tauto-selfhost --bin export-kernel -- meta/KernelSafe.taut > target/kernel-input.txt
+cargo run --locked -p selfhost-harness --bin export-kernel -- meta/KernelSafe.taut > target/kernel-input.txt
 cargo run --locked -p tauto-cli -- build --release totes/kernel
 target/tauto/target/release/kernel target/kernel-input.txt
-cargo test --locked -p tauto-selfhost --test kernel
+cargo test --locked -p selfhost-harness --test kernel
 ```
 
 各ファイルは空の宣言環境で始まり、1行につき1操作を再生する。書き出しには前提となる
@@ -50,7 +50,7 @@ Prop の大きな除去の制限は回避せず、失敗時にはグループ全
 
 差分試験は評価器での実行、受理と拒否、失敗後の再登録、相互・入れ子帰納型、
 宇宙の実体化、128ビット算術、生成した項、`std/Nat.taut`・`std/List.taut`・
-`meta/KernelSafe.taut` の精密化済み宣言を検査する。
+`std/Quot.taut`・`meta/KernelSafe.taut` の精密化済み宣言を検査する。
 
 型と全域性の検査、計算結果の定理、差分試験がある。実装全体の健全性を述べる定理はない。
 `meta/Kernel*.taut` は限定した計算体系のモデルとその証明であり、この実装の健全性証明にはならない。

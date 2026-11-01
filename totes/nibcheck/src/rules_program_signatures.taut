@@ -1,0 +1,27 @@
+import "rules_signature_decl.taut"
+
+// The schemes passed to body checking carry derivations for their own sources.
+pub(open) inductive OptionalSignature(
+  env: Datas,
+  partial: Bool
+): (Option(Pair(SurfaceFn, Scheme))) -> Prop {
+  OptionalSignatureNone: OptionalSignature(env, partial, None)
+  OptionalSignatureSome(
+    source: SurfaceFn,
+    scheme: Scheme,
+    derived: SignatureElaborated(env, partial, source, scheme)
+  ): OptionalSignature(env, partial, Some(Pair { fst: source, snd: scheme }))
+}
+pub(open) inductive ElaboratedSignatures(
+  env: Datas,
+  partial: Bool
+): (List(Pair(SurfaceFn, Scheme))) -> Prop {
+  ElaboratedSignaturesNil: ElaboratedSignatures(env, partial, Nil)
+  ElaboratedSignaturesCons(
+    source: SurfaceFn,
+    scheme: Scheme,
+    rest: List(Pair(SurfaceFn, Scheme)),
+    head: SignatureElaborated(env, partial, source, scheme),
+    tail: ElaboratedSignatures(env, partial, rest)
+  ): ElaboratedSignatures(env, partial, Cons(Pair { fst: source, snd: scheme }, rest))
+}

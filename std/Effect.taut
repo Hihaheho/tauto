@@ -1,0 +1,182 @@
+import "Base.taut"
+
+// The laws of `Comp`, `Comp::bind` and `Comp::fold` (the kernel prelude):
+// what a function with effects is in proofs. A handler is a fold of the tree
+// (deep: the continuation it gets is already handled), so the laws of
+// effectful code are theorems about ordinary terms.
+// Two computations are equal when they finish with the same value or perform
+// the same operation and continue equally for every answer. Equality of
+// continuations is pointwise, so no function extensionality is needed.
+pub(open) inductive CompEq(
+  Op: Type,
+  Res: (Op) -> Type,
+  A: Type
+): (Comp(Op, Res, A), Comp(Op, Res, A)) -> Prop {
+  CeqPure(a: A): CompEq(Op, Res, A, CompPure(a), CompPure(a))
+  CeqOp(
+    o: Op,
+    k1: (Res(o)) -> Comp(Op, Res, A),
+    k2: (Res(o)) -> Comp(Op, Res, A),
+    h: ∀ r: Res(o). CompEq(Op, Res, A, k1(r), k2(r))
+  ): CompEq(Op, Res, A, CompOp(o, k1), CompOp(o, k2))
+}
+
+module Comp {
+  pub theorem eq_refl<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type>(c: Comp(Op, Res, A)): CompEq(Op, Res, A, c, c) {
+    match c: CompEq(Op, Res, A, c, c) {
+      CompPure(a) => CeqPure(a)
+      CompOp(o, k) => CeqOp(o, k, k, (r: Res(o)) => eq_refl(k(r)))
+    }
+  }
+
+  pub theorem bind_pure_left<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type, B: Type>(
+    a: A,
+    f: (A) -> Comp(Op, Res, B)
+  ): bind(Op, Res, CompPure(a), f) = f(a) {
+    Refl
+  }
+
+  pub theorem bind_pure_right<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type>(
+    c: Comp(Op, Res, A)
+  ): CompEq(Op, Res, A, bind(Op, Res, c, (a: A) => CompPure(a)), c) {
+    match c: CompEq(Op, Res, A, bind(Op, Res, c, (a: A) => CompPure(a)), c) {
+      CompPure(a) => CeqPure(a)
+      CompOp(o, k) => CeqOp(
+        o,
+        (r: Res(o)) => bind(Op, Res, k(r), (a: A) => CompPure(a)),
+        k,
+        (r: Res(o)) => bind_pure_right(k(r))
+      )
+    }
+  }
+
+  pub theorem bind_assoc<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type, B: Type, C: Type>(
+    c: Comp(Op, Res, A),
+    f: (A) -> Comp(Op, Res, B),
+    g: (B) -> Comp(Op, Res, C)
+  ): CompEq(
+    Op,
+    Res,
+    C,
+    bind(Op, Res, bind(Op, Res, c, f), g),
+    bind(Op, Res, c, (a: A) => bind(Op, Res, f(a), g))
+  ) {
+    match c: CompEq(
+      Op,
+      Res,
+      C,
+      bind(Op, Res, bind(Op, Res, c, f), g),
+      bind(Op, Res, c, (a: A) => bind(Op, Res, f(a), g))
+    ) {
+      CompPure(a) => eq_refl(bind(Op, Res, f(a), g))
+      CompOp(o, k) => CeqOp(
+        o,
+        (r: Res(o)) => bind(Op, Res, bind(Op, Res, k(r), f), g),
+        (r: Res(o)) => bind(Op, Res, k(r), (a: A) => bind(Op, Res, f(a), g)),
+        (r: Res(o)) => bind_assoc(k(r), f, g)
+      )
+    }
+  }
+
+  pub theorem handle_pure<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type, B: Type>(
+    ret: (A) -> B,
+    arm: ∀ o: Op. ((Res(o)) -> B) -> B,
+    a: A
+  ): fold(Op, Res, ret, arm, CompPure(a)) = ret(a) {
+    Refl
+  }
+
+  pub theorem handle_op<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type, B: Type>(
+    ret: (A) -> B,
+    arm: ∀ o: Op. ((Res(o)) -> B) -> B,
+    o: Op,
+    k: (Res(o)) -> Comp(Op, Res, A)
+  ): fold(
+    Op,
+    Res,
+    ret,
+    arm,
+    CompOp(o, k)
+  ) = arm(o, (r: Res(o)) => fold(Op, Res, ret, arm, k(r))) {
+    Refl
+  }
+}
+
+// An operation arm that gives equal results for pointwise equal continuations.
+pub def ArmExt(Op: Type, Res: (Op) -> Type, B: Type, arm: ∀ o: Op. ((Res(o)) -> B) -> B): Prop :=
+∀ o: Op, k1: (Res(o)) -> B, k2: (Res(o)) -> B. (∀ r: Res(o). k1(r) = k2(r)) -> (arm(o, k1) = arm(o, k2))
+
+module Comp {
+  // Equal computations are handled to equal results.
+  pub theorem handle_respects<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type, B: Type>(
+    ret: (A) -> B,
+    arm: ∀ o: Op. ((Res(o)) -> B) -> B,
+    ext: ArmExt(Op, Res, B, arm),
+    c1: Comp(Op, Res, A),
+    c2: Comp(Op, Res, A),
+    h: CompEq(Op, Res, A, c1, c2)
+  ): fold(Op, Res, ret, arm, c1) = fold(Op, Res, ret, arm, c2) {
+    match h: fold(Op, Res, ret, arm, c1) = fold(Op, Res, ret, arm, c2) {
+      CeqPure(_) => Refl
+      CeqOp(o, k1, k2, hk) => ext(
+        o,
+        (r: Res(o)) => fold(Op, Res, ret, arm, k1(r)),
+        (r: Res(o)) => fold(Op, Res, ret, arm, k2(r)),
+        (r: Res(o)) => handle_respects(ret, arm, ext, k1(r), k2(r), hk(r))
+      )
+    }
+  }
+
+  // Handling a sequence handles the first part with a return arm that handles the rest.
+  pub theorem handle_bind<Op: Type, Res: (
+    Op
+  ) -> Type, A: Type, B: Type, C: Type>(
+    ret: (B) -> C,
+    arm: ∀ o: Op. ((Res(o)) -> C) -> C,
+    ext: ArmExt(Op, Res, C, arm),
+    c: Comp(Op, Res, A),
+    f: (A) -> Comp(Op, Res, B)
+  ): fold(
+    Op,
+    Res,
+    ret,
+    arm,
+    bind(Op, Res, c, f)
+  ) = fold(Op, Res, (a: A) => fold(Op, Res, ret, arm, f(a)), arm, c) {
+    match c: fold(
+      Op,
+      Res,
+      ret,
+      arm,
+      bind(Op, Res, c, f)
+    ) = fold(Op, Res, (a: A) => fold(Op, Res, ret, arm, f(a)), arm, c) {
+      CompPure(_) => Refl
+      CompOp(o, k) => ext(
+        o,
+        (r: Res(o)) => fold(Op, Res, ret, arm, bind(Op, Res, k(r), f)),
+        (r: Res(o)) => fold(
+          Op,
+          Res,
+          (a: A) => fold(Op, Res, ret, arm, f(a)),
+          arm,
+          k(r)
+        ),
+        (r: Res(o)) => handle_bind(ret, arm, ext, k(r), f)
+      )
+    }
+  }
+}

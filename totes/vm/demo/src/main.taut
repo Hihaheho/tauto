@@ -1,0 +1,38 @@
+import "../../src/vm.taut"
+
+// Compiles a program of the language of `src/vm.taut` and runs it. Function 0 is
+// Fibonacci; function 1 swaps the parts of a pair and computes with them; function 2 adds
+// a pair to a number, which gets stuck and has no answer.
+
+pub fn show_answer(r: Option(Val)): Unit {
+  match r {
+    None => print("no answer\n")
+    Some(v) => match v {
+      VNat(n) => {
+        print(Text::of_nat(n))
+        print("\n")
+      }
+      VPair(a, b) => print("a pair\n")
+    }
+  }
+}
+
+pub fn vm_demo(): Unit {
+  let fib := XIf(
+    XLt(XVar(0), XNat(2)),
+    XVar(0),
+    XAdd(XCall(0, XSub(XVar(0), XNat(1))), XCall(0, XSub(XVar(0), XNat(2))))
+  )
+  let swap_add := XLet(
+    XPair(XSnd(XVar(0)), XFst(XVar(0))),
+    XMul(XFst(XVar(0)), XAdd(XSnd(XVar(0)), XNat(1)))
+  )
+  let stuck := XAdd(XVar(0), XNat(1))
+  let prog := Cons(fib, Cons(swap_add, Cons(stuck, Nil)))
+  show_answer(run_program(prog, 1000000, 0, VNat(15)))
+  show_answer(run_program(prog, 1000000, 1, VPair(VNat(3), VNat(4))))
+  show_answer(run_program(prog, 10, 0, VNat(15)))
+  show_answer(run_program(prog, 1000, 2, VPair(VNat(1), VNat(2))))
+}
+
+vm_demo()

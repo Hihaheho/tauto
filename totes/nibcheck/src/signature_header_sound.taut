@@ -1,0 +1,126 @@
+import "rules_signature_decl.taut"
+import "signature_body_sound.taut"
+import "signature_generics_sound.taut"
+
+pub theorem signature_header_bind<A: Type>(
+  g: SigGenerics,
+  m: Mut1(A, Checker),
+  k: (A, Checker) -> Mut1(Scheme, Checker),
+  kept: ∀ value: A. ∀ next: Checker. SignatureHeader(g, ck_val(k(value, next)))
+): SignatureHeader(g, ck_val(frame_bind(A, Scheme, k, m))) {
+  match m: SignatureHeader(g, ck_val(frame_bind(A, Scheme, k, m))) {
+    mut1(value, next) => kept(value, next)
+  }
+}
+pub theorem signature_finish_preds_header(
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(List(Pair(Text, Text)), Checker)
+): SignatureHeader(g, ck_val(signature_finish_preds(g, params, result, m))) {
+  signature_header_bind(
+    List(Pair(Text, Text)),
+    g,
+    m,
+    (preds: List(Pair(Text, Text)), next: Checker) => mut1(
+      signature_scheme(g, params, result, preds),
+      next
+    ),
+    preds => next => Refl
+  )
+}
+pub theorem signature_finish_header(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty
+): SignatureHeader(g, ck_val(signature_finish(c, f, g, params, result))) {
+  signature_header_bind(
+    Unit,
+    g,
+    ck_report(c, ck_view_result_message(c, params, result), ck_sig_span(f)),
+    (ignored: Unit, next: Checker) => signature_finish_preds(
+      g,
+      params,
+      result,
+      ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil)
+    ),
+    ignored => next => signature_finish_preds_header(
+      g,
+      params,
+      result,
+      ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil)
+    )
+  )
+}
+pub theorem signature_answer_header(
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  m: Mut1(Ty, Checker)
+): SignatureHeader(g, ck_val(signature_answer_after(f, g, params, m))) {
+  signature_header_bind(
+    Ty,
+    g,
+    m,
+    (result: Ty, next: Checker) => signature_finish(next, f, g, params, result),
+    result => next => signature_finish_header(next, f, g, params, result)
+  )
+}
+pub theorem signature_read_header(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics
+): SignatureHeader(g, ck_val(signature_read(c, f, g))) {
+  signature_header_bind(
+    List(Ty),
+    g,
+    ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    (params: List(Ty), next: Checker) => signature_answer_after(
+      f,
+      g,
+      params,
+      ck_sig_result(next, f, signature_map(g))
+    ),
+    params => next => signature_answer_header(
+      f,
+      g,
+      params,
+      ck_sig_result(next, f, signature_map(g))
+    )
+  )
+}
+pub theorem ck_signature_header(
+  c: Checker,
+  source: SurfaceFn
+): SignatureHeader(signature_generics(source), ck_val(ck_signature(c, source))) {
+  Eq::subst(
+    (m: Mut1(Scheme, Checker)) => SignatureHeader(signature_generics(source), ck_val(m)),
+    Eq::sym(signature_read_unf(c, source)),
+    signature_read_header(c, source, signature_generics(source))
+  )
+}
+pub theorem ck_signature_elaborates(
+  c: Checker,
+  source: SurfaceFn,
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_signature(c, source)))
+): SignatureElaborated(
+  ck_datas_of(c),
+  frame_constructor_position(c),
+  source,
+  ck_val(ck_signature(c, source))
+) {
+  SignatureElaborated::Mk(
+    signature_generics(source),
+    sig_generics_sound(
+      signature_source_generics(source),
+      signature_source_bounds(source),
+      0,
+      SigGenericsMk(Nil, Ordmap::empty(), Nil)
+    ),
+    ck_signature_header(c, source),
+    ck_signature_body_sound(c, source, ordinary, clean)
+  )
+}

@@ -1,0 +1,329 @@
+import "../src/eval.taut"
+import "../../vm/src/compile.taut"
+
+pub theorem e_value_compiles(v: CVal): e_value(v) = c_value(v) {
+  match v {
+    CvUnit => Refl
+    CvInt(i) => Refl
+    CvFloat(x) => Refl
+    CvBool(b) => Refl
+    CvText(t) => Refl
+    CvFn(f) => Refl
+  }
+}
+
+pub theorem e_primitive_compiles(
+  op: CPrim,
+  arity: Nat
+): e_primitive(op, arity) = c_prim_op(op, arity) {
+  match op {
+    CprArith(a, w) => Refl
+    CprFloat(a) => Refl
+    CprFloat32(a) => Refl
+    CprCmp(c) => Refl
+    CprEq(negate) => Refl
+    CprConstruct(ctor, order) => Refl
+    CprProduct(picks) => Refl
+    CprConcat => Refl
+    CprTextOfInt => Refl
+    CprTextLen => Refl
+    CprTextCompare => Refl
+    CprDivide(modulo, w) => Refl
+    CprSynParse(parser) => Refl
+  }
+}
+
+pub theorem e_unary_compiles(op: CUnary): e_unary(op) = c_unary(op) {
+  match op {
+    CuNot => Refl
+    CuMember(i) => Refl
+    CuField(path) => Refl
+    CuShown => Refl
+    CuTempRef => Refl
+    CuDeref => Refl
+    CuInject(union, variant) => Refl
+    CuRemap(to, table) => Refl
+  }
+}
+
+pub theorem e_lookup_bound(
+  id: Nat,
+  b: EBinding,
+  env: List(Pair(Nat, EBinding))
+): e_lookup(Cons(Pair { fst: id, snd: b }, env), id) = Some(b) {
+  Eq::congr(
+    (same: Bool) => match same: Option(EBinding) { true => Some(b), false => e_lookup(env, id) },
+    Nat::eq_refl(id)
+  )
+}
+
+pub theorem e_read_bound(
+  ctors: List(MCtor),
+  cx: MCx,
+  env: List(Pair(Nat, EBinding)),
+  id: Nat,
+  deref: Bool,
+  b: EBinding,
+  found: e_lookup(env, id) = Some(b)
+): e_read(ctors, cx, env, id, deref) = ErValue(e_deref(ctors, cx, deref, e_binding(cx, b)), cx) {
+  Eq::congr((entry: Option(EBinding)) => match entry: EResult(MVal) {
+    None => ErError("internal: an unbound local")
+    Some(bound) => ErValue(e_deref(ctors, cx, deref, e_binding(cx, bound)), cx)
+  }, found)
+}
+
+pub theorem e_compile_pure(
+  fuel: Nat,
+  v: CVal,
+  k: MCode,
+  st: CSt
+): c_expr(Succ(fuel), CPure(v), k, st) = Cr(McPush(e_value(v), k), st) {
+  Eq::congr((value: MVal) => Cr(McPush(value, k), st), Eq::sym(e_value_compiles(v)))
+}
+
+pub fn e_code(r: CR): MCode {
+  match r { Cr(code, st) => code }
+}
+
+// The entire VM state agrees after evaluating a literal, for arbitrary following code.
+pub theorem e_pure_run(
+  p: MProgram,
+  fuel: Nat,
+  v: CVal,
+  k: MCode,
+  cs: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx
+): mrun(p, 1, Mstate(e_code(c_expr(Succ(fuel), CPure(v), k, cs)), slots, stack, frames, cx)) =
+MstepNext(Mstate(k, slots, Cons(e_value(v), stack), frames, cx)) {
+  Eq::congr(
+    (value: MVal) => MstepNext(Mstate(k, slots, Cons(value, stack), frames, cx)),
+    Eq::sym(e_value_compiles(v))
+  )
+}
+
+pub fn e_unbox(ctors: List(MCtor), cx: MCx, boxed: Bool, value: MVal): MVal {
+  match boxed {
+    false => value
+    true => match value: MVal {
+      MvRef(cell, path) => m_at_ref(ctors, cx_cell(cx, cell), path)
+      _ => value
+    }
+  }
+}
+
+pub fn e_read_code(boxed: Bool, deref: Bool, slot: Nat, k: MCode): MCode {
+  let after: MCode := match deref: MCode { false => k, true => McOp(MoDeref, k) }
+  McLoad(slot, match boxed: MCode { false => after, true => McOp(MoUnbox, after) })
+}
+
+pub fn e_read_steps(boxed: Bool, deref: Bool): Nat {
+  match boxed {
+    false => match deref: Nat { false => 1, true => 2 }
+    true => match deref: Nat { false => 2, true => 3 }
+  }
+}
+
+pub theorem e_compile_read(
+  fuel: Nat,
+  id: Nat,
+  deref: Bool,
+  k: MCode,
+  cs: CSt,
+  slot: Nat,
+  cs2: CSt,
+  resolved: c_slot(cs, id) = Pair { fst: slot, snd: cs2 }
+): c_expr(Succ(fuel), CRead(id, deref), k, cs) =
+Cr(e_read_code(c_is_boxed(cs2, id), deref, slot, k), cs2) {
+  Eq::congr((allocation: Pair(Nat, CSt)) => match allocation: CR {
+    Pair { fst: position, snd: state } => Cr(e_read_code(c_is_boxed(state, id), deref, position, k), state)
+  }, resolved)
+}
+
+pub theorem e_unbox_run(
+  p: MProgram,
+  deref: Bool,
+  v: MVal,
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx
+): mrun(
+  p,
+  (match deref: Nat { false => 1, true => 2 }),
+  Mstate(
+    McOp(MoUnbox, match deref: MCode { false => k, true => McOp(MoDeref, k) }),
+    slots,
+    Cons(v, stack),
+    frames,
+    cx
+  )
+) =
+MstepNext(
+  Mstate(
+    k,
+    slots,
+    Cons(e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, true, v)), stack),
+    frames,
+    cx
+  )
+) {
+  match deref {
+    false => match v: mrun(p, 1, Mstate(McOp(MoUnbox, k), slots, Cons(v, stack), frames, cx)) =
+    MstepNext(
+      Mstate(
+        k,
+        slots,
+        Cons(e_deref(p_ctors(p), cx, false, e_unbox(p_ctors(p), cx, true, v)), stack),
+        frames,
+        cx
+      )
+    ) {
+      MvRef(cell, path) => Refl
+      _ => Refl
+    }
+    true => match v: mrun(
+      p,
+      2,
+      Mstate(McOp(MoUnbox, McOp(MoDeref, k)), slots, Cons(v, stack), frames, cx)
+    ) =
+    MstepNext(
+      Mstate(
+        k,
+        slots,
+        Cons(e_deref(p_ctors(p), cx, true, e_unbox(p_ctors(p), cx, true, v)), stack),
+        frames,
+        cx
+      )
+    ) {
+      MvRef(cell, path) => Refl
+      _ => Refl
+    }
+  }
+}
+
+pub theorem e_read_code_run(
+  p: MProgram,
+  boxed: Bool,
+  deref: Bool,
+  slot: Nat,
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx
+): mrun(
+  p,
+  e_read_steps(boxed, deref),
+  Mstate(e_read_code(boxed, deref, slot, k), slots, stack, frames, cx)
+) =
+MstepNext(
+  Mstate(
+    k,
+    slots,
+    Cons(
+      e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, boxed, m_nth_or_unit(slots, slot))),
+      stack
+    ),
+    frames,
+    cx
+  )
+) {
+  match boxed {
+    false => match deref: mrun(
+      p,
+      e_read_steps(false, deref),
+      Mstate(e_read_code(false, deref, slot, k), slots, stack, frames, cx)
+    ) =
+    MstepNext(
+      Mstate(
+        k,
+        slots,
+        Cons(
+          e_deref(
+            p_ctors(p),
+            cx,
+            deref,
+            e_unbox(p_ctors(p), cx, false, m_nth_or_unit(slots, slot))
+          ),
+          stack
+        ),
+        frames,
+        cx
+      )
+    ) { false => Refl, true => Refl }
+    true => match deref: mrun(
+      p,
+      e_read_steps(true, deref),
+      Mstate(e_read_code(true, deref, slot, k), slots, stack, frames, cx)
+    ) =
+    MstepNext(
+      Mstate(
+        k,
+        slots,
+        Cons(
+          e_deref(p_ctors(p), cx, deref, e_unbox(p_ctors(p), cx, true, m_nth_or_unit(slots, slot))),
+          stack
+        ),
+        frames,
+        cx
+      )
+    ) {
+      false => e_unbox_run(p, false, m_nth_or_unit(slots, slot), k, slots, stack, frames, cx)
+      true => e_unbox_run(p, true, m_nth_or_unit(slots, slot), k, slots, stack, frames, cx)
+    }
+  }
+}
+
+pub theorem e_bound_read_run(
+  p: MProgram,
+  fuel: Nat,
+  id: Nat,
+  deref: Bool,
+  k: MCode,
+  cs: CSt,
+  slot: Nat,
+  cs2: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  b: EBinding,
+  resolved: c_slot(cs, id) = Pair { fst: slot, snd: cs2 },
+  related: e_unbox(
+    p_ctors(p),
+    cx,
+    c_is_boxed(cs2, id),
+    m_nth_or_unit(slots, slot)
+  ) = e_binding(cx, b)
+): mrun(
+  p,
+  e_read_steps(c_is_boxed(cs2, id), deref),
+  Mstate(e_code(c_expr(Succ(fuel), CRead(id, deref), k, cs)), slots, stack, frames, cx)
+) =
+MstepNext(
+  Mstate(k, slots, Cons(e_deref(p_ctors(p), cx, deref, e_binding(cx, b)), stack), frames, cx)
+) {
+  Eq::trans(
+    Eq::congr(
+      (compiled: CR) => mrun(
+        p,
+        e_read_steps(c_is_boxed(cs2, id), deref),
+        Mstate(e_code(compiled), slots, stack, frames, cx)
+      ),
+      e_compile_read(fuel, id, deref, k, cs, slot, cs2, resolved)
+    ),
+    Eq::trans(
+      e_read_code_run(p, c_is_boxed(cs2, id), deref, slot, k, slots, stack, frames, cx),
+      Eq::congr(
+        (value: MVal) => MstepNext(
+          Mstate(k, slots, Cons(e_deref(p_ctors(p), cx, deref, value), stack), frames, cx)
+        ),
+        related
+      )
+    )
+  )
+}

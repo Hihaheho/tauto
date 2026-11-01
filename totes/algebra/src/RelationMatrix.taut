@@ -2,7 +2,7 @@ import "RelationSemiring.taut"
 import "Matrix.taut"
 
 // Shapes and representatives are shared with the equality-based matrix API.
-def AlgebraVectorRelated(
+pub def AlgebraVectorRelated(
   R: Type,
   related: (R, R) -> Prop,
   n: Nat,
@@ -11,7 +11,7 @@ def AlgebraVectorRelated(
 ): Prop :=
 ∀ index: AlgebraFin(n). related(left(index), right(index))
 
-def AlgebraMatrixRelated(
+pub def AlgebraMatrixRelated(
   R: Type,
   related: (R, R) -> Prop,
   rows: Nat,
@@ -23,24 +23,22 @@ def AlgebraMatrixRelated(
   rows
 ). ∀ column: AlgebraFin(columns). related(left(row, column), right(row, column))
 
-fn algebra_relation_sum<R: Type>(
+pub fn algebra_relation_sum<R: Type>(
   zero_value: R,
   add: (R, R) -> R,
   n: Nat,
   values: AlgebraVector(R, n)
-) -> R {
-  match n -> R {
-    zero => zero_value
-    succ(
-      k
-    ) => add(
-      values(algebra_first(k)),
-      algebra_relation_sum(R, zero_value, add, k, index => values(algebra_next(k, index)))
+): R {
+  match n: R {
+    Zero => zero_value
+    Succ(k) => add(
+      values(AlgebraFirst(k)),
+      algebra_relation_sum(R, zero_value, add, k, index => values(AlgebraNext(k, index)))
     )
   }
 }
 
-fn algebra_relation_matrix_apply<R: Type>(
+pub fn algebra_relation_matrix_apply<R: Type>(
   zero_value: R,
   add: (R, R) -> R,
   mul: (R, R) -> R,
@@ -48,7 +46,7 @@ fn algebra_relation_matrix_apply<R: Type>(
   columns: Nat,
   matrix: AlgebraMatrix(R, rows, columns),
   values: AlgebraVector(R, columns)
-) -> AlgebraVector(R, rows) {
+): AlgebraVector(R, rows) {
   row => algebra_relation_sum(
     R,
     zero_value,
@@ -58,7 +56,7 @@ fn algebra_relation_matrix_apply<R: Type>(
   )
 }
 
-fn algebra_relation_matrix_product<R: Type>(
+pub fn algebra_relation_matrix_product<R: Type>(
   zero_value: R,
   add: (R, R) -> R,
   mul: (R, R) -> R,
@@ -67,7 +65,7 @@ fn algebra_relation_matrix_product<R: Type>(
   columns: Nat,
   left: AlgebraMatrix(R, rows, inner),
   right: AlgebraMatrix(R, inner, columns)
-) -> AlgebraMatrix(R, rows, columns) {
+): AlgebraMatrix(R, rows, columns) {
   row => column => algebra_relation_sum(
     R,
     zero_value,
@@ -77,7 +75,7 @@ fn algebra_relation_matrix_product<R: Type>(
   )
 }
 
-theorem algebra_relation_sum_congr<R: Type, related: (
+pub theorem algebra_relation_sum_congr<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -96,19 +94,17 @@ theorem algebra_relation_sum_congr<R: Type, related: (
   algebra_relation_sum(R, zero_value, add, n, left),
   algebra_relation_sum(R, zero_value, add, n, right)
 ) {
-  match n -> related(
+  match n: related(
     algebra_relation_sum(R, zero_value, add, n, left),
     algebra_relation_sum(R, zero_value, add, n, right)
   ) {
-    zero => algebra_relation_refl(
+    Zero => algebra_relation_refl(
       R,
       related,
       algebra_relation_equivalence(R, related, zero_value, one_value, add, mul, laws),
       zero_value
     )
-    succ(
-      k
-    ) => algebra_relation_add_respects(
+    Succ(k) => algebra_relation_add_respects(
       R,
       related,
       zero_value,
@@ -116,23 +112,23 @@ theorem algebra_relation_sum_congr<R: Type, related: (
       add,
       mul,
       laws,
-      left(algebra_first(k)),
-      right(algebra_first(k)),
-      algebra_relation_sum(R, zero_value, add, k, index => left(algebra_next(k, index))),
-      algebra_relation_sum(R, zero_value, add, k, index => right(algebra_next(k, index))),
-      equal(algebra_first(k)),
+      left(AlgebraFirst(k)),
+      right(AlgebraFirst(k)),
+      algebra_relation_sum(R, zero_value, add, k, index => left(AlgebraNext(k, index))),
+      algebra_relation_sum(R, zero_value, add, k, index => right(AlgebraNext(k, index))),
+      equal(AlgebraFirst(k)),
       algebra_relation_sum_congr(
         laws,
         k,
-        index => left(algebra_next(k, index)),
-        index => right(algebra_next(k, index)),
-        index => equal(algebra_next(k, index))
+        index => left(AlgebraNext(k, index)),
+        index => right(AlgebraNext(k, index)),
+        index => equal(AlgebraNext(k, index))
       )
     )
   }
 }
 
-theorem algebra_relation_matrix_apply_congr<R: Type, related: (
+pub theorem algebra_relation_matrix_apply_congr<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -188,7 +184,7 @@ theorem algebra_relation_matrix_apply_congr<R: Type, related: (
   )
 }
 
-theorem algebra_relation_matrix_product_congr<R: Type, related: (
+pub theorem algebra_relation_matrix_product_congr<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -258,7 +254,7 @@ theorem algebra_relation_matrix_product_congr<R: Type, related: (
 }
 
 // The ordinary equality-based structures embed without changing operations.
-theorem algebra_equality_relation_semiring<R: Type, addition: AlgebraMonoid(
+pub theorem algebra_equality_relation_semiring<R: Type, addition: AlgebraMonoid(
   0,
   R
 ), multiplication: AlgebraMonoid(
@@ -274,17 +270,17 @@ theorem algebra_equality_relation_semiring<R: Type, addition: AlgebraMonoid(
   algebra_op(0, R, addition),
   algebra_op(0, R, multiplication)
 ) {
-  algebra_relation_semiring(
+  AlgebraRelationSemiring::Mk(
     R,
     x => y => AlgebraEq(0, R, x, y),
     algebra_unit(0, R, addition),
     algebra_unit(0, R, multiplication),
     algebra_op(0, R, addition),
     algebra_op(0, R, multiplication),
-    algebra_setoid(
+    AlgebraSetoid::Mk(
       R,
       x => y => AlgebraEq(0, R, x, y),
-      x => algebra_refl(0, R, x),
+      x => AlgebraRefl(0, R, x),
       x => y => equal => algebra_flip(equal),
       x => y => z => first => second => algebra_chain(first, second)
     ),
@@ -312,7 +308,7 @@ theorem algebra_equality_relation_semiring<R: Type, addition: AlgebraMonoid(
   )
 }
 
-theorem algebra_relation_sum_equality<R: Type>(
+pub theorem algebra_relation_sum_equality<R: Type>(
   addition: AlgebraMonoid(0, R),
   n: Nat,
   values: AlgebraVector(R, n)
@@ -322,23 +318,21 @@ theorem algebra_relation_sum_equality<R: Type>(
   algebra_relation_sum(R, algebra_unit(0, R, addition), algebra_op(0, R, addition), n, values),
   algebra_sum(R, addition, n, values)
 ) {
-  match n -> AlgebraEq(
+  match n: AlgebraEq(
     0,
     R,
     algebra_relation_sum(R, algebra_unit(0, R, addition), algebra_op(0, R, addition), n, values),
     algebra_sum(R, addition, n, values)
   ) {
-    zero => algebra_refl(0, R, algebra_unit(0, R, addition))
-    succ(
-      k
-    ) => algebra_apply(
-      (value: R) => algebra_op(0, R, addition)(values(algebra_first(k)), value),
-      algebra_relation_sum_equality(R, addition, k, index => values(algebra_next(k, index)))
+    Zero => AlgebraRefl(0, R, algebra_unit(0, R, addition))
+    Succ(k) => algebra_apply(
+      (value: R) => algebra_op(0, R, addition)(values(AlgebraFirst(k)), value),
+      algebra_relation_sum_equality(R, addition, k, index => values(AlgebraNext(k, index)))
     )
   }
 }
 
-theorem algebra_relation_matrix_apply_equality<R: Type>(
+pub theorem algebra_relation_matrix_apply_equality<R: Type>(
   addition: AlgebraMonoid(0, R),
   multiplication: AlgebraMonoid(0, R),
   rows: Nat,
@@ -369,7 +363,7 @@ theorem algebra_relation_matrix_apply_equality<R: Type>(
   )
 }
 
-theorem algebra_relation_matrix_product_equality<R: Type>(
+pub theorem algebra_relation_matrix_product_equality<R: Type>(
   addition: AlgebraMonoid(0, R),
   multiplication: AlgebraMonoid(0, R),
   rows: Nat,

@@ -1,0 +1,195 @@
+import "rules_signature_parameters.taut"
+import "signature_written_sound.taut"
+
+pub fn signature_parameters_after(
+  rest: List(Option(SurfaceTerm)),
+  borrows: List(Option(Bool)),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(List(Ty), Checker) {
+  frame_bind(
+    Ty,
+    List(Ty),
+    (head: Ty, next: Checker) => written_map(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty)) => Cons(head, tail),
+      ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics)
+    ),
+    m
+  )
+}
+pub theorem signature_parameters_after_sound(
+  c: Checker,
+  source: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  borrows: List(Option(Bool)),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker),
+  read: CkReadFrame(c, m),
+  reset: CkWrittenReset(c, m),
+  head: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). SignatureParameter(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    source,
+    signature_parameter_borrow(borrows),
+    ck_val(m)
+  ),
+  ih: ∀ next: Checker. ∀ clean: DiagnosticClean(
+    ck_st(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
+  ). SignatureParameters(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    signature_remaining_borrows(borrows),
+    ck_val(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
+  ),
+  clean: DiagnosticClean(ck_st(signature_parameters_after(rest, borrows, generics, m)))
+): SignatureParameters(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(source, rest),
+  borrows,
+  ck_val(signature_parameters_after(rest, borrows, generics, m))
+) {
+  match m: SignatureParameters(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(source, rest),
+    borrows,
+    ck_val(signature_parameters_after(rest, borrows, generics, m))
+  ) {
+    mut1(t, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
+      ) := written_map_clean(
+        List(Ty),
+        List(Ty),
+        (types: List(Ty)) => Cons(t, types),
+        ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics),
+        clean
+      )
+      let tail: SignatureParameters(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        rest,
+        signature_remaining_borrows(borrows),
+        ck_val(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
+      ) := Eq::subst(
+        (partial: Bool) => SignatureParameters(
+          ck_datas_of(c),
+          generics,
+          partial,
+          rest,
+          signature_remaining_borrows(borrows),
+          ck_val(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
+        ),
+        Eq::congr(written_context_position, reset),
+        Eq::subst(
+          (env: Datas) => SignatureParameters(
+            env,
+            generics,
+            frame_constructor_position(next),
+            rest,
+            signature_remaining_borrows(borrows),
+            ck_val(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
+          ),
+          Eq::congr(frame_read_datas, read),
+          ih(next, tail_clean)
+        )
+      )
+      Eq::subst(
+        (types: List(Ty)) => SignatureParameters(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(source, rest),
+          borrows,
+          types
+        ),
+        Eq::sym(
+          written_map_value(
+            List(Ty),
+            List(Ty),
+            (types: List(Ty)) => Cons(t, types),
+            ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics)
+          )
+        ),
+        SignatureParametersCons(
+          source,
+          rest,
+          borrows,
+          t,
+          ck_val(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics)),
+          head(
+            ck_sig_params_frame_errors(
+              rest,
+              next,
+              signature_remaining_borrows(borrows),
+              generics,
+              tail_clean
+            )
+          ),
+          tail
+        )
+      )
+    }
+  }
+}
+pub theorem ck_sig_params_sound(
+  sources: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Bool)),
+  generics: Ordmap(Text, Ty),
+  clean: DiagnosticClean(ck_st(ck_sig_params(sources, c, borrows, generics)))
+): SignatureParameters(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  sources,
+  borrows,
+  ck_val(ck_sig_params(sources, c, borrows, generics))
+) {
+  match sources: SignatureParameters(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    sources,
+    borrows,
+    ck_val(ck_sig_params(sources, c, borrows, generics))
+  ) {
+    Nil => SignatureParametersNil(borrows)
+    Cons(source, rest) => signature_parameters_after_sound(
+      c,
+      source,
+      rest,
+      borrows,
+      generics,
+      ck_sig_param(c, source, signature_parameter_borrow(borrows), generics),
+      ck_sig_param_frame(c, source, signature_parameter_borrow(borrows), generics),
+      ck_sig_param_reset(c, source, signature_parameter_borrow(borrows), generics),
+      accepted => ck_sig_param_sound(
+        c,
+        source,
+        signature_parameter_borrow(borrows),
+        generics,
+        accepted
+      ),
+      next => accepted => ck_sig_params_sound(
+        rest,
+        next,
+        signature_remaining_borrows(borrows),
+        generics,
+        accepted
+      ),
+      clean
+    )
+  }
+}

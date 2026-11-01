@@ -1,0 +1,1671 @@
+import "mval.taut"
+import std::SInt
+import std::UInt
+
+// The runtime library's functions (`Cps::Builtin`), as the other backends' runtimes define
+// them. A builtin is called by its number in `m_builtin_names`. What only the host can do
+// it asks of the shell (`mout_ask`); the tasks' functions are the scheduler's
+// (`machine.taut`).
+
+// What a builtin answers.
+pub(open) inductive MOut: Type {
+  MoutVal(v: MVal, cx: MCx): MOut
+  MoutErr(message: Text): MOut
+  // It performs `op` with no arguments and no resumption (`out_of_bounds`, `missing`).
+  MoutPerform(op: Text): MOut
+  // The host answers the request.
+  MoutAsk(name: Text, args: List(MVal), cx: MCx): MOut
+  MoutExit(code: Int): MOut
+  // Starts a task that runs `f`, whose result goes to the pending `p`.
+  MoutSpawn(f: MVal, p: Nat, cx: MCx): MOut
+  // Lets the other tasks run first, then answers whether the pending is ready.
+  MoutYield(p: Nat, cx: MCx): MOut
+}
+
+pub fn m_builtin_names(): List(Text) {
+  Cons(
+    "clone",
+    Cons(
+      "replace",
+      Cons(
+        "Buf::new",
+        Cons(
+          "Buf::of",
+          Cons(
+            "Buf::clone",
+            Cons(
+              "Buf::push",
+              Cons(
+                "Text::of",
+                Cons(
+                  "Vec::new",
+                  Cons(
+                    "Vec::push",
+                    Cons(
+                      "Vec::pop",
+                      Cons(
+                        "Vec::len",
+                        Cons(
+                          "Slice::len",
+                          Cons(
+                            "Array::len",
+                            Cons(
+                              "Vec::as_slice",
+                              Cons(
+                                "Vec::as_mut_slice",
+                                Cons(
+                                  "Vec::clear",
+                                  Cons(
+                                    "Vec::truncate",
+                                    Cons(
+                                      "Vec::get",
+                                      Cons(
+                                        "Vec::get_mut",
+                                        Cons(
+                                          "Slice::get",
+                                          Cons(
+                                            "Vec::last_mut",
+                                            Cons(
+                                              "Vec::index",
+                                              Cons(
+                                                "Vec::swap",
+                                                Cons(
+                                                  "Vec::into_list",
+                                                  Cons(
+                                                    "Array::to_list",
+                                                    Cons(
+                                                      "Vec::into_array",
+                                                      Cons(
+                                                        "Array::of_list",
+                                                        Cons(
+                                                          "Array::get",
+                                                          Cons(
+                                                            "Bytes::of_list",
+                                                            Cons(
+                                                              "Bytes::to_list",
+                                                              Cons(
+                                                                "Bytes::len",
+                                                                Cons(
+                                                                  "Bytes::get",
+                                                                  Cons(
+                                                                    "Bytes::slice",
+                                                                    Cons(
+                                                                      "Bytes::concat",
+                                                                      Cons(
+                                                                        "Bytes::eq",
+                                                                        Cons(
+                                                                          "Bytes::of_text",
+                                                                          Cons(
+                                                                            "Text::of_bytes",
+                                                                            Cons(
+                                                                              "HashMap::new",
+                                                                              Cons(
+                                                                                "HashMap::insert",
+                                                                                Cons(
+                                                                                  "HashMap::get",
+                                                                                  Cons(
+                                                                                    "HashMap::get_mut",
+                                                                                    Cons(
+                                                                                      "HashMap::index",
+                                                                                      Cons(
+                                                                                        "HashMap::into_vec",
+                                                                                        Cons(
+                                                                                          "Text::byte",
+                                                                                          Cons(
+                                                                                            "Text::slice",
+                                                                                            Cons(
+                                                                                              "Text::of_code_point",
+                                                                                              Cons(
+                                                                                                "Text::of_utf8",
+                                                                                                Cons(
+                                                                                                  "I64::of_i32",
+                                                                                                  Cons(
+                                                                                                    "I64::of_u64",
+                                                                                                    Cons(
+                                                                                                      "I32::of_i64",
+                                                                                                      Cons(
+                                                                                                        "Nat::of_u64",
+                                                                                                        Cons(
+                                                                                                          "U64::of_i64",
+                                                                                                          Cons(
+                                                                                                            "U64::of_u32",
+                                                                                                            Cons(
+                                                                                                              "U64::of_u8",
+                                                                                                              Cons(
+                                                                                                                "U64::of_nat",
+                                                                                                                Cons(
+                                                                                                                  "U32::of_u64",
+                                                                                                                  Cons(
+                                                                                                                    "U8::of_u64",
+                                                                                                                    Cons(
+                                                                                                                      "Float::of_i64",
+                                                                                                                      Cons(
+                                                                                                                        "I64::of_float",
+                                                                                                                        Cons(
+                                                                                                                          "Float::of_text",
+                                                                                                                          Cons(
+                                                                                                                            "Text::of_float",
+                                                                                                                            Cons(
+                                                                                                                              "Float::bits",
+                                                                                                                              Cons(
+                                                                                                                                "Float::of_bits",
+                                                                                                                                Cons(
+                                                                                                                                  "Float::is_nan",
+                                                                                                                                  Cons(
+                                                                                                                                    "Float::abs",
+                                                                                                                                    Cons(
+                                                                                                                                      "Float::floor",
+                                                                                                                                      Cons(
+                                                                                                                                        "Float::ceil",
+                                                                                                                                        Cons(
+                                                                                                                                          "Float::trunc",
+                                                                                                                                          Cons(
+                                                                                                                                            "Float::round",
+                                                                                                                                            Cons(
+                                                                                                                                              "Float::sqrt",
+                                                                                                                                              Cons(
+                                                                                                                                                "Float::cbrt",
+                                                                                                                                                Cons(
+                                                                                                                                                  "Float::exp",
+                                                                                                                                                  Cons(
+                                                                                                                                                    "Float::ln",
+                                                                                                                                                    Cons(
+                                                                                                                                                      "Float::log2",
+                                                                                                                                                      Cons(
+                                                                                                                                                        "Float::log10",
+                                                                                                                                                        Cons(
+                                                                                                                                                          "Float::pow",
+                                                                                                                                                          Cons(
+                                                                                                                                                            "Float::sin",
+                                                                                                                                                            Cons(
+                                                                                                                                                              "Float::cos",
+                                                                                                                                                              Cons(
+                                                                                                                                                                "Float::tan",
+                                                                                                                                                                Cons(
+                                                                                                                                                                  "Float::asin",
+                                                                                                                                                                  Cons(
+                                                                                                                                                                    "Float::acos",
+                                                                                                                                                                    Cons(
+                                                                                                                                                                      "Float::atan",
+                                                                                                                                                                      Cons(
+                                                                                                                                                                        "Float::atan2",
+                                                                                                                                                                        Cons(
+                                                                                                                                                                          "Float::sinh",
+                                                                                                                                                                          Cons(
+                                                                                                                                                                            "Float::cosh",
+                                                                                                                                                                            Cons(
+                                                                                                                                                                              "Float::tanh",
+                                                                                                                                                                              Cons(
+                                                                                                                                                                                "words",
+                                                                                                                                                                                Cons(
+                                                                                                                                                                                  "budget_value",
+                                                                                                                                                                                  Cons(
+                                                                                                                                                                                    "info_more",
+                                                                                                                                                                                    Cons(
+                                                                                                                                                                                      "info_unbounded",
+                                                                                                                                                                                      Cons(
+                                                                                                                                                                                        "U32::and",
+                                                                                                                                                                                        Cons(
+                                                                                                                                                                                          "U32::or",
+                                                                                                                                                                                          Cons(
+                                                                                                                                                                                            "U32::xor",
+                                                                                                                                                                                            Cons(
+                                                                                                                                                                                              "U32::shl",
+                                                                                                                                                                                              Cons(
+                                                                                                                                                                                                "U32::shr",
+                                                                                                                                                                                                Cons(
+                                                                                                                                                                                                  "U32::rotl",
+                                                                                                                                                                                                  Cons(
+                                                                                                                                                                                                    "U32::rotr",
+                                                                                                                                                                                                    Cons(
+                                                                                                                                                                                                      "U64::and",
+                                                                                                                                                                                                      Cons(
+                                                                                                                                                                                                        "U64::or",
+                                                                                                                                                                                                        Cons(
+                                                                                                                                                                                                          "U64::xor",
+                                                                                                                                                                                                          Cons(
+                                                                                                                                                                                                            "U64::shl",
+                                                                                                                                                                                                            Cons(
+                                                                                                                                                                                                              "U64::shr",
+                                                                                                                                                                                                              Cons(
+                                                                                                                                                                                                                "U64::rotl",
+                                                                                                                                                                                                                Cons(
+                                                                                                                                                                                                                  "U64::rotr",
+                                                                                                                                                                                                                  Cons(
+                                                                                                                                                                                                                    "Ref::new",
+                                                                                                                                                                                                                    Cons(
+                                                                                                                                                                                                                      "Ref::get",
+                                                                                                                                                                                                                      Cons(
+                                                                                                                                                                                                                        "Ref::set",
+                                                                                                                                                                                                                        Cons(
+                                                                                                                                                                                                                          "Atomic::new",
+                                                                                                                                                                                                                          Cons(
+                                                                                                                                                                                                                            "Atomic::load",
+                                                                                                                                                                                                                            Cons(
+                                                                                                                                                                                                                              "Atomic::store",
+                                                                                                                                                                                                                              Cons(
+                                                                                                                                                                                                                                "Atomic::fetch_add",
+                                                                                                                                                                                                                                Cons(
+                                                                                                                                                                                                                                  "secret",
+                                                                                                                                                                                                                                  Cons(
+                                                                                                                                                                                                                                    "expose",
+                                                                                                                                                                                                                                    Cons(
+                                                                                                                                                                                                                                      "Os::exit",
+                                                                                                                                                                                                                                      Cons(
+                                                                                                                                                                                                                                        "Os::stop",
+                                                                                                                                                                                                                                        Cons(
+                                                                                                                                                                                                                                          "Os::sleep_pending",
+                                                                                                                                                                                                                                          Cons(
+                                                                                                                                                                                                                                            "Os::offload",
+                                                                                                                                                                                                                                            Cons(
+                                                                                                                                                                                                                                              "pending_spawn",
+                                                                                                                                                                                                                                              Cons(
+                                                                                                                                                                                                                                                "Pending::ready",
+                                                                                                                                                                                                                                                Cons(
+                                                                                                                                                                                                                                                  "Pending::take",
+                                                                                                                                                                                                                                                  Cons(
+                                                                                                                                                                                                                                                    "Pending::is_ready",
+                                                                                                                                                                                                                                                    Cons(
+                                                                                                                                                                                                                                                      "Pending::signal",
+                                                                                                                                                                                                                                                      Cons(
+                                                                                                                                                                                                                                                        "Mutex::new",
+                                                                                                                                                                                                                                                        Cons(
+                                                                                                                                                                                                                                                          "Mutex::claim",
+                                                                                                                                                                                                                                                          Cons(
+                                                                                                                                                                                                                                                            "Mutex::take_claimed",
+                                                                                                                                                                                                                                                            Cons(
+                                                                                                                                                                                                                                                              "Mutex::put",
+                                                                                                                                                                                                                                                              Cons(
+                                                                                                                                                                                                                                                                "vm_timer",
+                                                                                                                                                                                                                                                                m_builtin_names_float32()
+                                                                                                                                                                                                                                                              )
+                                                                                                                                                                                                                                                            )
+                                                                                                                                                                                                                                                          )
+                                                                                                                                                                                                                                                        )
+                                                                                                                                                                                                                                                      )
+                                                                                                                                                                                                                                                    )
+                                                                                                                                                                                                                                                  )
+                                                                                                                                                                                                                                                )
+                                                                                                                                                                                                                                              )
+                                                                                                                                                                                                                                            )
+                                                                                                                                                                                                                                          )
+                                                                                                                                                                                                                                        )
+                                                                                                                                                                                                                                      )
+                                                                                                                                                                                                                                    )
+                                                                                                                                                                                                                                  )
+                                                                                                                                                                                                                                )
+                                                                                                                                                                                                                              )
+                                                                                                                                                                                                                            )
+                                                                                                                                                                                                                          )
+                                                                                                                                                                                                                        )
+                                                                                                                                                                                                                      )
+                                                                                                                                                                                                                    )
+                                                                                                                                                                                                                  )
+                                                                                                                                                                                                                )
+                                                                                                                                                                                                              )
+                                                                                                                                                                                                            )
+                                                                                                                                                                                                          )
+                                                                                                                                                                                                        )
+                                                                                                                                                                                                      )
+                                                                                                                                                                                                    )
+                                                                                                                                                                                                  )
+                                                                                                                                                                                                )
+                                                                                                                                                                                              )
+                                                                                                                                                                                            )
+                                                                                                                                                                                          )
+                                                                                                                                                                                        )
+                                                                                                                                                                                      )
+                                                                                                                                                                                    )
+                                                                                                                                                                                  )
+                                                                                                                                                                                )
+                                                                                                                                                                              )
+                                                                                                                                                                            )
+                                                                                                                                                                          )
+                                                                                                                                                                        )
+                                                                                                                                                                      )
+                                                                                                                                                                    )
+                                                                                                                                                                  )
+                                                                                                                                                                )
+                                                                                                                                                              )
+                                                                                                                                                            )
+                                                                                                                                                          )
+                                                                                                                                                        )
+                                                                                                                                                      )
+                                                                                                                                                    )
+                                                                                                                                                  )
+                                                                                                                                                )
+                                                                                                                                              )
+                                                                                                                                            )
+                                                                                                                                          )
+                                                                                                                                        )
+                                                                                                                                      )
+                                                                                                                                    )
+                                                                                                                                  )
+                                                                                                                                )
+                                                                                                                              )
+                                                                                                                            )
+                                                                                                                          )
+                                                                                                                        )
+                                                                                                                      )
+                                                                                                                    )
+                                                                                                                  )
+                                                                                                                )
+                                                                                                              )
+                                                                                                            )
+                                                                                                          )
+                                                                                                        )
+                                                                                                      )
+                                                                                                    )
+                                                                                                  )
+                                                                                                )
+                                                                                              )
+                                                                                            )
+                                                                                          )
+                                                                                        )
+                                                                                      )
+                                                                                    )
+                                                                                  )
+                                                                                )
+                                                                              )
+                                                                            )
+                                                                          )
+                                                                        )
+                                                                      )
+                                                                    )
+                                                                  )
+                                                                )
+                                                              )
+                                                            )
+                                                          )
+                                                        )
+                                                      )
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// The builtins only the host answers, by name.
+pub fn m_host_names(): List(Text) {
+  Cons(
+    "Os::args",
+    Cons(
+      "Os::print",
+      Cons(
+        "Os::eprint",
+        Cons(
+          "Os::read_file",
+          Cons(
+            "Os::write_file",
+            Cons(
+              "Os::read_bytes",
+              Cons(
+                "Os::write_bytes",
+                Cons(
+                  "Os::create_dir",
+                  Cons(
+                    "Os::list_dir",
+                    Cons(
+                      "Os::remove",
+                      Cons(
+                        "Os::temp_dir",
+                        Cons(
+                          "Os::run",
+                          Cons(
+                            "Os::read_line",
+                            Cons(
+                              "Os::env",
+                              Cons(
+                                "Os::wall_ms",
+                                Cons(
+                                  "Os::monotonic_ns",
+                                  Cons(
+                                    "Os::random",
+                                    Cons(
+                                      "Os::secure_random",
+                                      Cons(
+                                        "Os::status",
+                                        Cons(
+                                          "Os::check",
+                                          Cons(
+                                            "Os::fetch",
+                                            Cons(
+                                              "Os::resolve",
+                                              Cons(
+                                                "Os::tcp_listen",
+                                                Cons(
+                                                  "Os::tcp_accept",
+                                                  Cons(
+                                                    "Os::tcp_connect",
+                                                    Cons(
+                                                      "Os::tcp_read",
+                                                      Cons(
+                                                        "Os::tcp_write",
+                                                        Cons(
+                                                          "Os::tcp_shutdown",
+                                                          Cons(
+                                                            "Os::tcp_close",
+                                                            Cons(
+                                                              "Os::tcp_unlisten",
+                                                              Cons(
+                                                                "Os::tls_accept",
+                                                                Cons(
+                                                                  "Os::tls_connect",
+                                                                  Cons(
+                                                                    "Os::tls_read",
+                                                                    Cons(
+                                                                      "Os::tls_write",
+                                                                      Cons(
+                                                                        "Os::tls_shutdown",
+                                                                        Cons("Os::tls_close", Nil)
+                                                                      )
+                                                                    )
+                                                                  )
+                                                                )
+                                                              )
+                                                            )
+                                                          )
+                                                        )
+                                                      )
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// ---- the prelude's constructors -------------------------------------------------------
+
+// Rust writes the prelude's constructors first, in this order.
+pub fn m_some(v: MVal): MVal {
+  MvData(0, Cons(v, Nil))
+}
+
+pub fn m_none(): MVal {
+  MvData(1, Nil)
+}
+
+pub fn m_option(o: Option(MVal)): MVal {
+  match o {
+    None => m_none()
+    Some(v) => m_some(v)
+  }
+}
+
+pub fn m_ok(v: MVal): MVal {
+  MvData(2, Cons(v, Nil))
+}
+
+pub fn m_errv(v: MVal): MVal {
+  MvData(3, Cons(v, Nil))
+}
+
+pub fn m_pair(a: MVal, b: MVal): MVal {
+  MvData(4, Cons(a, Cons(b, Nil)))
+}
+
+pub fn m_list(xs: List(MVal)): MVal {
+  match xs {
+    Nil => MvData(6, Nil)
+    Cons(x, rest) => MvData(5, Cons(x, Cons(m_list(rest), Nil)))
+  }
+}
+
+// The items of a `List`; `fuel` bounds its length.
+pub fn m_items(fuel: Nat, ctors: List(MCtor), cx: MCx, v: MVal): List(MVal) {
+  match fuel {
+    Zero => Nil
+    Succ(f) => match m_get(ctors, cx, v) {
+      MvData(c, fs) => if Nat::eq(c, 5) {
+        Cons(m_get(ctors, cx, m_nth_or_unit(fs, 0)), m_items(f, ctors, cx, m_nth_or_unit(fs, 1)))
+      } else {
+        Nil
+      }
+      _ => Nil
+    }
+  }
+}
+
+// ---- reading the arguments --------------------------------------------------------------
+
+pub fn m_as_int(v: MVal): Int {
+  match v {
+    MvInt(i) => i
+    _ => IntOfNat(0)
+  }
+}
+
+// The integer as an index, when it is not negative.
+pub fn m_as_nat(v: MVal): Nat {
+  match v {
+    MvInt(i) => match i {
+      IntOfNat(n) => n
+      _ => 0
+    }
+    _ => 0
+  }
+}
+
+pub fn m_is_neg(v: MVal): Bool {
+  match v {
+    MvInt(i) => m_int_neg(i)
+    _ => false
+  }
+}
+
+pub fn m_as_text(v: MVal): Text {
+  match v {
+    MvText(t) => t
+    MvShown(t) => t
+    MvBuf(t) => t
+    _ => ""
+  }
+}
+
+pub fn m_as_float32(v: MVal): Float32 {
+  match v {
+    MvFloat32(x) => x
+    _ => Float32::of_raw(0)
+  }
+}
+
+pub fn m_as_float(v: MVal): Float {
+  match v {
+    MvFloat(x) => x
+    _ => Float::of_raw(0)
+  }
+}
+
+pub fn m_as_seq(v: MVal): MSeq(MVal) {
+  match v {
+    MvVec(xs) => xs
+    MvArray(xs) => xs
+    _ => ms_empty()
+  }
+}
+
+pub fn m_as_items(v: MVal): List(MVal) {
+  ms_to_list(MvUnit, m_as_seq(v))
+}
+
+pub fn m_items_len(v: MVal): Nat {
+  ms_len(m_as_seq(v))
+}
+
+pub fn m_as_bytes(v: MVal): Bytes {
+  match v {
+    MvBytes(b) => b
+    _ => Bytes::of_list(Nil)
+  }
+}
+
+pub fn m_as_entries(v: MVal): List(Pair(MVal, MVal)) {
+  match v {
+    MvMap(es) => es
+    _ => Nil
+  }
+}
+
+// ---- bits ---------------------------------------------------------------------------------
+
+// The bitwise operation `op` (0 and, 1 or, 2 xor) of the low `bits` bits.
+pub fn m_bitwise(bits: Nat, op: Nat, a: Nat, b: Nat): Nat {
+  match bits {
+    Zero => 0
+    Succ(rest) => {
+      let x := Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl))
+      let y := Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+      let bit := if Nat::eq(op, 0) {
+        Nat::mul(x, y)
+      } else {
+        if Nat::eq(
+          op,
+          1
+        ) { if Nat::eq(Nat::add(x, y), 0) { 0 } else { 1 } } else { Nat::rem_nz(Nat::add(x, y), 2, Nat::ne_zero(2, Refl)) }
+      }
+      Nat::add(bit, Nat::mul(2, m_bitwise(rest, op, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl)))))
+    }
+  }
+}
+
+pub fn m_pow2(n: Nat): Nat {
+  match n {
+    Zero => 1
+    Succ(m) => Nat::mul(2, m_pow2(m))
+  }
+}
+
+// `op`: 0 and, 1 or, 2 xor, 3 shl, 4 shr, 5 rotl, 6 rotr.
+pub fn m_bits(bits: Nat, op: Nat, x: Nat, y: Nat): Nat {
+  if Nat::lt(op, 3) {
+    m_bitwise(bits, op, x, y)
+  } else {
+    match Nat::eq(bits, 0) eqn hb: Nat {
+      // With no bits, every result is taken modulo 1, except `shr` by `y` itself.
+      true => if Nat::eq(op, 4) { Nat::div_nz(x, Nat::pow2(y), Nat::pow2_ne_zero(y)) } else { 0 }
+      false => m_bits_nz(bits, op, x, Nat::rem_nz(y, bits, Nat::ne_zero(bits, hb)), Nat::ne_zero(bits, hb))
+    }
+  }
+}
+
+// `m_bits` for a shift `s` already below `bits`, which `hb` says is not 0.
+pub fn m_bits_nz(bits: Nat, op: Nat, x: Nat, s: Nat, hb: ¬(bits = 0)): Nat {
+  let modulus := Nat::pow2(bits)
+  if Nat::eq(op, 3) {
+    Nat::rem_nz(Nat::mul(x, Nat::pow2(s)), modulus, Nat::pow2_ne_zero(bits))
+  } else {
+    if Nat::eq(op, 4) {
+      Nat::div_nz(x, Nat::pow2(s), Nat::pow2_ne_zero(s))
+    } else {
+      let l := if Nat::eq(op, 5) { s } else { Nat::rem_nz(Nat::sub(bits, s), bits, hb) }
+      Nat::rem_nz(
+        Nat::add(Nat::mul(x, Nat::pow2(l)), Nat::div_nz(x, Nat::pow2(Nat::sub(bits, l)), Nat::pow2_ne_zero(Nat::sub(bits, l)))),
+        modulus,
+        Nat::pow2_ne_zero(bits)
+      )
+    }
+  }
+}
+
+// ---- text ---------------------------------------------------------------------------------
+
+pub fn m_space(b: Nat): Bool {
+  Bool::or(Nat::eq(b, 32), Bool::and(Nat::le(9, b), Nat::le(b, 13)))
+}
+
+// The words of the bytes, separated by whitespace; `cur` is the word so far, reversed.
+pub fn m_words(bs: List(Nat), cur: List(Nat)): List(MVal) {
+  match bs {
+    Nil => match cur {
+      Nil => Nil
+      _ => Cons(MvText(Text::Mk(List::reverse(cur))), Nil)
+    }
+    Cons(b, rest) => if m_space(b) {
+      match cur {
+        Nil => m_words(rest, Nil)
+        _ => Cons(MvText(Text::Mk(List::reverse(cur))), m_words(rest, Nil))
+      }
+    } else {
+      m_words(rest, Cons(b, cur))
+    }
+  }
+}
+
+pub fn m_slice<A>(l: List(A), s: Nat, e: Nat): List(A) {
+  List::take(Nat::sub(e, s), List::drop(s, l))
+}
+
+// The bytes from `s` to `e`, when they are in order and in the list.
+pub fn m_range_ok(s: MVal, e: MVal, len: Nat): Bool {
+  Bool::and(
+    Bool::and(not(m_is_neg(s)), not(m_is_neg(e))),
+    Bool::and(Nat::le(m_as_nat(s), m_as_nat(e)), Nat::le(m_as_nat(e), len))
+  )
+}
+
+pub fn m_text_of_utf8(bs: List(Nat)): MVal {
+  match Text::of_utf8(bs) {
+    None => m_none()
+    Some(t) => m_some(MvText(t))
+  }
+}
+
+pub fn m_all_bytes(xs: List(MVal)): Option(List(Nat)) {
+  match xs {
+    Nil => Some(Nil)
+    Cons(x, rest) => if Bool::and(not(m_is_neg(x)), Nat::lt(m_as_nat(x), 256)) {
+      match m_all_bytes(rest) {
+        None => None
+        Some(bs) => Some(Cons(m_as_nat(x), bs))
+      }
+    } else {
+      None
+    }
+  }
+}
+
+// ---- maps -----------------------------------------------------------------------------------
+
+pub fn m_find_key_general(
+  ctors: List(MCtor),
+  cx: MCx,
+  es: List(Pair(MVal, MVal)),
+  k: MVal,
+  at: Nat
+): Option(Nat) {
+  match es {
+    Nil => None
+    Cons(e, rest) => match e {
+      Pair { fst: key, snd: x } => if m_eq(ctors, cx, key, k) {
+        Some(at)
+      } else {
+        m_find_key_general(ctors, cx, rest, k, Succ(at))
+      }
+    }
+  }
+}
+
+// A text query compares text payloads without reading the heap. Other stored
+// values keep the general equality, including references and union injections.
+pub fn m_find_text_key(
+  ctors: List(MCtor),
+  cx: MCx,
+  es: List(Pair(MVal, MVal)),
+  text: Text,
+  at: Nat
+): Option(Nat) {
+  match es {
+    Nil => None
+    Cons(e, rest) => match e {
+      Pair { fst: key, snd: value } => match key {
+        MvText(stored) => if m_text_eq(stored, text) {
+          Some(at)
+        } else { m_find_text_key(ctors, cx, rest, text, Succ(at)) }
+        other => if m_eq(ctors, cx, other, MvText(text)) {
+          Some(at)
+        } else { m_find_text_key(ctors, cx, rest, text, Succ(at)) }
+      }
+    }
+  }
+}
+
+pub fn m_find_key(
+  ctors: List(MCtor),
+  cx: MCx,
+  es: List(Pair(MVal, MVal)),
+  k: MVal,
+  at: Nat
+): Option(Nat) {
+  match k {
+    MvText(text) => m_find_text_key(ctors, cx, es, text, at)
+    _ => m_find_key_general(ctors, cx, es, k, at)
+  }
+}
+
+// ---- the builtins -----------------------------------------------------------------------------
+
+pub fn m_val(v: MVal, cx: MCx): MOut {
+  MoutVal(v, cx)
+}
+
+// A borrow of the place `v` is, or of a temporary holding it.
+pub fn m_place(cx: MCx, v: MVal): Pair(MVal, MCx) {
+  match v {
+    MvRef(c, path) => Pair { fst: v, snd: cx }
+    _ => cx_temp(cx, v)
+  }
+}
+
+// Changes the value of the place `r` names with `f`, and answers `g` of the old value.
+pub fn m_update(ctors: List(MCtor), cx: MCx, r: MVal, f: (MVal) -> MVal, g: (MVal) -> MVal): MOut {
+  match m_place(cx, r) {
+    Pair { fst: place, snd: cx2 } => match place {
+      MvRef(cell, path) => {
+        let old := m_get(ctors, cx2, place)
+        MoutVal(g(old), m_put(ctors, cx2, cell, path, f(old)))
+      }
+      _ => MoutErr(m_internal())
+    }
+  }
+}
+
+// A borrow of the `i`-th item of what `r` names.
+pub fn m_item_ref(cx: MCx, r: MVal, s: MPath): Pair(MVal, MCx) {
+  m_child(cx, r, s)
+}
+
+pub fn m_checked_int(w: Nat, i: Int, cx: MCx): MOut {
+  if m_fits(w, i) { MoutVal(MvInt(i), cx) } else { MoutErr(m_too_large()) }
+}
+
+pub fn m_float1(
+  f: (Float) -> Float,
+  a: List(MVal),
+  cx: MCx
+): MOut {
+  MoutVal(MvFloat(f(m_as_float(m_nth_or_unit(a, 0)))), cx)
+}
+
+pub fn m_vec_get(ctors: List(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MOut {
+  let n := m_items_len(m_get(ctors, cx, r))
+  if Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), n)) {
+    match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
+      Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
+    }
+  } else {
+    if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
+  }
+}
+
+pub fn m_map_get(ctors: List(MCtor), cx: MCx, r: MVal, k: MVal, index: Bool): MOut {
+  match m_find_key(ctors, cx, m_as_entries(m_get(ctors, cx, r)), m_get(ctors, cx, k), 0) {
+    Some(i) => match m_item_ref(cx, r, MpathEntry(i)) {
+      Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
+    }
+    None => if index { MoutPerform("missing") } else { MoutVal(m_none(), cx) }
+  }
+}
+
+pub fn m_map_insert(ctors: List(MCtor), cx: MCx, r: MVal, k0: MVal, x: MVal): MOut {
+  let k := m_get(ctors, cx, k0)
+  let es := m_as_entries(m_get(ctors, cx, r))
+  match m_find_key(ctors, cx, es, k, 0) {
+    Some(i) => m_update(
+      ctors,
+      cx,
+      r,
+      (m: MVal) => MvMap(m_set(m_as_entries(m), i, Pair { fst: k, snd: x })),
+      (m: MVal) => match List::nth(m_as_entries(m), i) {
+        None => m_none()
+        Some(e) => match e {
+          Pair { fst: key, snd: old } => m_some(old)
+        }
+      }
+    )
+    None => m_update(
+      ctors,
+      cx,
+      r,
+      (m: MVal) => MvMap(List::append(m_as_entries(m), Cons(Pair { fst: k, snd: x }, Nil))),
+      (m: MVal) => m_none()
+    )
+  }
+}
+
+// The object of a pending, a signal or a mutex.
+pub fn m_pending_of(cx: MCx, id: Nat): Pair(MPend, Nat) {
+  match cx_obj(cx, id) {
+    Some(o) => match o {
+      MoPending(state, signal) => Pair { fst: state, snd: signal }
+      _ => Pair { fst: MpendTaken, snd: 0 }
+    }
+    None => Pair { fst: MpendTaken, snd: 0 }
+  }
+}
+
+pub fn m_raise(cx: MCx, s: Nat, handed: Option(MVal)): MCx {
+  cx_put(cx, s, MoSignal(true, handed))
+}
+
+// Whether the pending is ready: a timer is once the clock passes it.
+pub fn m_ready(cx: MCx, p: Nat): Pair(Bool, MCx) {
+  match m_pending_of(cx, p) {
+    Pair { fst: state, snd: s } => match state {
+      MpendRunning => Pair { fst: false, snd: cx }
+      MpendTimer(at) => if Int::le(at, cx_now(cx)) {
+        Pair { fst: true, snd: m_raise(cx_put(cx, p, MoPending(MpendReady(MvUnit), s)), s, None) }
+      } else {
+        Pair { fst: false, snd: cx }
+      }
+      _ => Pair { fst: true, snd: cx }
+    }
+  }
+}
+
+// A new pending in the state, with its signal.
+pub fn m_new_pending(cx: MCx, state: MPend, raised: Bool): Pair(Nat, MCx) {
+  match cx_alloc(cx, MoSignal(raised, None)) {
+    Pair { fst: s, snd: cx2 } => cx_alloc(cx2, MoPending(state, s))
+  }
+}
+
+pub fn m_id_of(v: MVal): Nat {
+  match v {
+    MvPending(p) => p
+    MvSignal(s) => s
+    MvMutex(m) => m
+    MvShared(k, c) => c
+    _ => 0
+  }
+}
+
+pub fn m_mutex_of(cx: MCx, id: Nat): Pair(Option(MVal), List(Nat)) {
+  match cx_obj(cx, id) {
+    Some(o) => match o {
+      MoMutex(value, waiting) => Pair { fst: value, snd: waiting }
+      _ => Pair { fst: None, snd: Nil }
+    }
+    None => Pair { fst: None, snd: Nil }
+  }
+}
+
+pub fn m_handed(cx: MCx, s: Nat): Option(MVal) {
+  match cx_obj(cx, s) {
+    Some(o) => match o {
+      MoSignal(raised, handed) => handed
+      _ => None
+    }
+    None => None
+  }
+}
+
+// The builtins of `Float32`, from 127 on.
+pub fn m_builtin_names_float32(): List(Text) {
+  Cons(
+    "Float32::of_float",
+    Cons(
+      "Float::of_float32",
+      Cons(
+        "Float32::bits",
+        Cons(
+          "Float32::of_bits",
+          Cons(
+            "Float32::is_nan",
+            Cons(
+              "Float32::abs",
+              Cons(
+                "Float32::floor",
+                Cons(
+                  "Float32::ceil",
+                  Cons(
+                    "Float32::trunc",
+                    Cons(
+                      "Float32::round",
+                      Cons(
+                        "Float32::sqrt",
+                        Cons(
+                          "Float32::cbrt",
+                          Cons(
+                            "Float32::exp",
+                            Cons(
+                              "Float32::ln",
+                              Cons(
+                                "Float32::log2",
+                                Cons(
+                                  "Float32::log10",
+                                  Cons(
+                                    "Float32::pow",
+                                    Cons(
+                                      "Float32::sin",
+                                      Cons(
+                                        "Float32::cos",
+                                        Cons(
+                                          "Float32::tan",
+                                          Cons(
+                                            "Float32::asin",
+                                            Cons(
+                                              "Float32::acos",
+                                              Cons(
+                                                "Float32::atan",
+                                                Cons(
+                                                  "Float32::atan2",
+                                                  Cons(
+                                                    "Float32::sinh",
+                                                    Cons("Float32::cosh", Cons("Float32::tanh", Nil))
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// The `b`-th builtin of `m_builtin_names` with the arguments `a`.
+pub fn m_builtin(ctors: List(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
+  let a0 := m_nth_or_unit(a, 0)
+  let a1 := m_nth_or_unit(a, 1)
+  let a2 := m_nth_or_unit(a, 2)
+  let v0 := m_get(ctors, cx, a0)
+  let v1 := m_get(ctors, cx, a1)
+  let v2 := m_get(ctors, cx, a2)
+  if Nat::lt(b, 30) {
+    m_builtin_0(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+  } else {
+    if Nat::lt(b, 60) {
+      m_builtin_30(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+    } else {
+      if Nat::lt(b, 90) {
+        m_builtin_60(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+      } else {
+        if Nat::lt(b, 127) {
+          m_builtin_90(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+        } else {
+          m_builtin_float32(cx, b, v0, v1)
+        }
+      }
+    }
+  }
+}
+
+pub fn m_builtin_0(
+  ctors: List(MCtor),
+  cx: MCx,
+  b: Nat,
+  a0: MVal,
+  a1: MVal,
+  a2: MVal,
+  v0: MVal,
+  v1: MVal,
+  v2: MVal
+): MOut {
+  if Nat::eq(b, 0) {
+    m_val(v0, cx)
+  } else { if Nat::eq(b, 1) {
+      m_update(ctors, cx, a0, (old: MVal) => a1, (old: MVal) => old)
+    } else { if Nat::eq(b, 2) {
+        m_val(MvBuf(""), cx)
+      } else { if Bool::or(Nat::eq(b, 3), Nat::eq(b, 4)) {
+          m_val(MvBuf(m_as_text(v0)), cx)
+        } else { if Nat::eq(b, 5) {
+            m_update(
+              ctors,
+              cx,
+              a0,
+              (old: MVal) => MvBuf(Text::concat(m_as_text(old), m_as_text(v1))),
+              (old: MVal) => MvUnit
+            )
+          } else { if Nat::eq(b, 6) {
+              m_val(MvText(m_as_text(v0)), cx)
+            } else { if Nat::eq(b, 7) {
+                m_val(MvVec(ms_empty()), cx)
+              } else { if Nat::eq(b, 8) {
+                  m_update(
+                    ctors,
+                    cx,
+                    a0,
+                    (old: MVal) => MvVec(ms_push(m_as_seq(old), a1)),
+                    (old: MVal) => MvUnit
+                  )
+                } else { if Nat::eq(b, 9) {
+                    m_update(
+                      ctors,
+                      cx,
+                      a0,
+                      (old: MVal) => MvVec(ms_init(m_as_seq(old))),
+                      (old: MVal) => m_option(ms_last(MvUnit, m_as_seq(old)))
+                    )
+                  } else { if Bool::or(Nat::eq(b, 10), Bool::or(Nat::eq(b, 11), Nat::eq(b, 12))) {
+                      m_val(m_int(m_items_len(v0)), cx)
+                    } else { if Bool::or(Nat::eq(b, 13), Nat::eq(b, 14)) {
+                        m_val(a0, cx)
+                      } else { if Nat::eq(b, 15) {
+                          m_update(
+                            ctors,
+                            cx,
+                            a0,
+                            (old: MVal) => MvVec(ms_empty()),
+                            (old: MVal) => MvUnit
+                          )
+                        } else { if Nat::eq(b, 16) {
+                            m_update(
+                              ctors,
+                              cx,
+                              a0,
+                              (old: MVal) => MvVec(ms_take(m_as_seq(old), m_as_nat(v1))),
+                              (old: MVal) => MvUnit
+                            )
+                          } else { if Bool::or(Nat::eq(b, 17), Bool::or(Nat::eq(b, 18), Nat::eq(b, 19))) {
+                              m_vec_get(ctors, cx, a0, v1, false)
+                            } else { if Nat::eq(b, 20) {
+                                let n := m_items_len(v0)
+                                match n {
+                                  Zero => m_val(m_none(), cx)
+                                  Succ(m) => match m_item_ref(cx, a0, MpathItem(m)) {
+                                    Pair { fst: x, snd: cx2 } => m_val(m_some(x), cx2)
+                                  }
+                                }
+                              } else { if Nat::eq(b, 21) {
+                                  m_vec_get(ctors, cx, a0, v1, true)
+                                } else { if Nat::eq(b, 22) {
+                                    let n := m_items_len(v0)
+                                    if Bool::and(
+                                      Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), n)),
+                                      Bool::and(not(m_is_neg(v2)), Nat::lt(m_as_nat(v2), n))
+                                    ) {
+                                      m_update(
+                                        ctors,
+                                        cx,
+                                        a0,
+                                        (old: MVal) => MvVec(
+                                          ms_swap(MvUnit, m_as_seq(old), m_as_nat(v1), m_as_nat(v2))
+                                        ),
+                                        (old: MVal) => MvUnit
+                                      )
+                                    } else {
+                                      MoutPerform("out_of_bounds")
+                                    }
+                                  } else { if Bool::or(Nat::eq(b, 23), Nat::eq(b, 24)) {
+                                      m_val(m_list(m_as_items(v0)), cx)
+                                    } else { if Nat::eq(b, 25) {
+                                        m_val(MvArray(m_as_seq(v0)), cx)
+                                      } else { if Nat::eq(b, 26) {
+                                          m_val(
+                                            MvArray(ms_of_list(m_items(1000000000, ctors, cx, v0))),
+                                            cx
+                                          )
+                                        } else { if Nat::eq(b, 27) {
+                                            let xs := m_as_seq(v0)
+                                            if Bool::and(
+                                              not(m_is_neg(v1)),
+                                              Nat::lt(m_as_nat(v1), ms_len(xs))
+                                            ) {
+                                              m_val(m_some(ms_get_or(MvUnit, xs, m_as_nat(v1))), cx)
+                                            } else {
+                                              m_val(m_none(), cx)
+                                            }
+                                          } else { if Nat::eq(b, 28) {
+                                              match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
+                                                None => MoutErr(m_too_large())
+                                                Some(bs) => m_val(
+                                                  MvBytes(
+                                                    Bytes::of_list(
+                                                      List::map((n: Nat) => U8::of_byte(n), bs)
+                                                    )
+                                                  ),
+                                                  cx
+                                                )
+                                              }
+                                            } else { if Nat::eq(b, 29) {
+                                                m_val(
+                                                  m_list(
+                                                    List::map(
+                                                      (x: Nat) => m_int(x),
+                                                      Bytes::values(m_as_bytes(v0))
+                                                    )
+                                                  ),
+                                                  cx
+                                                )
+                                              } else {
+                                                MoutErr(m_internal())
+                                              } } } } } } } } } } } } } } } } } } } } } } }
+}
+
+pub fn m_builtin_30(
+  ctors: List(MCtor),
+  cx: MCx,
+  b: Nat,
+  a0: MVal,
+  a1: MVal,
+  a2: MVal,
+  v0: MVal,
+  v1: MVal,
+  v2: MVal
+): MOut {
+  if Nat::eq(b, 30) {
+    m_val(m_int(Bytes::len(m_as_bytes(v0))), cx)
+  } else { if Nat::eq(b, 31) {
+      let bs := m_as_bytes(v0)
+      if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), Bytes::len(bs))) {
+        m_val(m_some(m_int(match Bytes::get(bs, m_as_nat(v1)) {
+        None => 0
+        Some(x) => U8::val(x)
+      })), cx)
+      } else {
+        m_val(m_none(), cx)
+      }
+    } else { if Nat::eq(b, 32) {
+        let bs := m_as_bytes(v0)
+        if m_range_ok(v1, v2, Bytes::len(bs)) {
+          match Bytes::slice(bs, m_as_nat(v1), m_as_nat(v2)) {
+            None => m_val(m_none(), cx)
+            Some(s) => m_val(m_some(MvBytes(s)), cx)
+          }
+        } else {
+          m_val(m_none(), cx)
+        }
+      } else { if Nat::eq(b, 33) {
+          m_val(MvBytes(Bytes::concat(m_as_bytes(v0), m_as_bytes(v1))), cx)
+        } else { if Nat::eq(b, 34) {
+            m_val(MvBool(Bytes::eq(m_as_bytes(v0), m_as_bytes(v1))), cx)
+          } else { if Nat::eq(b, 35) {
+              m_val(MvBytes(Bytes::of_text(m_as_text(v0))), cx)
+            } else { if Nat::eq(b, 36) {
+                match Text::of_bytes(m_as_bytes(v0)) {
+                  None => m_val(m_none(), cx)
+                  Some(t) => m_val(m_some(MvText(t)), cx)
+                }
+              } else { if Nat::eq(b, 37) {
+                  m_val(MvMap(Nil), cx)
+                } else { if Nat::eq(b, 38) {
+                    m_map_insert(ctors, cx, a0, a1, a2)
+                  } else { if Bool::or(Nat::eq(b, 39), Nat::eq(b, 40)) {
+                      m_map_get(ctors, cx, a0, a1, false)
+                    } else { if Nat::eq(b, 41) {
+                        m_map_get(ctors, cx, a0, a1, true)
+                      } else { if Nat::eq(b, 42) {
+                          m_val(MvVec(ms_of_list(List::map((e: Pair(MVal, MVal)) => m_pair(e.fst, e.snd), m_as_entries(v0)))), cx)
+                        } else { if Nat::eq(b, 43) {
+                            let bs := Text::bytes(m_as_text(v0))
+                            if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), List::length(bs))) {
+                              m_val(m_some(m_int(match List::nth(bs, m_as_nat(v1)) {
+        None => 0
+        Some(x) => x
+      })), cx)
+                            } else {
+                              m_val(m_none(), cx)
+                            }
+                          } else { if Nat::eq(b, 44) {
+                              let bs := Text::bytes(m_as_text(v0))
+                              if m_range_ok(v1, v2, List::length(bs)) {
+                                m_val(m_text_of_utf8(m_slice(bs, m_as_nat(v1), m_as_nat(v2))), cx)
+                              } else {
+                                m_val(m_none(), cx)
+                              }
+                            } else { if Nat::eq(b, 45) {
+                                let t := Text::utf8_of_code_point(m_as_nat(v0))
+                                if Bool::or(m_is_neg(v0), Nat::eq(Text::len(t), 0)) {
+                                  m_val(m_none(), cx)
+                                } else {
+                                  m_val(m_some(MvText(t)), cx)
+                                }
+                              } else { if Nat::eq(b, 46) {
+                                  match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
+                                    None => m_val(m_none(), cx)
+                                    Some(bs) => m_val(m_text_of_utf8(bs), cx)
+                                  }
+                                } else { if Bool::or(Nat::eq(b, 47), Nat::eq(b, 48)) {
+                                    m_checked_int(1, m_as_int(v0), cx)
+                                  } else { if Nat::eq(b, 49) {
+                                      m_checked_int(0, m_as_int(v0), cx)
+                                    } else { if Nat::eq(b, 50) {
+                                        m_val(v0, cx)
+                                      } else { if Bool::or(
+                                        Nat::eq(b, 51),
+                                        Bool::or(
+                                          Nat::eq(b, 52),
+                                          Bool::or(Nat::eq(b, 53), Nat::eq(b, 54))
+                                        )
+                                      ) {
+                                          m_checked_int(4, m_as_int(v0), cx)
+                                        } else { if Nat::eq(b, 55) {
+                                            m_checked_int(3, m_as_int(v0), cx)
+                                          } else { if Nat::eq(b, 56) {
+                                              m_checked_int(2, m_as_int(v0), cx)
+                                            } else { if Nat::eq(b, 57) {
+                                                match I64::of_int(m_as_int(v0)) {
+                                                  None => MoutErr(m_too_large())
+                                                  Some(n) => m_val(
+                                                    MvFloat(Float::of_i64(n)),
+                                                    cx
+                                                  )
+                                                }
+                                              } else { if Nat::eq(b, 58) {
+                                                  match I64::of_float_checked(m_as_float(v0)) {
+                                                    None => MoutErr(m_too_large())
+                                                    Some(n) => m_val(MvInt(I64::val(n)), cx)
+                                                  }
+                                                } else { if Nat::eq(b, 59) {
+                                                    match Float::of_text(
+                                                      m_as_text(v0)
+                                                    ) {
+                                                      None => m_val(m_none(), cx)
+                                                      Some(x) => m_val(m_some(MvFloat(x)), cx)
+                                                    }
+                                                  } else {
+                                                    MoutErr(m_internal())
+                                                  } } } } } } } } } } } } } } } } } } } } } } } } }
+}
+
+pub fn m_builtin_60(
+  ctors: List(MCtor),
+  cx: MCx,
+  b: Nat,
+  a0: MVal,
+  a1: MVal,
+  a2: MVal,
+  v0: MVal,
+  v1: MVal,
+  v2: MVal
+): MOut {
+  let a := m_as_float(v0)
+  let y := m_as_float(v1)
+  let fl := (x: Float) => m_val(MvFloat(x), cx)
+  if Nat::eq(b, 60) {
+    m_val(MvText(Text::of_float(a)), cx)
+  } else { if Nat::eq(b, 61) {
+      m_val(m_int(U64::val(Float::bits(a))), cx)
+    } else { if Nat::eq(b, 62) {
+        match U64::of_nat_checked(m_as_nat(v0)) {
+          None => MoutErr(m_too_large())
+          Some(n) => if m_is_neg(
+            v0
+          ) { MoutErr(m_too_large()) } else { fl(Float::of_bits(n)) }
+        }
+      } else { if Nat::eq(b, 63) {
+          m_val(MvBool(Float::is_nan(a)), cx)
+        } else { if Nat::eq(b, 64) { fl(Float::abs(a))
+          } else { if Nat::eq(b, 65) { fl(Float::floor(a))
+            } else { if Nat::eq(b, 66) { fl(Float::ceil(a))
+              } else { if Nat::eq(b, 67) { fl(Float::trunc(a))
+                } else { if Nat::eq(b, 68) { fl(Float::round(a))
+                  } else { if Nat::eq(b, 69) { fl(Float::sqrt(a))
+                    } else { if Nat::eq(b, 70) { fl(Float::cbrt(a))
+                      } else { if Nat::eq(b, 71) { fl(Float::exp(a))
+                        } else { if Nat::eq(b, 72) { fl(Float::ln(a))
+                          } else { if Nat::eq(b, 73) { fl(Float::log2(a))
+                            } else { if Nat::eq(b, 74) { fl(Float::log10(a))
+                              } else { if Nat::eq(b, 75) { fl(Float::pow(a, y))
+                                } else { if Nat::eq(b, 76) { fl(Float::sin(a))
+                                  } else { if Nat::eq(b, 77) { fl(Float::cos(a))
+                                    } else { if Nat::eq(b, 78) { fl(Float::tan(a))
+                                      } else { if Nat::eq(
+                                        b,
+                                        79
+                                      ) { fl(Float::asin(a))
+                                        } else { if Nat::eq(
+                                          b,
+                                          80
+                                        ) { fl(Float::acos(a))
+                                          } else { if Nat::eq(
+                                            b,
+                                            81
+                                          ) { fl(Float::atan(a))
+                                            } else { if Nat::eq(
+                                              b,
+                                              82
+                                            ) { fl(Float::atan2(a, y))
+                                              } else { if Nat::eq(
+                                                b,
+                                                83
+                                              ) { fl(Float::sinh(a))
+                                                } else { if Nat::eq(
+                                                  b,
+                                                  84
+                                                ) { fl(Float::cosh(a))
+                                                  } else { if Nat::eq(
+                                                    b,
+                                                    85
+                                                  ) { fl(Float::tanh(a))
+                                                    } else { if Nat::eq(b, 86) {
+                                                        m_val(
+                                                          m_list(
+                                                            m_words(Text::bytes(m_as_text(v0)), Nil)
+                                                          ),
+                                                          cx
+                                                        )
+                                                      } else { if Nat::eq(b, 87) {
+                                                          m_val(MvAnswer(a0), cx)
+                                                        } else { if Nat::eq(b, 88) {
+                                                            m_val(MvMore(Some(m_as_int(v1))), cx)
+                                                          } else { if Nat::eq(b, 89) {
+                                                              m_val(MvMore(None), cx)
+                                                            } else {
+                                                              MoutErr(m_internal())
+                                                            } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }
+}
+
+pub fn m_builtin_90(
+  ctors: List(MCtor),
+  cx: MCx,
+  b: Nat,
+  a0: MVal,
+  a1: MVal,
+  a2: MVal,
+  v0: MVal,
+  v1: MVal,
+  v2: MVal
+): MOut {
+  if Nat::lt(b, 104) {
+    // The bit operations: 90..96 of `u32`, 97..103 of `u64`.
+    let bits := if Nat::lt(b, 97) { 32 } else { 64 }
+    let op := if Nat::lt(b, 97) { Nat::sub(b, 90) } else { Nat::sub(b, 97) }
+    m_val(m_int(m_bits(bits, op, m_as_nat(v0), m_as_nat(v1))), cx)
+  } else { if Bool::or(Nat::eq(b, 104), Nat::eq(b, 107)) {
+      match cx_alloc(cx, MoCell(v0)) {
+        Pair { fst: c, snd: cx2 } => m_val(MvShared(if Nat::eq(b, 104) { 0 } else { 1 }, c), cx2)
+      }
+    } else { if Bool::or(Nat::eq(b, 105), Nat::eq(b, 108)) {
+        m_val(cx_cell(cx, m_id_of(v0)), cx)
+      } else { if Nat::eq(b, 106) {
+          m_val(MvUnit, cx_put(cx, m_id_of(v0), MoCell(a1)))
+        } else { if Nat::eq(b, 109) {
+            m_val(MvUnit, cx_put(cx, m_id_of(v0), MoCell(v1)))
+          } else { if Nat::eq(b, 110) {
+              let c := m_id_of(v0)
+              let old := m_as_nat(cx_cell(cx, c))
+              let new := Nat::rem_nz(Nat::add(old, m_as_nat(v1)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+              m_val(m_int(old), cx_put(cx, c, MoCell(m_int(new))))
+            } else { if Nat::eq(b, 111) {
+                m_val(MvSecret(a0), cx)
+              } else { if Nat::eq(b, 112) {
+                  match v0 {
+                    MvSecret(x) => m_val(x, cx)
+                    _ => m_val(v0, cx)
+                  }
+                } else { if Nat::eq(b, 113) {
+                    if m_fits(
+                      2,
+                      m_as_int(v0)
+                    ) { MoutExit(m_as_int(v0)) } else { MoutErr(m_too_large()) }
+                  } else { if Nat::eq(b, 114) {
+                      MoutErr(m_as_text(v0))
+                    } else { if Nat::eq(b, 115) {
+                        // The host says the clock first (`vm_timer` makes the timer).
+                        MoutAsk("vm_now", Nil, cx)
+                      } else { if Bool::or(Nat::eq(b, 116), Nat::eq(b, 117)) {
+                          match m_new_pending(cx, MpendRunning, false) {
+                            Pair { fst: p, snd: cx2 } => MoutSpawn(v0, p, cx2)
+                          }
+                        } else { if Nat::eq(b, 118) {
+                            match m_new_pending(cx, MpendReady(a0), true) {
+                              Pair { fst: p, snd: cx2 } => m_val(MvPending(p), cx2)
+                            }
+                          } else { if Nat::eq(b, 119) {
+                              let p := m_id_of(v0)
+                              match m_ready(cx, p) {
+                                Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
+                                  Pair { fst: state, snd: s } => match state {
+                                    MpendReady(x) => m_val(
+                                      x,
+                                      cx_put(cx2, p, MoPending(MpendTaken, s))
+                                    )
+                                    _ => MoutErr("internal: a result taken before it was there")
+                                  }
+                                }
+                              }
+                            } else { if Nat::eq(b, 120) {
+                                let p := m_id_of(v0)
+                                match m_ready(cx, p) {
+                                  Pair { fst: r, snd: cx2 } => if r {
+                                    m_val(MvBool(true), cx2)
+                                  } else { MoutYield(p, cx2) }
+                                }
+                              } else { if Nat::eq(b, 121) {
+                                  let p := m_id_of(v0)
+                                  match m_ready(cx, p) {
+                                    Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
+                                      Pair { fst: state, snd: s } => m_val(MvSignal(s), cx2)
+                                    }
+                                  }
+                                } else { if Nat::eq(b, 122) {
+                                    match cx_alloc(cx, MoMutex(Some(a0), Nil)) {
+                                      Pair { fst: m, snd: cx2 } => m_val(MvMutex(m), cx2)
+                                    }
+                                  } else { if Nat::eq(b, 123) {
+                                      let m := m_id_of(v0)
+                                      match m_mutex_of(cx, m) {
+                                        Pair { fst: value, snd: waiting } => match cx_alloc(
+                                          cx,
+                                          MoSignal(false, None)
+                                        ) {
+                                          Pair { fst: s, snd: cx2 } => match value {
+                                            Some(x) => match waiting {
+                                              Nil => m_val(
+                                                MvSignal(s),
+                                                m_raise(
+                                                  cx_put(cx2, m, MoMutex(None, Nil)),
+                                                  s,
+                                                  Some(x)
+                                                )
+                                              )
+                                              _ => m_val(
+                                                MvSignal(s),
+                                                cx_put(
+                                                  cx2,
+                                                  m,
+                                                  MoMutex(value, List::append(waiting, Cons(s, Nil)))
+                                                )
+                                              )
+                                            }
+                                            None => m_val(
+                                              MvSignal(s),
+                                              cx_put(
+                                                cx2,
+                                                m,
+                                                MoMutex(value, List::append(waiting, Cons(s, Nil)))
+                                              )
+                                            )
+                                          }
+                                        }
+                                      }
+                                    } else { if Nat::eq(b, 124) {
+                                        let s := m_id_of(v1)
+                                        match m_handed(cx, s) {
+                                          None => MoutErr(
+                                            "internal: a mutex's content taken before it was handed"
+                                          )
+                                          Some(x) => m_val(x, cx_put(cx, s, MoSignal(true, None)))
+                                        }
+                                      } else { if Nat::eq(b, 125) {
+                                          let m := m_id_of(v0)
+                                          match m_mutex_of(cx, m) {
+                                            Pair { fst: value, snd: waiting } => match waiting {
+                                              Cons(s, rest) => m_val(
+                                                MvUnit,
+                                                m_raise(
+                                                  cx_put(cx, m, MoMutex(value, rest)),
+                                                  s,
+                                                  Some(a1)
+                                                )
+                                              )
+                                              Nil => m_val(
+                                                MvUnit,
+                                                cx_put(cx, m, MoMutex(Some(a1), Nil))
+                                              )
+                                            }
+                                          }
+                                        } else {
+                                          MoutErr(m_internal())
+                                        } } } } } } } } } } } } } } } } } } } }
+}
+
+// The builtins of `Float32` (127 on): the same as `Float`'s, on 32 bits.
+pub fn m_builtin_float32(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
+  let a := m_as_float32(v0)
+  let y := m_as_float32(v1)
+  let fl := (x: Float32) => m_val(MvFloat32(x), cx)
+  if Nat::eq(b, 127) {
+    fl(Float32::of_float(m_as_float(v0)))
+  } else { if Nat::eq(b, 128) {
+      m_val(MvFloat(Float::of_float32(a)), cx)
+    } else { if Nat::eq(b, 129) {
+        m_val(m_int(U32::val(Float32::bits(a))), cx)
+      } else { if Nat::eq(b, 130) {
+          match U32::of_nat_checked(m_as_nat(v0)) {
+            None => MoutErr(m_too_large())
+            Some(n) => if m_is_neg(
+              v0
+            ) { MoutErr(m_too_large()) } else { fl(Float32::of_bits(n)) }
+          }
+        } else { if Nat::eq(b, 131) {
+            m_val(MvBool(Float32::is_nan(a)), cx)
+          } else { if Nat::eq(b, 132) {
+              fl(Float32::abs(a))
+            } else { if Nat::eq(b, 133) {
+                fl(Float32::floor(a))
+              } else { if Nat::eq(b, 134) {
+                  fl(Float32::ceil(a))
+                } else { if Nat::eq(b, 135) {
+                    fl(Float32::trunc(a))
+                  } else { if Nat::eq(b, 136) {
+                      fl(Float32::round(a))
+                    } else { if Nat::eq(b, 137) {
+                        fl(Float32::sqrt(a))
+                      } else { if Nat::eq(b, 138) {
+                          fl(Float32::cbrt(a))
+                        } else { if Nat::eq(b, 139) {
+                            fl(Float32::exp(a))
+                          } else { if Nat::eq(b, 140) {
+                              fl(Float32::ln(a))
+                            } else { if Nat::eq(b, 141) {
+                                fl(Float32::log2(a))
+                              } else { if Nat::eq(b, 142) {
+                                  fl(Float32::log10(a))
+                                } else { if Nat::eq(b, 143) {
+                                    fl(Float32::pow(a, y))
+                                  } else { if Nat::eq(b, 144) {
+                                      fl(Float32::sin(a))
+                                    } else { if Nat::eq(b, 145) {
+                                        fl(Float32::cos(a))
+                                      } else { if Nat::eq(b, 146) {
+                                          fl(Float32::tan(a))
+                                        } else { if Nat::eq(b, 147) {
+                                            fl(Float32::asin(a))
+                                          } else { if Nat::eq(b, 148) {
+                                              fl(Float32::acos(a))
+                                            } else { if Nat::eq(b, 149) {
+                                                fl(Float32::atan(a))
+                                              } else { if Nat::eq(b, 150) {
+                                                  fl(Float32::atan2(a, y))
+                                                } else { if Nat::eq(b, 151) {
+                                                    fl(Float32::sinh(a))
+                                                  } else { if Nat::eq(b, 152) {
+                                                      fl(Float32::cosh(a))
+                                                    } else { if Nat::eq(b, 153) {
+                                                        fl(Float32::tanh(a))
+                                                      } else {
+                                                        MoutErr(m_internal())
+                                                      } } } } } } } } } } } } } } } } } } } } } } } } } } }
+}

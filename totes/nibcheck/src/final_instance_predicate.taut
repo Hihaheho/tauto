@@ -1,0 +1,74 @@
+import "tracked_instantiation_sound.taut"
+import "final_class_parameter_sound.taut"
+
+pub def InstancePredicateParameter(
+  c: Checker,
+  p: Pair(Text, Text),
+  map: Ordmap(Text, Ty),
+  name: Text,
+  kind: Kind
+): Prop := ∀ ty: Ty. ∀ found: Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text) = Some(ty). ck_resolve(c, ty) = TyParam(name, kind)
+pub theorem final_instance_predicate_parameter(
+  c: Checker,
+  assume: List(Pair(Text, Text)),
+  p: Pair(Text, Text),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  name: Text,
+  kind: Kind,
+  recorded: InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(c)),
+  resolved: InstancePredicateParameter(c, p, map, name, kind),
+  final: FinalDiagnostics0(c)
+): ClassAssumption(assume, instantiation_constraint(p), name) {
+  match recorded: ClassAssumption(assume, instantiation_constraint(p), name) {
+    Mk(ty, found, member) => final_parameter_class(
+      c,
+      instantiated_pending(instantiation_constraint(p), ty, what, span, assume),
+      name,
+      kind,
+      member,
+      resolved(ty, found),
+      final
+    )
+  }
+}
+pub theorem continued_instance_predicate_parameter(
+  c: Checker,
+  next: Checker,
+  assume: List(Pair(Text, Text)),
+  p: Pair(Text, Text),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  name: Text,
+  kind: Kind,
+  recorded: InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(c)),
+  retained: TrackedState(c, next),
+  resolved: InstancePredicateParameter(ck_st(ck_finish(next)), p, map, name, kind),
+  clean: DiagnosticReportClean(ck_finish(next))
+): ClassAssumption(assume, instantiation_constraint(p), name) {
+  final_instance_predicate_parameter(
+    ck_st(ck_finish(next)),
+    assume,
+    p,
+    map,
+    what,
+    span,
+    name,
+    kind,
+    tracked_instance_predicate(
+      c,
+      ck_st(ck_finish(next)),
+      assume,
+      p,
+      map,
+      what,
+      span,
+      recorded,
+      tracked_state_trans(c, next, ck_st(ck_finish(next)), retained, ck_finish_tracked(next, clean))
+    ),
+    resolved,
+    ck_finish_obligations(next, clean)
+  )
+}

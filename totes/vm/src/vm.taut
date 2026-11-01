@@ -1,0 +1,365 @@
+import std::Base
+
+// A first-order language with recursive functions, a bytecode for it, the machine that
+// runs the bytecode, and the compiler. `proof/vm.taut` proves that the machine runs the
+// compiled program to the value the reference semantics `Eval` gives.
+
+// ---- the language -----------------------------------------------------------
+
+pub(open) inductive Val: Type {
+  VNat(n: Nat): Val
+  VPair(a: Val, b: Val): Val
+}
+
+// Locals are de Bruijn indices into the environment (the innermost `XLet` is 0). A
+// function takes one argument, which is local 0 in its body. `XIf` takes the first branch
+// when the condition is not zero.
+pub(open) inductive Expr: Type {
+  XVar(i: Nat): Expr
+  XNat(n: Nat): Expr
+  XAdd(a: Expr, b: Expr): Expr
+  XSub(a: Expr, b: Expr): Expr
+  XMul(a: Expr, b: Expr): Expr
+  XLt(a: Expr, b: Expr): Expr
+  XLet(a: Expr, body: Expr): Expr
+  XIf(c: Expr, t: Expr, e: Expr): Expr
+  XPair(a: Expr, b: Expr): Expr
+  XFst(a: Expr): Expr
+  XSnd(a: Expr): Expr
+  XCall(f: Nat, a: Expr): Expr
+}
+
+pub fn bool_nat(b: Bool): Nat {
+  match b: Nat {
+    true => 1
+    false => 0
+  }
+}
+
+// The reference semantics, big-step. `prog` lists the bodies of the functions; `XCall(f, a)`
+// calls the `f`-th one. A program that does not stop has no `Eval`.
+pub(open) inductive Eval(prog: List(Expr)): (List(Val), Expr, Val) -> Prop {
+  EvVar<env: List(Val), i: Nat, v: Val>(h: List::nth(env, i) = Some(v)): Eval(prog, env, XVar(i), v)
+  EvNat(env: List(Val), n: Nat): Eval(prog, env, XNat(n), VNat(n))
+  EvAdd<env: List(
+    Val
+  ), a: Expr, b: Expr, n: Nat, m: Nat>(
+    ha: Eval(prog, env, a, VNat(n)),
+    hb: Eval(prog, env, b, VNat(m))
+  ): Eval(prog, env, XAdd(a, b), VNat(Nat::add(n, m)))
+  EvSub<env: List(
+    Val
+  ), a: Expr, b: Expr, n: Nat, m: Nat>(
+    ha: Eval(prog, env, a, VNat(n)),
+    hb: Eval(prog, env, b, VNat(m))
+  ): Eval(prog, env, XSub(a, b), VNat(Nat::sub(n, m)))
+  EvMul<env: List(
+    Val
+  ), a: Expr, b: Expr, n: Nat, m: Nat>(
+    ha: Eval(prog, env, a, VNat(n)),
+    hb: Eval(prog, env, b, VNat(m))
+  ): Eval(prog, env, XMul(a, b), VNat(Nat::mul(n, m)))
+  EvLt<env: List(
+    Val
+  ), a: Expr, b: Expr, n: Nat, m: Nat>(
+    ha: Eval(prog, env, a, VNat(n)),
+    hb: Eval(prog, env, b, VNat(m))
+  ): Eval(prog, env, XLt(a, b), VNat(bool_nat(Nat::lt(n, m))))
+  EvLet<env: List(
+    Val
+  ), a: Expr, body: Expr, va: Val, v: Val>(
+    ha: Eval(prog, env, a, va),
+    hb: Eval(prog, Cons(va, env), body, v)
+  ): Eval(prog, env, XLet(a, body), v)
+  EvIfThen<env: List(
+    Val
+  ), c: Expr, t: Expr, e: Expr, n: Nat, v: Val>(
+    hc: Eval(prog, env, c, VNat(Succ(n))),
+    ht: Eval(prog, env, t, v)
+  ): Eval(prog, env, XIf(c, t, e), v)
+  EvIfElse<env: List(
+    Val
+  ), c: Expr, t: Expr, e: Expr, v: Val>(
+    hc: Eval(prog, env, c, VNat(Zero)),
+    he: Eval(prog, env, e, v)
+  ): Eval(prog, env, XIf(c, t, e), v)
+  EvPair<env: List(
+    Val
+  ), a: Expr, b: Expr, va: Val, vb: Val>(
+    ha: Eval(prog, env, a, va),
+    hb: Eval(prog, env, b, vb)
+  ): Eval(prog, env, XPair(a, b), VPair(va, vb))
+  EvFst<env: List(
+    Val
+  ), a: Expr, va: Val, vb: Val>(ha: Eval(prog, env, a, VPair(va, vb))): Eval(prog, env, XFst(a), va)
+  EvSnd<env: List(
+    Val
+  ), a: Expr, va: Val, vb: Val>(ha: Eval(prog, env, a, VPair(va, vb))): Eval(prog, env, XSnd(a), vb)
+  EvCall<env: List(
+    Val
+  ), f: Nat, a: Expr, body: Expr, va: Val, v: Val>(
+    ha: Eval(prog, env, a, va),
+    found: List::nth(prog, f) = Some(body),
+    hb: Eval(prog, Cons(va, Nil), body, v)
+  ): Eval(prog, env, XCall(f, a), v)
+}
+
+// ---- the bytecode -----------------------------------------------------------
+
+// Each instruction holds the code after it, so a function body is one `Bytecode` and no
+// address is computed. `c_branch` and `c_call` run a block that ends in `c_ret`, which
+// returns to the code saved in the frame.
+pub(open) inductive Bytecode: Type {
+  CRet: Bytecode
+  CLoad(i: Nat, k: Bytecode): Bytecode
+  CPush(n: Nat, k: Bytecode): Bytecode
+  CAdd(k: Bytecode): Bytecode
+  CSub(k: Bytecode): Bytecode
+  CMul(k: Bytecode): Bytecode
+  CLt(k: Bytecode): Bytecode
+  CBind(k: Bytecode): Bytecode
+  CUnbind(k: Bytecode): Bytecode
+  CBranch(t: Bytecode, e: Bytecode, k: Bytecode): Bytecode
+  CMkpair(k: Bytecode): Bytecode
+  CFst(k: Bytecode): Bytecode
+  CSnd(k: Bytecode): Bytecode
+  CCall(f: Nat, k: Bytecode): Bytecode
+}
+
+// What `c_ret` returns to: the code, the environment and the operand stack of the caller.
+pub(open) inductive Frame: Type {
+  FrameMk(k: Bytecode, env: List(Val), st: List(Val)): Frame
+}
+
+pub(open) inductive State: Type {
+  StateMk(code: Bytecode, env: List(Val), st: List(Val), frames: List(Frame)): State
+}
+
+// Applies a binary operation on numbers to the two values on top of the stack.
+pub fn step_nat2(
+  op: (Nat, Nat) -> Nat,
+  k: Bytecode,
+  env: List(Val),
+  st: List(Val),
+  fr: List(Frame)
+): Option(State) {
+  match st: Option(State) {
+    Nil => None
+    Cons(vb, s1) => match vb: Option(State) {
+      VPair(p, q) => None
+      VNat(m) => match s1: Option(State) {
+        Nil => None
+        Cons(va, s2) => match va: Option(State) {
+          VPair(p, q) => None
+          VNat(n) => Some(StateMk(k, env, Cons(VNat(op(n, m)), s2), fr))
+        }
+      }
+    }
+  }
+}
+
+pub fn step_ret(env: List(Val), st: List(Val), fr: List(Frame)): Option(State) {
+  match st: Option(State) {
+    Nil => None
+    Cons(v, s1) => match fr: Option(State) {
+      Nil => None
+      Cons(f, rest) => match f: Option(State) {
+        FrameMk(k, env2, st2) => Some(StateMk(k, env2, Cons(v, st2), rest))
+      }
+    }
+  }
+}
+
+pub fn step_branch(
+  t: Bytecode,
+  e: Bytecode,
+  k: Bytecode,
+  env: List(Val),
+  st: List(Val),
+  fr: List(Frame)
+): Option(State) {
+  match st: Option(State) {
+    Nil => None
+    Cons(c, s1) => match c: Option(State) {
+      VPair(p, q) => None
+      VNat(n) => match n: Option(State) {
+        Zero => Some(StateMk(e, env, Nil, Cons(FrameMk(k, env, s1), fr)))
+        Succ(n2) => Some(StateMk(t, env, Nil, Cons(FrameMk(k, env, s1), fr)))
+      }
+    }
+  }
+}
+
+pub fn step_proj(
+  first: Bool,
+  k: Bytecode,
+  env: List(Val),
+  st: List(Val),
+  fr: List(Frame)
+): Option(State) {
+  match st: Option(State) {
+    Nil => None
+    Cons(p, s1) => match p: Option(State) {
+      VNat(n) => None
+      VPair(a, b) => match first: Option(State) {
+        true => Some(StateMk(k, env, Cons(a, s1), fr))
+        false => Some(StateMk(k, env, Cons(b, s1), fr))
+      }
+    }
+  }
+}
+
+pub fn step_load(
+  o: Option(Val),
+  k: Bytecode,
+  env: List(Val),
+  st: List(Val),
+  fr: List(Frame)
+): Option(State) {
+  match o: Option(State) {
+    None => None
+    Some(v) => Some(StateMk(k, env, Cons(v, st), fr))
+  }
+}
+
+// Enters `body` with `v` as its only local, saving the caller in a frame.
+pub fn step_call(
+  o: Option(Bytecode),
+  v: Val,
+  k: Bytecode,
+  env: List(Val),
+  st: List(Val),
+  fr: List(Frame)
+): Option(State) {
+  match o: Option(State) {
+    None => None
+    Some(body) => Some(StateMk(body, Cons(v, Nil), Nil, Cons(FrameMk(k, env, st), fr)))
+  }
+}
+
+// One instruction. `None` when the machine has stopped: the program returned from its
+// last frame, or an instruction found the wrong values (which compiled code never does).
+pub fn step(prog: List(Bytecode), s: State): Option(State) {
+  match s: Option(State) {
+    StateMk(code, env, st, fr) => match code: Option(State) {
+      CRet => step_ret(env, st, fr)
+      CLoad(i, k) => step_load(List::nth(env, i), k, env, st, fr)
+      CPush(n, k) => Some(StateMk(k, env, Cons(VNat(n), st), fr))
+      CAdd(k) => step_nat2(Nat::add, k, env, st, fr)
+      CSub(k) => step_nat2(Nat::sub, k, env, st, fr)
+      CMul(k) => step_nat2(Nat::mul, k, env, st, fr)
+      CLt(k) => step_nat2((n: Nat, m: Nat) => bool_nat(Nat::lt(n, m)), k, env, st, fr)
+      CBind(k) => match st: Option(State) {
+        Nil => None
+        Cons(v, s1) => Some(StateMk(k, Cons(v, env), s1, fr))
+      }
+      CUnbind(k) => match env: Option(State) {
+        Nil => None
+        Cons(v, env2) => Some(StateMk(k, env2, st, fr))
+      }
+      CBranch(t, e, k) => step_branch(t, e, k, env, st, fr)
+      CMkpair(k) => match st: Option(State) {
+        Nil => None
+        Cons(vb, s1) => match s1: Option(State) {
+          Nil => None
+          Cons(va, s2) => Some(StateMk(k, env, Cons(VPair(va, vb), s2), fr))
+        }
+      }
+      CFst(k) => step_proj(true, k, env, st, fr)
+      CSnd(k) => step_proj(false, k, env, st, fr)
+      CCall(f, k) => match st: Option(State) {
+        Nil => None
+        Cons(v, s1) => step_call(List::nth(prog, f), v, k, env, s1, fr)
+      }
+    }
+  }
+}
+
+// Runs at most `fuel` instructions and gives the state where the machine stopped, or
+// `None` when the fuel ran out first.
+pub fn run(prog: List(Bytecode), fuel: Nat, s: State): Option(State) {
+  match fuel: Option(State) {
+    Zero => None
+    Succ(f) => match step(prog, s): Option(State) {
+      None => Some(s)
+      Some(s2) => run(prog, f, s2)
+    }
+  }
+}
+
+// ---- the compiler -----------------------------------------------------------
+
+// The code of `e` followed by `k`.
+pub fn comp(e: Expr, k: Bytecode): Bytecode {
+  match e: Bytecode {
+    XVar(i) => CLoad(i, k)
+    XNat(n) => CPush(n, k)
+    XAdd(a, b) => comp(a, comp(b, CAdd(k)))
+    XSub(a, b) => comp(a, comp(b, CSub(k)))
+    XMul(a, b) => comp(a, comp(b, CMul(k)))
+    XLt(a, b) => comp(a, comp(b, CLt(k)))
+    XLet(a, body) => comp(a, CBind(comp(body, CUnbind(k))))
+    XIf(c, t, e2) => comp(c, CBranch(comp(t, CRet), comp(e2, CRet), k))
+    XPair(a, b) => comp(a, comp(b, CMkpair(k)))
+    XFst(a) => comp(a, CFst(k))
+    XSnd(a) => comp(a, CSnd(k))
+    XCall(f, a) => comp(a, CCall(f, k))
+  }
+}
+
+pub fn comp_body(e: Expr): Bytecode {
+  comp(e, CRet)
+}
+
+pub fn compile(prog: List(Expr)): List(Bytecode) {
+  List::map(comp_body, prog)
+}
+
+// The state that calls function `f` with `arg` and stops when it returns. The extra frame
+// is where the answer lands.
+pub fn start(f: Nat, arg: Val): State {
+  StateMk(CCall(f, CRet), Nil, Cons(arg, Nil), Nil)
+}
+
+// The answer of a machine that returned from its last frame: the one value on its stack.
+// A machine stuck on an instruction that found the wrong values has no answer.
+pub fn final_answer(s: State): Option(Val) {
+  match s: Option(Val) {
+    StateMk(code, env, st, fr) => match code: Option(Val) {
+      CRet => match fr: Option(Val) {
+        Nil => match st: Option(Val) {
+          Nil => None
+          Cons(v, rest) => match rest: Option(Val) {
+            Nil => Some(v)
+            Cons(w, rest2) => None
+          }
+        }
+        Cons(f, frs) => None
+      }
+      CLoad(i, k) => None
+      CPush(n, k) => None
+      CAdd(k) => None
+      CSub(k) => None
+      CMul(k) => None
+      CLt(k) => None
+      CBind(k) => None
+      CUnbind(k) => None
+      CBranch(t, e, k) => None
+      CMkpair(k) => None
+      CFst(k) => None
+      CSnd(k) => None
+      CCall(f, k) => None
+    }
+  }
+}
+
+pub fn answer(o: Option(State)): Option(Val) {
+  match o: Option(Val) {
+    None => None
+    Some(s) => final_answer(s)
+  }
+}
+
+pub fn run_program(prog: List(Expr), fuel: Nat, f: Nat, arg: Val): Option(Val) {
+  answer(run(compile(prog), fuel, start(f, arg)))
+}

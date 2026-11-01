@@ -1,0 +1,163 @@
+import "registration_context_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem registration_if_context(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  take: Bool,
+  h: CkContextFrame(c, m)
+): CkContextFrame(c, registration_if(c, m, take)) {
+  match take: CkContextFrame(c, registration_if(c, m, take)) {
+    true => context_rewrap(c, m, h)
+    false => ordinary => Refl
+  }
+}
+pub theorem ck_program_data_one_context(
+  c: Checker,
+  s: SurfaceStmt
+): CkContextFrame(c, ck_program_data_one(c, s)) {
+  match s: CkContextFrame(c, ck_program_data_one(c, s)) {
+    StLet(name, ty, value, borrow, mutable) => ordinary => Refl
+    StVar(name, ty, value, borrow) => ordinary => Refl
+    StModule(name, stmts, start, end) => ordinary => Refl
+    StAssign(name, name_place, value) => ordinary => Refl
+    StCalled(name_generates, value) => ordinary => Refl
+    StFn(f) => ordinary => Refl
+    StTheorem(t) => ordinary => Refl
+    StDef(t) => ordinary => Refl
+    StMutual(stmts, start, end) => ordinary => Refl
+    StImport(path, start, end) => ordinary => Refl
+    StInductive(i) => ordinary => Refl
+    StEffect(e) => ordinary => Refl
+    StExtern(abi, fns, start, end) => ordinary => Refl
+    StClass(klass) => ordinary => Refl
+    StInstance(i) => ordinary => Refl
+    StWhile(cond, body) => ordinary => Refl
+    StReturn(value) => ordinary => Refl
+    StExpr(value) => ordinary => Refl
+    StOther(what, start, end) => ordinary => Refl
+    StMacro(name, function, start, end) => ordinary => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordinary => Refl
+    StSyntax(name, grammar, start, end) => ordinary => Refl
+    StStruct(d) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_program_StStruct_unf(d, c)),
+      context_rewrap(c, ck_declare_data(c, d, true, false), ck_declare_data_context(c, d, true, false))
+    )
+    StEnum(d) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_program_StEnum_unf(d, c)),
+      context_rewrap(c, ck_declare_data(c, d, false, false), ck_declare_data_context(c, d, false, false))
+    )
+  }
+}
+pub theorem ck_program_data_context(
+  stmts: List(SurfaceStmt),
+  c: Checker
+): CkContextFrame(c, ck_program_data(stmts, c)) {
+  match stmts: CkContextFrame(c, ck_program_data(stmts, c)) {
+    Nil => ordinary => Refl
+    Cons(s, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_program_unf(s, rest, c)),
+      context_bind(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s),
+        ck_program_data_one_context(c, s),
+        ignored => next => context_rewrap(
+          next,
+          ck_program_data(rest, next),
+          ck_program_data_context(rest, next)
+        )
+      )
+    )
+  }
+}
+pub theorem ck_prelude_data_one_context(
+  c: Checker,
+  s: SurfaceStmt,
+  own: Ordmap(Text, Bool)
+): CkContextFrame(c, ck_prelude_data_one(c, s, own)) {
+  match s: CkContextFrame(c, ck_prelude_data_one(c, s, own)) {
+    StLet(name, ty, value, borrow, mutable) => ordinary => Refl
+    StVar(name, ty, value, borrow) => ordinary => Refl
+    StModule(name, stmts, start, end) => ordinary => Refl
+    StAssign(name, name_place, value) => ordinary => Refl
+    StCalled(name_generates, value) => ordinary => Refl
+    StFn(f) => ordinary => Refl
+    StTheorem(t) => ordinary => Refl
+    StDef(t) => ordinary => Refl
+    StMutual(stmts, start, end) => ordinary => Refl
+    StImport(path, start, end) => ordinary => Refl
+    StInductive(i) => ordinary => Refl
+    StExtern(abi, fns, start, end) => ordinary => Refl
+    StClass(klass) => ordinary => Refl
+    StInstance(i) => ordinary => Refl
+    StWhile(cond, body) => ordinary => Refl
+    StReturn(value) => ordinary => Refl
+    StExpr(value) => ordinary => Refl
+    StOther(what, start, end) => ordinary => Refl
+    StMacro(name, function, start, end) => ordinary => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordinary => Refl
+    StSyntax(name, grammar, start, end) => ordinary => Refl
+    StEffect(e) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_prelude_StEffect_unf(e, c, own)),
+      registration_if_context(
+        c,
+        ck_declare_effect(c, e),
+        not(types_is_own(own, registration_effect_name(e))),
+        ck_declare_effect_frame_context(c, e)
+      )
+    )
+    StStruct(d) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_prelude_StStruct_unf(d, c, own)),
+      registration_if_context(
+        c,
+        ck_declare_data(c, d, true, data_is_opaque(registration_ctors(d))),
+        not(types_is_own(own, registration_name(d))),
+        ck_declare_data_context(c, d, true, data_is_opaque(registration_ctors(d)))
+      )
+    )
+    StEnum(d) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_prelude_StEnum_unf(d, c, own)),
+      registration_if_context(
+        c,
+        ck_declare_data(c, d, false, false),
+        not(types_is_own(own, registration_name(d))),
+        ck_declare_data_context(c, d, false, false)
+      )
+    )
+  }
+}
+pub theorem ck_prelude_data_context(
+  stmts: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Bool)
+): CkContextFrame(c, ck_prelude_data(stmts, c, own)) {
+  match stmts: CkContextFrame(c, ck_prelude_data(stmts, c, own)) {
+    Nil => ordinary => Refl
+    Cons(s, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
+      Eq::sym(registration_prelude_unf(s, rest, c, own)),
+      context_bind(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
+        ck_prelude_data_one(c, s, own),
+        ck_prelude_data_one_context(c, s, own),
+        ignored => next => context_rewrap(
+          next,
+          ck_prelude_data(rest, next, own),
+          ck_prelude_data_context(rest, next, own)
+        )
+      )
+    )
+  }
+}

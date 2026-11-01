@@ -1,0 +1,2798 @@
+import "percent.taut"
+import "../src/valid.taut"
+
+// Parsing the serialization of a valid URL gives the URL back
+// (`parse_serialize`).
+
+// ---- booleans and small numbers -----------------------------------------------------
+
+pub theorem or_false(a: Bool, b: Bool, h: Bool::or(a, b) = false): And(a = false, b = false) {
+  match a: (Bool::or(a, b) = false) -> And(a = false, b = false) {
+    true => (e: true = false) => False::elim(true_ne_false(e))
+    false => (e: b = false) => AndIntro(Refl, e)
+  }(h)
+}
+
+pub theorem or_true_left(a: Bool, b: Bool, h: a = true): Bool::or(a, b) = true {
+  Eq::subst((z: Bool) => Bool::or(z, b) = true, Eq::sym(h), Refl)
+}
+
+pub theorem or_true_right(a: Bool, b: Bool, h: b = true): Bool::or(a, b) = true {
+  match a: Bool::or(a, b) = true {
+    true => Refl
+    false => h
+  }
+}
+
+pub theorem not_of_false(x: Bool, h: x = false): not(x) = true {
+  Eq::congr(not, h)
+}
+
+pub theorem implies_use(a: Bool, b: Bool, h: implies(a, b) = true, ha: a = true): b = true {
+  Eq::trans(Eq::sym(Eq::subst((z: Bool) => Bool::or(not(z), b) = b, Eq::sym(ha), Refl)), h)
+}
+
+pub theorem lt_false_succ(a: Nat, b: Nat, h: Nat::lt(a, b) = false): Nat::lt(b, Succ(a)) = true {
+  match a: (Nat::lt(a, b) = false) -> Nat::lt(b, Succ(a)) = true {
+    Zero => match b: (Nat::lt(Zero, b) = false) -> Nat::lt(b, Succ(Zero)) = true {
+      Zero => (e: false = false) => Refl
+      Succ(b2) => (e: true = false) => False::elim(true_ne_false(e))
+    }
+    Succ(a2) => match b: (Nat::lt(Succ(a2), b) = false) -> Nat::lt(b, Succ(Succ(a2))) = true {
+      Zero => (e: false = false) => Refl
+      Succ(b2) => (e: Nat::lt(a2, b2) = false) => lt_false_succ(a2, b2, e)
+    }
+  }(h)
+}
+
+// A byte outside the C0 control set is below 127.
+pub theorem c0_bound(b: Nat, h: c0_control_set(b) = false): Nat::lt(b, 127) = true {
+  lt_false_succ(126, b, or_false(Nat::lt(b, 32), Nat::lt(126, b), h).b)
+}
+
+// What a set that holds the C0 control set leaves out, checked on the bytes
+// below 127.
+pub theorem clean_byte(
+  set: (Nat) -> Bool,
+  q: (Nat) -> Bool,
+  hset: (b: Nat) -> (set(b) = false) -> c0_control_set(b) = false,
+  hq: below(127, (b: Nat) => Bool::or(set(b), q(b))) = true,
+  b: Nat,
+  hb: not(set(b)) = true
+): q(b) = true {
+  Bool::cases(
+    (z: Bool) => q(b) = true,
+    set(b),
+    (e: set(b) = false) => Eq::trans(
+      Eq::sym(Eq::subst((z: Bool) => Bool::or(z, q(b)) = q(b), Eq::sym(e), Refl)),
+      below_sound(127, (y: Nat) => Bool::or(set(y), q(y)), b, hq, c0_bound(b, hset(b, e)))
+    ),
+    (e: set(b) = true) => False::elim(false_ne_true(Eq::trans(Eq::sym(Eq::congr(not, e)), hb)))
+  )
+}
+
+pub theorem clean_to(
+  set: (Nat) -> Bool,
+  q: (Nat) -> Bool,
+  hset: (b: Nat) -> (set(b) = false) -> c0_control_set(b) = false,
+  hq: below(127, (b: Nat) => Bool::or(set(b), q(b))) = true,
+  x: List(Nat),
+  h: clean(set, x) = true
+): all_bytes(q, x) = true {
+  all_bytes_imp(
+    (b: Nat) => not(set(b)),
+    q,
+    (b: Nat) => (hb: not(set(b)) = true) => clean_byte(set, q, hset, hq, b, hb),
+    x,
+    h
+  )
+}
+
+// ---- the sets hold the C0 control set -------------------------------------------------
+
+pub theorem c0_c0(b: Nat, h: c0_control_set(b) = false): c0_control_set(b) = false { h }
+
+pub theorem query_c0(b: Nat, h: query_set(b) = false): c0_control_set(b) = false {
+  or_false(c0_control_set(b), query_extra(b), h).a
+}
+
+pub theorem special_query_c0(b: Nat, h: special_query_set(b) = false): c0_control_set(b) = false {
+  or_false(c0_control_set(b), special_query_extra(b), h).a
+}
+
+pub theorem fragment_c0(b: Nat, h: fragment_set(b) = false): c0_control_set(b) = false {
+  or_false(c0_control_set(b), fragment_extra(b), h).a
+}
+
+pub theorem path_c0(b: Nat, h: path_set(b) = false): c0_control_set(b) = false {
+  or_false(c0_control_set(b), path_extra(b), h).a
+}
+
+pub theorem userinfo_c0(b: Nat, h: userinfo_set(b) = false): c0_control_set(b) = false {
+  or_false(c0_control_set(b), userinfo_extra(b), h).a
+}
+
+// ---- query and fragment ------------------------------------------------------------
+
+// An optional part with no byte in `set`.
+pub fn opt_clean(set: (Nat) -> Bool, o: Option(List(Nat))): Bool {
+  match o: Bool {
+    None => true
+    Some(x) => clean(set, x)
+  }
+}
+
+pub theorem tail_query_none(
+  qset: (Nat) -> Bool,
+  h: List(Nat),
+  fo: Option(List(Nat)),
+  e: cut(63, h) = None
+): tail_query(qset, h, fo) = MkTail(h, None, fo) {
+  Eq::subst(
+    (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Tail {
+        None => MkTail(h, None, fo)
+        Some(p) => MkTail(p.fst, Some(pct_encode(qset, p.snd)), fo)
+      }) = MkTail(h, None, fo),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+pub theorem tail_query_ok(
+  qset: (Nat) -> Bool,
+  h: List(Nat),
+  fo: Option(List(Nat)),
+  h63: all_bytes(ne(63), h) = true,
+  q: Option(List(Nat)),
+  hq: opt_clean(qset, q) = true
+): tail_query(qset, List::append(h, opt_bytes(63, q)), fo) = MkTail(h, q, fo) {
+  match q: tail_query(qset, List::append(h, opt_bytes(63, q)), fo) = MkTail(h, q, fo) {
+    None => Eq::subst(
+      (w: List(Nat)) => tail_query(qset, w, fo) = MkTail(h, None, fo),
+      Eq::sym(List::append_nil(h)),
+      tail_query_none(qset, h, fo, cut_none(63, h, h63))
+    )
+    Some(x) => {
+      let hx: pct_encode(qset, x) = x := pct_encode_clean(qset, x, hq)
+      Eq::trans(
+      Eq::subst(
+        (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Tail {
+            None => MkTail(List::append(h, Cons(63, x)), None, fo)
+            Some(p) => MkTail(p.fst, Some(pct_encode(qset, p.snd)), fo)
+          }) = MkTail(h, Some(pct_encode(qset, x)), fo),
+        Eq::sym(cut_app(63, h, x, h63)),
+        Refl
+      ),
+      Eq::congr((z: List(Nat)) => MkTail(h, Some(z), fo), hx)
+    )
+    }
+  }
+}
+
+pub theorem tail_of_ok(
+  qset: (Nat) -> Bool,
+  h: List(Nat),
+  q: Option(List(Nat)),
+  h35: all_bytes(ne(35), h) = true,
+  h63: all_bytes(ne(63), h) = true,
+  hq35: all_bytes(ne(35), opt_bytes(63, q)) = true,
+  hq: opt_clean(qset, q) = true,
+  f: Option(List(Nat)),
+  hf: opt_clean(fragment_set, f) = true
+): tail_of(qset, List::append(h, List::append(opt_bytes(63, q), opt_bytes(35, f)))) = MkTail(h, q, f) {
+  match f: tail_of(
+    qset,
+    List::append(h, List::append(opt_bytes(63, q), opt_bytes(35, f)))
+  ) = MkTail(h, q, f) {
+    None => Eq::subst(
+      (w: List(Nat)) => tail_of(qset, List::append(h, w)) = MkTail(h, q, None),
+      Eq::sym(List::append_nil(opt_bytes(63, q))),
+      Eq::trans(
+        Eq::subst(
+          (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Tail {
+              None => tail_query(qset, List::append(h, opt_bytes(63, q)), None)
+              Some(p) => tail_query(qset, p.fst, Some(pct_encode(fragment_set, p.snd)))
+            }) = tail_query(qset, List::append(h, opt_bytes(63, q)), None),
+          Eq::sym(cut_none(35, List::append(h, opt_bytes(63, q)), all_bytes_append(ne(35), h, opt_bytes(63, q), h35, hq35))),
+          Refl
+        ),
+        tail_query_ok(qset, h, None, h63, q, hq)
+      )
+    )
+    Some(y) => {
+      let hy: pct_encode(fragment_set, y) = y := pct_encode_clean(fragment_set, y, hf)
+      Eq::subst(
+      (w: List(Nat)) => tail_of(qset, w) = MkTail(h, q, Some(y)),
+      List::append_assoc(h, opt_bytes(63, q), Cons(35, y)),
+      Eq::trans(
+        Eq::subst(
+          (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Tail {
+              None => tail_query(qset, List::append(List::append(h, opt_bytes(63, q)), Cons(35, y)), None)
+              Some(p) => tail_query(qset, p.fst, Some(pct_encode(fragment_set, p.snd)))
+            }) = tail_query(qset, List::append(h, opt_bytes(63, q)), Some(pct_encode(fragment_set, y))),
+          Eq::sym(cut_app(35, List::append(h, opt_bytes(63, q)), y, all_bytes_append(ne(35), h, opt_bytes(63, q), h35, hq35))),
+          Refl
+        ),
+        Eq::trans(
+          Eq::congr((z: List(Nat)) => tail_query(qset, List::append(h, opt_bytes(63, q)), Some(z)), hy),
+          tail_query_ok(qset, h, Some(y), h63, q, hq)
+        )
+      )
+    )
+    }
+  }
+}
+
+// ---- segments -----------------------------------------------------------------------
+
+pub fn seg_rest3(sp: Bool, s: List(Nat)): Bool {
+  Bool::and(Nat::eq(dots(s), 0), implies(sp, all_bytes(ne(92), s)))
+}
+
+pub fn seg_rest2(sp: Bool, s: List(Nat)): Bool {
+  Bool::and(all_bytes(ne(47), s), seg_rest3(sp, s))
+}
+
+pub theorem seg_clean(sp: Bool, s: List(Nat), h: seg_ok(sp, s) = true): clean(path_set, s) = true {
+  Bool::and_split(clean(path_set, s), seg_rest2(sp, s), h).a
+}
+
+pub theorem seg_rest(sp: Bool, s: List(Nat), h: seg_ok(sp, s) = true): seg_rest2(sp, s) = true {
+  Bool::and_split(clean(path_set, s), seg_rest2(sp, s), h).b
+}
+
+pub theorem seg_noslash(
+  sp: Bool,
+  s: List(Nat),
+  h: seg_ok(sp, s) = true
+): all_bytes(ne(47), s) = true {
+  Bool::and_split(all_bytes(ne(47), s), seg_rest3(sp, s), seg_rest(sp, s, h)).a
+}
+
+pub theorem seg_rest_3(sp: Bool, s: List(Nat), h: seg_ok(sp, s) = true): seg_rest3(sp, s) = true {
+  Bool::and_split(all_bytes(ne(47), s), seg_rest3(sp, s), seg_rest(sp, s, h)).b
+}
+
+pub theorem seg_dots(sp: Bool, s: List(Nat), h: seg_ok(sp, s) = true): dots(s) = 0 {
+  Nat::eq_sound(
+    dots(s),
+    0,
+    Bool::and_split(Nat::eq(dots(s), 0), implies(sp, all_bytes(ne(92), s)), seg_rest_3(sp, s, h)).a
+  )
+}
+
+pub theorem seg_nobs(
+  sp: Bool,
+  s: List(Nat),
+  h: seg_ok(sp, s) = true
+): implies(sp, all_bytes(ne(92), s)) = true {
+  Bool::and_split(Nat::eq(dots(s), 0), implies(sp, all_bytes(ne(92), s)), seg_rest_3(sp, s, h)).b
+}
+
+pub theorem segs_head(
+  sp: Bool,
+  s: List(Nat),
+  rest: List(List(Nat)),
+  h: segs_ok(sp, Cons(s, rest)) = true
+): seg_ok(sp, s) = true {
+  Bool::and_split(seg_ok(sp, s), segs_ok(sp, rest), h).a
+}
+
+pub theorem segs_tail(
+  sp: Bool,
+  s: List(Nat),
+  rest: List(List(Nat)),
+  h: segs_ok(sp, Cons(s, rest)) = true
+): segs_ok(sp, rest) = true {
+  Bool::and_split(seg_ok(sp, s), segs_ok(sp, rest), h).b
+}
+
+pub theorem segs_pieces(
+  sp: Bool,
+  ss: List(List(Nat)),
+  h: segs_ok(sp, ss) = true
+): all_pieces(ne(47), ss) = true {
+  match ss: all_pieces(ne(47), ss) = true {
+    Nil => Refl
+    Cons(s, rest) => Bool::and_intro(
+      all_bytes(ne(47), s),
+      all_pieces(ne(47), rest),
+      seg_noslash(sp, s, segs_head(sp, s, rest, h)),
+      segs_pieces(sp, rest, segs_tail(sp, s, rest, h))
+    )
+  }
+}
+
+pub theorem walk_step_plain(
+  stack: List(List(Nat)),
+  s: List(Nat),
+  last: Bool,
+  e: dots(s) = 0
+): walk_step(stack, s, last) = Cons(s, stack) {
+  Eq::subst(
+    (n: Nat) => (match n: List(List(Nat)) {
+        Zero => Cons(s, stack)
+        Succ(k) => walk_dots(k, stack, last)
+      }) = Cons(s, stack),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+// Segments in normal form are read as they are.
+pub theorem walk_clean(
+  sp: Bool,
+  stack: List(List(Nat)),
+  ss: List(List(Nat)),
+  h: segs_ok(sp, ss) = true
+): walk(stack, ss) = List::reverse_onto(ss, stack) {
+  match ss: walk(stack, ss) = List::reverse_onto(ss, stack) {
+    Nil => Refl
+    Cons(s, rest) => {
+      Eq::trans(
+        Eq::congr(
+          (e: List(Nat)) => walk(walk_step(stack, e, is_empty_list(rest)), rest),
+          pct_encode_clean(path_set, s, seg_clean(sp, s, segs_head(sp, s, rest, h)))
+        ),
+        Eq::trans(
+          Eq::congr(
+            (st: List(List(Nat))) => walk(st, rest),
+            walk_step_plain(
+              stack,
+              s,
+              is_empty_list(rest),
+              seg_dots(sp, s, segs_head(sp, s, rest, h))
+            )
+          ),
+          walk_clean(sp, Cons(s, stack), rest, segs_tail(sp, s, rest, h))
+        )
+      )
+    }
+  }
+}
+
+// The bytes after the first `/` of a path read back as its segments.
+pub theorem path_of_join(
+  sp: Bool,
+  ss: List(List(Nat)),
+  ne_nil: is_empty_list(ss) = false,
+  h: segs_ok(sp, ss) = true
+): path_of(Nil, join(47, ss)) = ss {
+  Eq::trans(
+    Eq::congr(
+      (ps: List(List(Nat))) => List::reverse(walk(Nil, ps)),
+      split_join(47, ss, ne_nil, segs_pieces(sp, ss, h))
+    ),
+    Eq::trans(
+      Eq::congr((ps: List(List(Nat))) => List::reverse(ps), walk_clean(sp, Nil, ss, h)),
+      List::reverse_reverse(ss)
+    )
+  )
+}
+
+// ---- bytes by bounds -------------------------------------------------------------------
+
+// A test that bounds the bytes, and a fact checked below the bound.
+pub theorem bounded_to(
+  p: (Nat) -> Bool,
+  q: (Nat) -> Bool,
+  n: Nat,
+  hb: (b: Nat) -> (p(b) = true) -> Nat::lt(b, n) = true,
+  hq: below(n, (b: Nat) => implies(p(b), q(b))) = true,
+  x: List(Nat),
+  h: all_bytes(p, x) = true
+): all_bytes(q, x) = true {
+  all_bytes_imp(
+    p,
+    q,
+    (b: Nat) => (e: p(b) = true) => implies_use(
+      p(b),
+      q(b),
+      below_sound(n, (y: Nat) => implies(p(y), q(y)), b, hq, hb(b, e)),
+      e
+    ),
+    x,
+    h
+  )
+}
+
+pub theorem bytes_eq_sound(a: List(Nat), b: List(Nat), h: bytes_eq(a, b) = true): a = b {
+  match a: (m: List(Nat)) -> (bytes_eq(a, m) = true) -> a = m {
+    Nil => (m: List(Nat)) => match m: (bytes_eq(Nil, m) = true) -> Nil = m {
+      Nil => (e: true = true) => Refl
+      Cons(y, u) => (e: false = true) => False::elim(false_ne_true(e))
+    }
+    Cons(x, t) => (m: List(Nat)) => match m: (bytes_eq(Cons(x, t), m) = true) -> Cons(x, t) = m {
+      Nil => (e: false = true) => False::elim(false_ne_true(e))
+      Cons(y, u) => (e: Bool::and(Nat::eq(x, y), bytes_eq(t, u)) = true) => Eq::trans(
+        Eq::congr(
+          (z: Nat) => Cons(z, t),
+          Nat::eq_sound(x, y, Bool::and_split(Nat::eq(x, y), bytes_eq(t, u), e).a)
+        ),
+        Eq::congr(
+          (z: List(Nat)) => Cons(y, z),
+          bytes_eq_sound(t, u, Bool::and_split(Nat::eq(x, y), bytes_eq(t, u), e).b)
+        )
+      )
+    }
+  }(b, h)
+}
+
+pub theorem opt_list_is_sound(
+  o: Option(List(Nat)),
+  x: List(Nat),
+  h: opt_list_is(o, x) = true
+): o = Some(x) {
+  match o: (opt_list_is(o, x) = true) -> o = Some(x) {
+    None => (e: false = true) => False::elim(false_ne_true(e))
+    Some(y) => (e: bytes_eq(y, x) = true) => Eq::congr(Some, bytes_eq_sound(y, x, e))
+  }(h)
+}
+
+// ---- ports --------------------------------------------------------------------------
+
+pub fn port_check(l: List(Nat), n: Nat): Bool {
+  match l: Bool {
+    Nil => false
+    Cons(b, t) => Bool::and(opt_is(digits_value(0, l), n), all_bytes(is_digit, l))
+  }
+}
+
+pub theorem port_text_check(
+  n: Nat,
+  h: Nat::lt(n, 65536) = true
+): port_check(port_text(n), n) = true {
+  below_sound(65536, (y: Nat) => port_check(port_text(y), y), n, Refl, h)
+}
+
+pub theorem port_of_check(
+  d: Option(Nat),
+  l: List(Nat),
+  n: Nat,
+  h: port_check(l, n) = true
+): port_of(d, l) = port_value(d, n) {
+  match l: (port_check(l, n) = true) -> port_of(d, l) = port_value(d, n) {
+    Nil => (e: false = true) => False::elim(false_ne_true(e))
+    Cons(b, t) => (e: Bool::and(opt_is(digits_value(0, Cons(b, t)), n), all_bytes(is_digit, Cons(b, t))) = true) => Eq::subst(
+      (o: Option(Nat)) => (match o: Option(Option(Nat)) {
+          None => None
+          Some(v) => port_value(d, v)
+        }) = port_value(d, n),
+      Eq::sym(
+        opt_is_sound(
+          digits_value(0, Cons(b, t)),
+          n,
+          Bool::and_split(opt_is(digits_value(0, Cons(b, t)), n), all_bytes(is_digit, Cons(b, t)), e).a
+        )
+      ),
+      Refl
+    )
+  }(h)
+}
+
+pub theorem port_check_digits(
+  l: List(Nat),
+  n: Nat,
+  h: port_check(l, n) = true
+): all_bytes(is_digit, l) = true {
+  match l: (port_check(l, n) = true) -> all_bytes(is_digit, l) = true {
+    Nil => (e: false = true) => False::elim(false_ne_true(e))
+    Cons(b, t) => (
+      e: Bool::and(opt_is(digits_value(0, Cons(b, t)), n), all_bytes(is_digit, Cons(b, t))) = true
+    ) => Bool::and_split(
+      opt_is(digits_value(0, Cons(b, t)), n),
+      all_bytes(is_digit, Cons(b, t)),
+      e
+    ).b
+  }(h)
+}
+
+pub theorem port_bound(
+  d: Option(Nat),
+  n: Nat,
+  h: port_ok(d, Some(n)) = true
+): Nat::lt(n, 65536) = true {
+  Bool::and_split(Nat::lt(n, 65536), not_default(d, n), h).a
+}
+
+pub theorem port_value_default(
+  d: Option(Nat),
+  n: Nat,
+  h: not_default(d, n) = true
+): port_value_after(d, n) = Some(Some(n)) {
+  match d: (not_default(d, n) = true) -> port_value_after(d, n) = Some(Some(n)) {
+    None => (e: true = true) => Refl
+    Some(x) => (e: not(Nat::eq(n, x)) = true) => Eq::subst(
+      (z: Bool) => (match z: Option(Option(Nat)) {
+          true => Some(None)
+          false => Some(Some(n))
+        }) = Some(Some(n)),
+      Eq::sym(not_true(Nat::eq(n, x), e)),
+      Refl
+    )
+  }(h)
+}
+
+pub theorem port_value_ok(
+  d: Option(Nat),
+  n: Nat,
+  h: port_ok(d, Some(n)) = true
+): port_value(d, n) = Some(Some(n)) {
+  Eq::subst(
+    (z: Bool) => (match z: Option(Option(Nat)) {
+        false => None
+        true => port_value_after(d, n)
+      }) = Some(Some(n)),
+    Eq::sym(port_bound(d, n, h)),
+    port_value_default(d, n, Bool::and_split(Nat::lt(n, 65536), not_default(d, n), h).b)
+  )
+}
+
+pub theorem port_of_text(
+  d: Option(Nat),
+  n: Nat,
+  h: port_ok(d, Some(n)) = true
+): port_of(d, port_text(n)) = Some(Some(n)) {
+  Eq::trans(
+    port_of_check(d, port_text(n), n, port_text_check(n, port_bound(d, n, h))),
+    port_value_ok(d, n, h)
+  )
+}
+
+// A byte of `:port`.
+pub fn port_byte(b: Nat): Bool {
+  Bool::and(Nat::lt(b, 59), Bool::or(Nat::eq(b, 58), is_digit(b)))
+}
+
+pub theorem digit_port_byte(b: Nat, h: is_digit(b) = true): port_byte(b) = true {
+  Bool::and_intro(
+    Nat::lt(b, 59),
+    Bool::or(Nat::eq(b, 58), is_digit(b)),
+    Nat::lt_trans(b, 58, 59, Bool::and_split(Nat::le(48, b), Nat::le(b, 57), h).b, Refl),
+    or_true_right(Nat::eq(b, 58), is_digit(b), h)
+  )
+}
+
+pub theorem port_part_bytes(
+  d: Option(Nat),
+  pt: Option(Nat),
+  h: port_ok(d, pt) = true
+): all_bytes(port_byte, port_part(pt)) = true {
+  match pt: (port_ok(d, pt) = true) -> all_bytes(port_byte, port_part(pt)) = true {
+    None => (e: true = true) => Refl
+    Some(n) => (e: port_ok(d, Some(n)) = true) => all_bytes_cons(
+      port_byte,
+      58,
+      port_text(n),
+      Refl,
+      all_bytes_imp(
+        is_digit,
+        port_byte,
+        digit_port_byte,
+        port_text(n),
+        port_check_digits(port_text(n), n, port_text_check(n, port_bound(d, n, e)))
+      )
+    )
+  }(h)
+}
+
+pub theorem port_byte_bound(b: Nat, h: port_byte(b) = true): Nat::lt(b, 59) = true {
+  Bool::and_split(Nat::lt(b, 59), Bool::or(Nat::eq(b, 58), is_digit(b)), h).a
+}
+
+// ---- the authority ----------------------------------------------------------------------
+
+pub theorem host_c0(b: Nat, h: host_set(b) = false): c0_control_set(b) = false {
+  or_false(c0_control_set(b), forbidden_host(b), h).a
+}
+
+pub theorem host_clean(
+  sp: Bool,
+  h: List(Nat),
+  e: host_ok(sp, h) = true
+): clean(host_set, h) = true {
+  Bool::and_split(clean(host_set, h), opt_list_is(host_of(sp, h), h), e).a
+}
+
+pub theorem host_fixed(sp: Bool, h: List(Nat), e: host_ok(sp, h) = true): host_of(sp, h) = Some(h) {
+  opt_list_is_sound(
+    host_of(sp, h),
+    h,
+    Bool::and_split(clean(host_set, h), opt_list_is(host_of(sp, h), h), e).b
+  )
+}
+
+pub theorem host_with_port_ok(
+  sp: Bool,
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: host_of(sp, h) = Some(h)
+): host_with_port(sp, u, p, h, Some(pt)) = Some(Auth(u, p, h, pt)) {
+  Eq::subst(
+    (o: Option(List(Nat))) => (match o: Option(Authority) {
+        None => None
+        Some(x) => Some(Auth(u, p, x, pt))
+      }) = Some(Auth(u, p, h, pt)),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+pub theorem host_port_ok(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  hh: host_ok(sp, h) = true,
+  pt: Option(Nat),
+  hpt: port_ok(d, pt) = true,
+  hc: cred_has_host(u, p, h, pt) = true
+): host_port(sp, d, u, p, List::append(h, port_part(pt))) = Some(Auth(u, p, h, pt)) {
+  let h58: all_bytes(
+    ne(58),
+    h
+  ) = true := clean_to(host_set, ne(58), host_c0, Refl, h, host_clean(sp, h, hh))
+  match pt: (
+    port_ok(d, pt) = true
+  ) -> (
+    cred_has_host(u, p, h, pt) = true
+  ) -> host_port(sp, d, u, p, List::append(h, port_part(pt))) = Some(Auth(u, p, h, pt)) {
+    None => (e: true = true) => (ec: cred_has_host(u, p, h, None) = true) => Eq::subst(
+      (w: List(Nat)) => host_port(sp, d, u, p, w) = Some(Auth(u, p, h, None)),
+      Eq::sym(List::append_nil(h)),
+      Eq::trans(
+        Eq::subst(
+          (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Authority) {
+              None => host_with_port(sp, u, p, h, Some(None))
+              Some(q) => match is_empty(q.fst): Option(Authority) {
+                true => None
+                false => host_with_port(sp, u, p, q.fst, port_of(d, q.snd))
+              }
+            }) = host_with_port(sp, u, p, h, Some(None)),
+          Eq::sym(cut_none(58, h, h58)),
+          Refl
+        ),
+        host_with_port_ok(sp, u, p, h, None, host_fixed(sp, h, hh))
+      )
+    )
+    Some(n) => (e: port_ok(d, Some(n)) = true) => (ec: cred_has_host(u, p, h, Some(n)) = true) => Eq::trans(
+      Eq::subst(
+        (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Authority) {
+            None => host_with_port(sp, u, p, List::append(h, Cons(58, port_text(n))), Some(None))
+            Some(q) => match is_empty(q.fst): Option(Authority) {
+              true => None
+              false => host_with_port(sp, u, p, q.fst, port_of(d, q.snd))
+            }
+          }) = host_with_port(sp, u, p, h, port_of(d, port_text(n))),
+        Eq::sym(cut_app(58, h, port_text(n), h58)),
+        Eq::subst(
+          (z: Bool) => (match z: Option(Authority) {
+              true => None
+              false => host_with_port(sp, u, p, h, port_of(d, port_text(n)))
+            }) = host_with_port(sp, u, p, h, port_of(d, port_text(n))),
+          Eq::sym(
+            not_true(
+              is_empty(h),
+              implies_use(
+                Bool::or(not(cred_empty(u, p)), true),
+                not(is_empty(h)),
+                ec,
+                or_true_right(not(cred_empty(u, p)), true, Refl)
+              )
+            )
+          ),
+          Refl
+        )
+      ),
+      Eq::trans(
+        Eq::congr((o: Option(Option(Nat))) => host_with_port(sp, u, p, h, o), port_of_text(d, n, e)),
+        host_with_port_ok(sp, u, p, h, Some(n), host_fixed(sp, h, hh))
+      )
+    )
+  }(hpt, hc)
+}
+
+pub theorem user_pass_ok(
+  u: List(Nat),
+  hu: clean(userinfo_set, u) = true,
+  p: List(Nat),
+  hp: clean(userinfo_set, p) = true
+): user_pass(List::append(u, pass_part(p))) = (Pair { fst: u, snd: p }) {
+  let h58: all_bytes(ne(58), u) = true := clean_to(userinfo_set, ne(58), userinfo_c0, Refl, u, hu)
+  match p: (clean(userinfo_set, p) = true) -> user_pass(List::append(u, pass_part(p))) = (Pair { fst: u, snd: p }) {
+    Nil => (e: true = true) => Eq::subst(
+      (w: List(Nat)) => user_pass(w) = Pair { fst: u, snd: Nil },
+      Eq::sym(List::append_nil(u)),
+      Eq::trans(
+        Eq::subst(
+          (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Pair(List(Nat), List(Nat)) {
+              None => Pair { fst: pct_encode(userinfo_set, u), snd: Nil }
+              Some(q) => Pair { fst: pct_encode(userinfo_set, q.fst), snd: pct_encode(userinfo_set, q.snd) }
+            }) = Pair { fst: pct_encode(userinfo_set, u), snd: Nil },
+          Eq::sym(cut_none(58, u, h58)),
+          Refl
+        ),
+        Eq::congr((z: List(Nat)) => Pair { fst: z, snd: Nil }, pct_encode_clean(userinfo_set, u, hu))
+      )
+    )
+    Cons(x, t) => (e: clean(userinfo_set, Cons(x, t)) = true) => Eq::trans(
+      Eq::subst(
+        (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Pair(List(Nat), List(Nat)) {
+            None => Pair { fst: pct_encode(userinfo_set, List::append(u, Cons(58, Cons(x, t)))), snd: Nil }
+            Some(q) => Pair { fst: pct_encode(userinfo_set, q.fst), snd: pct_encode(userinfo_set, q.snd) }
+          }) = Pair { fst: pct_encode(userinfo_set, u), snd: pct_encode(userinfo_set, Cons(x, t)) },
+        Eq::sym(cut_app(58, u, Cons(x, t), h58)),
+        Refl
+      ),
+      Eq::trans(
+        Eq::congr((z: List(Nat)) => Pair { fst: z, snd: pct_encode(userinfo_set, Cons(x, t)) }, pct_encode_clean(userinfo_set, u, hu)),
+        Eq::congr((z: List(Nat)) => Pair { fst: u, snd: z }, pct_encode_clean(userinfo_set, Cons(x, t), e))
+      )
+    )
+  }(hp)
+}
+
+pub theorem authority_of_rcut(
+  sp: Bool,
+  d: Option(Nat),
+  a: List(Nat),
+  c: List(Nat),
+  hp: List(Nat),
+  e: rcut(64, a) = Some(Pair { fst: c, snd: hp }),
+  hne: is_empty(hp) = false
+): authority_of(sp, d, a) = host_port(sp, d, user_pass(c).fst, user_pass(c).snd, hp) {
+  Eq::subst(
+    (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Authority) {
+        None => host_port(sp, d, Nil, Nil, a)
+        Some(q) => match is_empty(q.snd): Option(Authority) {
+          true => None
+          false => host_port(sp, d, user_pass(q.fst).fst, user_pass(q.fst).snd, q.snd)
+        }
+      }) = host_port(sp, d, user_pass(c).fst, user_pass(c).snd, hp),
+    Eq::sym(e),
+    Eq::subst(
+      (z: Bool) => (match z: Option(Authority) {
+          true => None
+          false => host_port(sp, d, user_pass(c).fst, user_pass(c).snd, hp)
+        }) = host_port(sp, d, user_pass(c).fst, user_pass(c).snd, hp),
+      Eq::sym(hne),
+      Refl
+    )
+  )
+}
+
+pub theorem hp_nonempty(
+  h: List(Nat),
+  pt: Option(Nat),
+  e: Bool::and(is_empty(h), is_none(pt)) = false
+): is_empty(List::append(h, port_part(pt))) = false {
+  match h: (
+    Bool::and(is_empty(h), is_none(pt)) = false
+  ) -> is_empty(List::append(h, port_part(pt))) = false {
+    Nil => match pt: (Bool::and(true, is_none(pt)) = false) -> is_empty(port_part(pt)) = false {
+      None => (e2: true = false) => False::elim(true_ne_false(e2))
+      Some(n) => (e2: false = false) => Refl
+    }
+    Cons(x, t) => (e2: false = false) => Refl
+  }(e)
+}
+
+pub theorem cred_part_ne(
+  u: List(Nat),
+  p: List(Nat),
+  e: cred_empty(u, p) = false
+): cred_part(u, p) = List::append(u, List::append(pass_part(p), Cons(64, Nil))) {
+  Eq::subst(
+    (z: Bool) => (match z: List(Nat) {
+        true => Nil
+        false => List::append(u, List::append(pass_part(p), Cons(64, Nil)))
+      }) = List::append(u, List::append(pass_part(p), Cons(64, Nil))),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+// The bytes after the `@`: no `@` in them.
+pub theorem hp_no_at(
+  sp: Bool,
+  d: Option(Nat),
+  h: List(Nat),
+  hh: host_ok(sp, h) = true,
+  pt: Option(Nat),
+  hpt: port_ok(d, pt) = true
+): all_bytes(ne(64), List::append(h, port_part(pt))) = true {
+  all_bytes_append(
+    ne(64),
+    h,
+    port_part(pt),
+    clean_to(host_set, ne(64), host_c0, Refl, h, host_clean(sp, h, hh)),
+    bounded_to(
+      port_byte,
+      ne(64),
+      59,
+      port_byte_bound,
+      Refl,
+      port_part(pt),
+      port_part_bytes(d, pt, hpt)
+    )
+  )
+}
+
+pub theorem cred_append(
+  u: List(Nat),
+  p: List(Nat),
+  hp: List(Nat),
+  hc: cred_empty(u, p) = false
+): List::append(cred_part(u, p), hp) = List::append(List::append(u, pass_part(p)), Cons(64, hp)) {
+  Eq::trans(
+    Eq::congr((z: List(Nat)) => List::append(z, hp), cred_part_ne(u, p, hc)),
+    Eq::trans(
+      List::append_assoc(u, List::append(pass_part(p), Cons(64, Nil)), hp),
+      Eq::trans(
+        Eq::congr(
+          (z: List(Nat)) => List::append(u, z),
+          List::append_assoc(pass_part(p), Cons(64, Nil), hp)
+        ),
+        Eq::sym(List::append_assoc(u, pass_part(p), Cons(64, hp)))
+      )
+    )
+  )
+}
+
+pub theorem auth_with_cred(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  hc: cred_empty(u, p) = false,
+  hu: clean(userinfo_set, u) = true,
+  hpw: clean(userinfo_set, p) = true,
+  hh: host_ok(sp, h) = true,
+  hpt: port_ok(d, pt) = true,
+  hc2: cred_has_host(u, p, h, pt) = true,
+  hne: is_empty(List::append(h, port_part(pt))) = false
+): authority_of(sp, d, auth_part(Auth(u, p, h, pt))) = Some(Auth(u, p, h, pt)) {
+  let hp: List(Nat) := List::append(h, port_part(pt))
+  Eq::trans(
+    Eq::congr((z: List(Nat)) => authority_of(sp, d, z), cred_append(u, p, hp, hc)),
+    Eq::trans(
+      authority_of_rcut(
+        sp,
+        d,
+        List::append(List::append(u, pass_part(p)), Cons(64, hp)),
+        List::append(u, pass_part(p)),
+        hp,
+        rcut_app(64, List::append(u, pass_part(p)), hp, hp_no_at(sp, d, h, hh, pt, hpt)),
+        hne
+      ),
+      Eq::trans(
+        Eq::congr(
+          (q: Pair(List(Nat), List(Nat))) => host_port(sp, d, q.fst, q.snd, hp),
+          user_pass_ok(u, hu, p, hpw)
+        ),
+        host_port_ok(sp, d, u, p, h, hh, pt, hpt, hc2)
+      )
+    )
+  )
+}
+
+pub fn auth_rest(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat)
+): Bool {
+  Bool::and(host_ok(sp, h), Bool::and(port_ok(d, pt), cred_has_host(u, p, h, pt)))
+}
+
+pub theorem af_rest(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): auth_rest(sp, d, u, p, h, pt) = true {
+  Bool::and_split(cred_ok(u, p), auth_rest(sp, d, u, p, h, pt), e).b
+}
+
+pub theorem af_user(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): clean(userinfo_set, u) = true {
+  Bool::and_split(
+    clean(userinfo_set, u),
+    clean(userinfo_set, p),
+    Bool::and_split(cred_ok(u, p), auth_rest(sp, d, u, p, h, pt), e).a
+  ).a
+}
+
+pub theorem af_pass(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): clean(userinfo_set, p) = true {
+  Bool::and_split(
+    clean(userinfo_set, u),
+    clean(userinfo_set, p),
+    Bool::and_split(cred_ok(u, p), auth_rest(sp, d, u, p, h, pt), e).a
+  ).b
+}
+
+pub theorem af_host(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): host_ok(sp, h) = true {
+  Bool::and_split(
+    host_ok(sp, h),
+    Bool::and(port_ok(d, pt), cred_has_host(u, p, h, pt)),
+    af_rest(sp, d, u, p, h, pt, e)
+  ).a
+}
+
+pub theorem af_tail(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): Bool::and(port_ok(d, pt), cred_has_host(u, p, h, pt)) = true {
+  Bool::and_split(
+    host_ok(sp, h),
+    Bool::and(port_ok(d, pt), cred_has_host(u, p, h, pt)),
+    af_rest(sp, d, u, p, h, pt, e)
+  ).b
+}
+
+pub theorem af_port(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): port_ok(d, pt) = true {
+  Bool::and_split(port_ok(d, pt), cred_has_host(u, p, h, pt), af_tail(sp, d, u, p, h, pt, e)).a
+}
+
+pub theorem af_has_host(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): cred_has_host(u, p, h, pt) = true {
+  Bool::and_split(port_ok(d, pt), cred_has_host(u, p, h, pt), af_tail(sp, d, u, p, h, pt, e)).b
+}
+
+pub theorem af_nonempty(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true,
+  hc: cred_empty(u, p) = false
+): is_empty(List::append(h, port_part(pt))) = false {
+  append_ne_left(
+    h,
+    port_part(pt),
+    not_true(
+      is_empty(h),
+      implies_use(
+        Bool::or(not(cred_empty(u, p)), not(is_none(pt))),
+        not(is_empty(h)),
+        af_has_host(sp, d, u, p, h, pt, e),
+        or_true_left(not(cred_empty(u, p)), not(is_none(pt)), not_of_false(cred_empty(u, p), hc))
+      )
+    )
+  )
+}
+
+pub theorem auth_cred_case(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true,
+  hc: cred_empty(u, p) = false
+): authority_of(sp, d, auth_part(Auth(u, p, h, pt))) = Some(Auth(u, p, h, pt)) {
+  auth_with_cred(
+    sp,
+    d,
+    u,
+    p,
+    h,
+    pt,
+    hc,
+    af_user(sp, d, u, p, h, pt, e),
+    af_pass(sp, d, u, p, h, pt, e),
+    af_host(sp, d, u, p, h, pt, e),
+    af_port(sp, d, u, p, h, pt, e),
+    af_has_host(sp, d, u, p, h, pt, e),
+    af_nonempty(sp, d, u, p, h, pt, e, hc)
+  )
+}
+
+pub theorem auth_fields_round(
+  sp: Bool,
+  d: Option(Nat),
+  u: List(Nat),
+  p: List(Nat),
+  h: List(Nat),
+  pt: Option(Nat),
+  e: auth_fields_ok(sp, d, u, p, h, pt) = true
+): authority_of(sp, d, auth_part(Auth(u, p, h, pt))) = Some(Auth(u, p, h, pt)) {
+  match u: (
+    auth_fields_ok(sp, d, u, p, h, pt) = true
+  ) -> authority_of(sp, d, auth_part(Auth(u, p, h, pt))) = Some(Auth(u, p, h, pt)) {
+    Nil => match p: (
+      auth_fields_ok(sp, d, Nil, p, h, pt) = true
+    ) -> authority_of(sp, d, auth_part(Auth(Nil, p, h, pt))) = Some(Auth(Nil, p, h, pt)) {
+      Nil => (e2: auth_fields_ok(sp, d, Nil, Nil, h, pt) = true) => Eq::trans(
+        Eq::subst(
+          (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Authority) {
+              None => host_port(sp, d, Nil, Nil, List::append(h, port_part(pt)))
+              Some(q) => match is_empty(q.snd): Option(Authority) {
+                true => None
+                false => host_port(sp, d, user_pass(q.fst).fst, user_pass(q.fst).snd, q.snd)
+              }
+            }) = host_port(sp, d, Nil, Nil, List::append(h, port_part(pt))),
+          Eq::sym(
+            rcut_none(
+              64,
+              List::append(h, port_part(pt)),
+              hp_no_at(sp, d, h, af_host(sp, d, Nil, Nil, h, pt, e2), pt, af_port(sp, d, Nil, Nil, h, pt, e2))
+            )
+          ),
+          Refl
+        ),
+        host_port_ok(
+          sp,
+          d,
+          Nil,
+          Nil,
+          h,
+          af_host(sp, d, Nil, Nil, h, pt, e2),
+          pt,
+          af_port(sp, d, Nil, Nil, h, pt, e2),
+          af_has_host(sp, d, Nil, Nil, h, pt, e2)
+        )
+      )
+      Cons(x, t) => (e2: auth_fields_ok(sp, d, Nil, Cons(x, t), h, pt) = true) => auth_cred_case(
+        sp,
+        d,
+        Nil,
+        Cons(x, t),
+        h,
+        pt,
+        e2,
+        Refl
+      )
+    }
+    Cons(x, t) => (e2: auth_fields_ok(sp, d, Cons(x, t), p, h, pt) = true) => auth_cred_case(
+      sp,
+      d,
+      Cons(x, t),
+      p,
+      h,
+      pt,
+      e2,
+      Refl
+    )
+  }(e)
+}
+
+// The authority reads back from its serialization.
+pub theorem authority_round(
+  sp: Bool,
+  d: Option(Nat),
+  a: Authority,
+  e: auth_ok(sp, d, a) = true
+): authority_of(sp, d, auth_part(a)) = Some(a) {
+  match a: (auth_ok(sp, d, a) = true) -> authority_of(sp, d, auth_part(a)) = Some(a) {
+    Auth(u, p, h, pt) => (e2: auth_fields_ok(sp, d, u, p, h, pt) = true) => auth_fields_round(
+      sp,
+      d,
+      u,
+      p,
+      h,
+      pt,
+      e2
+    )
+  }(e)
+}
+
+// ---- the bytes of the parts --------------------------------------------------------------
+
+// A byte of the part before `?`: printable and not a space, not `#`, not
+// `?`.
+pub fn hbyte(b: Nat): Bool {
+  Bool::and(ptbyte(b), Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))))
+}
+
+pub fn ptbyte(b: Nat): Bool {
+  Bool::and(Nat::lt(32, b), Nat::lt(b, 127))
+}
+
+// In a special URL, not `\` either.
+pub fn hbyte_sp(b: Nat): Bool {
+  Bool::and(hbyte(b), not(Nat::eq(b, 92)))
+}
+
+// A byte of an authority: not `/` either.
+pub fn abyte(b: Nat): Bool {
+  Bool::and(hbyte_sp(b), not(Nat::eq(b, 47)))
+}
+
+pub theorem hbyte_bound(b: Nat, h: hbyte(b) = true): Nat::lt(b, 127) = true {
+  Bool::and_split(
+    Nat::lt(32, b),
+    Nat::lt(b, 127),
+    Bool::and_split(ptbyte(b), Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))), h).a
+  ).b
+}
+
+pub theorem hbyte_sp_bound(b: Nat, h: hbyte_sp(b) = true): Nat::lt(b, 127) = true {
+  hbyte_bound(b, Bool::and_split(hbyte(b), not(Nat::eq(b, 92)), h).a)
+}
+
+pub theorem abyte_bound(b: Nat, h: abyte(b) = true): Nat::lt(b, 127) = true {
+  hbyte_sp_bound(b, Bool::and_split(hbyte_sp(b), not(Nat::eq(b, 47)), h).a)
+}
+
+pub theorem all_bytes_and(
+  p: (Nat) -> Bool,
+  q: (Nat) -> Bool,
+  x: List(Nat),
+  hp: all_bytes(p, x) = true,
+  hq: all_bytes(q, x) = true
+): all_bytes((b: Nat) => Bool::and(p(b), q(b)), x) = true {
+  match x: (
+    all_bytes(p, x) = true
+  ) -> (all_bytes(q, x) = true) -> all_bytes((b: Nat) => Bool::and(p(b), q(b)), x) = true {
+    Nil => (e1: true = true) => (e2: true = true) => Refl
+    Cons(y, t) => (e1: all_bytes(p, Cons(y, t)) = true) => (
+      e2: all_bytes(q, Cons(y, t)) = true
+    ) => all_bytes_cons(
+      (b: Nat) => Bool::and(p(b), q(b)),
+      y,
+      t,
+      Bool::and_intro(p(y), q(y), all_bytes_head(p, y, t, e1), all_bytes_head(q, y, t, e2)),
+      all_bytes_and(p, q, t, all_bytes_tail(p, y, t, e1), all_bytes_tail(q, y, t, e2))
+    )
+  }(hp, hq)
+}
+
+pub theorem join_rest_bytes(
+  q: (Nat) -> Bool,
+  c: Nat,
+  hc: q(c) = true,
+  p: List(Nat),
+  rest: List(List(Nat)),
+  hp: all_bytes(q, p) = true,
+  hr: all_pieces(q, rest) = true
+): all_bytes(q, join_rest(c, p, rest)) = true {
+  match rest: (all_pieces(q, rest) = true) -> all_bytes(q, join_rest(c, p, rest)) = true {
+    Nil => (e: true = true) => hp
+    Cons(x, more) => (e: Bool::and(all_bytes(q, x), all_pieces(q, more)) = true) => all_bytes_append(
+      q,
+      p,
+      Cons(c, join_rest(c, x, more)),
+      hp,
+      all_bytes_cons(
+        q,
+        c,
+        join_rest(c, x, more),
+        hc,
+        join_rest_bytes(
+          q,
+          c,
+          hc,
+          x,
+          more,
+          Bool::and_split(all_bytes(q, x), all_pieces(q, more), e).a,
+          Bool::and_split(all_bytes(q, x), all_pieces(q, more), e).b
+        )
+      )
+    )
+  }(hr)
+}
+
+pub theorem segments_part_bytes(
+  q: (Nat) -> Bool,
+  hc: q(47) = true,
+  ss: List(List(Nat)),
+  h: all_pieces(q, ss) = true
+): all_bytes(q, segments_part(ss)) = true {
+  match ss: (all_pieces(q, ss) = true) -> all_bytes(q, segments_part(ss)) = true {
+    Nil => (e: true = true) => Refl
+    Cons(s, rest) => (e: Bool::and(all_bytes(q, s), all_pieces(q, rest)) = true) => all_bytes_cons(
+      q,
+      47,
+      join_rest(47, s, rest),
+      hc,
+      join_rest_bytes(
+        q,
+        47,
+        hc,
+        s,
+        rest,
+        Bool::and_split(all_bytes(q, s), all_pieces(q, rest), e).a,
+        Bool::and_split(all_bytes(q, s), all_pieces(q, rest), e).b
+      )
+    )
+  }(h)
+}
+
+// The bytes of segments: `hbyte`, and `hbyte_sp` in a special URL.
+pub theorem segs_hbyte(
+  sp: Bool,
+  ss: List(List(Nat)),
+  h: segs_ok(sp, ss) = true
+): all_pieces(hbyte, ss) = true {
+  match ss: (segs_ok(sp, ss) = true) -> all_pieces(hbyte, ss) = true {
+    Nil => (e: true = true) => Refl
+    Cons(s, rest) => (e: segs_ok(sp, Cons(s, rest)) = true) => Bool::and_intro(
+      all_bytes(hbyte, s),
+      all_pieces(hbyte, rest),
+      clean_to(path_set, hbyte, path_c0, Refl, s, seg_clean(sp, s, segs_head(sp, s, rest, e))),
+      segs_hbyte(sp, rest, segs_tail(sp, s, rest, e))
+    )
+  }(h)
+}
+
+pub theorem segs_hbyte_sp(
+  ss: List(List(Nat)),
+  h: segs_ok(true, ss) = true
+): all_pieces(hbyte_sp, ss) = true {
+  match ss: (segs_ok(true, ss) = true) -> all_pieces(hbyte_sp, ss) = true {
+    Nil => (e: true = true) => Refl
+    Cons(s, rest) => (e: segs_ok(true, Cons(s, rest)) = true) => Bool::and_intro(
+      all_bytes(hbyte_sp, s),
+      all_pieces(hbyte_sp, rest),
+      all_bytes_and(
+        hbyte,
+        ne(92),
+        s,
+        clean_to(
+          path_set,
+          hbyte,
+          path_c0,
+          Refl,
+          s,
+          seg_clean(true, s, segs_head(true, s, rest, e))
+        ),
+        implies_use(
+          true,
+          all_bytes(ne(92), s),
+          seg_nobs(true, s, segs_head(true, s, rest, e)),
+          Refl
+        )
+      ),
+      segs_hbyte_sp(rest, segs_tail(true, s, rest, e))
+    )
+  }(h)
+}
+
+pub theorem cred_part_bytes(
+  u: List(Nat),
+  p: List(Nat),
+  hu: clean(userinfo_set, u) = true,
+  hp: clean(userinfo_set, p) = true
+): all_bytes(abyte, cred_part(u, p)) = true {
+  Bool::cases(
+    (z: Bool) => all_bytes(abyte, cred_part(u, p)) = true,
+    cred_empty(u, p),
+    (e: cred_empty(u, p) = false) => Eq::subst(
+      (w: List(Nat)) => all_bytes(abyte, w) = true,
+      Eq::sym(cred_part_ne(u, p, e)),
+      all_bytes_append(
+        abyte,
+        u,
+        List::append(pass_part(p), Cons(64, Nil)),
+        clean_to(userinfo_set, abyte, userinfo_c0, Refl, u, hu),
+        all_bytes_append(
+          abyte,
+          pass_part(p),
+          Cons(64, Nil),
+          match p: (clean(userinfo_set, p) = true) -> all_bytes(abyte, pass_part(p)) = true {
+            Nil => (e2: true = true) => Refl
+            Cons(x, t) => (e2: clean(userinfo_set, Cons(x, t)) = true) => all_bytes_cons(
+              abyte,
+              58,
+              Cons(x, t),
+              Refl,
+              clean_to(userinfo_set, abyte, userinfo_c0, Refl, Cons(x, t), e2)
+            )
+          }(hp),
+          Refl
+        )
+      )
+    ),
+    (e: cred_empty(u, p) = true) => Eq::subst(
+      (w: List(Nat)) => all_bytes(abyte, w) = true,
+      Eq::sym(
+        Eq::subst(
+          (z: Bool) => (match z: List(Nat) {
+              true => Nil
+              false => List::append(u, List::append(pass_part(p), Cons(64, Nil)))
+            }) = Nil,
+          Eq::sym(e),
+          Refl
+        )
+      ),
+      Refl
+    )
+  )
+}
+
+pub theorem auth_part_bytes(
+  sp: Bool,
+  d: Option(Nat),
+  a: Authority,
+  h: auth_ok(sp, d, a) = true
+): all_bytes(abyte, auth_part(a)) = true {
+  match a: (auth_ok(sp, d, a) = true) -> all_bytes(abyte, auth_part(a)) = true {
+    Auth(u, p, hs, pt) => (e: auth_fields_ok(sp, d, u, p, hs, pt) = true) => all_bytes_append(
+      abyte,
+      cred_part(u, p),
+      List::append(hs, port_part(pt)),
+      cred_part_bytes(u, p, af_user(sp, d, u, p, hs, pt, e), af_pass(sp, d, u, p, hs, pt, e)),
+      all_bytes_append(
+        abyte,
+        hs,
+        port_part(pt),
+        clean_to(
+          host_set,
+          abyte,
+          host_c0,
+          Refl,
+          hs,
+          host_clean(sp, hs, af_host(sp, d, u, p, hs, pt, e))
+        ),
+        bounded_to(
+          port_byte,
+          abyte,
+          59,
+          port_byte_bound,
+          Refl,
+          port_part(pt),
+          port_part_bytes(d, pt, af_port(sp, d, u, p, hs, pt, e))
+        )
+      )
+    )
+  }(h)
+}
+
+// ---- the part before `?` ------------------------------------------------------------------
+
+pub theorem drop_keep(l: List(Nat), h: starts_with(47, l) = false): drop_slashes(l) = l {
+  match l: (starts_with(47, l) = false) -> drop_slashes(l) = l {
+    Nil => (e: false = false) => Refl
+    Cons(b, t) => (e: Nat::eq(b, 47) = false) => Eq::subst(
+      (z: Bool) => (match z: List(Nat) {
+          true => drop_slashes(t)
+          false => Cons(b, t)
+        }) = Cons(b, t),
+      Eq::sym(e),
+      Refl
+    )
+  }(h)
+}
+
+pub theorem map_bs_id(
+  l: List(Nat),
+  h: all_bytes(ne(92), l) = true
+): List::map(backslash_to_slash, l) = l {
+  match l: (all_bytes(ne(92), l) = true) -> List::map(backslash_to_slash, l) = l {
+    Nil => (e: true = true) => Refl
+    Cons(b, t) => (e: all_bytes(ne(92), Cons(b, t)) = true) => Eq::trans(
+      Eq::congr(
+        (z: Nat) => Cons(z, List::map(backslash_to_slash, t)),
+        Eq::subst(
+          (w: Bool) => (match w: Nat {
+              true => 47
+              false => b
+            }) = b,
+          Eq::sym(ne_false(92, b, all_bytes_head(ne(92), b, t, e))),
+          Refl
+        )
+      ),
+      Eq::congr((z: List(Nat)) => Cons(b, z), map_bs_id(t, all_bytes_tail(ne(92), b, t, e)))
+    )
+  }(h)
+}
+
+pub theorem starts_append(
+  a: List(Nat),
+  p: List(Nat),
+  ha: all_bytes(ne(47), a) = true,
+  hne: is_empty(a) = false
+): starts_with(47, List::append(a, p)) = false {
+  match a: (
+    all_bytes(ne(47), a) = true
+  ) -> (is_empty(a) = false) -> starts_with(47, List::append(a, p)) = false {
+    Nil => (e1: true = true) => (e2: true = false) => False::elim(true_ne_false(e2))
+    Cons(b, t) => (e1: all_bytes(ne(47), Cons(b, t)) = true) => (e2: false = false) => ne_false(
+      47,
+      b,
+      all_bytes_head(ne(47), b, t, e1)
+    )
+  }(ha, hne)
+}
+
+pub theorem append_ne_right(
+  x: List(Nat),
+  y: List(Nat),
+  h: is_empty(y) = false
+): is_empty(List::append(x, y)) = false {
+  match x: is_empty(List::append(x, y)) = false {
+    Nil => h
+    Cons(b, t) => Refl
+  }
+}
+
+pub theorem append_ne_left(
+  x: List(Nat),
+  y: List(Nat),
+  h: is_empty(x) = false
+): is_empty(List::append(x, y)) = false {
+  match x: (is_empty(x) = false) -> is_empty(List::append(x, y)) = false {
+    Nil => (e: true = false) => False::elim(true_ne_false(e))
+    Cons(b, t) => (e: false = false) => Refl
+  }(h)
+}
+
+pub theorem none_ne_some(x: List(Nat), e: None = Some(x)): False {
+  match e: False {
+  }
+}
+
+pub theorem special_host_nonempty(
+  h: List(Nat),
+  e: host_of(true, h) = Some(h)
+): is_empty(h) = false {
+  match h: (host_of(true, h) = Some(h)) -> is_empty(h) = false {
+    Nil => (e2: None = Some(Nil(Nat))) => False::elim(none_ne_some(Nil(Nat), e2))
+    Cons(b, t) => (e2: host_of(true, Cons(b, t)) = Some(Cons(b, t))) => Refl
+  }(e)
+}
+
+pub theorem special_auth_nonempty(
+  d: Option(Nat),
+  a: Authority,
+  h: auth_ok(true, d, a) = true
+): is_empty(auth_part(a)) = false {
+  match a: (auth_ok(true, d, a) = true) -> is_empty(auth_part(a)) = false {
+    Auth(u, p, hs, pt) => (e: auth_fields_ok(true, d, u, p, hs, pt) = true) => append_ne_right(
+      cred_part(u, p),
+      List::append(hs, port_part(pt)),
+      append_ne_left(
+        hs,
+        port_part(pt),
+        special_host_nonempty(hs, host_fixed(true, hs, af_host(true, d, u, p, hs, pt, e)))
+      )
+    )
+  }(h)
+}
+
+pub theorem auth_no_slash(
+  sp: Bool,
+  d: Option(Nat),
+  a: Authority,
+  h: auth_ok(sp, d, a) = true
+): all_bytes(ne(47), auth_part(a)) = true {
+  bounded_to(abyte, ne(47), 127, abyte_bound, Refl, auth_part(a), auth_part_bytes(sp, d, a, h))
+}
+
+pub theorem with_path_some(
+  a: Option(Authority),
+  x: Authority,
+  e: a = Some(x),
+  ss: List(List(Nat))
+): with_path(a, ss) = Some(Pair { fst: x, snd: ss }) {
+  Eq::subst((o: Option(Authority)) => with_path(o, ss) = Some(Pair { fst: x, snd: ss }), Eq::sym(e), Refl)
+}
+
+// The authority and nonempty segments read back.
+pub theorem auth_path_segs(
+  sp: Bool,
+  d: Option(Nat),
+  a: Authority,
+  ha: auth_ok(sp, d, a) = true,
+  ss: List(List(Nat)),
+  hs: segs_ok(sp, ss) = true,
+  hne: is_empty_list(ss) = false
+): auth_path(sp, d, List::append(auth_part(a), segments_part(ss))) = Some(Pair { fst: a, snd: ss }) {
+  match ss: (
+    segs_ok(sp, ss) = true
+  ) -> (
+    is_empty_list(ss) = false
+  ) -> auth_path(sp, d, List::append(auth_part(a), segments_part(ss))) = Some(Pair { fst: a, snd: ss }) {
+    Nil => (e1: true = true) => (e2: true = false) => False::elim(true_ne_false(e2))
+    Cons(s, rest) => (e1: segs_ok(sp, Cons(s, rest)) = true) => (e2: false = false) => Eq::trans(
+      Eq::subst(
+        (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Pair(Authority, List(List(Nat)))) {
+            None => with_path(
+              authority_of(sp, d, List::append(auth_part(a), segments_part(Cons(s, rest)))),
+              empty_path(sp)
+            )
+            Some(p) => with_path(authority_of(sp, d, p.fst), path_of(Nil, p.snd))
+          }) = with_path(authority_of(sp, d, auth_part(a)), path_of(Nil, join(47, Cons(s, rest)))),
+        Eq::sym(cut_app(47, auth_part(a), join(47, Cons(s, rest)), auth_no_slash(sp, d, a, ha))),
+        Refl
+      ),
+      Eq::trans(
+        Eq::congr(
+          (z: List(List(Nat))) => with_path(authority_of(sp, d, auth_part(a)), z),
+          path_of_join(sp, Cons(s, rest), Refl, e1)
+        ),
+        with_path_some(authority_of(sp, d, auth_part(a)), a, authority_round(sp, d, a, ha), Cons(s, rest))
+      )
+    )
+  }(hs, hne)
+}
+
+// An authority without a path, in a URL that is not special.
+pub theorem auth_path_none(
+  d: Option(Nat),
+  a: Authority,
+  ha: auth_ok(false, d, a) = true
+): auth_path(false, d, List::append(auth_part(a), Nil)) = Some(Pair { fst: a, snd: Nil }) {
+  Eq::subst(
+    (w: List(Nat)) => auth_path(false, d, w) = Some(Pair { fst: a, snd: Nil }),
+    Eq::sym(List::append_nil(auth_part(a))),
+    Eq::trans(
+      Eq::subst(
+        (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Pair(Authority, List(List(Nat)))) {
+            None => with_path(authority_of(false, d, auth_part(a)), empty_path(false))
+            Some(p) => with_path(authority_of(false, d, p.fst), path_of(Nil, p.snd))
+          }) = with_path(authority_of(false, d, auth_part(a)), Nil),
+        Eq::sym(cut_none(47, auth_part(a), auth_no_slash(false, d, a, ha))),
+        Refl
+      ),
+      with_path_some(authority_of(false, d, auth_part(a)), a, authority_round(false, d, a, ha), Nil)
+    )
+  )
+}
+
+pub theorem hier_auth_bytes_sp(
+  d: Option(Nat),
+  a: Authority,
+  ha: auth_ok(true, d, a) = true,
+  ss: List(List(Nat)),
+  hs: segs_ok(true, ss) = true
+): all_bytes(hbyte_sp, hier_part(Some(a), Segments(ss))) = true {
+  all_bytes_cons(
+    hbyte_sp,
+    47,
+    Cons(47, List::append(auth_part(a), segments_part(ss))),
+    Refl,
+    all_bytes_cons(
+      hbyte_sp,
+      47,
+      List::append(auth_part(a), segments_part(ss)),
+      Refl,
+      all_bytes_append(
+        hbyte_sp,
+        auth_part(a),
+        segments_part(ss),
+        bounded_to(
+          abyte,
+          hbyte_sp,
+          127,
+          abyte_bound,
+          Refl,
+          auth_part(a),
+          auth_part_bytes(true, d, a, ha)
+        ),
+        segments_part_bytes(hbyte_sp, Refl, ss, segs_hbyte_sp(ss, hs))
+      )
+    )
+  )
+}
+
+pub theorem hier_auth_bytes(
+  sp: Bool,
+  d: Option(Nat),
+  a: Authority,
+  ha: auth_ok(sp, d, a) = true,
+  ss: List(List(Nat)),
+  hs: segs_ok(sp, ss) = true
+): all_bytes(hbyte, hier_part(Some(a), Segments(ss))) = true {
+  all_bytes_cons(
+    hbyte,
+    47,
+    Cons(47, List::append(auth_part(a), segments_part(ss))),
+    Refl,
+    all_bytes_cons(
+      hbyte,
+      47,
+      List::append(auth_part(a), segments_part(ss)),
+      Refl,
+      all_bytes_append(
+        hbyte,
+        auth_part(a),
+        segments_part(ss),
+        bounded_to(
+          abyte,
+          hbyte,
+          127,
+          abyte_bound,
+          Refl,
+          auth_part(a),
+          auth_part_bytes(sp, d, a, ha)
+        ),
+        segments_part_bytes(hbyte, Refl, ss, segs_hbyte(sp, ss, hs))
+      )
+    )
+  )
+}
+
+pub theorem special_hier(
+  s: List(Nat),
+  d: Nat,
+  a: Authority,
+  ha: auth_ok(true, Some(d), a) = true,
+  ss: List(List(Nat)),
+  hs: segs_ok(true, ss) = true,
+  hne: is_empty_list(ss) = false,
+  q: Option(List(Nat)),
+  f: Option(List(Nat))
+): parse_special(
+  s,
+  d,
+  MkTail(hier_part(Some(a), Segments(ss)), q, f)
+) = Some(MkUrl(s, Some(a), Segments(ss), q, f)) {
+  Eq::trans(
+    Eq::congr(
+      (w: List(Nat)) => mk(
+        s,
+        auth_path(true, Some(d), drop_slashes(w)),
+        MkTail(hier_part(Some(a), Segments(ss)), q, f)
+      ),
+      map_bs_id(
+        hier_part(Some(a), Segments(ss)),
+        bounded_to(
+          hbyte_sp,
+          ne(92),
+          127,
+          hbyte_sp_bound,
+          Refl,
+          hier_part(Some(a), Segments(ss)),
+          hier_auth_bytes_sp(Some(d), a, ha, ss, hs)
+        )
+      )
+    ),
+    Eq::trans(
+      Eq::congr(
+        (w: List(Nat)) => mk(
+          s,
+          auth_path(true, Some(d), w),
+          MkTail(hier_part(Some(a), Segments(ss)), q, f)
+        ),
+        drop_keep(
+          List::append(auth_part(a), segments_part(ss)),
+          starts_append(
+            auth_part(a),
+            segments_part(ss),
+            auth_no_slash(true, Some(d), a, ha),
+            special_auth_nonempty(Some(d), a, ha)
+          )
+        )
+      ),
+      Eq::congr(
+        (o: Option(Pair(Authority, List(List(Nat))))) => mk(
+          s,
+          o,
+          MkTail(hier_part(Some(a), Segments(ss)), q, f)
+        ),
+        auth_path_segs(true, Some(d), a, ha, ss, hs, hne)
+      )
+    )
+  )
+}
+
+pub theorem plain_auth_hier(
+  s: List(Nat),
+  a: Authority,
+  ha: auth_ok(false, None, a) = true,
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  ss: List(List(Nat)),
+  hs: segs_ok(false, ss) = true
+): parse_plain(
+  s,
+  MkTail(hier_part(Some(a), Segments(ss)), q, f)
+) = Some(MkUrl(s, Some(a), Segments(ss), q, f)) {
+  match ss: (
+    segs_ok(false, ss) = true
+  ) -> parse_plain(
+    s,
+    MkTail(hier_part(Some(a), Segments(ss)), q, f)
+  ) = Some(MkUrl(s, Some(a), Segments(ss), q, f)) {
+    Nil => (e: true = true) => Eq::congr(
+      (o: Option(Pair(Authority, List(List(Nat))))) => mk(
+        s,
+        o,
+        MkTail(hier_part(Some(a), Segments(Nil)), q, f)
+      ),
+      auth_path_none(None, a, ha)
+    )
+    Cons(x, rest) => (e: segs_ok(false, Cons(x, rest)) = true) => Eq::congr(
+      (o: Option(Pair(Authority, List(List(Nat))))) => mk(
+        s,
+        o,
+        MkTail(hier_part(Some(a), Segments(Cons(x, rest))), q, f)
+      ),
+      auth_path_segs(false, None, a, ha, Cons(x, rest), e, Refl)
+    )
+  }(hs)
+}
+
+pub fn opaque_edge(o: List(Nat)): Bool {
+  Bool::and(not(starts_with(47, o)), not(ends_with_space(o)))
+}
+
+pub fn opaque_inner(o: List(Nat)): Bool {
+  all_bytes((b: Nat) => Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))), o)
+}
+
+pub fn opaque_rest(o: List(Nat)): Bool {
+  Bool::and(opaque_inner(o), opaque_edge(o))
+}
+
+pub theorem opaque_hier(
+  s: List(Nat),
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  o: List(Nat),
+  ho: opaque_ok(o) = true
+): parse_plain(s, MkTail(o, q, f)) = Some(MkUrl(s, None, Opaque(o), q, f)) {
+  let hr: opaque_rest(o) = true := Bool::and_split(clean(c0_control_set, o), opaque_rest(o), ho).b
+  let hc: clean(
+    c0_control_set,
+    o
+  ) = true := Bool::and_split(clean(c0_control_set, o), opaque_rest(o), ho).a
+  let hse: opaque_edge(o) = true := Bool::and_split(opaque_inner(o), opaque_edge(o), hr).b
+  let hst: not(
+    starts_with(47, o)
+  ) = true := Bool::and_split(not(starts_with(47, o)), not(ends_with_space(o)), hse).a
+  let hsp: not(
+    ends_with_space(o)
+  ) = true := Bool::and_split(not(starts_with(47, o)), not(ends_with_space(o)), hse).b
+  match o: (
+    clean(c0_control_set, o) = true
+  ) -> (
+    not(starts_with(47, o)) = true
+  ) -> (
+    not(ends_with_space(o)) = true
+  ) -> parse_plain(s, MkTail(o, q, f)) = Some(MkUrl(s, None, Opaque(o), q, f)) {
+    Nil => (e1: true = true) => (e2: true = true) => (e3: true = true) => Refl
+    Cons(b, t) => (e1: clean(c0_control_set, Cons(b, t)) = true) => (e2: not(Nat::eq(b, 47)) = true) => (e3: not(ends_with_space(Cons(b, t))) = true) => Eq::subst(
+      (z: Bool) => (match z: Option(Url) {
+          false => parse_opaque(s, MkTail(Cons(b, t), q, f))
+          true => plain_slash(s, t, MkTail(Cons(b, t), q, f))
+        }) = Some(MkUrl(s, None, Opaque(Cons(b, t)), q, f)),
+      Eq::sym(not_true(Nat::eq(b, 47), e2)),
+      Eq::trans(
+        Eq::congr(
+          (w: List(Nat)) => opaque_path(s, w, MkTail(Cons(b, t), q, f)),
+          pct_encode_clean(c0_control_set, Cons(b, t), e1)
+        ),
+        Eq::subst(
+          (z: Bool) => (match z: Option(Url) {
+              true => None
+              false => Some(MkUrl(s, None, Opaque(Cons(b, t)), q, f))
+            }) = Some(MkUrl(s, None, Opaque(Cons(b, t)), q, f)),
+          Eq::sym(not_true(ends_with_space(Cons(b, t)), e3)),
+          Refl
+        )
+      )
+    )
+  }(hc, hst, hsp)
+}
+
+pub theorem plain_slash_path(
+  s: List(Nat),
+  r: List(Nat),
+  hh: List(Nat),
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  hr: starts_with(47, r) = false
+): plain_slash(s, r, MkTail(hh, q, f)) = Some(MkUrl(s, None, Segments(path_of(Nil, r)), q, f)) {
+  match r: (
+    starts_with(47, r) = false
+  ) -> plain_slash(s, r, MkTail(hh, q, f)) = Some(MkUrl(s, None, Segments(path_of(Nil, r)), q, f)) {
+    Nil => (e: false = false) => Refl
+    Cons(b2, r2) => (e: Nat::eq(b2, 47) = false) => Eq::subst(
+      (z: Bool) => (match z: Option(Url) {
+          true => mk(s, auth_path(false, None, r2), MkTail(hh, q, f))
+          false => Some(MkUrl(s, None, Segments(path_of(Nil, Cons(b2, r2))), q, f))
+        }) = Some(MkUrl(s, None, Segments(path_of(Nil, Cons(b2, r2))), q, f)),
+      Eq::sym(e),
+      Refl
+    )
+  }(hr)
+}
+
+// `/.` before an empty first segment is read and dropped.
+pub theorem dot_path(
+  s2: List(Nat),
+  more: List(List(Nat)),
+  hs: segs_ok(false, Cons(Nil, Cons(s2, more))) = true
+): path_of(
+  Nil,
+  Cons(46, Cons(47, join(47, Cons(Nil, Cons(s2, more)))))
+) = Cons(Nil, Cons(s2, more)) {
+  Eq::trans(
+    Eq::congr(
+      (ps: List(List(Nat))) => List::reverse(walk(push_last(Nil, is_empty_list(ps)), ps)),
+      split_join(
+        47,
+        Cons(Nil, Cons(s2, more)),
+        Refl,
+        segs_pieces(false, Cons(Nil, Cons(s2, more)), hs)
+      )
+    ),
+    Eq::trans(
+      Eq::congr(
+        (ps: List(List(Nat))) => List::reverse(ps),
+        walk_clean(false, Nil, Cons(Nil, Cons(s2, more)), hs)
+      ),
+      List::reverse_reverse(Cons(Nil, Cons(s2, more)))
+    )
+  )
+}
+
+pub theorem first_byte_join(
+  x: Nat,
+  t0: List(Nat),
+  rest: List(List(Nat)),
+  e: Nat::eq(x, 47) = false
+): starts_with(47, join(47, Cons(Cons(x, t0), rest))) = false {
+  match rest: starts_with(47, join(47, Cons(Cons(x, t0), rest))) = false {
+    Nil => e
+    Cons(q, more) => e
+  }
+}
+
+// A path without an authority.
+pub theorem segs_hier(
+  s: List(Nat),
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  ss: List(List(Nat)),
+  hs: segs_ok(false, ss) = true,
+  hne: is_empty_list(ss) = false
+): parse_plain(
+  s,
+  MkTail(hier_part(None, Segments(ss)), q, f)
+) = Some(MkUrl(s, None, Segments(ss), q, f)) {
+  match ss: (
+    segs_ok(false, ss) = true
+  ) -> (
+    is_empty_list(ss) = false
+  ) -> parse_plain(
+    s,
+    MkTail(hier_part(None, Segments(ss)), q, f)
+  ) = Some(MkUrl(s, None, Segments(ss), q, f)) {
+    Nil => (e1: true = true) => (e2: true = false) => False::elim(true_ne_false(e2))
+    Cons(s0, rest) => (e1: segs_ok(false, Cons(s0, rest)) = true) => (
+      e2: false = false
+    ) => segs_hier_cons(s, q, f, s0, rest, e1)
+  }(hs, hne)
+}
+
+pub theorem segs_hier_cons(
+  s: List(Nat),
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  s0: List(Nat),
+  rest: List(List(Nat)),
+  hs: segs_ok(false, Cons(s0, rest)) = true
+): parse_plain(
+  s,
+  MkTail(hier_part(None, Segments(Cons(s0, rest))), q, f)
+) = Some(MkUrl(s, None, Segments(Cons(s0, rest)), q, f)) {
+  match s0: (
+    segs_ok(false, Cons(s0, rest)) = true
+  ) -> parse_plain(
+    s,
+    MkTail(hier_part(None, Segments(Cons(s0, rest))), q, f)
+  ) = Some(MkUrl(s, None, Segments(Cons(s0, rest)), q, f)) {
+    Nil => match rest: (
+      segs_ok(false, Cons(Nil, rest)) = true
+    ) -> parse_plain(
+      s,
+      MkTail(hier_part(None, Segments(Cons(Nil, rest))), q, f)
+    ) = Some(MkUrl(s, None, Segments(Cons(Nil, rest)), q, f)) {
+      Nil => (e: segs_ok(false, Cons(Nil, Nil)) = true) => Refl
+      Cons(s2, more) => (e: segs_ok(false, Cons(Nil, Cons(s2, more))) = true) => Eq::congr(
+        (ps: List(List(Nat))) => Some(MkUrl(s, None, Segments(ps), q, f)),
+        dot_path(s2, more, e)
+      )
+    }
+    Cons(x, t0) => (e: segs_ok(false, Cons(Cons(x, t0), rest)) = true) => Eq::trans(
+      plain_slash_path(
+        s,
+        join(47, Cons(Cons(x, t0), rest)),
+        hier_part(None, Segments(Cons(Cons(x, t0), rest))),
+        q,
+        f,
+        first_byte_join(
+          x,
+          t0,
+          rest,
+          ne_false(
+            47,
+            x,
+            all_bytes_head(
+              ne(47),
+              x,
+              t0,
+              seg_noslash(false, Cons(x, t0), segs_head(false, Cons(x, t0), rest, e))
+            )
+          )
+        )
+      ),
+      Eq::congr(
+        (ps: List(List(Nat))) => Some(MkUrl(s, None, Segments(ps), q, f)),
+        path_of_join(false, Cons(Cons(x, t0), rest), Refl, e)
+      )
+    )
+  }(hs)
+}
+
+// ---- the scheme ------------------------------------------------------------------------
+
+// `p` fails at `c`: a byte it accepts is not `c`.
+pub theorem ne_of(
+  p: (Nat) -> Bool,
+  c: Nat,
+  hc: p(c) = false,
+  b: Nat,
+  hb: p(b) = true
+): ne(c)(b) = true {
+  Bool::cases(
+    (z: Bool) => not(Nat::eq(b, c)) = true,
+    Nat::eq(b, c),
+    (e: Nat::eq(b, c) = false) => Eq::congr(not, e),
+    (e: Nat::eq(b, c) = true) => False::elim(
+      true_ne_false(
+        Eq::trans(Eq::sym(hb), Eq::subst((z: Nat) => p(z) = false, Eq::sym(Nat::eq_sound(b, c, e)), hc))
+      )
+    )
+  )
+}
+
+pub theorem scheme_not_upper(b: Nat, hb: scheme_byte(b) = true): is_upper(b) = false {
+  Bool::cases(
+    (z: Bool) => is_upper(b) = false,
+    is_upper(b),
+    (e: is_upper(b) = false) => e,
+    (e: is_upper(b) = true) => False::elim(
+      false_ne_true(
+        Eq::trans(
+          Eq::sym(Eq::congr(not, hb)),
+          implies_use(
+            is_upper(b),
+            not(scheme_byte(b)),
+            below_sound(
+              91,
+              (y: Nat) => implies(is_upper(y), not(scheme_byte(y))),
+              b,
+              Refl,
+              Bool::and_split(Nat::le(65, b), Nat::le(b, 90), e).b
+            ),
+            e
+          )
+        )
+      )
+    )
+  )
+}
+
+pub theorem lower_id(l: List(Nat), h: all_bytes(scheme_byte, l) = true): lower(l) = l {
+  match l: (all_bytes(scheme_byte, l) = true) -> lower(l) = l {
+    Nil => (e: true = true) => Refl
+    Cons(b, t) => (e: all_bytes(scheme_byte, Cons(b, t)) = true) => Eq::trans(
+      Eq::congr(
+        (z: Nat) => Cons(z, lower(t)),
+        lower_byte_same(b, scheme_not_upper(b, all_bytes_head(scheme_byte, b, t, e)))
+      ),
+      Eq::congr((z: List(Nat)) => Cons(b, z), lower_id(t, all_bytes_tail(scheme_byte, b, t, e)))
+    )
+  }(h)
+}
+
+pub theorem scheme_bytes(s: List(Nat), h: scheme_ok(s) = true): all_bytes(scheme_byte, s) = true {
+  match s: (scheme_ok(s) = true) -> all_bytes(scheme_byte, s) = true {
+    Nil => (e: false = true) => False::elim(false_ne_true(e))
+    Cons(b, t) => (e: Bool::and(is_lower(b), all_bytes(scheme_byte, t)) = true) => all_bytes_cons(
+      scheme_byte,
+      b,
+      t,
+      or_true_left(
+        is_lower(b),
+        Bool::or(is_digit(b), Bool::or(Nat::eq(b, 43), Bool::or(Nat::eq(b, 45), Nat::eq(b, 46)))),
+        Bool::and_split(is_lower(b), all_bytes(scheme_byte, t), e).a
+      ),
+      Bool::and_split(is_lower(b), all_bytes(scheme_byte, t), e).b
+    )
+  }(h)
+}
+
+pub theorem scheme_of_ok(
+  s: List(Nat),
+  r: List(Nat),
+  h: scheme_ok(s) = true
+): scheme_of(List::append(s, Cons(58, r))) = Some(Pair { fst: s, snd: r }) {
+  Eq::subst(
+    (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Pair(List(Nat), List(Nat))) {
+        None => None
+        Some(p) => match scheme_ok(lower(p.fst)): Option(Pair(List(Nat), List(Nat))) {
+          true => Some(Pair { fst: lower(p.fst), snd: p.snd })
+          false => None
+        }
+      }) = Some(Pair { fst: s, snd: r }),
+    Eq::sym(
+      cut_app(
+        58,
+        s,
+        r,
+        all_bytes_imp(scheme_byte, ne(58), (b: Nat) => (e: scheme_byte(b) = true) => ne_of(scheme_byte, 58, Refl, b, e), s, scheme_bytes(s, h))
+      )
+    ),
+    Eq::subst(
+      (w: List(Nat)) => (match scheme_ok(w): Option(Pair(List(Nat), List(Nat))) {
+          true => Some(Pair { fst: w, snd: r })
+          false => None
+        }) = Some(Pair { fst: s, snd: r }),
+      Eq::sym(lower_id(s, scheme_bytes(s, h))),
+      Eq::subst(
+        (z: Bool) => (match z: Option(Pair(List(Nat), List(Nat))) {
+            true => Some(Pair { fst: s, snd: r })
+            false => None
+          }) = Some(Pair { fst: s, snd: r }),
+        Eq::sym(h),
+        Refl
+      )
+    )
+  )
+}
+
+pub theorem parse_bytes_scheme(
+  s: List(Nat),
+  r: List(Nat),
+  h: scheme_ok(s) = true
+): parse_bytes(List::append(s, Cons(58, r))) = parse_after_scheme(s, r) {
+  Eq::subst(
+    (o: Option(Pair(List(Nat), List(Nat)))) => (match o: Option(Url) {
+        None => None
+        Some(p) => parse_after_scheme(p.fst, p.snd)
+      }) = parse_after_scheme(s, r),
+    Eq::sym(scheme_of_ok(s, r, h)),
+    Refl
+  )
+}
+
+pub theorem kind_cases(
+  G: Prop,
+  k: SchemeKind,
+  a: (d: Nat) -> (k = Special(d)) -> G,
+  b: (k = File) -> G,
+  c: (k = NotSpecial) -> G
+): G {
+  match k: G {
+    Special(d) => a(d, Refl)
+    File => b(Refl)
+    NotSpecial => c(Refl)
+  }
+}
+
+pub theorem special_of(
+  s: List(Nat),
+  d: Nat,
+  ek: scheme_kind(s) = Special(d)
+): is_special(s) = true {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Bool {
+        Special(x) => true
+        File => true
+        NotSpecial => false
+      }) = true,
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+pub theorem default_of(
+  s: List(Nat),
+  d: Nat,
+  ek: scheme_kind(s) = Special(d)
+): default_port(s) = Some(d) {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Option(Nat) {
+        Special(x) => Some(x)
+        File => None
+        NotSpecial => None
+      }) = Some(d),
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+pub theorem plain_of(s: List(Nat), ek: scheme_kind(s) = NotSpecial): is_special(s) = false {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Bool {
+        Special(x) => true
+        File => true
+        NotSpecial => false
+      }) = false,
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+pub theorem plain_default(s: List(Nat), ek: scheme_kind(s) = NotSpecial): default_port(s) = None {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Option(Nat) {
+        Special(x) => Some(x)
+        File => None
+        NotSpecial => None
+      }) = None,
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+pub theorem file_of(s: List(Nat), ek: scheme_kind(s) = File): is_file(s) = true {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Bool {
+        Special(x) => false
+        File => true
+        NotSpecial => false
+      }) = true,
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+pub theorem after_special(
+  s: List(Nat),
+  d: Nat,
+  r: List(Nat),
+  ek: scheme_kind(s) = Special(d)
+): parse_after_scheme(s, r) = parse_special(s, d, tail_of(special_query_set, r)) {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Option(Url) {
+        Special(x) => parse_special(s, x, tail_of(special_query_set, r))
+        File => None
+        NotSpecial => parse_plain(s, tail_of(query_set, r))
+      }) = parse_special(s, d, tail_of(special_query_set, r)),
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+pub theorem after_plain(
+  s: List(Nat),
+  r: List(Nat),
+  ek: scheme_kind(s) = NotSpecial
+): parse_after_scheme(s, r) = parse_plain(s, tail_of(query_set, r)) {
+  Eq::subst(
+    (k: SchemeKind) => (match k: Option(Url) {
+        Special(x) => parse_special(s, x, tail_of(special_query_set, r))
+        File => None
+        NotSpecial => parse_plain(s, tail_of(query_set, r))
+      }) = parse_plain(s, tail_of(query_set, r)),
+    Eq::sym(ek),
+    Refl
+  )
+}
+
+// ---- the whole URL ------------------------------------------------------------------------
+
+pub fn v_qf(sp: Bool, q: Option(List(Nat)), f: Option(List(Nat))): Bool {
+  Bool::and(query_ok(sp, q), fragment_ok(f))
+}
+
+pub fn v_pqf(
+  sp: Bool,
+  a: Option(Authority),
+  p: UrlPath,
+  q: Option(List(Nat)),
+  f: Option(List(Nat))
+): Bool {
+  Bool::and(path_ok(sp, is_some_auth(a), p), v_qf(sp, q, f))
+}
+
+pub fn v_apqf(
+  sp: Bool,
+  dp: Option(Nat),
+  a: Option(Authority),
+  p: UrlPath,
+  q: Option(List(Nat)),
+  f: Option(List(Nat))
+): Bool {
+  Bool::and(auth_opt_ok(sp, dp, a), v_pqf(sp, a, p, q, f))
+}
+
+pub fn rest_of(
+  a: Option(Authority),
+  p: UrlPath,
+  q: Option(List(Nat)),
+  f: Option(List(Nat))
+): List(Nat) {
+  List::append(hier_part(a, p), List::append(opt_bytes(63, q), opt_bytes(35, f)))
+}
+
+pub theorem q_special(
+  q: Option(List(Nat)),
+  h: query_ok(true, q) = true
+): opt_clean(special_query_set, q) = true {
+  match q: (query_ok(true, q) = true) -> opt_clean(special_query_set, q) = true {
+    None => (e: true = true) => Refl
+    Some(x) => (e: clean(special_query_set, x) = true) => e
+  }(h)
+}
+
+pub theorem q_plain(
+  q: Option(List(Nat)),
+  h: query_ok(false, q) = true
+): opt_clean(query_set, q) = true {
+  match q: (query_ok(false, q) = true) -> opt_clean(query_set, q) = true {
+    None => (e: true = true) => Refl
+    Some(x) => (e: clean(query_set, x) = true) => e
+  }(h)
+}
+
+pub theorem f_clean(
+  f: Option(List(Nat)),
+  h: fragment_ok(f) = true
+): opt_clean(fragment_set, f) = true {
+  match f: (fragment_ok(f) = true) -> opt_clean(fragment_set, f) = true {
+    None => (e: true = true) => Refl
+    Some(x) => (e: clean(fragment_set, x) = true) => e
+  }(h)
+}
+
+pub theorem q_no_hash(
+  set: (Nat) -> Bool,
+  hset: (b: Nat) -> (set(b) = false) -> c0_control_set(b) = false,
+  hq: below(127, (b: Nat) => Bool::or(set(b), ne(35)(b))) = true,
+  q: Option(List(Nat)),
+  h: opt_clean(set, q) = true
+): all_bytes(ne(35), opt_bytes(63, q)) = true {
+  match q: (opt_clean(set, q) = true) -> all_bytes(ne(35), opt_bytes(63, q)) = true {
+    None => (e: true = true) => Refl
+    Some(x) => (e: clean(set, x) = true) => all_bytes_cons(
+      ne(35),
+      63,
+      x,
+      Refl,
+      clean_to(set, ne(35), hset, hq, x, e)
+    )
+  }(h)
+}
+
+pub theorem hb35(x: List(Nat), h: all_bytes(hbyte, x) = true): all_bytes(ne(35), x) = true {
+  bounded_to(hbyte, ne(35), 127, hbyte_bound, Refl, x, h)
+}
+
+pub theorem hb63(x: List(Nat), h: all_bytes(hbyte, x) = true): all_bytes(ne(63), x) = true {
+  bounded_to(hbyte, ne(63), 127, hbyte_bound, Refl, x, h)
+}
+
+pub theorem not_empty_list(
+  c: Bool,
+  ss: List(List(Nat)),
+  hc: c = true,
+  h: implies(c, not(is_empty_list(ss))) = true
+): is_empty_list(ss) = false {
+  not_true(is_empty_list(ss), implies_use(c, not(is_empty_list(ss)), h, hc))
+}
+
+pub theorem special_round(
+  s: List(Nat),
+  d: Nat,
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  a: Option(Authority),
+  p: UrlPath,
+  hv: v_apqf(true, Some(d), a, p, q, f) = true
+): parse_special(
+  s,
+  d,
+  tail_of(special_query_set, rest_of(a, p, q, f))
+) = Some(MkUrl(s, a, p, q, f)) {
+  match a: (
+    v_apqf(true, Some(d), a, p, q, f) = true
+  ) -> parse_special(
+    s,
+    d,
+    tail_of(special_query_set, rest_of(a, p, q, f))
+  ) = Some(MkUrl(s, a, p, q, f)) {
+    None => (e: Bool::and(false, v_pqf(true, None, p, q, f)) = true) => False::elim(false_ne_true(e))
+    Some(x) => match p: (
+      v_apqf(true, Some(d), Some(x), p, q, f) = true
+    ) -> parse_special(
+      s,
+      d,
+      tail_of(special_query_set, rest_of(Some(x), p, q, f))
+    ) = Some(MkUrl(s, Some(x), p, q, f)) {
+      Opaque(o) => (e: v_apqf(true, Some(d), Some(x), Opaque(o), q, f) = true) => False::elim(
+        false_ne_true(
+          Bool::and_split(
+            Bool::and(false, opaque_ok(o)),
+            v_qf(true, q, f),
+            Bool::and_split(auth_ok(true, Some(d), x), v_pqf(true, Some(x), Opaque(o), q, f), e).b
+          ).a
+        )
+      )
+      Segments(ss) => (e: v_apqf(true, Some(d), Some(x), Segments(ss), q, f) = true) => {
+        let hqf: v_qf(
+          true,
+          q,
+          f
+        ) = true := Bool::and_split(
+          path_ok(true, true, Segments(ss)),
+          v_qf(true, q, f),
+          Bool::and_split(auth_ok(true, Some(d), x), v_pqf(true, Some(x), Segments(ss), q, f), e).b
+        ).b
+        let hq: opt_clean(
+          special_query_set,
+          q
+        ) = true := q_special(q, Bool::and_split(query_ok(true, q), fragment_ok(f), hqf).a)
+        let hf: opt_clean(
+          fragment_set,
+          f
+        ) = true := f_clean(f, Bool::and_split(query_ok(true, q), fragment_ok(f), hqf).b)
+        let hx: auth_ok(
+          true,
+          Some(d),
+          x
+        ) = true := Bool::and_split(
+          auth_ok(true, Some(d), x),
+          v_pqf(true, Some(x), Segments(ss), q, f),
+          e
+        ).a
+        let hpo: path_ok(
+          true,
+          true,
+          Segments(ss)
+        ) = true := Bool::and_split(
+          path_ok(true, true, Segments(ss)),
+          v_qf(true, q, f),
+          Bool::and_split(auth_ok(true, Some(d), x), v_pqf(true, Some(x), Segments(ss), q, f), e).b
+        ).a
+        let hss: segs_ok(
+          true,
+          ss
+        ) = true := Bool::and_split(segs_ok(true, ss), implies(true, not(is_empty_list(ss))), hpo).a
+        let hne: is_empty_list(
+          ss
+        ) = false := not_empty_list(
+          true,
+          ss,
+          Refl,
+          Bool::and_split(segs_ok(true, ss), implies(true, not(is_empty_list(ss))), hpo).b
+        )
+        let hh: all_bytes(
+          hbyte,
+          hier_part(Some(x), Segments(ss))
+        ) = true := hier_auth_bytes(true, Some(d), x, hx, ss, hss)
+        Eq::trans(
+          Eq::congr(
+            (t: Tail) => parse_special(s, d, t),
+            tail_of_ok(
+              special_query_set,
+              hier_part(Some(x), Segments(ss)),
+              q,
+              hb35(hier_part(Some(x), Segments(ss)), hh),
+              hb63(hier_part(Some(x), Segments(ss)), hh),
+              q_no_hash(special_query_set, special_query_c0, Refl, q, hq),
+              hq,
+              f,
+              hf
+            )
+          ),
+          special_hier(s, d, x, hx, ss, hss, hne, q, f)
+        )
+      }
+    }
+  }(hv)
+}
+
+pub theorem dot_prefix_bytes(
+  q: (Nat) -> Bool,
+  h47: q(47) = true,
+  h46: q(46) = true,
+  ss: List(List(Nat))
+): all_bytes(q, dot_prefix(ss)) = true {
+  match ss: all_bytes(q, dot_prefix(ss)) = true {
+    Nil => Refl
+    Cons(s0, rest) => match s0: all_bytes(q, dot_prefix(Cons(s0, rest))) = true {
+      Nil => match rest: all_bytes(q, dot_prefix(Cons(Nil, rest))) = true {
+        Nil => Refl
+        Cons(s2, more) => all_bytes_cons(
+          q,
+          47,
+          Cons(46, Nil),
+          h47,
+          all_bytes_cons(q, 46, Nil, h46, Refl)
+        )
+      }
+      Cons(x, t) => Refl
+    }
+  }
+}
+
+pub theorem plain_round(
+  s: List(Nat),
+  q: Option(List(Nat)),
+  f: Option(List(Nat)),
+  a: Option(Authority),
+  p: UrlPath,
+  hv: v_apqf(false, None, a, p, q, f) = true
+): parse_plain(s, tail_of(query_set, rest_of(a, p, q, f))) = Some(MkUrl(s, a, p, q, f)) {
+  match a: (
+    v_apqf(false, None, a, p, q, f) = true
+  ) -> parse_plain(s, tail_of(query_set, rest_of(a, p, q, f))) = Some(MkUrl(s, a, p, q, f)) {
+    None => match p: (
+      v_apqf(false, None, None, p, q, f) = true
+    ) -> parse_plain(s, tail_of(query_set, rest_of(None, p, q, f))) = Some(MkUrl(s, None, p, q, f)) {
+      Opaque(o) => (e: v_apqf(false, None, None, Opaque(o), q, f) = true) => {
+        let hpq: v_pqf(
+          false,
+          None,
+          Opaque(o),
+          q,
+          f
+        ) = true := Bool::and_split(true, v_pqf(false, None, Opaque(o), q, f), e).b
+        let ho: opaque_ok(
+          o
+        ) = true := Bool::and_split(
+          true,
+          opaque_ok(o),
+          Bool::and_split(Bool::and(true, opaque_ok(o)), v_qf(false, q, f), hpq).a
+        ).b
+        let hqf: v_qf(
+          false,
+          q,
+          f
+        ) = true := Bool::and_split(Bool::and(true, opaque_ok(o)), v_qf(false, q, f), hpq).b
+        let hq: opt_clean(
+          query_set,
+          q
+        ) = true := q_plain(q, Bool::and_split(query_ok(false, q), fragment_ok(f), hqf).a)
+        let hf: opt_clean(
+          fragment_set,
+          f
+        ) = true := f_clean(f, Bool::and_split(query_ok(false, q), fragment_ok(f), hqf).b)
+        let hin: opaque_inner(
+          o
+        ) = true := Bool::and_split(
+          opaque_inner(o),
+          opaque_edge(o),
+          Bool::and_split(clean(c0_control_set, o), opaque_rest(o), ho).b
+        ).a
+        Eq::trans(
+          Eq::congr(
+            (t: Tail) => parse_plain(s, t),
+            tail_of_ok(
+              query_set,
+              o,
+              q,
+              all_bytes_imp(
+                (b: Nat) => Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))),
+                ne(35),
+                (b: Nat) => (
+                  eb: Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))) = true
+                ) => Bool::and_split(not(Nat::eq(b, 35)), not(Nat::eq(b, 63)), eb).a,
+                o,
+                hin
+              ),
+              all_bytes_imp(
+                (b: Nat) => Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))),
+                ne(63),
+                (b: Nat) => (
+                  eb: Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))) = true
+                ) => Bool::and_split(not(Nat::eq(b, 35)), not(Nat::eq(b, 63)), eb).b,
+                o,
+                hin
+              ),
+              q_no_hash(query_set, query_c0, Refl, q, hq),
+              hq,
+              f,
+              hf
+            )
+          ),
+          opaque_hier(s, q, f, o, ho)
+        )
+      }
+      Segments(ss) => (e: v_apqf(false, None, None, Segments(ss), q, f) = true) => {
+        let hpq: v_pqf(
+          false,
+          None,
+          Segments(ss),
+          q,
+          f
+        ) = true := Bool::and_split(true, v_pqf(false, None, Segments(ss), q, f), e).b
+        let hpo: path_ok(
+          false,
+          false,
+          Segments(ss)
+        ) = true := Bool::and_split(path_ok(false, false, Segments(ss)), v_qf(false, q, f), hpq).a
+        let hqf: v_qf(
+          false,
+          q,
+          f
+        ) = true := Bool::and_split(path_ok(false, false, Segments(ss)), v_qf(false, q, f), hpq).b
+        let hq: opt_clean(
+          query_set,
+          q
+        ) = true := q_plain(q, Bool::and_split(query_ok(false, q), fragment_ok(f), hqf).a)
+        let hf: opt_clean(
+          fragment_set,
+          f
+        ) = true := f_clean(f, Bool::and_split(query_ok(false, q), fragment_ok(f), hqf).b)
+        let hss: segs_ok(
+          false,
+          ss
+        ) = true := Bool::and_split(segs_ok(false, ss), implies(true, not(is_empty_list(ss))), hpo).a
+        let hne: is_empty_list(
+          ss
+        ) = false := not_empty_list(
+          true,
+          ss,
+          Refl,
+          Bool::and_split(segs_ok(false, ss), implies(true, not(is_empty_list(ss))), hpo).b
+        )
+        let hh: all_bytes(
+          hbyte,
+          hier_part(None, Segments(ss))
+        ) = true := all_bytes_append(
+          hbyte,
+          dot_prefix(ss),
+          segments_part(ss),
+          dot_prefix_bytes(hbyte, Refl, Refl, ss),
+          segments_part_bytes(hbyte, Refl, ss, segs_hbyte(false, ss, hss))
+        )
+        Eq::trans(
+          Eq::congr(
+            (t: Tail) => parse_plain(s, t),
+            tail_of_ok(
+              query_set,
+              hier_part(None, Segments(ss)),
+              q,
+              hb35(hier_part(None, Segments(ss)), hh),
+              hb63(hier_part(None, Segments(ss)), hh),
+              q_no_hash(query_set, query_c0, Refl, q, hq),
+              hq,
+              f,
+              hf
+            )
+          ),
+          segs_hier(s, q, f, ss, hss, hne)
+        )
+      }
+    }
+    Some(x) => match p: (
+      v_apqf(false, None, Some(x), p, q, f) = true
+    ) -> parse_plain(
+      s,
+      tail_of(query_set, rest_of(Some(x), p, q, f))
+    ) = Some(MkUrl(s, Some(x), p, q, f)) {
+      Opaque(o) => (e: v_apqf(false, None, Some(x), Opaque(o), q, f) = true) => False::elim(
+        false_ne_true(
+          Bool::and_split(
+            Bool::and(false, opaque_ok(o)),
+            v_qf(false, q, f),
+            Bool::and_split(auth_ok(false, None, x), v_pqf(false, Some(x), Opaque(o), q, f), e).b
+          ).a
+        )
+      )
+      Segments(ss) => (e: v_apqf(false, None, Some(x), Segments(ss), q, f) = true) => {
+        let hx: auth_ok(
+          false,
+          None,
+          x
+        ) = true := Bool::and_split(
+          auth_ok(false, None, x),
+          v_pqf(false, Some(x), Segments(ss), q, f),
+          e
+        ).a
+        let hpq: v_pqf(
+          false,
+          Some(x),
+          Segments(ss),
+          q,
+          f
+        ) = true := Bool::and_split(
+          auth_ok(false, None, x),
+          v_pqf(false, Some(x), Segments(ss), q, f),
+          e
+        ).b
+        let hpo: path_ok(
+          false,
+          true,
+          Segments(ss)
+        ) = true := Bool::and_split(path_ok(false, true, Segments(ss)), v_qf(false, q, f), hpq).a
+        let hqf: v_qf(
+          false,
+          q,
+          f
+        ) = true := Bool::and_split(path_ok(false, true, Segments(ss)), v_qf(false, q, f), hpq).b
+        let hq: opt_clean(
+          query_set,
+          q
+        ) = true := q_plain(q, Bool::and_split(query_ok(false, q), fragment_ok(f), hqf).a)
+        let hf: opt_clean(
+          fragment_set,
+          f
+        ) = true := f_clean(f, Bool::and_split(query_ok(false, q), fragment_ok(f), hqf).b)
+        let hss: segs_ok(
+          false,
+          ss
+        ) = true := Bool::and_split(
+          segs_ok(false, ss),
+          implies(false, not(is_empty_list(ss))),
+          hpo
+        ).a
+        let hh: all_bytes(
+          hbyte,
+          hier_part(Some(x), Segments(ss))
+        ) = true := hier_auth_bytes(false, None, x, hx, ss, hss)
+        Eq::trans(
+          Eq::congr(
+            (t: Tail) => parse_plain(s, t),
+            tail_of_ok(
+              query_set,
+              hier_part(Some(x), Segments(ss)),
+              q,
+              hb35(hier_part(Some(x), Segments(ss)), hh),
+              hb63(hier_part(Some(x), Segments(ss)), hh),
+              q_no_hash(query_set, query_c0, Refl, q, hq),
+              hq,
+              f,
+              hf
+            )
+          ),
+          plain_auth_hier(s, x, hx, q, f, ss, hss)
+        )
+      }
+    }
+  }(hv)
+}
+
+pub fn v_after(
+  s: List(Nat),
+  a: Option(Authority),
+  p: UrlPath,
+  q: Option(List(Nat)),
+  f: Option(List(Nat))
+): Bool {
+  Bool::and(not(is_file(s)), v_apqf(is_special(s), default_port(s), a, p, q, f))
+}
+
+// Parsing the serialization of a valid URL gives it back.
+pub theorem parse_serialize(u: Url, h: url_valid(u) = true): parse_bytes(serialize(u)) = Some(u) {
+  match u: (url_valid(u) = true) -> parse_bytes(serialize(u)) = Some(u) {
+    MkUrl(s, a, p, q, f) => (e: Bool::and(scheme_ok(s), v_after(s, a, p, q, f)) = true) => {
+      let hva: v_after(
+        s,
+        a,
+        p,
+        q,
+        f
+      ) = true := Bool::and_split(scheme_ok(s), v_after(s, a, p, q, f), e).b
+      let hv: v_apqf(
+        is_special(s),
+        default_port(s),
+        a,
+        p,
+        q,
+        f
+      ) = true := Bool::and_split(
+        not(is_file(s)),
+        v_apqf(is_special(s), default_port(s), a, p, q, f),
+        hva
+      ).b
+      Eq::trans(
+        parse_bytes_scheme(
+          s,
+          rest_of(a, p, q, f),
+          Bool::and_split(scheme_ok(s), v_after(s, a, p, q, f), e).a
+        ),
+        kind_cases(
+          parse_after_scheme(s, rest_of(a, p, q, f)) = Some(MkUrl(s, a, p, q, f)),
+          scheme_kind(s),
+          (d: Nat) => (ek: scheme_kind(s) = Special(d)) => Eq::trans(
+            after_special(s, d, rest_of(a, p, q, f), ek),
+            special_round(
+              s,
+              d,
+              q,
+              f,
+              a,
+              p,
+              Eq::subst(
+                (o: Option(Nat)) => v_apqf(true, o, a, p, q, f) = true,
+                default_of(s, d, ek),
+                Eq::subst(
+                  (z: Bool) => v_apqf(z, default_port(s), a, p, q, f) = true,
+                  special_of(s, d, ek),
+                  hv
+                )
+              )
+            )
+          ),
+          (ek: scheme_kind(s) = File) => False::elim(
+            false_ne_true(
+              Eq::trans(
+                Eq::sym(Eq::congr(not, file_of(s, ek))),
+                Bool::and_split(
+                  not(is_file(s)),
+                  v_apqf(is_special(s), default_port(s), a, p, q, f),
+                  hva
+                ).a
+              )
+            )
+          ),
+          (ek: scheme_kind(s) = NotSpecial) => Eq::trans(
+            after_plain(s, rest_of(a, p, q, f), ek),
+            plain_round(
+              s,
+              q,
+              f,
+              a,
+              p,
+              Eq::subst(
+                (o: Option(Nat)) => v_apqf(false, o, a, p, q, f) = true,
+                plain_default(s, ek),
+                Eq::subst(
+                  (z: Bool) => v_apqf(z, default_port(s), a, p, q, f) = true,
+                  plain_of(s, ek),
+                  hv
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }(h)
+}

@@ -1,0 +1,247 @@
+import "final_instantiation_bindings.taut"
+import "finish_literal_sound.taut"
+
+pub fn finish_requirements_view(
+  c: Checker
+): Pair(List(TyBound), List(TyCtorBound)) { Pair {fst: c.bounds, snd: c.ctor_bounds} }
+pub fn finish_requirement_bounds(
+  r#view: Pair(List(TyBound), List(TyCtorBound))
+): List(TyBound) { (r#view: List(TyBound)) }
+pub fn finish_requirement_ctors(
+  r#view: Pair(List(TyBound), List(TyCtorBound))
+): List(TyCtorBound) { (r#view: List(TyCtorBound)) }
+pub def LiteralRecordsFrame_requirements<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := finish_requirements_view(ck_st(m)) = finish_requirements_view(c)
+pub theorem literal_records_bind_requirements<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: LiteralRecordsFrame_requirements(c, m),
+  tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame_requirements(next, k(value, next))
+): LiteralRecordsFrame_requirements(c, frame_bind(A, B, k, m)) {
+  match m: LiteralRecordsFrame_requirements(
+    c,
+    frame_bind(A, B, k, m)
+  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+}
+pub theorem literal_records_rewrap_requirements<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: LiteralRecordsFrame_requirements(c, m)
+): LiteralRecordsFrame_requirements(c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => LiteralRecordsFrame_requirements(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
+}
+pub theorem literal_default_records_requirements(
+  c: Checker,
+  t: Ty
+): LiteralRecordsFrame_requirements(c, finish_default(c, t)) {
+  match t: LiteralRecordsFrame_requirements(c, finish_default(c, t)) {
+    TyInt(w) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(ps, result, kind) => Refl
+    TyUnion(ys) => Refl
+    TyProduct(ys) => Refl
+    TyTagged(tags, item) => Refl
+    TyNamed(name, params) => Refl
+    TyParam(name, bound) => Refl
+    TyInfo(item) => Refl
+    TyBorrow(item, mutable) => Refl
+    TyVar(v) => Refl
+    TyPoly(gs, item) => Refl
+    TyApp(head, arg) => Refl
+  }
+}
+pub theorem ck_default_int_records_requirements(
+  c: Checker,
+  v: Nat
+): LiteralRecordsFrame_requirements(c, ck_default_int(c, v)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_requirements(c, m),
+    Eq::sym(finish_default_unf(c, v)),
+    literal_default_records_requirements(c, ck_resolve(c, TyVar(v)))
+  )
+}
+pub theorem ck_default_ints_records_requirements(
+  vs: List(Pair(Nat, Bool)),
+  c: Checker
+): LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) {
+  match vs: LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) {
+    Nil => Refl
+    Cons(v, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_requirements(c, m),
+      Eq::sym(finish_defaults_unf(v, rest, c)),
+      literal_records_bind_requirements(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
+        ck_default_int(c, finish_int_key(v)),
+        ck_default_int_records_requirements(c, finish_int_key(v)),
+        ignored => next => literal_records_rewrap_requirements(
+          next,
+          ck_default_ints(rest, next),
+          ck_default_ints_records_requirements(rest, next)
+        )
+      )
+    )
+  }
+}
+pub theorem literal_after_defaults_records_requirements(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  clean: DiagnosticReportClean(finish_after_defaults(c, widths))
+): LiteralRecordsFrame_requirements(c, finish_after_defaults(c, Widths)) {
+  Eq::congr(
+    Mut1(TypeReport, Checker),
+    Pair(List(TyBound), List(TyCtorBound)),
+    finish_after_defaults(c, Widths),
+    mut1(finish_report(c, Widths), c),
+    (m: Mut1(TypeReport, Checker)) => finish_requirements_view(ck_st(m)),
+    And::right(finish_after_defaults_accepts(c, Widths, clean))
+  )
+}
+pub theorem literal_finish_default_records_requirements(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: LiteralRecordsFrame_requirements(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
+): LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) {
+  match m: LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) {
+    mut1(value, next) => Eq::trans(
+      literal_after_defaults_records_requirements(
+        next,
+        ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty()),
+        clean
+      ),
+      first
+    )
+  }
+}
+pub theorem literal_finish_products_records_requirements(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: LiteralRecordsFrame_requirements(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
+): LiteralRecordsFrame_requirements(c, diagnostic_finish_products_result(m)) {
+  match m: LiteralRecordsFrame_requirements(c, diagnostic_finish_products_result(m)) {
+    mut1(value, next) => literal_finish_default_records_requirements(
+      c,
+      ck_check_products(List::reverse(finish_product_checks(next)), next),
+      Eq::trans(
+        Eq::congr(
+          keep_requirements,
+          ck_check_products_keep(List::reverse(finish_product_checks(next)), next)
+        ),
+        first
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_finish_literal_records_requirements(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): LiteralRecordsFrame_requirements(c, ck_finish(c)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => LiteralRecordsFrame_requirements(c, m),
+    Eq::sym(diagnostic_finish_default_unf(c)),
+    literal_finish_products_records_requirements(
+      c,
+      ck_default_ints(Ordmap::entries(finish_ints(c)), c),
+      ck_default_ints_records_requirements(Ordmap::entries(finish_ints(c)), c),
+      Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
+    )
+  )
+}
+
+pub theorem ck_finish_requirements_frame(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): RequirementFrame(c, ck_finish(c)) {
+  let equal: finish_requirements_view(ck_st(ck_finish(c))) = finish_requirements_view(c) := ck_finish_literal_records_requirements(c, clean)
+  AndIntro(
+    item => member => Eq::subst(
+      (items: List(TyBound)) => Mem(TyBound, item, items),
+      Eq::sym(Eq::congr(finish_requirement_bounds, equal)),
+      member
+    ),
+    item => member => Eq::subst(
+      (items: List(TyCtorBound)) => Mem(TyCtorBound, item, items),
+      Eq::sym(Eq::congr(finish_requirement_ctors, equal)),
+      member
+    )
+  )
+}
+pub theorem ck_finish_instantiation_bindings<gs: List(
+  Pair(Text, Kind)
+), initial: Ordmap(
+  Text,
+  Ty
+), result: Ordmap(
+  Text,
+  Ty
+)>(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  recorded: RecordedInstantiation(c, Nil, name, span, gs, initial, result),
+  clean: DiagnosticReportClean(ck_finish(c))
+): InstanceKindBindings(
+  ck_subst_of(ck_st(ck_finish(c))),
+  ck_datas_of(ck_st(ck_finish(c))),
+  gs,
+  initial,
+  result
+) {
+  final_instantiation_bindings(
+    ck_st(ck_finish(c)),
+    name,
+    span,
+    recorded_instantiation_move(
+      c,
+      ck_st(ck_finish(c)),
+      Nil,
+      name,
+      span,
+      ck_finish_requirements_frame(c, clean),
+      recorded
+    ),
+    ck_finish_obligations(c, clean)
+  )
+}
+
+pub theorem ck_instantiate_map_final_kinds(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  initial: Ordmap(Text, Ty),
+  clean: DiagnosticReportClean(
+    ck_finish(ck_st(ck_instantiate_map_ctors(gs, c, Nil, name, span, initial)))
+  )
+): InstanceKindBindings(
+  ck_subst_of(ck_st(ck_finish(ck_st(ck_instantiate_map_ctors(gs, c, Nil, name, span, initial))))),
+  ck_datas_of(ck_st(ck_finish(ck_st(ck_instantiate_map_ctors(gs, c, Nil, name, span, initial))))),
+  gs,
+  initial,
+  ck_val(ck_instantiate_map_ctors(gs, c, Nil, name, span, initial))
+) {
+  ck_finish_instantiation_bindings(
+    ck_st(ck_instantiate_map_ctors(gs, c, Nil, name, span, initial)),
+    name,
+    span,
+    ck_instantiate_map_requirements(gs, c, Nil, name, span, initial),
+    clean
+  )
+}

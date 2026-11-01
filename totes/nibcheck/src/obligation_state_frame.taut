@@ -1,0 +1,80 @@
+import "instantiation_requirement_frame.taut"
+
+// These deferred checks can grow; every check already recorded must survive.
+pub def ObligationState(
+  c: Checker,
+  next: Checker
+): Prop := And(
+  RequirementState(c, next),
+  Sub(TyPending, finish_pending_items(c), finish_pending_items(next))
+)
+pub def ObligationFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := ObligationState(c, ck_st(m))
+pub theorem obligation_state_refl(c: Checker): ObligationState(c, c) {
+  AndIntro(
+    requirement_state_refl(c),
+    (item: TyPending, member: Mem(TyPending, item, finish_pending_items(c))) => member
+  )
+}
+pub theorem obligation_state_trans(
+  c: Checker,
+  next: Checker,
+  last: Checker,
+  first: ObligationState(c, next),
+  tail: ObligationState(next, last)
+): ObligationState(c, last) {
+  AndIntro(
+    requirement_state_trans(c, next, last, And::left(first), And::left(tail)),
+    (item: TyPending, member: Mem(TyPending, item, finish_pending_items(c))) => And::right(
+      tail
+    )(item, And::right(first)(item, member))
+  )
+}
+pub theorem obligation_bound_of_mem<bs: List(
+  TyBound
+), b: TyBound>(member: Mem(TyBound, b, bs)): BoundIn(bs, b) {
+  match member: BoundIn(bs, b) {
+    MemHere(rest) => BoundHere(b, rest)
+    MemThere(head, rest, tail) => BoundThere(head, obligation_bound_of_mem(tail))
+  }
+}
+pub theorem obligation_mem_of_bound<bs: List(
+  TyBound
+), b: TyBound>(member: BoundIn(bs, b)): Mem(TyBound, b, bs) {
+  match member: Mem(TyBound, b, bs) {
+    BoundHere(head, rest) => MemHere(rest)
+    BoundThere(rest, item, head, tail) => MemThere(head, rest, obligation_mem_of_bound(tail))
+  }
+}
+pub theorem grows_obligations(
+  c: Checker,
+  next: Checker,
+  grows: Grows(c, next)
+): ObligationState(c, next) {
+  let unchanged: ck_deferred_view(c) = ck_deferred_view(next) := And::right(And::right(And::right(And::right(And::right(And::right(grows))))))
+  let fixed: CkFixed(c, next) := And::right(And::right(And::right(grows)))
+  match fixed: ObligationState(c, next) {
+    AndIntro(datas_equal, rest) => match rest: ObligationState(c, next) {
+      AndIntro(extended, preservation) => AndIntro(
+        AndIntro(
+          item => member => obligation_mem_of_bound(
+            extended(item, obligation_bound_of_mem(member))
+          ),
+          item => member => Eq::subst(
+            (items: List(TyCtorBound)) => Mem(TyCtorBound, item, items),
+            Eq::congr(ck_deferred_ctors, unchanged),
+            member
+          )
+        ),
+        item => member => Eq::subst(
+          (items: List(TyPending)) => Mem(TyPending, item, items),
+          Eq::congr(ck_deferred_pending, unchanged),
+          member
+        )
+      )
+    }
+  }
+
+}

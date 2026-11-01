@@ -1,0 +1,145 @@
+import "program_data_metadata_sound.taut"
+import "rules_decls.taut"
+
+pub theorem declared_data_member<ss: List(
+  SurfaceStmt
+), d: SurfaceData>(declared: DeclaresData(ss, d)): Mem(SurfaceData, d, types_data_decls(ss)) {
+  match declared: Mem(SurfaceData, d, types_data_decls(ss)) {
+    DeclaresDataStruct(data, rest) => MemHere(types_data_decls(rest))
+    DeclaresDataEnum(data, rest) => MemHere(types_data_decls(rest))
+    DeclaresDataLater(s, rest, data, tail) => Mem::append_right(
+      types_stmt_data(s),
+      types_data_decls(rest),
+      declared_data_member(tail)
+    )
+  }
+}
+
+pub theorem fresh_data_head_absent(
+  f: SurfaceData,
+  rest: List(SurfaceData),
+  seen: List(Text),
+  fresh: FreshDataNames(Cons(f, rest), seen),
+  present: Mem(Text, decl_data_name(f), seen)
+): False {
+  match fresh: False {
+    FreshDatasCons(head, tail, previous, absent, remaining) => absent(present)
+  }
+}
+
+pub theorem fresh_data_tail(
+  f: SurfaceData,
+  rest: List(SurfaceData),
+  seen: List(Text),
+  fresh: FreshDataNames(Cons(f, rest), seen)
+): FreshDataNames(rest, Cons(decl_data_name(f), seen)) {
+  match fresh: FreshDataNames(rest, Cons(decl_data_name(f), seen)) {
+    FreshDatasCons(head, tail, previous, absent, remaining) => remaining
+  }
+}
+
+pub theorem fresh_data_excludes<d: SurfaceData, fs: List(
+  SurfaceData
+)>(
+  member: Mem(SurfaceData, d, fs),
+  seen: List(Text),
+  fresh: FreshDataNames(fs, seen),
+  n: Text,
+  already: Mem(Text, n, seen),
+  equal: n = registration_name(d)
+): False {
+  match member: False {
+    MemHere(rest) => fresh_data_head_absent(
+      d,
+      rest,
+      seen,
+      fresh,
+      Eq::subst((key: Text) => Mem(Text, key, seen), equal, already)
+    )
+    MemThere(first, rest, tail) => fresh_data_excludes(
+      tail,
+      Cons(decl_data_name(first), seen),
+      fresh_data_tail(first, rest, seen, fresh),
+      n,
+      MemThere(decl_data_name(first), seen, already),
+      equal
+    )
+  }
+}
+
+pub theorem fresh_program_excludes(
+  ss: List(SurfaceStmt),
+  seen: List(Text),
+  fresh: FreshDataNames(types_data_decls(ss), seen),
+  n: Text,
+  already: Mem(Text, n, seen)
+): NoDeclarationName(n, ss) {
+  d => declared => equal => fresh_data_excludes(
+    declared_data_member(declared),
+    seen,
+    fresh,
+    n,
+    already,
+    equal
+  )
+}
+
+pub theorem data_seen_cons_sub(
+  head: Text,
+  small: List(Text),
+  large: List(Text),
+  sub: Sub(Text, small, large),
+  n: Text,
+  member: Mem(Text, n, Cons(head, small))
+): Mem(Text, n, Cons(head, large)) {
+  match member: Mem(Text, n, Cons(head, large)) {
+    MemHere(rest) => MemHere(large)
+    MemThere(first, rest, tail) => MemThere(head, large, sub(n, tail))
+  }
+}
+
+pub theorem fresh_data_weaken<fs: List(
+  SurfaceData
+), seen: List(
+  Text
+)>(
+  fresh: FreshDataNames(fs, seen),
+  smaller: List(Text),
+  sub: Sub(Text, smaller, seen)
+): FreshDataNames(fs, smaller) {
+  match fresh: FreshDataNames(fs, smaller) {
+    FreshDatasNil(previous) => FreshDatasNil(smaller)
+    FreshDatasCons(first, rest, previous, absent, remaining) => FreshDatasCons(
+      first,
+      rest,
+      smaller,
+      member => absent(sub(decl_data_name(first), member)),
+      fresh_data_weaken(
+        remaining,
+        Cons(decl_data_name(first), smaller),
+        n => member => data_seen_cons_sub(decl_data_name(first), smaller, previous, sub, n, member)
+      )
+    )
+  }
+}
+
+pub theorem fresh_data_append_tail(
+  prefix: List(SurfaceData),
+  suffix: List(SurfaceData),
+  seen: List(Text),
+  fresh: FreshDataNames(List::append(prefix, suffix), seen)
+): FreshDataNames(suffix, seen) {
+  match prefix: FreshDataNames(suffix, seen) {
+    Nil => fresh
+    Cons(first, rest) => fresh_data_weaken(
+      fresh_data_append_tail(
+        rest,
+        suffix,
+        Cons(decl_data_name(first), seen),
+        fresh_data_tail(first, List::append(rest, suffix), seen, fresh)
+      ),
+      seen,
+      n => member => MemThere(decl_data_name(first), seen, member)
+    )
+  }
+}

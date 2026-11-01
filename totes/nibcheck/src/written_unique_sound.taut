@@ -1,0 +1,372 @@
+import "written_unique_lists.taut"
+
+mutual {
+  pub theorem written_term_unique<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, borrow: Bool, term: SurfaceTerm, t: Ty>(
+    meaning: WrittenTerm(env, generics, partial, borrow, term, t),
+    other_env: Datas,
+    other: Ty,
+    second: WrittenTerm(other_env, generics, partial, borrow, term, other)
+  ): t = other {
+    match meaning: t = other {
+      Mk(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        sk,
+        value,
+        start,
+        end,
+        inner
+      ) => written_unique_term(
+        ctor_ast_occurrence,
+        second,
+        value,
+        next_env => next_value => next_meaning => written_kind_unique(
+          inner,
+          next_env,
+          next_value,
+          next_meaning
+        )
+      )
+    }
+  }
+  pub theorem written_kind_unique<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, borrow: Bool, kind: SurfaceKind, t: Ty>(
+    meaning: WrittenKind(env, generics, partial, borrow, kind, t),
+    other_env: Datas,
+    other: Ty,
+    second: WrittenKind(other_env, generics, partial, borrow, kind, other)
+  ): t = other {
+    match meaning: t = other {
+      WrittenKindName(gs, Mode, borrowing, name, value, Named) => written_unique_name(
+        second,
+        env,
+        value,
+        Named
+      )
+      WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, start, end) => written_unique_unit(
+        ctor_ast_occurrence,
+        second
+      )
+      WrittenKindInfo(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        arg,
+        value,
+        start,
+        end,
+        argument
+      ) => written_unique_info(
+        ctor_ast_occurrence,
+        second,
+        value,
+        next_env => next_value => next_meaning => written_term_unique(
+          argument,
+          next_env,
+          next_value,
+          next_meaning
+        )
+      )
+      WrittenKindNamed(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        name,
+        args,
+        types,
+        start,
+        end,
+        NotTuple,
+        not_info,
+        unbound,
+        SliceBorrowed,
+        arguments,
+        arity
+      ) => written_unique_named(
+        ctor_ast_occurrence,
+        second,
+        types,
+        NotTuple,
+        not_info,
+        unbound,
+        next_env => next_values => next_meaning => written_terms_unique(
+          arguments,
+          next_env,
+          next_values,
+          next_meaning
+        )
+      )
+      WrittenKindGeneric(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        name,
+        arg,
+        head,
+        value,
+        bound,
+        start,
+        end,
+        not_info,
+        Parameter,
+        Constructor,
+        argument
+      ) => written_unique_generic(
+        ctor_ast_occurrence,
+        second,
+        head,
+        value,
+        bound,
+        not_info,
+        Parameter,
+        Constructor,
+        next_env => next_value => next_meaning => written_term_unique(
+          argument,
+          next_env,
+          next_value,
+          next_meaning
+        )
+      )
+      WrittenKindNested(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        function,
+        before,
+        args,
+        start,
+        end,
+        name,
+        first,
+        last,
+        Constructor,
+        arguments,
+        arity
+      ) => written_unique_nested(
+        ctor_ast_occurrence,
+        second,
+        name,
+        first,
+        last,
+        next_env => next_value => next_meaning => written_term_unique(
+          Constructor,
+          next_env,
+          next_value,
+          next_meaning
+        ),
+        next_env => next_values => next_meaning => written_terms_unique(
+          arguments,
+          next_env,
+          next_values,
+          next_meaning
+        )
+      )
+      WrittenKindFunction(
+        gs,
+        Mode,
+        borrowing,
+        params,
+        result,
+        effects,
+        Binders,
+        Suffix,
+        inner,
+        arguments,
+        Returns,
+        value,
+        MkSplit,
+        MkScope,
+        ParameterTypes,
+        ResultType,
+        Polymorphic
+      ) => written_unique_function(
+        second,
+        Binders,
+        Suffix,
+        inner,
+        arguments,
+        Returns,
+        value,
+        MkSplit,
+        MkScope,
+        Polymorphic,
+        next_env => next_values => next_meaning => written_parameters_unique(
+          ParameterTypes,
+          next_env,
+          next_values,
+          next_meaning
+        ),
+        next_env => next_value => next_meaning => written_term_unique(
+          ResultType,
+          next_env,
+          next_value,
+          next_meaning
+        )
+      )
+      WrittenKindFunctionKind(
+        gs,
+        Mode,
+        borrowing,
+        spelling,
+        body,
+        params,
+        result,
+        original,
+        kind,
+        function,
+        Annotation
+      ) => written_unique_fn_kind(
+        second,
+        params,
+        result,
+        original,
+        kind,
+        next_env => next_value => next_meaning => written_term_unique(
+          function,
+          next_env,
+          next_value,
+          next_meaning
+        ),
+        Annotation
+      )
+      WrittenKindBorrow(gs, Mode, borrowing, mutable, body, value, inner) => written_unique_borrow(
+        second,
+        value,
+        next_env => next_value => next_meaning => written_term_unique(
+          inner,
+          next_env,
+          next_value,
+          next_meaning
+        )
+      )
+      WrittenKindUnion(gs, Mode, borrowing, parts, types, inner) => written_unique_union(
+        second,
+        types,
+        next_env => next_values => next_meaning => written_terms_unique(
+          inner,
+          next_env,
+          next_values,
+          next_meaning
+        )
+      )
+      WrittenKindProduct(gs, mode, borrowing, parts, types, inner) => written_unique_product(
+        second,
+        types,
+        next_env => next_values => next_meaning => written_terms_unique(
+          inner,
+          next_env,
+          next_values,
+          next_meaning
+        )
+      )
+      WrittenKindTagged(gs, mode, borrowing, tag, body, value, inner) => written_unique_tagged(
+        second,
+        value,
+        next_env => next_value => next_meaning => written_term_unique(
+          inner,
+          next_env,
+          next_value,
+          next_meaning
+        )
+      )
+    }
+  }
+  pub theorem written_terms_unique<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, terms: List(
+    SurfaceTerm
+  ), types: List(
+    Ty
+  )>(
+    meaning: WrittenTerms(env, generics, partial, terms, types),
+    other_env: Datas,
+    other: List(Ty),
+    second: WrittenTerms(other_env, generics, partial, terms, other)
+  ): types = other {
+    match meaning: types = other {
+      WrittenTermsNil(gs, Mode) => written_unique_terms_nil(second)
+      WrittenTermsCons(
+        gs,
+        Mode,
+        first,
+        rest,
+        value,
+        values,
+        head,
+        tail
+      ) => written_unique_terms_cons(
+        second,
+        value,
+        values,
+        next_env => next_value => next_meaning => written_term_unique(
+          head,
+          next_env,
+          next_value,
+          next_meaning
+        ),
+        next_env => next_values => next_meaning => written_terms_unique(
+          tail,
+          next_env,
+          next_values,
+          next_meaning
+        )
+      )
+    }
+  }
+  pub theorem written_parameters_unique<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, params: List(
+    SurfaceParam
+  ), types: List(
+    Ty
+  )>(
+    meaning: WrittenParameters(env, generics, partial, params, types),
+    other_env: Datas,
+    other: List(Ty),
+    second: WrittenParameters(other_env, generics, partial, params, other)
+  ): types = other {
+    match meaning: types = other {
+      WrittenParametersNil(gs, Mode) => written_unique_parameters_nil(second)
+      WrittenParametersCons(
+        gs,
+        Mode,
+        name,
+        body,
+        rest,
+        value,
+        values,
+        head,
+        tail
+      ) => written_unique_parameters_cons(
+        second,
+        value,
+        values,
+        next_env => next_value => next_meaning => written_term_unique(
+          head,
+          next_env,
+          next_value,
+          next_meaning
+        ),
+        next_env => next_values => next_meaning => written_parameters_unique(
+          tail,
+          next_env,
+          next_values,
+          next_meaning
+        )
+      )
+    }
+  }
+}

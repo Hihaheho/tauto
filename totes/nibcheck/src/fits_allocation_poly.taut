@@ -1,0 +1,133 @@
+import "fits_allocation_defs.taut"
+
+pub theorem fits_alloc_poly_r_after(
+  fuel: Nat,
+  hu: FitsAllocU(fuel),
+  c: Checker,
+  a: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  first: AllocationAdvance(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  left: TypeAllocated(ck_next_of(ck_st(m)), a),
+  right: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(t, ck_val(m)))
+): AllocationAdvance(c, ck_poly_r_k(fuel, a, gs, t, m)) {
+  match m: AllocationAdvance(c, ck_poly_r_k(fuel, a, gs, t, m)) {
+    mut1(rigid, next) => allocation_advance_start(
+      c,
+      next,
+      ck_and(
+        (last: Checker) => ck_keep(last, gs, rigid, a, TyPoly(gs, t)),
+        ck_fits_in(fuel, next, a, ty_substitute(t, rigid))
+      ),
+      And::left(first),
+      allocation_advance_and(
+        next,
+        (last: Checker) => ck_keep(last, gs, rigid, a, TyPoly(gs, t)),
+        ck_fits_in(fuel, next, a, ty_substitute(t, rigid)),
+        hu(next, a, ty_substitute(t, rigid), ordered, And::right(first), left, right),
+        fits_alloc_ordered_U(fuel, next, a, ty_substitute(t, rigid), ordered),
+        last => advanced => current => order => allocation_advance_fixed(
+          last,
+          ck_keep(last, gs, rigid, a, TyPoly(gs, t)),
+          ck_keep_allocation_run(last, gs, rigid, a, TyPoly(gs, t), current)
+        )
+      )
+    )
+  }
+}
+pub theorem fits_alloc_poly_r(
+  fuel: Nat,
+  hu: FitsAllocU(fuel),
+  c: Checker,
+  a: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), t)
+): AllocationAdvance(c, ck_poly_r_k(fuel, a, gs, t, ck_rigid(gs, c))) {
+  fits_alloc_poly_r_after(
+    fuel,
+    hu,
+    c,
+    a,
+    gs,
+    t,
+    ck_rigid(gs, c),
+    allocation_advance_fixed(
+      c,
+      ck_rigid(gs, c),
+      AndIntro(ck_rigid_counter(gs, c), ck_rigid_allocation(gs, c, state))
+    ),
+    And::left(grows_of_same(c, ck_st(ck_rigid(gs, c)), ordered, ck_rigid_same(gs, c))),
+    Eq::subst((limit: Nat) => TypeAllocated(limit, a), ck_rigid_counter(gs, c), left),
+    Eq::subst(
+      (limit: Nat) => TypeAllocated(limit, ty_substitute(t, ck_val(ck_rigid(gs, c)))),
+      ck_rigid_counter(gs, c),
+      ck_rigid_substitute_allocated(gs, c, t, ck_next_of(c), right)
+    )
+  )
+}
+pub theorem fits_alloc_poly_l_after(
+  fuel: Nat,
+  hu: FitsAllocU(fuel),
+  c: Checker,
+  b: Ty,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  first: InstanceAllocation(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  left: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(t, ck_val(m))),
+  right: TypeAllocated(ck_next_of(ck_st(m)), b)
+): AllocationAdvance(c, ck_poly_l_k(fuel, b, gs, t, m)) {
+  match m: AllocationAdvance(c, ck_poly_l_k(fuel, b, gs, t, m)) {
+    mut1(map, next) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, next, ty_substitute(t, map), b),
+      allocation_advance_start(
+        c,
+        next,
+        ck_fits_in(fuel, next, ty_substitute(t, map), b),
+        And::left(first),
+        hu(next, ty_substitute(t, map), b, ordered, And::left(And::right(first)), left, right)
+      )
+    )
+  }
+}
+pub theorem fits_alloc_poly_l(
+  fuel: Nat,
+  hu: FitsAllocU(fuel),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), t),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_poly_l_k(fuel, b, gs, t, ck_instance_of(gs, c))) {
+  let first: InstanceAllocation(c, ck_instance_of(gs, c)) := ck_instance_of_allocation(gs, c, state)
+  fits_alloc_poly_l_after(
+    fuel,
+    hu,
+    c,
+    b,
+    gs,
+    t,
+    ck_instance_of(gs, c),
+    first,
+    And::left(And::left(inst_ok(gs, c))(ordered)),
+    ck_instance_substitute_allocated(gs, c, t, state, left),
+    type_allocated_weaken(
+      b,
+      ck_next_of(c),
+      ck_next_of(ck_st(ck_instance_of(gs, c))),
+      And::left(first),
+      right
+    )
+  )
+}

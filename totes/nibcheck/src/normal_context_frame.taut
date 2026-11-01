@@ -1,0 +1,92 @@
+import "signature_registration_context.taut"
+import "instances_frame.taut"
+
+pub def CkNormal(
+  c: Checker
+): Prop := written_context(c) = (Pair { fst: false, snd: false })
+pub def CkNormalFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := ∀ normal: CkNormal(c). CkNormal(ck_st(m))
+pub theorem normal_from_context<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  context: CkContextFrame(c, m)
+): CkNormalFrame(c, m) {
+  normal => Eq::trans(context(Eq::congr(written_context_borrow, normal)), normal)
+}
+pub theorem normal_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  before: CkNormalFrame(c, m),
+  after: ∀ value: A. ∀ next: Checker. CkNormalFrame(next, k(value, next))
+): CkNormalFrame(c, frame_bind(A, B, k, m)) {
+  match m: CkNormalFrame(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => normal => after(value, next, before(normal))
+  }
+}
+pub theorem normal_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  kept: CkNormalFrame(c, m)
+): CkNormalFrame(c, ck_rewrap1(m)) {
+  match m: CkNormalFrame(c, ck_rewrap1(m)) {
+    mut1(value, next) => kept
+  }
+}
+pub theorem normal_return<A: Type, B: Type>(
+  c: Checker,
+  value: B,
+  m: Mut1(A, Checker),
+  kept: CkNormalFrame(c, m)
+): CkNormalFrame(c, frame_return(value, m)) {
+  match m: CkNormalFrame(c, frame_return(value, m)) {
+    mut1(ignored, next) => kept
+  }
+}
+pub theorem normal_changed<A: Type>(
+  c: Checker,
+  changed: Checker,
+  m: Mut1(A, Checker),
+  same: written_context(changed) = written_context(c),
+  kept: CkNormalFrame(changed, m)
+): CkNormalFrame(c, m) {
+  normal => kept(Eq::trans(same, normal))
+}
+pub theorem ck_error_normal(
+  c: Checker,
+  message: Text,
+  span: TySpan
+): CkNormalFrame(c, ck_error(c, message, span)) {
+  normal_from_context(c, ck_error(c, message, span), ck_error_frame_context(c, message, span))
+}
+pub theorem normal_error_if(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  condition: Bool
+): CkNormalFrame(c, frame_error_if(c, message, span, condition)) {
+  normal_from_context(
+    c,
+    frame_error_if(c, message, span, condition),
+    frame_error_if_ok_context(c, message, span, condition)
+  )
+}
+pub theorem ck_signature_normal(
+  c: Checker,
+  source: SurfaceFn
+): CkNormalFrame(c, ck_signature(c, source)) {
+  normal_from_context(c, ck_signature(c, source), ck_signature_frame_context(c, source))
+}
+pub theorem ck_written_normal(
+  c: Checker,
+  source: SurfaceTerm,
+  generics: Ordmap(Text, Ty)
+): CkNormalFrame(c, ck_written(c, source, generics)) {
+  normal_from_context(
+    c,
+    ck_written(c, source, generics),
+    ck_written_frame_context(c, source, generics)
+  )
+}

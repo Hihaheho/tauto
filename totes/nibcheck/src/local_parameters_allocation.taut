@@ -1,0 +1,99 @@
+import "local_allocation_sound.taut"
+
+pub def ParametersAllocationIH(
+  rest: List(Text)
+): Prop := ∀ c: Checker. ∀ env: Scope. ∀ tys: List(
+  Ty
+). ∀ site: Nat. ∀ state: CheckerAllocation(
+  c
+). ∀ locals: LocalsAllocated(
+  ck_next_of(c),
+  allocation_scope_items(env)
+). ∀ types: TypeListAllocated(
+  ck_next_of(c),
+  tys
+). ScopeAllocation(c, ck_bind_params(rest, c, env, tys, site))
+pub theorem params_cons_allocation(
+  name: Text,
+  rest: List(Text),
+  c: Checker,
+  env: Scope,
+  site: Nat,
+  tys: List(Ty),
+  state: CheckerAllocation(c),
+  locals: LocalsAllocated(ck_next_of(c), allocation_scope_items(env)),
+  types: TypeListAllocated(ck_next_of(c), tys),
+  ih: ParametersAllocationIH(rest)
+): ScopeAllocation(c, pattern_params_cons(name, rest, c, env, site, tys)) {
+  match tys: ScopeAllocation(c, pattern_params_cons(name, rest, c, env, site, tys)) {
+    Nil => AndIntro(allocation_advance_return(c, Star, state), locals)
+    Cons(ty, more) => scope_allocation_bind(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, next: Checker, nextenv: Scope) => pattern_rewrap(
+        ck_bind_params(rest, next, nextenv, more, site)
+      ),
+      ck_bind_local(c, env, name, ty, false, site),
+      ck_bind_local_allocation(c, env, name, ty, false, site, state, locals, And::left(types)),
+      ignored => next => nextenv => advanced => current => bounded => scope_allocation_rewrap(
+        next,
+        ck_bind_params(rest, next, nextenv, more, site),
+        ih(
+          next,
+          nextenv,
+          more,
+          site,
+          current,
+          bounded,
+          type_list_allocated_weaken(
+            more,
+            ck_next_of(c),
+            ck_next_of(next),
+            advanced,
+            And::right(types)
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem ck_bind_params_allocation(
+  names: List(Text),
+  c: Checker,
+  env: Scope,
+  tys: List(Ty),
+  site: Nat,
+  state: CheckerAllocation(c),
+  locals: LocalsAllocated(ck_next_of(c), allocation_scope_items(env)),
+  types: TypeListAllocated(ck_next_of(c), tys)
+): ScopeAllocation(c, ck_bind_params(names, c, env, tys, site)) {
+  match names: ScopeAllocation(c, ck_bind_params(names, c, env, tys, site)) {
+    Nil => AndIntro(allocation_advance_return(c, Star, state), locals)
+    Cons(name, rest) => Eq::subst(
+      (result: Mut2(Unit, Checker, Scope)) => ScopeAllocation(c, result),
+      Eq::sym(pattern_params_cons_unf(name, rest, c, env, site, tys)),
+      params_cons_allocation(
+        name,
+        rest,
+        c,
+        env,
+        site,
+        tys,
+        state,
+        locals,
+        types,
+        next => nextenv => more => at => current => bounded => type_bounds => ck_bind_params_allocation(
+          rest,
+          next,
+          nextenv,
+          more,
+          at,
+          current,
+          bounded,
+          type_bounds
+        )
+      )
+    )
+  }
+}

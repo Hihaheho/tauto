@@ -1,0 +1,3538 @@
+import "surface.taut"
+import "occurrence.taut"
+
+// Indexing followed by erasure preserves the whole tree modulo metadata.
+mutual {
+  pub theorem surface_index_list_option_surfaceterm_erase_from(
+    value: List(Option(SurfaceTerm)),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_option_surfaceterm_from(
+      surface_index_list_option_surfaceterm_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_option_surfaceterm_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_option_surfaceterm_from(
+        surface_index_list_option_surfaceterm_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_option_surfaceterm_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: Option(SurfaceTerm)) => Cons(
+            replacement,
+            surface_index_list_option_surfaceterm_from(
+              surface_index_list_option_surfaceterm_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_option_surfaceterm_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(Option(SurfaceTerm))) => Cons(
+            surface_index_option_surfaceterm(
+              item,
+              surface_index_child(erase_path, erase_index),
+              false
+            ),
+            replacement
+          ),
+          surface_index_list_option_surfaceterm_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacearm_erase_from(
+    value: List(SurfaceArm),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacearm_from(
+      surface_index_list_surfacearm_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacearm_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacearm_from(
+        surface_index_list_surfacearm_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacearm_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceArm) => Cons(
+            replacement,
+            surface_index_list_surfacearm_from(
+              surface_index_list_surfacearm_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacearm_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceArm)) => Cons(
+            surface_index_surfacearm(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacearm_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfaceconstraint_erase_from(
+    value: List(SurfaceConstraint),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfaceconstraint_from(
+      surface_index_list_surfaceconstraint_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfaceconstraint_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfaceconstraint_from(
+        surface_index_list_surfaceconstraint_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfaceconstraint_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceConstraint) => Cons(
+            replacement,
+            surface_index_list_surfaceconstraint_from(
+              surface_index_list_surfaceconstraint_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfaceconstraint_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceConstraint)) => Cons(
+            surface_index_surfaceconstraint(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfaceconstraint_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacector_erase_from(
+    value: List(SurfaceCtor),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacector_from(
+      surface_index_list_surfacector_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacector_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacector_from(
+        surface_index_list_surfacector_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacector_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceCtor) => Cons(
+            replacement,
+            surface_index_list_surfacector_from(
+              surface_index_list_surfacector_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacector_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceCtor)) => Cons(
+            surface_index_surfacector(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacector_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacedatactor_erase_from(
+    value: List(SurfaceDataCtor),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacedatactor_from(
+      surface_index_list_surfacedatactor_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacedatactor_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacedatactor_from(
+        surface_index_list_surfacedatactor_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacedatactor_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceDataCtor) => Cons(
+            replacement,
+            surface_index_list_surfacedatactor_from(
+              surface_index_list_surfacedatactor_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacedatactor_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceDataCtor)) => Cons(
+            surface_index_surfacedatactor(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacedatactor_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacedatafield_erase_from(
+    value: List(SurfaceDataField),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacedatafield_from(
+      surface_index_list_surfacedatafield_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacedatafield_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacedatafield_from(
+        surface_index_list_surfacedatafield_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacedatafield_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceDataField) => Cons(
+            replacement,
+            surface_index_list_surfacedatafield_from(
+              surface_index_list_surfacedatafield_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacedatafield_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceDataField)) => Cons(
+            surface_index_surfacedatafield(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacedatafield_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacefield_erase_from(
+    value: List(SurfaceField),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacefield_from(
+      surface_index_list_surfacefield_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacefield_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacefield_from(
+        surface_index_list_surfacefield_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacefield_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceField) => Cons(
+            replacement,
+            surface_index_list_surfacefield_from(
+              surface_index_list_surfacefield_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacefield_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceField)) => Cons(
+            surface_index_surfacefield(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacefield_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacefn_erase_from(
+    value: List(SurfaceFn),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacefn_from(
+      surface_index_list_surfacefn_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacefn_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacefn_from(
+        surface_index_list_surfacefn_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacefn_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceFn) => Cons(
+            replacement,
+            surface_index_list_surfacefn_from(
+              surface_index_list_surfacefn_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacefn_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceFn)) => Cons(
+            surface_index_surfacefn(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacefn_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacehandler_erase_from(
+    value: List(SurfaceHandler),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacehandler_from(
+      surface_index_list_surfacehandler_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacehandler_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacehandler_from(
+        surface_index_list_surfacehandler_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacehandler_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceHandler) => Cons(
+            replacement,
+            surface_index_list_surfacehandler_from(
+              surface_index_list_surfacehandler_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacehandler_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceHandler)) => Cons(
+            surface_index_surfacehandler(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacehandler_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacelaw_erase_from(
+    value: List(SurfaceLaw),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacelaw_from(
+      surface_index_list_surfacelaw_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacelaw_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacelaw_from(
+        surface_index_list_surfacelaw_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacelaw_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceLaw) => Cons(
+            replacement,
+            surface_index_list_surfacelaw_from(
+              surface_index_list_surfacelaw_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacelaw_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceLaw)) => Cons(
+            surface_index_surfacelaw(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacelaw_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacenamed_erase_from(
+    value: List(SurfaceNamed),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacenamed_from(
+      surface_index_list_surfacenamed_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacenamed_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacenamed_from(
+        surface_index_list_surfacenamed_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacenamed_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceNamed) => Cons(
+            replacement,
+            surface_index_list_surfacenamed_from(
+              surface_index_list_surfacenamed_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacenamed_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceNamed)) => Cons(
+            surface_index_surfacenamed(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacenamed_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfaceparam_erase_from(
+    value: List(SurfaceParam),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfaceparam_from(
+      surface_index_list_surfaceparam_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfaceparam_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfaceparam_from(
+        surface_index_list_surfaceparam_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfaceparam_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceParam) => Cons(
+            replacement,
+            surface_index_list_surfaceparam_from(
+              surface_index_list_surfaceparam_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfaceparam_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceParam)) => Cons(
+            surface_index_surfaceparam(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfaceparam_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacepattern_erase_from(
+    value: List(SurfacePattern),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacepattern_from(
+      surface_index_list_surfacepattern_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacepattern_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacepattern_from(
+        surface_index_list_surfacepattern_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacepattern_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfacePattern) => Cons(
+            replacement,
+            surface_index_list_surfacepattern_from(
+              surface_index_list_surfacepattern_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacepattern_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfacePattern)) => Cons(
+            surface_index_surfacepattern(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacepattern_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacepatternfield_erase_from(
+    value: List(SurfacePatternField),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacepatternfield_from(
+      surface_index_list_surfacepatternfield_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacepatternfield_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacepatternfield_from(
+        surface_index_list_surfacepatternfield_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacepatternfield_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfacePatternField) => Cons(
+            replacement,
+            surface_index_list_surfacepatternfield_from(
+              surface_index_list_surfacepatternfield_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacepatternfield_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfacePatternField)) => Cons(
+            surface_index_surfacepatternfield(
+              item,
+              surface_index_child(erase_path, erase_index),
+              false
+            ),
+            replacement
+          ),
+          surface_index_list_surfacepatternfield_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacesteparm_erase_from(
+    value: List(SurfaceStepArm),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacesteparm_from(
+      surface_index_list_surfacesteparm_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacesteparm_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacesteparm_from(
+        surface_index_list_surfacesteparm_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacesteparm_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceStepArm) => Cons(
+            replacement,
+            surface_index_list_surfacesteparm_from(
+              surface_index_list_surfacesteparm_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacesteparm_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceStepArm)) => Cons(
+            surface_index_surfacesteparm(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacesteparm_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfacestmt_erase_from(
+    value: List(SurfaceStmt),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfacestmt_from(
+      surface_index_list_surfacestmt_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfacestmt_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfacestmt_from(
+        surface_index_list_surfacestmt_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfacestmt_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceStmt) => Cons(
+            replacement,
+            surface_index_list_surfacestmt_from(
+              surface_index_list_surfacestmt_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfacestmt_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceStmt)) => Cons(
+            surface_index_surfacestmt(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfacestmt_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_list_surfaceterm_erase_from(
+    value: List(SurfaceTerm),
+    path: List(Nat),
+    keep: Bool,
+    index: Nat,
+    erase_path: List(Nat),
+    erase_index: Nat
+  ): surface_index_list_surfaceterm_from(
+      surface_index_list_surfaceterm_from(value, path, keep, index),
+      erase_path,
+      false,
+      erase_index
+    ) = surface_index_list_surfaceterm_from(value, erase_path, false, erase_index) {
+    match value: surface_index_list_surfaceterm_from(
+        surface_index_list_surfaceterm_from(value, path, keep, index),
+        erase_path,
+        false,
+        erase_index
+      ) = surface_index_list_surfaceterm_from(value, erase_path, false, erase_index) {
+      Nil => Refl
+      Cons(item, rest) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => Cons(
+            replacement,
+            surface_index_list_surfaceterm_from(
+              surface_index_list_surfaceterm_from(rest, path, keep, index + 1),
+              erase_path,
+              false,
+              erase_index + 1
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            item,
+            surface_index_child(path, index),
+            keep,
+            surface_index_child(erase_path, erase_index)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceTerm)) => Cons(
+            surface_index_surfaceterm(item, surface_index_child(erase_path, erase_index), false),
+            replacement
+          ),
+          surface_index_list_surfaceterm_erase_from(
+            rest,
+            path,
+            keep,
+            index + 1,
+            erase_path,
+            erase_index + 1
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_option_surfaceterm_erase(
+    value: Option(SurfaceTerm),
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_option_surfaceterm(
+      surface_index_option_surfaceterm(value, path, keep),
+      erase_path,
+      false
+    ) = surface_index_option_surfaceterm(value, erase_path, false) {
+    match value: surface_index_option_surfaceterm(
+        surface_index_option_surfaceterm(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_option_surfaceterm(value, erase_path, false) {
+      None => Refl
+      Some(item) => Eq::congr(
+        (replacement: SurfaceTerm) => Some(replacement),
+        surface_index_surfaceterm_erase(
+          item,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacearm_erase(
+    value: SurfaceArm,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacearm(surface_index_surfacearm(value, path, keep), erase_path, false) = surface_index_surfacearm(value, erase_path, false) {
+    match value: surface_index_surfacearm(surface_index_surfacearm(value, path, keep), erase_path, false) = surface_index_surfacearm(value, erase_path, false) {
+      SurfaceArmMk(slot_pattern, slot_guard, slot_goal, slot_body) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfacePattern) => SurfaceArmMk(
+            replacement,
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            ),
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_goal, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            ),
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 3), keep),
+              surface_index_child(erase_path, 3),
+              false
+            )
+          ),
+          surface_index_surfacepattern_erase(
+            slot_pattern,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: Option(SurfaceTerm)) => SurfaceArmMk(
+              surface_index_surfacepattern(slot_pattern, surface_index_child(erase_path, 0), false),
+              replacement,
+              surface_index_option_surfaceterm(
+                surface_index_option_surfaceterm(slot_goal, surface_index_child(path, 2), keep),
+                surface_index_child(erase_path, 2),
+                false
+              ),
+              surface_index_surfaceterm(
+                surface_index_surfaceterm(slot_body, surface_index_child(path, 3), keep),
+                surface_index_child(erase_path, 3),
+                false
+              )
+            ),
+            surface_index_option_surfaceterm_erase(
+              slot_guard,
+              surface_index_child(path, 1),
+              keep,
+              surface_index_child(erase_path, 1)
+            )
+          ),
+          Eq::trans(
+            Eq::congr(
+              (replacement: Option(SurfaceTerm)) => SurfaceArmMk(
+                surface_index_surfacepattern(slot_pattern, surface_index_child(erase_path, 0), false),
+                surface_index_option_surfaceterm(
+                  slot_guard,
+                  surface_index_child(erase_path, 1),
+                  false
+                ),
+                replacement,
+                surface_index_surfaceterm(
+                  surface_index_surfaceterm(slot_body, surface_index_child(path, 3), keep),
+                  surface_index_child(erase_path, 3),
+                  false
+                )
+              ),
+              surface_index_option_surfaceterm_erase(
+                slot_goal,
+                surface_index_child(path, 2),
+                keep,
+                surface_index_child(erase_path, 2)
+              )
+            ),
+            Eq::congr(
+              (replacement: SurfaceTerm) => SurfaceArmMk(
+                surface_index_surfacepattern(slot_pattern, surface_index_child(erase_path, 0), false),
+                surface_index_option_surfaceterm(
+                  slot_guard,
+                  surface_index_child(erase_path, 1),
+                  false
+                ),
+                surface_index_option_surfaceterm(slot_goal, surface_index_child(erase_path, 2), false),
+                replacement
+              ),
+              surface_index_surfaceterm_erase(
+                slot_body,
+                surface_index_child(path, 3),
+                keep,
+                surface_index_child(erase_path, 3)
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfaceclass_erase(
+    value: SurfaceClass,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceclass(surface_index_surfaceclass(value, path, keep), erase_path, false) = surface_index_surfaceclass(value, erase_path, false) {
+    match value: surface_index_surfaceclass(surface_index_surfaceclass(value, path, keep), erase_path, false) = surface_index_surfaceclass(value, erase_path, false) {
+      SurfaceClassMk(
+        slot_name,
+        slot_param,
+        slot_arity,
+        slot_bound,
+        slot_methods,
+        slot_laws,
+        slot_start,
+        slot_end
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceFn)) => SurfaceClassMk(
+            slot_name,
+            slot_param,
+            slot_arity,
+            slot_bound,
+            replacement,
+            surface_index_list_surfacelaw_from(
+              surface_index_list_surfacelaw_from(slot_laws, surface_index_child(path, 5), keep, 0),
+              surface_index_child(erase_path, 5),
+              false,
+              0
+            ),
+            slot_start,
+            slot_end
+          ),
+          surface_index_list_surfacefn_erase_from(
+            slot_methods,
+            surface_index_child(path, 4),
+            keep,
+            0,
+            surface_index_child(erase_path, 4),
+            0
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceLaw)) => SurfaceClassMk(
+            slot_name,
+            slot_param,
+            slot_arity,
+            slot_bound,
+            surface_index_list_surfacefn_from(
+              slot_methods,
+              surface_index_child(erase_path, 4),
+              false,
+              0
+            ),
+            replacement,
+            slot_start,
+            slot_end
+          ),
+          surface_index_list_surfacelaw_erase_from(
+            slot_laws,
+            surface_index_child(path, 5),
+            keep,
+            0,
+            surface_index_child(erase_path, 5),
+            0
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfaceconstraint_erase(
+    value: SurfaceConstraint,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceconstraint(
+      surface_index_surfaceconstraint(value, path, keep),
+      erase_path,
+      false
+    ) = surface_index_surfaceconstraint(value, erase_path, false) {
+    match value: surface_index_surfaceconstraint(
+        surface_index_surfaceconstraint(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_surfaceconstraint(value, erase_path, false) {
+      SurfaceConstraintMk(slot_class, slot_ty, slot_start, slot_end) => Eq::congr(
+        (replacement: SurfaceTerm) => SurfaceConstraintMk(
+          slot_class,
+          replacement,
+          slot_start,
+          slot_end
+        ),
+        surface_index_surfaceterm_erase(
+          slot_ty,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacector_erase(
+    value: SurfaceCtor,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacector(surface_index_surfacector(value, path, keep), erase_path, false) = surface_index_surfacector(value, erase_path, false) {
+    match value: surface_index_surfacector(surface_index_surfacector(value, path, keep), erase_path, false) = surface_index_surfacector(value, erase_path, false) {
+      SurfaceCtorMk(slot_name, slot_implicit, slot_params, slot_result) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceNamed)) => SurfaceCtorMk(
+            slot_name,
+            slot_implicit,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_result, surface_index_child(path, 3), keep),
+              surface_index_child(erase_path, 3),
+              false
+            )
+          ),
+          surface_index_list_surfacenamed_erase_from(
+            slot_params,
+            surface_index_child(path, 2),
+            keep,
+            0,
+            surface_index_child(erase_path, 2),
+            0
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => SurfaceCtorMk(
+            slot_name,
+            slot_implicit,
+            surface_index_list_surfacenamed_from(
+              slot_params,
+              surface_index_child(erase_path, 2),
+              false,
+              0
+            ),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_result,
+            surface_index_child(path, 3),
+            keep,
+            surface_index_child(erase_path, 3)
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacedata_erase(
+    value: SurfaceData,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacedata(surface_index_surfacedata(value, path, keep), erase_path, false) = surface_index_surfacedata(value, erase_path, false) {
+    match value: surface_index_surfacedata(surface_index_surfacedata(value, path, keep), erase_path, false) = surface_index_surfacedata(value, erase_path, false) {
+      SurfaceDataMk(
+        slot_kind,
+        slot_name,
+        slot_generics,
+        slot_constructors,
+        slot_start,
+        slot_end
+      ) => Eq::congr(
+        (replacement: List(SurfaceDataCtor)) => SurfaceDataMk(
+          slot_kind,
+          slot_name,
+          slot_generics,
+          replacement,
+          slot_start,
+          slot_end
+        ),
+        surface_index_list_surfacedatactor_erase_from(
+          slot_constructors,
+          surface_index_child(path, 3),
+          keep,
+          0,
+          surface_index_child(erase_path, 3),
+          0
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacedatactor_erase(
+    value: SurfaceDataCtor,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacedatactor(surface_index_surfacedatactor(value, path, keep), erase_path, false) = surface_index_surfacedatactor(value, erase_path, false) {
+    match value: surface_index_surfacedatactor(
+        surface_index_surfacedatactor(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_surfacedatactor(value, erase_path, false) {
+      SurfaceDataCtorMk(slot_name, slot_fields) => Eq::congr(
+        (replacement: List(SurfaceDataField)) => SurfaceDataCtorMk(slot_name, replacement),
+        surface_index_list_surfacedatafield_erase_from(
+          slot_fields,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacedatafield_erase(
+    value: SurfaceDataField,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacedatafield(
+      surface_index_surfacedatafield(value, path, keep),
+      erase_path,
+      false
+    ) = surface_index_surfacedatafield(value, erase_path, false) {
+    match value: surface_index_surfacedatafield(
+        surface_index_surfacedatafield(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_surfacedatafield(value, erase_path, false) {
+      SurfaceDataFieldMk(slot_name, slot_ty) => Eq::congr(
+        (replacement: SurfaceTerm) => SurfaceDataFieldMk(slot_name, replacement),
+        surface_index_surfaceterm_erase(
+          slot_ty,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfaceeffect_erase(
+    value: SurfaceEffect,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceeffect(surface_index_surfaceeffect(value, path, keep), erase_path, false) = surface_index_surfaceeffect(value, erase_path, false) {
+    match value: surface_index_surfaceeffect(surface_index_surfaceeffect(value, path, keep), erase_path, false) = surface_index_surfaceeffect(value, erase_path, false) {
+      SurfaceEffectMk(
+        slot_name,
+        slot_generics,
+        slot_params,
+        slot_result,
+        slot_resume,
+        slot_start,
+        slot_end,
+        slot_set
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: List(Option(SurfaceTerm))) => SurfaceEffectMk(
+            slot_name,
+            slot_generics,
+            replacement,
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_result, surface_index_child(path, 3), keep),
+              surface_index_child(erase_path, 3),
+              false
+            ),
+            slot_resume,
+            slot_start,
+            slot_end,
+            slot_set
+          ),
+          surface_index_list_option_surfaceterm_erase_from(
+            slot_params,
+            surface_index_child(path, 2),
+            keep,
+            0,
+            surface_index_child(erase_path, 2),
+            0
+          )
+        ),
+        Eq::congr(
+          (replacement: Option(SurfaceTerm)) => SurfaceEffectMk(
+            slot_name,
+            slot_generics,
+            surface_index_list_option_surfaceterm_from(
+              slot_params,
+              surface_index_child(erase_path, 2),
+              false,
+              0
+            ),
+            replacement,
+            slot_resume,
+            slot_start,
+            slot_end,
+            slot_set
+          ),
+          surface_index_option_surfaceterm_erase(
+            slot_result,
+            surface_index_child(path, 3),
+            keep,
+            surface_index_child(erase_path, 3)
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacefield_erase(
+    value: SurfaceField,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacefield(surface_index_surfacefield(value, path, keep), erase_path, false) = surface_index_surfacefield(value, erase_path, false) {
+    match value: surface_index_surfacefield(surface_index_surfacefield(value, path, keep), erase_path, false) = surface_index_surfacefield(value, erase_path, false) {
+      SurfaceFieldMk(slot_name, slot_value) => Eq::congr(
+        (replacement: SurfaceTerm) => SurfaceFieldMk(slot_name, replacement),
+        surface_index_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacefn_erase(
+    value: SurfaceFn,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacefn(surface_index_surfacefn(value, path, keep), erase_path, false) = surface_index_surfacefn(value, erase_path, false) {
+    match value: surface_index_surfacefn(surface_index_surfacefn(value, path, keep), erase_path, false) = surface_index_surfacefn(value, erase_path, false) {
+      SurfaceFnMk(
+        slot_name,
+        slot_generics,
+        slot_bounds,
+        slot_params,
+        slot_borrows,
+        slot_param_types,
+        slot_result,
+        slot_effects,
+        slot_wheres,
+        slot_start,
+        slot_end,
+        slot_body
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: List(Option(SurfaceTerm))) => SurfaceFnMk(
+            slot_name,
+            slot_generics,
+            slot_bounds,
+            slot_params,
+            slot_borrows,
+            replacement,
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_result, surface_index_child(path, 6), keep),
+              surface_index_child(erase_path, 6),
+              false
+            ),
+            slot_effects,
+            surface_index_list_surfaceconstraint_from(
+              surface_index_list_surfaceconstraint_from(
+                slot_wheres,
+                surface_index_child(path, 8),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 8),
+              false,
+              0
+            ),
+            slot_start,
+            slot_end,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
+              surface_index_child(erase_path, 11),
+              false
+            )
+          ),
+          surface_index_list_option_surfaceterm_erase_from(
+            slot_param_types,
+            surface_index_child(path, 5),
+            keep,
+            0,
+            surface_index_child(erase_path, 5),
+            0
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: Option(SurfaceTerm)) => SurfaceFnMk(
+              slot_name,
+              slot_generics,
+              slot_bounds,
+              slot_params,
+              slot_borrows,
+              surface_index_list_option_surfaceterm_from(
+                slot_param_types,
+                surface_index_child(erase_path, 5),
+                false,
+                0
+              ),
+              replacement,
+              slot_effects,
+              surface_index_list_surfaceconstraint_from(
+                surface_index_list_surfaceconstraint_from(
+                  slot_wheres,
+                  surface_index_child(path, 8),
+                  keep,
+                  0
+                ),
+                surface_index_child(erase_path, 8),
+                false,
+                0
+              ),
+              slot_start,
+              slot_end,
+              surface_index_surfaceterm(
+                surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
+                surface_index_child(erase_path, 11),
+                false
+              )
+            ),
+            surface_index_option_surfaceterm_erase(
+              slot_result,
+              surface_index_child(path, 6),
+              keep,
+              surface_index_child(erase_path, 6)
+            )
+          ),
+          Eq::trans(
+            Eq::congr(
+              (replacement: List(SurfaceConstraint)) => SurfaceFnMk(
+                slot_name,
+                slot_generics,
+                slot_bounds,
+                slot_params,
+                slot_borrows,
+                surface_index_list_option_surfaceterm_from(
+                  slot_param_types,
+                  surface_index_child(erase_path, 5),
+                  false,
+                  0
+                ),
+                surface_index_option_surfaceterm(
+                  slot_result,
+                  surface_index_child(erase_path, 6),
+                  false
+                ),
+                slot_effects,
+                replacement,
+                slot_start,
+                slot_end,
+                surface_index_surfaceterm(
+                  surface_index_surfaceterm(slot_body, surface_index_child(path, 11), keep),
+                  surface_index_child(erase_path, 11),
+                  false
+                )
+              ),
+              surface_index_list_surfaceconstraint_erase_from(
+                slot_wheres,
+                surface_index_child(path, 8),
+                keep,
+                0,
+                surface_index_child(erase_path, 8),
+                0
+              )
+            ),
+            Eq::congr(
+              (replacement: SurfaceTerm) => SurfaceFnMk(
+                slot_name,
+                slot_generics,
+                slot_bounds,
+                slot_params,
+                slot_borrows,
+                surface_index_list_option_surfaceterm_from(
+                  slot_param_types,
+                  surface_index_child(erase_path, 5),
+                  false,
+                  0
+                ),
+                surface_index_option_surfaceterm(
+                  slot_result,
+                  surface_index_child(erase_path, 6),
+                  false
+                ),
+                slot_effects,
+                surface_index_list_surfaceconstraint_from(
+                  slot_wheres,
+                  surface_index_child(erase_path, 8),
+                  false,
+                  0
+                ),
+                slot_start,
+                slot_end,
+                replacement
+              ),
+              surface_index_surfaceterm_erase(
+                slot_body,
+                surface_index_child(path, 11),
+                keep,
+                surface_index_child(erase_path, 11)
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacehandler_erase(
+    value: SurfaceHandler,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacehandler(surface_index_surfacehandler(value, path, keep), erase_path, false) = surface_index_surfacehandler(value, erase_path, false) {
+    match value: surface_index_surfacehandler(surface_index_surfacehandler(value, path, keep), erase_path, false) = surface_index_surfacehandler(value, erase_path, false) {
+      HdReturn(slot_pattern, slot_body) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfacePattern) => HdReturn(
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            )
+          ),
+          surface_index_surfacepattern_erase(
+            slot_pattern,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => HdReturn(
+            surface_index_surfacepattern(slot_pattern, surface_index_child(erase_path, 0), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_body,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        )
+      )
+      HdOperation(
+        slot_op,
+        slot_binds,
+        slot_types,
+        slot_patterns,
+        slot_resume,
+        slot_guard,
+        slot_body
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceTerm)) => HdOperation(
+            slot_op,
+            slot_binds,
+            replacement,
+            surface_index_list_surfacepattern_from(
+              surface_index_list_surfacepattern_from(
+                slot_patterns,
+                surface_index_child(path, 3),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 3),
+              false,
+              0
+            ),
+            slot_resume,
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 5), keep),
+              surface_index_child(erase_path, 5),
+              false
+            ),
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 6), keep),
+              surface_index_child(erase_path, 6),
+              false
+            )
+          ),
+          surface_index_list_surfaceterm_erase_from(
+            slot_types,
+            surface_index_child(path, 2),
+            keep,
+            0,
+            surface_index_child(erase_path, 2),
+            0
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: List(SurfacePattern)) => HdOperation(
+              slot_op,
+              slot_binds,
+              surface_index_list_surfaceterm_from(
+                slot_types,
+                surface_index_child(erase_path, 2),
+                false,
+                0
+              ),
+              replacement,
+              slot_resume,
+              surface_index_option_surfaceterm(
+                surface_index_option_surfaceterm(slot_guard, surface_index_child(path, 5), keep),
+                surface_index_child(erase_path, 5),
+                false
+              ),
+              surface_index_surfaceterm(
+                surface_index_surfaceterm(slot_body, surface_index_child(path, 6), keep),
+                surface_index_child(erase_path, 6),
+                false
+              )
+            ),
+            surface_index_list_surfacepattern_erase_from(
+              slot_patterns,
+              surface_index_child(path, 3),
+              keep,
+              0,
+              surface_index_child(erase_path, 3),
+              0
+            )
+          ),
+          Eq::trans(
+            Eq::congr(
+              (replacement: Option(SurfaceTerm)) => HdOperation(
+                slot_op,
+                slot_binds,
+                surface_index_list_surfaceterm_from(
+                  slot_types,
+                  surface_index_child(erase_path, 2),
+                  false,
+                  0
+                ),
+                surface_index_list_surfacepattern_from(
+                  slot_patterns,
+                  surface_index_child(erase_path, 3),
+                  false,
+                  0
+                ),
+                slot_resume,
+                replacement,
+                surface_index_surfaceterm(
+                  surface_index_surfaceterm(slot_body, surface_index_child(path, 6), keep),
+                  surface_index_child(erase_path, 6),
+                  false
+                )
+              ),
+              surface_index_option_surfaceterm_erase(
+                slot_guard,
+                surface_index_child(path, 5),
+                keep,
+                surface_index_child(erase_path, 5)
+              )
+            ),
+            Eq::congr(
+              (replacement: SurfaceTerm) => HdOperation(
+                slot_op,
+                slot_binds,
+                surface_index_list_surfaceterm_from(
+                  slot_types,
+                  surface_index_child(erase_path, 2),
+                  false,
+                  0
+                ),
+                surface_index_list_surfacepattern_from(
+                  slot_patterns,
+                  surface_index_child(erase_path, 3),
+                  false,
+                  0
+                ),
+                slot_resume,
+                surface_index_option_surfaceterm(
+                  slot_guard,
+                  surface_index_child(erase_path, 5),
+                  false
+                ),
+                replacement
+              ),
+              surface_index_surfaceterm_erase(
+                slot_body,
+                surface_index_child(path, 6),
+                keep,
+                surface_index_child(erase_path, 6)
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfaceinductive_erase(
+    value: SurfaceInductive,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceinductive(
+      surface_index_surfaceinductive(value, path, keep),
+      erase_path,
+      false
+    ) = surface_index_surfaceinductive(value, erase_path, false) {
+    match value: surface_index_surfaceinductive(
+        surface_index_surfaceinductive(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_surfaceinductive(value, erase_path, false) {
+      SurfaceInductiveMk(
+        slot_name,
+        slot_params,
+        slot_sort,
+        slot_constructors,
+        slot_start,
+        slot_end
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceNamed)) => SurfaceInductiveMk(
+            slot_name,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_sort, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            ),
+            surface_index_list_surfacector_from(
+              surface_index_list_surfacector_from(
+                slot_constructors,
+                surface_index_child(path, 3),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 3),
+              false,
+              0
+            ),
+            slot_start,
+            slot_end
+          ),
+          surface_index_list_surfacenamed_erase_from(
+            slot_params,
+            surface_index_child(path, 1),
+            keep,
+            0,
+            surface_index_child(erase_path, 1),
+            0
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: SurfaceTerm) => SurfaceInductiveMk(
+              slot_name,
+              surface_index_list_surfacenamed_from(
+                slot_params,
+                surface_index_child(erase_path, 1),
+                false,
+                0
+              ),
+              replacement,
+              surface_index_list_surfacector_from(
+                surface_index_list_surfacector_from(
+                  slot_constructors,
+                  surface_index_child(path, 3),
+                  keep,
+                  0
+                ),
+                surface_index_child(erase_path, 3),
+                false,
+                0
+              ),
+              slot_start,
+              slot_end
+            ),
+            surface_index_surfaceterm_erase(
+              slot_sort,
+              surface_index_child(path, 2),
+              keep,
+              surface_index_child(erase_path, 2)
+            )
+          ),
+          Eq::congr(
+            (replacement: List(SurfaceCtor)) => SurfaceInductiveMk(
+              slot_name,
+              surface_index_list_surfacenamed_from(
+                slot_params,
+                surface_index_child(erase_path, 1),
+                false,
+                0
+              ),
+              surface_index_surfaceterm(slot_sort, surface_index_child(erase_path, 2), false),
+              replacement,
+              slot_start,
+              slot_end
+            ),
+            surface_index_list_surfacector_erase_from(
+              slot_constructors,
+              surface_index_child(path, 3),
+              keep,
+              0,
+              surface_index_child(erase_path, 3),
+              0
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfaceinstance_erase(
+    value: SurfaceInstance,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceinstance(surface_index_surfaceinstance(value, path, keep), erase_path, false) = surface_index_surfaceinstance(value, erase_path, false) {
+    match value: surface_index_surfaceinstance(
+        surface_index_surfaceinstance(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_surfaceinstance(value, erase_path, false) {
+      SurfaceInstanceMk(
+        slot_generics,
+        slot_bounds,
+        slot_class,
+        slot_head,
+        slot_wheres,
+        slot_methods,
+        slot_laws,
+        slot_start,
+        slot_end
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SurfaceInstanceMk(
+            slot_generics,
+            slot_bounds,
+            slot_class,
+            replacement,
+            surface_index_list_surfaceconstraint_from(
+              surface_index_list_surfaceconstraint_from(
+                slot_wheres,
+                surface_index_child(path, 4),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 4),
+              false,
+              0
+            ),
+            surface_index_list_surfacefn_from(
+              surface_index_list_surfacefn_from(
+                slot_methods,
+                surface_index_child(path, 5),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 5),
+              false,
+              0
+            ),
+            surface_index_list_surfacelaw_from(
+              surface_index_list_surfacelaw_from(slot_laws, surface_index_child(path, 6), keep, 0),
+              surface_index_child(erase_path, 6),
+              false,
+              0
+            ),
+            slot_start,
+            slot_end
+          ),
+          surface_index_surfaceterm_erase(
+            slot_head,
+            surface_index_child(path, 3),
+            keep,
+            surface_index_child(erase_path, 3)
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: List(SurfaceConstraint)) => SurfaceInstanceMk(
+              slot_generics,
+              slot_bounds,
+              slot_class,
+              surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
+              replacement,
+              surface_index_list_surfacefn_from(
+                surface_index_list_surfacefn_from(
+                  slot_methods,
+                  surface_index_child(path, 5),
+                  keep,
+                  0
+                ),
+                surface_index_child(erase_path, 5),
+                false,
+                0
+              ),
+              surface_index_list_surfacelaw_from(
+                surface_index_list_surfacelaw_from(
+                  slot_laws,
+                  surface_index_child(path, 6),
+                  keep,
+                  0
+                ),
+                surface_index_child(erase_path, 6),
+                false,
+                0
+              ),
+              slot_start,
+              slot_end
+            ),
+            surface_index_list_surfaceconstraint_erase_from(
+              slot_wheres,
+              surface_index_child(path, 4),
+              keep,
+              0,
+              surface_index_child(erase_path, 4),
+              0
+            )
+          ),
+          Eq::trans(
+            Eq::congr(
+              (replacement: List(SurfaceFn)) => SurfaceInstanceMk(
+                slot_generics,
+                slot_bounds,
+                slot_class,
+                surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
+                surface_index_list_surfaceconstraint_from(
+                  slot_wheres,
+                  surface_index_child(erase_path, 4),
+                  false,
+                  0
+                ),
+                replacement,
+                surface_index_list_surfacelaw_from(
+                  surface_index_list_surfacelaw_from(
+                    slot_laws,
+                    surface_index_child(path, 6),
+                    keep,
+                    0
+                  ),
+                  surface_index_child(erase_path, 6),
+                  false,
+                  0
+                ),
+                slot_start,
+                slot_end
+              ),
+              surface_index_list_surfacefn_erase_from(
+                slot_methods,
+                surface_index_child(path, 5),
+                keep,
+                0,
+                surface_index_child(erase_path, 5),
+                0
+              )
+            ),
+            Eq::congr(
+              (replacement: List(SurfaceLaw)) => SurfaceInstanceMk(
+                slot_generics,
+                slot_bounds,
+                slot_class,
+                surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 3), false),
+                surface_index_list_surfaceconstraint_from(
+                  slot_wheres,
+                  surface_index_child(erase_path, 4),
+                  false,
+                  0
+                ),
+                surface_index_list_surfacefn_from(
+                  slot_methods,
+                  surface_index_child(erase_path, 5),
+                  false,
+                  0
+                ),
+                replacement,
+                slot_start,
+                slot_end
+              ),
+              surface_index_list_surfacelaw_erase_from(
+                slot_laws,
+                surface_index_child(path, 6),
+                keep,
+                0,
+                surface_index_child(erase_path, 6),
+                0
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacekind_erase(
+    value: SurfaceKind,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacekind(surface_index_surfacekind(value, path, keep), erase_path, false) = surface_index_surfacekind(value, erase_path, false) {
+    match value: surface_index_surfacekind(surface_index_surfacekind(value, path, keep), erase_path, false) = surface_index_surfacekind(value, erase_path, false) {
+      SkVar(slot_name) => Refl
+      SkNat(slot_digits) => Refl
+      SkFloat(slot_digits) => Refl
+      SkRow(slot_effects) => Refl
+      SkText(slot_value) => Refl
+      SkBool(slot_value) => Refl
+      SkApp(slot_head, slot_args) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkApp(
+            replacement,
+            surface_index_list_surfaceterm_from(
+              surface_index_list_surfaceterm_from(slot_args, surface_index_child(path, 1), keep, 0),
+              surface_index_child(erase_path, 1),
+              false,
+              0
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_head,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceTerm)) => SkApp(
+            surface_index_surfaceterm(slot_head, surface_index_child(erase_path, 0), false),
+            replacement
+          ),
+          surface_index_list_surfaceterm_erase_from(
+            slot_args,
+            surface_index_child(path, 1),
+            keep,
+            0,
+            surface_index_child(erase_path, 1),
+            0
+          )
+        )
+      )
+      SkPi(slot_params, slot_result, slot_effects) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceParam)) => SkPi(
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_result, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            ),
+            slot_effects
+          ),
+          surface_index_list_surfaceparam_erase_from(
+            slot_params,
+            surface_index_child(path, 0),
+            keep,
+            0,
+            surface_index_child(erase_path, 0),
+            0
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkPi(
+            surface_index_list_surfaceparam_from(
+              slot_params,
+              surface_index_child(erase_path, 0),
+              false,
+              0
+            ),
+            replacement,
+            slot_effects
+          ),
+          surface_index_surfaceterm_erase(
+            slot_result,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        )
+      )
+      SkExists(slot_binder, slot_domain, slot_body) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkExists(
+            slot_binder,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_domain,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkExists(
+            slot_binder,
+            surface_index_surfaceterm(slot_domain, surface_index_child(erase_path, 1), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_body,
+            surface_index_child(path, 2),
+            keep,
+            surface_index_child(erase_path, 2)
+          )
+        )
+      )
+      SkLam(slot_params, slot_body) => Eq::congr(
+        (replacement: SurfaceTerm) => SkLam(slot_params, replacement),
+        surface_index_surfaceterm_erase(
+          slot_body,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      SkUnion(slot_parts) => Eq::congr(
+        (replacement: List(SurfaceTerm)) => SkUnion(replacement),
+        surface_index_list_surfaceterm_erase_from(
+          slot_parts,
+          surface_index_child(path, 0),
+          keep,
+          0,
+          surface_index_child(erase_path, 0),
+          0
+        )
+      )
+      SkProduct(slot_members) => Eq::congr(
+        (replacement: List(SurfaceTerm)) => SkProduct(replacement),
+        surface_index_list_surfaceterm_erase_from(
+          slot_members,
+          surface_index_child(path, 0),
+          keep,
+          0,
+          surface_index_child(erase_path, 0),
+          0
+        )
+      )
+      SkTagged(slot_tag, slot_value) => Eq::congr(
+        (replacement: SurfaceTerm) => SkTagged(slot_tag, replacement),
+        surface_index_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      SkIf(slot_cond, slot_then, slot_otherwise) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkIf(
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_then, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            ),
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_otherwise, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_cond,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: SurfaceTerm) => SkIf(
+              surface_index_surfaceterm(slot_cond, surface_index_child(erase_path, 0), false),
+              replacement,
+              surface_index_option_surfaceterm(
+                surface_index_option_surfaceterm(
+                  slot_otherwise,
+                  surface_index_child(path, 2),
+                  keep
+                ),
+                surface_index_child(erase_path, 2),
+                false
+              )
+            ),
+            surface_index_surfaceterm_erase(
+              slot_then,
+              surface_index_child(path, 1),
+              keep,
+              surface_index_child(erase_path, 1)
+            )
+          ),
+          Eq::congr(
+            (replacement: Option(SurfaceTerm)) => SkIf(
+              surface_index_surfaceterm(slot_cond, surface_index_child(erase_path, 0), false),
+              surface_index_surfaceterm(slot_then, surface_index_child(erase_path, 1), false),
+              replacement
+            ),
+            surface_index_option_surfaceterm_erase(
+              slot_otherwise,
+              surface_index_child(path, 2),
+              keep,
+              surface_index_child(erase_path, 2)
+            )
+          )
+        )
+      )
+      SkField(slot_value, slot_name) => Eq::congr(
+        (replacement: SurfaceTerm) => SkField(replacement, slot_name),
+        surface_index_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      SkProject(slot_value, slot_ty) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkProject(
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_ty, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_value,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkProject(
+            surface_index_surfaceterm(slot_value, surface_index_child(erase_path, 0), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_ty,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        )
+      )
+      SkBlock(slot_stmts) => Eq::congr(
+        (replacement: List(SurfaceStmt)) => SkBlock(replacement),
+        surface_index_list_surfacestmt_erase_from(
+          slot_stmts,
+          surface_index_child(path, 0),
+          keep,
+          0,
+          surface_index_child(erase_path, 0),
+          0
+        )
+      )
+      SkPerform(slot_op, slot_args) => Eq::congr(
+        (replacement: List(SurfaceTerm)) => SkPerform(slot_op, replacement),
+        surface_index_list_surfaceterm_erase_from(
+          slot_args,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      SkHandle(slot_body, slot_handlers) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkHandle(
+            replacement,
+            surface_index_list_surfacehandler_from(
+              surface_index_list_surfacehandler_from(
+                slot_handlers,
+                surface_index_child(path, 1),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 1),
+              false,
+              0
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_body,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::congr(
+          (replacement: List(SurfaceHandler)) => SkHandle(
+            surface_index_surfaceterm(slot_body, surface_index_child(erase_path, 0), false),
+            replacement
+          ),
+          surface_index_list_surfacehandler_erase_from(
+            slot_handlers,
+            surface_index_child(path, 1),
+            keep,
+            0,
+            surface_index_child(erase_path, 1),
+            0
+          )
+        )
+      )
+      SkBudget(slot_memory, slot_amount, slot_body) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkBudget(
+            slot_memory,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_amount,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkBudget(
+            slot_memory,
+            surface_index_surfaceterm(slot_amount, surface_index_child(erase_path, 1), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_body,
+            surface_index_child(path, 2),
+            keep,
+            surface_index_child(erase_path, 2)
+          )
+        )
+      )
+      SkMatch(slot_scrutinee, slot_motive, slot_arms, slot_binder) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkMatch(
+            replacement,
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_motive, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            ),
+            surface_index_list_surfacearm_from(
+              surface_index_list_surfacearm_from(slot_arms, surface_index_child(path, 2), keep, 0),
+              surface_index_child(erase_path, 2),
+              false,
+              0
+            ),
+            slot_binder
+          ),
+          surface_index_surfaceterm_erase(
+            slot_scrutinee,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: Option(SurfaceTerm)) => SkMatch(
+              surface_index_surfaceterm(slot_scrutinee, surface_index_child(erase_path, 0), false),
+              replacement,
+              surface_index_list_surfacearm_from(
+                surface_index_list_surfacearm_from(
+                  slot_arms,
+                  surface_index_child(path, 2),
+                  keep,
+                  0
+                ),
+                surface_index_child(erase_path, 2),
+                false,
+                0
+              ),
+              slot_binder
+            ),
+            surface_index_option_surfaceterm_erase(
+              slot_motive,
+              surface_index_child(path, 1),
+              keep,
+              surface_index_child(erase_path, 1)
+            )
+          ),
+          Eq::congr(
+            (replacement: List(SurfaceArm)) => SkMatch(
+              surface_index_surfaceterm(slot_scrutinee, surface_index_child(erase_path, 0), false),
+              surface_index_option_surfaceterm(slot_motive, surface_index_child(erase_path, 1), false),
+              replacement,
+              slot_binder
+            ),
+            surface_index_list_surfacearm_erase_from(
+              slot_arms,
+              surface_index_child(path, 2),
+              keep,
+              0,
+              surface_index_child(erase_path, 2),
+              0
+            )
+          )
+        )
+      )
+      SkHole(slot_name) => Refl
+      SkRecord(slot_name, slot_fields) => Eq::congr(
+        (replacement: List(SurfaceField)) => SkRecord(slot_name, replacement),
+        surface_index_list_surfacefield_erase_from(
+          slot_fields,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      SkBorrow(slot_mutable, slot_value) => Eq::congr(
+        (replacement: SurfaceTerm) => SkBorrow(slot_mutable, replacement),
+        surface_index_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      SkFnKind(slot_kind, slot_ty) => Eq::congr(
+        (replacement: SurfaceTerm) => SkFnKind(slot_kind, replacement),
+        surface_index_surfaceterm_erase(
+          slot_ty,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      SkBorrowLam(slot_borrows, slot_lam) => Eq::congr(
+        (replacement: SurfaceTerm) => SkBorrowLam(slot_borrows, replacement),
+        surface_index_surfaceterm_erase(
+          slot_lam,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      SkOther(slot_what) => Refl
+      SkMacroCall(slot_name, slot_arg) => Eq::congr(
+        (replacement: SurfaceTerm) => SkMacroCall(slot_name, replacement),
+        surface_index_surfaceterm_erase(
+          slot_arg,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      SkQuote(slot_stmts_form, slot_stmts) => Eq::congr(
+        (replacement: List(SurfaceStmt)) => SkQuote(slot_stmts_form, replacement),
+        surface_index_list_surfacestmt_erase_from(
+          slot_stmts,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      SkSplice(slot_value) => Eq::congr(
+        (replacement: SurfaceTerm) => SkSplice(replacement),
+        surface_index_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      SkSyntaxLit(slot_name, slot_body) => Refl
+      SkStep(
+        slot_tactic,
+        slot_arg,
+        slot_call_start,
+        slot_call_end,
+        slot_before,
+        slot_arms
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => SkStep(
+            slot_tactic,
+            replacement,
+            slot_call_start,
+            slot_call_end,
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_before, surface_index_child(path, 4), keep),
+              surface_index_child(erase_path, 4),
+              false
+            ),
+            surface_index_list_surfacesteparm_from(
+              surface_index_list_surfacesteparm_from(
+                slot_arms,
+                surface_index_child(path, 5),
+                keep,
+                0
+              ),
+              surface_index_child(erase_path, 5),
+              false,
+              0
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_arg,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: Option(SurfaceTerm)) => SkStep(
+              slot_tactic,
+              surface_index_surfaceterm(slot_arg, surface_index_child(erase_path, 1), false),
+              slot_call_start,
+              slot_call_end,
+              replacement,
+              surface_index_list_surfacesteparm_from(
+                surface_index_list_surfacesteparm_from(
+                  slot_arms,
+                  surface_index_child(path, 5),
+                  keep,
+                  0
+                ),
+                surface_index_child(erase_path, 5),
+                false,
+                0
+              )
+            ),
+            surface_index_option_surfaceterm_erase(
+              slot_before,
+              surface_index_child(path, 4),
+              keep,
+              surface_index_child(erase_path, 4)
+            )
+          ),
+          Eq::congr(
+            (replacement: List(SurfaceStepArm)) => SkStep(
+              slot_tactic,
+              surface_index_surfaceterm(slot_arg, surface_index_child(erase_path, 1), false),
+              slot_call_start,
+              slot_call_end,
+              surface_index_option_surfaceterm(slot_before, surface_index_child(erase_path, 4), false),
+              replacement
+            ),
+            surface_index_list_surfacesteparm_erase_from(
+              slot_arms,
+              surface_index_child(path, 5),
+              keep,
+              0,
+              surface_index_child(erase_path, 5),
+              0
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacelaw_erase(
+    value: SurfaceLaw,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacelaw(surface_index_surfacelaw(value, path, keep), erase_path, false) = surface_index_surfacelaw(value, erase_path, false) {
+    match value: surface_index_surfacelaw(surface_index_surfacelaw(value, path, keep), erase_path, false) = surface_index_surfacelaw(value, erase_path, false) {
+      SurfaceLawMk(slot_name, slot_start, slot_end) => Refl
+    }
+  }
+
+  pub theorem surface_index_surfacenamed_erase(
+    value: SurfaceNamed,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacenamed(surface_index_surfacenamed(value, path, keep), erase_path, false) = surface_index_surfacenamed(value, erase_path, false) {
+    match value: surface_index_surfacenamed(surface_index_surfacenamed(value, path, keep), erase_path, false) = surface_index_surfacenamed(value, erase_path, false) {
+      SurfaceNamedMk(slot_name, slot_ty) => Eq::congr(
+        (replacement: SurfaceTerm) => SurfaceNamedMk(slot_name, replacement),
+        surface_index_surfaceterm_erase(
+          slot_ty,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfaceparam_erase(
+    value: SurfaceParam,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceparam(surface_index_surfaceparam(value, path, keep), erase_path, false) = surface_index_surfaceparam(value, erase_path, false) {
+    match value: surface_index_surfaceparam(surface_index_surfaceparam(value, path, keep), erase_path, false) = surface_index_surfaceparam(value, erase_path, false) {
+      SurfaceParamMk(slot_name, slot_ty) => Eq::congr(
+        (replacement: SurfaceTerm) => SurfaceParamMk(slot_name, replacement),
+        surface_index_surfaceterm_erase(
+          slot_ty,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacepattern_erase(
+    value: SurfacePattern,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacepattern(surface_index_surfacepattern(value, path, keep), erase_path, false) = surface_index_surfacepattern(value, erase_path, false) {
+    match value: surface_index_surfacepattern(surface_index_surfacepattern(value, path, keep), erase_path, false) = surface_index_surfacepattern(value, erase_path, false) {
+      PtWild => Refl
+      PtBind(slot_name) => Refl
+      PtInt(slot_negative, slot_magnitude) => Refl
+      PtBool(slot_value) => Refl
+      PtText(slot_value) => Refl
+      PtCtor(slot_name, slot_args) => Eq::congr(
+        (replacement: List(SurfacePattern)) => PtCtor(slot_name, replacement),
+        surface_index_list_surfacepattern_erase_from(
+          slot_args,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      PtRecord(slot_name, slot_fields) => Eq::congr(
+        (replacement: List(SurfacePatternField)) => PtRecord(slot_name, replacement),
+        surface_index_list_surfacepatternfield_erase_from(
+          slot_fields,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      PtOther(slot_what) => Refl
+    }
+  }
+
+  pub theorem surface_index_surfacepatternfield_erase(
+    value: SurfacePatternField,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacepatternfield(
+      surface_index_surfacepatternfield(value, path, keep),
+      erase_path,
+      false
+    ) = surface_index_surfacepatternfield(value, erase_path, false) {
+    match value: surface_index_surfacepatternfield(
+        surface_index_surfacepatternfield(value, path, keep),
+        erase_path,
+        false
+      ) = surface_index_surfacepatternfield(value, erase_path, false) {
+      SurfacePatternFieldMk(slot_name, slot_pattern) => Eq::congr(
+        (replacement: SurfacePattern) => SurfacePatternFieldMk(slot_name, replacement),
+        surface_index_surfacepattern_erase(
+          slot_pattern,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacesteparm_erase(
+    value: SurfaceStepArm,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacesteparm(surface_index_surfacesteparm(value, path, keep), erase_path, false) = surface_index_surfacesteparm(value, erase_path, false) {
+    match value: surface_index_surfacesteparm(surface_index_surfacesteparm(value, path, keep), erase_path, false) = surface_index_surfacesteparm(value, erase_path, false) {
+      SurfaceStepArmMk(slot_binders, slot_goal, slot_body, slot_start, slot_end) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceField)) => SurfaceStepArmMk(
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_goal, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            ),
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            ),
+            slot_start,
+            slot_end
+          ),
+          surface_index_list_surfacefield_erase_from(
+            slot_binders,
+            surface_index_child(path, 0),
+            keep,
+            0,
+            surface_index_child(erase_path, 0),
+            0
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: SurfaceTerm) => SurfaceStepArmMk(
+              surface_index_list_surfacefield_from(
+                slot_binders,
+                surface_index_child(erase_path, 0),
+                false,
+                0
+              ),
+              replacement,
+              surface_index_surfaceterm(
+                surface_index_surfaceterm(slot_body, surface_index_child(path, 2), keep),
+                surface_index_child(erase_path, 2),
+                false
+              ),
+              slot_start,
+              slot_end
+            ),
+            surface_index_surfaceterm_erase(
+              slot_goal,
+              surface_index_child(path, 1),
+              keep,
+              surface_index_child(erase_path, 1)
+            )
+          ),
+          Eq::congr(
+            (replacement: SurfaceTerm) => SurfaceStepArmMk(
+              surface_index_list_surfacefield_from(
+                slot_binders,
+                surface_index_child(erase_path, 0),
+                false,
+                0
+              ),
+              surface_index_surfaceterm(slot_goal, surface_index_child(erase_path, 1), false),
+              replacement,
+              slot_start,
+              slot_end
+            ),
+            surface_index_surfaceterm_erase(
+              slot_body,
+              surface_index_child(path, 2),
+              keep,
+              surface_index_child(erase_path, 2)
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacestmt_erase(
+    value: SurfaceStmt,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacestmt(surface_index_surfacestmt(value, path, keep), erase_path, false) = surface_index_surfacestmt(value, erase_path, false) {
+    match value: surface_index_surfacestmt(surface_index_surfacestmt(value, path, keep), erase_path, false) = surface_index_surfacestmt(value, erase_path, false) {
+      StLet(slot_name, slot_ty, slot_value, slot_borrow, slot_mutable) => Eq::trans(
+        Eq::congr(
+          (replacement: Option(SurfaceTerm)) => StLet(
+            slot_name,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_value, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            ),
+            slot_borrow,
+            slot_mutable
+          ),
+          surface_index_option_surfaceterm_erase(
+            slot_ty,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => StLet(
+            slot_name,
+            surface_index_option_surfaceterm(slot_ty, surface_index_child(erase_path, 1), false),
+            replacement,
+            slot_borrow,
+            slot_mutable
+          ),
+          surface_index_surfaceterm_erase(
+            slot_value,
+            surface_index_child(path, 2),
+            keep,
+            surface_index_child(erase_path, 2)
+          )
+        )
+      )
+      StVar(slot_name, slot_ty, slot_value, slot_borrow) => Eq::trans(
+        Eq::congr(
+          (replacement: Option(SurfaceTerm)) => StVar(
+            slot_name,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_value, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            ),
+            slot_borrow
+          ),
+          surface_index_option_surfaceterm_erase(
+            slot_ty,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => StVar(
+            slot_name,
+            surface_index_option_surfaceterm(slot_ty, surface_index_child(erase_path, 1), false),
+            replacement,
+            slot_borrow
+          ),
+          surface_index_surfaceterm_erase(
+            slot_value,
+            surface_index_child(path, 2),
+            keep,
+            surface_index_child(erase_path, 2)
+          )
+        )
+      )
+      StModule(slot_name, slot_stmts, slot_start, slot_end) => Eq::congr(
+        (replacement: List(SurfaceStmt)) => StModule(slot_name, replacement, slot_start, slot_end),
+        surface_index_list_surfacestmt_erase_from(
+          slot_stmts,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      StAssign(slot_name, slot_place, slot_value) => Eq::trans(
+        Eq::congr(
+          (replacement: Option(SurfaceTerm)) => StAssign(
+            slot_name,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_value, surface_index_child(path, 2), keep),
+              surface_index_child(erase_path, 2),
+              false
+            )
+          ),
+          surface_index_option_surfaceterm_erase(
+            slot_place,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => StAssign(
+            slot_name,
+            surface_index_option_surfaceterm(slot_place, surface_index_child(erase_path, 1), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_value,
+            surface_index_child(path, 2),
+            keep,
+            surface_index_child(erase_path, 2)
+          )
+        )
+      )
+      StCalled(slot_generates, slot_call) => Eq::congr(
+        (replacement: SurfaceTerm) => StCalled(slot_generates, replacement),
+        surface_index_surfaceterm_erase(
+          slot_call,
+          surface_index_child(path, 1),
+          keep,
+          surface_index_child(erase_path, 1)
+        )
+      )
+      StAttributed(slot_name, slot_arg, slot_generates, slot_stmt) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => StAttributed(
+            slot_name,
+            replacement,
+            slot_generates,
+            surface_index_surfacestmt(
+              surface_index_surfacestmt(slot_stmt, surface_index_child(path, 3), keep),
+              surface_index_child(erase_path, 3),
+              false
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_arg,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceStmt) => StAttributed(
+            slot_name,
+            surface_index_surfaceterm(slot_arg, surface_index_child(erase_path, 1), false),
+            slot_generates,
+            replacement
+          ),
+          surface_index_surfacestmt_erase(
+            slot_stmt,
+            surface_index_child(path, 3),
+            keep,
+            surface_index_child(erase_path, 3)
+          )
+        )
+      )
+      StFn(slot_f) => Eq::congr(
+        (replacement: SurfaceFn) => StFn(replacement),
+        surface_index_surfacefn_erase(
+          slot_f,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StTheorem(slot_t) => Eq::congr(
+        (replacement: SurfaceTheorem) => StTheorem(replacement),
+        surface_index_surfacetheorem_erase(
+          slot_t,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StDef(slot_t) => Eq::congr(
+        (replacement: SurfaceTheorem) => StDef(replacement),
+        surface_index_surfacetheorem_erase(
+          slot_t,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StMutual(slot_stmts, slot_start, slot_end) => Eq::congr(
+        (replacement: List(SurfaceStmt)) => StMutual(replacement, slot_start, slot_end),
+        surface_index_list_surfacestmt_erase_from(
+          slot_stmts,
+          surface_index_child(path, 0),
+          keep,
+          0,
+          surface_index_child(erase_path, 0),
+          0
+        )
+      )
+      StImport(slot_path, slot_start, slot_end) => Refl
+      StInductive(slot_i) => Eq::congr(
+        (replacement: SurfaceInductive) => StInductive(replacement),
+        surface_index_surfaceinductive_erase(
+          slot_i,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StEffect(slot_e) => Eq::congr(
+        (replacement: SurfaceEffect) => StEffect(replacement),
+        surface_index_surfaceeffect_erase(
+          slot_e,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StStruct(slot_d) => Eq::congr(
+        (replacement: SurfaceData) => StStruct(replacement),
+        surface_index_surfacedata_erase(
+          slot_d,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StEnum(slot_d) => Eq::congr(
+        (replacement: SurfaceData) => StEnum(replacement),
+        surface_index_surfacedata_erase(
+          slot_d,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StExtern(slot_abi, slot_fns, slot_start, slot_end) => Eq::congr(
+        (replacement: List(SurfaceFn)) => StExtern(slot_abi, replacement, slot_start, slot_end),
+        surface_index_list_surfacefn_erase_from(
+          slot_fns,
+          surface_index_child(path, 1),
+          keep,
+          0,
+          surface_index_child(erase_path, 1),
+          0
+        )
+      )
+      StClass(slot_c) => Eq::congr(
+        (replacement: SurfaceClass) => StClass(replacement),
+        surface_index_surfaceclass_erase(
+          slot_c,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StInstance(slot_i) => Eq::congr(
+        (replacement: SurfaceInstance) => StInstance(replacement),
+        surface_index_surfaceinstance_erase(
+          slot_i,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StWhile(slot_cond, slot_body) => Eq::trans(
+        Eq::congr(
+          (replacement: SurfaceTerm) => StWhile(
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_body, surface_index_child(path, 1), keep),
+              surface_index_child(erase_path, 1),
+              false
+            )
+          ),
+          surface_index_surfaceterm_erase(
+            slot_cond,
+            surface_index_child(path, 0),
+            keep,
+            surface_index_child(erase_path, 0)
+          )
+        ),
+        Eq::congr(
+          (replacement: SurfaceTerm) => StWhile(
+            surface_index_surfaceterm(slot_cond, surface_index_child(erase_path, 0), false),
+            replacement
+          ),
+          surface_index_surfaceterm_erase(
+            slot_body,
+            surface_index_child(path, 1),
+            keep,
+            surface_index_child(erase_path, 1)
+          )
+        )
+      )
+      StReturn(slot_value) => Eq::congr(
+        (replacement: Option(SurfaceTerm)) => StReturn(replacement),
+        surface_index_option_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StExpr(slot_value) => Eq::congr(
+        (replacement: SurfaceTerm) => StExpr(replacement),
+        surface_index_surfaceterm_erase(
+          slot_value,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+      StOther(slot_what, slot_start, slot_end) => Refl
+      StMacro(slot_name, slot_function, slot_start, slot_end) => Refl
+      StSyntax(slot_name, slot_grammar, slot_start, slot_end) => Refl
+    }
+  }
+
+  pub theorem surface_index_surfaceterm_erase(
+    value: SurfaceTerm,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfaceterm(surface_index_surfaceterm(value, path, keep), erase_path, false) = surface_index_surfaceterm(value, erase_path, false) {
+    match value: surface_index_surfaceterm(surface_index_surfaceterm(value, path, keep), erase_path, false) = surface_index_surfaceterm(value, erase_path, false) {
+      SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_old_occurrence) =>
+      Eq::congr(
+        (replacement: SurfaceKind) => SurfaceTermIndexedMk(replacement, slot_start, slot_end, None),
+        surface_index_surfacekind_erase(
+          slot_kind,
+          surface_index_child(path, 0),
+          keep,
+          surface_index_child(erase_path, 0)
+        )
+      )
+    }
+  }
+
+  pub theorem surface_index_surfacetheorem_erase(
+    value: SurfaceTheorem,
+    path: List(Nat),
+    keep: Bool,
+    erase_path: List(Nat)
+  ): surface_index_surfacetheorem(surface_index_surfacetheorem(value, path, keep), erase_path, false) = surface_index_surfacetheorem(value, erase_path, false) {
+    match value: surface_index_surfacetheorem(surface_index_surfacetheorem(value, path, keep), erase_path, false) = surface_index_surfacetheorem(value, erase_path, false) {
+      SurfaceTheoremMk(
+        slot_name,
+        slot_implicit,
+        slot_params,
+        slot_ty,
+        slot_body,
+        slot_start,
+        slot_end
+      ) => Eq::trans(
+        Eq::congr(
+          (replacement: List(SurfaceNamed)) => SurfaceTheoremMk(
+            slot_name,
+            slot_implicit,
+            replacement,
+            surface_index_surfaceterm(
+              surface_index_surfaceterm(slot_ty, surface_index_child(path, 3), keep),
+              surface_index_child(erase_path, 3),
+              false
+            ),
+            surface_index_option_surfaceterm(
+              surface_index_option_surfaceterm(slot_body, surface_index_child(path, 4), keep),
+              surface_index_child(erase_path, 4),
+              false
+            ),
+            slot_start,
+            slot_end
+          ),
+          surface_index_list_surfacenamed_erase_from(
+            slot_params,
+            surface_index_child(path, 2),
+            keep,
+            0,
+            surface_index_child(erase_path, 2),
+            0
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (replacement: SurfaceTerm) => SurfaceTheoremMk(
+              slot_name,
+              slot_implicit,
+              surface_index_list_surfacenamed_from(
+                slot_params,
+                surface_index_child(erase_path, 2),
+                false,
+                0
+              ),
+              replacement,
+              surface_index_option_surfaceterm(
+                surface_index_option_surfaceterm(slot_body, surface_index_child(path, 4), keep),
+                surface_index_child(erase_path, 4),
+                false
+              ),
+              slot_start,
+              slot_end
+            ),
+            surface_index_surfaceterm_erase(
+              slot_ty,
+              surface_index_child(path, 3),
+              keep,
+              surface_index_child(erase_path, 3)
+            )
+          ),
+          Eq::congr(
+            (replacement: Option(SurfaceTerm)) => SurfaceTheoremMk(
+              slot_name,
+              slot_implicit,
+              surface_index_list_surfacenamed_from(
+                slot_params,
+                surface_index_child(erase_path, 2),
+                false,
+                0
+              ),
+              surface_index_surfaceterm(slot_ty, surface_index_child(erase_path, 3), false),
+              replacement,
+              slot_start,
+              slot_end
+            ),
+            surface_index_option_surfaceterm_erase(
+              slot_body,
+              surface_index_child(path, 4),
+              keep,
+              surface_index_child(erase_path, 4)
+            )
+          )
+        )
+      )
+    }
+  }
+
+}
+
+pub theorem surface_index_list_option_surfaceterm_erase(
+  value: List(Option(SurfaceTerm)),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_option_surfaceterm_from(
+    surface_index_list_option_surfaceterm_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_option_surfaceterm_from(value, erase_path, false, 0) {
+  surface_index_list_option_surfaceterm_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacearm_erase(
+  value: List(SurfaceArm),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacearm_from(
+    surface_index_list_surfacearm_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacearm_from(value, erase_path, false, 0) {
+  surface_index_list_surfacearm_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfaceconstraint_erase(
+  value: List(SurfaceConstraint),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfaceconstraint_from(
+    surface_index_list_surfaceconstraint_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfaceconstraint_from(value, erase_path, false, 0) {
+  surface_index_list_surfaceconstraint_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacector_erase(
+  value: List(SurfaceCtor),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacector_from(
+    surface_index_list_surfacector_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacector_from(value, erase_path, false, 0) {
+  surface_index_list_surfacector_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacedatactor_erase(
+  value: List(SurfaceDataCtor),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacedatactor_from(
+    surface_index_list_surfacedatactor_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacedatactor_from(value, erase_path, false, 0) {
+  surface_index_list_surfacedatactor_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacedatafield_erase(
+  value: List(SurfaceDataField),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacedatafield_from(
+    surface_index_list_surfacedatafield_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacedatafield_from(value, erase_path, false, 0) {
+  surface_index_list_surfacedatafield_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacefield_erase(
+  value: List(SurfaceField),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacefield_from(
+    surface_index_list_surfacefield_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacefield_from(value, erase_path, false, 0) {
+  surface_index_list_surfacefield_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacefn_erase(
+  value: List(SurfaceFn),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacefn_from(
+    surface_index_list_surfacefn_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacefn_from(value, erase_path, false, 0) {
+  surface_index_list_surfacefn_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacehandler_erase(
+  value: List(SurfaceHandler),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacehandler_from(
+    surface_index_list_surfacehandler_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacehandler_from(value, erase_path, false, 0) {
+  surface_index_list_surfacehandler_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacelaw_erase(
+  value: List(SurfaceLaw),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacelaw_from(
+    surface_index_list_surfacelaw_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacelaw_from(value, erase_path, false, 0) {
+  surface_index_list_surfacelaw_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacenamed_erase(
+  value: List(SurfaceNamed),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacenamed_from(
+    surface_index_list_surfacenamed_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacenamed_from(value, erase_path, false, 0) {
+  surface_index_list_surfacenamed_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfaceparam_erase(
+  value: List(SurfaceParam),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfaceparam_from(
+    surface_index_list_surfaceparam_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfaceparam_from(value, erase_path, false, 0) {
+  surface_index_list_surfaceparam_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacepattern_erase(
+  value: List(SurfacePattern),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacepattern_from(
+    surface_index_list_surfacepattern_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacepattern_from(value, erase_path, false, 0) {
+  surface_index_list_surfacepattern_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacepatternfield_erase(
+  value: List(SurfacePatternField),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacepatternfield_from(
+    surface_index_list_surfacepatternfield_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacepatternfield_from(value, erase_path, false, 0) {
+  surface_index_list_surfacepatternfield_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacesteparm_erase(
+  value: List(SurfaceStepArm),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacesteparm_from(
+    surface_index_list_surfacesteparm_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacesteparm_from(value, erase_path, false, 0) {
+  surface_index_list_surfacesteparm_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfacestmt_erase(
+  value: List(SurfaceStmt),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfacestmt_from(
+    surface_index_list_surfacestmt_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfacestmt_from(value, erase_path, false, 0) {
+  surface_index_list_surfacestmt_erase_from(value, path, keep, 0, erase_path, 0)
+}
+
+pub theorem surface_index_list_surfaceterm_erase(
+  value: List(SurfaceTerm),
+  path: List(Nat),
+  keep: Bool,
+  erase_path: List(Nat)
+): surface_index_list_surfaceterm_from(
+    surface_index_list_surfaceterm_from(value, path, keep, 0),
+    erase_path,
+    false,
+    0
+  ) = surface_index_list_surfaceterm_from(value, erase_path, false, 0) {
+  surface_index_list_surfaceterm_erase_from(value, path, keep, 0, erase_path, 0)
+}

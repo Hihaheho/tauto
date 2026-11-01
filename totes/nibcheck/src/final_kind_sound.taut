@@ -1,0 +1,87 @@
+import "final_rigid_sound.taut"
+import "rules_kind_inst.taut"
+
+pub theorem diagnostic_bounds_to_items(
+  c: Checker,
+  bs: List(TyBound),
+  h: DiagnosticBounds(c, bs)
+): DiagnosticItems(TyBound, DiagnosticBound, c, bs) {
+  match h: DiagnosticItems(TyBound, DiagnosticBound, c, bs) {
+    DiagnosticBoundsNil => DiagnosticItemsNil
+    DiagnosticBoundsCons(b, rest, head, tail) => DiagnosticItemsCons(
+      head,
+      diagnostic_bounds_to_items(c, rest, tail)
+    )
+  }
+}
+pub theorem diagnostic_bound_member(
+  c: Checker,
+  bs: List(TyBound),
+  b: TyBound,
+  member: BoundIn(bs, b),
+  checked: DiagnosticItems(TyBound, DiagnosticBound, c, bs)
+): DiagnosticBound(c, b) {
+  match member: DiagnosticBound(c, b) {
+    BoundHere(head, rest) => diagnostic_items_head(checked)
+    BoundThere(rest, target, head, inside) => diagnostic_bound_member(
+      c,
+      rest,
+      target,
+      inside,
+      diagnostic_items_tail(checked)
+    )
+  }
+}
+pub theorem final_bound_sound(
+  c: Checker,
+  b: TyBound,
+  final: FinalDiagnostics0(c),
+  member: BoundIn(ck_bounds_of(c), b)
+): DiagnosticBound(c, b) {
+  diagnostic_bound_member(
+    c,
+    ck_bounds_of(c),
+    b,
+    member,
+    diagnostic_items_unreverse(
+      DiagnosticBound,
+      c,
+      ck_bounds_of(c),
+      diagnostic_bounds_to_items(
+        c,
+        List::reverse(ck_bounds_of(c)),
+        And::left(And::right(And::right(And::right(final))))
+      )
+    )
+  )
+}
+pub theorem final_instantiation_kinds(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  map: Ordmap(Text, Ty),
+  r#instance: InstBy(ck_bounds_of(c), gs, map),
+  final: FinalDiagnostics0(c)
+): InstanceKinds(ck_subst_of(c), ck_datas_of(c), gs, map) {
+  match r#instance: InstanceKinds(ck_subst_of(c), ck_datas_of(c), gs, map) {
+    InstNil => InstanceKindsNil
+    InstCons(rest, previous, g, v, bound, tail) => InstanceKindsCons(
+      g,
+      v,
+      ck_resolve(c, v),
+      ty_resolve_eq(
+        ck_steps_of(c),
+        ck_subst_of(c),
+        (generics: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+          ck_subst_of(c),
+          generics,
+          rigid,
+          left,
+          right
+        ),
+        v
+      ),
+      And::right(final_bound_sound(c, TyBoundMk(v, tk_second(g), 0, 0), final, bound)),
+      final_instantiation_kinds(c, rest, previous, tail, final)
+    )
+  }
+}

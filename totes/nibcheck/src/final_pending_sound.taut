@@ -1,0 +1,84 @@
+import "literal_typing_sound.taut"
+import "structural_fuel_sound.taut"
+
+pub theorem final_pending_checked(
+  c: Checker,
+  p: TyPending,
+  member: Mem(TyPending, p, finish_pending_items(c)),
+  final: FinalDiagnostics0(c)
+): DiagnosticPending(c, p) {
+  diagnostic_items_member(
+    member,
+    diagnostic_items_unreverse(
+      DiagnosticPending,
+      c,
+      finish_pending_items(c),
+      And::left(And::right(And::right(And::right(And::right(And::right(final))))))
+    )
+  )
+}
+pub theorem final_structural_pending(
+  c: Checker,
+  p: TyPending,
+  member: Mem(TyPending, p, finish_pending_items(c)),
+  structural: class_is_structural(finish_pending_class(p)) = true,
+  final: FinalDiagnostics0(c)
+): datas_structural(
+    ck_datas_of(c),
+    finish_pending_class(p),
+    ck_resolve(c, finish_pending_ty(p)),
+    finish_pending_assume(p)
+  ) = true {
+  diagnostic_not_no(
+    datas_structural(
+      ck_datas_of(c),
+      finish_pending_class(p),
+      ck_resolve(c, finish_pending_ty(p)),
+      finish_pending_assume(p)
+    ),
+    Eq::subst(
+      (flag: Bool) => DiagnosticPendingKind(c, p, flag),
+      Eq::congr(not, structural),
+      final_pending_checked(c, p, member, final)
+    )
+  )
+}
+pub theorem final_structural_function_impossible(
+  c: Checker,
+  p: TyPending,
+  params: List(Ty),
+  result: Ty,
+  kind: Kind,
+  member: Mem(TyPending, p, finish_pending_items(c)),
+  structural: class_is_structural(finish_pending_class(p)) = true,
+  resolved: ck_resolve(c, finish_pending_ty(p)) = TyFn(params, result, kind),
+  final: FinalDiagnostics0(c)
+): False {
+  let accepted: datas_structural(
+      ck_datas_of(c),
+      finish_pending_class(p),
+      TyFn(params, result, kind),
+      finish_pending_assume(p)
+    ) = true := Eq::subst(
+    (ty: Ty) => datas_structural(ck_datas_of(c), finish_pending_class(p), ty, finish_pending_assume(p)) = true,
+    resolved,
+    final_structural_pending(c, p, member, structural, final)
+  )
+  false_ne_true(
+    Eq::trans(
+      Eq::sym(
+        structural_function_rejected(
+          summary_steps(ck_datas_of(c)),
+          ck_datas_of(c),
+          finish_pending_class(p),
+          params,
+          result,
+          kind,
+          finish_pending_assume(p),
+          Nil
+        )
+      ),
+      accepted
+    )
+  )
+}

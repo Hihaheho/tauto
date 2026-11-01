@@ -1,0 +1,79 @@
+import "rules_where.taut"
+import "kind_sound.taut"
+
+pub fn where_classes(c: Checker): Ordmap(Text, ClassInfo) { c.classes }
+pub theorem where_class_structural(
+  classes: Ordmap(Text, ClassInfo),
+  name: Text,
+  structural: class_is_structural(name) = true
+): WhereClass(classes, name) {
+  kyn_or_true(
+    Bool::or(Text::eq(name, "PartialEq"), Text::eq(name, "DecEq")),
+    Text::eq(name, "Hash"),
+    WhereClass(classes, name),
+    structural,
+    first => kyn_or_true(
+      Text::eq(name, "PartialEq"),
+      Text::eq(name, "DecEq"),
+      WhereClass(classes, name),
+      first,
+      partial => Eq::subst(
+        (n: Text) => WhereClass(classes, n),
+        Eq::sym(text_eq_true(name, "PartialEq", partial)),
+        WhereClassPartialEq
+      ),
+      decidable => Eq::subst(
+        (n: Text) => WhereClass(classes, n),
+        Eq::sym(text_eq_true(name, "DecEq", decidable)),
+        WhereClassDecEq
+      )
+    ),
+    hashed => Eq::subst(
+      (n: Text) => WhereClass(classes, n),
+      Eq::sym(text_eq_true(name, "Hash", hashed)),
+      WhereClassHash
+    )
+  )
+}
+pub fn where_class_present(info: Option(ClassInfo)): Bool {
+  match info: Bool {
+    None => false
+    Some(decl) => true
+  }
+}
+pub theorem where_class_lookup(
+  classes: Ordmap(Text, ClassInfo),
+  name: Text,
+  info: Option(ClassInfo),
+  found: Ordmap::get(classes, name, Ordmap::compare_text) = info,
+  present: where_class_present(info) = true
+): WhereClass(classes, name) {
+  match info: WhereClass(classes, name) {
+    None => False::elim(false_ne_true(present))
+    Some(decl) => WhereClassDeclared(name, decl, found)
+  }
+}
+pub theorem where_class_contains(
+  classes: Ordmap(Text, ClassInfo),
+  name: Text,
+  present: Ordmap::contains(classes, name, Ordmap::compare_text) = true
+): WhereClass(classes, name) {
+  where_class_lookup(classes, name, Ordmap::get(classes, name, Ordmap::compare_text), Refl, present)
+}
+pub theorem where_class_allowed(
+  classes: Ordmap(Text, ClassInfo),
+  name: Text,
+  structural: Bool,
+  present: Bool,
+  built_in: class_is_structural(name) = structural,
+  declared: Ordmap::contains(classes, name, Ordmap::compare_text) = present,
+  allowed: Bool::and(not(structural), not(present)) = false
+): WhereClass(classes, name) {
+  match structural: WhereClass(classes, name) {
+    true => where_class_structural(classes, name, built_in)
+    false => match present: WhereClass(classes, name) {
+      true => where_class_contains(classes, name, declared)
+      false => False::elim(true_ne_false(allowed))
+    }
+  }
+}

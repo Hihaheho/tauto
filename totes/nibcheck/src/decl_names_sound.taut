@@ -1,0 +1,277 @@
+import "instances_frame.taut"
+import "rules_decls.taut"
+
+pub fn decl_names_check(c: Checker, duplicate: Option(SurfaceFn)): Mut1(Unit, Checker) {
+  match duplicate: Mut1(Unit, Checker) {
+    None => mut1(Star, c)
+    Some(f) => ck_rewrap1(
+      ck_error(c, cat3("function ", signature_name(f), " is declared twice"), cf_method_span(f))
+    )
+  }
+}
+pub theorem decl_names_check_frame(
+  c: Checker,
+  duplicate: Option(SurfaceFn)
+): CkReadFrame(c, decl_names_check(c, duplicate)) {
+  match duplicate: CkReadFrame(c, decl_names_check(c, duplicate)) {
+    None => Refl
+    Some(f) => Refl
+  }
+}
+pub theorem decl_names_check_unf(
+  c: Checker,
+  fs: List(SurfaceFn)
+): ck_check_fn_names(c, fs) = decl_names_check(c, types_duplicate_fn(fs, Ordmap::empty())) { Refl }
+pub theorem ck_check_fn_names_frame(
+  c: Checker,
+  fs: List(SurfaceFn)
+): CkReadFrame(c, ck_check_fn_names(c, fs)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+    Eq::sym(decl_names_check_unf(c, fs)),
+    decl_names_check_frame(c, types_duplicate_fn(fs, Ordmap::empty()))
+  )
+}
+
+// The map covers every name already encountered in this scope.
+pub def DeclNameCover(seen: List(Text), map: Ordmap(Text, Bool)): Prop :=
+∀ n: Text. ∀ h: Mem(
+  Text,
+  n,
+  seen
+). Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
+
+pub fn decl_names_present(o: Option(Bool)): Bool {
+  match o: Bool {
+    None => false
+    Some(v) => true
+  }
+}
+pub theorem decl_names_contains(
+  map: Ordmap(Text, Bool),
+  n: Text,
+  h: Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
+): Ordmap::contains(map, n, Ordmap::compare_text) = true {
+  Eq::congr(decl_names_present, h)
+}
+pub theorem decl_names_insert_old_at(
+  map: Ordmap(Text, Bool),
+  n: Text,
+  q: Text,
+  cmp: Ordering,
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  equal: Ordmap::compare_text(q, n) = cmp,
+  old: Ordmap::get(map, q, Ordmap::compare_text) = Some(true)
+): Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+  match cmp: Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+    Less => Eq::trans(
+      Ordmap::get_insert_other(
+        Ordmap::compare_text,
+        Ordmap::compare_text_law(),
+        map,
+        n,
+        true,
+        q,
+        Less,
+        less_ne_equal,
+        equal,
+        ordered
+      ),
+      old
+    )
+    Equal => Eq::subst(
+      (key: Text) => Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), key, Ordmap::compare_text) = Some(true),
+      Eq::sym(Ordmap::compare_text_eq(q, n, equal)),
+      Ordmap::text_get_insert_same(map, n, true, ordered)
+    )
+    Greater => Eq::trans(
+      Ordmap::get_insert_other(
+        Ordmap::compare_text,
+        Ordmap::compare_text_law(),
+        map,
+        n,
+        true,
+        q,
+        Greater,
+        greater_ne_equal,
+        equal,
+        ordered
+      ),
+      old
+    )
+  }
+}
+pub theorem decl_names_insert_cover(
+  map: Ordmap(Text, Bool),
+  n: Text,
+  seen: List(Text),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  cover: DeclNameCover(seen, map)
+): DeclNameCover(Cons(n, seen), Ordmap::insert(map, n, true, Ordmap::compare_text)) {
+  q => h => match h: Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+    MemHere(tail) => Ordmap::text_get_insert_same(map, n, true, ordered)
+    MemThere(head, tail, member) => decl_names_insert_old_at(
+      map,
+      n,
+      q,
+      Ordmap::compare_text(q, n),
+      ordered,
+      Refl,
+      cover(q, member)
+    )
+  }
+}
+pub fn decl_names_step(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  map: Ordmap(Text, Bool),
+  duplicate: Bool
+): Option(SurfaceFn) {
+  match duplicate: Option(SurfaceFn) {
+    true => Some(f)
+    false => types_duplicate_fn(rest, Ordmap::insert(map, decl_fn_name(f), true, Ordmap::compare_text))
+  }
+}
+pub theorem decl_names_step_unf(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  map: Ordmap(Text, Bool)
+): types_duplicate_fn(Cons(f, rest), map) = decl_names_step(f, rest, map, Ordmap::contains(map, decl_fn_name(f), Ordmap::compare_text)) { Refl }
+
+pub def DeclNamesIH(rest: List(SurfaceFn)): Prop :=
+∀ map: Ordmap(
+  Text,
+  Bool
+). ∀ seen: List(
+  Text
+). ∀ ordered: Ordmap::ordered(
+  map,
+  Ordmap::compare_text
+). ∀ cover: DeclNameCover(
+  seen,
+  map
+). ∀ clean: types_duplicate_fn(rest, map) = None. FreshFunctionNames(rest, seen)
+
+pub theorem decl_names_cons_sound(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  map: Ordmap(Text, Bool),
+  seen: List(Text),
+  duplicate: Bool,
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  cover: DeclNameCover(seen, map),
+  equal: Ordmap::contains(map, decl_fn_name(f), Ordmap::compare_text) = duplicate,
+  clean: decl_names_step(f, rest, map, duplicate) = None,
+  ih: DeclNamesIH(rest)
+): FreshFunctionNames(Cons(f, rest), seen) {
+  match duplicate: FreshFunctionNames(Cons(f, rest), seen) {
+    true => False::elim(ck_none_ne_some(f, Eq::sym(clean)))
+    false => FreshFunctionsCons(
+      f,
+      rest,
+      seen,
+      member => false_ne_true(
+        Eq::trans(
+          Eq::sym(equal),
+          decl_names_contains(map, decl_fn_name(f), cover(decl_fn_name(f), member))
+        )
+      ),
+      ih(
+        Ordmap::insert(map, decl_fn_name(f), true, Ordmap::compare_text),
+        Cons(decl_fn_name(f), seen),
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          map,
+          decl_fn_name(f),
+          true,
+          ordered
+        ),
+        decl_names_insert_cover(map, decl_fn_name(f), seen, ordered, cover),
+        clean
+      )
+    )
+  }
+}
+pub theorem types_duplicate_fn_sound(
+  fs: List(SurfaceFn),
+  map: Ordmap(Text, Bool),
+  seen: List(Text),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  cover: DeclNameCover(seen, map),
+  clean: types_duplicate_fn(fs, map) = None
+): FreshFunctionNames(fs, seen) {
+  match fs: FreshFunctionNames(fs, seen) {
+    Nil => FreshFunctionsNil(seen)
+    Cons(f, rest) => decl_names_cons_sound(
+      f,
+      rest,
+      map,
+      seen,
+      Ordmap::contains(map, decl_fn_name(f), Ordmap::compare_text),
+      ordered,
+      cover,
+      Refl,
+      Eq::trans(Eq::sym(decl_names_step_unf(f, rest, map)), clean),
+      nextmap => nextseen => onext => cnext => hnext => types_duplicate_fn_sound(
+        rest,
+        nextmap,
+        nextseen,
+        onext,
+        cnext,
+        hnext
+      )
+    )
+  }
+}
+pub theorem types_function_names_unique(
+  fs: List(SurfaceFn),
+  clean: types_duplicate_fn(fs, Ordmap::empty()) = None
+): UniqueFunctionNames(fs) {
+  types_duplicate_fn_sound(
+    fs,
+    Ordmap::empty(),
+    Nil,
+    Trivial,
+    n => member => Mem::nil(
+      Ordmap::get(Ordmap::empty(), n, Ordmap::compare_text) = Some(true),
+      member
+    ),
+    clean
+  )
+}
+pub fn decl_names_errors(c: Checker): List(TypeError) { c.errors }
+pub fn decl_names_empty(es: List(TypeError)): Bool {
+  match es: Bool {
+    Nil => true
+    Cons(e, rest) => false
+  }
+}
+pub theorem decl_names_check_clean(
+  c: Checker,
+  duplicate: Option(SurfaceFn),
+  clean: decl_names_errors(ck_st(decl_names_check(c, duplicate))) = Nil
+): duplicate = None {
+  match duplicate: duplicate = None {
+    None => Refl
+    Some(f) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+  }
+}
+pub theorem ck_check_fn_names_sound(
+  c: Checker,
+  fs: List(SurfaceFn),
+  clean: decl_names_errors(ck_st(ck_check_fn_names(c, fs))) = Nil
+): UniqueFunctionNames(fs) {
+  types_function_names_unique(
+    fs,
+    decl_names_check_clean(
+      c,
+      types_duplicate_fn(fs, Ordmap::empty()),
+      Eq::subst(
+        (z: Mut1(Unit, Checker)) => decl_names_errors(ck_st(z)) = Nil,
+        decl_names_check_unf(c, fs),
+        clean
+      )
+    )
+  )
+}

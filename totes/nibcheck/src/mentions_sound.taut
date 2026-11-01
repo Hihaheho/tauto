@@ -1,0 +1,546 @@
+import "unify_sound.taut"
+import "union_sound.taut"
+import "product_sound.taut"
+
+// A mentioned parameter occurs in a non-union leaf of the type.
+pub(open) inductive MentionLeaf(s: Ordmap(Nat, Ty), n: Text, ts: List(Ty)): Prop {
+  Mk(t: Ty, leaf: Leaves(t, ts), occurs: TyMentions(s, n, t)): MentionLeaf(s, n, ts)
+}
+pub theorem mention_leaf_nested(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  xs: List(Ty),
+  rest: List(Ty),
+  witness: MentionLeaf(s, n, xs)
+): MentionLeaf(s, n, Cons(TyUnion(xs), rest)) {
+  match witness: MentionLeaf(s, n, Cons(TyUnion(xs), rest)) {
+    Mk(t, leaf, occurs) => MentionLeaf::Mk(t, LvIn(xs, rest, leaf), occurs)
+  }
+}
+pub theorem mention_leaf_later(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  x: Ty,
+  rest: List(Ty),
+  witness: MentionLeaf(s, n, rest)
+): MentionLeaf(s, n, Cons(x, rest)) {
+  match witness: MentionLeaf(s, n, Cons(x, rest)) {
+    Mk(t, leaf, occurs) => MentionLeaf::Mk(t, LvThere(x, rest, leaf), occurs)
+  }
+}
+mutual {
+  pub theorem mentions_leaf(
+    s: Ordmap(Nat, Ty),
+    n: Text,
+    t: Ty,
+    h: TyMentions(s, n, t),
+    rest: List(Ty)
+  ): MentionLeaf(s, n, Cons(t, rest)) {
+    match h: MentionLeaf(s, n, Cons(t, rest)) {
+      MenParam(k) => MentionLeaf::Mk(TyParam(n, k), LvHere(rest, Refl), h)
+      MenVar(inner, i, eq, inside) => MentionLeaf::Mk(TyVar(i), LvHere(rest, Refl), h)
+      MenFnParam(ps, r, k, inside) => MentionLeaf::Mk(TyFn(ps, r, k), LvHere(rest, Refl), h)
+      MenFnResult(r, ps, k, inside) => MentionLeaf::Mk(TyFn(ps, r, k), LvHere(rest, Refl), h)
+      MenUnion(ts, inside) => mention_leaf_nested(
+        s,
+        n,
+        ts,
+        rest,
+        mentions_list_leaf(s, n, ts, inside)
+      )
+      MenProduct(ts, inside) => MentionLeaf::Mk(TyProduct(ts), LvHere(rest, Refl), h)
+      MenTagged(inner, tags, inside) => MentionLeaf::Mk(TyTagged(tags, inner), LvHere(rest, Refl), h)
+      MenNamed(ts, name, inside) => MentionLeaf::Mk(TyNamed(name, ts), LvHere(rest, Refl), h)
+      MenInfo(inner, inside) => MentionLeaf::Mk(TyInfo(inner), LvHere(rest, Refl), h)
+      MenBorrow(inner, mutable, inside) => MentionLeaf::Mk(
+        TyBorrow(inner, mutable),
+        LvHere(rest, Refl),
+        h
+      )
+      MenPoly(inner, gs, inside) => MentionLeaf::Mk(TyPoly(gs, inner), LvHere(rest, Refl), h)
+      MenAppHead(head, arg, inside) => MentionLeaf::Mk(TyApp(head, arg), LvHere(rest, Refl), h)
+      MenAppArg(arg, head, inside) => MentionLeaf::Mk(TyApp(head, arg), LvHere(rest, Refl), h)
+    }
+  }
+  pub theorem mentions_list_leaf(
+    s: Ordmap(Nat, Ty),
+    n: Text,
+    ts: List(Ty),
+    h: TyMentionsList(s, n, ts)
+  ): MentionLeaf(s, n, ts) {
+    match h: MentionLeaf(s, n, ts) {
+      MenHead(x, rest, inside) => mentions_leaf(s, n, x, inside, rest)
+      MenTail(rest, x, inside) => mention_leaf_later(
+        s,
+        n,
+        x,
+        rest,
+        mentions_list_leaf(s, n, rest, inside)
+      )
+    }
+  }
+}
+
+pub theorem mentions_list_of_member(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  e: Ty,
+  ts: List(Ty),
+  m: Mem(Ty, e, ts),
+  h: TyMentions(s, n, e)
+): TyMentionsList(s, n, ts) {
+  match m: TyMentionsList(s, n, ts) {
+    MemHere(rest) => MenHead(rest, h)
+    MemThere(x, rest, inside) => MenTail(x, mentions_list_of_member(s, n, e, rest, inside, h))
+  }
+}
+pub theorem mentions_singleton(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  t: Ty,
+  e: Ty,
+  m: Mem(Ty, e, Cons(t, Nil)),
+  h: TyMentions(s, n, e)
+): TyMentions(s, n, t) {
+  Or::elim(
+    mem_cons_inv(t, Nil, m),
+    same => Eq::subst((x: Ty) => TyMentions(s, n, x), same, h),
+    absent => Mem::nil(TyMentions(s, n, t), absent)
+  )
+}
+pub theorem mentions_members(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  u: Ty,
+  e: Ty,
+  m: Mem(Ty, e, ty_members(u)),
+  h: TyMentions(s, n, e)
+): TyMentions(s, n, u) { match u: TyMentions(s, n, u) {
+    TyInt(part_w) => mentions_singleton(s, n, u, e, m, h)
+    TyBool => mentions_singleton(s, n, u, e, m, h)
+    TyText => mentions_singleton(s, n, u, e, m, h)
+    TyUnit => mentions_singleton(s, n, u, e, m, h)
+    TyNever => Mem::nil(TyMentions(s, n, TyNever), m)
+    TyDecimal => mentions_singleton(s, n, u, e, m, h)
+    TyFloat => mentions_singleton(s, n, u, e, m, h)
+    TyFn(part_params, part_result, part_kind) => mentions_singleton(s, n, u, e, m, h)
+    TyUnion(part_members) => MenUnion(mentions_list_of_member(s, n, e, part_members, m, h))
+    TyProduct(part_members) => mentions_singleton(s, n, u, e, m, h)
+    TyTagged(part_tags, part_inner) => mentions_singleton(s, n, u, e, m, h)
+    TyNamed(part_name, part_args) => mentions_singleton(s, n, u, e, m, h)
+    TyParam(part_name, part_bound) => mentions_singleton(s, n, u, e, m, h)
+    TyInfo(part_inner) => mentions_singleton(s, n, u, e, m, h)
+    TyBorrow(part_inner, part_mutable) => mentions_singleton(s, n, u, e, m, h)
+    TyVar(part_v) => mentions_singleton(s, n, u, e, m, h)
+    TyPoly(part_generics, part_inner) => mentions_singleton(s, n, u, e, m, h)
+    TyApp(part_head, part_arg) => mentions_singleton(s, n, u, e, m, h)
+  } }
+pub theorem mentions_union_leaf(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  ts: List(Ty),
+  witness: MentionLeaf(s, n, ts)
+): TyMentions(s, n, ty_union(ts)) {
+  match witness: TyMentions(s, n, ty_union(ts)) {
+    Mk(t, leaf, occurs) => mentions_members(
+      s,
+      n,
+      ty_union(ts),
+      t,
+      union_has(t, ts, leaf),
+      occurs
+    )
+  }
+}
+pub theorem mentions_union(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  ts: List(Ty),
+  h: TyMentionsList(s, n, ts)
+): TyMentions(s, n, ty_union(ts)) {
+  mentions_union_leaf(s, n, ts, mentions_list_leaf(s, n, ts, h))
+}
+
+// The same for a product.
+// A mentioned parameter occurs in a non-product leaf of the type.
+pub(open) inductive PMentionLeaf(s: Ordmap(Nat, Ty), n: Text, ts: List(Ty)): Prop {
+  PmentionLeaf(t: Ty, leaf: PLeaves(t, ts), occurs: TyMentions(s, n, t)): PMentionLeaf(s, n, ts)
+}
+pub theorem pmention_leaf_nested(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  xs: List(Ty),
+  rest: List(Ty),
+  witness: PMentionLeaf(s, n, xs)
+): PMentionLeaf(s, n, Cons(TyProduct(xs), rest)) {
+  match witness: PMentionLeaf(s, n, Cons(TyProduct(xs), rest)) {
+    PmentionLeaf(t, leaf, occurs) => PmentionLeaf(t, PlvIn(xs, rest, leaf), occurs)
+  }
+}
+pub theorem pmention_leaf_later(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  x: Ty,
+  rest: List(Ty),
+  witness: PMentionLeaf(s, n, rest)
+): PMentionLeaf(s, n, Cons(x, rest)) {
+  match witness: PMentionLeaf(s, n, Cons(x, rest)) {
+    PmentionLeaf(t, leaf, occurs) => PmentionLeaf(t, PlvThere(x, rest, leaf), occurs)
+  }
+}
+mutual {
+  pub theorem pmentions_leaf(
+    s: Ordmap(Nat, Ty),
+    n: Text,
+    t: Ty,
+    h: TyMentions(s, n, t),
+    rest: List(Ty)
+  ): PMentionLeaf(s, n, Cons(t, rest)) {
+    match h: PMentionLeaf(s, n, Cons(t, rest)) {
+      MenParam(k) => PmentionLeaf(TyParam(n, k), PlvHere(rest, Refl), h)
+      MenVar(inner, i, eq, inside) => PmentionLeaf(TyVar(i), PlvHere(rest, Refl), h)
+      MenFnParam(ps, r, k, inside) => PmentionLeaf(TyFn(ps, r, k), PlvHere(rest, Refl), h)
+      MenFnResult(r, ps, k, inside) => PmentionLeaf(TyFn(ps, r, k), PlvHere(rest, Refl), h)
+      MenUnion(ts, inside) => PmentionLeaf(TyUnion(ts), PlvHere(rest, Refl), h)
+      MenProduct(ts, inside) => pmention_leaf_nested(
+        s,
+        n,
+        ts,
+        rest,
+        pmentions_list_leaf(s, n, ts, inside)
+      )
+      MenTagged(inner, tags, inside) => PmentionLeaf(TyTagged(tags, inner), PlvHere(rest, Refl), h)
+      MenNamed(ts, name, inside) => PmentionLeaf(TyNamed(name, ts), PlvHere(rest, Refl), h)
+      MenInfo(inner, inside) => PmentionLeaf(TyInfo(inner), PlvHere(rest, Refl), h)
+      MenBorrow(inner, mutable, inside) => PmentionLeaf(
+        TyBorrow(inner, mutable),
+        PlvHere(rest, Refl),
+        h
+      )
+      MenPoly(inner, gs, inside) => PmentionLeaf(TyPoly(gs, inner), PlvHere(rest, Refl), h)
+      MenAppHead(head, arg, inside) => PmentionLeaf(TyApp(head, arg), PlvHere(rest, Refl), h)
+      MenAppArg(arg, head, inside) => PmentionLeaf(TyApp(head, arg), PlvHere(rest, Refl), h)
+    }
+  }
+  pub theorem pmentions_list_leaf(
+    s: Ordmap(Nat, Ty),
+    n: Text,
+    ts: List(Ty),
+    h: TyMentionsList(s, n, ts)
+  ): PMentionLeaf(s, n, ts) {
+    match h: PMentionLeaf(s, n, ts) {
+      MenHead(x, rest, inside) => pmentions_leaf(s, n, x, inside, rest)
+      MenTail(rest, x, inside) => pmention_leaf_later(
+        s,
+        n,
+        x,
+        rest,
+        pmentions_list_leaf(s, n, rest, inside)
+      )
+    }
+  }
+}
+
+pub theorem pmentions_members(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  u: Ty,
+  e: Ty,
+  m: Mem(Ty, e, ty_pmembers(u)),
+  h: TyMentions(s, n, e)
+): TyMentions(s, n, u) { match u: TyMentions(s, n, u) {
+    TyInt(part_w) => mentions_singleton(s, n, u, e, m, h)
+    TyBool => mentions_singleton(s, n, u, e, m, h)
+    TyText => mentions_singleton(s, n, u, e, m, h)
+    TyUnit => Mem::nil(TyMentions(s, n, TyUnit), m)
+    TyNever => mentions_singleton(s, n, u, e, m, h)
+    TyDecimal => mentions_singleton(s, n, u, e, m, h)
+    TyFloat => mentions_singleton(s, n, u, e, m, h)
+    TyFn(part_params, part_result, part_kind) => mentions_singleton(s, n, u, e, m, h)
+    TyUnion(part_members) => mentions_singleton(s, n, u, e, m, h)
+    TyProduct(part_members) => MenProduct(mentions_list_of_member(s, n, e, part_members, m, h))
+    TyTagged(part_tags, part_inner) => mentions_singleton(s, n, u, e, m, h)
+    TyNamed(part_name, part_args) => mentions_singleton(s, n, u, e, m, h)
+    TyParam(part_name, part_bound) => mentions_singleton(s, n, u, e, m, h)
+    TyInfo(part_inner) => mentions_singleton(s, n, u, e, m, h)
+    TyBorrow(part_inner, part_mutable) => mentions_singleton(s, n, u, e, m, h)
+    TyVar(part_v) => mentions_singleton(s, n, u, e, m, h)
+    TyPoly(part_generics, part_inner) => mentions_singleton(s, n, u, e, m, h)
+    TyApp(part_head, part_arg) => mentions_singleton(s, n, u, e, m, h)
+  } }
+pub theorem mentions_product_leaf(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  ts: List(Ty),
+  witness: PMentionLeaf(s, n, ts)
+): TyMentions(s, n, ty_product(ts)) {
+  match witness: TyMentions(s, n, ty_product(ts)) {
+    PmentionLeaf(t, leaf, occurs) => pmentions_members(
+      s,
+      n,
+      ty_product(ts),
+      t,
+      product_has(t, ts, leaf),
+      occurs
+    )
+  }
+}
+pub theorem mentions_product(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  ts: List(Ty),
+  h: TyMentionsList(s, n, ts)
+): TyMentions(s, n, ty_product(ts)) {
+  mentions_product_leaf(s, n, ts, pmentions_list_leaf(s, n, ts, h))
+}
+
+pub theorem mentions_tagged_inner(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  tags: List(Text),
+  x: Ty,
+  h: TyMentions(s, n, TyTagged(tags, x))
+): TyMentions(s, n, x) {
+  match h: TyMentions(s, n, x) { MenTagged(inner, labels, inside) => inside }
+}
+pub theorem mentions_tagged_with(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  tags: List(Text),
+  x: Ty,
+  h: TyMentions(s, n, x)
+): TyMentions(s, n, ty_tagged_with(tags, x)) {
+  match tags: TyMentions(s, n, ty_tagged_with(tags, x)) { Nil => h
+    Cons(tag, rest) => MenTagged(Cons(tag, rest), h) }
+}
+pub theorem mentions_list_append_left(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  xs: List(Ty),
+  h: TyMentionsList(s, n, xs),
+  ys: List(Ty)
+): TyMentionsList(s, n, List::append(xs, ys)) {
+  match h: TyMentionsList(s, n, List::append(xs, ys)) {
+    MenHead(x, rest, inside) => MenHead(List::append(rest, ys), inside)
+    MenTail(rest, x, inside) => MenTail(x, mentions_list_append_left(s, n, rest, inside, ys))
+  }
+}
+pub theorem mentions_list_append_right(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  xs: List(Ty),
+  ys: List(Ty),
+  h: TyMentionsList(s, n, ys)
+): TyMentionsList(s, n, List::append(xs, ys)) {
+  match xs: TyMentionsList(s, n, List::append(xs, ys)) {
+    Nil => h
+    Cons(x, rest) => MenTail(x, mentions_list_append_right(s, n, rest, ys, h))
+  }
+}
+pub theorem mentions_named_args(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  name: Text,
+  args: List(Ty),
+  h: TyMentions(s, n, TyNamed(name, args))
+): TyMentionsList(s, n, args) {
+  match h: TyMentionsList(s, n, args) { MenNamed(parts, label, inside) => inside }
+}
+pub theorem mentions_tagged(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  t: Ty,
+  tags: List(Text),
+  h: TyMentions(s, n, t)
+): TyMentions(s, n, ty_tagged(tags, t)) { match t: TyMentions(s, n, ty_tagged(tags, t)) {
+    TyInt(part_w) => mentions_tagged_with(s, n, tags, t, h)
+    TyBool => mentions_tagged_with(s, n, tags, t, h)
+    TyText => mentions_tagged_with(s, n, tags, t, h)
+    TyUnit => mentions_tagged_with(s, n, tags, t, h)
+    TyNever => mentions_tagged_with(s, n, tags, t, h)
+    TyDecimal => mentions_tagged_with(s, n, tags, t, h)
+    TyFloat => mentions_tagged_with(s, n, tags, t, h)
+    TyFn(part_params, part_result, part_kind) => mentions_tagged_with(s, n, tags, t, h)
+    TyUnion(part_members) => mentions_tagged_with(s, n, tags, t, h)
+    TyProduct(part_members) => mentions_tagged_with(s, n, tags, t, h)
+    TyTagged(part_tags, part_inner) => mentions_tagged_with(
+      s,
+      n,
+      tags_union(tags, part_tags),
+      part_inner,
+      mentions_tagged_inner(s, n, part_tags, part_inner, h)
+    )
+    TyNamed(part_name, part_args) => mentions_tagged_with(s, n, tags, t, h)
+    TyParam(part_name, part_bound) => mentions_tagged_with(s, n, tags, t, h)
+    TyInfo(part_inner) => mentions_tagged_with(s, n, tags, t, h)
+    TyBorrow(part_inner, part_mutable) => mentions_tagged_with(s, n, tags, t, h)
+    TyVar(part_v) => mentions_tagged_with(s, n, tags, t, h)
+    TyPoly(part_generics, part_inner) => mentions_tagged_with(s, n, tags, t, h)
+    TyApp(part_head, part_arg) => mentions_tagged_with(s, n, tags, t, h)
+  } }
+pub theorem mentions_apply_head(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  t: Ty,
+  x: Ty,
+  h: TyMentions(s, n, t)
+): TyMentions(s, n, ty_apply(t, x)) { match t: TyMentions(s, n, ty_apply(t, x)) {
+    TyInt(part_w) => MenAppHead(x, h)
+    TyBool => MenAppHead(x, h)
+    TyText => MenAppHead(x, h)
+    TyUnit => MenAppHead(x, h)
+    TyNever => MenAppHead(x, h)
+    TyDecimal => MenAppHead(x, h)
+    TyFloat => MenAppHead(x, h)
+    TyFn(part_params, part_result, part_kind) => MenAppHead(x, h)
+    TyUnion(part_members) => MenAppHead(x, h)
+    TyProduct(part_members) => MenAppHead(x, h)
+    TyTagged(part_tags, part_inner) => MenAppHead(x, h)
+    TyNamed(part_name, part_args) => MenNamed(
+      part_name,
+      mentions_list_append_left(
+        s,
+        n,
+        part_args,
+        mentions_named_args(s, n, part_name, part_args, h),
+        Cons(x, Nil)
+      )
+    )
+    TyParam(part_name, part_bound) => MenAppHead(x, h)
+    TyInfo(part_inner) => MenAppHead(x, h)
+    TyBorrow(part_inner, part_mutable) => MenAppHead(x, h)
+    TyVar(part_v) => MenAppHead(x, h)
+    TyPoly(part_generics, part_inner) => MenAppHead(x, h)
+    TyApp(part_head, part_arg) => MenAppHead(x, h)
+  } }
+pub theorem mentions_apply_arg(
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  t: Ty,
+  x: Ty,
+  h: TyMentions(s, n, x)
+): TyMentions(s, n, ty_apply(t, x)) { match t: TyMentions(s, n, ty_apply(t, x)) {
+    TyInt(part_w) => MenAppArg(t, h)
+    TyBool => MenAppArg(t, h)
+    TyText => MenAppArg(t, h)
+    TyUnit => MenAppArg(t, h)
+    TyNever => MenAppArg(t, h)
+    TyDecimal => MenAppArg(t, h)
+    TyFloat => MenAppArg(t, h)
+    TyFn(part_params, part_result, part_kind) => MenAppArg(t, h)
+    TyUnion(part_members) => MenAppArg(t, h)
+    TyProduct(part_members) => MenAppArg(t, h)
+    TyTagged(part_tags, part_inner) => MenAppArg(t, h)
+    TyNamed(part_name, part_args) => MenNamed(
+      part_name,
+      mentions_list_append_right(s, n, part_args, Cons(x, Nil), MenHead(Nil, h))
+    )
+    TyParam(part_name, part_bound) => MenAppArg(t, h)
+    TyInfo(part_inner) => MenAppArg(t, h)
+    TyBorrow(part_inner, part_mutable) => MenAppArg(t, h)
+    TyVar(part_v) => MenAppArg(t, h)
+    TyPoly(part_generics, part_inner) => MenAppArg(t, h)
+    TyApp(part_head, part_arg) => MenAppArg(t, h)
+  } }
+
+pub def ResolveMentionsAt(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  n: Text
+): Prop := ∀ t: Ty. ∀ h: TyMentions(s, n, t). TyMentions(s, n, ty_resolve_in(k, s, t))
+pub def ResolveMentionsListAt(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  n: Text
+): Prop := ∀ ts: List(
+  Ty
+). ∀ h: TyMentionsList(s, n, ts). TyMentionsList(s, n, ty_resolve_list_in(k, s, ts))
+pub theorem mentions_resolve_list_step(
+  j: Nat,
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  ht: ResolveMentionsAt(j, s, n),
+  hl: ResolveMentionsListAt(j, s, n),
+  ts: List(Ty),
+  h: TyMentionsList(s, n, ts)
+): TyMentionsList(s, n, ty_resolve_list_in(Succ(j), s, ts)) {
+  match h: TyMentionsList(s, n, ty_resolve_list_in(Succ(j), s, ts)) {
+    MenHead(x, rest, inside) => MenHead(ty_resolve_list_in(j, s, rest), ht(x, inside))
+    MenTail(rest, x, inside) => MenTail(ty_resolve_in(j, s, x), hl(rest, inside))
+  }
+}
+pub theorem mentions_resolve_step(
+  j: Nat,
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  ht: ResolveMentionsAt(j, s, n),
+  hl: ResolveMentionsListAt(j, s, n),
+  t: Ty,
+  h: TyMentions(s, n, t)
+): TyMentions(s, n, ty_resolve_in(Succ(j), s, t)) {
+  match h: TyMentions(s, n, ty_resolve_in(Succ(j), s, t)) {
+    MenParam(k) => MenParam(k)
+    MenVar(inner, i, eq, inside) => Eq::subst(
+      (o: Option(Ty)) => TyMentions(s, n, ty_resolve_var(j, s, i, o)),
+      Eq::sym(eq),
+      ht(inner, inside)
+    )
+    MenFnParam(ps, r, k, inside) => MenFnParam(ty_resolve_in(j, s, r), k, hl(ps, inside))
+    MenFnResult(r, ps, k, inside) => MenFnResult(ty_resolve_list_in(j, s, ps), k, ht(r, inside))
+    MenUnion(ts, inside) => mentions_union(s, n, ty_resolve_list_in(j, s, ts), hl(ts, inside))
+    MenProduct(ts, inside) => mentions_product(s, n, ty_resolve_list_in(j, s, ts), hl(ts, inside))
+    MenTagged(inner, tags, inside) => mentions_tagged(
+      s,
+      n,
+      ty_resolve_in(j, s, inner),
+      tags,
+      ht(inner, inside)
+    )
+    MenNamed(ts, name, inside) => MenNamed(name, hl(ts, inside))
+    MenInfo(inner, inside) => MenInfo(ht(inner, inside))
+    MenBorrow(inner, mutable, inside) => MenBorrow(mutable, ht(inner, inside))
+    MenPoly(inner, gs, inside) => MenPoly(gs, ht(inner, inside))
+    MenAppHead(head, arg, inside) => mentions_apply_head(
+      s,
+      n,
+      ty_resolve_in(j, s, head),
+      ty_resolve_in(j, s, arg),
+      ht(head, inside)
+    )
+    MenAppArg(arg, head, inside) => mentions_apply_arg(
+      s,
+      n,
+      ty_resolve_in(j, s, head),
+      ty_resolve_in(j, s, arg),
+      ht(arg, inside)
+    )
+  }
+}
+pub theorem mentions_resolve_all(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  n: Text
+): And(ResolveMentionsAt(k, s, n), ResolveMentionsListAt(k, s, n)) {
+  match k: And(ResolveMentionsAt(k, s, n), ResolveMentionsListAt(k, s, n)) {
+    Zero => AndIntro(t => h => h, ts => h => h)
+    Succ(j) => {
+      let ih: And(
+        ResolveMentionsAt(j, s, n),
+        ResolveMentionsListAt(j, s, n)
+      ) := mentions_resolve_all(j, s, n)
+      AndIntro(
+        t => h => mentions_resolve_step(j, s, n, And::left(ih), And::right(ih), t, h),
+        ts => h => mentions_resolve_list_step(j, s, n, And::left(ih), And::right(ih), ts, h)
+      )
+    }
+  }
+}
+pub theorem mentions_resolve(
+  k: Nat,
+  s: Ordmap(Nat, Ty),
+  n: Text,
+  t: Ty,
+  h: TyMentions(s, n, t)
+): TyMentions(s, n, ty_resolve_in(k, s, t)) {
+  And::left(mentions_resolve_all(k, s, n))(t, h)
+}

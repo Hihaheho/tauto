@@ -1,0 +1,394 @@
+import "constructor_resolution_frame.taut"
+import "body_frame.taut"
+import "registration_ordered.taut"
+import "finish_frame.taut"
+
+pub fn run_builtins(&mut c: Checker): Unit {
+  let sig := EffectSig {
+    generics: Cons("A", Nil),
+    params: Cons(TyText, Cons(TyNamed("A", Nil), Nil)),
+    result: TyUnit
+  }
+  set_to(&mut c.effects, Ordmap::insert(c.effects, "show", sig, Ordmap::compare_text))
+  set_to(
+    &mut c.quants,
+    Ordmap::insert(
+      Ordmap::insert(c.quants, "show", QuantDirect, Ordmap::compare_text),
+      "exceeded",
+      QuantAtMostOne,
+      Ordmap::compare_text
+    )
+  )
+}
+pub theorem run_builtins_frame(c: Checker): CkReadFrame(c, run_builtins(c)) { Refl }
+
+pub fn run_after_datas(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    List(Pair(SurfaceFn, Scheme)),
+    Unit,
+    (fns: List(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
+      Unit,
+      Unit,
+      (checked: Unit, c2: Checker) => inference_bind_scope(
+        Unit,
+        Unit,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil))
+      ),
+      ck_check_fns(fns, c1)
+    ),
+    ck_prepare_fns(c, prelude, program, own)
+  )
+}
+
+pub theorem run_after_datas_frame(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, run_after_datas(c, prelude, program, own)) {
+  run_frame_bind(
+    List(Pair(SurfaceFn, Scheme)),
+    Unit,
+    c,
+    (fns: List(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
+      Unit,
+      Unit,
+      (checked: Unit, c2: Checker) => inference_bind_scope(
+        Unit,
+        Unit,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil))
+      ),
+      ck_check_fns(fns, c1)
+    ),
+    ck_prepare_fns(c, prelude, program, own),
+    run_frame_read(
+      c,
+      ck_prepare_fns(c, prelude, program, own),
+      ck_prepare_fns_frame(c, prelude, program, own),
+      ordered
+    ),
+    fns => c1 => o_c1 => run_frame_bind(
+      Unit,
+      Unit,
+      c1,
+      (checked: Unit, c2: Checker) => inference_bind_scope(
+        Unit,
+        Unit,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil))
+      ),
+      ck_check_fns(fns, c1),
+      ck_check_fns_frame(fns, c1, o_c1),
+      checked => c2 => o_c2 => inference_bind_scope_frame(
+        Unit,
+        Unit,
+        c2,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil)),
+        ck_top_level_frame(program, c2, ScopeMk(Nil), o_c2),
+        finished => c3 => env => o_c3 => run_frame_return(c3, finished, o_c3)
+      )
+    )
+  )
+}
+
+pub def CkReady(c: Checker): Prop := And(CkOrdered(c), CkSummaryOk(c))
+pub theorem run_frame_ready<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: CkRunFrame(c, m),
+  ok: CkSummaryOk(c)
+): CkReady(ck_st(m)) { AndIntro(And::left(h), run_frame_summary(c, m, h, ok)) }
+pub fn run_after_data_result(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker)
+): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) { mut1(v, next) => run_after_datas(next, prelude, program, own) }
+}
+pub theorem run_after_data_result_ready(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ready: CkReady(ck_st(m))
+): CkReady(ck_st(run_after_data_result(prelude, program, own, m))) {
+  match m: CkReady(ck_st(run_after_data_result(prelude, program, own, m))) {
+    mut1(v, next) => run_frame_ready(
+      next,
+      run_after_datas(next, prelude, program, own),
+      run_after_datas_frame(next, prelude, program, own, And::left(ready)),
+      And::right(ready)
+    )
+  }
+}
+pub fn run_after_builtins(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) {
+    mut1(v, next) => run_after_data_result(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty()))
+    )
+  }
+}
+pub theorem run_after_builtins_ready(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m))
+): CkReady(ck_st(run_after_builtins(prelude, program, m))) {
+  match m: CkReady(ck_st(run_after_builtins(prelude, program, m))) {
+    mut1(v, next) => run_after_data_result_ready(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      AndIntro(
+        ck_prepare_datas_subst_ordered(
+          next,
+          prelude,
+          program,
+          types_own(program, Ordmap::empty()),
+          ordered
+        ),
+        ck_prepare_datas_summary_ok(
+          next,
+          prelude,
+          program,
+          types_own(program, Ordmap::empty()),
+          decls
+        )
+      )
+    )
+  }
+}
+pub theorem run_summary_unf(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): ck_run(c, prelude, program) = run_after_builtins(prelude, program, run_builtins(c)) { Refl }
+pub theorem ck_run_ready(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c)
+): CkReady(ck_st(ck_run(c, prelude, program))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkReady(ck_st(z)),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_after_builtins_ready(
+      prelude,
+      program,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+      frame_ordered(c, run_builtins(c), run_builtins_frame(c), decls)
+    )
+  )
+}
+
+pub def RunModuleIH(
+  rest: List(TypeError)
+): Prop := ∀ c: Checker. CkReadFrame(c, ck_module_errors(rest, c))
+
+pub fn run_error_message(e: TypeError): Text { e.message }
+pub fn run_error_span(e: TypeError): TySpan { span_at(e.start, e.end) }
+
+pub fn run_module_cons(e: TypeError, rest: List(TypeError), c: Checker): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (reported: Unit, c1: Checker) => ck_rewrap1(ck_module_errors(rest, c1)),
+    ck_error(c, run_error_message(e), run_error_span(e))
+  )
+}
+
+pub theorem run_module_cons_frame(
+  e: TypeError,
+  rest: List(TypeError),
+  c: Checker,
+  ih: RunModuleIH(rest)
+): CkReadFrame(c, run_module_cons(e, rest, c)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (reported: Unit, c1: Checker) => ck_rewrap1(ck_module_errors(rest, c1)),
+    ck_error(c, run_error_message(e), run_error_span(e)),
+    ck_error_frame(c, run_error_message(e), run_error_span(e)),
+    reported => c1 => frame_rewrap(c1, ck_module_errors(rest, c1), ih(c1))
+  )
+}
+
+pub theorem run_module_unf(
+  e: TypeError,
+  rest: List(TypeError),
+  c: Checker
+): ck_module_errors(Cons(e, rest), c) = run_module_cons(e, rest, c) { Refl }
+
+pub theorem ck_module_errors_frame(
+  es: List(TypeError),
+  c: Checker
+): CkReadFrame(c, ck_module_errors(es, c)) {
+  match es: CkReadFrame(c, ck_module_errors(es, c)) {
+    Nil => Refl
+    Cons(e, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq::sym(run_module_unf(e, rest, c)),
+      run_module_cons_frame(e, rest, c, next => ck_module_errors_frame(rest, next))
+    )
+  }
+}
+
+pub def RunReportSummary(
+  m: Mut1(TypeReport, Checker)
+): Prop := SummaryOk(finish_report_datas(ck_val(m)))
+pub fn run_finish_known(m: Mut1(Unit, Checker)): Mut1(TypeReport, Checker) {
+  match m: Mut1(TypeReport, Checker) { mut1(v, next) => ck_rewrap1(ck_finish(next)) }
+}
+pub theorem run_finish_known_summary(
+  m: Mut1(Unit, Checker),
+  ready: CkReady(ck_st(m))
+): RunReportSummary(run_finish_known(m)) {
+  match m: RunReportSummary(run_finish_known(m)) {
+    mut1(v, next) => Eq::subst(
+      RunReportSummary,
+      Eq::sym(ck_rewrap1_id(ck_finish(next))),
+      ck_finish_report_summary_ok(next, And::left(ready), And::right(ready))
+    )
+  }
+}
+pub fn run_constructor_after(m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) { mut1(value, next) => ck_resolve_constructor_uses(next) }
+}
+
+pub theorem run_constructor_after_frame(
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m))
+): ConstructorFrame(ck_st(m), run_constructor_after(m)) {
+  match m: ConstructorFrame(ck_st(m), run_constructor_after(m)) {
+    mut1(value, next) => ck_resolve_constructor_uses_frame(next, ordered)
+  }
+}
+
+pub fn run_finish_after(m: Mut1(Unit, Checker)): Mut1(TypeReport, Checker) {
+  match m: Mut1(TypeReport, Checker) { mut1(value, next) => ck_rewrap1(ck_finalize(next)) }
+}
+
+pub theorem run_finalize_unf(
+  c: Checker
+): ck_finalize(c) = run_finish_known(ck_resolve_constructor_uses(c)) { Refl }
+
+pub theorem run_finish_after_split(
+  m: Mut1(Unit, Checker)
+): run_finish_after(m) = run_finish_known(run_constructor_after(m)) {
+  match m: run_finish_after(m) = run_finish_known(run_constructor_after(m)) {
+    mut1(value, next) => Eq::trans(ck_rewrap1_id(ck_finalize(next)), run_finalize_unf(next))
+  }
+}
+
+pub theorem run_finish_after_summary(
+  m: Mut1(Unit, Checker),
+  ready: CkReady(ck_st(m))
+): RunReportSummary(run_finish_after(m)) {
+  let frame: ConstructorFrame(
+    ck_st(m),
+    run_constructor_after(m)
+  ) := run_constructor_after_frame(m, And::left(ready))
+  Eq::subst(
+    RunReportSummary,
+    Eq::sym(run_finish_after_split(m)),
+    run_finish_known_summary(
+      run_constructor_after(m),
+      AndIntro(
+        And::left(And::left(frame)),
+        Eq::subst(SummaryOk, Eq::sym(And::right(And::left(frame))), And::right(ready))
+      )
+    )
+  )
+}
+
+pub fn run_after_module_errors(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): Mut1(TypeReport, Checker) {
+  match m: Mut1(
+    TypeReport,
+    Checker
+  ) { mut1(v, next) => run_finish_after(ck_run(next, prelude, program)) }
+}
+pub theorem run_after_module_errors_summary(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m))
+): RunReportSummary(run_after_module_errors(prelude, program, m)) {
+  match m: RunReportSummary(run_after_module_errors(prelude, program, m)) {
+    mut1(v, next) => run_finish_after_summary(
+      ck_run(next, prelude, program),
+      ck_run_ready(next, prelude, program, ordered, decls)
+    )
+  }
+}
+pub theorem run_types_unf(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError)
+): ck_types_run(c, prelude, program, errors) = run_after_module_errors(prelude, program, ck_module_errors(errors, c)) { Refl }
+pub theorem ck_types_run_summary_ok(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c)
+): RunReportSummary(ck_types_run(c, prelude, program, errors)) {
+  Eq::subst(
+    RunReportSummary,
+    Eq::sym(run_types_unf(c, prelude, program, errors)),
+    run_after_module_errors_summary(
+      prelude,
+      program,
+      ck_module_errors(errors, c),
+      frame_subst_ordered(
+        c,
+        ck_module_errors(errors, c),
+        ck_module_errors_frame(errors, c),
+        ordered
+      ),
+      frame_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), decls)
+    )
+  )
+}
+pub theorem types_check_summary_ok(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError)
+): SummaryOk(finish_report_datas(types_check(prelude, program, errors))) {
+  ck_types_run_summary_ok(
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    errors,
+    Trivial,
+    Trivial
+  )
+}

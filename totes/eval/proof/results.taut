@@ -1,0 +1,75 @@
+import "../src/eval.taut"
+
+pub(open) inductive EBindValue(
+  A: Type,
+  B: Type,
+  r: EResult(A),
+  next: (A, MCx) -> EResult(B),
+  w: B,
+  final: MCx
+): Prop {
+  Ebv(
+    v: A,
+    heap: MCx,
+    first: r = ErValue(v, heap),
+    second: next(v, heap) = ErValue(w, final)
+  ): EBindValue(A, B, r, next, w, final)
+}
+
+pub theorem e_bind_value<A, B>(
+  r: EResult(A),
+  next: (A, MCx) -> EResult(B),
+  w: B,
+  final: MCx,
+  done: e_bind(r, next) = ErValue(w, final)
+): EBindValue(A, B, r, next, w, final) {
+  match r {
+    ErValue(v, heap) => Ebv(v, heap, Refl, done)
+    ErError(message) => match done: EBindValue(A, B, ErError(message), next, w, final) {}
+    ErFuel => match done: EBindValue(A, B, ErFuel, next, w, final) {}
+    ErUnsupported(construct) => match done: EBindValue(
+      A,
+      B,
+      ErUnsupported(construct),
+      next,
+      w,
+      final
+    ) {}
+  }
+}
+
+pub theorem e_primitive_value(
+  out: MOut,
+  v: MVal,
+  cx: MCx,
+  done: e_primitive_out(out) = ErValue(v, cx)
+): out = MoutVal(v, cx) {
+  match out {
+    MoutVal(w, heap) => match done: Eq(MOut, MoutVal(w, heap), MoutVal(v, cx)) {
+      Refl => ⊢ Eq(MOut, MoutVal(w, heap), MoutVal(w, heap)) from Refl
+    }
+    MoutErr(message) => match done: Eq(MOut, MoutErr(message), MoutVal(v, cx)) {}
+    MoutExit(code) => match done: Eq(MOut, MoutExit(code), MoutVal(v, cx)) {}
+    MoutAsk(name, args, heap) => match done: Eq(MOut, MoutAsk(name, args, heap), MoutVal(v, cx)) {}
+    MoutPerform(op) => match done: Eq(MOut, MoutPerform(op), MoutVal(v, cx)) {}
+    MoutSpawn(fnval, pid, heap) => match done: Eq(
+      MOut,
+      MoutSpawn(fnval, pid, heap),
+      MoutVal(v, cx)
+    ) {}
+    MoutYield(pid, heap) => match done: Eq(MOut, MoutYield(pid, heap), MoutVal(v, cx)) {}
+  }
+}
+
+pub theorem e_unary_arity(op: CUnary): m_op_arity(e_unary(op)) = 1 {
+  match op {
+    CuNot => Refl
+    CuMember(i) => Refl
+    CuField(path) => Refl
+    CuShown => Refl
+    CuTempRef => Refl
+    CuDeref => Refl
+    CuInject(union, variant) => Refl
+    CuRemap(to, table) => Refl
+  }
+}

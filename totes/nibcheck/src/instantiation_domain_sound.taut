@@ -1,0 +1,356 @@
+import "instantiation_pending_sound.taut"
+import "data_presence_sound.taut"
+
+pub(open) inductive InstanceNamePresent(m: Ordmap(Text, Ty), n: Text): Prop {
+  Mk(
+    value: Ty,
+    found: Ordmap::get(m, n, Ordmap::compare_text) = Some(value)
+  ): InstanceNamePresent(m, n)
+}
+pub def InstanceDomainExtends(
+  a: Ordmap(Text, Ty),
+  b: Ordmap(Text, Ty)
+): Prop := ∀ n: Text. ∀ h: InstanceNamePresent(a, n). InstanceNamePresent(b, n)
+
+pub theorem instance_presence_insert_other(
+  m: Ordmap(Text, Ty),
+  k: Text,
+  v: Ty,
+  n: Text,
+  o: Ordering,
+  ne: (o = Equal) -> False,
+  eo: Ordmap::compare_text(n, k) = o,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text),
+  h: InstanceNamePresent(m, n)
+): InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  match h: InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+    Mk(value, found) => InstanceNamePresent::Mk(
+      value,
+      Eq::trans(
+        Ordmap::get_insert_other(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          m,
+          k,
+          v,
+          n,
+          o,
+          ne,
+          eo,
+          ordered
+        ),
+        found
+      )
+    )
+  }
+}
+
+pub theorem instance_presence_insert_k(
+  m: Ordmap(Text, Ty),
+  k: Text,
+  v: Ty,
+  n: Text,
+  o: Ordering,
+  eo: Ordmap::compare_text(n, k) = o,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text),
+  h: InstanceNamePresent(m, n)
+): InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  match o: InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+    Equal => Eq::subst(
+      (z: Text) => InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), z),
+      Eq::sym(Ordmap::compare_text_eq(n, k, eo)),
+      InstanceNamePresent::Mk(
+        v,
+        Ordmap::get_insert_same(Ordmap::compare_text, Ordmap::compare_text_law(), m, k, v, ordered)
+      )
+    )
+    Less => instance_presence_insert_other(m, k, v, n, Less, q => less_ne_equal(q), eo, ordered, h)
+    Greater => instance_presence_insert_other(
+      m,
+      k,
+      v,
+      n,
+      Greater,
+      q => greater_ne_equal(q),
+      eo,
+      ordered,
+      h
+    )
+  }
+}
+
+pub theorem instance_presence_insert(
+  m: Ordmap(Text, Ty),
+  k: Text,
+  v: Ty,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text)
+): InstanceDomainExtends(m, Ordmap::insert(m, k, v, Ordmap::compare_text)) {
+  n => h => instance_presence_insert_k(m, k, v, n, Ordmap::compare_text(n, k), Refl, ordered, h)
+}
+
+pub def GenericNamesPresent(
+  gs: List(Pair(Text, Kind)),
+  map: Ordmap(Text, Ty)
+): Prop := ∀ g: Pair(
+  Text,
+  Kind
+). ∀ member: Mem(Pair(Text, Kind), g, gs). InstanceNamePresent(map, instantiation_name(g))
+pub def InstantiationDomain(
+  gs: List(Pair(Text, Kind)),
+  initial: Ordmap(Text, Ty),
+  result: Ordmap(Text, Ty)
+): Prop := And(
+  Ordmap::ordered(result, Ordmap::compare_text),
+  And(InstanceDomainExtends(initial, result), GenericNamesPresent(gs, result))
+)
+pub theorem instance_names_nil(map: Ordmap(Text, Ty)): GenericNamesPresent(Nil, map) {
+  g => member => match member: InstanceNamePresent(map, instantiation_name(g)) {
+  }
+}
+pub theorem instance_domain_nil(
+  map: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text)
+): InstantiationDomain(Nil, map, map) {
+  AndIntro(
+    ordered,
+    AndIntro(
+      (name: Text, present: InstanceNamePresent(map, name)) => present,
+      instance_names_nil(map)
+    )
+  )
+}
+pub theorem instance_domain_cons_member(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  initial: Ordmap(Text, Ty),
+  value: Ty,
+  result: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(initial, Ordmap::compare_text),
+  tail: InstantiationDomain(
+    rest,
+    Ordmap::insert(initial, instantiation_name(g), value, Ordmap::compare_text),
+    result
+  ),
+  item: Pair(Text, Kind),
+  member: Mem(Pair(Text, Kind), item, Cons(g, rest))
+): InstanceNamePresent(result, instantiation_name(item)) {
+  match member: InstanceNamePresent(result, instantiation_name(item)) {
+    MemHere(more) => And::left(
+      And::right(tail)
+    )(
+      instantiation_name(item),
+      InstanceNamePresent::Mk(
+        value,
+        Ordmap::get_insert_same(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          initial,
+          instantiation_name(item),
+          value,
+          ordered
+        )
+      )
+    )
+    MemThere(head, more, inside) => And::right(And::right(tail))(item, inside)
+  }
+}
+pub theorem instance_domain_cons(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  initial: Ordmap(Text, Ty),
+  value: Ty,
+  result: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(initial, Ordmap::compare_text),
+  tail: InstantiationDomain(
+    rest,
+    Ordmap::insert(initial, instantiation_name(g), value, Ordmap::compare_text),
+    result
+  )
+): InstantiationDomain(Cons(g, rest), initial, result) {
+  AndIntro(
+    And::left(tail),
+    AndIntro(
+      name => present => And::left(
+        And::right(tail)
+      )(
+        name,
+        instance_presence_insert(initial, instantiation_name(g), value, ordered, name, present)
+      ),
+      item => member => instance_domain_cons_member(
+        g,
+        rest,
+        initial,
+        value,
+        result,
+        ordered,
+        tail,
+        item,
+        member
+      )
+    )
+  )
+}
+pub theorem instance_value_bind<A: Type, B: Type>(
+  m: Mut1(A, Checker),
+  k: (A, Checker) -> Mut1(B, Checker),
+  predicate: (B) -> Prop,
+  tail: ∀ value: A. ∀ next: Checker. predicate(ck_val(k(value, next)))
+): predicate(ck_val(frame_bind(A, B, k, m))) {
+  match m: predicate(ck_val(frame_bind(A, B, k, m))) { mut1(value, next) => tail(value, next) }
+}
+pub theorem instance_value_rewrap<A: Type>(
+  m: Mut1(A, Checker),
+  predicate: (A) -> Prop,
+  h: predicate(ck_val(m))
+): predicate(ck_val(ck_rewrap1(m))) {
+  Eq::subst((result: Mut1(A, Checker)) => predicate(ck_val(result)), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub def InstanceDomainIH(
+  rest: List(Pair(Text, Kind)),
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan
+): Prop := ∀ next: Checker. ∀ map: Ordmap(
+  Text,
+  Ty
+). ∀ ordered: Ordmap::ordered(
+  map,
+  Ordmap::compare_text
+). InstantiationDomain(
+  rest,
+  map,
+  ck_val(ck_instantiate_map_ctors(rest, next, ctors, name, span, map))
+)
+pub theorem instantiation_cons_domain(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  ih: InstanceDomainIH(rest, ctors, name, span)
+): InstantiationDomain(
+  Cons(g, rest),
+  map,
+  ck_val(instantiation_cons(g, rest, c, ctors, name, span, map))
+) {
+  instance_value_bind(
+    Ty,
+    Ordmap(Text, Ty),
+    ck_fresh(c),
+    (value: Ty, next: Checker) => frame_bind(
+      Unit,
+      Ordmap(Text, Ty),
+      (ignored: Unit, bound: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          bound,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+        )
+      ),
+      instantiation_bound(next, g, value, name, span, ctor_arg_of(ctors, instantiation_name(g)))
+    ),
+    (result: Ordmap(Text, Ty)) => InstantiationDomain(Cons(g, rest), map, result),
+    value => next => instance_value_bind(
+      Unit,
+      Ordmap(Text, Ty),
+      instantiation_bound(next, g, value, name, span, ctor_arg_of(ctors, instantiation_name(g))),
+      (ignored: Unit, bound: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          bound,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+        )
+      ),
+      (result: Ordmap(Text, Ty)) => InstantiationDomain(Cons(g, rest), map, result),
+      ignored => bound => instance_value_rewrap(
+        ck_instantiate_map_ctors(
+          rest,
+          bound,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+        ),
+        (result: Ordmap(Text, Ty)) => InstantiationDomain(Cons(g, rest), map, result),
+        instance_domain_cons(
+          g,
+          rest,
+          map,
+          value,
+          ck_val(
+            ck_instantiate_map_ctors(
+              rest,
+              bound,
+              ctors,
+              name,
+              span,
+              Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+            )
+          ),
+          ordered,
+          ih(
+            bound,
+            Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text),
+            Ordmap::insert_ordered(
+              Ordmap::compare_text,
+              Ordmap::compare_text_law(),
+              map,
+              instantiation_name(g),
+              value,
+              ordered
+            )
+          )
+        )
+      )
+    )
+  )
+}
+pub theorem ck_instantiate_map_ctors_domain(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text)
+): InstantiationDomain(gs, map, ck_val(ck_instantiate_map_ctors(gs, c, ctors, name, span, map))) {
+  match gs: InstantiationDomain(
+    gs,
+    map,
+    ck_val(ck_instantiate_map_ctors(gs, c, ctors, name, span, map))
+  ) {
+    Nil => instance_domain_nil(map, ordered)
+    Cons(g, rest) => Eq::subst(
+      (m: Mut1(Ordmap(Text, Ty), Checker)) => InstantiationDomain(Cons(g, rest), map, ck_val(m)),
+      Eq::sym(instantiation_cons_unf(g, rest, c, ctors, name, span, map)),
+      instantiation_cons_domain(
+        g,
+        rest,
+        c,
+        ctors,
+        name,
+        span,
+        map,
+        ordered,
+        next => more => sorted => ck_instantiate_map_ctors_domain(
+          rest,
+          next,
+          ctors,
+          name,
+          span,
+          more,
+          sorted
+        )
+      )
+    )
+  }
+}

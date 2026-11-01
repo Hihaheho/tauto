@@ -1,0 +1,353 @@
+import "rules_program_signatures.taut"
+import "signature_header_sound.taut"
+import "signature_registration_context.taut"
+import "../../surface/src/surface.taut"
+
+pub fn signature_store_after(source: SurfaceFn, m: Mut1(Scheme, Checker)): Mut1(Scheme, Checker) {
+  frame_bind(
+    Scheme,
+    Scheme,
+    (scheme: Scheme, next: Checker) => signature_store(next, source, scheme),
+    m
+  )
+}
+pub theorem signature_store_after_sound(
+  env: Datas,
+  partial: Bool,
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker),
+  derived: ∀ accepted: DiagnosticClean(
+    ck_st(m)
+  ). SignatureElaborated(env, partial, source, ck_val(m)),
+  clean: DiagnosticClean(ck_st(signature_store_after(source, m)))
+): SignatureElaborated(env, partial, source, ck_val(signature_store_after(source, m))) {
+  match m: SignatureElaborated(env, partial, source, ck_val(signature_store_after(source, m))) {
+    mut1(scheme, next) => derived(clean)
+  }
+}
+pub theorem ck_add_fn_elaborates(
+  c: Checker,
+  source: SurfaceFn,
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_add_fn(c, source)))
+): SignatureElaborated(
+  ck_datas_of(c),
+  frame_constructor_position(c),
+  source,
+  ck_val(ck_add_fn(c, source))
+) {
+  Eq::subst(
+    (m: Mut1(Scheme, Checker)) => SignatureElaborated(
+      ck_datas_of(c),
+      frame_constructor_position(c),
+      source,
+      ck_val(m)
+    ),
+    Eq::sym(signature_add_unf(c, source)),
+    signature_store_after_sound(
+      ck_datas_of(c),
+      frame_constructor_position(c),
+      source,
+      ck_signature(c, source),
+      accepted => ck_signature_elaborates(c, source, ordinary, accepted),
+      Eq::subst(
+        (m: Mut1(Scheme, Checker)) => DiagnosticClean(ck_st(m)),
+        signature_add_unf(c, source),
+        clean
+      )
+    )
+  )
+}
+pub fn signature_none_after(
+  m: Mut1(Unit, Checker)
+): Mut1(Option(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Unit,
+    Option(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, next: Checker) => mut1(None, next),
+    m
+  )
+}
+pub theorem signature_none_after_sound(
+  env: Datas,
+  partial: Bool,
+  m: Mut1(Unit, Checker)
+): OptionalSignature(env, partial, ck_val(signature_none_after(m))) {
+  match m: OptionalSignature(env, partial, ck_val(signature_none_after(m))) {
+    mut1(ignored, next) => OptionalSignatureNone
+  }
+}
+pub fn signature_some_after(
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker)
+): Mut1(Option(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Scheme,
+    Option(Pair(SurfaceFn, Scheme)),
+    (scheme: Scheme, next: Checker) => mut1(Some(Pair { fst: source, snd: scheme }), next),
+    m
+  )
+}
+pub theorem signature_some_after_sound(
+  env: Datas,
+  partial: Bool,
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker),
+  derived: ∀ accepted: DiagnosticClean(
+    ck_st(m)
+  ). SignatureElaborated(env, partial, source, ck_val(m)),
+  clean: DiagnosticClean(ck_st(signature_some_after(source, m)))
+): OptionalSignature(env, partial, ck_val(signature_some_after(source, m))) {
+  match m: OptionalSignature(env, partial, ck_val(signature_some_after(source, m))) {
+    mut1(scheme, next) => OptionalSignatureSome(source, scheme, derived(clean))
+  }
+}
+
+pub theorem ck_program_decl_elaborates(
+  stmt: SurfaceStmt,
+  c: Checker,
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_program_decl(c, stmt)))
+): OptionalSignature(
+  ck_datas_of(c),
+  frame_constructor_position(c),
+  ck_val(ck_program_decl(c, Stmt))
+) {
+  match Stmt: OptionalSignature(
+    ck_datas_of(c),
+    frame_constructor_position(c),
+    ck_val(ck_program_decl(c, Stmt))
+  ) {
+    StLet(name, ty, value, borrow, mutable) => OptionalSignatureNone
+    StVar(name, ty, value, borrow) => OptionalSignatureNone
+    StModule(name, stmts, start, end) => OptionalSignatureNone
+    StAssign(name, name_place, value) => OptionalSignatureNone
+    StCalled(name_generates, value) => OptionalSignatureNone
+    StFn(f) => Eq::subst(
+      (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => OptionalSignature(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_val(m)
+      ),
+      Eq::sym(signature_program_decl_StFn_unf(f, c)),
+      signature_some_after_sound(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        f,
+        ck_add_fn(c, f),
+        accepted => ck_add_fn_elaborates(c, f, ordinary, accepted),
+        Eq::subst(
+          (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+          signature_program_decl_StFn_unf(f, c),
+          clean
+        )
+      )
+    )
+    StTheorem(t) => OptionalSignatureNone
+    StDef(t) => OptionalSignatureNone
+    StMutual(stmts, start, end) => OptionalSignatureNone
+    StImport(path, start, end) => OptionalSignatureNone
+    StInductive(i) => OptionalSignatureNone
+    StEffect(e) => Eq::subst(
+      (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => OptionalSignature(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_val(m)
+      ),
+      Eq::sym(signature_program_decl_StEffect_unf(e, c)),
+      signature_none_after_sound(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_declare_effect(c, e)
+      )
+    )
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => OptionalSignature(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_val(m)
+      ),
+      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      signature_none_after_sound(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_extern_fns(fns, c)
+      )
+    )
+    StClass(klass) => OptionalSignatureNone
+    StInstance(i) => OptionalSignatureNone
+    StWhile(cond, body) => OptionalSignatureNone
+    StReturn(value) => OptionalSignatureNone
+    StExpr(value) => OptionalSignatureNone
+    StOther(what, start, end) => OptionalSignatureNone
+    StMacro(name, function, start, end) => OptionalSignatureNone
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => OptionalSignatureNone
+    StSyntax(name, grammar, start, end) => OptionalSignatureNone
+    StStruct(d) => OptionalSignatureNone
+    StEnum(d) => OptionalSignatureNone
+  }
+}
+
+pub theorem signature_optional_cons<env: Datas, partial: Bool, item: Option(
+  Pair(SurfaceFn, Scheme)
+), rest: List(
+  Pair(SurfaceFn, Scheme)
+)>(
+  head: OptionalSignature(env, partial, item),
+  tail: ElaboratedSignatures(env, partial, rest)
+): ElaboratedSignatures(env, partial, opt_cons(item, rest)) {
+  match head: ElaboratedSignatures(env, partial, opt_cons(item, rest)) {
+    OptionalSignatureNone => tail
+    OptionalSignatureSome(source, scheme, derived) => ElaboratedSignaturesCons(
+      source,
+      scheme,
+      rest,
+      derived,
+      tail
+    )
+  }
+}
+pub fn signature_program_after(
+  rest: List(SurfaceStmt),
+  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)
+): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    (head: Option(Pair(SurfaceFn, Scheme)), next: Checker) => written_map(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      (tail: List(Pair(SurfaceFn, Scheme))) => opt_cons(head, tail),
+      ck_program_decls(rest, next)
+    ),
+    m
+  )
+}
+pub theorem signature_program_after_sound(
+  c: Checker,
+  rest: List(SurfaceStmt),
+  m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
+  read: CkReadFrame(c, m),
+  context: CkContextFrame(c, m),
+  ordinary: frame_under_borrow(c) = false,
+  head: ∀ accepted: DiagnosticClean(
+    ck_st(m)
+  ). OptionalSignature(ck_datas_of(c), frame_constructor_position(c), ck_val(m)),
+  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ accepted: DiagnosticClean(
+    ck_st(ck_program_decls(rest, next))
+  ). ElaboratedSignatures(
+    ck_datas_of(next),
+    frame_constructor_position(next),
+    ck_val(ck_program_decls(rest, next))
+  ),
+  clean: DiagnosticClean(ck_st(signature_program_after(rest, m)))
+): ElaboratedSignatures(
+  ck_datas_of(c),
+  frame_constructor_position(c),
+  ck_val(signature_program_after(rest, m))
+) {
+  match m: ElaboratedSignatures(
+    ck_datas_of(c),
+    frame_constructor_position(c),
+    ck_val(signature_program_after(rest, m))
+  ) {
+    mut1(item, next) => {
+      let accepted: DiagnosticClean(
+        ck_st(ck_program_decls(rest, next))
+      ) := written_map_clean(
+        List(Pair(SurfaceFn, Scheme)),
+        List(Pair(SurfaceFn, Scheme)),
+        (tail: List(Pair(SurfaceFn, Scheme))) => opt_cons(item, tail),
+        ck_program_decls(rest, next),
+        clean
+      )
+      let tail: ElaboratedSignatures(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_val(ck_program_decls(rest, next))
+      ) := Eq::subst(
+        (env: Datas) => ElaboratedSignatures(
+          env,
+          frame_constructor_position(c),
+          ck_val(ck_program_decls(rest, next))
+        ),
+        Eq::congr(frame_read_datas, read),
+        Eq::subst(
+          (partial: Bool) => ElaboratedSignatures(
+            ck_datas_of(next),
+            partial,
+            ck_val(ck_program_decls(rest, next))
+          ),
+          Eq::congr(written_context_position, context(ordinary)),
+          ih(
+            next,
+            Eq::trans(Eq::congr(written_context_borrow, context(ordinary)), ordinary),
+            accepted
+          )
+        )
+      )
+      Eq::subst(
+        (schemes: List(Pair(SurfaceFn, Scheme))) => ElaboratedSignatures(
+          ck_datas_of(c),
+          frame_constructor_position(c),
+          schemes
+        ),
+        Eq::sym(
+          written_map_value(
+            List(Pair(SurfaceFn, Scheme)),
+            List(Pair(SurfaceFn, Scheme)),
+            (schemes: List(Pair(SurfaceFn, Scheme))) => opt_cons(item, schemes),
+            ck_program_decls(rest, next)
+          )
+        ),
+        signature_optional_cons(head(ck_program_decls_frame_errors(rest, next, accepted)), tail)
+      )
+    }
+  }
+}
+pub theorem ck_program_decls_elaborates(
+  program: List(SurfaceStmt),
+  c: Checker,
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_program_decls(program, c)))
+): ElaboratedSignatures(
+  ck_datas_of(c),
+  frame_constructor_position(c),
+  ck_val(ck_program_decls(program, c))
+) {
+  match program: ElaboratedSignatures(
+    ck_datas_of(c),
+    frame_constructor_position(c),
+    ck_val(ck_program_decls(program, c))
+  ) {
+    Nil => ElaboratedSignaturesNil
+    Cons(Stmt, rest) => Eq::subst(
+      (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => ElaboratedSignatures(
+        ck_datas_of(c),
+        frame_constructor_position(c),
+        ck_val(m)
+      ),
+      Eq::sym(signature_program_decls_cons_unf(Stmt, rest, c)),
+      signature_program_after_sound(
+        c,
+        rest,
+        ck_program_decl(c, Stmt),
+        ck_program_decl_frame(c, Stmt),
+        ck_program_decl_frame_context(c, Stmt),
+        ordinary,
+        accepted => ck_program_decl_elaborates(Stmt, c, ordinary, accepted),
+        next => ordinary_next => accepted => ck_program_decls_elaborates(
+          rest,
+          next,
+          ordinary_next,
+          accepted
+        ),
+        Eq::subst(
+          (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+          signature_program_decls_cons_unf(Stmt, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}

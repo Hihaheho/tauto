@@ -1,0 +1,263 @@
+import "registered_source_functions.taut"
+import "prepare_data_function_table.taut"
+import "run_function_signatures.taut"
+
+pub theorem fnt_run_module_cons_frame(
+  e: TypeError,
+  rest: List(TypeError),
+  c: Checker,
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_module_errors(rest, next))
+): CkFnsFrame(c, run_module_cons(e, rest, c)) {
+  fnt_frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (reported: Unit, c1: Checker) => ck_rewrap1(ck_module_errors(rest, c1)),
+    ck_error(c, run_error_message(e), run_error_span(e)),
+    fnt_ck_error_frame(c, run_error_message(e), run_error_span(e)),
+    reported => c1 => fnt_frame_rewrap(c1, ck_module_errors(rest, c1), ih(c1))
+  )
+}
+
+pub theorem fnt_ck_module_errors_frame(
+  es: List(TypeError),
+  c: Checker
+): CkFnsFrame(c, ck_module_errors(es, c)) {
+  match es: CkFnsFrame(c, ck_module_errors(es, c)) {
+    Nil => Refl
+    Cons(e, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsFrame(c, z),
+      Eq::sym(run_module_unf(e, rest, c)),
+      fnt_run_module_cons_frame(e, rest, c, next => fnt_ck_module_errors_frame(rest, next))
+    )
+  }
+}
+
+pub def RegisteredSourceState(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): Prop := SourceFunctionsRegistered(ck_datas_of(ck_st(m)), program)
+pub theorem run_after_datas_registered_functions(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c),
+  fns_ordered: CkFnsOrdered(c),
+  normal: CkNormal(c),
+  clean: DiagnosticClean(ck_st(run_after_datas(c, prelude, program, own)))
+): RegisteredSourceState(program, run_after_datas(c, prelude, program, own)) {
+  let accepted: DiagnosticClean(
+    ck_st(ck_prepare_fns(c, prelude, program, own))
+  ) := accepted_checked_bind_fact(
+    List(Pair(SurfaceFn, Scheme)),
+    Unit,
+    DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own))),
+    ck_prepare_fns(c, prelude, program, own),
+    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    frame_subst_ordered(
+      c,
+      ck_prepare_fns(c, prelude, program, own),
+      ck_prepare_fns_frame(c, prelude, program, own),
+      ordered
+    ),
+    h => h,
+    fns => next => ord => names_function_body_checked(next, program, fns, ord),
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+      names_after_datas_unf(c, prelude, program, own),
+      clean
+    )
+  )
+  Eq::subst(
+    (env: Datas) => SourceFunctionsRegistered(env, program),
+    Eq::sym(And::right(run_after_datas_frame(c, prelude, program, own, ordered))),
+    prepared_source_registered(
+      ck_prepare_fns_source_signatures(c, prelude, program, own, normal, accepted),
+      fnt_table(ck_st(ck_prepare_fns(c, prelude, program, own))),
+      ck_prepare_fns_registered(c, prelude, program, own, fns_ordered, accepted)
+    )
+  )
+}
+pub theorem run_after_data_result_registered_functions(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  fns_ordered: ∀ accepted: DiagnosticClean(ck_st(m)). CkFnsOrdered(ck_st(m)),
+  normal: ∀ accepted: DiagnosticClean(ck_st(m)). CkNormal(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
+): RegisteredSourceState(program, run_after_data_result(prelude, program, own, m)) {
+  match m: RegisteredSourceState(program, run_after_data_result(prelude, program, own, m)) {
+    mut1(ignored, next) => run_after_datas_registered_functions(
+      next,
+      prelude,
+      program,
+      own,
+      ordered,
+      fns_ordered(
+        And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)
+      ),
+      normal(And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)),
+      clean
+    )
+  }
+}
+pub theorem run_after_builtins_registered_functions(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  fns_ordered: CkFnsOrdered(ck_st(m)),
+  normal: CkNormal(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
+): RegisteredSourceState(program, run_after_builtins(prelude, program, m)) {
+  match m: RegisteredSourceState(program, run_after_builtins(prelude, program, m)) {
+    mut1(ignored, next) => run_after_data_result_registered_functions(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      ck_prepare_datas_subst_ordered(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        ordered
+      ),
+      accepted => fnt_ordered(
+        next,
+        ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+        ck_prepare_datas_fns(next, prelude, program, types_own(program, Ordmap::empty()), accepted),
+        fns_ordered
+      ),
+      accepted => Eq::trans(
+        ck_prepare_datas_context(
+          next,
+          prelude,
+          program,
+          types_own(program, Ordmap::empty()),
+          Eq::congr(written_context_borrow, normal),
+          accepted
+        ),
+        normal
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_run_registered_functions(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c),
+  fns_ordered: CkFnsOrdered(c),
+  normal: CkNormal(c),
+  clean: DiagnosticClean(ck_st(ck_run(c, prelude, program)))
+): RegisteredSourceState(program, ck_run(c, prelude, program)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => RegisteredSourceState(program, m),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_after_builtins_registered_functions(
+      prelude,
+      program,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+      fnt_ordered(c, run_builtins(c), Refl, fns_ordered),
+      Eq::trans(body_builtins_context(c), normal),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        run_summary_unf(c, prelude, program),
+        clean
+      )
+    )
+  )
+}
+
+pub def RegisteredSourceReport(
+  program: List(SurfaceStmt),
+  m: Mut1(TypeReport, Checker)
+): Prop := SourceFunctionsRegistered(finish_report_datas(ck_val(m)), program)
+pub theorem run_module_registered_functions(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  fns_ordered: CkFnsOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  normal: CkNormal(ck_st(m)),
+  clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
+): RegisteredSourceReport(program, run_after_module_errors(prelude, program, m)) {
+  match m: RegisteredSourceReport(program, run_after_module_errors(prelude, program, m)) {
+    mut1(ignored, next) => accepted_data_report(
+      (env: Datas) => SourceFunctionsRegistered(env, program),
+      ck_run(next, prelude, program),
+      And::left(ck_run_ready(next, prelude, program, ordered, decls)),
+      accepted => ck_run_registered_functions(
+        next,
+        prelude,
+        program,
+        ordered,
+        fns_ordered,
+        normal,
+        accepted
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_types_run_registered_functions(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  fns_ordered: CkFnsOrdered(c),
+  decls: CkDatasOrdered(c),
+  normal: CkNormal(c),
+  clean: DiagnosticReportClean(ck_types_run(c, prelude, program, errors))
+): RegisteredSourceReport(program, ck_types_run(c, prelude, program, errors)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => RegisteredSourceReport(program, m),
+    Eq::sym(run_types_unf(c, prelude, program, errors)),
+    run_module_registered_functions(
+      prelude,
+      program,
+      ck_module_errors(errors, c),
+      frame_subst_ordered(
+        c,
+        ck_module_errors(errors, c),
+        ck_module_errors_frame(errors, c),
+        ordered
+      ),
+      fnt_ordered(
+        c,
+        ck_module_errors(errors, c),
+        fnt_ck_module_errors_frame(errors, c),
+        fns_ordered
+      ),
+      frame_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), decls),
+      Eq::trans(body_module_context(errors, c, Eq::congr(written_context_borrow, normal)), normal),
+      Eq::subst(DiagnosticReportClean, run_types_unf(c, prelude, program, errors), clean)
+    )
+  )
+}
+pub theorem types_check_registered_functions(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): SourceFunctionsRegistered(finish_report_datas(types_check(prelude, program, errors)), program) {
+  ck_types_run_registered_functions(
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    errors,
+    Trivial,
+    Trivial,
+    Trivial,
+    Refl,
+    clean
+  )
+}

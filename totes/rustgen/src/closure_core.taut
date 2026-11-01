@@ -1,0 +1,129 @@
+pub fn rustgen_closure_append(
+  left: List(RustgenBinding),
+  right: List(RustgenBinding)
+): List(RustgenBinding) {
+  match left: List(RustgenBinding) {
+    Nil => right
+    Cons(binding, rest) => Cons(binding, rustgen_closure_append(rest, right))
+  }
+}
+
+pub fn rustgen_closure_reverse(
+  bindings: List(RustgenBinding),
+  done: List(RustgenBinding)
+): List(RustgenBinding) {
+  match bindings: List(RustgenBinding) {
+    Nil => done
+    Cons(binding, rest) => rustgen_closure_reverse(rest, Cons(binding, done))
+  }
+}
+
+// Visible lexical bindings are kept once, from the innermost scope.
+pub fn rustgen_closure_visible(
+  locals: List(RustgenBinding),
+  seen: List(RustgenBinding)
+): List(RustgenBinding) {
+  match locals: List(RustgenBinding) {
+    Nil => Nil
+    Cons(binding, rest) => match rustgen_find(binding.name, seen): List(RustgenBinding) {
+      Some(ty) => rustgen_closure_visible(rest, seen)
+      None => Cons(binding, rustgen_closure_visible(rest, Cons(binding, seen)))
+    }
+  }
+}
+
+pub fn rustgen_closure_parameters(
+  names: List(Text),
+  types: List(RustgenType),
+  locals: List(RustgenBinding),
+  done: List(RustgenBinding)
+): RustgenResult(List(RustgenBinding)) {
+  match names: RustgenResult(List(RustgenBinding)) {
+    Nil => match types: RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenOk(rustgen_closure_reverse(done, Nil))
+      Cons(ty, rest) => RustgenErr("closure parameter count differs")
+    }
+    Cons(name, rest) => match types: RustgenResult(List(RustgenBinding)) {
+      Nil => RustgenErr("closure parameter count differs")
+      Cons(ty, more) => match rustgen_find(
+        name,
+        rustgen_closure_append(done, locals)
+      ): RustgenResult(List(RustgenBinding)) {
+        Some(existing) => RustgenErr("duplicate or shadowed closure parameter")
+        None => rustgen_closure_parameters(
+          rest,
+          more,
+          locals,
+          Cons(RustgenBinding::Mk(name, ty), done)
+        )
+      }
+    }
+  }
+}
+
+mutual {
+  pub fn rustgen_capture_concrete(k: Nat, ty: RustgenType): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ty: Bool {
+        RustgenVar(name) => false
+        RustgenMeta(name) => false
+        RustgenNumber(id, value) => false
+        RustgenApply(name, args) => rustgen_capture_types(j, args)
+        RustgenCallable(params, result) => rustgen_capture_types(j, Cons(result, params))
+        RustgenInt => true
+        RustgenNat => true
+        RustgenBool => true
+        RustgenText => true
+        RustgenNamed(name) => true
+      }
+    }
+  }
+  pub fn rustgen_capture_types(k: Nat, types: List(RustgenType)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match types: Bool {
+        Nil => true
+        Cons(ty, rest) => rustgen_capture_concrete(j, ty) && rustgen_capture_types(j, rest)
+      }
+    }
+  }
+}
+pub fn rustgen_captures_concrete(locals: List(RustgenBinding)): Bool {
+  match locals: Bool {
+    Nil => true
+    Cons(binding, rest) => rustgen_capture_concrete(
+      10000,
+      binding.ty
+    ) && rustgen_captures_concrete(rest)
+  }
+}
+
+mutual {
+  pub fn rustgen_contains_callable(k: Nat, ty: RustgenType): Bool {
+    match k: Bool {
+      Zero => true
+      Succ(j) => match ty: Bool {
+        RustgenCallable(params, result) => true
+        RustgenApply(name, args) => rustgen_contains_callables(j, args)
+        RustgenVar(name) => false
+        RustgenMeta(name) => true
+        RustgenNumber(id, value) => false
+        RustgenInt => false
+        RustgenNat => false
+        RustgenBool => false
+        RustgenText => false
+        RustgenNamed(name) => false
+      }
+    }
+  }
+  pub fn rustgen_contains_callables(k: Nat, types: List(RustgenType)): Bool {
+    match k: Bool {
+      Zero => true
+      Succ(j) => match types: Bool {
+        Nil => false
+        Cons(ty, rest) => rustgen_contains_callable(j, ty) || rustgen_contains_callables(j, rest)
+      }
+    }
+  }
+}

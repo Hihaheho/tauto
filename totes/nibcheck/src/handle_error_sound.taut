@@ -1,0 +1,100 @@
+import "pattern_read_error_sound.taut"
+import "handle_frame.taut"
+import "written_error_sound.taut"
+import "instantiation_error_sound.taut"
+
+pub theorem handle_direct_frame_errors(
+  c: Checker,
+  quant: Quant,
+  eff: Text,
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): CkErrorFrame(c, handle_direct(c, quant, eff, cont, guard, body)) {
+  frame_error_if_ok_errors(
+    c,
+    cat3(eff, " is direct; every path of its arm must end in k(e)", ""),
+    span_of(body),
+    handle_direct_bad(quant, cont, guard, body)
+  )
+}
+
+pub theorem ck_handle_direct_frame_errors(
+  c: Checker,
+  quant: Quant,
+  eff: Text,
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): CkErrorFrame(c, ck_handle_direct(c, quant, eff, cont, guard, body)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(handle_direct_unf(c, quant, eff, cont, guard, body)),
+    handle_direct_frame_errors(c, quant, eff, cont, guard, body)
+  )
+}
+
+pub theorem handle_sig_found_frame_errors(
+  c: Checker,
+  eff: Text,
+  result: Ty,
+  budget_ty: Ty,
+  body: SurfaceTerm,
+  found: Option(EffectSig)
+): CkErrorFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
+  match found: CkErrorFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
+    Some(s) => error_frame_bind(
+      Ty,
+      Option(Pair(List(Ty), Ty)),
+      c,
+      (ty: Ty, c1: Checker) => mut1(ty_fn_sig(ty), c1),
+      ck_instantiate_named(c, handle_effect_generics(s), handle_effect_type(s)),
+      ck_instantiate_named_frame_errors(c, handle_effect_generics(s), handle_effect_type(s)),
+      ty => c1 => (clean_errors => clean_errors)
+    )
+    None => error_frame_bind(
+      Unit,
+      Option(Pair(List(Ty), Ty)),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ck_error_frame_errors(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ignored => c1 => (clean_errors => clean_errors)
+    )
+  }
+}
+
+pub theorem handle_sig_frame_errors(
+  c: Checker,
+  eff: Text,
+  result: Ty,
+  budget_ty: Ty,
+  body: SurfaceTerm,
+  exceeded: Bool
+): CkErrorFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
+  match exceeded: CkErrorFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
+    true => (clean_errors => clean_errors)
+    false => handle_sig_found_frame_errors(
+      c,
+      eff,
+      result,
+      budget_ty,
+      body,
+      Ordmap::get(handle_effects(c), eff, Ordmap::compare_text)
+    )
+  }
+}
+
+pub theorem ck_handle_sig_frame_errors(
+  c: Checker,
+  eff: Text,
+  result: Ty,
+  budget_ty: Ty,
+  body: SurfaceTerm
+): CkErrorFrame(c, ck_handle_sig(c, eff, result, budget_ty, body)) {
+  Eq::subst(
+    (z: Mut1(Option(Pair(List(Ty), Ty)), Checker)) => CkErrorFrame(c, z),
+    Eq::sym(handle_sig_unf(c, eff, result, budget_ty, body)),
+    handle_sig_frame_errors(c, eff, result, budget_ty, body, Text::eq(eff, "exceeded"))
+  )
+}

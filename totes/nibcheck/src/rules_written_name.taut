@@ -1,0 +1,49 @@
+import "ty.taut"
+
+// The fixed primitive type names; other names are parameters or nominal types.
+pub fn primitive_type_name(n: Text): Option(Ty) {
+  if Text::eq(
+    n,
+    "i32"
+  ) { Some(TyInt(Width32)) } else if Text::eq(
+    n,
+    "i64"
+  ) { Some(TyInt(Width64)) } else if Text::eq(
+    n,
+    "u8"
+  ) { Some(TyInt(WidthU8)) } else if Text::eq(
+    n,
+    "u32"
+  ) { Some(TyInt(WidthU32)) } else if Text::eq(
+    n,
+    "u64"
+  ) { Some(TyInt(WidthU64)) } else if Text::eq(
+    n,
+    "Bool"
+  ) { Some(TyBool) } else if Text::eq(
+    n,
+    "Text"
+  ) { Some(TyText) } else if Text::eq(
+    n,
+    "Never"
+  ) { Some(TyNever) } else if Text::eq(
+    n,
+    "Decimal"
+  ) { Some(TyDecimal) } else if Text::eq(n, "Float") { Some(TyFloat) } else { None }
+}
+
+pub(open) inductive WrittenTypeName(generics: Ordmap(Text, Ty), name: Text): (Ty) -> Prop {
+  WrittenNamePrimitive(
+    t: Ty,
+    builtin: primitive_type_name(name) = Some(t)
+  ): WrittenTypeName(generics, name, t)
+  WrittenNameParameter(
+    t: Ty,
+    ordinary: primitive_type_name(name) = None,
+    bound: Ordmap::get(generics, name, Ordmap::compare_text) = Some(t)
+  ): WrittenTypeName(generics, name, t)
+  WrittenNameNominal(
+    ordinary: primitive_type_name(name) = None,
+    unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None
+  ): WrittenTypeName(generics, name, TyNamed(name, Nil))
+}

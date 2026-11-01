@@ -1,0 +1,191 @@
+import "pattern_frame.taut"
+
+pub fn pattern_checker<A>(m: Mut2(A, Checker, Scope)): Mut1(A, Checker) {
+  match m: Mut1(A, Checker) { mut2(v, c, env) => mut1(v, c) }
+}
+pub def CkScopeFrame<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope)
+): Prop := CkRunFrame(c, pattern_checker(m))
+
+pub fn pattern_bind<A, B>(
+  k: (A, Checker, Scope) -> Mut2(B, Checker, Scope),
+  m: Mut2(A, Checker, Scope)
+): Mut2(B, Checker, Scope) {
+  match m: Mut2(B, Checker, Scope) { mut2(v, c, env) => k(v, c, env) }
+}
+pub theorem pattern_bind_frame<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker, Scope) -> Mut2(B, Checker, Scope),
+  m: Mut2(A, Checker, Scope),
+  hm: CkScopeFrame(c, m),
+  hk: ∀ v: A. ∀ next: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+    next
+  ). CkScopeFrame(next, k(v, next, env))
+): CkScopeFrame(c, pattern_bind(k, m)) {
+  match m: CkScopeFrame(c, pattern_bind(k, m)) {
+    mut2(v, next, env) => {
+      let h: CkScopeFrame(next, k(v, next, env)) := hk(v, next, env, And::left(hm))
+      AndIntro(And::left(h), Eq::trans(And::right(h), And::right(hm)))
+    }
+  }
+}
+pub fn pattern_rewrap<A>(m: Mut2(A, Checker, Scope)): Mut2(A, Checker, Scope) {
+  match m: Mut2(A, Checker, Scope) { mut2(v, c, env) => mut2(v, c, env) }
+}
+pub theorem pattern_rewrap_id<A: Type>(
+  m: Mut2(A, Checker, Scope)
+): pattern_rewrap(m) = m {
+  match m: pattern_rewrap(m) = m { mut2(v, c, env) => Refl }
+}
+pub theorem pattern_rewrap_frame<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope),
+  h: CkScopeFrame(c, m)
+): CkScopeFrame(c, pattern_rewrap(m)) {
+  Eq::subst((z: Mut2(A, Checker, Scope)) => CkScopeFrame(c, z), Eq::sym(pattern_rewrap_id(m)), h)
+}
+pub theorem ck_bind_local_scope_frame(
+  c: Checker,
+  env: Scope,
+  name: Text,
+  ty: Ty,
+  mutable: Bool,
+  site: Nat,
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, ck_bind_local(c, env, name, ty, mutable, site)) { AndIntro(ordered, Refl) }
+
+pub fn pattern_params_cons(
+  n: Text,
+  rest: List(Text),
+  c: Checker,
+  env: Scope,
+  site: Nat,
+  tys: List(Ty)
+): Mut2(Unit, Checker, Scope) {
+  match tys: Mut2(Unit, Checker, Scope) {
+    Nil => mut2(Star, c, env)
+    Cons(t, more) => pattern_bind(
+      Unit,
+      Unit,
+      (ignored: Unit, next: Checker, nextenv: Scope) => pattern_rewrap(
+        ck_bind_params(rest, next, nextenv, more, site)
+      ),
+      ck_bind_local(c, env, n, t, false, site)
+    )
+  }
+}
+pub def PatternParamsIH(
+  rest: List(Text)
+): Prop := ∀ c: Checker. ∀ env: Scope. ∀ tys: List(
+  Ty
+). ∀ site: Nat. ∀ ordered: CkOrdered(c). CkScopeFrame(c, ck_bind_params(rest, c, env, tys, site))
+pub theorem pattern_params_cons_frame(
+  n: Text,
+  rest: List(Text),
+  c: Checker,
+  env: Scope,
+  site: Nat,
+  tys: List(Ty),
+  ih: PatternParamsIH(rest),
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, pattern_params_cons(n, rest, c, env, site, tys)) {
+  match tys: CkScopeFrame(c, pattern_params_cons(n, rest, c, env, site, tys)) {
+    Nil => AndIntro(ordered, Refl)
+    Cons(t, more) => pattern_bind_frame(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, next: Checker, nextenv: Scope) => pattern_rewrap(
+        ck_bind_params(rest, next, nextenv, more, site)
+      ),
+      ck_bind_local(c, env, n, t, false, site),
+      ck_bind_local_scope_frame(c, env, n, t, false, site, ordered),
+      ignored => next => nextenv => onext => pattern_rewrap_frame(
+        next,
+        ck_bind_params(rest, next, nextenv, more, site),
+        ih(next, nextenv, more, site, onext)
+      )
+    )
+  }
+}
+pub theorem pattern_params_cons_unf(
+  n: Text,
+  rest: List(Text),
+  c: Checker,
+  env: Scope,
+  site: Nat,
+  tys: List(Ty)
+): ck_bind_params(Cons(n, rest), c, env, tys, site) = pattern_params_cons(n, rest, c, env, site, tys) { Refl }
+pub theorem ck_bind_params_scope_frame(
+  names: List(Text),
+  c: Checker,
+  env: Scope,
+  tys: List(Ty),
+  site: Nat,
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, ck_bind_params(names, c, env, tys, site)) {
+  match names: CkScopeFrame(c, ck_bind_params(names, c, env, tys, site)) {
+    Nil => AndIntro(ordered, Refl)
+    Cons(n, rest) => Eq::subst(
+      (z: Mut2(Unit, Checker, Scope)) => CkScopeFrame(c, z),
+      Eq::sym(pattern_params_cons_unf(n, rest, c, env, site, tys)),
+      pattern_params_cons_frame(
+        n,
+        rest,
+        c,
+        env,
+        site,
+        tys,
+        next => nextenv => more => at => onext => ck_bind_params_scope_frame(
+          rest,
+          next,
+          nextenv,
+          more,
+          at,
+          onext
+        ),
+        ordered
+      )
+    )
+  }
+}
+
+pub fn pattern_lift<A>(env: Scope, m: Mut1(A, Checker)): Mut2(A, Checker, Scope) {
+  match m: Mut2(A, Checker, Scope) { mut1(v, c) => mut2(v, c, env) }
+}
+pub theorem pattern_lift_frame<A: Type>(
+  c: Checker,
+  env: Scope,
+  m: Mut1(A, Checker),
+  h: CkRunFrame(c, m)
+): CkScopeFrame(c, pattern_lift(env, m)) {
+  match m: CkScopeFrame(c, pattern_lift(env, m)) { mut1(v, next) => h }
+}
+pub theorem pattern_return_frame<A: Type>(
+  c: Checker,
+  env: Scope,
+  v: A,
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, mut2(v, c, env)) { AndIntro(ordered, Refl) }
+pub theorem ck_fresh_int_read_frame(c: Checker): CkReadFrame(c, ck_fresh_int(c)) { Refl }
+pub fn pattern_bind_one<A, B>(
+  k: (A, Checker) -> Mut2(B, Checker, Scope),
+  m: Mut1(A, Checker)
+): Mut2(B, Checker, Scope) {
+  match m: Mut2(B, Checker, Scope) { mut1(v, c) => k(v, c) }
+}
+pub theorem pattern_bind_one_frame<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut2(B, Checker, Scope),
+  m: Mut1(A, Checker),
+  hm: CkRunFrame(c, m),
+  hk: ∀ v: A. ∀ next: Checker. ∀ ordered: CkOrdered(next). CkScopeFrame(next, k(v, next))
+): CkScopeFrame(c, pattern_bind_one(k, m)) {
+  match m: CkScopeFrame(c, pattern_bind_one(k, m)) {
+    mut1(v, next) => {
+      let h: CkScopeFrame(next, k(v, next)) := hk(v, next, And::left(hm))
+      AndIntro(And::left(h), Eq::trans(And::right(h), And::right(hm)))
+    }
+  }
+}

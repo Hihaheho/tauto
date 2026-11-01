@@ -1,0 +1,22 @@
+import "data_names_sound.taut"
+import "written_error_sound.taut"
+
+pub theorem data_names_check_frame_errors(
+  c: Checker,
+  duplicate: Option(SurfaceData)
+): CkErrorFrame(c, data_names_check(c, duplicate)) {
+  match duplicate: CkErrorFrame(c, data_names_check(c, duplicate)) {
+    None => (clean_errors => clean_errors)
+    Some(f) => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+  }
+}
+pub theorem ck_check_data_names_frame_errors(
+  c: Checker,
+  fs: List(SurfaceData)
+): CkErrorFrame(c, ck_check_data_names(c, fs)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(data_names_check_unf(c, fs)),
+    data_names_check_frame_errors(c, types_duplicate_data(fs, Ordmap::empty()))
+  )
+}

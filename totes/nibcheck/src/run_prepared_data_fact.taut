@@ -1,0 +1,130 @@
+import "prepare_data_body_sound.taut"
+import "run_data_names_sound.taut"
+
+pub def PreparedDataFact<P: Prop>(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): Prop := ∀ c: Checker. ∀ own: Ordmap(
+  Text,
+  Bool
+). ∀ clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own))). P
+
+pub theorem data_fact_after_result<P: Prop>(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m))),
+  prepared: ∀ accepted: DiagnosticClean(ck_st(m)). P
+): P {
+  match m: P {
+    mut1(ignored, next) => prepared(
+      And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)
+    )
+  }
+}
+pub theorem run_after_builtins_prepared_data_fact<P: Prop>(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m))),
+  prepared: PreparedDataFact(P, prelude, program)
+): P {
+  match m: P {
+    mut1(v, next) => data_fact_after_result(
+      P,
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      ck_prepare_datas_subst_ordered(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        ordered
+      ),
+      clean,
+      accepted => prepared(next, types_own(program, Ordmap::empty()), accepted)
+    )
+  }
+}
+pub theorem ck_run_prepared_data_fact<P: Prop>(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_run(c, prelude, program))),
+  prepared: PreparedDataFact(P, prelude, program)
+): P {
+  run_after_builtins_prepared_data_fact(
+    P,
+    prelude,
+    program,
+    run_builtins(c),
+    frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+      run_summary_unf(c, prelude, program),
+      clean
+    ),
+    prepared
+  )
+}
+pub theorem run_after_module_errors_prepared_data_fact<P: Prop>(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m)),
+  prepared: PreparedDataFact(P, prelude, program)
+): P {
+  match m: P {
+    mut1(v, next) => run_finish_after_fact(
+      P,
+      ck_run(next, prelude, program),
+      ck_run_ordered(next, prelude, program, ordered),
+      accepted => ck_run_prepared_data_fact(P, next, prelude, program, ordered, accepted, prepared),
+      clean
+    )
+  }
+}
+pub theorem ck_types_run_prepared_data_fact<P: Prop>(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  clean: DiagnosticReportClean(ck_types_run(c, prelude, program, errors)),
+  prepared: PreparedDataFact(P, prelude, program)
+): P {
+  run_after_module_errors_prepared_data_fact(
+    P,
+    prelude,
+    program,
+    ck_module_errors(errors, c),
+    frame_subst_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), ordered),
+    Eq::subst(DiagnosticReportClean, run_types_unf(c, prelude, program, errors), clean),
+    prepared
+  )
+}
+pub theorem types_check_prepared_data_fact<P: Prop>(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil,
+  prepared: PreparedDataFact(P, prelude, program)
+): P {
+  ck_types_run_prepared_data_fact(
+    P,
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    errors,
+    Trivial,
+    clean,
+    prepared
+  )
+}

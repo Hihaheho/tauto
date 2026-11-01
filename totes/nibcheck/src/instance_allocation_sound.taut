@@ -1,0 +1,126 @@
+import "unify_allocation_sound.taut"
+
+pub def InstanceAllocation(
+  c: Checker,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): Prop := And(
+  Nat::le(ck_next_of(c), ck_next_of(ck_st(m))) = true,
+  And(CheckerAllocation(ck_st(m)), RigidMapAllocation(ck_next_of(ck_st(m)), ck_val(m)))
+)
+pub theorem instance_allocation_cons(
+  c: Checker,
+  next: Checker,
+  generic: Pair(Text, Kind),
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  advance: Nat::le(Succ(ck_next_of(c)), ck_next_of(next)) = true,
+  tail: InstanceAllocation(next, m)
+): InstanceAllocation(c, ck_inst_k(generic, TyVar(ck_next_of(c)), m)) {
+  match m: InstanceAllocation(c, ck_inst_k(generic, TyVar(ck_next_of(c)), m)) {
+    mut1(map, last) => {
+      let variable: TypeAllocated(
+        ck_next_of(last),
+        TyVar(ck_next_of(c))
+      ) := Nat::le_trans(
+        Succ(ck_next_of(c)),
+        ck_next_of(next),
+        ck_next_of(last),
+        advance,
+        And::left(tail)
+      )
+      AndIntro(
+        Nat::le_trans(
+          ck_next_of(c),
+          Succ(ck_next_of(c)),
+          ck_next_of(last),
+          Nat::le_succ(ck_next_of(c)),
+          variable
+        ),
+        AndIntro(
+          And::left(And::right(tail)),
+          AndIntro(
+            Ordmap::insert_ordered(
+              Ordmap::compare_text,
+              Ordmap::compare_text_law(),
+              map,
+              tk_first(generic),
+              TyVar(ck_next_of(c)),
+              And::left(And::right(And::right(tail)))
+            ),
+            generic_map_insert_allocated(
+              ck_next_of(last),
+              map,
+              tk_first(generic),
+              TyVar(ck_next_of(c)),
+              And::left(And::right(And::right(tail))),
+              variable,
+              And::right(And::right(And::right(tail)))
+            )
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_instance_of_allocation(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  state: CheckerAllocation(c)
+): InstanceAllocation(c, ck_instance_of(gs, c)) {
+  match gs: InstanceAllocation(c, ck_instance_of(gs, c)) {
+    Nil => AndIntro(
+      Nat::le_refl(ck_next_of(c)),
+      AndIntro(
+        state,
+        AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
+      )
+    )
+    Cons(generic, rest) => Eq::subst(
+      (result: Mut1(Ordmap(Text, Ty), Checker)) => InstanceAllocation(c, result),
+      Eq::sym(inst_unf_cons(c, generic, rest)),
+      instance_allocation_cons(
+        c,
+        ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(generic))),
+        generic,
+        ck_instance_of(
+          rest,
+          ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(generic)))
+        ),
+        Nat::le_refl(Succ(ck_next_of(c))),
+        ck_instance_of_allocation(
+          rest,
+          ck_st(ck_inst_bound(ck_st(ck_fresh(c)), TyVar(ck_next_of(c)), tk_second(generic))),
+          ck_fresh_allocation(c, state)
+        )
+      )
+    )
+  }
+}
+pub theorem ck_instance_substitute_allocated(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  ty: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), ty)
+): TypeAllocated(
+  ck_next_of(ck_st(ck_instance_of(gs, c))),
+  ty_substitute(ty, ck_val(ck_instance_of(gs, c)))
+) {
+  let instance_state: InstanceAllocation(
+    c,
+    ck_instance_of(gs, c)
+  ) := ck_instance_of_allocation(gs, c, state)
+  allocated_substitute(
+    ty,
+    ck_next_of(ck_st(ck_instance_of(gs, c))),
+    ck_val(ck_instance_of(gs, c)),
+    And::left(And::right(And::right(instance_state))),
+    And::right(And::right(And::right(instance_state))),
+    type_allocated_weaken(
+      ty,
+      ck_next_of(c),
+      ck_next_of(ck_st(ck_instance_of(gs, c))),
+      And::left(instance_state),
+      bounded
+    )
+  )
+}

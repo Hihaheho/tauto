@@ -1,0 +1,105 @@
+import "unify_allocation_sequence.taut"
+
+pub fn allocated_split(limit: Nat, result: Option(Pair(List(Ty), Ty))): Prop {
+  match result: Prop { None => True
+    Some(pair) => And(
+      TypeListAllocated(limit, pair_fst_lt(pair)),
+      TypeAllocated(limit, pair_snd_lt(pair))
+    ) }
+}
+pub theorem allocated_split_cons(
+  limit: Nat,
+  head: Ty,
+  item: TypeAllocated(limit, head),
+  result: Option(Pair(List(Ty), Ty)),
+  rest: allocated_split(limit, result)
+): allocated_split(limit, ck_split_k(head, result)) {
+  match result: allocated_split(limit, ck_split_k(head, result)) {
+    None => AndIntro(Trivial, item)
+    Some(pair) => match pair: allocated_split(limit, ck_split_k(head, Some(pair))) {
+      Pair { fst: initial, snd: last } => AndIntro(
+        AndIntro(item, And::left(rest)),
+        And::right(rest)
+      )
+    }
+  }
+}
+pub theorem allocated_split_last(
+  args: List(Ty),
+  limit: Nat,
+  h: TypeListAllocated(limit, args)
+): allocated_split(limit, ty_split_last(args)) {
+  match args: allocated_split(limit, ty_split_last(args)) {
+    Nil => Trivial
+    Cons(head, tail) => allocated_split_cons(
+      limit,
+      head,
+      And::left(h),
+      ty_split_last(tail),
+      allocated_split_last(tail, limit, And::right(h))
+    )
+  }
+}
+pub theorem allocated_unify_app_choice(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  c: Checker,
+  head: Ty,
+  arg: Ty,
+  name: Text,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  fn_type: TypeAllocated(ck_next_of(c), head),
+  arg_type: TypeAllocated(ck_next_of(c), arg),
+  result: Option(Pair(List(Ty), Ty)),
+  split: allocated_split(ck_next_of(c), result)
+): AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) {
+  match result: AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) {
+    None => AndIntro(Refl, state)
+    Some(pair) => allocation_and(
+      c,
+      (next: Checker) => ck_unify_in(fuel, next, arg, pair_snd_lt(pair)),
+      ck_unify_in(fuel, c, head, TyNamed(name, pair_fst_lt(pair))),
+      hu(c, head, TyNamed(name, pair_fst_lt(pair)), ordered, state, fn_type, And::left(split)),
+      unify_in_allocation_ordered(fuel, c, head, TyNamed(name, pair_fst_lt(pair)), ordered),
+      next => same => current => order => hu(
+        next,
+        arg,
+        pair_snd_lt(pair),
+        order,
+        current,
+        Eq::subst((limit: Nat) => TypeAllocated(limit, arg), same, arg_type),
+        Eq::subst((limit: Nat) => TypeAllocated(limit, pair_snd_lt(pair)), same, And::right(split))
+      )
+    )
+  }
+}
+pub theorem allocated_unify_app_step(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  c: Checker,
+  head: Ty,
+  arg: Ty,
+  name: Text,
+  args: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  fn_type: TypeAllocated(ck_next_of(c), head),
+  arg_type: TypeAllocated(ck_next_of(c), arg),
+  args_type: TypeListAllocated(ck_next_of(c), args)
+): AllocationRun(c, ck_unify_app_in(Succ(fuel), c, head, arg, name, args)) {
+  allocated_unify_app_choice(
+    fuel,
+    hu,
+    c,
+    head,
+    arg,
+    name,
+    ordered,
+    state,
+    fn_type,
+    arg_type,
+    ty_split_last(args),
+    allocated_split_last(args, ck_next_of(c), args_type)
+  )
+}

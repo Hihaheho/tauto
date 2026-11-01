@@ -1,0 +1,52 @@
+import "diagnostic_sound.taut"
+
+// An earlier diagnostic cannot disappear in a successful computation.
+pub def CkErrorFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := ∀ clean: DiagnosticClean(ck_st(m)). DiagnosticClean(c)
+pub theorem error_frame_return<A: Type>(
+  c: Checker,
+  v: A
+): CkErrorFrame(c, mut1(v, c)) { clean => clean }
+pub theorem error_frame_same<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  same: decl_names_errors(ck_st(m)) = decl_names_errors(c)
+): CkErrorFrame(c, m) { clean => Eq::trans(Eq::sym(same), clean) }
+pub theorem error_frame_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: CkErrorFrame(c, m)
+): CkErrorFrame(c, ck_rewrap1(m)) {
+  Eq::subst((result: Mut1(A, Checker)) => CkErrorFrame(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub theorem error_frame_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: CkErrorFrame(c, m),
+  hk: ∀ v: A. ∀ next: Checker. CkErrorFrame(next, k(v, next))
+): CkErrorFrame(c, frame_bind(k, m)) {
+  match m: CkErrorFrame(c, frame_bind(k, m)) {
+    mut1(v, next) => clean => hm(hk(v, next, clean))
+  }
+}
+pub theorem ck_error_error_frame(
+  c: Checker,
+  message: Text,
+  span: TySpan
+): CkErrorFrame(c, ck_error(c, message, span)) {
+  clean => False::elim(diagnostic_error_impossible(c, message, span, clean))
+}
+pub theorem error_frame_if(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  take: Bool
+): CkErrorFrame(c, frame_error_if(c, message, span, take)) {
+  match take: CkErrorFrame(c, frame_error_if(c, message, span, take)) {
+    true => ck_error_error_frame(c, message, span)
+    false => error_frame_return(c, Star)
+  }
+}

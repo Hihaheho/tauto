@@ -1,0 +1,235 @@
+import "instantiation_requirements.taut"
+
+// One map witnesses the substituted result, every class predicate, and every
+// scalar or constructor kind obligation generated for the generic bindings.
+pub(open) inductive SchemeInstanceObligations(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ty, Checker)
+): Prop {
+  Mk(
+    map: Ordmap(Text, Ty),
+    covered: GenericNamesPresent(instantiation_scheme_generics(scheme), map),
+    substituted: ck_val(m) = ty_substitute(instantiation_scheme_ty(scheme), map),
+    predicates: InstancePredicatesRecorded(
+      inference_assume(c),
+      instantiation_scheme_preds(scheme),
+      map,
+      name,
+      span,
+      finish_pending_items(ck_st(m))
+    ),
+    requirements: RecordedInstantiation(
+      ck_st(m),
+      instantiation_scheme_ctors(scheme),
+      name,
+      span,
+      instantiation_scheme_generics(scheme),
+      Ordmap::empty(),
+      map
+    )
+  ): SchemeInstanceObligations(c, name, scheme, span, m)
+}
+pub theorem instance_obligations_after_preds(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  m: Mut1(Unit, Checker),
+  covered: GenericNamesPresent(instantiation_scheme_generics(scheme), map),
+  predicates: InstancePredicatesRecorded(
+    inference_assume(c),
+    instantiation_scheme_preds(scheme),
+    map,
+    name,
+    span,
+    finish_pending_items(ck_st(m))
+  ),
+  requirements: RecordedInstantiation(
+    ck_st(m),
+    instantiation_scheme_ctors(scheme),
+    name,
+    span,
+    instantiation_scheme_generics(scheme),
+    Ordmap::empty(),
+    map
+  )
+): SchemeInstanceObligations(c, name, scheme, span, instance_scheme_after_preds(scheme, map, m)) {
+  match m: SchemeInstanceObligations(
+    c,
+    name,
+    scheme,
+    span,
+    instance_scheme_after_preds(scheme, map, m)
+  ) {
+    mut1(ignored, next) => SchemeInstanceObligations::Mk(
+      map,
+      covered,
+      Refl,
+      predicates,
+      requirements
+    )
+  }
+}
+pub theorem instance_obligations_after_map(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  covered: GenericNamesPresent(instantiation_scheme_generics(scheme), ck_val(m)),
+  context: InstantiationContextFrame(c, m),
+  declared: WherePredicatesDeclared(
+    instantiation_scheme_generics(scheme),
+    instantiation_scheme_preds(scheme)
+  ),
+  requirements: RecordedInstantiation(
+    ck_st(m),
+    instantiation_scheme_ctors(scheme),
+    name,
+    span,
+    instantiation_scheme_generics(scheme),
+    Ordmap::empty(),
+    ck_val(m)
+  )
+): SchemeInstanceObligations(
+  c,
+  name,
+  scheme,
+  span,
+  instance_scheme_after_map(name, scheme, span, m)
+) {
+  match m: SchemeInstanceObligations(
+    c,
+    name,
+    scheme,
+    span,
+    instance_scheme_after_map(name, scheme, span, m)
+  ) {
+    mut1(map, next) => instance_obligations_after_preds(
+      c,
+      name,
+      scheme,
+      span,
+      map,
+      ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
+      covered,
+      Eq::subst(
+        (assume: List(Pair(Text, Text))) => InstancePredicatesRecorded(
+          assume,
+          instantiation_scheme_preds(scheme),
+          map,
+          name,
+          span,
+          finish_pending_items(
+            ck_st(ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span))
+          )
+        ),
+        context,
+        ck_pend_declared_predicates(
+          next,
+          instantiation_scheme_generics(scheme),
+          instantiation_scheme_preds(scheme),
+          map,
+          name,
+          span,
+          declared,
+          covered
+        )
+      ),
+      recorded_instantiation_move(
+        next,
+        ck_st(ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span)),
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        ck_pend_preds_frame_requirements(instantiation_scheme_preds(scheme), next, map, name, span),
+        requirements
+      )
+    )
+  }
+}
+pub theorem ck_instantiate_scheme_obligations(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  declared: WherePredicatesDeclared(
+    instantiation_scheme_generics(scheme),
+    instantiation_scheme_preds(scheme)
+  )
+): SchemeInstanceObligations(c, name, scheme, span, ck_instantiate_scheme(c, name, scheme, span)) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => SchemeInstanceObligations(c, name, scheme, span, m),
+    Eq::sym(instance_scheme_records_unf(c, name, scheme, span)),
+    instance_obligations_after_map(
+      c,
+      name,
+      scheme,
+      span,
+      ck_instantiate_map_ctors(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty()
+      ),
+      And::right(
+        And::right(
+          ck_instantiate_map_ctors_domain(
+            instantiation_scheme_generics(scheme),
+            c,
+            instantiation_scheme_ctors(scheme),
+            name,
+            span,
+            Ordmap::empty(),
+            Trivial
+          )
+        )
+      ),
+      ck_instantiate_map_ctors_frame_context(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty()
+      ),
+      declared,
+      ck_instantiate_map_requirements(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty()
+      )
+    )
+  )
+}
+pub theorem ck_signature_instantiation_obligations(
+  declaration: Checker,
+  source: SurfaceFn,
+  use_site: Checker,
+  name: Text,
+  span: TySpan,
+  clean: DiagnosticClean(ck_st(ck_signature(declaration, source)))
+): SchemeInstanceObligations(
+  use_site,
+  name,
+  ck_val(ck_signature(declaration, source)),
+  span,
+  ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span)
+) {
+  ck_instantiate_scheme_obligations(
+    use_site,
+    name,
+    ck_val(ck_signature(declaration, source)),
+    span,
+    where_clauses_declare(ck_signature_where_declared(declaration, source, clean))
+  )
+}

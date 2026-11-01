@@ -1,0 +1,370 @@
+import "widen_allocation_fn.taut"
+
+pub theorem widen_alloc_borrow_current(
+  c: Checker,
+  a: Ty,
+  rv: Nat,
+  current: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv))
+): AllocationAdvance(c, widen_borrow_current(c, a, rv, current)) {
+  match current: AllocationAdvance(c, widen_borrow_current(c, a, rv, current)) {
+    TyInt(width) => allocation_advance_return(c, false, state)
+    TyBool => allocation_advance_return(c, false, state)
+    TyText => allocation_advance_return(c, false, state)
+    TyUnit => allocation_advance_return(c, false, state)
+    TyNever => allocation_advance_return(c, false, state)
+    TyDecimal => allocation_advance_return(c, false, state)
+    TyFloat => allocation_advance_return(c, false, state)
+    TyParam(name, kind) => allocation_advance_return(c, false, state)
+    TyVar(index) => allocation_advance_return(c, false, state)
+    TyFn(params, result, kind) => allocation_advance_return(c, false, state)
+    TyUnion(members) => allocation_advance_return(c, false, state)
+    TyProduct(members) => allocation_advance_return(c, false, state)
+    TyNamed(name, params) => allocation_advance_return(c, false, state)
+    TyTagged(tags, inner) => allocation_advance_return(c, false, state)
+    TyInfo(inner) => allocation_advance_return(c, false, state)
+    TyBorrow(inner, mutable) => allocation_advance_bind(
+      Bool,
+      Bool,
+      c,
+      (success: Bool, next: Checker) => widen_attempt(next, rv, inner, success),
+      widen_fits_if(
+        c,
+        a,
+        inner,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, inner)))
+      ),
+      widen_alloc_fits_if(
+        c,
+        a,
+        inner,
+        ordered,
+        state,
+        a_bound,
+        current_bound,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, inner)))
+      ),
+      And::left(
+        widen_fits_if_frame(
+          c,
+          a,
+          inner,
+          Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, inner))),
+          ordered
+        )
+      ),
+      success => next => advanced => current_state => order => widen_alloc_attempt(
+        next,
+        rv,
+        inner,
+        order,
+        current_state,
+        type_allocated_weaken(TyVar(rv), ck_next_of(c), ck_next_of(next), advanced, rv_bound),
+        type_allocated_weaken(inner, ck_next_of(c), ck_next_of(next), advanced, current_bound),
+        success
+      )
+    )
+    TyPoly(gs, inner) => allocation_advance_return(c, false, state)
+    TyApp(head, arg) => allocation_advance_return(c, false, state)
+  }
+}
+pub theorem ck_widen_borrowed_current_allocation(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv))
+): AllocationAdvance(c, ck_widen_borrowed_current(c, a, current, rv)) {
+  Eq::subst(
+    (result: Mut1(Bool, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(widen_borrow_current_unf(c, a, current, rv)),
+    widen_alloc_borrow_current(c, a, rv, current, ordered, state, a_bound, current_bound, rv_bound)
+  )
+}
+pub theorem widen_alloc_borrow_arm(
+  c: Checker,
+  current: Ty,
+  arm: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  arm_bound: TypeAllocated(ck_next_of(c), arm)
+): AllocationAdvance(c, widen_borrow_arm(c, current, arm)) {
+  match arm: AllocationAdvance(c, widen_borrow_arm(c, current, arm)) {
+    TyInt(width) => allocation_advance_return(c, false, state)
+    TyBool => allocation_advance_return(c, false, state)
+    TyText => allocation_advance_return(c, false, state)
+    TyUnit => allocation_advance_return(c, false, state)
+    TyNever => allocation_advance_return(c, false, state)
+    TyDecimal => allocation_advance_return(c, false, state)
+    TyFloat => allocation_advance_return(c, false, state)
+    TyParam(name, kind) => allocation_advance_return(c, false, state)
+    TyVar(index) => allocation_advance_return(c, false, state)
+    TyFn(params, result, kind) => allocation_advance_return(c, false, state)
+    TyUnion(members) => allocation_advance_return(c, false, state)
+    TyProduct(members) => allocation_advance_return(c, false, state)
+    TyNamed(name, params) => allocation_advance_return(c, false, state)
+    TyTagged(tags, inner) => allocation_advance_return(c, false, state)
+    TyInfo(inner) => allocation_advance_return(c, false, state)
+    TyBorrow(inner, mutable) => widen_alloc_fits_if(
+      c,
+      inner,
+      current,
+      ordered,
+      state,
+      arm_bound,
+      current_bound,
+      Bool::and(not(ty_is_borrow(current)), kind_dup(ck_kind(c, inner)))
+    )
+    TyPoly(gs, inner) => allocation_advance_return(c, false, state)
+    TyApp(head, arg) => allocation_advance_return(c, false, state)
+  }
+}
+pub theorem ck_widen_borrowed_arm_allocation(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current)
+): AllocationAdvance(c, ck_widen_borrowed_arm(c, a, current)) {
+  Eq::subst(
+    (result: Mut1(Bool, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(widen_borrow_arm_unf(c, a, current)),
+    widen_alloc_borrow_arm(
+      c,
+      current,
+      ck_resolve(c, a),
+      ordered,
+      state,
+      current_bound,
+      ck_resolve_allocated(c, a, And::right(state), a_bound)
+    )
+  )
+}
+pub theorem widen_alloc_final_fits(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
+  failed: Bool
+): AllocationAdvance(c, widen_final_fits(c, a, current, rv, failed)) {
+  match failed: AllocationAdvance(c, widen_final_fits(c, a, current, rv, failed)) {
+    false => allocation_advance_return(c, Star, state)
+    true => allocation_advance_rewrap(
+      c,
+      ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
+      allocation_advance_set(
+        c,
+        rv,
+        ty_union(Cons(current, Cons(ck_resolve(c, a), Nil))),
+        ordered,
+        state,
+        rv_bound,
+        allocated_union(
+          Cons(current, Cons(ck_resolve(c, a), Nil)),
+          ck_next_of(c),
+          AndIntro(
+            current_bound,
+            AndIntro(ck_resolve_allocated(c, a, And::right(state), a_bound), Trivial)
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem widen_alloc_after_arm(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
+  failed: Bool
+): AllocationAdvance(c, widen_after_arm(c, a, current, rv, failed)) {
+  match failed: AllocationAdvance(c, widen_after_arm(c, a, current, rv, failed)) {
+    false => allocation_advance_return(c, Star, state)
+    true => allocation_advance_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, next: Checker) => widen_final_fits(next, a, current, rv, not(success)),
+      ck_attempt_fits(c, a, current),
+      ck_attempt_fits_allocation(c, a, current, ordered, state, a_bound, current_bound),
+      And::left(ck_attempt_fits_run_frame(c, a, current, ordered)),
+      success => next => advanced => current_state => order => widen_alloc_final_fits(
+        next,
+        a,
+        current,
+        rv,
+        order,
+        current_state,
+        type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
+        type_allocated_weaken(current, ck_next_of(c), ck_next_of(next), advanced, current_bound),
+        type_allocated_weaken(TyVar(rv), ck_next_of(c), ck_next_of(next), advanced, rv_bound),
+        not(success)
+      )
+    )
+  }
+}
+pub theorem widen_alloc_after_current(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
+  failed: Bool
+): AllocationAdvance(c, widen_after_current(c, a, current, rv, failed)) {
+  match failed: AllocationAdvance(c, widen_after_current(c, a, current, rv, failed)) {
+    false => allocation_advance_return(c, Star, state)
+    true => allocation_advance_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, next: Checker) => widen_after_arm(next, a, current, rv, not(success)),
+      ck_widen_borrowed_arm(c, a, current),
+      ck_widen_borrowed_arm_allocation(c, a, current, ordered, state, a_bound, current_bound),
+      And::left(ck_widen_borrowed_arm_run_frame(c, a, current, ordered)),
+      success => next => advanced => current_state => order => widen_alloc_after_arm(
+        next,
+        a,
+        current,
+        rv,
+        order,
+        current_state,
+        type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
+        type_allocated_weaken(current, ck_next_of(c), ck_next_of(next), advanced, current_bound),
+        type_allocated_weaken(TyVar(rv), ck_next_of(c), ck_next_of(next), advanced, rv_bound),
+        not(success)
+      )
+    )
+  }
+}
+pub theorem widen_alloc_after_fn(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv)),
+  failed: Bool
+): AllocationAdvance(c, widen_after_fn(c, a, current, rv, failed)) {
+  match failed: AllocationAdvance(c, widen_after_fn(c, a, current, rv, failed)) {
+    false => allocation_advance_return(c, Star, state)
+    true => allocation_advance_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, next: Checker) => widen_after_current(next, a, current, rv, not(success)),
+      ck_widen_borrowed_current(c, a, current, rv),
+      ck_widen_borrowed_current_allocation(
+        c,
+        a,
+        current,
+        rv,
+        ordered,
+        state,
+        a_bound,
+        current_bound,
+        rv_bound
+      ),
+      And::left(ck_widen_borrowed_current_run_frame(c, a, current, rv, ordered)),
+      success => next => advanced => current_state => order => widen_alloc_after_current(
+        next,
+        a,
+        current,
+        rv,
+        order,
+        current_state,
+        type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
+        type_allocated_weaken(current, ck_next_of(c), ck_next_of(next), advanced, current_bound),
+        type_allocated_weaken(TyVar(rv), ck_next_of(c), ck_next_of(next), advanced, rv_bound),
+        not(success)
+      )
+    )
+  }
+}
+pub theorem widen_alloc_handle(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  current_bound: TypeAllocated(ck_next_of(c), current),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv))
+): AllocationAdvance(c, widen_handle(c, a, current, rv)) {
+  allocation_advance_bind(
+    Bool,
+    Unit,
+    c,
+    (success: Bool, next: Checker) => widen_after_fn(next, a, current, rv, not(success)),
+    ck_widen_fn(c, a, current, rv),
+    ck_widen_fn_allocation(c, a, current, rv, ordered, state, a_bound, current_bound, rv_bound),
+    And::left(ck_widen_fn_run_frame(c, a, current, rv, ordered)),
+    success => next => advanced => current_state => order => widen_alloc_after_fn(
+      next,
+      a,
+      current,
+      rv,
+      order,
+      current_state,
+      type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
+      type_allocated_weaken(current, ck_next_of(c), ck_next_of(next), advanced, current_bound),
+      type_allocated_weaken(TyVar(rv), ck_next_of(c), ck_next_of(next), advanced, rv_bound),
+      not(success)
+    )
+  )
+}
+pub theorem ck_handle_widen_allocation(
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  result_bound: TypeAllocated(ck_next_of(c), result),
+  rv_bound: TypeAllocated(ck_next_of(c), TyVar(rv))
+): AllocationAdvance(c, ck_handle_widen(c, a, result, rv)) {
+  Eq::subst(
+    (value: Mut1(Unit, Checker)) => AllocationAdvance(c, value),
+    Eq::sym(widen_handle_unf(c, a, result, rv)),
+    widen_alloc_handle(
+      c,
+      a,
+      ck_resolve(c, result),
+      rv,
+      ordered,
+      state,
+      a_bound,
+      ck_resolve_allocated(c, result, And::right(state), result_bound),
+      rv_bound
+    )
+  )
+}

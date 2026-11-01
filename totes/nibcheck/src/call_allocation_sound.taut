@@ -1,0 +1,393 @@
+import "argument_allocation_sound.taut"
+
+pub theorem allocation_result_ty_bind(
+  c: Checker,
+  k: (Ty, Checker) -> Mut1(Ty, Checker),
+  m: Mut1(Ty, Checker),
+  first: AllocationResult(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  tail: ∀ value: Ty. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ current: CheckerAllocation(
+    next
+  ). ∀ order: CkOrdered(
+    next
+  ). ∀ bounded: TypeAllocated(ck_next_of(next), value). AllocationResult(next, k(value, next))
+): AllocationResult(c, frame_bind(Ty, Ty, k, m)) {
+  match m: AllocationResult(c, frame_bind(Ty, Ty, k, m)) {
+    mut1(value, next) => allocation_result_start(
+      c,
+      next,
+      k(value, next),
+      And::left(And::left(first)),
+      tail(
+        value,
+        next,
+        And::left(And::left(first)),
+        And::right(And::left(first)),
+        ordered,
+        And::right(first)
+      )
+    ) }
+}
+pub theorem application_fn_arity_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  actual: TypeListAllocated(ck_next_of(c), args),
+  expected: TypeListAllocated(ck_next_of(c), ps),
+  bad: Bool
+): AllocationAdvance(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+  match bad: AllocationAdvance(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+    true => allocation_advance_rewrap(
+      c,
+      ck_error(
+        c,
+        cat4(
+          "a function of ",
+          Text::of_nat(list_len(ps)),
+          " values is given ",
+          Text::of_nat(list_len(args))
+        ),
+        span_of(term)
+      ),
+      AndIntro(Nat::le_refl(ck_next_of(c)), state)
+    )
+    false => allocation_advance_rewrap(
+      c,
+      ck_expect_args(args, c, ps, arguments),
+      ck_expect_args_allocation(args, c, ps, arguments, ordered, state, actual, expected)
+    ) }
+}
+pub theorem application_fn_known_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  r: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  actual: TypeListAllocated(ck_next_of(c), args),
+  expected: TypeListAllocated(ck_next_of(c), ps),
+  result_bound: TypeAllocated(ck_next_of(c), r),
+  known: Option(List(Ty))
+): AllocationResult(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+  match known: AllocationResult(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+    Some(kp) => allocation_result_return(c, r, state, result_bound)
+    None => allocation_result_bind(
+      Unit,
+      c,
+      (ignored: Unit, next: Checker) => mut1(r, next),
+      application_fn_arity(c, term, arguments, args, ps, not(Nat::eq(list_len(ps), list_len(args)))),
+      application_fn_arity_allocation(
+        c,
+        term,
+        arguments,
+        args,
+        ps,
+        ordered,
+        state,
+        actual,
+        expected,
+        not(Nat::eq(list_len(ps), list_len(args)))
+      ),
+      ignored => next => advanced => current => allocation_result_return(
+        next,
+        r,
+        current,
+        type_allocated_weaken(r, ck_next_of(c), ck_next_of(next), advanced, result_bound)
+      )
+    ) }
+}
+pub fn allocation_call_error(
+  c: Checker,
+  function: SurfaceTerm,
+  r: Ty,
+  unified: Bool
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Unit,
+    Ty,
+    (ignored: Unit, next: Checker) => mut1(r, next),
+    frame_error_if(c, "cannot infer a function type for this call", span_of(function), not(unified))
+  )
+}
+pub theorem allocation_call_error_ok(
+  c: Checker,
+  function: SurfaceTerm,
+  r: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), r),
+  unified: Bool
+): AllocationResult(c, allocation_call_error(c, function, r, unified)) {
+  allocation_result_bind(
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => mut1(r, next),
+    frame_error_if(
+      c,
+      "cannot infer a function type for this call",
+      span_of(function),
+      not(unified)
+    ),
+    allocation_error_if(
+      c,
+      "cannot infer a function type for this call",
+      span_of(function),
+      state,
+      not(unified)
+    ),
+    ignored => next => advanced => current => allocation_result_return(
+      next,
+      r,
+      current,
+      type_allocated_weaken(r, ck_next_of(c), ck_next_of(next), advanced, bounded)
+    )
+  )
+}
+pub fn allocation_call_unify(
+  c: Checker,
+  function: SurfaceTerm,
+  f: Ty,
+  args: List(Ty),
+  r: Ty
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Bool,
+    Ty,
+    (unified: Bool, next: Checker) => allocation_call_error(next, function, r, unified),
+    ck_unify(c, f, TyFn(args, r, KindShared))
+  )
+}
+pub theorem allocation_call_unify_ok(
+  c: Checker,
+  function: SurfaceTerm,
+  f: Ty,
+  args: List(Ty),
+  r: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  callee: TypeAllocated(ck_next_of(c), f),
+  actual: TypeListAllocated(ck_next_of(c), args),
+  bounded: TypeAllocated(ck_next_of(c), r)
+): AllocationResult(c, allocation_call_unify(c, function, f, args, r)) {
+  allocation_result_bind(
+    Bool,
+    c,
+    (unified: Bool, next: Checker) => allocation_call_error(next, function, r, unified),
+    ck_unify(c, f, TyFn(args, r, KindShared)),
+    allocation_advance_fixed(
+      c,
+      ck_unify(c, f, TyFn(args, r, KindShared)),
+      ck_unify_allocation(
+        c,
+        f,
+        TyFn(args, r, KindShared),
+        ordered,
+        state,
+        callee,
+        AndIntro(actual, bounded)
+      )
+    ),
+    unified => next => advanced => current => allocation_call_error_ok(
+      next,
+      function,
+      r,
+      current,
+      type_allocated_weaken(r, ck_next_of(c), ck_next_of(next), advanced, bounded),
+      unified
+    )
+  )
+}
+pub theorem application_fn_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  original: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  callee: TypeAllocated(ck_next_of(c), f),
+  actual: TypeListAllocated(ck_next_of(c), args),
+  fr: Ty,
+  bounded: TypeAllocated(ck_next_of(c), fr)
+): AllocationResult(c, application_fn(c, term, function, arguments, f, known, args, original, fr)) {
+  match fr: AllocationResult(
+    c,
+    application_fn(c, term, function, arguments, f, known, args, original, fr)
+  ) {
+    TyInt(w) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyBool => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyText => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyUnit => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyNever => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyDecimal => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyFloat => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyFn(ps, r, k) => application_fn_known_allocation(
+      c,
+      term,
+      arguments,
+      args,
+      ps,
+      r,
+      ordered,
+      state,
+      actual,
+      And::left(bounded),
+      And::right(bounded),
+      known
+    )
+    TyUnion(ts) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyProduct(ts) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyTagged(tags, inner) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyNamed(d, more) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyParam(n, k) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyInfo(h) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyBorrow(inner, mutable) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyVar(v) => allocation_result_ty_bind(
+      c,
+      (r: Ty, next: Checker) => allocation_call_unify(next, function, f, args, r),
+      ck_fresh(c),
+      ck_fresh_allocation_result(c, state),
+      And::left(run_frame_read(c, ck_fresh(c), ck_fresh_frame(c), ordered)),
+      r => next => advanced => current => order => result_bound => allocation_call_unify_ok(
+        next,
+        function,
+        f,
+        args,
+        r,
+        order,
+        current,
+        type_allocated_weaken(f, ck_next_of(c), ck_next_of(next), advanced, callee),
+        type_list_allocated_weaken(args, ck_next_of(c), ck_next_of(next), advanced, actual),
+        result_bound
+      )
+    )
+    TyPoly(gs, inner) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+    TyApp(h, a) => allocation_error_fresh(
+      c,
+      cat2(ty_show(original), " is not a function"),
+      span_of(function),
+      state
+    )
+  }
+}
+pub theorem ck_app_result_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  callee: TypeAllocated(ck_next_of(c), f),
+  actual: TypeListAllocated(ck_next_of(c), args)
+): AllocationResult(c, ck_app_result(c, term, function, arguments, f, known, args)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(application_fn_unf(c, term, function, arguments, f, known, args)),
+    application_fn_allocation(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      known,
+      args,
+      ty_unborrowed(ck_resolve(c, f)),
+      ordered,
+      state,
+      callee,
+      actual,
+      ty_unborrowed(ck_resolve(c, f)),
+      ty_unborrowed_allocated(
+        ck_resolve(c, f),
+        ck_next_of(c),
+        ck_resolve_allocated(c, f, And::right(state), callee)
+      )
+    )
+  )
+}

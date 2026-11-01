@@ -1,0 +1,226 @@
+import "program_body_recheck_sound.taut"
+import "prepare_error_sound.taut"
+
+pub fn body_bind_registration_fns_after_names(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker)
+): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Unit,
+    List(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
+    m
+  )
+}
+
+pub fn body_bind_registration_fns_after_data_names(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker)
+): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Unit,
+    List(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, next: Checker) => registration_fns_after_data_names(
+      next,
+      prelude,
+      program,
+      own
+    ),
+    m
+  )
+}
+
+pub theorem body_data_names_identity(
+  c: Checker,
+  fs: List(SurfaceData),
+  clean: DiagnosticClean(ck_st(ck_check_data_names(c, fs)))
+): ck_check_data_names(c, fs) = mut1(Star, c) {
+  Eq::trans(
+    data_names_check_unf(c, fs),
+    Eq::congr(
+      (duplicate: Option(SurfaceData)) => data_names_check(c, duplicate),
+      data_names_check_clean(
+        c,
+        types_duplicate_data(fs, Ordmap::empty()),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          data_names_check_unf(c, fs),
+          clean
+        )
+      )
+    )
+  )
+}
+pub theorem body_fn_names_identity(
+  c: Checker,
+  fs: List(SurfaceFn),
+  clean: DiagnosticClean(ck_st(ck_check_fn_names(c, fs)))
+): ck_check_fn_names(c, fs) = mut1(Star, c) {
+  Eq::trans(
+    decl_names_check_unf(c, fs),
+    Eq::congr(
+      (duplicate: Option(SurfaceFn)) => decl_names_check(c, duplicate),
+      decl_names_check_clean(
+        c,
+        types_duplicate_fn(fs, Ordmap::empty()),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          decl_names_check_unf(c, fs),
+          clean
+        )
+      )
+    )
+  )
+}
+pub theorem body_after_names_checked(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(registration_fns_after_names(c, prelude, program, own)))
+): DataBodyChecked(ck_datas_of(c), source) {
+  ck_recheck_datas_body(
+    member,
+    c,
+    registered,
+    ordinary,
+    position,
+    written_bind_input_clean(
+      Unit,
+      List(Pair(SurfaceFn, Scheme)),
+      ck_recheck_datas(types_data_decls(program), c),
+      (ignored: Unit, next: Checker) => registration_fns_after_fields(next, prelude, program, own),
+      ignored => next => registration_fns_after_fields_frame_errors(next, prelude, program, own),
+      clean
+    )
+  )
+}
+pub theorem body_after_data_names_checked(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(registration_fns_after_data_names(c, prelude, program, own)))
+): DataBodyChecked(ck_datas_of(c), source) {
+  let first_clean: DiagnosticClean(
+    ck_st(ck_check_fn_names(c, types_function_decls(program)))
+  ) := written_bind_input_clean(
+    Unit,
+    List(Pair(SurfaceFn, Scheme)),
+    ck_check_fn_names(c, types_function_decls(program)),
+    (ignored: Unit, next: Checker) => registration_fns_after_names(next, prelude, program, own),
+    ignored => next => registration_fns_after_names_frame_errors(next, prelude, program, own),
+    clean
+  )
+  body_after_names_checked(
+    c,
+    prelude,
+    program,
+    own,
+    source,
+    member,
+    registered,
+    ordinary,
+    position,
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(
+        ck_st(body_bind_registration_fns_after_names(prelude, program, own, m))
+      ),
+      body_fn_names_identity(c, types_function_decls(program), first_clean),
+      clean
+    )
+  )
+}
+pub theorem body_fns_checked(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(registration_fns(c, prelude, program, own)))
+): DataBodyChecked(ck_datas_of(c), source) {
+  let first_clean: DiagnosticClean(
+    ck_st(ck_check_data_names(c, types_data_decls(program)))
+  ) := written_bind_input_clean(
+    Unit,
+    List(Pair(SurfaceFn, Scheme)),
+    ck_check_data_names(c, types_data_decls(program)),
+    (ignored: Unit, next: Checker) => registration_fns_after_data_names(
+      next,
+      prelude,
+      program,
+      own
+    ),
+    ignored => next => registration_fns_after_data_names_frame_errors(next, prelude, program, own),
+    clean
+  )
+  body_after_data_names_checked(
+    c,
+    prelude,
+    program,
+    own,
+    source,
+    member,
+    registered,
+    ordinary,
+    position,
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(
+        ck_st(body_bind_registration_fns_after_data_names(prelude, program, own, m))
+      ),
+      body_data_names_identity(c, types_data_decls(program), first_clean),
+      clean
+    )
+  )
+}
+pub theorem ck_prepare_fns_body(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  registered: DataBodyRegistered(ck_datas_of(c), source),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own)))
+): DataBodyChecked(ck_datas_of(ck_st(ck_prepare_fns(c, prelude, program, own))), source) {
+  Eq::subst(
+    (env: Datas) => DataBodyChecked(env, source),
+    Eq::sym(Eq::congr(frame_read_datas, ck_prepare_fns_frame(c, prelude, program, own))),
+    body_fns_checked(
+      c,
+      prelude,
+      program,
+      own,
+      source,
+      member,
+      registered,
+      ordinary,
+      position,
+      Eq::subst(
+        (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+        registration_fns_unf(c, prelude, program, own),
+        clean
+      )
+    )
+  )
+}

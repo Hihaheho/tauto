@@ -1,0 +1,666 @@
+import "inference_lists.taut"
+
+pub fn inference_call_args(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  f: Ty,
+  known: Option(List(Ty))
+): Mut1(Ty, Checker) {
+  frame_bind(
+    List(Ty),
+    Ty,
+    (args: List(Ty), c1: Checker) => ck_rewrap1(
+      ck_app_result(c1, term, function, arguments, f, known, args)
+    ),
+    ck_app_args_in(j, c, arguments, known, env, 0)
+  )
+}
+
+pub theorem inference_call_args_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  f: Ty,
+  known: Option(List(Ty)),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_call_args(j, c, term, function, arguments, env, f, known)) {
+  run_frame_bind(
+    List(Ty),
+    Ty,
+    c,
+    (args: List(Ty), c1: Checker) => ck_rewrap1(
+      ck_app_result(c1, term, function, arguments, f, known, args)
+    ),
+    ck_app_args_in(j, c, arguments, known, env, 0),
+    inference_use_ck_app_args_in(j, c, arguments, known, env, 0, ordered, ih),
+    args => c1 => o_c1 => run_frame_rewrap(
+      c1,
+      ck_app_result(c1, term, function, arguments, f, known, args),
+      ck_app_result_run_frame(c1, term, function, arguments, f, known, args, o_c1)
+    )
+  )
+}
+
+pub fn inference_step_ck_app_call_in(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local)
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (t: Ty, c1: Checker) => frame_bind(
+      Ty,
+      Ty,
+      (f: Ty, c2: Checker) => inference_call_args(
+        j,
+        c2,
+        term,
+        function,
+        arguments,
+        env,
+        f,
+        ck_known_params(c2, f, list_len(arguments))
+      ),
+      ck_poly_instance(c1, function, t)
+    ),
+    ck_infer_in(j, c, function, env)
+  )
+}
+
+pub theorem inference_step_ck_app_call_in_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_step_ck_app_call_in(j, c, term, function, arguments, env)) {
+  run_frame_bind(
+    Ty,
+    Ty,
+    c,
+    (t: Ty, c1: Checker) => frame_bind(
+      Ty,
+      Ty,
+      (f: Ty, c2: Checker) => inference_call_args(
+        j,
+        c2,
+        term,
+        function,
+        arguments,
+        env,
+        f,
+        ck_known_params(c2, f, list_len(arguments))
+      ),
+      ck_poly_instance(c1, function, t)
+    ),
+    ck_infer_in(j, c, function, env),
+    inference_use_ck_infer_in(j, c, function, env, ordered, ih),
+    t => c1 => o_c1 => run_frame_bind(
+      Ty,
+      Ty,
+      c1,
+      (f: Ty, c2: Checker) => inference_call_args(
+        j,
+        c2,
+        term,
+        function,
+        arguments,
+        env,
+        f,
+        ck_known_params(c2, f, list_len(arguments))
+      ),
+      ck_poly_instance(c1, function, t),
+      ck_poly_instance_run_frame(c1, function, t, o_c1),
+      f => c2 => o_c2 => inference_call_args_frame(
+        j,
+        c2,
+        term,
+        function,
+        arguments,
+        env,
+        f,
+        ck_known_params(c2, f, list_len(arguments)),
+        ih,
+        o_c2
+      )
+    )
+  )
+}
+
+pub theorem inference_unf_ck_app_call_in(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local)
+): ck_app_call_in(Succ(j), c, term, function, arguments, env) = inference_step_ck_app_call_in(j, c, term, function, arguments, env) { Refl }
+
+pub fn inference_clone_rest(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  span: TySpan,
+  arg: SurfaceTerm,
+  rest: List(SurfaceTerm)
+): Mut1(Ty, Checker) {
+  match rest: Mut1(Ty, Checker) {
+    Nil => frame_bind(
+      Ty,
+      Ty,
+      (t0: Ty, c1: Checker) => ck_rewrap1(ck_clone_value(c1, t0, arg, span)),
+      ck_infer_in(j, c, arg, env)
+    )
+    Cons(x, more) => ck_rewrap1(ck_clone_bad(c, span))
+  }
+}
+
+pub theorem inference_clone_rest_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  span: TySpan,
+  arg: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
+  match rest: CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
+    Nil => run_frame_bind(
+      Ty,
+      Ty,
+      c,
+      (t0: Ty, c1: Checker) => ck_rewrap1(ck_clone_value(c1, t0, arg, span)),
+      ck_infer_in(j, c, arg, env),
+      inference_use_ck_infer_in(j, c, arg, env, ordered, ih),
+      t0 => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_clone_value(c1, t0, arg, span)),
+        frame_rewrap(
+          c1,
+          ck_clone_value(c1, t0, arg, span),
+          ck_clone_value_frame(c1, t0, arg, span)
+        ),
+        o_c1
+      )
+    )
+    Cons(x, more) => run_frame_read(
+      c,
+      ck_rewrap1(ck_clone_bad(c, span)),
+      frame_rewrap(c, ck_clone_bad(c, span), ck_clone_bad_frame(c, span)),
+      ordered
+    )
+  }
+}
+
+pub fn inference_clone_args(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  span: TySpan,
+  arguments: List(SurfaceTerm)
+): Mut1(Ty, Checker) {
+  match arguments: Mut1(Ty, Checker) {
+    Nil => ck_rewrap1(ck_clone_bad(c, span))
+    Cons(arg, rest) => inference_clone_rest(j, c, env, span, arg, rest)
+  }
+}
+
+pub theorem inference_clone_args_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  span: TySpan,
+  arguments: List(SurfaceTerm),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
+  match arguments: CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
+    Nil => run_frame_read(
+      c,
+      ck_rewrap1(ck_clone_bad(c, span)),
+      frame_rewrap(c, ck_clone_bad(c, span), ck_clone_bad_frame(c, span)),
+      ordered
+    )
+    Cons(arg, rest) => inference_clone_rest_frame(j, c, env, span, arg, rest, ih, ordered)
+  }
+}
+
+pub fn inference_step_ck_clone_of_in(
+  j: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  span: TySpan
+): Mut1(Ty, Checker) { inference_clone_args(j, c, env, span, arguments) }
+
+pub theorem inference_step_ck_clone_of_in_frame(
+  j: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  span: TySpan,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_step_ck_clone_of_in(j, c, arguments, env, span)
+) { inference_clone_args_frame(j, c, env, span, arguments, ih, ordered) }
+
+pub theorem inference_unf_ck_clone_of_in(
+  j: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  span: TySpan
+): ck_clone_of_in(Succ(j), c, arguments, env, span) = inference_step_ck_clone_of_in(j, c, arguments, env, span) { match arguments: ck_clone_of_in(Succ(j), c, arguments, env, span) = inference_step_ck_clone_of_in(j, c, arguments, env, span) {
+    Nil => Refl
+    Cons(arg, rest) => Refl
+  } }
+
+pub fn inference_argument_hint(
+  j: Nat,
+  c: Checker,
+  a: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  expected: Option(Ty),
+  lambda: Bool
+): Mut1(Unit, Checker) {
+  match lambda: Mut1(Unit, Checker) {
+    true => inference_set_hint(c, expected)
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem inference_argument_hint_frame(
+  j: Nat,
+  c: Checker,
+  a: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  expected: Option(Ty),
+  lambda: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_argument_hint(j, c, a, rest, known, env, i, expected, lambda)) {
+  match lambda: CkRunFrame(
+    c,
+    inference_argument_hint(j, c, a, rest, known, env, i, expected, lambda)
+  ) {
+    true => run_frame_read(
+      c,
+      inference_set_hint(c, expected),
+      inference_set_hint_frame(c, expected),
+      ordered
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn inference_argument(
+  j: Nat,
+  c: Checker,
+  a: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  expected: Option(Ty)
+): Mut1(List(Ty), Checker) {
+  frame_bind(
+    Unit,
+    List(Ty),
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Ty,
+      List(Ty),
+      (t: Ty, c2: Checker) => frame_bind(
+        Unit,
+        List(Ty),
+        (cleared: Unit, c3: Checker) => frame_bind(
+          Unit,
+          List(Ty),
+          (checked: Unit, c4: Checker) => frame_bind(
+            List(Ty),
+            List(Ty),
+            (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
+            ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
+          ),
+          ck_expect_opt(c3, t, expected, a)
+        ),
+        inference_set_hint(c2, None)
+      ),
+      ck_infer_in(j, c1, a, env)
+    ),
+    inference_argument_hint(j, c, a, rest, known, env, i, expected, ck_is_lambda(a))
+  )
+}
+
+pub theorem inference_argument_frame(
+  j: Nat,
+  c: Checker,
+  a: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  expected: Option(Ty),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_argument(j, c, a, rest, known, env, i, expected)) {
+  run_frame_bind(
+    Unit,
+    List(Ty),
+    c,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Ty,
+      List(Ty),
+      (t: Ty, c2: Checker) => frame_bind(
+        Unit,
+        List(Ty),
+        (cleared: Unit, c3: Checker) => frame_bind(
+          Unit,
+          List(Ty),
+          (checked: Unit, c4: Checker) => frame_bind(
+            List(Ty),
+            List(Ty),
+            (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
+            ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
+          ),
+          ck_expect_opt(c3, t, expected, a)
+        ),
+        inference_set_hint(c2, None)
+      ),
+      ck_infer_in(j, c1, a, env)
+    ),
+    inference_argument_hint(j, c, a, rest, known, env, i, expected, ck_is_lambda(a)),
+    inference_argument_hint_frame(
+      j,
+      c,
+      a,
+      rest,
+      known,
+      env,
+      i,
+      expected,
+      ck_is_lambda(a),
+      ih,
+      ordered
+    ),
+    ignored => c1 => o_c1 => run_frame_bind(
+      Ty,
+      List(Ty),
+      c1,
+      (t: Ty, c2: Checker) => frame_bind(
+        Unit,
+        List(Ty),
+        (cleared: Unit, c3: Checker) => frame_bind(
+          Unit,
+          List(Ty),
+          (checked: Unit, c4: Checker) => frame_bind(
+            List(Ty),
+            List(Ty),
+            (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
+            ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
+          ),
+          ck_expect_opt(c3, t, expected, a)
+        ),
+        inference_set_hint(c2, None)
+      ),
+      ck_infer_in(j, c1, a, env),
+      inference_use_ck_infer_in(j, c1, a, env, o_c1, ih),
+      t => c2 => o_c2 => run_frame_bind(
+        Unit,
+        List(Ty),
+        c2,
+        (cleared: Unit, c3: Checker) => frame_bind(
+          Unit,
+          List(Ty),
+          (checked: Unit, c4: Checker) => frame_bind(
+            List(Ty),
+            List(Ty),
+            (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
+            ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
+          ),
+          ck_expect_opt(c3, t, expected, a)
+        ),
+        inference_set_hint(c2, None),
+        run_frame_read(
+          c2,
+          inference_set_hint(c2, None),
+          inference_set_hint_frame(c2, None),
+          o_c2
+        ),
+        cleared => c3 => o_c3 => run_frame_bind(
+          Unit,
+          List(Ty),
+          c3,
+          (checked: Unit, c4: Checker) => frame_bind(
+            List(Ty),
+            List(Ty),
+            (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
+            ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1))
+          ),
+          ck_expect_opt(c3, t, expected, a),
+          ck_expect_opt_run_frame(c3, t, expected, a, o_c3),
+          checked => c4 => o_c4 => run_frame_bind(
+            List(Ty),
+            List(Ty),
+            c4,
+            (tl: List(Ty), c5: Checker) => mut1(Cons(t, tl), c5),
+            ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1)),
+            inference_use_ck_app_args_in(j, c4, rest, known, env, Nat::add(i, 1), o_c4, ih),
+            tl => c5 => o_c5 => run_frame_return(c5, Cons(t, tl), o_c5)
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn inference_arguments(
+  j: Nat,
+  c: Checker,
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  arguments: List(SurfaceTerm)
+): Mut1(List(Ty), Checker) {
+  match arguments: Mut1(List(Ty), Checker) {
+    Nil => mut1(Nil, c)
+    Cons(a, rest) => inference_argument(j, c, a, rest, known, env, i, ck_expected(known, i))
+  }
+}
+
+pub theorem inference_arguments_frame(
+  j: Nat,
+  c: Checker,
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  arguments: List(SurfaceTerm),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
+  match arguments: CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
+    Nil => run_frame_return(c, Nil, ordered)
+    Cons(a, rest) => inference_argument_frame(
+      j,
+      c,
+      a,
+      rest,
+      known,
+      env,
+      i,
+      ck_expected(known, i),
+      ih,
+      ordered
+    )
+  }
+}
+
+pub fn inference_step_ck_app_args_in(
+  j: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat
+): Mut1(List(Ty), Checker) { inference_arguments(j, c, known, env, i, arguments) }
+
+pub theorem inference_step_ck_app_args_in_frame(
+  j: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_step_ck_app_args_in(j, c, arguments, known, env, i)
+) { inference_arguments_frame(j, c, known, env, i, arguments, ih, ordered) }
+
+pub theorem inference_unf_ck_app_args_in(
+  j: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat
+): ck_app_args_in(Succ(j), c, arguments, known, env, i) = inference_step_ck_app_args_in(j, c, arguments, known, env, i) { match arguments: ck_app_args_in(Succ(j), c, arguments, known, env, i) = inference_step_ck_app_args_in(j, c, arguments, known, env, i) {
+    Nil => Refl
+    Cons(a, rest) => Refl
+  } }
+
+pub fn inference_match_answer(j: Nat, c: Checker, result: Option(Ty)): Mut1(Ty, Checker) {
+  match result: Mut1(Ty, Checker) {
+    None => mut1(TyNever, c)
+    Some(t) => mut1(t, c)
+  }
+}
+
+pub theorem inference_match_answer_frame(
+  j: Nat,
+  c: Checker,
+  result: Option(Ty),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_match_answer(j, c, result)) {
+  match result: CkRunFrame(c, inference_match_answer(j, c, result)) {
+    None => run_frame_return(c, TyNever, ordered)
+    Some(t) => run_frame_return(c, t, ordered)
+  }
+}
+
+pub fn inference_step_ck_match_expr_in(
+  j: Nat,
+  c: Checker,
+  scrutinee: SurfaceTerm,
+  arms: List(SurfaceArm),
+  env: List(Local),
+  span: TySpan
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (s: Ty, c1: Checker) => frame_bind(
+      Option(Ty),
+      Ty,
+      (result: Option(Ty), c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
+        ck_check_covers(c2, s, arms, span)
+      ),
+      ck_match_arms_in(j, c1, arms, s, env, None)
+    ),
+    ck_infer_in(j, c, scrutinee, env)
+  )
+}
+
+pub theorem inference_step_ck_match_expr_in_frame(
+  j: Nat,
+  c: Checker,
+  scrutinee: SurfaceTerm,
+  arms: List(SurfaceArm),
+  env: List(Local),
+  span: TySpan,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span)) {
+  run_frame_bind(
+    Ty,
+    Ty,
+    c,
+    (s: Ty, c1: Checker) => frame_bind(
+      Option(Ty),
+      Ty,
+      (result: Option(Ty), c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
+        ck_check_covers(c2, s, arms, span)
+      ),
+      ck_match_arms_in(j, c1, arms, s, env, None)
+    ),
+    ck_infer_in(j, c, scrutinee, env),
+    inference_use_ck_infer_in(j, c, scrutinee, env, ordered, ih),
+    s => c1 => o_c1 => run_frame_bind(
+      Option(Ty),
+      Ty,
+      c1,
+      (result: Option(Ty), c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
+        ck_check_covers(c2, s, arms, span)
+      ),
+      ck_match_arms_in(j, c1, arms, s, env, None),
+      inference_use_ck_match_arms_in(j, c1, arms, s, env, None, o_c1, ih),
+      result => c2 => o_c2 => run_frame_bind(
+        Unit,
+        Ty,
+        c2,
+        (checked: Unit, c3: Checker) => inference_match_answer(j, c3, result),
+        ck_check_covers(c2, s, arms, span),
+        run_frame_read(
+          c2,
+          ck_check_covers(c2, s, arms, span),
+          ck_check_covers_frame(c2, s, arms, span),
+          o_c2
+        ),
+        checked => c3 => o_c3 => inference_match_answer_frame(j, c3, result, ih, o_c3)
+      )
+    )
+  )
+}
+
+pub theorem inference_unf_ck_match_expr_in(
+  j: Nat,
+  c: Checker,
+  scrutinee: SurfaceTerm,
+  arms: List(SurfaceArm),
+  env: List(Local),
+  span: TySpan
+): ck_match_expr_in(Succ(j), c, scrutinee, arms, env, span) = inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span) { Refl }

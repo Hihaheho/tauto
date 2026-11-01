@@ -1,0 +1,428 @@
+// Computed examples: boundaries and attacks on small histories.
+
+import "../src/engine.taut"
+
+// Small timestamps keep boundary examples readable. They denote seconds, not wall time.
+pub fn sample_key(): IxKey { IxKey::Mk(1, 1) }
+pub fn sample_root(index: Nat, revision: Nat): IxState {
+  IxState::Mk(
+    index,
+    10,
+    0,
+    0,
+    4,
+    IxPoint::Mk(revision, index),
+    Cons(IxCheckpoint::Mk(IxPoint::Mk(revision, index), 0), Nil),
+    Nil,
+    Nil,
+    Nil,
+    Nil,
+    false
+  )
+}
+pub fn alice0(): IxState { sample_root(1, 0) }
+pub fn alice_first(): IxBatch {
+  IxBatch::Mk(
+    1,
+    1,
+    4,
+    10,
+    IxPoint::Mk(0, 1),
+    IxPoint::Mk(1, 11),
+    Cons(IxObserve(sample_key(), 7, 1), Cons(IxDecide(sample_key(), true), Nil))
+  )
+}
+pub fn alice1(): IxState { ix_commit(alice0(), alice_first()) }
+pub fn alice_refresh(): IxBatch {
+  IxBatch::Mk(2, 4, 20, 10, IxPoint::Mk(1, 11), IxPoint::Mk(2, 12), Nil)
+}
+pub fn alice2(): IxState { ix_commit(alice1(), alice_refresh()) }
+pub fn bob0(): IxState { sample_root(2, 10) }
+pub fn bob_batch(): IxBatch {
+  IxBatch::Mk(
+    1,
+    4,
+    20,
+    10,
+    IxPoint::Mk(10, 2),
+    IxPoint::Mk(11, 21),
+    Cons(MkIxWitness(IxReceipt::Mk(1, 101, IxPoint::Mk(2, 12), 4)), Nil)
+  )
+}
+pub fn bob1(): IxState { ix_commit(bob0(), bob_batch()) }
+pub fn alice_trust(): IxTrust { IxTrust::Mk(1, 101, IxPoint::Mk(0, 1)) }
+pub fn bob_trust(): IxTrust { IxTrust::Mk(2, 102, IxPoint::Mk(10, 2)) }
+pub fn sample_observers(): List(IxTrust) { Cons(alice_trust(), Nil) }
+pub fn sample_witnesses(): List(IxWitness) { Cons(IxRemote(bob_trust()), Nil) }
+pub fn sample_states(): List(IxState) { Cons(alice2(), Cons(bob1(), Nil)) }
+pub fn sample_origins(now: Nat): List(IxOrigin) {
+  Cons(
+    IxOrigin::Mk(1, 101, IxPoint::Mk(2, 12), now),
+    Cons(IxOrigin::Mk(2, 102, IxPoint::Mk(11, 21), now), Nil)
+  )
+}
+pub fn sample_limits(): IxLimits { IxLimits::Mk(5, 20, 3) }
+pub fn sample_eligible(now: Nat): Bool {
+  ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(now),
+    Nil,
+    now,
+    sample_key(),
+    7
+  )
+}
+
+// Valid roots and batches; no fixture silently depends on ix_commit's failure fallback.
+pub theorem sample_root_valid(): ix_root(10, IxPoint::Mk(0, 1), 0, 4) = Some(alice0()) { Refl }
+pub theorem sample_first_valid(): ix_step(alice0(), alice_first()) = Some(alice1()) { Refl }
+pub theorem sample_refresh_valid(): ix_step(alice1(), alice_refresh()) = Some(alice2()) { Refl }
+pub theorem sample_bob_valid(): ix_step(bob0(), bob_batch()) = Some(bob1()) { Refl }
+pub theorem sample_rebuild(): ix_rebuild(10, IxPoint::Mk(0, 1), 0, 4, Cons(alice_first(), Cons(alice_refresh(), Nil))) = Some(alice2()) { Refl }
+pub theorem sample_age_boundary_accept(): sample_eligible(9) = true { Refl }
+pub theorem sample_one_second_early(): sample_eligible(8) = false { Refl }
+pub theorem sample_expiry_boundary(): sample_eligible(20) = false { Refl }
+
+// The receipt covers a later checkpoint with an EMPTY batch; the observation is in its prefix.
+pub theorem sample_later_checkpoint_covers(): ix_covers(alice2(), IxObservation::Mk(sample_key(), 7, 1, 1), IxPoint::Mk(2, 12)) = true { Refl }
+pub theorem sample_earlier_checkpoint_does_not_cover(): ix_covers(alice2(), IxObservation::Mk(sample_key(), 7, 1, 1), IxPoint::Mk(0, 1)) = false { Refl }
+pub theorem sample_wrong_checkpoint_hash(): ix_covers(alice2(), IxObservation::Mk(sample_key(), 7, 1, 1), IxPoint::Mk(2, 99)) = false { Refl }
+pub theorem sample_expired_historical_checkpoint_covers(): ix_receipt_ready(
+    alice_trust(),
+    alice2(),
+    IxObservation::Mk(sample_key(), 7, 1, 1),
+    9,
+    5,
+    IxReceipt::Mk(1, 101, IxPoint::Mk(1, 11), 4)
+  ) = true { Refl }
+
+// Backdating the observer cannot remove the independently required witness delay.
+pub theorem sample_backdating_cannot_accelerate(): ix_observation_ready(
+    alice_trust(),
+    alice2(),
+    sample_key(),
+    7,
+    sample_states(),
+    sample_origins(8),
+    Nil,
+    sample_witnesses(),
+    8,
+    sample_limits(),
+    IxObservation::Mk(sample_key(), 7, 0, 1)
+  ) = false { Refl }
+pub theorem sample_future_receipt_rejected_even_zero_age(): ix_mature(10, 9, 0) = false { Refl }
+
+// Empty or missing required evidence never turns into vacuous acceptance.
+pub theorem sample_empty_observers_rejected(): ix_eligible(
+    Nil,
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_empty_witnesses_rejected(): ix_eligible(
+    sample_observers(),
+    Nil,
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_missing_observer_rejected(): ix_eligible(
+    Cons(alice_trust(), Cons(IxTrust::Mk(3, 103, IxPoint::Mk(20, 3)), Nil)),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_missing_witness_rejected(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    Cons(alice2(), Nil),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_extra_witness_must_also_mature(): ix_eligible(
+    sample_observers(),
+    Cons(IxLocal, sample_witnesses()),
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Cons(IxReceipt::Mk(1, 101, IxPoint::Mk(2, 12), 6), Nil),
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_local_witness_accepts(): ix_eligible(
+    sample_observers(),
+    Cons(IxLocal, Nil),
+    sample_limits(),
+    Cons(alice2(), Nil),
+    Cons(IxOrigin::Mk(1, 101, IxPoint::Mk(2, 12), 9), Nil),
+    Cons(IxReceipt::Mk(1, 101, IxPoint::Mk(2, 12), 4), Nil),
+    9,
+    sample_key(),
+    7
+  ) = true { Refl }
+pub theorem sample_self_witness_rejected(): ix_policy_ok(sample_observers(), Cons(IxRemote(alice_trust()), Nil), sample_limits()) = false { Refl }
+pub theorem sample_duplicate_observer_rejected(): ix_policy_ok(Cons(alice_trust(), sample_observers()), sample_witnesses(), sample_limits()) = false { Refl }
+pub theorem sample_same_source_different_identity_rejected(): ix_policy_ok(
+    sample_observers(),
+    Cons(IxRemote(IxTrust::Mk(2, 101, IxPoint::Mk(10, 2))), Nil),
+    sample_limits()
+  ) = false { Refl }
+pub theorem sample_duplicate_views_rejected(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    Cons(alice0(), sample_states()),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+
+// Authentication is independent of cross-index observations.
+pub theorem sample_peer_receipt_does_not_authenticate_observer(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    Cons(IxOrigin::Mk(2, 102, IxPoint::Mk(11, 21), 9), Nil),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_old_origin_head_rejected(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    Cons(IxOrigin::Mk(1, 101, IxPoint::Mk(1, 11), 9), sample_origins(0)),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_stale_origin_check_rejected(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(5),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_origin_check_boundary_accepted(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(6),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = true { Refl }
+pub theorem sample_future_origin_check_rejected(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(10),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_source_hash_mismatch_rejected(): ix_usable(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7,
+    8
+  ) = false { Refl }
+
+pub fn alice_next(
+  events: List(IxEvent)
+): IxBatch { IxBatch::Mk(3, 9, 20, 10, IxPoint::Mk(2, 12), IxPoint::Mk(3, 13), events) }
+
+pub theorem sample_duplicate_observation_rejected(): ix_step(alice2(), alice_next(Cons(IxObserve(sample_key(), 8, 0), Nil))) = None { Refl }
+pub theorem sample_same_batch_duplicate_rejected(): ix_step(
+    alice0(),
+    IxBatch::Mk(
+      1,
+      1,
+      4,
+      10,
+      IxPoint::Mk(0, 1),
+      IxPoint::Mk(1, 11),
+      Cons(IxObserve(sample_key(), 7, 1), Cons(IxObserve(sample_key(), 7, 1), Nil))
+    )
+  ) = None { Refl }
+pub theorem sample_atomic_bad_tail(): ix_commit(
+    alice2(),
+    alice_next(Cons(IxObserve(IxKey::Mk(1, 2), 8, 9), Cons(IxObserve(sample_key(), 9, 0), Nil)))
+  ) = alice2() { Refl }
+pub theorem sample_unknown_decision_rejected(): ix_step(alice2(), alice_next(Cons(IxDecide(IxKey::Mk(1, 2), true), Nil))) = None { Refl }
+pub theorem sample_new_observation_not_auto_accepted(): ix_vote_for(
+    IxKey::Mk(1, 2),
+    ix_state_votes(ix_commit(alice2(), alice_next(Cons(IxObserve(IxKey::Mk(1, 2), 8, 9), Nil))))
+  ) = false { Refl }
+pub theorem sample_last_decision_wins(): ix_vote_for(
+    sample_key(),
+    ix_state_votes(
+      ix_commit(
+        alice2(),
+        alice_next(Cons(IxDecide(sample_key(), false), Cons(IxDecide(sample_key(), true), Nil)))
+      )
+    )
+  ) = true { Refl }
+pub theorem sample_reject_takes_effect(): ix_observer_ready(
+    sample_key(),
+    7,
+    Cons(ix_commit(alice2(), alice_next(Cons(IxDecide(sample_key(), false), Nil))), Cons(bob1(), Nil)),
+    Cons(
+      IxOrigin::Mk(1, 101, IxPoint::Mk(3, 13), 9),
+      Cons(IxOrigin::Mk(2, 102, IxPoint::Mk(11, 21), 9), Nil)
+    ),
+    Nil,
+    sample_witnesses(),
+    9,
+    sample_limits(),
+    alice_trust()
+  ) = false { Refl }
+pub theorem sample_withdrawal_cannot_be_reaccepted(): ix_step(
+    alice2(),
+    alice_next(Cons(IxWithdraw(sample_key()), Cons(IxDecide(sample_key(), true), Nil)))
+  ) = None { Refl }
+pub theorem sample_withdrawal_cannot_be_reobserved(): ix_step(
+    alice2(),
+    alice_next(Cons(IxWithdraw(sample_key()), Cons(IxObserve(sample_key(), 7, 9), Nil)))
+  ) = None { Refl }
+pub theorem sample_event_after_retirement_rejected(): ix_step(alice2(), alice_next(Cons(IxRetire, Cons(IxDecide(sample_key(), true), Nil)))) = None { Refl }
+pub theorem sample_next_batch_after_retirement_rejected(): ix_step(
+    ix_commit(alice2(), alice_next(Cons(IxRetire, Nil))),
+    IxBatch::Mk(4, 10, 20, 10, IxPoint::Mk(3, 13), IxPoint::Mk(4, 14), Nil)
+  ) = None { Refl }
+pub theorem sample_config_change_rejected(): ix_step(alice2(), IxBatch::Mk(3, 9, 20, 11, IxPoint::Mk(2, 12), IxPoint::Mk(3, 13), Nil)) = None { Refl }
+pub theorem sample_wrong_parent_rejected(): ix_step(alice2(), IxBatch::Mk(3, 9, 20, 10, IxPoint::Mk(1, 11), IxPoint::Mk(3, 13), Nil)) = None { Refl }
+pub theorem sample_sequence_gap_rejected(): ix_step(alice2(), IxBatch::Mk(4, 9, 20, 10, IxPoint::Mk(2, 12), IxPoint::Mk(3, 13), Nil)) = None { Refl }
+pub theorem sample_issued_time_rollback_rejected(): ix_step(alice2(), IxBatch::Mk(3, 3, 20, 10, IxPoint::Mk(2, 12), IxPoint::Mk(3, 13), Nil)) = None { Refl }
+pub theorem sample_fresh_repeated_batch_rejected(): ix_step(alice2(), alice_refresh()) = None { Refl }
+pub theorem sample_replay_is_noop(): ix_ingest(alice2(), alice_refresh()) = Some(alice2()) { Refl }
+
+pub theorem sample_clock_rollback_rejected(): ix_evaluate(
+    10,
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+
+pub fn sample_bad_batch(): IxBatch { alice_next(Cons(IxObserve(sample_key(), 8, 0), Nil)) }
+
+pub theorem sample_grounded_invalid_batch_freezes(): ix_ingest_grounded(IxOpen(alice2()), sample_bad_batch()) = IxFrozen(alice2()) { Refl }
+pub theorem sample_frozen_required_observer_blocks_admission(): ix_evaluate_ledgers(
+    9,
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    Cons(ix_ingest_grounded(IxOpen(alice2()), sample_bad_batch()), Cons(IxOpen(bob1()), Nil)),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_open_duplicate_cannot_hide_freeze(): ix_evaluate_ledgers(
+    9,
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    Cons(IxFrozen(alice2()), Cons(IxOpen(alice2()), Cons(IxOpen(bob1()), Nil))),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_pin_advances_without_changing_source(): ix_advance_pin(alice_trust(), alice2(), sample_origins(9)) = Some(IxTrust::Mk(1, 101, IxPoint::Mk(2, 12))) { Refl }
+pub theorem sample_current_pin_blocks_rollback(): ix_eligible(
+    Cons(IxTrust::Mk(1, 101, IxPoint::Mk(3, 13)), Nil),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    sample_origins(9),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+
+pub theorem sample_stale_known_checkpoint_is_not_a_fork(): ix_ingest_grounded(IxOpen(alice2()), alice_first()) = IxOpen(alice2()) { Refl }
+pub theorem sample_retirement_still_advances_pin(): ix_advance_pin(
+    alice_trust(),
+    ix_commit(alice2(), alice_next(Cons(IxRetire, Nil))),
+    Cons(IxOrigin::Mk(1, 101, IxPoint::Mk(3, 13), 9), Nil)
+  ) = Some(IxTrust::Mk(1, 101, IxPoint::Mk(3, 13))) { Refl }
+pub theorem sample_expired_extension_still_advances_pin(): ix_advance_pin(alice_trust(), alice2(), sample_origins(20)) = Some(IxTrust::Mk(1, 101, IxPoint::Mk(2, 12))) { Refl }
+
+// A fresh old reply may not mask a newer advertised head whose history is unavailable.
+pub theorem sample_new_origin_head_requires_new_history(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    Cons(
+      IxOrigin::Mk(1, 101, IxPoint::Mk(3, 13), 9),
+      Cons(IxOrigin::Mk(2, 102, IxPoint::Mk(11, 21), 9), Nil)
+    ),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }
+pub theorem sample_old_origin_fact_cannot_mask_new_head(): ix_eligible(
+    sample_observers(),
+    sample_witnesses(),
+    sample_limits(),
+    sample_states(),
+    Cons(IxOrigin::Mk(1, 101, IxPoint::Mk(3, 13), 9), sample_origins(9)),
+    Nil,
+    9,
+    sample_key(),
+    7
+  ) = false { Refl }

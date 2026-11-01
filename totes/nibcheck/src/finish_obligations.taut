@@ -1,0 +1,123 @@
+import "diagnostic_lists.taut"
+
+pub def DiagnosticKept(c: Checker, k: TyKept): Prop := finish_kept_bad(c, k) = false
+pub theorem diagnostic_kept_unf(
+  k: TyKept,
+  rest: List(TyKept),
+  c: Checker
+): ck_check_kept(Cons(k, rest), c) = diagnostic_after(
+    (next: Checker) => ck_check_kept(rest, next),
+    frame_error_if(
+      c,
+      "a generic escapes the type that binds it",
+      TySpan { start: 0, end: 0 },
+      finish_kept_bad(c, k)
+    )
+  ) { Refl }
+pub theorem ck_check_kept_accepts(
+  xs: List(TyKept),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_kept(xs, c)))
+): DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) {
+  match xs: DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(k, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticKept, Cons(k, rest), c, z),
+      Eq::sym(diagnostic_kept_unf(k, rest, c)),
+      diagnostic_items_cons_accepts(
+        DiagnosticKept,
+        k,
+        rest,
+        c,
+        frame_error_if(
+          c,
+          "a generic escapes the type that binds it",
+          TySpan { start: 0, end: 0 },
+          finish_kept_bad(c, k)
+        ),
+        (next: Checker) => ck_check_kept(rest, next),
+        h => diagnostic_if_sound(
+          c,
+          "a generic escapes the type that binds it",
+          TySpan { start: 0, end: 0 },
+          finish_kept_bad(c, k),
+          h
+        ),
+        next => h => ck_check_kept_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_kept_unf(k, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem ck_check_kept_identity(
+  xs: List(TyKept),
+  c: Checker
+): DiagnosticIdentity(
+  c,
+  ck_check_kept(xs, c)
+) { clean => And::right(ck_check_kept_accepts(xs, c, clean)) }
+
+pub def DiagnosticClosures(c: Checker, r: TyClosure): Prop := finish_closure_bad(c, r) = false
+pub theorem diagnostic_closures_unf(
+  r: TyClosure,
+  rest: List(TyClosure),
+  c: Checker
+): ck_check_closures(Cons(r, rest), c) = diagnostic_after(
+    (next: Checker) => ck_check_closures(rest, next),
+    frame_error_if(
+      c,
+      "a closure cannot return a borrow",
+      finish_closure_span(r),
+      finish_closure_bad(c, r)
+    )
+  ) { Refl }
+pub theorem ck_check_closures_accepts(
+  xs: List(TyClosure),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_closures(xs, c)))
+): DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) {
+  match xs: DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(r, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticClosures, Cons(r, rest), c, z),
+      Eq::sym(diagnostic_closures_unf(r, rest, c)),
+      diagnostic_items_cons_accepts(
+        DiagnosticClosures,
+        r,
+        rest,
+        c,
+        frame_error_if(
+          c,
+          "a closure cannot return a borrow",
+          finish_closure_span(r),
+          finish_closure_bad(c, r)
+        ),
+        (next: Checker) => ck_check_closures(rest, next),
+        h => diagnostic_if_sound(
+          c,
+          "a closure cannot return a borrow",
+          finish_closure_span(r),
+          finish_closure_bad(c, r),
+          h
+        ),
+        next => h => ck_check_closures_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_closures_unf(r, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem ck_check_closures_identity(
+  xs: List(TyClosure),
+  c: Checker
+): DiagnosticIdentity(
+  c,
+  ck_check_closures(xs, c)
+) { clean => And::right(ck_check_closures_accepts(xs, c, clean)) }

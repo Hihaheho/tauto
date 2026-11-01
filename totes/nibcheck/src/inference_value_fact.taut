@@ -1,0 +1,64 @@
+import "inference_lists.taut"
+import "diagnostic_sound.taut"
+
+pub fn inference_record_after(term: SurfaceTerm, m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (ty: Ty, next: Checker) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, last: Checker) => mut1(ty, last),
+      access_record_term(next, term, ty)
+    ),
+    m
+  )
+}
+pub theorem inference_record_after_sound(
+  p: (Ty) -> Prop,
+  term: SurfaceTerm,
+  m: Mut1(Ty, Checker),
+  derived: ∀ accepted: DiagnosticClean(ck_st(m)). p(ck_val(m)),
+  clean: DiagnosticClean(ck_st(inference_record_after(term, m)))
+): p(ck_val(inference_record_after(term, m))) {
+  match m: p(ck_val(inference_record_after(term, m))) {
+    mut1(ty, next) => derived(clean)
+  }
+}
+pub theorem ck_infer_value_fact(
+  p: (Ty) -> Prop,
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ih: ∀ fuel: Nat. ∀ accepted: DiagnosticClean(
+    ck_st(ck_infer_term_in(fuel, c, term, env))
+  ). p(ck_val(ck_infer_term_in(fuel, c, term, env))),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, term, env)))
+): p(ck_val(ck_infer_in(k, c, term, env))) {
+  match k: p(ck_val(ck_infer_in(k, c, term, env))) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan {start: 0, end: 0},
+        clean
+      )
+    )
+    Succ(j) => Eq::subst(
+      (m: Mut1(Ty, Checker)) => p(ck_val(m)),
+      Eq::sym(inference_unf_ck_infer_in(j, c, term, env)),
+      inference_record_after_sound(
+        p,
+        term,
+        ck_infer_term_in(j, c, term, env),
+        accepted => ih(j, accepted),
+        Eq::subst(
+          (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+          inference_unf_ck_infer_in(j, c, term, env),
+          clean
+        )
+      )
+    )
+  }
+}

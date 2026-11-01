@@ -1,0 +1,86 @@
+import "allocation_poly_map.taut"
+
+pub fn allocation_state_view(
+  c: Checker
+): Pair(Nat, Ordmap(Nat, Ty)) { Pair { fst: ck_next_of(c), snd: ck_subst_of(c) } }
+pub fn allocation_view_valid(r#view: Pair(Nat, Ordmap(Nat, Ty))): Prop {
+  match r#view: Prop {
+    Pair { fst: limit, snd: subst } => And(
+      SubstFutureEmpty(limit, subst),
+      SubstValuesAllocated(limit, subst)
+    )
+  }
+}
+pub theorem allocation_state_transfer(
+  c: Checker,
+  next: Checker,
+  same: allocation_state_view(c) = allocation_state_view(next),
+  allocated: CheckerAllocation(c)
+): CheckerAllocation(next) {
+  Eq::subst(allocation_view_valid, same, allocated)
+}
+pub theorem allocation_rigid_state_after(
+  c: Checker,
+  generic: Pair(Text, Kind),
+  value: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  same: allocation_state_view(c) = allocation_state_view(ck_st(m))
+): allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) {
+  match m: allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) {
+    mut1(map, next) => same
+  }
+}
+pub theorem ck_rigid_allocation_state(
+  gs: List(Pair(Text, Kind)),
+  c: Checker
+): allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) {
+  match gs: allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) {
+    Nil => Refl
+    Cons(generic, rest) => allocation_rigid_state_after(
+      c,
+      generic,
+      TyParam(
+        cat3(tk_first(generic), "#", Text::of_nat(Nat::add(ck_rigids_of(c), 1))),
+        tk_second(generic)
+      ),
+      ck_rigid(rest, ck_st(ck_bump_rigids(c))),
+      ck_rigid_allocation_state(rest, ck_st(ck_bump_rigids(c)))
+    )
+  }
+}
+pub theorem ck_rigid_allocation(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  allocated: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_rigid(gs, c))) {
+  allocation_state_transfer(c, ck_st(ck_rigid(gs, c)), ck_rigid_allocation_state(gs, c), allocated)
+}
+pub theorem ck_keep_allocation_state(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty
+): allocation_state_view(c) = allocation_state_view(ck_st(ck_keep(c, gs, rigid, a, b))) {
+  Bool::cases(
+    (flag: Bool) => allocation_state_view(c) = allocation_state_view(ck_st(ck_keep_k(c, gs, rigid, a, b, flag))),
+    ck_rigid_kept(c, gs, rigid, a, b),
+    ignored => Refl,
+    ignored => Refl
+  )
+}
+pub theorem ck_keep_allocation(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  allocated: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_keep(c, gs, rigid, a, b))) {
+  allocation_state_transfer(
+    c,
+    ck_st(ck_keep(c, gs, rigid, a, b)),
+    ck_keep_allocation_state(c, gs, rigid, a, b),
+    allocated
+  )
+}

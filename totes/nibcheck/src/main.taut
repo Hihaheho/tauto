@@ -3,123 +3,125 @@
 // differential test's input, `docs/design/self-host.md`). PRELUDE is the file of
 // the standard library.
 
-fn nibcheck_read(
+pub fn nibcheck_read(
   &t: SyntaxTables,
   classes: UnicodeClasses,
   path: Text,
-  base: u64
-) -> Option(List(SurfaceStmt)) {
-  match os_read_file(path) {
+  base: Nat
+): Option(List(SurfaceStmt)) {
+  match read_file(path) {
     Err(e) => None
     Ok(source) => surface_parse_program(t, classes, source, base)
   }
 }
 
-fn nibcheck_rows_each(
-  &t: SyntaxTables,
-  classes: UnicodeClasses,
-  prelude: List(SurfaceStmt),
-  paths: List(Text)
-) -> () {
-  match paths {
-    Nil => ()
-    Cons(path, rest) => {
-      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
-      match nibcheck_read(t, classes, path, 0) {
-        None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
-        Some(program) => os_print(rows_dump(rows_check(prelude, modules_resolve(program).stmts)))
-      }
-      nibcheck_rows_each(t, classes, prelude, rest)
+pub(open) enum NibcheckMode {
+  NibcheckRows
+  NibcheckTypes
+  NibcheckLin
+}
+
+pub fn nibcheck_mode(written: Text): Option(NibcheckMode) {
+  if written == "--rows" { Some(NibcheckRows) } else if written == "--types" {
+    Some(NibcheckTypes)
+  } else if written == "--lin" { Some(NibcheckLin) } else { None }
+}
+
+// The prelude and the program get their occurrences here, once, before the
+// checker sees them: the prelude in one namespace and the program in another,
+// so that no two of their nodes share one. What the checker makes from them
+// (an instance's methods as functions) keeps the occurrences of their nodes.
+pub fn nibcheck_index_prelude(prelude: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_index_program(prelude, 0)
+}
+
+pub fn nibcheck_index_program(program: List(SurfaceStmt)): List(SurfaceStmt) {
+  surface_index_program(program, 1)
+}
+
+pub fn nibcheck_missing_occurrence(): Text {
+  Text::concat_all(Cons("error: a term has no occurrence", Cons(text_newline(), Nil)))
+}
+
+pub fn nibcheck_types(prelude: List(SurfaceStmt), resolved: ModResolved): Text {
+  let program := nibcheck_index_program(resolved.stmts)
+  let report := types_check(nibcheck_index_prelude(prelude), program, resolved.errors)
+  if report_missing_occurrence(report) { nibcheck_missing_occurrence() } else {
+    types_dump(report)
+  }
+}
+
+pub fn nibcheck_lin(prelude: List(SurfaceStmt), resolved: ModResolved): Text {
+  let indexed := nibcheck_index_prelude(prelude)
+  let program := nibcheck_index_program(resolved.stmts)
+  let report := types_check(indexed, program, resolved.errors)
+  if report_missing_occurrence(report) { nibcheck_missing_occurrence() } else {
+    match lin_run_report(report, indexed, program) {
+      None => Text::concat_all(Cons("error", Cons(text_newline(), Nil)))
+      Some(dump) => dump
     }
   }
 }
 
-fn nibcheck_types_each(
-  &t: SyntaxTables,
-  classes: UnicodeClasses,
+// `expanded` is the prelude with its indexed effects expanded
+// (`types/indices.rs`), which the types and the use check read.
+pub fn nibcheck_report(
+  mode: NibcheckMode,
   prelude: List(SurfaceStmt),
-  paths: List(Text)
-) -> () {
-  match paths {
-    Nil => ()
-    Cons(path, rest) => {
-      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
-      match nibcheck_read(t, classes, path, 0) {
-        None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
-        Some(program) => {
-          let resolved = modules_resolve(program)
-          os_print(types_dump(types_check(prelude, resolved.stmts, resolved.errors)))
-        }
-      }
-      nibcheck_types_each(t, classes, prelude, rest)
-    }
+  expanded: List(SurfaceStmt),
+  resolved: ModResolved
+): Text {
+  match Mode {
+    NibcheckRows => rows_dump(rows_check(prelude, resolved.stmts))
+    NibcheckTypes => nibcheck_types(expanded, resolved)
+    NibcheckLin => nibcheck_lin(expanded, resolved)
   }
 }
 
-fn nibcheck_lin_each(
+pub fn nibcheck_each(
   &t: SyntaxTables,
   classes: UnicodeClasses,
   prelude: List(SurfaceStmt),
+  expanded: List(SurfaceStmt),
+  mode: NibcheckMode,
   paths: List(Text)
-) -> () {
+): Unit {
   match paths {
-    Nil => ()
+    Nil => #()
     Cons(path, rest) => {
-      os_print(text_concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
+      print(Text::concat_all(Cons("== ", Cons(path, Cons(text_newline(), Nil)))))
       match nibcheck_read(t, classes, path, 0) {
-        None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
-        Some(program) => {
-          let resolved = modules_resolve(program)
-          match lin_run(prelude, resolved.stmts, resolved.errors) {
-            None => os_print(text_concat_all(Cons("error", Cons(text_newline(), Nil))))
-            Some(dump) => os_print(dump)
-          }
-        }
+        None => print(Text::concat_all(Cons("error", Cons(text_newline(), Nil))))
+        Some(program) => print(nibcheck_report(Mode, prelude, expanded, modules_resolve(program)))
       }
-      nibcheck_lin_each(t, classes, prelude, rest)
+      nibcheck_each(t, classes, prelude, expanded, Mode, rest)
     }
   }
 }
 
 match syntax_tables() {
-  None => os_eprint("the tables of the syntax are damaged")
-  Some(t) => match os_args() {
-    Nil => ()
-    Cons(mode, rest) => if mode == "--rows" {
-      match rest {
-        Nil => ()
+  None => eprint("the tables of the syntax are damaged")
+  Some(t) => match perform argv() {
+    Nil => #()
+    Cons(written, rest) => match nibcheck_mode(written) {
+      None => eprint("usage: --rows|--types|--lin PRELUDE FILE…")
+      Some(Mode) => match rest {
+        Nil => #()
         Cons(prelude_path, paths) => {
-          let classes = unicode_classes()
+          let classes := unicode_classes()
           match nibcheck_read(t, classes, prelude_path, 2147483648) {
-            None => os_eprint("the prelude does not parse")
-            Some(prelude) => nibcheck_rows_each(t, classes, classes_expand_prelude(prelude), paths)
+            None => eprint("the prelude does not parse")
+            Some(prelude) => {
+              let read := classes_expand_prelude(modules_drop_sets(prelude))
+              let expanded := match Mode {
+                NibcheckRows => read
+                _ => ix_prelude(nibcheck_index_prelude(read)).stmts
+              }
+              nibcheck_each(t, classes, read, expanded, Mode, paths)
+            }
           }
         }
       }
-    } else if mode == "--types" {
-      match rest {
-        Nil => ()
-        Cons(prelude_path, paths) => {
-          let classes = unicode_classes()
-          match nibcheck_read(t, classes, prelude_path, 2147483648) {
-            None => os_eprint("the prelude does not parse")
-            Some(prelude) => nibcheck_types_each(t, classes, classes_expand_prelude(prelude), paths)
-          }
-        }
-      }
-    } else if mode == "--lin" {
-      match rest {
-        Nil => ()
-        Cons(prelude_path, paths) => {
-          let classes = unicode_classes()
-          match nibcheck_read(t, classes, prelude_path, 2147483648) {
-            None => os_eprint("the prelude does not parse")
-            Some(prelude) => nibcheck_lin_each(t, classes, classes_expand_prelude(prelude), paths)
-          }
-        }
-      }
-    } else {
-      os_eprint("usage: --rows|--types|--lin PRELUDE FILE…")
     }
   }
 }

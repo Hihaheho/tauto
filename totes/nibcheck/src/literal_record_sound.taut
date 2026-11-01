@@ -1,0 +1,141 @@
+import "expr_leaf_frame.taut"
+import "diagnostic_sound.taut"
+
+pub fn natural_literal_record(span: TySpan, magnitude: Nat, ty: Ty): TyLiteral {
+  TyLiteral { start: span.start, end: span.end, negative: false, magnitude: magnitude, ty: ty }
+}
+pub(open) inductive NaturalRecorded(
+  value: Text,
+  span: TySpan,
+  ty: Ty,
+  literals: List(TyLiteral)
+): Prop {
+  Mk(
+    magnitude: Nat,
+    parsed: text_parse_u64(value) = Some(magnitude),
+    stored: Mem(TyLiteral, natural_literal_record(span, magnitude, ty), literals)
+  ): NaturalRecorded(value, span, ty, literals)
+}
+pub theorem literal_parsed_recorded(
+  c: Checker,
+  value: Text,
+  span: TySpan,
+  ty: Ty,
+  parsed: Option(Nat),
+  equal: text_parse_u64(value) = parsed,
+  clean: DiagnosticClean(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
+): NaturalRecorded(
+  value,
+  span,
+  ty,
+  finish_literals(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
+) {
+  match parsed: NaturalRecorded(
+    value,
+    span,
+    ty,
+    finish_literals(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
+  ) {
+    Some(magnitude) => NaturalRecorded::Mk(magnitude, equal, MemHere(finish_literals(c)))
+    None => False::elim(diagnostic_error_impossible(c, cat2(value, " is too large"), span, clean))
+  }
+}
+pub fn literal_value_after(ty: Ty, m: Mut1(Unit, Checker)): Mut1(Ty, Checker) {
+  frame_bind(Unit, Ty, (ignored: Unit, next: Checker) => mut1(ty, next), m)
+}
+pub theorem literal_value_recorded(
+  value: Text,
+  span: TySpan,
+  ty: Ty,
+  m: Mut1(Unit, Checker),
+  h: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). NaturalRecorded(value, span, ty, finish_literals(ck_st(m))),
+  clean: DiagnosticClean(ck_st(literal_value_after(ty, m)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(literal_value_after(ty, m)),
+  finish_literals(ck_st(literal_value_after(ty, m)))
+) {
+  match m: NaturalRecorded(
+    value,
+    span,
+    ck_val(literal_value_after(ty, m)),
+    finish_literals(ck_st(literal_value_after(ty, m)))
+  ) { mut1(ignored, next) => h(clean) }
+}
+pub theorem leaf_literal_after_recorded(
+  c: Checker,
+  value: Text,
+  span: TySpan,
+  ty: Ty,
+  clean: DiagnosticClean(ck_st(leaf_literal_after(c, value, span, ty)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(leaf_literal_after(c, value, span, ty)),
+  finish_literals(ck_st(leaf_literal_after(c, value, span, ty)))
+) {
+  literal_value_recorded(
+    value,
+    span,
+    ty,
+    leaf_literal_parsed(c, value, span, ty, text_parse_u64(value)),
+    accepted => literal_parsed_recorded(
+      c,
+      value,
+      span,
+      ty,
+      text_parse_u64(value),
+      Refl,
+      accepted
+    ),
+    clean
+  )
+}
+pub fn literal_fresh_after(value: Text, span: TySpan, m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
+  frame_bind(Ty, Ty, (ty: Ty, next: Checker) => leaf_literal_after(next, value, span, ty), m)
+}
+pub theorem literal_fresh_recorded(
+  value: Text,
+  span: TySpan,
+  m: Mut1(Ty, Checker),
+  clean: DiagnosticClean(ck_st(literal_fresh_after(value, span, m)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(literal_fresh_after(value, span, m)),
+  finish_literals(ck_st(literal_fresh_after(value, span, m)))
+) {
+  match m: NaturalRecorded(
+    value,
+    span,
+    ck_val(literal_fresh_after(value, span, m)),
+    finish_literals(ck_st(literal_fresh_after(value, span, m)))
+  ) { mut1(ty, next) => leaf_literal_after_recorded(next, value, span, ty, clean) }
+}
+pub theorem ck_nat_literal_recorded(
+  c: Checker,
+  value: Text,
+  span: TySpan,
+  clean: DiagnosticClean(ck_st(ck_nat_literal(c, value, span)))
+): NaturalRecorded(
+  value,
+  span,
+  ck_val(ck_nat_literal(c, value, span)),
+  finish_literals(ck_st(ck_nat_literal(c, value, span)))
+) {
+  let expanded: DiagnosticClean(
+    ck_st(leaf_literal(c, value, span))
+  ) := Eq::subst(
+    (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+    leaf_literal_unf(c, value, span),
+    clean
+  )
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => NaturalRecorded(value, span, ck_val(m), finish_literals(ck_st(m))),
+    Eq::sym(leaf_literal_unf(c, value, span)),
+    literal_fresh_recorded(value, span, ck_fresh_int(c), expanded)
+  )
+}

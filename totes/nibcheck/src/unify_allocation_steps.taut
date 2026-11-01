@@ -1,0 +1,177 @@
+import "binding_counter.taut"
+import "allocation_rigid_state.taut"
+
+pub def AllocationRun<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := And(CounterUnchanged(c, m), CheckerAllocation(ck_st(m)))
+pub def UnifyAllocatedRest(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ left: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ right: TypeAllocated(ck_next_of(c), b). AllocationRun(c, ck_unify_rest_in(fuel, c, a, b))
+pub theorem allocation_run_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: AllocationRun(c, m)
+): AllocationRun(c, ck_rewrap1(m)) {
+  AndIntro(counter_rewrap(c, m, And::left(h)), allocation_rewrap(m, And::right(h)))
+}
+pub theorem ck_bind_allocation_run(
+  c: Checker,
+  index: Nat,
+  value: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  variable: TypeAllocated(ck_next_of(c), TyVar(index)),
+  item: TypeAllocated(ck_next_of(c), value)
+): AllocationRun(c, ck_bind(c, index, value)) {
+  AndIntro(
+    ck_bind_counter(c, index, value),
+    ck_bind_allocation(c, index, value, ordered, variable, item, state)
+  )
+}
+pub theorem allocated_unify_choice(
+  fuel: Nat,
+  c: Checker,
+  b: Ty,
+  whole: Ty,
+  a: Ty,
+  ih: UnifyAllocatedRest(fuel),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), whole),
+  right: TypeAllocated(ck_next_of(c), b),
+  same: whole = a
+): AllocationRun(c, ck_unify_k(fuel, c, b, whole, a)) {
+  match a: AllocationRun(c, ck_unify_k(fuel, c, b, whole, a)) {
+    TyInt(width) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyBool => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyText => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyUnit => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyNever => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyDecimal => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyFloat => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyParam(name, kind) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyVar(index) => allocation_run_rewrap(
+      c,
+      ck_bind(c, index, b),
+      ck_bind_allocation_run(
+        c,
+        index,
+        b,
+        ordered,
+        state,
+        Eq::subst((ty: Ty) => TypeAllocated(ck_next_of(c), ty), same, left),
+        right
+      )
+    )
+    TyFn(params, result, kind) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyUnion(members) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyProduct(members) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyNamed(name, params) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyTagged(tags, inner) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyInfo(inner) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyBorrow(inner, mutable) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyPoly(gs, inner) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+    TyApp(head, arg) => allocation_run_rewrap(
+      c,
+      ck_unify_rest_in(fuel, c, whole, b),
+      ih(c, whole, b, ordered, state, left, right)
+    )
+  }
+}
+pub theorem allocated_unify_step(
+  fuel: Nat,
+  ih: UnifyAllocatedRest(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationRun(c, ck_unify_in(Succ(fuel), c, a, b)) {
+  allocated_unify_choice(
+    fuel,
+    c,
+    ck_resolve(c, b),
+    ck_resolve(c, a),
+    ck_resolve(c, a),
+    ih,
+    ordered,
+    state,
+    ck_resolve_allocated(c, a, And::right(state), left),
+    ck_resolve_allocated(c, b, And::right(state), right),
+    Refl
+  )
+}

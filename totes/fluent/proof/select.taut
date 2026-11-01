@@ -1,0 +1,222 @@
+import std::Row
+import "../src/resolve.taut"
+
+// A select expression picks a variant whose key matches the selector, the first such variant,
+// and the default only when none matches.
+
+theorem bytes_eq_refl(a: List(Nat)): byte_list_eq(a, a) = true {
+  match a: byte_list_eq(a, a) = true {
+    Nil => Refl
+    Cons(c, t) => Eq::subst(
+      Bool,
+      true,
+      Nat::eq(c, c),
+      (y: Bool) => Bool::and(y, byte_list_eq(t, t)) = true,
+      Eq::sym(Nat::eq_refl(c)),
+      bytes_eq_refl(t)
+    )
+  }
+}
+
+theorem none_ne_some(x: Variant, e: None = Some(x)): False {
+  match e: False {
+  }
+}
+
+fn get_or(d: Variant, o: Option(Variant)): Variant {
+  match o: Variant {
+    None => d
+    Some(x) => x
+  }
+}
+
+def Found(l: List(Nat), v: Value, vs: List(Variant), x: Variant): Prop :=
+And(Mem(Variant, x, vs), key_matches(l, v, variant_key(x)) = true)
+
+// One step of `find_variant_sound`: the head matched, or the rest found it (`ih`).
+theorem found_step(
+  l: List(Nat),
+  v: Value,
+  y: Variant,
+  rest: List(Variant),
+  x: Variant,
+  o: Bool,
+  e: key_matches(l, v, variant_key(y)) = o,
+  h: find_step(o, y, find_variant(l, v, rest)) = Some(x),
+  ih: (find_variant(l, v, rest) = Some(x)) -> Found(l, v, rest, x)
+): Found(l, v, Cons(y, rest), x) {
+  match o: (
+    key_matches(l, v, variant_key(y)) = o
+  ) -> (
+    find_step(o, y, find_variant(l, v, rest)) = Some(x)
+  ) -> Found(l, v, Cons(y, rest), x) {
+    true => (e1: key_matches(l, v, variant_key(y)) = true) => (
+      h1: Some(y) = Some(x)
+    ) => Eq::subst(
+      Variant,
+      y,
+      x,
+      (z: Variant) => Found(l, v, Cons(y, rest), z),
+      Eq::congr((p: Option(Variant)) => get_or(y, p), h1),
+      AndIntro(MemHere(rest), e1)
+    )
+    false => (e1: key_matches(l, v, variant_key(y)) = false) => (
+      h1: find_variant(l, v, rest) = Some(x)
+    ) => AndIntro(MemThere(y, rest, And::left(ih(h1))), And::right(ih(h1)))
+  }(e, h)
+}
+
+// What `find_variant` finds is one of the variants, and its key matches the selector.
+theorem find_variant_sound(
+  l: List(Nat),
+  v: Value,
+  vs: List(Variant),
+  x: Variant,
+  h: find_variant(l, v, vs) = Some(x)
+): Found(l, v, vs, x) {
+  match vs {
+    Nil => False::elim(none_ne_some(x, h))
+    Cons(y, rest) => found_step(
+      l,
+      v,
+      y,
+      rest,
+      x,
+      key_matches(l, v, variant_key(y)),
+      Refl,
+      h,
+      (h2: find_variant(l, v, rest) = Some(x)) => find_variant_sound(
+        l,
+        v,
+        rest,
+        x,
+        h2
+      )
+    )
+  }
+}
+
+// No variant's key matches.
+fn none_match(l: List(Nat), v: Value, vs: List(Variant)): Prop {
+  match vs: Prop {
+    Nil => True
+    Cons(y, rest) => And(key_matches(l, v, variant_key(y)) = false, none_match(l, v, rest))
+  }
+}
+
+theorem some_ne_none(y: Variant, e: Some(y) = None): False {
+  match e: False {
+  }
+}
+
+theorem none_step(
+  l: List(Nat),
+  v: Value,
+  y: Variant,
+  rest: List(Variant),
+  o: Bool,
+  e: key_matches(l, v, variant_key(y)) = o,
+  h: find_step(o, y, find_variant(l, v, rest)) = None,
+  ih: (find_variant(l, v, rest) = None) -> none_match(l, v, rest)
+): none_match(l, v, Cons(y, rest)) {
+  match o: (
+    key_matches(l, v, variant_key(y)) = o
+  ) -> (
+    find_step(o, y, find_variant(l, v, rest)) = None
+  ) -> none_match(l, v, Cons(y, rest)) {
+    true => (e1: key_matches(l, v, variant_key(y)) = true) => (
+      h1: Some(y) = None
+    ) => False::elim(some_ne_none(y, h1))
+    false => (e1: key_matches(l, v, variant_key(y)) = false) => (
+      h1: find_variant(l, v, rest) = None
+    ) => AndIntro(e1, ih(h1))
+  }(e, h)
+}
+
+// When `find_variant` finds nothing, no key matches the selector.
+theorem find_variant_none(
+  l: List(Nat),
+  v: Value,
+  vs: List(Variant),
+  h: find_variant(l, v, vs) = None
+): none_match(l, v, vs) {
+  match vs {
+    Nil => Trivial
+    Cons(y, rest) => none_step(
+      l,
+      v,
+      y,
+      rest,
+      key_matches(l, v, variant_key(y)),
+      Refl,
+      h,
+      (h2: find_variant(l, v, rest) = None) => find_variant_none(l, v, rest, h2)
+    )
+  }
+}
+
+theorem find_none_of(
+  l: List(Nat),
+  v: Value,
+  vs: List(Variant),
+  h: none_match(l, v, vs)
+): find_variant(l, v, vs) = None {
+  match vs {
+    Nil => Refl
+    Cons(y, rest) => Eq::subst(
+      Bool,
+      false,
+      key_matches(l, v, variant_key(y)),
+      (o: Bool) => find_step(o, y, find_variant(l, v, rest)) = None,
+      Eq::sym(And::left(h)),
+      find_none_of(l, v, rest, And::right(h))
+    )
+  }
+}
+
+// Conversely, when no key matches, `pick` gives the default pattern.
+theorem pick_default(
+  l: List(Nat),
+  v: Value,
+  vs: List(Variant),
+  d: List(Elem),
+  h: none_match(l, v, vs)
+): pick(l, v, vs, d) = d {
+  Eq::congr((o: Option(Variant)) => pattern_of(d, o), find_none_of(l, v, vs, h))
+}
+
+// A first variant whose key is the selector's number, or its text, is picked, whatever the
+// plural category of the number is.
+theorem exact_number_first(
+  l: List(Nat),
+  n: Nat,
+  p: List(Elem),
+  rest: List(Variant),
+  d: List(Elem)
+): pick(l, VNum(n), Cons(Variant::Mk(KeyNum(n), p), rest), d) = p {
+  Eq::subst(
+    Bool,
+    true,
+    Nat::eq(n, n),
+    (o: Bool) => pattern_of(d, find_step(o, Variant::Mk(KeyNum(n), p), find_variant(l, VNum(n), rest))) = p,
+    Eq::sym(Nat::eq_refl(n)),
+    Refl
+  )
+}
+
+theorem exact_string_first(
+  l: List(Nat),
+  s: List(Nat),
+  p: List(Elem),
+  rest: List(Variant),
+  d: List(Elem)
+): pick(l, VStr(s), Cons(Variant::Mk(KeyId(s), p), rest), d) = p {
+  Eq::subst(
+    Bool,
+    true,
+    byte_list_eq(s, s),
+    (o: Bool) => pattern_of(d, find_step(o, Variant::Mk(KeyId(s), p), find_variant(l, VStr(s), rest))) = p,
+    Eq::sym(bytes_eq_refl(s)),
+    Refl
+  )
+}

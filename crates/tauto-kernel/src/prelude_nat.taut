@@ -1,0 +1,83 @@
+// The decisions and the division of numbers that the kernel computes at
+// once on two numerals (`Nat::eq`, `Nat::lt`, `Nat::sub`, `Nat::div_nz`, `Nat::rem_nz`), as it does
+// `+`, `*` and `-`. They are here, not in a library, so that their names
+// always mean these definitions: the shortcut gives what unfolding them
+// gives, and a differential test of the kernel checks that it does.
+
+// A decision: what a program branches on. `false` and `true` are its
+// constructors, written as the literals of `Bool`.
+pub(open) inductive Bool: Type {
+  false: Bool
+  true: Bool
+}
+
+module Nat {
+  pub fn eq(a: Nat, b: Nat): Bool {
+    match a: Bool {
+      Zero => match b: Bool {
+        Zero => true
+        Succ(b2) => false
+      }
+      Succ(a2) => match b: Bool {
+        Zero => false
+        Succ(b2) => eq(a2, b2)
+      }
+    }
+  }
+
+  // It matches `b` first, so that nothing is below zero whatever `a` is:
+  // `Nat::lt(a, Zero)` is `false`, and `Nat::le(Succ(a), Zero)` (`Nat::lt(Succ(a), Succ(Zero))`)
+  // is `false` too, without knowing `a`.
+  pub fn lt(a: Nat, b: Nat): Bool {
+    match b: Bool {
+      Zero => false
+      Succ(b2) => match a: Bool {
+        Zero => true
+        Succ(a2) => lt(a2, b2)
+      }
+    }
+  }
+
+  pub fn pred(n: Nat): Nat {
+    match n: Nat {
+      Zero => Zero
+      Succ(k) => k
+    }
+  }
+
+  pub fn sub(a: Nat, b: Nat): Nat {
+    match b: Nat {
+      Zero => a
+      Succ(k) => pred(sub(a, k))
+    }
+  }
+
+  // `a` divided by `b` from a running quotient `q` and remainder `r`: each
+  // of the `a` steps adds one to `r`, and a remainder that reaches `b` is
+  // one more in the quotient. (One recursive call per step, so the kernel's
+  // reduction stays linear.)
+  pub fn divmod(a: Nat, b: Nat, q: Nat, r: Nat): Pair(Nat, Nat) {
+    match a: Pair(Nat, Nat) {
+      Zero => Pair { fst: q, snd: r }
+      Succ(a2) => match eq(Succ(r), b): Pair(Nat, Nat) {
+        false => divmod(a2, b, q, Succ(r))
+        true => divmod(a2, b, Succ(q), Zero)
+      }
+    }
+  }
+
+  // `a div b`, rounded down, for a `b` that `h` says is not 0. Dividing by 0
+  // is the effect `DivZero` of `Nat::div` (`std/UInt.taut`), defined by this.
+  pub fn div_nz(a: Nat, b: Nat, h: ¬(b = 0)): Nat {
+    match divmod(a, b, Zero, Zero): Nat {
+      Pair { fst: q, snd: r } => q
+    }
+  }
+
+  // The remainder of `div_nz`.
+  pub fn rem_nz(a: Nat, b: Nat, h: ¬(b = 0)): Nat {
+    match divmod(a, b, Zero, Zero): Nat {
+      Pair { fst: q, snd: r } => r
+    }
+  }
+}

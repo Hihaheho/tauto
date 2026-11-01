@@ -1,0 +1,81 @@
+import "instantiation_map_allocation.taut"
+
+pub def AllocationResult(
+  c: Checker,
+  m: Mut1(Ty, Checker)
+): Prop := And(AllocationAdvance(c, m), TypeAllocated(ck_next_of(ck_st(m)), ck_val(m)))
+pub theorem allocation_result_return(
+  c: Checker,
+  value: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), value)
+): AllocationResult(
+  c,
+  mut1(value, c)
+) { AndIntro(allocation_advance_return(c, value, state), bounded) }
+pub theorem allocation_result_start(
+  c: Checker,
+  next: Checker,
+  m: Mut1(Ty, Checker),
+  advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true,
+  tail: AllocationResult(next, m)
+): AllocationResult(
+  c,
+  m
+) { AndIntro(allocation_advance_start(c, next, m, advanced, And::left(tail)), And::right(tail)) }
+pub theorem allocation_result_rewrap(
+  c: Checker,
+  m: Mut1(Ty, Checker),
+  h: AllocationResult(c, m)
+): AllocationResult(c, ck_rewrap1(m)) {
+  Eq::subst((result: Mut1(Ty, Checker)) => AllocationResult(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub theorem allocation_result_bind<A: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(Ty, Checker),
+  m: Mut1(A, Checker),
+  first: AllocationAdvance(c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(next). AllocationResult(next, k(value, next))
+): AllocationResult(c, frame_bind(A, Ty, k, m)) {
+  match m: AllocationResult(c, frame_bind(A, Ty, k, m)) {
+    mut1(value, next) => allocation_result_start(
+      c,
+      next,
+      k(value, next),
+      And::left(first),
+      tail(value, next, And::left(first), And::right(first))
+    )
+  }
+}
+pub theorem allocation_result_map_bind(
+  c: Checker,
+  k: (Ordmap(Text, Ty), Checker) -> Mut1(Ty, Checker),
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  first: InstanceAllocation(c, m),
+  tail: ∀ map: Ordmap(
+    Text,
+    Ty
+  ). ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(
+    next
+  ). ∀ ordered: Ordmap::ordered(
+    map,
+    Ordmap::compare_text
+  ). ∀ values: GenericMapAllocated(ck_next_of(next), map). AllocationResult(next, k(map, next))
+): AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) {
+  match m: AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) {
+    mut1(map, next) => allocation_result_start(
+      c,
+      next,
+      k(map, next),
+      And::left(first),
+      tail(
+        map,
+        next,
+        And::left(first),
+        And::left(And::right(first)),
+        And::left(And::right(And::right(first))),
+        And::right(And::right(And::right(first)))
+      )
+    )
+  }
+}

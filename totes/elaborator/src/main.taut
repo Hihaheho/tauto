@@ -1,18 +1,22 @@
-fn elab_source(k: u64, source: Text) -> ElabResult(List(ElabDeclaration)) {
-  match syntax_tables() -> ElabResult(List(ElabDeclaration)) {
+import std::Text
+pub fn elab_source(k: Nat, source: Text): ElabResult(List(ElabDeclaration)) {
+  match syntax_tables(): ElabResult(List(ElabDeclaration)) {
     None => ElabErr("invalid syntax tables")
-    Some(tables) => match syntax_parse(tables, source) -> ElabResult(List(ElabDeclaration)) {
+    Some(tables) => match syntax_parse(tables, source): ElabResult(List(ElabDeclaration)) {
       None => ElabErr("cannot parse source")
-      Some(root) => if elab_unsupported(surface_size(root) + 1, Cons(root, Nil)) {
+      Some(Root) => if elab_unsupported(surface_size(Root) + 1, Cons(Root, Nil)) {
         ElabErr("attributes and generated declarations are unsupported")
       } else {
-        let stmts = surface_program_of(
-          SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(
-            root
-          ) + 1 },
-          root
+        let stmts := surface_program_of(
+          SurfaceCtx {
+            source: source,
+            base: 0,
+            classes: unicode_classes(),
+            fuel: surface_size(Root) + 1
+          },
+          Root
         )
-        var core = kernel_new()
+        var core := kernel_new()
         elab_program(stmts, k, &mut core)
       }
     }
@@ -21,29 +25,27 @@ fn elab_source(k: u64, source: Text) -> ElabResult(List(ElabDeclaration)) {
 
 // Each file is an independent source program. Successful output is the kernel
 // wire format, suitable for replay by totes/kernel, not a host API result.
-fn elab_main_files(paths: List(Text)) -> () {
+pub fn elab_main_files(paths: List(Text)): Unit {
   match paths {
-    Nil => ()
+    Nil => #()
     Cons(path, rest) => {
-      match os_read_file(path) {
+      match read_file(path) {
         Err(message) => {
-          os_eprint(
-            text_concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil)))))
-          )
-          os_exit(1)
+          eprint(Text::concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil))))))
+          perform exit(1)
         }
         Ok(source) => match elab_source(2000, source) {
           ElabErr(message) => {
-            os_eprint(
-              text_concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil)))))
+            eprint(
+              Text::concat_all(Cons(path, Cons(": ", Cons(message, Cons(text_newline(), Nil)))))
             )
-            os_exit(1)
+            perform exit(1)
           }
-          ElabOk(ds) => os_print(elab_write_declarations(ds))
+          ElabOk(ds) => print(elab_write_declarations(ds))
         }
       }
       elab_main_files(rest)
     }
   }
 }
-elab_main_files(os_args())
+elab_main_files(perform argv())

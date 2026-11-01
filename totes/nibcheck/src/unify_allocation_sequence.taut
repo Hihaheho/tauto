@@ -1,0 +1,108 @@
+import "unify_allocation_steps.taut"
+
+pub def UnifyAllocated(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ left: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ right: TypeAllocated(ck_next_of(c), b). AllocationRun(c, ck_unify_in(fuel, c, a, b))
+pub def UnifyPairsAllocated(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: List(
+  Ty
+). ∀ b: List(
+  Ty
+). ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ left: TypeListAllocated(
+  ck_next_of(c),
+  a
+). ∀ right: TypeListAllocated(ck_next_of(c), b). AllocationRun(c, ck_unify_pairs_in(fuel, c, a, b))
+pub theorem allocation_and_next(
+  c: Checker,
+  next: Checker,
+  k: (Checker) -> Mut1(Bool, Checker),
+  same: ck_next_of(c) = ck_next_of(next),
+  state: CheckerAllocation(next),
+  tail: AllocationRun(next, k(next)),
+  flag: Bool
+): AllocationRun(c, ck_and_k(k, next, flag)) {
+  match flag: AllocationRun(c, ck_and_k(k, next, flag)) {
+    false => AndIntro(same, state)
+    true => allocation_run_rewrap(
+      c,
+      k(next),
+      AndIntro(Eq::trans(same, And::left(tail)), And::right(tail))
+    )
+  }
+}
+pub theorem allocation_and(
+  c: Checker,
+  k: (Checker) -> Mut1(Bool, Checker),
+  m: Mut1(Bool, Checker),
+  first: AllocationRun(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  tail: ∀ next: Checker. ∀ same: ck_next_of(c) = ck_next_of(next). ∀ state: CheckerAllocation(next). ∀ order: CkOrdered(next). AllocationRun(next, k(next))
+): AllocationRun(c, ck_and(k, m)) {
+  match m: AllocationRun(c, ck_and(k, m)) {
+    mut1(flag, next) => allocation_and_next(
+      c,
+      next,
+      k,
+      And::left(first),
+      And::right(first),
+      tail(next, And::left(first), And::right(first), ordered),
+      flag
+    )
+  }
+}
+pub theorem unify_in_allocation_ordered(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_unify_in(fuel, c, a, b))) {
+  And::left(And::left(And::left(unify_at(fuel))(c, a, b)(ordered)))
+}
+pub theorem allocated_unify_pairs_step(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  hp: UnifyPairsAllocated(fuel),
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeListAllocated(ck_next_of(c), xs),
+  right: TypeListAllocated(ck_next_of(c), ys)
+): AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) {
+  match xs: AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) {
+    Nil => AndIntro(Refl, state)
+    Cons(x, xr) => match ys: AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, Cons(x, xr), ys)) {
+      Nil => AndIntro(Refl, state)
+      Cons(y, yr) => allocation_and(
+        c,
+        (next: Checker) => ck_unify_pairs_in(fuel, next, xr, yr),
+        ck_unify_in(fuel, c, x, y),
+        hu(c, x, y, ordered, state, And::left(left), And::left(right)),
+        unify_in_allocation_ordered(fuel, c, x, y, ordered),
+        next => same => current => order => hp(
+          next,
+          xr,
+          yr,
+          order,
+          current,
+          Eq::subst((limit: Nat) => TypeListAllocated(limit, xr), same, And::right(left)),
+          Eq::subst((limit: Nat) => TypeListAllocated(limit, yr), same, And::right(right))
+        )
+      )
+    }
+  }
+}

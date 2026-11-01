@@ -1,0 +1,298 @@
+import std::Int
+import std::Text
+
+// The shell of the machine of `machine.taut`. It reads the program that
+// `tauto run --backend vm` wrote to the file (`wire.taut`), compiles it (`compile.taut`),
+// runs it, and does what it asks of the host.
+//
+//   vm FILE LIMIT SHOWS ARGS...
+//
+// LIMIT is the host's limit of steps, or `-` for none. SHOWS is where what the program
+// shows goes: `-` for the standard output, else a file that holds them one to a line.
+// ARGS are the program's own arguments. What the machine cannot run ends the shell with
+// code 3.
+
+pub fn vm_fail(message: Text): Unit {
+  eprint(Text::concat(message, "\n"))
+  perform exit(1)
+}
+
+// ---- the host's values as the machine's -----------------------------------------------
+
+pub fn vm_int(n: i64): Int {
+  if n < 0 {
+    IntNegSucc(Nat::of_u64(U64::of_i64(0 - (n + 1))))
+  } else {
+    IntOfNat(Nat::of_u64(U64::of_i64(n)))
+  }
+}
+
+pub fn vm_i64(n: Int): i64 {
+  match n {
+    IntOfNat(k) => I64::of_u64(U64::of_nat(k))
+    IntNegSucc(k) => 0 - I64::of_u64(U64::of_nat(k)) - 1
+  }
+}
+
+pub fn vm_texts(ts: List(Text)): List(MVal) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(MvText(t), vm_texts(rest))
+  }
+}
+
+pub fn vm_text_option(o: Option(Text)): MVal {
+  match o {
+    None => m_none()
+    Some(t) => m_some(MvText(t))
+  }
+}
+
+pub fn vm_arg(args: List(MVal), i: Nat): MVal {
+  match List::nth(args, i) {
+    None => MvUnit
+    Some(v) => v
+  }
+}
+
+// The clock the machine's timers read: milliseconds of the monotonic clock.
+pub fn vm_now(): Int {
+  vm_int(div(perform monotonic_clock(), 1000000))
+}
+
+pub fn vm_io_unit(r: Result(Unit, IoError)): MVal {
+  match r {
+    Ok(u) => m_ok(MvUnit)
+    Err(e) => m_errv(MvText(io_message(e)))
+  }
+}
+
+// The host's answer to the request `name`, or `None` when the shell cannot make it. The
+// shell asks its own host by the standard effects, which check what it was allowed
+// itself: a request the program's permissions would refuse is refused there.
+pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(MVal) {
+  let a := vm_arg(args, 0)
+  let b := vm_arg(args, 1)
+  if Text::eq(name, "vm_now") {
+    Some(MvInt(vm_now()))
+  } else if Text::eq(name, "Os::args") {
+    Some(m_list(vm_texts(program_args)))
+  } else if Text::eq(name, "Os::print") {
+    print(m_as_text(a))
+    Some(MvUnit)
+  } else if Text::eq(name, "Os::eprint") {
+    eprint(m_as_text(a))
+    Some(MvUnit)
+  } else if Text::eq(name, "Os::check") {
+    // The host's own check, so a denial comes back as `Denied`.
+    Some(vm_text_option(perform permission(m_as_text(a), m_as_text(b))))
+  } else if Text::eq(name, "Os::read_file") {
+    match perform fs_read(m_as_text(a)) {
+      Ok(t) => Some(m_ok(MvText(t)))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::write_file") {
+    Some(vm_io_unit(perform fs_write(m_as_text(a), m_as_text(b))))
+  } else if Text::eq(name, "Os::read_bytes") {
+    match perform fs_read_bytes(m_as_text(a)) {
+      Ok(bs) => Some(m_ok(MvBytes(bs)))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::write_bytes") {
+    Some(vm_io_unit(perform fs_write_bytes(m_as_text(a), m_as_bytes(b))))
+  } else if Text::eq(name, "Os::create_dir") {
+    Some(vm_io_unit(perform fs_create_dir(m_as_text(a))))
+  } else if Text::eq(name, "Os::list_dir") {
+    match perform fs_list_dir(m_as_text(a)) {
+      Ok(names) => Some(m_ok(m_list(vm_texts(names))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::remove") {
+    Some(vm_io_unit(perform fs_remove(m_as_text(a))))
+  } else if Text::eq(name, "Os::temp_dir") {
+    match perform fs_temp_dir() {
+      Ok(t) => Some(m_ok(MvText(t)))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::read_line") {
+    Some(vm_text_option(perform stdin()))
+  } else if Text::eq(name, "Os::env") {
+    match perform env(m_as_text(a)) {
+      Ok(o) => Some(vm_text_option(o))
+      Err(e) => Some(m_none())
+    }
+  } else if Text::eq(name, "Os::wall_ms") {
+    Some(MvInt(vm_int(perform wall_clock())))
+  } else if Text::eq(name, "Os::monotonic_ns") {
+    Some(MvInt(vm_int(perform monotonic_clock())))
+  } else if Text::eq(name, "Os::random") {
+    Some(MvInt(IntOfNat(Nat::of_u64(perform random()))))
+  } else if Text::eq(name, "Os::secure_random") {
+    match perform secure_random(U64::of_nat(m_as_nat(a))) {
+      Ok(s) => Some(m_ok(MvBytes(expose(s))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::status") {
+    match w_number(Text::bytes(m_as_text(a)), 0, false) {
+      None => Some(MvInt(IntOfNat(0)))
+      Some(r) => match r {
+        Pair { fst: n, snd: rest } => Some(MvInt(IntOfNat(n)))
+      }
+    }
+  } else {
+    None
+  }
+}
+
+// ---- the shell ------------------------------------------------------------------------
+
+// Where shows go, and what was shown so far when they go to a file.
+pub fn vm_show(shows: Option(Text), so_far: Text, line: Text): Text {
+  match shows {
+    None => {
+      print(line)
+      so_far
+    }
+    Some(path) => {
+      let all := Text::concat(so_far, line)
+      match write_file(path, all) {
+        Ok(u) => all
+        Err(e) => {
+          vm_fail(Text::concat_all(Cons(path, Cons(": ", Cons(e, Nil)))))
+          all
+        }
+      }
+    }
+  }
+}
+
+pub fn vm_exit(code: Int): Unit {
+  perform exit(I32::of_i64(vm_i64(code)))
+}
+
+// Runs the machine to its end, in runs of at most 100000 instructions. LIMIT is the
+// host's limit of steps as `vm` was given it, for the message when it runs out.
+pub fn vm_shell(
+  p: MProgram,
+  limit: Text,
+  r: MStep,
+  shows: Option(Text),
+  so_far: Text,
+  program_args: List(Text)
+): Unit {
+  match r {
+    MstepNext(s) => vm_shell(
+      p,
+      limit,
+      mrun(p, 100000, m_set_now(s, vm_now())),
+      shows,
+      so_far,
+      program_args
+    )
+    MstepDone => #()
+    MstepExit(MkCode) => vm_exit(MkCode)
+    MstepShow(name, shown, s) => {
+      let so_far2 := vm_show(
+        shows,
+        so_far,
+        Text::concat_all(Cons(name, Cons(" = ", Cons(shown, Cons("\n", Nil)))))
+      )
+      vm_shell(p, limit, MstepNext(s), shows, so_far2, program_args)
+    }
+    MstepAsk(name, args, s) => match vm_host(name, args, program_args) {
+      Some(v) => vm_shell(p, limit, MstepNext(m_answer(s, v)), shows, so_far, program_args)
+      None => {
+        eprint(
+          Text::concat_all(
+            Cons("not supported by the vm backend: the host request ", Cons(name, Cons("\n", Nil)))
+          )
+        )
+        perform exit(3)
+      }
+    }
+    MstepSleep(until, cx) => {
+      let now := vm_now()
+      let wait := vm_i64(until) - vm_i64(now)
+      if wait > 0 {
+        perform sleep(U64::of_i64(wait))
+      } else {
+        #()
+      }
+      vm_shell(p, limit, m_wake(cx, vm_now()), shows, so_far, program_args)
+    }
+    MstepError(message) => if Text::eq(message, m_step_limit()) {
+      vm_fail(
+        Text::concat_all(
+          Cons(
+            message,
+            Cons(
+              " after ",
+              Cons(limit, Cons(" steps; `--steps N` raises it, `--allow-div` lifts it", Nil))
+            )
+          )
+        )
+      )
+    } else {
+      vm_fail(message)
+    }
+  }
+}
+
+pub fn vm_limit(t: Text): Option(Nat) {
+  match w_number(Text::bytes(t), 0, false) {
+    None => None
+    Some(r) => match r {
+      Pair { fst: n, snd: rest } => Some(n)
+    }
+  }
+}
+
+pub fn vm_main(path: Text, limit_text: Text, shows: Option(Text), program_args: List(Text)): Unit {
+  match read_file(path) {
+    Err(message) => vm_fail(Text::concat_all(Cons(path, Cons(": ", Cons(message, Nil)))))
+    Ok(source) => match read_program(Text::bytes(source)) {
+      None => vm_fail(Text::concat(path, ": malformed program"))
+      Some(cp) => match vm::src::compile::compile(cp) {
+        CUnsupported(what) => {
+          eprint(
+            Text::concat_all(Cons("not supported by the vm backend: ", Cons(what, Cons("\n", Nil))))
+          )
+          perform exit(3)
+        }
+        COk(p) => {
+          match shows {
+            None => #()
+            Some(f) => match write_file(f, "") {
+              Ok(u) => #()
+              Err(e) => vm_fail(Text::concat_all(Cons(f, Cons(": ", Cons(e, Nil)))))
+            }
+          }
+          vm_shell(
+            p,
+            limit_text,
+            MstepNext(mstart(p, vm_limit(limit_text), vm_now())),
+            shows,
+            "",
+            program_args
+          )
+        }
+      }
+    }
+  }
+}
+
+match perform argv() {
+  Nil => vm_fail("usage: vm FILE [LIMIT [SHOWS [ARGS...]]]")
+  Cons(path, rest) => match rest {
+    Nil => vm_main(path, "-", None, Nil)
+    Cons(limit, more) => match more {
+      Nil => vm_main(path, limit, None, Nil)
+      Cons(shows, program_args) => vm_main(
+        path,
+        limit,
+        if Text::eq(shows, "-") { None } else { Some(shows) },
+        program_args
+      )
+    }
+  }
+}

@@ -1,0 +1,149 @@
+import "effect_function_table_frame.taut"
+import "data_fields_context_sound.taut"
+
+pub theorem fnt_registration_fields_cons_ok_context(
+  field: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_data_fields(rest, next, generics))
+): CkFnsFrame(c, registration_fields_cons(field, rest, c, generics)) {
+  fnt_frame_bind_ok(
+    Unit,
+    List(DataField),
+    c,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Ty,
+      List(DataField),
+      (ty: Ty, c2: Checker) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (tail: List(DataField), c3: Checker) => mut1(
+          Cons(DataFieldMk(registration_field_name(field), ty), tail),
+          c3
+        ),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics)
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    ),
+    fnt_frame_error_if_ok(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    ),
+    ignored => c1 => fnt_frame_bind_ok(
+      Ty,
+      List(DataField),
+      c1,
+      (ty: Ty, c2: Checker) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (tail: List(DataField), c3: Checker) => mut1(
+          Cons(DataFieldMk(registration_field_name(field), ty), tail),
+          c3
+        ),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics),
+      fnt_ck_written_frame(c1, registration_field_ty(field), generics),
+      ty => c2 => fnt_frame_bind_ok(
+        List(DataField),
+        List(DataField),
+        c2,
+        (tail: List(DataField), c3: Checker) => mut1(
+          Cons(DataFieldMk(registration_field_name(field), ty), tail),
+          c3
+        ),
+        ck_data_fields(rest, c2, generics),
+        ih(c2),
+        tail => c3 => (Refl)
+      )
+    )
+  )
+}
+
+pub theorem fnt_ck_data_fields_frame_context(
+  fs: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_data_fields(fs, c, generics)) {
+  match fs: CkFnsFrame(c, ck_data_fields(fs, c, generics)) {
+    Nil => (Refl)
+    Cons(field, rest) => Eq::subst(
+      (z: Mut1(List(DataField), Checker)) => CkFnsFrame(c, z),
+      Eq::sym(registration_fields_unf(field, rest, c, generics)),
+      fnt_registration_fields_cons_ok_context(
+        field,
+        rest,
+        c,
+        generics,
+        next => fnt_ck_data_fields_frame_context(rest, next, generics)
+      )
+    )
+  }
+}
+
+pub theorem fnt_registration_ctors_cons_ok_context(
+  ctor: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_data_ctors(rest, next, generics))
+): CkFnsFrame(c, registration_ctors_cons(ctor, rest, c, generics)) {
+  fnt_frame_bind_ok(
+    List(DataField),
+    List(DataCtor),
+    c,
+    (fields: List(DataField), c1: Checker) => frame_bind(
+      List(DataCtor),
+      List(DataCtor),
+      (tail: List(DataCtor), c2: Checker) => mut1(
+        Cons(DataCtorMk(registration_ctor_name(ctor), fields), tail),
+        c2
+      ),
+      ck_data_ctors(rest, c1, generics)
+    ),
+    ck_data_fields(registration_ctor_fields(ctor), c, generics),
+    fnt_ck_data_fields_frame_context(registration_ctor_fields(ctor), c, generics),
+    fields => c1 => fnt_frame_bind_ok(
+      List(DataCtor),
+      List(DataCtor),
+      c1,
+      (tail: List(DataCtor), c2: Checker) => mut1(
+        Cons(DataCtorMk(registration_ctor_name(ctor), fields), tail),
+        c2
+      ),
+      ck_data_ctors(rest, c1, generics),
+      ih(c1),
+      tail => c2 => (Refl)
+    )
+  )
+}
+
+pub theorem fnt_ck_data_ctors_frame_context(
+  cs: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_data_ctors(cs, c, generics)) {
+  match cs: CkFnsFrame(c, ck_data_ctors(cs, c, generics)) {
+    Nil => (Refl)
+    Cons(ctor, rest) => Eq::subst(
+      (z: Mut1(List(DataCtor), Checker)) => CkFnsFrame(c, z),
+      Eq::sym(registration_ctors_unf(ctor, rest, c, generics)),
+      fnt_registration_ctors_cons_ok_context(
+        ctor,
+        rest,
+        c,
+        generics,
+        next => fnt_ck_data_ctors_frame_context(rest, next, generics)
+      )
+    )
+  }
+}

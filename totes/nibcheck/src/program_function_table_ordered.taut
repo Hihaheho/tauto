@@ -1,0 +1,287 @@
+import "function_table_registration.taut"
+import "effect_function_table_frame.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem fnt_effect_step(
+  c: Checker,
+  decl: SurfaceEffect
+): CkFnsStep(c, ck_declare_effect(c, decl)) {
+  fnt_step_read(c, ck_declare_effect(c, decl), fnt_ck_declare_effect_frame(c, decl))
+}
+
+pub theorem signature_prelude_if_ordered(
+  c: Checker,
+  f: SurfaceFn,
+  take: Bool
+): CkFnsStep(c, signature_prelude_if(c, f, take)) {
+  match take: CkFnsStep(c, signature_prelude_if(c, f, take)) {
+    true => fnt_step_return_after(c, Star, ck_add_fn(c, f), ck_add_fn_ordered(c, f))
+    false => ordered => ordered
+  }
+}
+
+pub theorem signature_prelude_fns_each_cons_ordered(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Bool),
+  ih: ∀ next: Checker. CkFnsStep(next, ck_prelude_fns_each(rest, next, own))
+): CkFnsStep(c, signature_prelude_fns_each_cons(f, rest, c, own)) {
+  fnt_step_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns_each(rest, c1, own)),
+    signature_prelude_if(c, f, not(types_is_own(own, signature_name(f)))),
+    signature_prelude_if_ordered(c, f, not(types_is_own(own, signature_name(f)))),
+    ignored => c1 => fnt_step_rewrap(c1, ck_prelude_fns_each(rest, c1, own), ih(c1))
+  )
+}
+
+pub theorem ck_prelude_fns_each_ordered(
+  fs: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Bool)
+): CkFnsStep(c, ck_prelude_fns_each(fs, c, own)) {
+  match fs: CkFnsStep(c, ck_prelude_fns_each(fs, c, own)) {
+    Nil => ordered => ordered
+    Cons(f, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_prelude_fns_each_unf(f, rest, c, own)),
+      signature_prelude_fns_each_cons_ordered(
+        f,
+        rest,
+        c,
+        own,
+        next => ck_prelude_fns_each_ordered(rest, next, own)
+      )
+    )
+  }
+}
+
+pub theorem signature_extern_fns_cons_ordered(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  ih: ∀ next: Checker. CkFnsStep(next, ck_extern_fns(rest, next))
+): CkFnsStep(c, signature_extern_fns_cons(f, rest, c)) {
+  fnt_step_bind(
+    Scheme,
+    Unit,
+    c,
+    (ignored: Scheme, c1: Checker) => ck_rewrap1(ck_extern_fns(rest, c1)),
+    ck_add_fn(c, f),
+    ck_add_fn_ordered(c, f),
+    ignored => c1 => fnt_step_rewrap(c1, ck_extern_fns(rest, c1), ih(c1))
+  )
+}
+
+pub theorem ck_extern_fns_ordered(
+  fs: List(SurfaceFn),
+  c: Checker
+): CkFnsStep(c, ck_extern_fns(fs, c)) {
+  match fs: CkFnsStep(c, ck_extern_fns(fs, c)) {
+    Nil => ordered => ordered
+    Cons(f, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_extern_fns_unf(f, rest, c)),
+      signature_extern_fns_cons_ordered(f, rest, c, next => ck_extern_fns_ordered(rest, next))
+    )
+  }
+}
+
+pub theorem ck_prelude_fns_one_ordered(
+  c: Checker,
+  s: SurfaceStmt,
+  own: Ordmap(Text, Bool)
+): CkFnsStep(c, ck_prelude_fns_one(c, s, own)) {
+  match s: CkFnsStep(c, ck_prelude_fns_one(c, s, own)) {
+    StLet(name, ty, value, borrow, mutable) => ordered => ordered
+    StVar(name, ty, value, borrow) => ordered => ordered
+    StModule(name, stmts, start, end) => ordered => ordered
+    StAssign(name, name_place, value) => ordered => ordered
+    StCalled(name_generates, value) => ordered => ordered
+    StFn(f) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_prelude_fns_one_StFn_unf(f, c, own)),
+      fnt_step_rewrap(
+        c,
+        ck_prelude_fns_each(Cons(f, Nil), c, own),
+        ck_prelude_fns_each_ordered(Cons(f, Nil), c, own)
+      )
+    )
+    StTheorem(t) => ordered => ordered
+    StDef(t) => ordered => ordered
+    StMutual(stmts, start, end) => ordered => ordered
+    StImport(path, start, end) => ordered => ordered
+    StInductive(i) => ordered => ordered
+    StEffect(e) => ordered => ordered
+    StStruct(d) => ordered => ordered
+    StEnum(d) => ordered => ordered
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_prelude_fns_one_StExtern_unf(abi, fns, start, end, c, own)),
+      fnt_step_rewrap(c, ck_prelude_fns_each(fns, c, own), ck_prelude_fns_each_ordered(fns, c, own))
+    )
+    StClass(c) => ordered => ordered
+    StInstance(i) => ordered => ordered
+    StWhile(cond, body) => ordered => ordered
+    StReturn(value) => ordered => ordered
+    StExpr(value) => ordered => ordered
+    StOther(what, start, end) => ordered => ordered
+    StMacro(name, function, start, end) => ordered => ordered
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered => ordered
+    StSyntax(name, grammar, start, end) => ordered => ordered
+  }
+}
+
+pub theorem ck_program_decl_ordered(
+  c: Checker,
+  s: SurfaceStmt
+): CkFnsStep(c, ck_program_decl(c, s)) {
+  match s: CkFnsStep(c, ck_program_decl(c, s)) {
+    StLet(name, ty, value, borrow, mutable) => ordered => ordered
+    StVar(name, ty, value, borrow) => ordered => ordered
+    StModule(name, stmts, start, end) => ordered => ordered
+    StAssign(name, name_place, value) => ordered => ordered
+    StCalled(name_generates, value) => ordered => ordered
+    StFn(f) => Eq::subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_program_decl_StFn_unf(f, c)),
+      fnt_step_bind(
+        Scheme,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (scheme: Scheme, c1: Checker) => mut1(Some(Pair { fst: f, snd: scheme }), c1),
+        ck_add_fn(c, f),
+        ck_add_fn_ordered(c, f),
+        scheme => c1 => ordered => ordered
+      )
+    )
+    StTheorem(t) => ordered => ordered
+    StDef(t) => ordered => ordered
+    StMutual(stmts, start, end) => ordered => ordered
+    StImport(path, start, end) => ordered => ordered
+    StInductive(i) => ordered => ordered
+    StEffect(e) => Eq::subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_program_decl_StEffect_unf(e, c)),
+      fnt_step_bind(
+        Unit,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (ignored: Unit, c1: Checker) => mut1(None, c1),
+        ck_declare_effect(c, e),
+        fnt_effect_step(c, e),
+        ignored => c1 => ordered => ordered
+      )
+    )
+    StStruct(d) => ordered => ordered
+    StEnum(d) => ordered => ordered
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      fnt_step_bind(
+        Unit,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (ignored: Unit, c1: Checker) => mut1(None, c1),
+        ck_extern_fns(fns, c),
+        ck_extern_fns_ordered(fns, c),
+        ignored => c1 => ordered => ordered
+      )
+    )
+    StClass(c) => ordered => ordered
+    StInstance(i) => ordered => ordered
+    StWhile(cond, body) => ordered => ordered
+    StReturn(value) => ordered => ordered
+    StExpr(value) => ordered => ordered
+    StOther(what, start, end) => ordered => ordered
+    StMacro(name, function, start, end) => ordered => ordered
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered => ordered
+    StSyntax(name, grammar, start, end) => ordered => ordered
+  }
+}
+
+pub theorem signature_prelude_fns_cons_ordered(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Bool),
+  ih: ∀ next: Checker. CkFnsStep(next, ck_prelude_fns(rest, next, own))
+): CkFnsStep(c, signature_prelude_fns_cons(s, rest, c, own)) {
+  fnt_step_bind(
+    Unit,
+    Unit,
+    c,
+    (head: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns(rest, c1, own)),
+    ck_prelude_fns_one(c, s, own),
+    ck_prelude_fns_one_ordered(c, s, own),
+    head => c1 => fnt_step_rewrap(c1, ck_prelude_fns(rest, c1, own), ih(c1))
+  )
+}
+
+pub theorem ck_prelude_fns_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Bool)
+): CkFnsStep(c, ck_prelude_fns(ss, c, own)) {
+  match ss: CkFnsStep(c, ck_prelude_fns(ss, c, own)) {
+    Nil => ordered => ordered
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_prelude_fns_cons_unf(s, rest, c, own)),
+      signature_prelude_fns_cons_ordered(
+        s,
+        rest,
+        c,
+        own,
+        next => ck_prelude_fns_ordered(rest, next, own)
+      )
+    )
+  }
+}
+
+pub theorem signature_program_decls_cons_ordered(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  ih: ∀ next: Checker. CkFnsStep(next, ck_program_decls(rest, next))
+): CkFnsStep(c, signature_program_decls_cons(s, rest, c)) {
+  fnt_step_bind(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    c,
+    (head: Option(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1)
+    ),
+    ck_program_decl(c, s),
+    ck_program_decl_ordered(c, s),
+    head => c1 => fnt_step_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      c1,
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1),
+      ih(c1),
+      tail => c2 => ordered => ordered
+    )
+  )
+}
+
+pub theorem ck_program_decls_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker
+): CkFnsStep(c, ck_program_decls(ss, c)) {
+  match ss: CkFnsStep(c, ck_program_decls(ss, c)) {
+    Nil => ordered => ordered
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkFnsStep(c, z),
+      Eq::sym(signature_program_decls_cons_unf(s, rest, c)),
+      signature_program_decls_cons_ordered(s, rest, c, next => ck_program_decls_ordered(rest, next))
+    )
+  }
+}

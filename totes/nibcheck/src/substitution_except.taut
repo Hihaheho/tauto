@@ -1,0 +1,284 @@
+import "widen_frame.taut"
+import "typing_state_extension.taut"
+
+// Widening may replace its own result variable. All other established
+// substitution bindings must remain unchanged.
+pub def SubstExtExcept(
+  private: Nat,
+  before: Ordmap(Nat, Ty),
+  after: Ordmap(Nat, Ty)
+): Prop := ∀ index: Nat. ∀ ty: Ty. ∀ different: (
+  index = private
+) -> False. ∀ found: Ordmap::get(before, index, Ordmap::compare_nat) = Some(ty). Ordmap::get(after, index, Ordmap::compare_nat) = Some(ty)
+pub theorem subst_except_refl(
+  private: Nat,
+  subst: Ordmap(Nat, Ty)
+): SubstExtExcept(private, subst, subst) { index => ty => different => found => found }
+pub theorem subst_except_trans(
+  private: Nat,
+  first: Ordmap(Nat, Ty),
+  middle: Ordmap(Nat, Ty),
+  last: Ordmap(Nat, Ty),
+  head: SubstExtExcept(private, first, middle),
+  tail: SubstExtExcept(private, middle, last)
+): SubstExtExcept(private, first, last) {
+  index => ty => different => found => tail(index, ty, different, head(index, ty, different, found))
+}
+pub theorem subst_except_extension(
+  private: Nat,
+  before: Ordmap(Nat, Ty),
+  after: Ordmap(Nat, Ty),
+  extended: SubstExt(before, after)
+): SubstExtExcept(private, before, after) {
+  index => ty => different => found => extended(index, ty, found)
+}
+pub theorem subst_except_insert(
+  private: Nat,
+  subst: Ordmap(Nat, Ty),
+  value: Ty,
+  ordered: Ordmap::ordered(subst, Ordmap::compare_nat)
+): SubstExtExcept(private, subst, Ordmap::insert(subst, private, value, Ordmap::compare_nat)) {
+  index => ty => different => found => Ordering::cases(
+    (order: Ordering) => Ordmap::get(
+        Ordmap::insert(subst, private, value, Ordmap::compare_nat),
+        index,
+        Ordmap::compare_nat
+      ) = Some(ty),
+    Ordmap::compare_nat(index, private),
+    less => Eq::trans(
+      Ordmap::get_insert_other(
+        Ordmap::compare_nat,
+        Ordmap::compare_nat_law(),
+        subst,
+        private,
+        value,
+        index,
+        Less,
+        less_ne_equal,
+        less,
+        ordered
+      ),
+      found
+    ),
+    equal => False::elim(different(Ordmap::compare_nat_eq(index, private, equal))),
+    greater => Eq::trans(
+      Ordmap::get_insert_other(
+        Ordmap::compare_nat,
+        Ordmap::compare_nat_law(),
+        subst,
+        private,
+        value,
+        index,
+        Greater,
+        greater_ne_equal,
+        greater,
+        ordered
+      ),
+      found
+    )
+  )
+}
+pub theorem subst_index_different(
+  index: Nat,
+  private: Nat,
+  order: Ordering,
+  unequal: (order = Equal) -> False,
+  compared: Ordmap::compare_nat(index, private) = order,
+  equal: index = private
+): False {
+  unequal(
+    Eq::trans(
+      Eq::sym(compared),
+      Eq::trans(
+        Eq::congr((value: Nat) => Ordmap::compare_nat(value, private), equal),
+        Ordmap::compare_nat_same(private)
+      )
+    )
+  )
+}
+pub theorem subst_except_fresh(
+  private: Nat,
+  before: Ordmap(Nat, Ty),
+  after: Ordmap(Nat, Ty),
+  absent: Ordmap::get(before, private, Ordmap::compare_nat) = None,
+  kept: SubstExtExcept(private, before, after)
+): SubstExt(before, after) {
+  index => ty => found => Ordering::cases(
+    (order: Ordering) => Ordmap::get(after, index, Ordmap::compare_nat) = Some(ty),
+    Ordmap::compare_nat(index, private),
+    less => kept(
+      index,
+      ty,
+      equal => subst_index_different(index, private, Less, less_ne_equal, less, equal),
+      found
+    ),
+    equal => False::elim(
+      ck_none_ne_some(
+        ty,
+        Eq::trans(
+          Eq::sym(absent),
+          Eq::subst(
+            (value: Nat) => Ordmap::get(before, value, Ordmap::compare_nat) = Some(ty),
+            Ordmap::compare_nat_eq(index, private, equal),
+            found
+          )
+        )
+      )
+    ),
+    greater => kept(
+      index,
+      ty,
+      equal => subst_index_different(index, private, Greater, greater_ne_equal, greater, equal),
+      found
+    )
+  )
+}
+pub def ExceptRunFrame<A: Type>(
+  private: Nat,
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := And(
+  CkOrdered(ck_st(m)),
+  And(SubstExtExcept(private, ck_subst_of(c), ck_subst_of(ck_st(m))), TypeRecordsExt(c, ck_st(m)))
+)
+pub theorem except_frame_return<A: Type>(
+  private: Nat,
+  c: Checker,
+  value: A,
+  ordered: CkOrdered(c)
+): ExceptRunFrame(private, c, mut1(value, c)) {
+  AndIntro(ordered, AndIntro(subst_except_refl(private, ck_subst_of(c)), type_records_refl(c)))
+}
+pub theorem except_frame_grows<A: Type>(
+  private: Nat,
+  c: Checker,
+  m: Mut1(A, Checker),
+  grows: Grows(c, ck_st(m))
+): ExceptRunFrame(private, c, m) {
+  AndIntro(
+    And::left(grows),
+    AndIntro(
+      subst_except_extension(
+        private,
+        ck_subst_of(c),
+        ck_subst_of(ck_st(m)),
+        And::left(And::right(grows))
+      ),
+      grows_type_records(c, ck_st(m), grows)
+    )
+  )
+}
+pub theorem except_frame_rewrap<A: Type>(
+  private: Nat,
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: ExceptRunFrame(private, c, m)
+): ExceptRunFrame(private, c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => ExceptRunFrame(private, c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
+}
+pub theorem except_frame_bind<A: Type, B: Type>(
+  private: Nat,
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: ExceptRunFrame(private, c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ ordered: CkOrdered(
+    next
+  ). ExceptRunFrame(private, next, k(value, next))
+): ExceptRunFrame(private, c, frame_bind(A, B, k, m)) {
+  match m: ExceptRunFrame(private, c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => {
+      let last: ExceptRunFrame(private, next, k(value, next)) := tail(value, next, And::left(first))
+      AndIntro(
+        And::left(last),
+        AndIntro(
+          subst_except_trans(
+            private,
+            ck_subst_of(c),
+            ck_subst_of(next),
+            ck_subst_of(ck_st(k(value, next))),
+            And::left(And::right(first)),
+            And::left(And::right(last))
+          ),
+          type_records_trans(
+            c,
+            next,
+            ck_st(k(value, next)),
+            And::right(And::right(first)),
+            And::right(And::right(last))
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_set_subst_except_frame(
+  c: Checker,
+  private: Nat,
+  value: Ty,
+  ordered: CkOrdered(c)
+): ExceptRunFrame(private, c, ck_set_subst(c, private, value)) {
+  AndIntro(
+    And::left(ck_set_subst_run_frame(c, private, value, ordered)),
+    AndIntro(subst_except_insert(private, ck_subst_of(c), value, ordered), type_records_refl(c))
+  )
+}
+pub theorem ck_attempt_fits_except_frame(
+  private: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): ExceptRunFrame(private, c, ck_attempt_fits(c, a, b)) {
+  except_frame_grows(
+    private,
+    c,
+    ck_attempt_fits(c, a, b),
+    And::left(ck_attempt_fits_ok(c, a, b)(ordered))
+  )
+}
+pub theorem ck_attempt_unify_except_frame(
+  private: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): ExceptRunFrame(private, c, ck_attempt_unify(c, a, b)) {
+  except_frame_grows(
+    private,
+    c,
+    ck_attempt_unify(c, a, b),
+    And::left(attempt_unify_sub(c, a, b)(ordered))
+  )
+}
+
+// A private result may already have been bound since the snapshot was taken.
+// Its absence is required only in that snapshot, not in the current state.
+pub theorem subst_except_snapshot(
+  private: Nat,
+  snapshot: Ordmap(Nat, Ty),
+  before: Ordmap(Nat, Ty),
+  after: Ordmap(Nat, Ty),
+  absent: Ordmap::get(snapshot, private, Ordmap::compare_nat) = None,
+  prior: SubstExt(snapshot, before),
+  kept: SubstExtExcept(private, before, after)
+): SubstExt(snapshot, after) {
+  subst_except_fresh(
+    private,
+    snapshot,
+    after,
+    absent,
+    subst_except_trans(
+      private,
+      snapshot,
+      before,
+      after,
+      subst_except_extension(private, snapshot, before, prior),
+      kept
+    )
+  )
+}

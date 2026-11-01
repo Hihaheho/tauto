@@ -1,0 +1,198 @@
+import "obligation_state_frame.taut"
+import "finish_literal_sound.taut"
+
+pub fn finish_obligations_view(
+  c: Checker
+): Pair(
+  List(TyBound),
+  Pair(List(TyPending), List(TyCtorBound))
+) { Pair {fst: c.bounds, snd: Pair {fst: c.pending, snd: c.ctor_bounds}} }
+pub fn finish_obligations_bounds(
+  r#view: Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound)))
+): List(TyBound) { (r#view: List(TyBound)) }
+pub fn finish_obligations_pending(
+  r#view: Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound)))
+): List(TyPending) { (r#view: Pair(List(TyPending), List(TyCtorBound))).fst }
+pub fn finish_obligations_ctors(
+  r#view: Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound)))
+): List(TyCtorBound) { (r#view: Pair(List(TyPending), List(TyCtorBound))).snd }
+pub def LiteralRecordsFrame_obligations<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := finish_obligations_view(ck_st(m)) = finish_obligations_view(c)
+pub theorem literal_records_bind_obligations<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: LiteralRecordsFrame_obligations(c, m),
+  tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame_obligations(next, k(value, next))
+): LiteralRecordsFrame_obligations(c, frame_bind(A, B, k, m)) {
+  match m: LiteralRecordsFrame_obligations(
+    c,
+    frame_bind(A, B, k, m)
+  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+}
+pub theorem literal_records_rewrap_obligations<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: LiteralRecordsFrame_obligations(c, m)
+): LiteralRecordsFrame_obligations(c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => LiteralRecordsFrame_obligations(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
+}
+pub theorem literal_default_records_obligations(
+  c: Checker,
+  t: Ty
+): LiteralRecordsFrame_obligations(c, finish_default(c, t)) {
+  match t: LiteralRecordsFrame_obligations(c, finish_default(c, t)) {
+    TyInt(w) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(ps, result, kind) => Refl
+    TyUnion(ys) => Refl
+    TyProduct(ys) => Refl
+    TyTagged(tags, item) => Refl
+    TyNamed(name, params) => Refl
+    TyParam(name, bound) => Refl
+    TyInfo(item) => Refl
+    TyBorrow(item, mutable) => Refl
+    TyVar(v) => Refl
+    TyPoly(gs, item) => Refl
+    TyApp(head, arg) => Refl
+  }
+}
+pub theorem ck_default_int_records_obligations(
+  c: Checker,
+  v: Nat
+): LiteralRecordsFrame_obligations(c, ck_default_int(c, v)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_obligations(c, m),
+    Eq::sym(finish_default_unf(c, v)),
+    literal_default_records_obligations(c, ck_resolve(c, TyVar(v)))
+  )
+}
+pub theorem ck_default_ints_records_obligations(
+  vs: List(Pair(Nat, Bool)),
+  c: Checker
+): LiteralRecordsFrame_obligations(c, ck_default_ints(vs, c)) {
+  match vs: LiteralRecordsFrame_obligations(c, ck_default_ints(vs, c)) {
+    Nil => Refl
+    Cons(v, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_obligations(c, m),
+      Eq::sym(finish_defaults_unf(v, rest, c)),
+      literal_records_bind_obligations(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
+        ck_default_int(c, finish_int_key(v)),
+        ck_default_int_records_obligations(c, finish_int_key(v)),
+        ignored => next => literal_records_rewrap_obligations(
+          next,
+          ck_default_ints(rest, next),
+          ck_default_ints_records_obligations(rest, next)
+        )
+      )
+    )
+  }
+}
+pub theorem literal_after_defaults_records_obligations(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  clean: DiagnosticReportClean(finish_after_defaults(c, widths))
+): LiteralRecordsFrame_obligations(c, finish_after_defaults(c, Widths)) {
+  Eq::congr(
+    Mut1(TypeReport, Checker),
+    Pair(List(TyBound), Pair(List(TyPending), List(TyCtorBound))),
+    finish_after_defaults(c, Widths),
+    mut1(finish_report(c, Widths), c),
+    (m: Mut1(TypeReport, Checker)) => finish_obligations_view(ck_st(m)),
+    And::right(finish_after_defaults_accepts(c, Widths, clean))
+  )
+}
+pub theorem literal_finish_default_records_obligations(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: LiteralRecordsFrame_obligations(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
+): LiteralRecordsFrame_obligations(c, diagnostic_finish_default_result(m)) {
+  match m: LiteralRecordsFrame_obligations(c, diagnostic_finish_default_result(m)) {
+    mut1(value, next) => Eq::trans(
+      literal_after_defaults_records_obligations(
+        next,
+        ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty()),
+        clean
+      ),
+      first
+    )
+  }
+}
+pub theorem literal_finish_products_records_obligations(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: LiteralRecordsFrame_obligations(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
+): LiteralRecordsFrame_obligations(c, diagnostic_finish_products_result(m)) {
+  match m: LiteralRecordsFrame_obligations(c, diagnostic_finish_products_result(m)) {
+    mut1(value, next) => literal_finish_default_records_obligations(
+      c,
+      ck_check_products(List::reverse(finish_product_checks(next)), next),
+      Eq::trans(
+        Eq::congr(
+          keep_obligations,
+          ck_check_products_keep(List::reverse(finish_product_checks(next)), next)
+        ),
+        first
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_finish_literal_records_obligations(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): LiteralRecordsFrame_obligations(c, ck_finish(c)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => LiteralRecordsFrame_obligations(c, m),
+    Eq::sym(diagnostic_finish_default_unf(c)),
+    literal_finish_products_records_obligations(
+      c,
+      ck_default_ints(Ordmap::entries(finish_ints(c)), c),
+      ck_default_ints_records_obligations(Ordmap::entries(finish_ints(c)), c),
+      Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
+    )
+  )
+}
+
+pub theorem ck_finish_obligation_frame(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): ObligationFrame(c, ck_finish(c)) {
+  let equal: finish_obligations_view(ck_st(ck_finish(c))) = finish_obligations_view(c) := ck_finish_literal_records_obligations(c, clean)
+  AndIntro(
+    AndIntro(
+      item => member => Eq::subst(
+        (items: List(TyBound)) => Mem(TyBound, item, items),
+        Eq::sym(Eq::congr(finish_obligations_bounds, equal)),
+        member
+      ),
+      item => member => Eq::subst(
+        (items: List(TyCtorBound)) => Mem(TyCtorBound, item, items),
+        Eq::sym(Eq::congr(finish_obligations_ctors, equal)),
+        member
+      )
+    ),
+    item => member => Eq::subst(
+      (items: List(TyPending)) => Mem(TyPending, item, items),
+      Eq::sym(Eq::congr(finish_obligations_pending, equal)),
+      member
+    )
+  )
+}

@@ -1,0 +1,115 @@
+import "../../surface/src/surface.taut"
+import "datas.taut"
+
+pub fn declaration_field_ty(f: DataField): Ty { f.ty }
+pub fn declaration_ctor_fields(k: DataCtor): List(DataField) { k.fields }
+pub fn declaration_generics(d: Data): List(Text) { d.generics }
+
+pub(open) inductive DeclaredArity: (Data, List(Ty)) -> Prop {
+  Mk(
+    data: Data,
+    args: List(Ty),
+    count: list_len(args) = list_len(declaration_generics(data))
+  ): DeclaredArity(data, args)
+}
+
+// Explicit copy declarations require copy fields; the other declarations
+// bound fields by the ordinary kind order.
+pub(open) inductive DeclaredFieldKinds(
+  d: Datas,
+  map: Ordmap(Text, Ty),
+  declared: Kind
+): (List(DataField)) -> Prop {
+  DeclaredFieldsNil: DeclaredFieldKinds(d, map, declared, Nil)
+  DeclaredFieldsCons<f: DataField, rest: List(
+    DataField
+  )>(
+    bound: kind_join(datas_kind(d, ty_substitute(declaration_field_ty(f), map)), declared) = declared,
+    tail: DeclaredFieldKinds(d, map, declared, rest)
+  ): DeclaredFieldKinds(d, map, declared, Cons(f, rest))
+}
+pub(open) inductive DeclaredConstructorKinds(
+  d: Datas,
+  map: Ordmap(Text, Ty),
+  declared: Kind
+): (List(DataCtor)) -> Prop {
+  DeclaredCtorsNil: DeclaredConstructorKinds(d, map, declared, Nil)
+  DeclaredCtorsCons<k: DataCtor, rest: List(
+    DataCtor
+  )>(
+    fields: DeclaredFieldKinds(d, map, declared, declaration_ctor_fields(k)),
+    tail: DeclaredConstructorKinds(d, map, declared, rest)
+  ): DeclaredConstructorKinds(d, map, declared, Cons(k, rest))
+}
+
+pub(open) inductive RecursiveDeclarationKind: (Bool, Kind) -> Prop {
+  DeclarationNonrecursive(k: Kind): RecursiveDeclarationKind(false, k)
+  DeclarationRecursiveShared: RecursiveDeclarationKind(true, KindShared)
+  DeclarationRecursiveAffine: RecursiveDeclarationKind(true, KindAffine)
+  DeclarationRecursiveLinear: RecursiveDeclarationKind(true, KindLinear)
+}
+
+pub fn declaration_surface_name(s: SurfaceData): Text { s.name }
+pub fn declaration_annotation(d: Data): Option(Kind) { d.declared }
+pub fn declaration_data_recursive(d: Data): Bool { d.recursive }
+pub fn declaration_data_ctors(d: Data): List(DataCtor) { d.constructors }
+pub fn declaration_parameters(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
+  match gs: Ordmap(Text, Ty) {
+    Nil => map
+    Cons(g, rest) => declaration_parameters(
+      rest,
+      Ordmap::insert(map, g, TyParam(g, KindCopy), Ordmap::compare_text)
+    )
+  }
+}
+// The kind conditions on a registered declaration with an explicit annotation.
+// Existence and uniqueness of registrations are separate well-formedness conditions.
+pub def DataDeclarationKinds(
+  d: Datas,
+  s: SurfaceData
+): Prop := ∀ data: Data. ∀ declared: Kind. ∀ found: datas_decl(d, declaration_surface_name(s)) = Some(data). ∀ annotation: declaration_annotation(data) = Some(declared). And(
+  RecursiveDeclarationKind(declaration_data_recursive(data), declared),
+  DeclaredConstructorKinds(
+    d,
+    declaration_parameters(declaration_generics(data), Ordmap::empty()),
+    declared,
+    declaration_data_ctors(data)
+  )
+)
+pub fn StatementDataKinds(d: Datas, s: SurfaceStmt): Prop {
+  match s: Prop {
+    StLet(n, ty, v, b, m) => True
+    StVar(n, ty, v, b) => True
+    StModule(n, ss, start, end) => True
+    StAssign(n, n_place, v) => True
+    StCalled(n_generates, v) => True
+    StFn(f) => True
+    StTheorem(t) => True
+    StDef(t) => True
+    StMutual(ss, start, end) => True
+    StImport(path, start, end) => True
+    StInductive(i) => True
+    StEffect(e) => True
+    StExtern(abi, fs, start, end) => True
+    StClass(cl) => True
+    StInstance(i) => True
+    StWhile(cond, body) => True
+    StReturn(v) => True
+    StExpr(v) => True
+    StOther(what, start, end) => True
+    StMacro(n, f, start, end) => True
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => True
+    StSyntax(n, grammar, start, end) => True
+    StStruct(data) => DataDeclarationKinds(d, data)
+    StEnum(data) => DataDeclarationKinds(d, data)
+  }
+}
+pub(open) inductive ProgramDataKinds(d: Datas): (List(SurfaceStmt)) -> Prop {
+  ProgramDataKindsNil: ProgramDataKinds(d, Nil)
+  ProgramDataKindsCons<s: SurfaceStmt, ss: List(
+    SurfaceStmt
+  )>(
+    head: StatementDataKinds(d, s),
+    tail: ProgramDataKinds(d, ss)
+  ): ProgramDataKinds(d, Cons(s, ss))
+}

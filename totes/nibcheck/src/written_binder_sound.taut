@@ -1,0 +1,369 @@
+import "rules_written_binders.taut"
+import "unify_sound.taut"
+import "types_decl.taut"
+
+pub fn written_binder_kind_lookup(name: Text, o: Option(Kind)): Option(Pair(Text, Kind)) {
+  match o: Option(Pair(Text, Kind)) {
+    None => None
+    Some(kind) => Some(Pair { fst: name, snd: kind })
+  }
+}
+pub fn written_binder_shape(name: Text, sk: SurfaceKind): Option(Pair(Text, Kind)) {
+  match sk: Option(Pair(Text, Kind)) {
+    SkVar(arg_name) => written_binder_kind_lookup(name, kind_parse(arg_name))
+    SkNat(arg_digits) => None
+    SkText(arg_value) => None
+    SkBool(arg_value) => None
+    SkApp(arg_head, arg_args) => None
+    SkPi(arg_params, arg_result, arg_effects) => None
+    SkExists(arg_binder, arg_domain, arg_body) => None
+    SkLam(arg_params, arg_body) => None
+    SkUnion(arg_parts) => None
+    SkProduct(arg_parts) => None
+    SkTagged(arg_tag, arg_value) => None
+    SkIf(arg_cond, arg_then, arg_otherwise) => None
+    SkField(arg_value, arg_name) => None
+    SkBlock(arg_stmts) => None
+    SkPerform(arg_op, arg_args) => None
+    SkHandle(arg_body, arg_handlers) => None
+    SkBudget(arg_amount_memory, arg_amount, arg_body) => None
+    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => None
+    SkHole(arg_name) => None
+    SkRecord(arg_name, arg_fields) => None
+    SkBorrow(arg_mutable, arg_value) => None
+    SkFnKind(arg_kind, arg_ty) => None
+    SkBorrowLam(arg_borrows, arg_lam) => None
+    SkOther(arg_what) => None
+    SkRow(arg_what_effects) => None
+    SkFloat(arg_what) => None
+    SkProject(arg_what, arg_what_ty) => None
+    SkMacroCall(arg_name, arg_arg) => None
+    SkQuote(arg_stmts_form, arg_stmts) => None
+    SkSplice(arg_value) => None
+    SkSyntaxLit(arg_name, arg_body) => None
+    SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms) => None
+  }
+}
+pub fn written_binder_term(
+  name: Text,
+  t: SurfaceTerm
+): Option(Pair(Text, Kind)) { written_binder_shape(name, t.kind) }
+pub fn written_binder_named(t: SurfaceTerm, o: Option(Text)): Option(Pair(Text, Kind)) {
+  match o: Option(Pair(Text, Kind)) {
+    None => None
+    Some(name) => written_binder_term(name, t)
+  }
+}
+pub theorem written_binder_unf(
+  name: Option(Text),
+  t: SurfaceTerm
+): pi_binder(SurfaceParamMk(name, t)) = written_binder_named(t, name) { Refl }
+
+pub theorem written_binder_complete<p: SurfaceParam, b: Pair(
+  Text,
+  Kind
+)>(h: WrittenKindBinder(p, b)): pi_binder(p) = Some(b) {
+  match h: pi_binder(p) = Some(b) {
+    Mk(ctor_ast_occurrence, name, spelling, kind, start, end, parsed) => Eq::congr(
+      (o: Option(Kind)) => written_binder_kind_lookup(name, o),
+      parsed
+    )
+  }
+}
+
+pub theorem written_binder_kind_sound(
+  ast_occurrence: Option(TermOccurrence),
+  name: Text,
+  spelling: Text,
+  start: Nat,
+  end: Nat,
+  b: Pair(Text, Kind),
+  o: Option(Kind),
+  parsed: kind_parse(spelling) = o,
+  found: written_binder_kind_lookup(name, o) = Some(b)
+): WrittenKindBinder(
+  SurfaceParamMk(Some(name), SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence)),
+  b
+) {
+  match o: WrittenKindBinder(
+    SurfaceParamMk(Some(name), SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence)),
+    b
+  ) {
+    None => False::elim(ck_none_ne_some(b, found))
+    Some(kind) => Eq::subst(
+      (pair: Pair(Text, Kind)) => WrittenKindBinder(
+        SurfaceParamMk(
+          Some(name),
+          SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence)
+        ),
+        pair
+      ),
+      ck_some_inj(Pair { fst: name, snd: kind }, b, found),
+      WrittenKindBinder::Mk(name, spelling, kind, start, end, parsed)
+    )
+  }
+}
+
+pub theorem written_binder_shape_sound(
+  ast_occurrence: Option(TermOccurrence),
+  name: Text,
+  sk: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  b: Pair(Text, Kind),
+  found: written_binder_shape(name, sk) = Some(b)
+): WrittenKindBinder(
+  SurfaceParamMk(Some(name), SurfaceTermIndexedMk(sk, start, end, ast_occurrence)),
+  b
+) {
+  match sk: WrittenKindBinder(
+    SurfaceParamMk(Some(name), SurfaceTermIndexedMk(sk, start, end, ast_occurrence)),
+    b
+  ) {
+    SkVar(arg_name) => written_binder_kind_sound(
+      ast_occurrence,
+      name,
+      arg_name,
+      start,
+      end,
+      b,
+      kind_parse(arg_name),
+      Refl,
+      found
+    )
+    SkNat(arg_digits) => False::elim(ck_none_ne_some(b, found))
+    SkText(arg_value) => False::elim(ck_none_ne_some(b, found))
+    SkBool(arg_value) => False::elim(ck_none_ne_some(b, found))
+    SkApp(arg_head, arg_args) => False::elim(ck_none_ne_some(b, found))
+    SkPi(arg_params, arg_result, arg_effects) => False::elim(ck_none_ne_some(b, found))
+    SkExists(arg_binder, arg_domain, arg_body) => False::elim(ck_none_ne_some(b, found))
+    SkLam(arg_params, arg_body) => False::elim(ck_none_ne_some(b, found))
+    SkUnion(arg_parts) => False::elim(ck_none_ne_some(b, found))
+    SkProduct(arg_parts) => False::elim(ck_none_ne_some(b, found))
+    SkTagged(arg_tag, arg_value) => False::elim(ck_none_ne_some(b, found))
+    SkIf(arg_cond, arg_then, arg_otherwise) => False::elim(ck_none_ne_some(b, found))
+    SkField(arg_value, arg_name) => False::elim(ck_none_ne_some(b, found))
+    SkBlock(arg_stmts) => False::elim(ck_none_ne_some(b, found))
+    SkPerform(arg_op, arg_args) => False::elim(ck_none_ne_some(b, found))
+    SkHandle(arg_body, arg_handlers) => False::elim(ck_none_ne_some(b, found))
+    SkBudget(arg_amount_memory, arg_amount, arg_body) => False::elim(ck_none_ne_some(b, found))
+    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => False::elim(
+      ck_none_ne_some(b, found)
+    )
+    SkHole(arg_name) => False::elim(ck_none_ne_some(b, found))
+    SkRecord(arg_name, arg_fields) => False::elim(ck_none_ne_some(b, found))
+    SkBorrow(arg_mutable, arg_value) => False::elim(ck_none_ne_some(b, found))
+    SkFnKind(arg_kind, arg_ty) => False::elim(ck_none_ne_some(b, found))
+    SkBorrowLam(arg_borrows, arg_lam) => False::elim(ck_none_ne_some(b, found))
+    SkOther(arg_what) => False::elim(ck_none_ne_some(b, found))
+    SkRow(arg_what_effects) => False::elim(ck_none_ne_some(b, found))
+    SkFloat(arg_what) => False::elim(ck_none_ne_some(b, found))
+    SkProject(arg_what, arg_what_ty) => False::elim(ck_none_ne_some(b, found))
+    SkMacroCall(arg_name, arg_arg) => False::elim(ck_none_ne_some(b, found))
+    SkQuote(arg_stmts_form, arg_stmts) => False::elim(ck_none_ne_some(b, found))
+    SkSplice(arg_value) => False::elim(ck_none_ne_some(b, found))
+    SkSyntaxLit(arg_name, arg_body) => False::elim(ck_none_ne_some(b, found))
+    SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms) => False::elim(
+      ck_none_ne_some(b, found)
+    )
+  }
+}
+pub theorem written_binder_term_sound(
+  name: Text,
+  t: SurfaceTerm,
+  b: Pair(Text, Kind),
+  found: written_binder_term(name, t) = Some(b)
+): WrittenKindBinder(SurfaceParamMk(Some(name), t), b) {
+  match t: WrittenKindBinder(SurfaceParamMk(Some(name), t), b) {
+    SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => written_binder_shape_sound(
+      ast_occurrence,
+      name,
+      sk,
+      start,
+      end,
+      b,
+      found
+    )
+  }
+}
+pub theorem written_binder_named_sound(
+  t: SurfaceTerm,
+  o: Option(Text),
+  b: Pair(Text, Kind),
+  found: written_binder_named(t, o) = Some(b)
+): WrittenKindBinder(SurfaceParamMk(o, t), b) {
+  match o: WrittenKindBinder(SurfaceParamMk(o, t), b) {
+    None => False::elim(ck_none_ne_some(b, found))
+    Some(name) => written_binder_term_sound(name, t, b, found)
+  }
+}
+pub theorem pi_binder_sound(
+  p: SurfaceParam,
+  b: Pair(Text, Kind),
+  found: pi_binder(p) = Some(b)
+): WrittenKindBinder(p, b) {
+  match p: WrittenKindBinder(p, b) {
+    SurfaceParamMk(name, t) => written_binder_named_sound(
+      t,
+      name,
+      b,
+      Eq::trans(Eq::sym(written_binder_unf(name, t)), found)
+    )
+  }
+}
+pub theorem pi_binder_absent(
+  p: SurfaceParam,
+  absent: pi_binder(p) = None,
+  b: Pair(Text, Kind),
+  h: WrittenKindBinder(p, b)
+): False {
+  ck_none_ne_some(b, Eq::trans(Eq::sym(absent), written_binder_complete(h)))
+}
+
+pub fn written_binders_prefix(
+  r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
+): List(Pair(Text, Kind)) { (r: List(Pair(Text, Kind))) }
+pub fn written_binders_suffix(
+  r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
+): List(SurfaceParam) { (r: List(SurfaceParam)) }
+pub def WrittenBinderSplit(
+  ps: List(SurfaceParam),
+  r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
+): Prop := WrittenBindersPrefix(ps, written_binders_prefix(r), written_binders_suffix(r))
+
+pub fn written_binders_cons_result(
+  b: Pair(Text, Kind),
+  r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
+): Pair(List(Pair(Text, Kind)), List(SurfaceParam)) { Pair { fst: Cons(b, (r: List(Pair(Text, Kind)))), snd: (r: List(SurfaceParam)) } }
+pub fn written_binders_choice(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  o: Option(Pair(Text, Kind))
+): Pair(List(Pair(Text, Kind)), List(SurfaceParam)) {
+  match o: Pair(List(Pair(Text, Kind)), List(SurfaceParam)) {
+    None => Pair { fst: Nil, snd: Cons(p, rest) }
+    Some(b) => written_binders_cons_result(b, pi_binders(rest))
+  }
+}
+pub theorem written_binders_unf(
+  p: SurfaceParam,
+  rest: List(SurfaceParam)
+): pi_binders(Cons(p, rest)) = written_binders_choice(p, rest, pi_binder(p)) { Refl }
+
+pub theorem written_binders_prepend(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  b: Pair(Text, Kind),
+  r: Pair(List(Pair(Text, Kind)), List(SurfaceParam)),
+  head: WrittenKindBinder(p, b),
+  tail: WrittenBinderSplit(rest, r)
+): WrittenBinderSplit(Cons(p, rest), written_binders_cons_result(b, r)) {
+  match r: WrittenBinderSplit(Cons(p, rest), written_binders_cons_result(b, r)) {
+    Pair { fst: bs, snd: Suffix } => WrittenBindersCons(p, rest, b, bs, Suffix, head, tail)
+  }
+}
+pub theorem written_binders_choice_sound(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  o: Option(Pair(Text, Kind)),
+  found: pi_binder(p) = o,
+  tail: WrittenBinderSplit(rest, pi_binders(rest))
+): WrittenBinderSplit(Cons(p, rest), written_binders_choice(p, rest, o)) {
+  match o: WrittenBinderSplit(Cons(p, rest), written_binders_choice(p, rest, o)) {
+    None => WrittenBindersStop(p, rest, b => h => pi_binder_absent(p, found, b, h))
+    Some(b) => written_binders_prepend(
+      p,
+      rest,
+      b,
+      pi_binders(rest),
+      pi_binder_sound(p, b, found),
+      tail
+    )
+  }
+}
+pub theorem pi_binders_sound(ps: List(SurfaceParam)): WrittenBinderSplit(ps, pi_binders(ps)) {
+  match ps: WrittenBinderSplit(ps, pi_binders(ps)) {
+    Nil => WrittenBindersNil
+    Cons(p, rest) => Eq::subst(
+      (r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))) => WrittenBinderSplit(Cons(p, rest), r),
+      Eq::sym(written_binders_unf(p, rest)),
+      written_binders_choice_sound(p, rest, pi_binder(p), Refl, pi_binders_sound(rest))
+    )
+  }
+}
+
+pub theorem binders_map_sound(
+  bs: List(Pair(Text, Kind)),
+  initial: Ordmap(Text, Ty)
+): WrittenBinderMap(bs, initial, binders_map(bs, initial)) {
+  match bs: WrittenBinderMap(bs, initial, binders_map(bs, initial)) {
+    Nil => WrittenBinderMapNil(initial)
+    Cons(b, rest) => match b: WrittenBinderMap(
+      Cons(b, rest),
+      initial,
+      binders_map(Cons(b, rest), initial)
+    ) {
+      Pair { fst: name, snd: kind } => WrittenBinderMapCons(
+        name,
+        kind,
+        rest,
+        initial,
+        binders_map(rest, Ordmap::insert(initial, name, TyParam(name, kind), Ordmap::compare_text)),
+        binders_map_sound(
+          rest,
+          Ordmap::insert(initial, name, TyParam(name, kind), Ordmap::compare_text)
+        )
+      )
+    }
+  }
+}
+
+pub theorem written_params_skip_unf(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  count: Nat
+): ck_written_params(Cons(p, rest), c, generics, Succ(count)) = ck_rewrap1(ck_written_params(rest, c, generics, count)) { Refl }
+
+pub theorem written_binders_skip<ps: List(
+  SurfaceParam
+), bs: List(
+  Pair(Text, Kind)
+), suffix: List(
+  SurfaceParam
+)>(
+  split: WrittenBindersPrefix(ps, bs, Suffix),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): ck_written_params(ps, c, generics, list_len(bs)) = ck_written_params(Suffix, c, generics, 0) {
+  match MkSplit: ck_written_params(ps, c, generics, list_len(bs)) = ck_written_params(Suffix, c, generics, 0) {
+    WrittenBindersNil => Refl
+    WrittenBindersStop(first, rest, ordinary) => Refl
+    WrittenBindersCons(first, rest, b, tail, remaining, head, split_tail) => Eq::trans(
+      written_params_skip_unf(first, rest, c, generics, list_len(tail)),
+      Eq::trans(
+        ck_rewrap1_id(ck_written_params(rest, c, generics, list_len(tail))),
+        written_binders_skip(split_tail, c, generics)
+      )
+    )
+  }
+}
+
+pub theorem pi_binders_skipped_parameters(
+  ps: List(SurfaceParam),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): ck_written_params(ps, c, generics, list_len(written_binders_prefix(pi_binders(ps)))) = ck_written_params(written_binders_suffix(pi_binders(ps)), c, generics, 0) {
+  written_binders_skip(pi_binders_sound(ps), c, generics)
+}
+
+pub theorem ty_poly_of_sound(
+  bs: List(Pair(Text, Kind)),
+  body: Ty
+): WrittenPolymorphicType(bs, body, ty_poly_of(bs, body)) {
+  match bs: WrittenPolymorphicType(bs, body, ty_poly_of(bs, body)) {
+    Nil => WrittenMonomorphic(body)
+    Cons(first, rest) => WrittenPolymorphic(first, rest, body)
+  }
+}

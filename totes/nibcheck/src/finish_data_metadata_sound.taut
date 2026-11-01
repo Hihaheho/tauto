@@ -1,0 +1,114 @@
+import "data_metadata_sound.taut"
+
+pub theorem data_metadata_mark_k(
+  d: Datas,
+  n: Text,
+  o: Option(Data),
+  found: datas_decl(d, n) = o,
+  ordered: SummaryOrdered(d)
+): DataMetadataPreserved(d, summary_mark_k(d, n, o)) {
+  match o: DataMetadataPreserved(d, summary_mark_k(d, n, o)) {
+    None => key => Refl
+    Some(data) => data_metadata_insert(
+      summary_decls(d),
+      n,
+      data_with_recursive(data, datas_reaches_from(d, n, n)),
+      ordered,
+      Eq::trans(
+        Eq::congr(data_metadata_option, found),
+        Eq::congr(
+          (v: Data) => Some(v),
+          Eq::sym(data_metadata_recursive(data, datas_reaches_from(d, n, n)))
+        )
+      )
+    )
+  }
+}
+
+pub theorem data_metadata_mark(
+  d: Datas,
+  n: Text,
+  ordered: SummaryOrdered(d)
+): DataMetadataPreserved(d, datas_mark_recursive(d, n)) {
+  Eq::subst(
+    (next: Datas) => DataMetadataPreserved(d, next),
+    Eq::sym(summary_mark_unf(d, n)),
+    data_metadata_mark_k(d, n, datas_decl(d, n), Refl, ordered)
+  )
+}
+
+pub theorem ck_mark_preserves_metadata(
+  es: List(Pair(Text, Data)),
+  c: Checker,
+  ordered: SummaryOrdered(ck_datas_of(c))
+): DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+  match es: DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+    Nil => n => Refl
+    Cons(e, rest) => {
+      let next: Checker := summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
+      let tail: DataMetadataPreserved(
+        ck_datas_of(next),
+        ck_datas_of(ck_st(ck_mark_recursive(rest, next)))
+      ) := ck_mark_preserves_metadata(
+        rest,
+        next,
+        summary_mark_ordered(ck_datas_of(c), summary_key(e), ordered)
+      )
+      Eq::subst(
+        (z: Mut1(Unit, Checker)) => DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(z))),
+        Eq::sym(
+          Eq::trans(summary_mark_step(e, rest, c), ck_rewrap1_id(ck_mark_recursive(rest, next)))
+        ),
+        n => Eq::trans(data_metadata_mark(ck_datas_of(c), summary_key(e), ordered)(n), tail(n))
+      )
+    }
+  }
+}
+
+pub theorem data_metadata_finish_k(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: SummaryOrdered(ck_datas_of(ck_st(m)))
+): DataMetadataPreserved(
+  ck_datas_of(ck_st(m)),
+  ck_datas_of(ck_st(summary_finish_datas_k(program, m)))
+) {
+  match m: DataMetadataPreserved(
+    ck_datas_of(ck_st(m)),
+    ck_datas_of(ck_st(summary_finish_datas_k(program, m)))
+  ) {
+    mut1(v, next) => Eq::subst(
+      (d: Datas) => DataMetadataPreserved(ck_datas_of(next), d),
+      Eq::sym(
+        Eq::trans(
+          Eq::congr(
+            (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
+            ck_rewrap1_id(
+              ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+            )
+          ),
+          ck_finish_stmts_datas(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+        )
+      ),
+      datas_summarize_preserves_metadata(ck_datas_of(next), ordered)
+    )
+  }
+}
+
+pub theorem ck_finish_datas_preserves_metadata(
+  c: Checker,
+  program: List(SurfaceStmt),
+  ordered: SummaryOrdered(ck_datas_of(c))
+): DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(ck_finish_datas(c, program)))) {
+  let es: List(Pair(Text, Data)) := Ordmap::entries(summary_decls(ck_datas_of(c)))
+  let marked: Mut1(Unit, Checker) := ck_mark_recursive(es, c)
+  let tail: DataMetadataPreserved(
+    ck_datas_of(ck_st(marked)),
+    ck_datas_of(ck_st(summary_finish_datas_k(program, marked)))
+  ) := data_metadata_finish_k(program, marked, ck_mark_summary_ordered(es, c, ordered))
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(z))),
+    Eq::sym(summary_finish_datas_unf(c, program)),
+    n => Eq::trans(ck_mark_preserves_metadata(es, c, ordered)(n), tail(n))
+  )
+}

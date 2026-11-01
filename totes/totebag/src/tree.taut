@@ -1,0 +1,155 @@
+import "spec.taut"
+
+// The paths of a source tree: relative, with `/` between plain components.
+
+pub(open) inductive TbPathProblem: Type {
+  // Empty, or over 4096 bytes.
+  PathLength: TbPathProblem
+  // A backslash, NUL or another control character.
+  PathCharacters: TbPathProblem
+  PathAbsolute: TbPathProblem
+  // An empty component, `.` or `..`.
+  PathComponents: TbPathProblem
+}
+
+// A control character in UTF-8: C0, DEL, or C1 (`C2 80` to `C2 9F`).
+pub fn tb_control(l: List(Nat)): Bool {
+  match l: Bool {
+    Nil => false
+    Cons(b, t) => Bool::or(Nat::lt(b, 32), Bool::or(Nat::eq(b, 127), Bool::or(
+      Bool::and(Nat::eq(b, 194), match t: Bool {
+        Nil => false
+        Cons(c, u) => Bool::and(Nat::le(128, c), Nat::le(c, 159))
+      }),
+      tb_control(t)
+    )))
+  }
+}
+
+pub fn tb_path_component_bad(c: List(Nat)): Bool {
+  Bool::or(is_empty(c), tb_dots(c))
+}
+
+pub fn tb_path(p: List(Nat)): Option(TbPathProblem) {
+  match Bool::and(not(is_empty(p)), tb_at_most(4096, p)): Option(TbPathProblem) {
+    false => Some(PathLength)
+    true => match Bool::or(tb_has_byte(92, p), tb_control(p)): Option(TbPathProblem) {
+      true => Some(PathCharacters)
+      false => match starts_with(47, p): Option(TbPathProblem) {
+        true => Some(PathAbsolute)
+        false => match tb_some_piece(tb_path_component_bad, split_all(47, p)): Option(TbPathProblem) {
+          true => Some(PathComponents)
+          false => None
+        }
+      }
+    }
+  }
+}
+
+pub fn tb_check_path(t: Text): Option(TbPathProblem) {
+  tb_path(Text::bytes(t))
+}
+
+// ---- the paths of one tree together ---------------------------------------------
+
+// A path of a tree and the same path in lower case, as the host folds it:
+// two paths are one file where names are compared without case.
+pub(open) inductive TbTreePath: Type {
+  MkTreePath(path: Text, folded: Text): TbTreePath
+}
+
+pub(open) inductive TbTreeProblem: Type {
+  // The same path twice.
+  PathTwice(path: Text): TbTreeProblem
+  // Two paths that are one without case.
+  PathCaseClash(other: Text, path: Text): TbTreeProblem
+  // A file that is also a directory of another path.
+  FileAndDirectory(file: Text, path: Text): TbTreeProblem
+}
+
+pub fn tb_folded(p: TbTreePath): Text {
+  match p: Text {
+    MkTreePath(path, folded) => folded
+  }
+}
+
+pub fn tb_path_of(p: TbTreePath): Text {
+  match p: Text {
+    MkTreePath(path, folded) => path
+  }
+}
+
+// The first path before `p` that is the same file.
+pub fn tb_clash(p: TbTreePath, seen: List(TbTreePath)): Option(TbTreeProblem) {
+  match seen: Option(TbTreeProblem) {
+    Nil => None
+    Cons(q, rest) => match Text::eq(tb_folded(q), tb_folded(p)): Option(TbTreeProblem) {
+      false => tb_clash(p, rest)
+      true => match Text::eq(tb_path_of(q), tb_path_of(p)): Option(TbTreeProblem) {
+        true => Some(PathTwice(tb_path_of(p)))
+        false => Some(PathCaseClash(tb_path_of(q), tb_path_of(p)))
+      }
+    }
+  }
+}
+
+pub fn tb_clashes(ps: List(TbTreePath), seen: List(TbTreePath)): Option(TbTreeProblem) {
+  match ps: Option(TbTreeProblem) {
+    Nil => None
+    Cons(p, rest) => match tb_clash(p, seen): Option(TbTreeProblem) {
+      Some(problem) => Some(problem)
+      None => tb_clashes(rest, Cons(p, seen))
+    }
+  }
+}
+
+// The directories `p` goes through, folded: `a`, `a/b` for `a/b/c`.
+pub fn tb_dirs_of(l: List(Nat), at: List(Nat)): List(List(Nat)) {
+  match l: List(List(Nat)) {
+    Nil => Nil
+    Cons(b, t) => match Nat::eq(b, 47): List(List(Nat)) {
+      true => Cons(List::reverse(at), tb_dirs_of(t, Cons(b, at)))
+      false => tb_dirs_of(t, Cons(b, at))
+    }
+  }
+}
+
+// The file of `all` that is the directory `d`.
+pub fn tb_file_at(d: List(Nat), all: List(TbTreePath)): Option(TbTreePath) {
+  match all: Option(TbTreePath) {
+    Nil => None
+    Cons(q, rest) => match bytes_eq(Text::bytes(tb_folded(q)), d): Option(TbTreePath) {
+      true => Some(q)
+      false => tb_file_at(d, rest)
+    }
+  }
+}
+
+pub fn tb_file_on_way(p: TbTreePath, dirs: List(List(Nat)), all: List(TbTreePath)): Option(TbTreeProblem) {
+  match dirs: Option(TbTreeProblem) {
+    Nil => None
+    Cons(d, rest) => match tb_file_at(d, all): Option(TbTreeProblem) {
+      Some(file) => Some(FileAndDirectory(tb_path_of(file), tb_path_of(p)))
+      None => tb_file_on_way(p, rest, all)
+    }
+  }
+}
+
+pub fn tb_files_on_way(ps: List(TbTreePath), all: List(TbTreePath)): Option(TbTreeProblem) {
+  match ps: Option(TbTreeProblem) {
+    Nil => None
+    Cons(p, rest) => match tb_file_on_way(p, tb_dirs_of(Text::bytes(tb_folded(p)), Nil), all): Option(TbTreeProblem) {
+      Some(problem) => Some(problem)
+      None => tb_files_on_way(rest, all)
+    }
+  }
+}
+
+// Whether the paths of a tree, each already a checked path, make a tree:
+// no two are one file without case, and no file is also a directory.
+pub fn tb_check_tree(ps: List(TbTreePath)): Option(TbTreeProblem) {
+  match tb_clashes(ps, Nil): Option(TbTreeProblem) {
+    Some(problem) => Some(problem)
+    None => tb_files_on_way(ps, ps)
+  }
+}

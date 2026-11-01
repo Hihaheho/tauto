@@ -1,0 +1,220 @@
+import "expr_access_frame.taut"
+import "operator_frame.taut"
+import "binding_error_sound.taut"
+
+pub theorem access_info_unbounded_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  unbounded: Bool
+): CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
+  match unbounded: CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
+    true => (clean_errors => clean_errors)
+    false => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, TyInfo(h), name),
+      ck_field_missing_frame_errors(c, term, TyInfo(h), name)
+    )
+  }
+}
+
+pub theorem access_info_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  more: Bool
+): CkErrorFrame(c, access_info(c, term, name, h, more)) {
+  match more: CkErrorFrame(c, access_info(c, term, name, h, more)) {
+    true => (clean_errors => clean_errors)
+    false => access_info_unbounded_frame_errors(c, term, name, h, Text::eq(name, "unbounded"))
+  }
+}
+
+pub theorem access_borrow_frame_errors(
+  c: Checker,
+  t: Ty,
+  borrow: Bool
+): CkErrorFrame(c, access_borrow(c, t, borrow)) {
+  match borrow: CkErrorFrame(c, access_borrow(c, t, borrow)) {
+    true => (clean_errors => clean_errors)
+    false => (clean_errors => clean_errors)
+  }
+}
+
+pub theorem access_found_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  borrowed: Bool,
+  found: Option(Ty)
+): CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) {
+  match found: CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) {
+    None => error_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat4(d, " has no field `", name, "`"), span_of(term)),
+      ck_error_frame_errors(c, cat4(d, " has no field `", name, "`"), span_of(term)),
+      ignored => c1 => error_frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame_errors(c1))
+    )
+    Some(t) => access_borrow_frame_errors(c, t, Bool::and(borrowed, not(kind_dup(ck_kind(c, t)))))
+  }
+}
+
+pub theorem access_struct_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  args: List(Ty),
+  borrowed: Bool,
+  structural: Bool
+): CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+  match structural: CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+    true => access_found_frame_errors(
+      c,
+      term,
+      name,
+      d,
+      borrowed,
+      ck_field_find(datas_fields(ck_datas_of(c), d, 0, args), name)
+    )
+    false => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, TyNamed(d, args), name),
+      ck_field_missing_frame_errors(c, term, TyNamed(d, args), name)
+    )
+  }
+}
+
+pub theorem access_field_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  original: Ty,
+  borrowed: Bool,
+  t: Ty
+): CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) {
+  match t: CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) {
+    TyInt(pat_w) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyBool => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyText => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyUnit => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyNever => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyDecimal => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyFloat => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyFn(pat_params, pat_result, pat_kind) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyUnion(pat_members) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyProduct(pat_members) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyTagged(pat_tags, pat_inner) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyNamed(d, args) => access_struct_frame_errors(
+      c,
+      term,
+      name,
+      d,
+      args,
+      borrowed,
+      data_is_struct(ck_datas_of(c), d)
+    )
+    TyParam(pat_name, pat_bound) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyInfo(h) => access_info_frame_errors(c, term, name, h, Text::eq(name, "more"))
+    TyBorrow(pat_inner, pat_mutable) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyVar(pat_v) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyPoly(pat_generics, pat_inner) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+    TyApp(pat_head, pat_arg) => error_frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame_errors(c, term, original, name)
+    )
+  }
+}
+
+pub theorem ck_field_of_frame_errors(
+  c: Checker,
+  term: SurfaceTerm,
+  b: Ty,
+  name: Text
+): CkErrorFrame(c, ck_field_of(c, term, b, name)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(access_field_unf(c, term, b, name)),
+    access_field_frame_errors(
+      c,
+      term,
+      name,
+      ty_unborrowed(ck_resolve(c, b)),
+      ty_is_borrow(ck_resolve(c, b)),
+      ty_unborrowed(ck_resolve(c, b))
+    )
+  )
+}
+
+pub theorem access_record_term_frame_errors(
+  c: Checker,
+  function: SurfaceTerm,
+  inst: Ty
+): CkErrorFrame(c, access_record_term(c, function, inst)) { (clean_errors => clean_errors) }

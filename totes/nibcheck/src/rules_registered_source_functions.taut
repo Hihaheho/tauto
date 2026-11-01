@@ -1,0 +1,15 @@
+import std::Map
+import "rules_registered_signatures.taut"
+import "rules_program_signature_sources.taut"
+
+// Every source function with a body has its elaborated scheme in one common
+// function environment. Body typing and instantiation are separate judgments.
+pub(open) inductive SourceFunctionsRegistered(env: Datas, program: List(SurfaceStmt)): Prop {
+  Mk(
+    table: Ordmap(Text, Scheme),
+    schemes: List(Pair(SurfaceFn, Scheme)),
+    sources: signature_list_sources(schemes) = signature_program_sources(program),
+    elaborated: ElaboratedSignatures(env, false, schemes),
+    registered: RegisteredSignatures(table, schemes)
+  ): SourceFunctionsRegistered(env, program)
+}

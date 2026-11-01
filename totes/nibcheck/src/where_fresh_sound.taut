@@ -1,0 +1,41 @@
+import "rules_where.taut"
+import "kind_sound.taut"
+
+pub fn where_pred_test(predicate: Pair(Text, Text), r#class: Text, name: Text): Bool {
+  Bool::and(Text::eq(predicate.fst, r#class), Text::eq(predicate.snd, name))
+}
+pub theorem where_pred_self(
+  r#class: Text,
+  name: Text
+): (Bool::and(Text::eq(r#class, r#class), Text::eq(name, name)) = true) {
+  Eq::trans(
+    Eq::congr((left: Bool) => Bool::and(left, Text::eq(name, name)), text_eq_refl(r#class)),
+    text_eq_refl(name)
+  )
+}
+pub theorem preds_have_complete<preds: List(
+  Pair(Text, Text)
+), r#class: Text, name: Text>(
+  present: Mem(Pair(Text, Text), Pair { fst: r#class, snd: name }, preds)
+): (preds_have(preds, r#class, name) = true) {
+  match present: (preds_have(preds, r#class, name) = true) {
+    MemHere(rest) => Eq::congr(
+      (same: Bool) => Bool::or(same, preds_have(rest, r#class, name)),
+      where_pred_self(r#class, name)
+    )
+    MemThere(first, rest, tail) => bool_or_right(
+      where_pred_test(first, r#class, name),
+      preds_have(rest, r#class, name),
+      preds_have_complete(tail)
+    )
+  }
+}
+pub theorem preds_have_fresh(
+  preds: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  absent: preds_have(preds, r#class, name) = false,
+  present: Mem(Pair(Text, Text), Pair { fst: r#class, snd: name }, preds)
+): False {
+  true_ne_false(Eq::trans(Eq::sym(preds_have_complete(present)), absent))
+}

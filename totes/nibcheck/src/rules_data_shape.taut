@@ -1,0 +1,23 @@
+import "rules_data_fields.taut"
+
+// An opaque view has no stored fields, including in any constructor.
+pub(open) inductive EmptyDataConstructors: (List(SurfaceDataCtor)) -> Prop {
+  EmptyDataConstructorsNil: EmptyDataConstructors(Nil)
+  EmptyDataConstructorsCons(
+    name: Text,
+    rest: List(SurfaceDataCtor),
+    tail: EmptyDataConstructors(rest)
+  ): EmptyDataConstructors(Cons(surface_data_ctor_mk(name, Nil), rest))
+}
+pub(open) inductive DataViewShape(
+  r#view: Bool,
+  is_struct: Bool,
+  constructors: List(SurfaceDataCtor)
+): Prop {
+  DataViewOrdinary(ordinary: r#view = false): DataViewShape(r#view, is_struct, constructors)
+  DataViewOpaque(
+    is_view: r#view = true,
+    structure: is_struct = true,
+    fields: EmptyDataConstructors(constructors)
+  ): DataViewShape(r#view, is_struct, constructors)
+}

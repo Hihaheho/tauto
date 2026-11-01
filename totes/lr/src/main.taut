@@ -1,0 +1,92 @@
+// The differential test's runner (`tools/selfhost-harness/tests/lr.rs`):
+// the arguments are the scanner's five texts (`Tables::scan_texts`), the
+// parser's five (`Tables::lr_texts`), then texts to parse. For each text it
+// prints `==`, then the events of the parse a line each (`open N`, `close`,
+// `token T START END`) or `error AT EXPECTED...` (AT `-` at the end).
+import std::Stack
+import std::Text
+import "../../scan/src/scan.taut"
+import "../../llk/src/llk.taut"
+import "lr.taut"
+
+fn lr_line_of(parts: List(Text)): Text {
+  Text::concat_all(Cons(text_join(parts, " "), Cons(text_newline(), Nil)))
+}
+
+fn lr_event_line(e: LlkEvent): Text {
+  match e {
+    LlkOpen(n) => lr_line_of(Cons("open", Cons(Text::of_nat(n), Nil)))
+    LlkClose => lr_line_of(Cons("close", Nil))
+    LlkToken(ty, r#from, to) => lr_line_of(
+      Cons("token", Cons(Text::of_nat(ty), Cons(Text::of_nat(r#from), Cons(Text::of_nat(to), Nil))))
+    )
+  }
+}
+
+fn lr_print_events(&mut events: Stack(LlkEvent)): Unit {
+  var all: List(LlkEvent) := Nil
+  var popping := true
+  while popping {
+    match Stack::pop(&mut events) {
+      None => {
+        popping := false
+      }
+      Some(e) => {
+        all := Cons(e, all)
+      }
+    }
+  }
+  var b := Buf::new()
+  var rest := all
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(e, more) => {
+        rest := more
+        Buf::push(&mut b, &lr_event_line(e))
+      }
+    }
+  }
+  print(Text::of(b))
+}
+
+fn lr_print_error(e: LlkError): Unit {
+  let at := match e.at {
+    None => "-"
+    Some(n) => Text::of_nat(n)
+  }
+  print(lr_line_of(Cons("error", Cons(at, List::map(Text::of_nat, e.expected)))))
+}
+
+fn lr_each(s: ScanTables, t: LrTables, texts: List(Text)): Unit {
+  match texts {
+    Nil => #()
+    Cons(text, rest) => {
+      print(lr_line_of(Cons("==", Nil)))
+      let tokens := lr_tokens(&t, scan_all(&s, text), Nat::of_u64(std::prelude::Text::len(text)))
+      var events: Stack(LlkEvent) := Stack::new()
+      match lr_parse(lr_fuel(t, tokens), t, tokens, &mut events) {
+        LlkParsed => lr_print_events(&mut events)
+        LlkFailed(e) => lr_print_error(e)
+      }
+      lr_each(s, t, rest)
+    }
+  }
+}
+
+match perform argv() {
+  Cons(
+    m,
+    Cons(c, Cons(st, Cons(r, Cons(d, Cons(lm, Cons(lsk, Cons(la, Cons(lg, Cons(lp, texts)))))))))
+  ) => match scan_tables_read_dynamic(m, c, st, r, d) {
+    None => eprint("the scanner's tables are damaged")
+    Some(s) => match lr_tables_read(lm, lsk, la, lg, lp) {
+      None => eprint("the parser's tables are damaged")
+      Some(t) => lr_each(s, t, texts)
+    }
+  }
+  other => eprint("usage: lr SCANNER(5) PARSER(5) TEXT...")
+}

@@ -1,0 +1,1101 @@
+import "Int.taut"
+import "Nat.taut"
+import "Tactic.taut"
+
+module Nat {
+  // The laws of `Int`'s arithmetic (`std/Int::taut`). Every integer is
+  // `Int::sub_nat(a, b)`, `a - b`, of two natural numbers; two of these are
+  // equal when `a + d = c + b`, and `+` and `*` act on them as on pairs. The
+  // laws of `Int` follow from those of `Nat`.
+
+  // ---- `a - b` --------------------------------------------------------------------
+
+  pub theorem sub_succ_succ(a: Nat, b: Nat): Succ(a) - Succ(b) = a - b {
+    match b: Succ(a) - Succ(b) = a - b {
+      Zero => Refl
+      Succ(k) => Eq::congr(Nat::pred, sub_succ_succ(a, k))
+    }
+  }
+
+  // ---- cancellation -----------------------------------------------------------
+
+  pub theorem zero_ne_succ(n: Nat, h: Zero = Succ(n)): False {
+    true_ne_false(Eq::congr(⟦Nat::eq(Zero, □)⟧, h))
+  }
+
+  pub theorem add_cancel(a: Nat, b: Nat, c: Nat, h: add(a, c) = add(b, c)): a = b {
+    match c: a = b {
+      Zero => h
+      Succ(k) => add_cancel(a, b, k, Eq::congr(Nat::pred, h))
+    }
+  }
+
+  // `a (k + 1) = b (k + 1)` gives `a = b`.
+  pub theorem mul_cancel(
+    a: Nat,
+    b: Nat,
+    k: Nat,
+    h: mul(a, Succ(k)) = mul(b, Succ(k))
+  ): a = b {
+    match a: a = b {
+      Zero => match b: Zero = b {
+        Zero => Refl
+        Succ(b2) => False::elim(
+          zero_ne_succ(
+            add(mul(b2, k), add(b2, k)),
+            calc Zero {
+              = mul(Zero, Succ(k)) from Eq::sym(mul_zero_left(Succ(k)))
+              = mul(Succ(b2), Succ(k)) from h
+              = Succ(add(mul(b2, k), add(b2, k))) from by nat_norm!(): mul(
+                Succ(b2),
+                Succ(k)
+              ) = Succ(add(mul(b2, k), add(b2, k))) {}
+            }
+          )
+        )
+      }
+      Succ(a2) => match b: Succ(a2) = b {
+        Zero => False::elim(
+          zero_ne_succ(
+            add(mul(a2, k), add(a2, k)),
+            calc Zero {
+              = mul(Zero, Succ(k)) from Eq::sym(mul_zero_left(Succ(k)))
+              = mul(Succ(a2), Succ(k)) from Eq::sym(h)
+              = Succ(add(mul(a2, k), add(a2, k))) from by nat_norm!(): mul(
+                Succ(a2),
+                Succ(k)
+              ) = Succ(add(mul(a2, k), add(a2, k))) {}
+            }
+          )
+        )
+        Succ(b2) => Eq::congr(
+          Succ,
+          mul_cancel(
+            a2,
+            b2,
+            k,
+            add_cancel(
+              mul(a2, Succ(k)),
+              mul(b2, Succ(k)),
+              Succ(k),
+              Eq::trans(
+                Eq::sym(mul_succ_left(a2, Succ(k))),
+                Eq::trans(h, mul_succ_left(b2, Succ(k)))
+              )
+            )
+          )
+        )
+      }
+    }
+  }
+}
+
+module Int {
+  // `Int::sub_nat` with its decision and the two differences apart.
+  pub fn sub_with(l: Bool, p: Nat, q: Nat): Int {
+    match l: Int {
+      false => IntOfNat(p)
+      true => IntNegSucc(q - Succ(Zero))
+    }
+  }
+
+  pub theorem sub_succ(a: Nat, b: Nat): sub_nat(Succ(a), Succ(b)) = sub_nat(a, b) {
+    Eq::trans(
+      Eq::congr(
+        ⟦sub_with(a < b, □, Succ(b) - Succ(a))⟧,
+        Nat::sub_succ_succ(a, b)
+      ),
+      Eq::congr(⟦sub_with(a < b, a - b, □)⟧, Nat::sub_succ_succ(b, a))
+    )
+  }
+
+  pub theorem sub_cancel(
+    a: Nat,
+    b: Nat,
+    c: Nat
+  ): sub_nat(Nat::add(a, c), Nat::add(b, c)) = sub_nat(a, b) {
+    match c: sub_nat(Nat::add(a, c), Nat::add(b, c)) = sub_nat(a, b) {
+      Zero => Refl
+      Succ(k) => Eq::trans(sub_succ(Nat::add(a, k), Nat::add(b, k)), sub_cancel(a, b, k))
+    }
+  }
+
+  // `a - b = c - d` when `a + d = c + b`.
+  pub theorem sub_eq(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    h: Nat::add(a, d) = Nat::add(c, b)
+  ): sub_nat(a, b) = sub_nat(c, d) {
+    calc sub_nat(a, b) {
+      = sub_nat(Nat::add(a, d), Nat::add(b, d)) from Eq::sym(sub_cancel(a, b, d))
+      = sub_nat(Nat::add(c, b), Nat::add(b, d)) from Eq::congr(⟦sub_nat(□, Nat::add(b, d))⟧, h)
+      = sub_nat(Nat::add(c, b), Nat::add(d, b)) from Eq::congr(
+        ⟦sub_nat(Nat::add(c, b), □)⟧,
+        Nat::add_comm(b, d)
+      )
+      = sub_nat(c, d) from sub_cancel(c, d, b)
+    }
+  }
+
+  // The two parts of an integer: it is `pos(x) - negp(x)`.
+  pub fn pos(x: Int): Nat {
+    match x: Nat {
+      IntOfNat(n) => n
+      IntNegSucc(n) => Zero
+    }
+  }
+
+  pub fn negp(x: Int): Nat {
+    match x: Nat {
+      IntOfNat(n) => Zero
+      IntNegSucc(n) => Succ(n)
+    }
+  }
+
+  pub theorem parts(x: Int): x = sub_nat(pos(x), negp(x)) {
+    match x: x = sub_nat(pos(x), negp(x)) {
+      IntOfNat(n) => Refl
+      IntNegSucc(n) => Refl
+    }
+  }
+
+  // The parts of `a - b` differ as `a` and `b` do.
+  pub theorem sub_parts(
+    a: Nat,
+    b: Nat
+  ): Nat::add(a, negp(sub_nat(a, b))) = Nat::add(pos(sub_nat(a, b)), b) {
+    match a: Nat::add(a, negp(sub_nat(a, b))) = Nat::add(pos(sub_nat(a, b)), b) {
+      Zero => match b: Nat::add(
+        Zero,
+        negp(sub_nat(Zero, b))
+      ) = Nat::add(pos(sub_nat(Zero, b)), b) {
+        Zero => Refl
+        Succ(k) => Eq::trans(Nat::add_zero_left(Succ(k)), Eq::sym(Nat::add_zero_left(Succ(k))))
+      }
+      Succ(a2) => match b: Nat::add(
+        Succ(a2),
+        negp(sub_nat(Succ(a2), b))
+      ) = Nat::add(pos(sub_nat(Succ(a2), b)), b) {
+        Zero => Refl
+        Succ(b2) => by rewrite!(
+          sub_succ(a2, b2)
+        ): (
+          Nat::add(
+            Succ(a2),
+            negp(sub_nat(Succ(a2), Succ(b2)))
+          ) = Nat::add(pos(sub_nat(Succ(a2), Succ(b2))), Succ(b2))
+        ) {
+          ⊢ Nat::add(
+            Succ(a2),
+            negp(sub_nat(a2, b2))
+          ) = Nat::add(pos(sub_nat(a2, b2)), Succ(b2)) from Eq::trans(
+            Nat::add_succ_left(a2, negp(sub_nat(a2, b2))),
+            Eq::congr(Succ, sub_parts(a2, b2))
+          )
+        }
+      }
+    }
+  }
+
+  // ---- addition ---------------------------------------------------------------
+
+  // `x + y` is the sum of the parts.
+  pub theorem add_parts(
+    x: Int,
+    y: Int
+  ): add(x, y) = sub_nat(Nat::add(pos(x), pos(y)), Nat::add(negp(x), negp(y))) {
+    match x: add(
+      x,
+      y
+    ) = sub_nat(Nat::add(pos(x), pos(y)), Nat::add(negp(x), negp(y))) {
+      IntOfNat(a) => match y: add(
+        IntOfNat(a),
+        y
+      ) = sub_nat(Nat::add(a, pos(y)), Nat::add(Zero, negp(y))) {
+        IntOfNat(b) => Refl
+        IntNegSucc(b) => Eq::congr(⟦sub_nat(a, □)⟧, Eq::sym(Nat::add_zero_left(Succ(b))))
+      }
+      IntNegSucc(a) => match y: add(
+        IntNegSucc(a),
+        y
+      ) = sub_nat(Nat::add(Zero, pos(y)), Nat::add(Succ(a), negp(y))) {
+        IntOfNat(b) => Eq::congr(⟦sub_nat(□, Succ(a))⟧, Eq::sym(Nat::add_zero_left(b)))
+        IntNegSucc(b) => Eq::congr(
+          ⟦sub_nat(Zero, Succ(□))⟧,
+          Eq::sym(Nat::add_succ_left(a, b))
+        )
+      }
+    }
+  }
+
+  // `(a - b) + (c - d) = (a + c) - (b + d)`.
+  pub theorem add_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat
+  ): add(sub_nat(a, b), sub_nat(c, d)) = sub_nat(Nat::add(a, c), Nat::add(b, d)) {
+    Eq::trans(
+      add_parts(sub_nat(a, b), sub_nat(c, d)),
+      sub_eq(
+        Nat::add(pos(sub_nat(a, b)), pos(sub_nat(c, d))),
+        Nat::add(negp(sub_nat(a, b)), negp(sub_nat(c, d))),
+        Nat::add(a, c),
+        Nat::add(b, d),
+        add_regroup(
+          a,
+          b,
+          c,
+          d,
+          pos(sub_nat(a, b)),
+          negp(sub_nat(a, b)),
+          pos(sub_nat(c, d)),
+          negp(sub_nat(c, d)),
+          sub_parts(a, b),
+          sub_parts(c, d)
+        )
+      )
+    )
+  }
+
+  // With `a + n = p + b` and `c + m = q + d`: `(p + q) + (b + d) = (a + c) + (n + m)`.
+  pub theorem add_regroup(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    p: Nat,
+    n: Nat,
+    q: Nat,
+    m: Nat,
+    h1: Nat::add(a, n) = Nat::add(p, b),
+    h2: Nat::add(c, m) = Nat::add(q, d)
+  ): Nat::add(Nat::add(p, q), Nat::add(b, d)) = Nat::add(Nat::add(a, c), Nat::add(n, m)) {
+    let e1: Nat::add(
+      Nat::add(p, q),
+      Nat::add(b, d)
+    ) = Nat::add(
+      Nat::add(p, b),
+      Nat::add(q, d)
+    ) := by nat_norm!(): Nat::add(
+      Nat::add(p, q),
+      Nat::add(b, d)
+    ) = Nat::add(Nat::add(p, b), Nat::add(q, d)) {}
+    let e2: Nat::add(
+      Nat::add(a, n),
+      Nat::add(c, m)
+    ) = Nat::add(
+      Nat::add(a, c),
+      Nat::add(n, m)
+    ) := by nat_norm!(): Nat::add(
+      Nat::add(a, n),
+      Nat::add(c, m)
+    ) = Nat::add(Nat::add(a, c), Nat::add(n, m)) {}
+    Eq::trans(
+      e1,
+      Eq::trans(
+        Eq::congr(⟦Nat::add(□, Nat::add(q, d))⟧, Eq::sym(h1)),
+        Eq::trans(Eq::congr(⟦Nat::add(Nat::add(a, n), □)⟧, Eq::sym(h2)), e2)
+      )
+    )
+  }
+
+  pub theorem add_comm(x: Int, y: Int): add(x, y) = add(y, x) {
+    Eq::trans(
+      add_parts(x, y),
+      Eq::trans(
+        Eq::congr(
+          ⟦sub_nat(□, Nat::add(negp(x), negp(y)))⟧,
+          Nat::add_comm(pos(x), pos(y))
+        ),
+        Eq::trans(
+          Eq::congr(
+            ⟦sub_nat(Nat::add(pos(y), pos(x)), □)⟧,
+            Nat::add_comm(negp(x), negp(y))
+          ),
+          Eq::sym(add_parts(y, x))
+        )
+      )
+    )
+  }
+
+  pub theorem add_assoc_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    e: Nat,
+    f: Nat
+  ): add(
+    add(sub_nat(a, b), sub_nat(c, d)),
+    sub_nat(e, f)
+  ) = add(sub_nat(a, b), add(sub_nat(c, d), sub_nat(e, f))) {
+    Eq::trans(
+      Eq::congr(⟦add(□, sub_nat(e, f))⟧, add_sub(a, b, c, d)),
+      Eq::trans(
+        add_sub(Nat::add(a, c), Nat::add(b, d), e, f),
+        Eq::trans(
+          Eq::congr(⟦sub_nat(□, Nat::add(Nat::add(b, d), f))⟧, Nat::add_assoc(a, c, e)),
+          Eq::trans(
+            Eq::congr(⟦sub_nat(Nat::add(a, Nat::add(c, e)), □)⟧, Nat::add_assoc(b, d, f)),
+            Eq::trans(
+              Eq::sym(add_sub(a, b, Nat::add(c, e), Nat::add(d, f))),
+              Eq::congr(⟦add(sub_nat(a, b), □)⟧, Eq::sym(add_sub(c, d, e, f)))
+            )
+          )
+        )
+      )
+    )
+  }
+
+  pub theorem add_assoc(
+    x: Int,
+    y: Int,
+    z: Int
+  ): add(add(x, y), z) = add(x, add(y, z)) {
+    Eq::subst(
+      (w: Int) => add(add(w, y), z) = add(w, add(y, z)),
+      Eq::sym(parts(x)),
+      Eq::subst(
+        (w: Int) => add(
+          add(sub_nat(pos(x), negp(x)), w),
+          z
+        ) = add(sub_nat(pos(x), negp(x)), add(w, z)),
+        Eq::sym(parts(y)),
+        Eq::subst(
+          (w: Int) => add(
+            add(sub_nat(pos(x), negp(x)), sub_nat(pos(y), negp(y))),
+            w
+          ) = add(
+            sub_nat(pos(x), negp(x)),
+            add(sub_nat(pos(y), negp(y)), w)
+          ),
+          Eq::sym(parts(z)),
+          add_assoc_sub(pos(x), negp(x), pos(y), negp(y), pos(z), negp(z))
+        )
+      )
+    )
+  }
+
+  pub theorem zero_add(x: Int): add(IntOfNat(Zero), x) = x {
+    Eq::trans(add_comm(IntOfNat(Zero), x), add_zero(x))
+  }
+
+  // `-(a - b) = b - a`.
+  pub theorem neg_sub(a: Nat, b: Nat): neg(sub_nat(a, b)) = sub_nat(b, a) {
+    match a: neg(sub_nat(a, b)) = sub_nat(b, a) {
+      Zero => match b: neg(sub_nat(Zero, b)) = sub_nat(b, Zero) {
+        Zero => Refl
+        Succ(k) => Refl
+      }
+      Succ(a2) => match b: neg(sub_nat(Succ(a2), b)) = sub_nat(b, Succ(a2)) {
+        Zero => Refl
+        Succ(b2) => Eq::trans(
+          Eq::congr(neg, sub_succ(a2, b2)),
+          Eq::trans(neg_sub(a2, b2), Eq::sym(sub_succ(b2, a2)))
+        )
+      }
+    }
+  }
+
+  pub theorem sub_self(a: Nat): sub_nat(a, a) = IntOfNat(Zero) {
+    match a: sub_nat(a, a) = IntOfNat(Zero) {
+      Zero => Refl
+      Succ(k) => Eq::trans(sub_succ(k, k), sub_self(k))
+    }
+  }
+
+  pub theorem add_neg(x: Int): add(x, neg(x)) = IntOfNat(Zero) {
+    Eq::subst(
+      (w: Int) => add(w, neg(w)) = IntOfNat(Zero),
+      Eq::sym(parts(x)),
+      Eq::trans(
+        Eq::congr(
+          ⟦add(sub_nat(pos(x), negp(x)), □)⟧,
+          neg_sub(pos(x), negp(x))
+        ),
+        Eq::trans(
+          add_sub(pos(x), negp(x), negp(x), pos(x)),
+          Eq::trans(
+            Eq::congr(
+              ⟦sub_nat(Nat::add(pos(x), negp(x)), □)⟧,
+              Nat::add_comm(negp(x), pos(x))
+            ),
+            sub_self(Nat::add(pos(x), negp(x)))
+          )
+        )
+      )
+    )
+  }
+
+  // ---- multiplication -----------------------------------------------------------
+
+  pub theorem neg_of_nat(k: Nat): neg(IntOfNat(k)) = sub_nat(Zero, k) {
+    neg_sub(k, Zero)
+  }
+
+  // `Int::sub_nat` of equal parts.
+  pub theorem sub_congr(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    h1: a = c,
+    h2: b = d
+  ): sub_nat(a, b) = sub_nat(c, d) {
+    Eq::trans(Eq::congr(⟦sub_nat(□, b)⟧, h1), Eq::congr(⟦sub_nat(c, □)⟧, h2))
+  }
+
+  // `x * y` is the product of the parts.
+  pub theorem mul_parts(
+    x: Int,
+    y: Int
+  ): mul(
+    x,
+    y
+  ) = sub_nat(
+    Nat::add(Nat::mul(pos(x), pos(y)), Nat::mul(negp(x), negp(y))),
+    Nat::add(Nat::mul(pos(x), negp(y)), Nat::mul(negp(x), pos(y)))
+  ) {
+    match x: mul(
+      x,
+      y
+    ) = sub_nat(
+      Nat::add(Nat::mul(pos(x), pos(y)), Nat::mul(negp(x), negp(y))),
+      Nat::add(Nat::mul(pos(x), negp(y)), Nat::mul(negp(x), pos(y)))
+    ) {
+      IntOfNat(a) => match y: mul(
+        IntOfNat(a),
+        y
+      ) = sub_nat(
+        Nat::add(Nat::mul(a, pos(y)), Nat::mul(Zero, negp(y))),
+        Nat::add(Nat::mul(a, negp(y)), Nat::mul(Zero, pos(y)))
+      ) {
+        IntOfNat(b) => sub_congr(
+          Nat::mul(a, b),
+          Zero,
+          Nat::add(Nat::mul(a, b), Nat::mul(Zero, Zero)),
+          Nat::add(Nat::mul(a, Zero), Nat::mul(Zero, b)),
+          Refl,
+          by nat_norm!(): Zero = Nat::add(Nat::mul(a, Zero), Nat::mul(Zero, b)) {}
+        )
+        IntNegSucc(b) => Eq::trans(
+          neg_of_nat(Nat::mul(a, Succ(b))),
+          sub_congr(
+            Zero,
+            Nat::mul(a, Succ(b)),
+            Nat::add(Nat::mul(a, Zero), Nat::mul(Zero, Succ(b))),
+            Nat::add(Nat::mul(a, Succ(b)), Nat::mul(Zero, Zero)),
+            by nat_norm!(): Zero = Nat::add(Nat::mul(a, Zero), Nat::mul(Zero, Succ(b))) {},
+            Refl
+          )
+        )
+      }
+      IntNegSucc(a) => match y: mul(
+        IntNegSucc(a),
+        y
+      ) = sub_nat(
+        Nat::add(Nat::mul(Zero, pos(y)), Nat::mul(Succ(a), negp(y))),
+        Nat::add(Nat::mul(Zero, negp(y)), Nat::mul(Succ(a), pos(y)))
+      ) {
+        IntOfNat(b) => Eq::trans(
+          neg_of_nat(Nat::mul(Succ(a), b)),
+          sub_congr(
+            Zero,
+            Nat::mul(Succ(a), b),
+            Nat::add(Nat::mul(Zero, b), Nat::mul(Succ(a), Zero)),
+            Nat::add(Nat::mul(Zero, Zero), Nat::mul(Succ(a), b)),
+            by nat_norm!(): Zero = Nat::add(Nat::mul(Zero, b), Nat::mul(Succ(a), Zero)) {},
+            by nat_norm!(): Nat::mul(
+              Succ(a),
+              b
+            ) = Nat::add(Nat::mul(Zero, Zero), Nat::mul(Succ(a), b)) {}
+          )
+        )
+        IntNegSucc(b) => sub_congr(
+          Nat::mul(Succ(a), Succ(b)),
+          Zero,
+          Nat::add(Nat::mul(Zero, Zero), Nat::mul(Succ(a), Succ(b))),
+          Nat::add(Nat::mul(Zero, Succ(b)), Nat::mul(Succ(a), Zero)),
+          by nat_norm!(): Nat::mul(
+            Succ(a),
+            Succ(b)
+          ) = Nat::add(Nat::mul(Zero, Zero), Nat::mul(Succ(a), Succ(b))) {},
+          by nat_norm!(): Zero = Nat::add(Nat::mul(Zero, Succ(b)), Nat::mul(Succ(a), Zero)) {}
+        )
+      }
+    }
+  }
+
+  // With `a + n = p + b`: `(p c + n d) + (a d + b c) = (a c + b d) + (p d + n c)`.
+  pub theorem mul_regroup_left(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    p: Nat,
+    n: Nat,
+    h: Nat::add(a, n) = Nat::add(p, b)
+  ): Nat::add(
+    Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+    Nat::add(Nat::mul(a, d), Nat::mul(b, c))
+  ) = Nat::add(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), Nat::add(Nat::mul(p, d), Nat::mul(n, c))) {
+    let e1: Nat::add(
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(a, d), Nat::mul(b, c))
+    ) = Nat::add(
+      Nat::mul(c, Nat::add(p, b)),
+      Nat::mul(d, Nat::add(a, n))
+    ) := by nat_norm!(): Nat::add(
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(a, d), Nat::mul(b, c))
+    ) = Nat::add(Nat::mul(c, Nat::add(p, b)), Nat::mul(d, Nat::add(a, n))) {}
+    let e2: Nat::add(
+      Nat::mul(c, Nat::add(a, n)),
+      Nat::mul(d, Nat::add(p, b))
+    ) = Nat::add(
+      Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c))
+    ) := by nat_norm!(): Nat::add(
+      Nat::mul(c, Nat::add(a, n)),
+      Nat::mul(d, Nat::add(p, b))
+    ) = Nat::add(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), Nat::add(Nat::mul(p, d), Nat::mul(n, c))) {}
+    Eq::trans(
+      e1,
+      Eq::trans(
+        Eq::congr(⟦Nat::add(Nat::mul(c, □), Nat::mul(d, Nat::add(a, n)))⟧, Eq::sym(h)),
+        Eq::trans(Eq::congr(⟦Nat::add(Nat::mul(c, Nat::add(a, n)), Nat::mul(d, □))⟧, h), e2)
+      )
+    )
+  }
+
+  // `(p q + n m) - (p m + n q) = (p c + n d) - (p d + n c)` when `c + m = q + d`.
+  pub theorem mul_sub_right(
+    c: Nat,
+    d: Nat,
+    p: Nat,
+    n: Nat,
+    q: Nat,
+    m: Nat,
+    h: Nat::add(c, m) = Nat::add(q, d)
+  ): sub_nat(
+    Nat::add(Nat::mul(p, q), Nat::mul(n, m)),
+    Nat::add(Nat::mul(p, m), Nat::mul(n, q))
+  ) = sub_nat(Nat::add(Nat::mul(p, c), Nat::mul(n, d)), Nat::add(Nat::mul(p, d), Nat::mul(n, c))) {
+    let r1: Nat::add(
+      Nat::add(Nat::mul(p, q), Nat::mul(n, m)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c))
+    ) = Nat::add(
+      Nat::add(Nat::mul(q, p), Nat::mul(m, n)),
+      Nat::add(Nat::mul(c, n), Nat::mul(d, p))
+    ) := by nat_norm!(): Nat::add(
+      Nat::add(Nat::mul(p, q), Nat::mul(n, m)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c))
+    ) = Nat::add(Nat::add(Nat::mul(q, p), Nat::mul(m, n)), Nat::add(Nat::mul(c, n), Nat::mul(d, p))) {}
+    let r2: Nat::add(
+      Nat::add(Nat::mul(q, p), Nat::mul(m, n)),
+      Nat::add(Nat::mul(c, n), Nat::mul(d, p))
+    ) = Nat::add(
+      Nat::add(Nat::mul(c, p), Nat::mul(d, n)),
+      Nat::add(Nat::mul(q, n), Nat::mul(m, p))
+    ) := mul_regroup_left(c, d, p, n, q, m, h)
+    let r3: Nat::add(
+      Nat::add(Nat::mul(c, p), Nat::mul(d, n)),
+      Nat::add(Nat::mul(q, n), Nat::mul(m, p))
+    ) = Nat::add(
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(p, m), Nat::mul(n, q))
+    ) := by nat_norm!(): Nat::add(
+      Nat::add(Nat::mul(c, p), Nat::mul(d, n)),
+      Nat::add(Nat::mul(q, n), Nat::mul(m, p))
+    ) = Nat::add(Nat::add(Nat::mul(p, c), Nat::mul(n, d)), Nat::add(Nat::mul(p, m), Nat::mul(n, q))) {}
+    sub_eq(
+      Nat::add(Nat::mul(p, q), Nat::mul(n, m)),
+      Nat::add(Nat::mul(p, m), Nat::mul(n, q)),
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c)),
+      Eq::trans(r1, Eq::trans(r2, r3))
+    )
+  }
+
+  // `(a - b) * (c - d) = (a c + b d) - (a d + b c)`.
+  pub theorem mul_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat
+  ): mul(
+    sub_nat(a, b),
+    sub_nat(c, d)
+  ) = sub_nat(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), Nat::add(Nat::mul(a, d), Nat::mul(b, c))) {
+    let p: Nat := pos(sub_nat(a, b))
+    let n: Nat := negp(sub_nat(a, b))
+    let q: Nat := pos(sub_nat(c, d))
+    let m: Nat := negp(sub_nat(c, d))
+    let right: sub_nat(
+      Nat::add(Nat::mul(p, q), Nat::mul(n, m)),
+      Nat::add(Nat::mul(p, m), Nat::mul(n, q))
+    ) = sub_nat(
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c))
+    ) := mul_sub_right(c, d, p, n, q, m, sub_parts(c, d))
+    let left: sub_nat(
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c))
+    ) = sub_nat(
+      Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+      Nat::add(Nat::mul(a, d), Nat::mul(b, c))
+    ) := sub_eq(
+      Nat::add(Nat::mul(p, c), Nat::mul(n, d)),
+      Nat::add(Nat::mul(p, d), Nat::mul(n, c)),
+      Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+      Nat::add(Nat::mul(a, d), Nat::mul(b, c)),
+      mul_regroup_left(a, b, c, d, p, n, sub_parts(a, b))
+    )
+    Eq::trans(mul_parts(sub_nat(a, b), sub_nat(c, d)), Eq::trans(right, left))
+  }
+
+  pub theorem sub_nat_zero(k: Nat): sub_nat(k, Zero) = IntOfNat(k) {
+    Refl
+  }
+
+  pub theorem mul_comm_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat
+  ): mul(sub_nat(a, b), sub_nat(c, d)) = mul(sub_nat(c, d), sub_nat(a, b)) {
+    Eq::trans(
+      mul_sub(a, b, c, d),
+      Eq::trans(
+        sub_eq(
+          Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+          Nat::add(Nat::mul(a, d), Nat::mul(b, c)),
+          Nat::add(Nat::mul(c, a), Nat::mul(d, b)),
+          Nat::add(Nat::mul(c, b), Nat::mul(d, a)),
+          by nat_norm!(): Nat::add(
+            Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+            Nat::add(Nat::mul(c, b), Nat::mul(d, a))
+          ) = Nat::add(Nat::add(Nat::mul(c, a), Nat::mul(d, b)), Nat::add(Nat::mul(a, d), Nat::mul(b, c))) {}
+        ),
+        Eq::sym(mul_sub(c, d, a, b))
+      )
+    )
+  }
+
+  pub theorem mul_add_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    e: Nat,
+    f: Nat
+  ): mul(
+    sub_nat(a, b),
+    add(sub_nat(c, d), sub_nat(e, f))
+  ) = add(
+    mul(sub_nat(a, b), sub_nat(c, d)),
+    mul(sub_nat(a, b), sub_nat(e, f))
+  ) {
+    Eq::trans(
+      Eq::congr(⟦mul(sub_nat(a, b), □)⟧, add_sub(c, d, e, f)),
+      Eq::trans(
+        mul_sub(a, b, Nat::add(c, e), Nat::add(d, f)),
+        Eq::trans(
+          sub_eq(
+            Nat::add(Nat::mul(a, Nat::add(c, e)), Nat::mul(b, Nat::add(d, f))),
+            Nat::add(Nat::mul(a, Nat::add(d, f)), Nat::mul(b, Nat::add(c, e))),
+            Nat::add(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), Nat::add(Nat::mul(a, e), Nat::mul(b, f))),
+            Nat::add(Nat::add(Nat::mul(a, d), Nat::mul(b, c)), Nat::add(Nat::mul(a, f), Nat::mul(b, e))),
+            by nat_norm!(): Nat::add(
+              Nat::add(Nat::mul(a, Nat::add(c, e)), Nat::mul(b, Nat::add(d, f))),
+              Nat::add(Nat::add(Nat::mul(a, d), Nat::mul(b, c)), Nat::add(Nat::mul(a, f), Nat::mul(b, e)))
+            ) = Nat::add(
+              Nat::add(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), Nat::add(Nat::mul(a, e), Nat::mul(b, f))),
+              Nat::add(Nat::mul(a, Nat::add(d, f)), Nat::mul(b, Nat::add(c, e)))
+            ) {}
+          ),
+          Eq::trans(
+            Eq::sym(
+              add_sub(
+                Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+                Nat::add(Nat::mul(a, d), Nat::mul(b, c)),
+                Nat::add(Nat::mul(a, e), Nat::mul(b, f)),
+                Nat::add(Nat::mul(a, f), Nat::mul(b, e))
+              )
+            ),
+            Eq::trans(
+              Eq::congr(
+                ⟦add(
+                  □,
+                  sub_nat(
+                    Nat::add(Nat::mul(a, e), Nat::mul(b, f)),
+                    Nat::add(Nat::mul(a, f), Nat::mul(b, e))
+                  )
+                )⟧,
+                Eq::sym(mul_sub(a, b, c, d))
+              ),
+              Eq::congr(
+                ⟦add(mul(sub_nat(a, b), sub_nat(c, d)), □)⟧,
+                Eq::sym(mul_sub(a, b, e, f))
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+
+  pub theorem mul_assoc_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    e: Nat,
+    f: Nat
+  ): mul(
+    mul(sub_nat(a, b), sub_nat(c, d)),
+    sub_nat(e, f)
+  ) = mul(sub_nat(a, b), mul(sub_nat(c, d), sub_nat(e, f))) {
+    Eq::trans(
+      Eq::congr(⟦mul(□, sub_nat(e, f))⟧, mul_sub(a, b, c, d)),
+      Eq::trans(
+        mul_sub(
+          Nat::add(Nat::mul(a, c), Nat::mul(b, d)),
+          Nat::add(Nat::mul(a, d), Nat::mul(b, c)),
+          e,
+          f
+        ),
+        Eq::trans(
+          sub_eq(
+            Nat::add(
+              Nat::mul(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), e),
+              Nat::mul(Nat::add(Nat::mul(a, d), Nat::mul(b, c)), f)
+            ),
+            Nat::add(
+              Nat::mul(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), f),
+              Nat::mul(Nat::add(Nat::mul(a, d), Nat::mul(b, c)), e)
+            ),
+            Nat::add(
+              Nat::mul(a, Nat::add(Nat::mul(c, e), Nat::mul(d, f))),
+              Nat::mul(b, Nat::add(Nat::mul(c, f), Nat::mul(d, e)))
+            ),
+            Nat::add(
+              Nat::mul(a, Nat::add(Nat::mul(c, f), Nat::mul(d, e))),
+              Nat::mul(b, Nat::add(Nat::mul(c, e), Nat::mul(d, f)))
+            ),
+            by nat_norm!(): Nat::add(
+              Nat::add(
+                Nat::mul(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), e),
+                Nat::mul(Nat::add(Nat::mul(a, d), Nat::mul(b, c)), f)
+              ),
+              Nat::add(
+                Nat::mul(a, Nat::add(Nat::mul(c, f), Nat::mul(d, e))),
+                Nat::mul(b, Nat::add(Nat::mul(c, e), Nat::mul(d, f)))
+              )
+            ) = Nat::add(
+              Nat::add(
+                Nat::mul(a, Nat::add(Nat::mul(c, e), Nat::mul(d, f))),
+                Nat::mul(b, Nat::add(Nat::mul(c, f), Nat::mul(d, e)))
+              ),
+              Nat::add(
+                Nat::mul(Nat::add(Nat::mul(a, c), Nat::mul(b, d)), f),
+                Nat::mul(Nat::add(Nat::mul(a, d), Nat::mul(b, c)), e)
+              )
+            ) {}
+          ),
+          Eq::trans(
+            Eq::sym(
+              mul_sub(
+                a,
+                b,
+                Nat::add(Nat::mul(c, e), Nat::mul(d, f)),
+                Nat::add(Nat::mul(c, f), Nat::mul(d, e))
+              )
+            ),
+            Eq::congr(⟦mul(sub_nat(a, b), □)⟧, Eq::sym(mul_sub(c, d, e, f)))
+          )
+        )
+      )
+    )
+  }
+
+  pub theorem mul_one_sub(
+    a: Nat,
+    b: Nat
+  ): mul(sub_nat(a, b), IntOfNat(Succ(Zero))) = sub_nat(a, b) {
+    Eq::trans(
+      Eq::congr(⟦mul(sub_nat(a, b), □)⟧, Eq::sym(sub_nat_zero(Succ(Zero)))),
+      Eq::trans(
+        mul_sub(a, b, Succ(Zero), Zero),
+        sub_eq(
+          Nat::add(Nat::mul(a, Succ(Zero)), Nat::mul(b, Zero)),
+          Nat::add(Nat::mul(a, Zero), Nat::mul(b, Succ(Zero))),
+          a,
+          b,
+          by nat_norm!(): Nat::add(
+            Nat::add(Nat::mul(a, Succ(Zero)), Nat::mul(b, Zero)),
+            b
+          ) = Nat::add(a, Nat::add(Nat::mul(a, Zero), Nat::mul(b, Succ(Zero)))) {}
+        )
+      )
+    )
+  }
+
+  pub theorem mul_comm(x: Int, y: Int): mul(x, y) = mul(y, x) {
+    Eq::subst(
+      (w: Int) => mul(w, y) = mul(y, w),
+      Eq::sym(parts(x)),
+      Eq::subst(
+        (w: Int) => mul(
+          sub_nat(pos(x), negp(x)),
+          w
+        ) = mul(w, sub_nat(pos(x), negp(x))),
+        Eq::sym(parts(y)),
+        mul_comm_sub(pos(x), negp(x), pos(y), negp(y))
+      )
+    )
+  }
+
+  pub theorem mul_one(x: Int): mul(x, IntOfNat(Succ(Zero))) = x {
+    Eq::subst(
+      (w: Int) => mul(w, IntOfNat(Succ(Zero))) = w,
+      Eq::sym(parts(x)),
+      mul_one_sub(pos(x), negp(x))
+    )
+  }
+
+  pub theorem mul_add(
+    x: Int,
+    y: Int,
+    z: Int
+  ): mul(x, add(y, z)) = add(mul(x, y), mul(x, z)) {
+    Eq::subst(
+      (w: Int) => mul(w, add(y, z)) = add(mul(w, y), mul(w, z)),
+      Eq::sym(parts(x)),
+      Eq::subst(
+        (w: Int) => mul(
+          sub_nat(pos(x), negp(x)),
+          add(w, z)
+        ) = add(
+          mul(sub_nat(pos(x), negp(x)), w),
+          mul(sub_nat(pos(x), negp(x)), z)
+        ),
+        Eq::sym(parts(y)),
+        Eq::subst(
+          (w: Int) => mul(
+            sub_nat(pos(x), negp(x)),
+            add(sub_nat(pos(y), negp(y)), w)
+          ) = add(
+            mul(sub_nat(pos(x), negp(x)), sub_nat(pos(y), negp(y))),
+            mul(sub_nat(pos(x), negp(x)), w)
+          ),
+          Eq::sym(parts(z)),
+          mul_add_sub(pos(x), negp(x), pos(y), negp(y), pos(z), negp(z))
+        )
+      )
+    )
+  }
+
+  pub theorem mul_assoc(
+    x: Int,
+    y: Int,
+    z: Int
+  ): mul(mul(x, y), z) = mul(x, mul(y, z)) {
+    Eq::subst(
+      (w: Int) => mul(mul(w, y), z) = mul(w, mul(y, z)),
+      Eq::sym(parts(x)),
+      Eq::subst(
+        (w: Int) => mul(
+          mul(sub_nat(pos(x), negp(x)), w),
+          z
+        ) = mul(sub_nat(pos(x), negp(x)), mul(w, z)),
+        Eq::sym(parts(y)),
+        Eq::subst(
+          (w: Int) => mul(
+            mul(sub_nat(pos(x), negp(x)), sub_nat(pos(y), negp(y))),
+            w
+          ) = mul(
+            sub_nat(pos(x), negp(x)),
+            mul(sub_nat(pos(y), negp(y)), w)
+          ),
+          Eq::sym(parts(z)),
+          mul_assoc_sub(pos(x), negp(x), pos(y), negp(y), pos(z), negp(z))
+        )
+      )
+    )
+  }
+
+  // The converse of `sub_eq`.
+  pub theorem sub_eq_inv(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    h: sub_nat(a, b) = sub_nat(c, d)
+  ): Nat::add(a, d) = Nat::add(c, b) {
+    let p: Nat := pos(sub_nat(a, b))
+    let n: Nat := negp(sub_nat(a, b))
+    let hab: Nat::add(a, n) = Nat::add(p, b) := sub_parts(a, b)
+    let hcd: Nat::add(
+      c,
+      n
+    ) = Nat::add(
+      p,
+      d
+    ) := Eq::subst(
+      (w: Int) => Nat::add(c, negp(w)) = Nat::add(pos(w), d),
+      Eq::sym(h),
+      sub_parts(c, d)
+    )
+    Nat::add_cancel(Nat::add(a, d), Nat::add(c, b), n, sub_eq_inv_step(a, b, c, d, p, n, hab, hcd))
+  }
+
+  pub theorem sub_eq_inv_step(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    p: Nat,
+    n: Nat,
+    hab: Nat::add(a, n) = Nat::add(p, b),
+    hcd: Nat::add(c, n) = Nat::add(p, d)
+  ): Nat::add(Nat::add(a, d), n) = Nat::add(Nat::add(c, b), n) {
+    let s1: Nat::add(
+      Nat::add(a, d),
+      n
+    ) = Nat::add(
+      Nat::add(a, n),
+      d
+    ) := by nat_norm!(): Nat::add(Nat::add(a, d), n) = Nat::add(Nat::add(a, n), d) {}
+    let s2: Nat::add(
+      Nat::add(a, n),
+      d
+    ) = Nat::add(Nat::add(p, b), d) := Eq::congr(⟦Nat::add(□, d)⟧, hab)
+    let s3: Nat::add(
+      Nat::add(p, b),
+      d
+    ) = Nat::add(
+      Nat::add(p, d),
+      b
+    ) := by nat_norm!(): Nat::add(Nat::add(p, b), d) = Nat::add(Nat::add(p, d), b) {}
+    let s4: Nat::add(
+      Nat::add(p, d),
+      b
+    ) = Nat::add(Nat::add(c, n), b) := Eq::congr(⟦Nat::add(□, b)⟧, Eq::sym(hcd))
+    let s5: Nat::add(
+      Nat::add(c, n),
+      b
+    ) = Nat::add(
+      Nat::add(c, b),
+      n
+    ) := by nat_norm!(): Nat::add(Nat::add(c, n), b) = Nat::add(Nat::add(c, b), n) {}
+    Eq::trans(s1, Eq::trans(s2, Eq::trans(s3, Eq::trans(s4, s5))))
+  }
+
+  pub theorem of_nat_mul(
+    a: Nat,
+    b: Nat
+  ): mul(IntOfNat(a), IntOfNat(b)) = IntOfNat(Nat::mul(a, b)) {
+    Refl
+  }
+
+  pub theorem mul_cancel_sub(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    k: Nat,
+    h: mul(sub_nat(a, b), IntOfNat(Succ(k))) = mul(sub_nat(c, d), IntOfNat(Succ(k)))
+  ): sub_nat(a, b) = sub_nat(c, d) {
+    let ea: mul(
+      sub_nat(a, b),
+      IntOfNat(Succ(k))
+    ) = sub_nat(Nat::mul(a, Succ(k)), Nat::mul(b, Succ(k))) := mul_by_nat(a, b, Succ(k))
+    let ec: mul(
+      sub_nat(c, d),
+      IntOfNat(Succ(k))
+    ) = sub_nat(Nat::mul(c, Succ(k)), Nat::mul(d, Succ(k))) := mul_by_nat(c, d, Succ(k))
+    let e: Nat::add(
+      Nat::mul(a, Succ(k)),
+      Nat::mul(d, Succ(k))
+    ) = Nat::add(
+      Nat::mul(c, Succ(k)),
+      Nat::mul(b, Succ(k))
+    ) := sub_eq_inv(
+      Nat::mul(a, Succ(k)),
+      Nat::mul(b, Succ(k)),
+      Nat::mul(c, Succ(k)),
+      Nat::mul(d, Succ(k)),
+      Eq::trans(Eq::sym(ea), Eq::trans(h, ec))
+    )
+    sub_eq(
+      a,
+      b,
+      c,
+      d,
+      Nat::mul_cancel(
+        Nat::add(a, d),
+        Nat::add(c, b),
+        k,
+        Eq::trans(
+          Nat::mul_add_distrib_right(a, d, Succ(k)),
+          Eq::trans(e, Eq::sym(Nat::mul_add_distrib_right(c, b, Succ(k))))
+        )
+      )
+    )
+  }
+
+  pub theorem mul_by_nat(
+    a: Nat,
+    b: Nat,
+    m: Nat
+  ): mul(sub_nat(a, b), IntOfNat(m)) = sub_nat(Nat::mul(a, m), Nat::mul(b, m)) {
+    Eq::trans(
+      Eq::congr(⟦mul(sub_nat(a, b), □)⟧, Eq::sym(sub_nat_zero(m))),
+      Eq::trans(
+        mul_sub(a, b, m, Zero),
+        sub_eq(
+          Nat::add(Nat::mul(a, m), Nat::mul(b, Zero)),
+          Nat::add(Nat::mul(a, Zero), Nat::mul(b, m)),
+          Nat::mul(a, m),
+          Nat::mul(b, m),
+          by nat_norm!(): Nat::add(
+            Nat::add(Nat::mul(a, m), Nat::mul(b, Zero)),
+            Nat::mul(b, m)
+          ) = Nat::add(Nat::mul(a, m), Nat::add(Nat::mul(a, Zero), Nat::mul(b, m))) {}
+        )
+      )
+    )
+  }
+
+  // `x (k + 1) = y (k + 1)` gives `x = y`.
+  pub theorem mul_cancel(
+    x: Int,
+    y: Int,
+    k: Nat,
+    h: mul(x, IntOfNat(Succ(k))) = mul(y, IntOfNat(Succ(k)))
+  ): x = y {
+    let ex: x = sub_nat(pos(x), negp(x)) := parts(x)
+    let ey: y = sub_nat(pos(y), negp(y)) := parts(y)
+    Eq::trans(
+      ex,
+      Eq::trans(
+        mul_cancel_sub(
+          pos(x),
+          negp(x),
+          pos(y),
+          negp(y),
+          k,
+          Eq::trans(
+            Eq::congr(⟦mul(□, IntOfNat(Succ(k)))⟧, Eq::sym(ex)),
+            Eq::trans(h, Eq::congr(⟦mul(□, IntOfNat(Succ(k)))⟧, ey))
+          )
+        ),
+        Eq::sym(ey)
+      )
+    )
+  }
+}

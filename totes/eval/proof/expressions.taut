@@ -1,0 +1,843 @@
+import "arguments.taut"
+
+// The supported expression shape is a property of CPS, not a separate language.
+mutual {
+  pub fn EPrimitiveExpr(e: Cps): Prop {
+    match e {
+      CPure(v) => True
+      CMap(value, op) => EPrimitiveExpr(value)
+      MkCPrim(op, args) => EPrimitiveArgs(args)
+      CRead(id, deref) => False
+      CCall(callee, args, ticked) => False
+      CTail(inst, args) => False
+      CBuiltin(name, args) => False
+      CBranch(cond, then, otherwise) => False
+      CSeq(items) => EPrimitiveArgs(items)
+      CDefine(id, is_shared, init) => False
+      CAssign(id, path, through, value) => False
+      CWhile(cond, body, ticked) => False
+      CReturn(value) => False
+      CMatch(scrut, pats, guards, bodies) => False
+      CClosure(body, params, captures, borrowed, refs) => False
+      CPerform(op, quant, args) => False
+      CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => False
+      CBorrow(id, path, through) => False
+      CBudget(memory, steps, body) => False
+    }
+  }
+
+  pub fn EPrimitiveArgs(es: List(Cps)): Prop {
+    match es {
+      Nil => True
+      Cons(e, rest) => EPrimitiveExpr(e) ∧ EPrimitiveArgs(rest)
+    }
+  }
+}
+
+mutual {
+  pub fn e_expression_steps(e: Cps): Nat {
+    match e {
+      CPure(v) => 1
+      CMap(value, op) => Succ(e_expression_steps(value))
+      MkCPrim(op, args) => Succ(e_arguments_steps(args))
+      CRead(id, deref) => 0
+      CCall(callee, args, ticked) => 0
+      CTail(inst, args) => 0
+      CBuiltin(name, args) => 0
+      CBranch(cond, then, otherwise) => 0
+      CSeq(items) => e_sequence_steps(items)
+      CDefine(id, is_shared, init) => 0
+      CAssign(id, path, through, value) => 0
+      CWhile(cond, body, ticked) => 0
+      CReturn(value) => 0
+      CMatch(scrut, pats, guards, bodies) => 0
+      CClosure(body, params, captures, borrowed, refs) => 0
+      CPerform(op, quant, args) => 0
+      CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => 0
+      CBorrow(id, path, through) => 0
+      CBudget(memory, steps, body) => 0
+    }
+  }
+
+  pub fn e_arguments_steps(es: List(Cps)): Nat {
+    match es {
+      Nil => 0
+      Cons(e, rest) => Nat::add(e_arguments_steps(rest), e_expression_steps(e))
+    }
+  }
+
+  pub fn e_sequence_steps(es: List(Cps)): Nat {
+    match es {
+      Nil => 1
+      Cons(e, rest) => {
+        let later: Nat := e_sequence_steps(rest)
+        match rest: Nat {
+          Nil => e_expression_steps(e)
+          Cons(next, more) => Nat::add(later, Succ(e_expression_steps(e)))
+        }
+      }
+    }
+  }
+
+}
+
+mutual {
+  pub theorem e_primitive_expr_correct(
+    fuel: Nat,
+    e: Cps,
+    shape: EPrimitiveExpr(e),
+    p: MProgram,
+    env: List(Pair(Nat, EBinding)),
+    cx: MCx,
+    value: MVal,
+    final: MCx,
+    k: MCode,
+    cs: CSt,
+    slots: List(MVal),
+    stack: List(MVal),
+    frames: List(MFrame),
+    done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)
+  ): ECodeResult(
+    p,
+    e_expression_steps(e),
+    c_expr(fuel, e, k, cs),
+    cs,
+    k,
+    slots,
+    stack,
+    frames,
+    cx,
+    Cons(value, stack),
+    final
+  ) {
+    match fuel {
+      Zero => match done: ECodeResult(
+        p,
+        e_expression_steps(e),
+        c_expr(Zero, e, k, cs),
+        cs,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        Cons(value, stack),
+        final
+      ) {}
+      Succ(f) => match e: ECodeResult(
+        p,
+        e_expression_steps(e),
+        c_expr(Succ(f), e, k, cs),
+        cs,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        Cons(value, stack),
+        final
+      ) {
+        CPure(v) => match done: ECodeResult(
+          p,
+          1,
+          c_expr(Succ(f), CPure(v), k, cs),
+          cs,
+          k,
+          slots,
+          stack,
+          frames,
+          cx,
+          Cons(value, stack),
+          final
+        ) {
+          Refl => ⊢ ECodeResult(
+            p,
+            1,
+            c_expr(Succ(f), CPure(v), k, cs),
+            cs,
+            k,
+            slots,
+            stack,
+            frames,
+            cx,
+            Cons(e_value(v), stack),
+            cx
+          ) from
+          AndIntro(Refl, e_runs_one(e_pure_run(p, f, v, k, cs, slots, stack, frames, cx)))
+        }
+        CMap(inner, op) => {
+          let stages: EBindValue(
+            MVal,
+            MVal,
+            e_eval(f, p_ctors(p), env, inner, cx),
+            (v: MVal, heap: MCx) => e_operation(p_ctors(p), heap, e_unary(op), Cons(v, Nil)),
+            value,
+            final
+          ) := e_bind_value(
+            e_eval(f, p_ctors(p), env, inner, cx),
+            (v: MVal, heap: MCx) => e_operation(p_ctors(p), heap, e_unary(op), Cons(v, Nil)),
+            value,
+            final,
+            done
+          )
+          match stages: ECodeResult(
+            p,
+            Succ(e_expression_steps(inner)),
+            c_expr(f, inner, McOp(c_unary(op), k), cs),
+            cs,
+            k,
+            slots,
+            stack,
+            frames,
+            cx,
+            Cons(value, stack),
+            final
+          ) {
+            Ebv(v, heap, first, second) => {
+              let ih: ECodeResult(
+                p,
+                e_expression_steps(inner),
+                c_expr(f, inner, McOp(c_unary(op), k), cs),
+                cs,
+                McOp(c_unary(op), k),
+                slots,
+                stack,
+                frames,
+                cx,
+                Cons(v, stack),
+                heap
+              ) := e_primitive_expr_correct(
+                f,
+                inner,
+                shape,
+                p,
+                env,
+                cx,
+                v,
+                heap,
+                McOp(c_unary(op), k),
+                cs,
+                slots,
+                stack,
+                frames,
+                first
+              )
+              AndIntro(
+                And::left(ih),
+                e_runs_snoc(
+                  And::right(ih),
+                  Mstate(k, slots, Cons(value, stack), frames, final),
+                  e_unary_step(p, op, v, heap, value, final, k, slots, stack, frames, second)
+                )
+              )
+            }
+          }
+        }
+        MkCPrim(op, args) => {
+          let stages: EBindValue(
+            List(MVal),
+            MVal,
+            e_args(f, p_ctors(p), env, args, cx),
+            (values: List(MVal), heap: MCx) => e_operation(
+              p_ctors(p),
+              heap,
+              e_primitive(op, List::length(args)),
+              values
+            ),
+            value,
+            final
+          ) := e_bind_value(
+            e_args(f, p_ctors(p), env, args, cx),
+            (values: List(MVal), heap: MCx) => e_operation(
+              p_ctors(p),
+              heap,
+              e_primitive(op, List::length(args)),
+              values
+            ),
+            value,
+            final,
+            done
+          )
+          match stages: ECodeResult(
+            p,
+            Succ(e_arguments_steps(args)),
+            c_all(f, args, McOp(c_prim_op(op, List::length(args)), k), cs),
+            cs,
+            k,
+            slots,
+            stack,
+            frames,
+            cx,
+            Cons(value, stack),
+            final
+          ) {
+            Ebv(values, heap, first, second) => {
+              let ih: ECodeResult(
+                p,
+                e_arguments_steps(args),
+                c_all(f, args, McOp(c_prim_op(op, List::length(args)), k), cs),
+                cs,
+                McOp(c_prim_op(op, List::length(args)), k),
+                slots,
+                stack,
+                frames,
+                cx,
+                e_argument_stack(values, stack),
+                heap
+              ) := e_primitive_args_correct(
+                f,
+                args,
+                shape,
+                p,
+                env,
+                cx,
+                values,
+                heap,
+                McOp(c_prim_op(op, List::length(args)), k),
+                cs,
+                slots,
+                stack,
+                frames,
+                first
+              )
+              AndIntro(
+                And::left(ih),
+                e_runs_snoc(
+                  And::right(ih),
+                  Mstate(k, slots, Cons(value, stack), frames, final),
+                  e_primitive_step(
+                    p,
+                    op,
+                    List::length(args),
+                    values,
+                    heap,
+                    value,
+                    final,
+                    k,
+                    slots,
+                    stack,
+                    frames,
+                    second
+                  )
+                )
+              )
+            }
+          }
+        }
+        CRead(id, deref) => False::elim(shape)
+        CCall(callee, args, ticked) => False::elim(shape)
+        CTail(inst, args) => False::elim(shape)
+        CBuiltin(name, args) => False::elim(shape)
+        CBranch(cond, then, otherwise) => False::elim(shape)
+        CSeq(items) => match items: ECodeResult(
+          p,
+          e_sequence_steps(items),
+          c_expr(Succ(f), CSeq(items), k, cs),
+          cs,
+          k,
+          slots,
+          stack,
+          frames,
+          cx,
+          Cons(value, stack),
+          final
+        ) {
+          Nil => match f: ECodeResult(
+            p,
+            1,
+            Cr(McPush(MvUnit, k), cs),
+            cs,
+            k,
+            slots,
+            stack,
+            frames,
+            cx,
+            Cons(value, stack),
+            final
+          ) {
+            Zero => match done: ECodeResult(
+              p,
+              1,
+              Cr(McPush(MvUnit, k), cs),
+              cs,
+              k,
+              slots,
+              stack,
+              frames,
+              cx,
+              Cons(value, stack),
+              final
+            ) {}
+            Succ(g) => match done: ECodeResult(
+              p,
+              1,
+              Cr(McPush(MvUnit, k), cs),
+              cs,
+              k,
+              slots,
+              stack,
+              frames,
+              cx,
+              Cons(value, stack),
+              final
+            ) {
+              Refl => ⊢ ECodeResult(
+                p,
+                1,
+                Cr(McPush(MvUnit, k), cs),
+                cs,
+                k,
+                slots,
+                stack,
+                frames,
+                cx,
+                Cons(MvUnit, stack),
+                cx
+              ) from
+              AndIntro(Refl, e_runs_one(Refl))
+            }
+          }
+          Cons(first, rest) => e_primitive_sequence_correct(
+            f,
+            first,
+            rest,
+            shape,
+            p,
+            env,
+            cx,
+            value,
+            final,
+            k,
+            cs,
+            slots,
+            stack,
+            frames,
+            done
+          )
+        }
+        CDefine(id, is_shared, init) => False::elim(shape)
+        CAssign(id, path, through, assigned) => False::elim(shape)
+        CWhile(cond, body, ticked) => False::elim(shape)
+        CReturn(returned) => False::elim(shape)
+        CMatch(scrut, pats, guards, bodies) => False::elim(shape)
+        CClosure(body, params, captures, borrowed, refs) => False::elim(shape)
+        CPerform(op, quant, args) => False::elim(shape)
+        CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => False::elim(shape)
+        CBorrow(id, path, through) => False::elim(shape)
+        CBudget(memory, steps, body) => False::elim(shape)
+      }
+    }
+  }
+
+  pub theorem e_primitive_args_correct(
+    fuel: Nat,
+    es: List(Cps),
+    shape: EPrimitiveArgs(es),
+    p: MProgram,
+    env: List(Pair(Nat, EBinding)),
+    cx: MCx,
+    values: List(MVal),
+    final: MCx,
+    k: MCode,
+    cs: CSt,
+    slots: List(MVal),
+    stack: List(MVal),
+    frames: List(MFrame),
+    done: e_args(fuel, p_ctors(p), env, es, cx) = ErValue(values, final)
+  ): ECodeResult(
+    p,
+    e_arguments_steps(es),
+    c_all(fuel, es, k, cs),
+    cs,
+    k,
+    slots,
+    stack,
+    frames,
+    cx,
+    e_argument_stack(values, stack),
+    final
+  ) {
+    match fuel {
+      Zero => match done: ECodeResult(
+        p,
+        e_arguments_steps(es),
+        c_all(Zero, es, k, cs),
+        cs,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        e_argument_stack(values, stack),
+        final
+      ) {}
+      Succ(f) => match es: ECodeResult(
+        p,
+        e_arguments_steps(es),
+        c_all(Succ(f), es, k, cs),
+        cs,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        e_argument_stack(values, stack),
+        final
+      ) {
+        Nil => match done: ECodeResult(
+          p,
+          0,
+          Cr(k, cs),
+          cs,
+          k,
+          slots,
+          stack,
+          frames,
+          cx,
+          e_argument_stack(values, stack),
+          final
+        ) {
+          Refl => ⊢ ECodeResult(p, 0, Cr(k, cs), cs, k, slots, stack, frames, cx, stack, cx) from
+          AndIntro(Refl, ErunRefl(Mstate(k, slots, stack, frames, cx)))
+        }
+        Cons(e, rest) => {
+          let stages: EBindValue(
+            MVal,
+            List(MVal),
+            e_eval(f, p_ctors(p), env, e, cx),
+            (v: MVal, heap: MCx) => e_bind(
+              e_args(f, p_ctors(p), env, rest, heap),
+              (tail: List(MVal), heap2: MCx) => ErValue(Cons(v, tail), heap2)
+            ),
+            values,
+            final
+          ) := e_bind_value(
+            e_eval(f, p_ctors(p), env, e, cx),
+            (v: MVal, heap: MCx) => e_bind(
+              e_args(f, p_ctors(p), env, rest, heap),
+              (tail: List(MVal), heap2: MCx) => ErValue(Cons(v, tail), heap2)
+            ),
+            values,
+            final,
+            done
+          )
+          match stages: ECodeResult(
+            p,
+            e_arguments_steps(Cons(e, rest)),
+            c_all(Succ(f), Cons(e, rest), k, cs),
+            cs,
+            k,
+            slots,
+            stack,
+            frames,
+            cx,
+            e_argument_stack(values, stack),
+            final
+          ) {
+            Ebv(v, heap, first, next) => {
+              let remainder: EBindValue(
+                List(MVal),
+                List(MVal),
+                e_args(f, p_ctors(p), env, rest, heap),
+                (tail: List(MVal), heap2: MCx) => ErValue(Cons(v, tail), heap2),
+                values,
+                final
+              ) := e_bind_value(
+                e_args(f, p_ctors(p), env, rest, heap),
+                (tail: List(MVal), heap2: MCx) => ErValue(Cons(v, tail), heap2),
+                values,
+                final,
+                next
+              )
+              match remainder: ECodeResult(
+                p,
+                e_arguments_steps(Cons(e, rest)),
+                c_all(Succ(f), Cons(e, rest), k, cs),
+                cs,
+                k,
+                slots,
+                stack,
+                frames,
+                cx,
+                e_argument_stack(values, stack),
+                final
+              ) {
+                Ebv(tail, heap2, later, assembled) => match assembled: ECodeResult(
+                  p,
+                  e_arguments_steps(Cons(e, rest)),
+                  c_all(Succ(f), Cons(e, rest), k, cs),
+                  cs,
+                  k,
+                  slots,
+                  stack,
+                  frames,
+                  cx,
+                  e_argument_stack(values, stack),
+                  final
+                ) {
+                  Refl => ⊢ ECodeResult(
+                    p,
+                    e_arguments_steps(Cons(e, rest)),
+                    c_all(Succ(f), Cons(e, rest), k, cs),
+                    cs,
+                    k,
+                    slots,
+                    stack,
+                    frames,
+                    cx,
+                    e_argument_stack(Cons(v, tail), stack),
+                    heap2
+                  ) from
+                  e_arguments_cons_result(
+                    f,
+                    e,
+                    rest,
+                    p,
+                    k,
+                    cs,
+                    slots,
+                    stack,
+                    frames,
+                    cx,
+                    v,
+                    heap,
+                    tail,
+                    heap2,
+                    e_primitive_expr_correct(
+                      f,
+                      e,
+                      And::left(shape),
+                      p,
+                      env,
+                      cx,
+                      v,
+                      heap,
+                      e_code(c_all(f, rest, k, cs)),
+                      cs,
+                      slots,
+                      stack,
+                      frames,
+                      first
+                    ),
+                    e_primitive_args_correct(
+                      f,
+                      rest,
+                      And::right(shape),
+                      p,
+                      env,
+                      heap,
+                      tail,
+                      heap2,
+                      k,
+                      cs,
+                      slots,
+                      Cons(v, stack),
+                      frames,
+                      later
+                    )
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem e_primitive_sequence_correct(
+    fuel: Nat,
+    first: Cps,
+    rest: List(Cps),
+    shape: EPrimitiveArgs(Cons(first, rest)),
+    p: MProgram,
+    env: List(Pair(Nat, EBinding)),
+    cx: MCx,
+    value: MVal,
+    final: MCx,
+    k: MCode,
+    cs: CSt,
+    slots: List(MVal),
+    stack: List(MVal),
+    frames: List(MFrame),
+    done: e_sequence(fuel, p_ctors(p), env, Cons(first, rest), cx) = ErValue(value, final)
+  ): ECodeResult(
+    p,
+    e_sequence_steps(Cons(first, rest)),
+    c_seq_from(fuel, first, rest, k, cs),
+    cs,
+    k,
+    slots,
+    stack,
+    frames,
+    cx,
+    Cons(value, stack),
+    final
+  ) {
+    match fuel {
+      Zero => match done: ECodeResult(
+        p,
+        e_sequence_steps(Cons(first, rest)),
+        c_seq_from(Zero, first, rest, k, cs),
+        cs,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        Cons(value, stack),
+        final
+      ) {}
+      Succ(f) => match rest: ECodeResult(
+        p,
+        e_sequence_steps(Cons(first, rest)),
+        c_seq_from(Succ(f), first, rest, k, cs),
+        cs,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        Cons(value, stack),
+        final
+      ) {
+        Nil => e_primitive_expr_correct(
+          f,
+          first,
+          And::left(shape),
+          p,
+          env,
+          cx,
+          value,
+          final,
+          k,
+          cs,
+          slots,
+          stack,
+          frames,
+          done
+        )
+        Cons(next, more) => {
+          let stages: EBindValue(
+            MVal,
+            MVal,
+            e_eval(f, p_ctors(p), env, first, cx),
+            (v: MVal, heap: MCx) => e_sequence(f, p_ctors(p), env, Cons(next, more), heap),
+            value,
+            final
+          ) := e_bind_value(
+            e_eval(f, p_ctors(p), env, first, cx),
+            (v: MVal, heap: MCx) => e_sequence(f, p_ctors(p), env, Cons(next, more), heap),
+            value,
+            final,
+            done
+          )
+          match stages: ECodeResult(
+            p,
+            e_sequence_steps(Cons(first, Cons(next, more))),
+            c_seq_from(Succ(f), first, Cons(next, more), k, cs),
+            cs,
+            k,
+            slots,
+            stack,
+            frames,
+            cx,
+            Cons(value, stack),
+            final
+          ) {
+            Ebv(discarded, heap, initial, later) => e_sequence_cons_result(
+              f,
+              first,
+              next,
+              more,
+              p,
+              k,
+              cs,
+              slots,
+              stack,
+              frames,
+              cx,
+              discarded,
+              heap,
+              value,
+              final,
+              e_primitive_expr_correct(
+                f,
+                first,
+                And::left(shape),
+                p,
+                env,
+                cx,
+                discarded,
+                heap,
+                McPop(e_code(c_seq_from(f, next, more, k, cs))),
+                cs,
+                slots,
+                stack,
+                frames,
+                initial
+              ),
+              e_primitive_sequence_correct(
+                f,
+                next,
+                more,
+                And::right(shape),
+                p,
+                env,
+                heap,
+                value,
+                final,
+                k,
+                cs,
+                slots,
+                stack,
+                frames,
+                later
+              )
+            )
+          }
+        }
+      }
+    }
+  }
+
+}
+
+pub theorem e_primitive_expr_mrun(
+  fuel: Nat,
+  e: Cps,
+  shape: EPrimitiveExpr(e),
+  p: MProgram,
+  env: List(Pair(Nat, EBinding)),
+  cx: MCx,
+  value: MVal,
+  final: MCx,
+  k: MCode,
+  cs: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)
+): mrun(p, e_expression_steps(e), Mstate(e_code(c_expr(fuel, e, k, cs)), slots, stack, frames, cx)) =
+MstepNext(Mstate(k, slots, Cons(value, stack), frames, final)) {
+  e_runs_mrun(
+    And::right(
+      e_primitive_expr_correct(
+        fuel,
+        e,
+        shape,
+        p,
+        env,
+        cx,
+        value,
+        final,
+        k,
+        cs,
+        slots,
+        stack,
+        frames,
+        done
+      )
+    )
+  )
+}

@@ -1,0 +1,277 @@
+import "signature_table_frame.taut"
+import "program_signature_sound.taut"
+import "decl_names_sound.taut"
+
+// Lookup observes exactly the scheme inserted by signature registration.
+pub fn fnt_lookup(c: Checker, name: Text): Option(Scheme) {
+  Ordmap::get(fnt_table(c), name, Ordmap::compare_text)
+}
+pub def CkFnsStep<A: Type>(c: Checker, m: Mut1(A, Checker)): Prop :=
+∀ ordered: CkFnsOrdered(c). CkFnsOrdered(ck_st(m))
+
+pub theorem fnt_step_return<A: Type>(c: Checker, value: A): CkFnsStep(c, mut1(value, c)) {
+  ordered => ordered
+}
+pub theorem fnt_step_read<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  kept: CkFnsFrame(c, m)
+): CkFnsStep(c, m) {
+  ordered => fnt_ordered(c, m, kept, ordered)
+}
+pub theorem fnt_step_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  head: CkFnsStep(c, m),
+  tail: ∀ value: A. ∀ next: Checker. CkFnsStep(next, k(value, next))
+): CkFnsStep(c, frame_bind(k, m)) {
+  match m: CkFnsStep(c, frame_bind(k, m)) {
+    mut1(value, next) => ordered => tail(value, next, head(ordered))
+  }
+}
+pub theorem fnt_step_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  step: CkFnsStep(c, m)
+): CkFnsStep(c, ck_rewrap1(m)) {
+  Eq::subst((result: Mut1(A, Checker)) => CkFnsStep(c, result), Eq::sym(ck_rewrap1_id(m)), step)
+}
+
+pub theorem signature_store_ordered(
+  c: Checker,
+  source: SurfaceFn,
+  scheme: Scheme
+): CkFnsStep(c, signature_store(c, source, scheme)) {
+  ordered => Ordmap::insert_ordered(
+    Ordmap::compare_text,
+    Ordmap::compare_text_law(),
+    fnt_table(c),
+    signature_name(source),
+    scheme,
+    ordered
+  )
+}
+pub theorem signature_store_lookup(
+  c: Checker,
+  source: SurfaceFn,
+  scheme: Scheme,
+  ordered: CkFnsOrdered(c)
+): fnt_lookup(ck_st(signature_store(c, source, scheme)), signature_name(source)) = Some(scheme) {
+  Ordmap::get_insert_same(
+    Ordmap::compare_text,
+    Ordmap::compare_text_law(),
+    fnt_table(c),
+    signature_name(source),
+    scheme,
+    ordered
+  )
+}
+pub theorem signature_add_ordered(
+  c: Checker,
+  source: SurfaceFn
+): CkFnsStep(c, signature_add(c, source)) {
+  fnt_step_bind(
+    Scheme,
+    Scheme,
+    c,
+    (scheme: Scheme, next: Checker) => signature_store(next, source, scheme),
+    ck_signature(c, source),
+    fnt_step_read(c, ck_signature(c, source), fnt_ck_signature_frame(c, source)),
+    scheme => next => signature_store_ordered(next, source, scheme)
+  )
+}
+pub theorem ck_add_fn_ordered(c: Checker, source: SurfaceFn): CkFnsStep(c, ck_add_fn(c, source)) {
+  Eq::subst(
+    (result: Mut1(Scheme, Checker)) => CkFnsStep(c, result),
+    Eq::sym(signature_add_unf(c, source)),
+    signature_add_ordered(c, source)
+  )
+}
+pub theorem signature_after_lookup(
+  source: SurfaceFn,
+  m: Mut1(Scheme, Checker),
+  ordered: CkFnsOrdered(ck_st(m))
+): fnt_lookup(ck_st(signature_store_after(source, m)), signature_name(source)) = Some(ck_val(signature_store_after(source, m))) {
+  match m: fnt_lookup(ck_st(signature_store_after(source, m)), signature_name(source)) = Some(ck_val(signature_store_after(source, m))) {
+    mut1(scheme, next) => signature_store_lookup(next, source, scheme, ordered)
+  }
+}
+pub theorem ck_add_fn_lookup(
+  c: Checker,
+  source: SurfaceFn,
+  ordered: CkFnsOrdered(c)
+): fnt_lookup(ck_st(ck_add_fn(c, source)), signature_name(source)) = Some(ck_val(ck_add_fn(c, source))) {
+  Eq::subst(
+    (result: Mut1(Scheme, Checker)) => fnt_lookup(ck_st(result), signature_name(source)) = Some(ck_val(result)),
+    Eq::sym(signature_add_unf(c, source)),
+    signature_after_lookup(
+      source,
+      ck_signature(c, source),
+      fnt_ordered(c, ck_signature(c, source), fnt_ck_signature_frame(c, source), ordered)
+    )
+  )
+}
+
+pub def FnNameApart(a: Text, b: Text): Prop := (a = b) -> False
+
+pub theorem fnt_insert_other_at(
+  table: Ordmap(Text, Scheme),
+  source: Text,
+  scheme: Scheme,
+  query: Text,
+  ordering: Ordering,
+  ordered: Ordmap::ordered(table, Ordmap::compare_text),
+  apart: FnNameApart(query, source),
+  comparison: Ordmap::compare_text(query, source) = ordering
+): Ordmap::get(Ordmap::insert(table, source, scheme, Ordmap::compare_text), query, Ordmap::compare_text) = Ordmap::get(table, query, Ordmap::compare_text) {
+  match ordering: Ordmap::get(
+      Ordmap::insert(table, source, scheme, Ordmap::compare_text),
+      query,
+      Ordmap::compare_text
+    ) = Ordmap::get(table, query, Ordmap::compare_text) {
+    Less => Ordmap::get_insert_other(
+      Ordmap::compare_text,
+      Ordmap::compare_text_law(),
+      table,
+      source,
+      scheme,
+      query,
+      Less,
+      less_ne_equal,
+      comparison,
+      ordered
+    )
+    Equal => False::elim(apart(Ordmap::compare_text_eq(query, source, comparison)))
+    Greater => Ordmap::get_insert_other(
+      Ordmap::compare_text,
+      Ordmap::compare_text_law(),
+      table,
+      source,
+      scheme,
+      query,
+      Greater,
+      greater_ne_equal,
+      comparison,
+      ordered
+    )
+  }
+}
+pub def CkFnPreserved<A: Type>(name: Text, c: Checker, m: Mut1(A, Checker)): Prop :=
+And(
+  CkFnsStep(c, m),
+  ∀ ordered: CkFnsOrdered(c). fnt_lookup(ck_st(m), name) = fnt_lookup(c, name)
+)
+
+pub theorem fnt_preserved_read<A: Type>(
+  name: Text,
+  c: Checker,
+  m: Mut1(A, Checker),
+  kept: CkFnsFrame(c, m)
+): CkFnPreserved(name, c, m) {
+  AndIntro(
+    fnt_step_read(c, m, kept),
+    ordered => Eq::congr(
+      (table: Ordmap(Text, Scheme)) => Ordmap::get(table, name, Ordmap::compare_text),
+      kept
+    )
+  )
+}
+pub theorem fnt_preserved_return<A: Type>(
+  name: Text,
+  c: Checker,
+  value: A
+): CkFnPreserved(name, c, mut1(value, c)) {
+  fnt_preserved_read(name, c, mut1(value, c), Refl)
+}
+pub theorem fnt_preserved_rewrap<A: Type>(
+  name: Text,
+  c: Checker,
+  m: Mut1(A, Checker),
+  kept: CkFnPreserved(name, c, m)
+): CkFnPreserved(name, c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => CkFnPreserved(name, c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    kept
+  )
+}
+pub theorem fnt_preserved_bind<A: Type, B: Type>(
+  name: Text,
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  head: CkFnPreserved(name, c, m),
+  tail: ∀ value: A. ∀ next: Checker. CkFnPreserved(name, next, k(value, next))
+): CkFnPreserved(name, c, frame_bind(k, m)) {
+  match m: CkFnPreserved(name, c, frame_bind(k, m)) {
+    mut1(value, next) => AndIntro(
+      ordered => (And::left(tail(value, next)))((And::left(head))(ordered)),
+      ordered => Eq::trans(
+        (And::right(tail(value, next)))((And::left(head))(ordered)),
+        (And::right(head))(ordered)
+      )
+    )
+  }
+}
+pub theorem signature_store_preserved(
+  name: Text,
+  c: Checker,
+  source: SurfaceFn,
+  scheme: Scheme,
+  apart: FnNameApart(name, signature_name(source))
+): CkFnPreserved(name, c, signature_store(c, source, scheme)) {
+  AndIntro(
+    signature_store_ordered(c, source, scheme),
+    ordered => fnt_insert_other_at(
+      fnt_table(c),
+      signature_name(source),
+      scheme,
+      name,
+      Ordmap::compare_text(name, signature_name(source)),
+      ordered,
+      apart,
+      Refl
+    )
+  )
+}
+pub theorem signature_add_preserved(
+  name: Text,
+  c: Checker,
+  source: SurfaceFn,
+  apart: FnNameApart(name, signature_name(source))
+): CkFnPreserved(name, c, signature_add(c, source)) {
+  fnt_preserved_bind(
+    Scheme,
+    Scheme,
+    name,
+    c,
+    (scheme: Scheme, next: Checker) => signature_store(next, source, scheme),
+    ck_signature(c, source),
+    fnt_preserved_read(name, c, ck_signature(c, source), fnt_ck_signature_frame(c, source)),
+    scheme => next => signature_store_preserved(name, next, source, scheme, apart)
+  )
+}
+pub theorem ck_add_fn_preserved(
+  name: Text,
+  c: Checker,
+  source: SurfaceFn,
+  apart: FnNameApart(name, signature_name(source))
+): CkFnPreserved(name, c, ck_add_fn(c, source)) {
+  Eq::subst(
+    (result: Mut1(Scheme, Checker)) => CkFnPreserved(name, c, result),
+    Eq::sym(signature_add_unf(c, source)),
+    signature_add_preserved(name, c, source, apart)
+  )
+}
+
+pub theorem fnt_step_return_after<A: Type, B: Type>(
+  c: Checker,
+  value: B,
+  m: Mut1(A, Checker),
+  step: CkFnsStep(c, m)
+): CkFnsStep(c, frame_return(A, B, value, m)) {
+  match m: CkFnsStep(c, frame_return(A, B, value, m)) {
+    mut1(ignored, next) => step
+  }
+}

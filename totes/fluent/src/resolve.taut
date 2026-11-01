@@ -1,0 +1,368 @@
+import std::Base
+import std::Text
+import "syntax.taut"
+import "plural.taut"
+
+// Formatting a message: its pattern with each placeable replaced by the value of its expression.
+// What cannot be found is written as Fluent writes it (`{$name}`, `{id}`, `{-id}`) and reported
+// as an error, so formatting always gives text.
+
+pub(open) inductive Value: Type {
+  VStr(bytes: List(Nat)): Value
+  VNum(n: Nat): Value
+}
+
+// A variable given to a message: `$name`.
+pub(open) inductive Arg: Type {
+  Mk(name: List(Nat), value: Value): Arg
+}
+
+pub(open) inductive FluentError: Type {
+  UnknownMessage(id: List(Nat)): FluentError
+  UnknownTerm(id: List(Nat)): FluentError
+  UnknownAttribute(id: List(Nat), attr: List(Nat)): FluentError
+  UnknownVariable(name: List(Nat)): FluentError
+  // A message with attributes but no value, used for its value.
+  NoValue(id: List(Nat)): FluentError
+  // References nested deeper than the budget allows, as a cycle of references does.
+  TooDeep: FluentError
+}
+
+// What formatting uses: the locale, whether placeables are isolated (U+2068 … U+2069, as Fluent
+// does by default so that text of another direction does not reorder its surroundings), and the
+// entries.
+pub(open) inductive Bundle: Type {
+  Mk(locale: List(Nat), isolating: Bool, entries: List(Entry)): Bundle
+}
+
+pub(open) inductive Out: Type {
+  Mk(bytes: List(Nat), errors: List(FluentError)): Out
+}
+
+pub(open) inductive Ev: Type {
+  Mk(value: Value, errors: List(FluentError)): Ev
+}
+
+// ---- looking things up --------------------------------------------------------
+
+pub fn find_arg(args: List(Arg), name: List(Nat)): Option(Value) {
+  match args: Option(Value) {
+    Nil => None
+    Cons(a, rest) => match a: Option(Value) {
+      Arg::Mk(n, v) => match byte_list_eq(n, name): Option(Value) {
+        true => Some(v)
+        false => find_arg(rest, name)
+      }
+    }
+  }
+}
+
+// The first message called `id`.
+pub fn find_message(es: List(Entry), id: List(Nat)): Option(Entry) {
+  match es: Option(Entry) {
+    Nil => None
+    Cons(e, rest) => match e: Option(Entry) {
+      Message(i, v, a) => match byte_list_eq(i, id): Option(Entry) {
+        true => Some(e)
+        false => find_message(rest, id)
+      }
+      Term(i, v, a) => find_message(rest, id)
+    }
+  }
+}
+
+// The first term called `id` (written `-id`).
+pub fn find_term(es: List(Entry), id: List(Nat)): Option(Entry) {
+  match es: Option(Entry) {
+    Nil => None
+    Cons(e, rest) => match e: Option(Entry) {
+      Message(i, v, a) => find_term(rest, id)
+      Term(i, v, a) => match byte_list_eq(i, id): Option(Entry) {
+        true => Some(e)
+        false => find_term(rest, id)
+      }
+    }
+  }
+}
+
+pub fn find_attr(attrs: List(Attr), name: List(Nat)): Option(List(Elem)) {
+  match attrs: Option(List(Elem)) {
+    Nil => None
+    Cons(a, rest) => match a: Option(List(Elem)) {
+      Attr::Mk(n, p) => match byte_list_eq(n, name): Option(List(Elem)) {
+        true => Some(p)
+        false => find_attr(rest, name)
+      }
+    }
+  }
+}
+
+pub fn entry_attrs(e: Entry): List(Attr) {
+  match e: List(Attr) {
+    Message(i, v, a) => a
+    Term(i, v, a) => a
+  }
+}
+
+// ---- choosing a variant -------------------------------------------------------
+
+// A number matches a numeric key equal to it and the key naming its plural category; a string
+// matches the key with the same name.
+pub fn key_matches(locale: List(Nat), v: Value, k: Key): Bool {
+  match v: Bool {
+    VNum(n) => match k: Bool {
+      KeyNum(m) => Nat::eq(n, m)
+      KeyId(name) => byte_list_eq(name, category_name(plural(locale, n)))
+    }
+    VStr(s) => match k: Bool {
+      KeyNum(m) => false
+      KeyId(name) => byte_list_eq(name, s)
+    }
+  }
+}
+
+pub fn variant_key(x: Variant): Key {
+  match x: Key {
+    Mk(k, p) => k
+  }
+}
+
+pub fn variant_pat(x: Variant): List(Elem) {
+  match x: List(Elem) {
+    Mk(k, p) => p
+  }
+}
+
+pub fn find_step(o: Bool, y: Variant, later: Option(Variant)): Option(Variant) {
+  match o: Option(Variant) {
+    true => Some(y)
+    false => later
+  }
+}
+
+// The first variant whose key matches.
+pub fn find_variant(locale: List(Nat), v: Value, vs: List(Variant)): Option(Variant) {
+  match vs: Option(Variant) {
+    Nil => None
+    Cons(x, rest) => find_step(
+      key_matches(locale, v, variant_key(x)),
+      x,
+      find_variant(locale, v, rest)
+    )
+  }
+}
+
+pub fn pattern_of(dpat: List(Elem), o: Option(Variant)): List(Elem) {
+  match o: List(Elem) {
+    None => dpat
+    Some(x) => variant_pat(x)
+  }
+}
+
+// The pattern a select expression gives for the selector's value: the first matching variant,
+// otherwise the default.
+pub fn pick(locale: List(Nat), v: Value, vs: List(Variant), dpat: List(Elem)): List(Elem) {
+  pattern_of(dpat, find_variant(locale, v, vs))
+}
+
+// ---- formatting ---------------------------------------------------------------
+
+pub fn value_bytes(v: Value): List(Nat) {
+  match v: List(Nat) {
+    VStr(b) => b
+    VNum(n) => Text::bytes(Text::of_nat(n))
+  }
+}
+
+pub fn lit_value(l: Lit): Value {
+  match l: Value {
+    LitStr(b) => VStr(b)
+    LitNum(n) => VNum(n)
+  }
+}
+
+pub fn term_args(xs: List(NamedArg)): List(Arg) {
+  match xs: List(Arg) {
+    Nil => Nil
+    Cons(x, rest) => match x: List(Arg) {
+      Named(n, l) => Cons(Arg::Mk(n, lit_value(l)), term_args(rest))
+    }
+  }
+}
+
+pub fn braced(bs: List(Nat)): List(Nat) {
+  Cons(123, List::append(bs, Cons(125, Nil)))
+}
+
+pub fn dotted(id: List(Nat), a: List(Nat)): List(Nat) {
+  List::append(id, Cons(46, a))
+}
+
+// An expression that could not be resolved: its fallback text and the error.
+pub fn failed(text: List(Nat), e: FluentError): Ev {
+  Ev::Mk(VStr(braced(text)), Cons(e, Nil))
+}
+
+pub fn with_errors(es: List(FluentError), x: Ev): Ev {
+  match x: Ev {
+    Mk(v, es2) => Ev::Mk(v, List::append(es, es2))
+  }
+}
+
+pub fn out_ev(o: Out): Ev {
+  match o: Ev {
+    Mk(b, es) => Ev::Mk(VStr(b), es)
+  }
+}
+
+pub fn isolate(on: Bool, bs: List(Nat)): List(Nat) {
+  match on: List(Nat) {
+    false => bs
+    // U+2068 FIRST STRONG ISOLATE … U+2069 POP DIRECTIONAL ISOLATE
+    true => Cons(226, Cons(129, Cons(168, List::append(bs, Cons(226, Cons(129, Cons(169, Nil)))))))
+  }
+}
+
+// Placeables are isolated only when the pattern has more than one element.
+pub fn isolates(b: Bundle, p: List(Elem)): Bool {
+  match b: Bool {
+    Mk(l, iso, es) => match p: Bool {
+      Nil => false
+      Cons(x, rest) => match rest: Bool {
+        Nil => false
+        Cons(y, more) => iso
+      }
+    }
+  }
+}
+
+pub fn bundle_locale(b: Bundle): List(Nat) {
+  match b: List(Nat) {
+    Mk(l, iso, es) => l
+  }
+}
+
+pub fn bundle_entries(b: Bundle): List(Entry) {
+  match b: List(Entry) {
+    Mk(l, iso, es) => es
+  }
+}
+
+pub fn prepend(bs: List(Nat), es: List(FluentError), o: Out): Out {
+  match o: Out {
+    Mk(b2, es2) => Out::Mk(List::append(bs, b2), List::append(es, es2))
+  }
+}
+
+pub fn ev_out(on: Bool, x: Ev, rest: Out): Out {
+  match x: Out {
+    Mk(v, es) => prepend(isolate(on, value_bytes(v)), es, rest)
+  }
+}
+
+pub fn ev_errors(x: Ev): List(FluentError) {
+  match x: List(FluentError) {
+    Mk(v, es) => es
+  }
+}
+
+pub fn ev_value(x: Ev): Value {
+  match x: Value {
+    Mk(v, es) => v
+  }
+}
+
+mutual {
+  // The elements of a pattern, from `p` on; `on` is whether placeables are isolated.
+  pub fn r_elems(fuel: Nat, b: Bundle, args: List(Arg), on: Bool, p: List(Elem)): Out {
+    match fuel: Out {
+      Zero => Out::Mk(Nil, Cons(TooDeep, Nil))
+      Succ(j) => match p: Out {
+        Nil => Out::Mk(Nil, Nil)
+        Cons(x, rest) => match x: Out {
+          ElText(bs) => prepend(bs, Nil, r_elems(j, b, args, on, rest))
+          ElPlace(e) => ev_out(on, r_expr(j, b, args, e), r_elems(j, b, args, on, rest))
+        }
+      }
+    }
+  }
+
+  pub fn r_pattern(fuel: Nat, b: Bundle, args: List(Arg), p: List(Elem)): Out {
+    match fuel: Out {
+      Zero => Out::Mk(Nil, Cons(TooDeep, Nil))
+      Succ(j) => r_elems(j, b, args, isolates(b, p), p)
+    }
+  }
+
+  pub fn r_expr(fuel: Nat, b: Bundle, args: List(Arg), e: Expr): Ev {
+    match fuel: Ev {
+      Zero => failed(Nil, TooDeep)
+      Succ(j) => match e: Ev {
+        ExStr(bs) => Ev::Mk(VStr(bs), Nil)
+        ExNum(n) => Ev::Mk(VNum(n), Nil)
+        ExVar(name) => match find_arg(args, name): Ev {
+          None => failed(Cons(36, name), UnknownVariable(name))
+          Some(v) => Ev::Mk(v, Nil)
+        }
+        ExMsg(id, a) => match find_message(bundle_entries(b), id): Ev {
+          None => failed(id, UnknownMessage(id))
+          Some(m) => match a: Ev {
+            None => match m: Ev {
+              Message(i, v, at) => match v: Ev {
+                None => failed(id, NoValue(id))
+                Some(p) => out_ev(r_pattern(j, b, args, p))
+              }
+              Term(i, v, at) => out_ev(r_pattern(j, b, args, v))
+            }
+            Some(name) => match find_attr(entry_attrs(m), name): Ev {
+              None => failed(dotted(id, name), UnknownAttribute(id, name))
+              Some(p) => out_ev(r_pattern(j, b, args, p))
+            }
+          }
+        }
+        // a term sees only the arguments written on it
+        ExTerm(id, a, xs) => match find_term(bundle_entries(b), id): Ev {
+          None => failed(Cons(45, id), UnknownTerm(id))
+          Some(t) => match a: Ev {
+            None => match t: Ev {
+              Message(i, v, at) => failed(Cons(45, id), UnknownTerm(id))
+              Term(i, v, at) => out_ev(r_pattern(j, b, term_args(xs), v))
+            }
+            Some(name) => match find_attr(entry_attrs(t), name): Ev {
+              None => failed(Cons(45, dotted(id, name)), UnknownAttribute(id, name))
+              Some(p) => out_ev(r_pattern(j, b, term_args(xs), p))
+            }
+          }
+        }
+        // a selector that fails picks the default variant
+        ExSelect(sel, vs, dk, dp) => r_select(j, b, args, r_expr(j, b, args, sel), vs, dp)
+      }
+    }
+  }
+
+  pub fn r_select(
+    fuel: Nat,
+    b: Bundle,
+    args: List(Arg),
+    s: Ev,
+    vs: List(Variant),
+    dp: List(Elem)
+  ): Ev {
+    match fuel: Ev {
+      Zero => failed(Nil, TooDeep)
+      Succ(j) => match ev_errors(s): Ev {
+        Nil => out_ev(r_pattern(j, b, args, pick(bundle_locale(b), ev_value(s), vs, dp)))
+        Cons(x, xs) => with_errors(Cons(x, xs), out_ev(r_pattern(j, b, args, dp)))
+      }
+    }
+  }
+}
+
+// How deep references may nest before formatting stops with `too_deep`.
+pub fn depth(): Nat {
+  1000
+}
+
+pub fn format_pattern(b: Bundle, args: List(Arg), p: List(Elem)): Out {
+  r_pattern(depth(), b, args, p)
+}

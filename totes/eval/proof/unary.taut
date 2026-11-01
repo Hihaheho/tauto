@@ -1,0 +1,217 @@
+import "operations.taut"
+import "results.taut"
+import "steps.taut"
+
+// A structural property of production CPS expressions, independent of evaluation.
+pub(open) inductive EUnaryExpr: (Nat, Cps) -> Prop {
+  EuLiteral(v: CVal): EUnaryExpr(1, CPure(v))
+  EuMap<n: Nat, e: Cps>(op: CUnary, inner: EUnaryExpr(n, e)): EUnaryExpr(Succ(n), CMap(e, op))
+}
+
+pub fn e_compile_state(r: CR): CSt {
+  match r { Cr(code, state) => state }
+}
+
+// With sufficient compiler fuel, these expressions allocate no slots or functions
+// and introduce no compilation error.
+pub theorem e_unary_compile_state<n: Nat, e: Cps>(
+  shape: EUnaryExpr(n, e),
+  extra: Nat,
+  k: MCode,
+  cs: CSt
+): e_compile_state(c_expr(Nat::add(extra, n), e, k, cs)) = cs {
+  match shape {
+    EuLiteral(v) => ⊢ e_compile_state(c_expr(Succ(extra), CPure(v), k, cs)) = cs from Refl
+    EuMap<n: count, e: inner_expr>(op, inner) =>
+    ⊢ e_compile_state(c_expr(Succ(Nat::add(extra, count)), CMap(inner_expr, op), k, cs)) = cs from
+    e_unary_compile_state(inner, extra, McOp(c_unary(op), k), cs)
+  }
+}
+
+pub theorem e_unary_step(
+  p: MProgram,
+  op: CUnary,
+  value: MVal,
+  cx: MCx,
+  out: MVal,
+  cx2: MCx,
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  done: e_operation(p_ctors(p), cx, e_unary(op), Cons(value, Nil)) = ErValue(out, cx2)
+): step(p, Mstate(McOp(c_unary(op), k), slots, Cons(value, stack), frames, cx)) =
+MstepNext(Mstate(k, slots, Cons(out, stack), frames, cx2)) {
+  let primitive: m_op(p_ctors(p), cx, e_unary(op), Cons(value, Nil)) = MoutVal(out, cx2) :=
+  e_primitive_value(
+    m_op(p_ctors(p), cx, e_unary(op), Cons(value, Nil)),
+    out,
+    cx2,
+    Eq::trans(
+      Eq::sym(e_operation_arity(p_ctors(p), cx, e_unary(op), Cons(value, Nil), e_unary_arity(op))),
+      done
+    )
+  )
+  Eq::trans(
+    Eq::congr(
+      (operation: MOp) => step(
+        p,
+        Mstate(McOp(operation, k), slots, Cons(value, stack), frames, cx)
+      ),
+      Eq::sym(e_unary_compiles(op))
+    ),
+    And::right(
+      e_operation_value_agrees(
+        p,
+        e_unary(op),
+        Cons(value, Nil),
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        out,
+        cx2,
+        e_unary_arity(op),
+        primitive
+      )
+    )
+  )
+}
+
+// The following code, stack, slots and frames are arbitrary; the final heap is exact.
+pub theorem e_unary_expr_run<n: Nat, e: Cps>(
+  shape: EUnaryExpr(n, e),
+  fuel: Nat,
+  p: MProgram,
+  env: List(Pair(Nat, EBinding)),
+  cx: MCx,
+  value: MVal,
+  final: MCx,
+  k: MCode,
+  cs: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)
+): ERuns(
+  p,
+  n,
+  Mstate(e_code(c_expr(fuel, e, k, cs)), slots, stack, frames, cx),
+  Mstate(k, slots, Cons(value, stack), frames, final)
+) {
+  match shape {
+    EuLiteral(v) => ⊢ ERuns(
+      p,
+      1,
+      Mstate(e_code(c_expr(fuel, CPure(v), k, cs)), slots, stack, frames, cx),
+      Mstate(k, slots, Cons(value, stack), frames, final)
+    ) from match fuel: ERuns(
+      p,
+      1,
+      Mstate(e_code(c_expr(fuel, CPure(v), k, cs)), slots, stack, frames, cx),
+      Mstate(k, slots, Cons(value, stack), frames, final)
+    ) {
+      Zero => match done: ERuns(
+        p,
+        1,
+        Mstate(e_code(c_expr(Zero, CPure(v), k, cs)), slots, stack, frames, cx),
+        Mstate(k, slots, Cons(value, stack), frames, final)
+      ) {}
+      Succ(f) => match done: ERuns(
+        p,
+        1,
+        Mstate(e_code(c_expr(Succ(f), CPure(v), k, cs)), slots, stack, frames, cx),
+        Mstate(k, slots, Cons(value, stack), frames, final)
+      ) {
+        Refl => ⊢ ERuns(
+          p,
+          1,
+          Mstate(e_code(c_expr(Succ(f), CPure(v), k, cs)), slots, stack, frames, cx),
+          Mstate(k, slots, Cons(e_value(v), stack), frames, cx)
+        ) from e_runs_one(e_pure_run(p, f, v, k, cs, slots, stack, frames, cx))
+      }
+    }
+    EuMap<n: count, e: inner_expr>(op, inner) => ⊢ ERuns(
+      p,
+      Succ(count),
+      Mstate(e_code(c_expr(fuel, CMap(inner_expr, op), k, cs)), slots, stack, frames, cx),
+      Mstate(k, slots, Cons(value, stack), frames, final)
+    ) from match fuel: ERuns(
+      p,
+      Succ(count),
+      Mstate(e_code(c_expr(fuel, CMap(inner_expr, op), k, cs)), slots, stack, frames, cx),
+      Mstate(k, slots, Cons(value, stack), frames, final)
+    ) {
+      Zero => match done: ERuns(
+        p,
+        Succ(count),
+        Mstate(e_code(c_expr(Zero, CMap(inner_expr, op), k, cs)), slots, stack, frames, cx),
+        Mstate(k, slots, Cons(value, stack), frames, final)
+      ) {}
+      Succ(f) => {
+        let stages: EBindValue(
+          MVal,
+          MVal,
+          e_eval(f, p_ctors(p), env, inner_expr, cx),
+          (v: MVal, heap: MCx) => e_operation(p_ctors(p), heap, e_unary(op), Cons(v, Nil)),
+          value,
+          final
+        ) := e_bind_value(
+          e_eval(f, p_ctors(p), env, inner_expr, cx),
+          (v: MVal, heap: MCx) => e_operation(p_ctors(p), heap, e_unary(op), Cons(v, Nil)),
+          value,
+          final,
+          done
+        )
+        match stages: ERuns(
+          p,
+          Succ(count),
+          Mstate(e_code(c_expr(f, inner_expr, McOp(c_unary(op), k), cs)), slots, stack, frames, cx),
+          Mstate(k, slots, Cons(value, stack), frames, final)
+        ) {
+          Ebv(v, heap, first, second) => e_runs_snoc(
+            e_unary_expr_run(
+              inner,
+              f,
+              p,
+              env,
+              cx,
+              v,
+              heap,
+              McOp(c_unary(op), k),
+              cs,
+              slots,
+              stack,
+              frames,
+              first
+            ),
+            Mstate(k, slots, Cons(value, stack), frames, final),
+            e_unary_step(p, op, v, heap, value, final, k, slots, stack, frames, second)
+          )
+        }
+      }
+    }
+  }
+}
+
+pub theorem e_unary_expr_mrun<n: Nat, e: Cps>(
+  shape: EUnaryExpr(n, e),
+  fuel: Nat,
+  p: MProgram,
+  env: List(Pair(Nat, EBinding)),
+  cx: MCx,
+  value: MVal,
+  final: MCx,
+  k: MCode,
+  cs: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  done: e_eval(fuel, p_ctors(p), env, e, cx) = ErValue(value, final)
+): mrun(p, n, Mstate(e_code(c_expr(fuel, e, k, cs)), slots, stack, frames, cx)) =
+MstepNext(Mstate(k, slots, Cons(value, stack), frames, final)) {
+  e_runs_mrun(
+    e_unary_expr_run(shape, fuel, p, env, cx, value, final, k, cs, slots, stack, frames, done)
+  )
+}

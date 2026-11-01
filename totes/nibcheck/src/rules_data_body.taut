@@ -1,0 +1,67 @@
+import "rules_data_fields.taut"
+
+pub fn body_source_generics(source: SurfaceData): List(Text) { source.generics }
+pub fn body_source_ctors(source: SurfaceData): List(SurfaceDataCtor) { source.constructors }
+pub fn body_source_name(source: SurfaceData): Text { source.name }
+pub fn body_data_ctors(data: Data): List(DataCtor) { data.constructors }
+
+pub(open) inductive DataGenericMap: (List(Text), Ordmap(Text, Ty), Ordmap(Text, Ty)) -> Prop {
+  DataGenericMapNil(map: Ordmap(Text, Ty)): DataGenericMap(Nil, map, map)
+  DataGenericMapCons(
+    name: Text,
+    rest: List(Text),
+    initial: Ordmap(Text, Ty),
+    final: Ordmap(Text, Ty),
+    tail: DataGenericMap(
+      rest,
+      Ordmap::insert(initial, name, TyParam(name, KindLinear), Ordmap::compare_text),
+      final
+    )
+  ): DataGenericMap(Cons(name, rest), initial, final)
+}
+// Registration retains the source's elaboration in the environment in which the
+// declaration was read. A successful recheck transports it to the final one.
+pub(open) inductive DataBodyKnown(source: SurfaceData, constructors: List(DataCtor)): Prop {
+  Mk(
+    env: Datas,
+    generics: Ordmap(Text, Ty),
+    bindings: DataGenericMap(body_source_generics(source), Ordmap::empty(), generics),
+    meaning: WrittenDataCtors(env, generics, false, body_source_ctors(source), constructors)
+  ): DataBodyKnown(source, constructors)
+}
+pub(open) inductive DataBodyFormed(
+  env: Datas,
+  source: SurfaceData,
+  constructors: List(DataCtor)
+): Prop {
+  Mk(
+    generics: Ordmap(Text, Ty),
+    bindings: DataGenericMap(body_source_generics(source), Ordmap::empty(), generics),
+    meaning: WrittenDataCtors(env, generics, false, body_source_ctors(source), constructors)
+  ): DataBodyFormed(env, source, constructors)
+}
+
+pub fn body_ctors_option(data: Option(Data)): Option(List(DataCtor)) {
+  match data: Option(List(DataCtor)) {
+    None => None
+    Some(decl) => Some(body_data_ctors(decl))
+  }
+}
+pub fn body_lookup(
+  env: Datas,
+  name: Text
+): Option(List(DataCtor)) { body_ctors_option(datas_decl(env, name)) }
+pub(open) inductive DataBodyRegistered(env: Datas, source: SurfaceData): Prop {
+  Mk(
+    constructors: List(DataCtor),
+    found: body_lookup(env, body_source_name(source)) = Some(constructors),
+    known: DataBodyKnown(source, constructors)
+  ): DataBodyRegistered(env, source)
+}
+pub(open) inductive DataBodyChecked(env: Datas, source: SurfaceData): Prop {
+  Mk(
+    constructors: List(DataCtor),
+    found: body_lookup(env, body_source_name(source)) = Some(constructors),
+    formed: DataBodyFormed(env, source, constructors)
+  ): DataBodyChecked(env, source)
+}

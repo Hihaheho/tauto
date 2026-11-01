@@ -1,0 +1,168 @@
+import "registration_all_body_sound.taut"
+
+pub def DataBodyState(
+  source: SurfaceData,
+  m: Mut1(Unit, Checker)
+): Prop := DataBodyChecked(ck_datas_of(ck_st(m)), source)
+pub theorem run_after_datas_body(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  ordered: CkOrdered(c),
+  ready: BodyPreparationReady(program, source, c),
+  clean: DiagnosticClean(ck_st(run_after_datas(c, prelude, program, own)))
+): DataBodyState(source, run_after_datas(c, prelude, program, own)) {
+  let accepted: DiagnosticClean(
+    ck_st(ck_prepare_fns(c, prelude, program, own))
+  ) := accepted_checked_bind_fact(
+    List(Pair(SurfaceFn, Scheme)),
+    Unit,
+    DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own))),
+    ck_prepare_fns(c, prelude, program, own),
+    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    frame_subst_ordered(
+      c,
+      ck_prepare_fns(c, prelude, program, own),
+      ck_prepare_fns_frame(c, prelude, program, own),
+      ordered
+    ),
+    h => h,
+    fns => next => ord => names_function_body_checked(next, program, fns, ord),
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+      names_after_datas_unf(c, prelude, program, own),
+      clean
+    )
+  )
+  Eq::subst(
+    (env: Datas) => DataBodyChecked(env, source),
+    Eq::sym(And::right(run_after_datas_frame(c, prelude, program, own, ordered))),
+    body_fns_checked(
+      c,
+      prelude,
+      program,
+      own,
+      source,
+      member,
+      And::right(
+        And::right(ready)
+      )(ck_prepare_fns_data_names_unique(c, prelude, program, own, accepted)),
+      And::left(ready),
+      And::left(And::right(ready)),
+      Eq::subst(
+        (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => DiagnosticClean(ck_st(m)),
+        registration_fns_unf(c, prelude, program, own),
+        accepted
+      )
+    )
+  )
+}
+pub theorem run_after_data_result_body(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  prepared: ∀ accepted: DiagnosticClean(ck_st(m)). BodyPreparationReady(program, source, ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
+): DataBodyState(source, run_after_data_result(prelude, program, own, m)) {
+  match m: DataBodyState(source, run_after_data_result(prelude, program, own, m)) {
+    mut1(ignored, next) => run_after_datas_body(
+      next,
+      prelude,
+      program,
+      own,
+      source,
+      member,
+      ordered,
+      prepared(
+        And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)
+      ),
+      clean
+    )
+  }
+}
+pub theorem run_after_builtins_body(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  declared: DeclaresData(program, source),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  ordinary: frame_under_borrow(ck_st(m)) = false,
+  position: frame_constructor_position(ck_st(m)) = false,
+  clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
+): DataBodyState(source, run_after_builtins(prelude, program, m)) {
+  match m: DataBodyState(source, run_after_builtins(prelude, program, m)) {
+    mut1(ignored, next) => run_after_data_result_body(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      source,
+      declared_data_member(declared),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      ck_prepare_datas_subst_ordered(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        ordered
+      ),
+      accepted => body_prepare_data_ready(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        source,
+        decls,
+        ordinary,
+        position,
+        declared,
+        accepted
+      ),
+      clean
+    )
+  }
+}
+pub theorem body_builtins_context(
+  c: Checker
+): written_context(ck_st(run_builtins(c))) = written_context(c) { Refl }
+pub theorem ck_run_data_body(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  declared: DeclaresData(program, source),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(ck_run(c, prelude, program)))
+): DataBodyState(source, ck_run(c, prelude, program)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DataBodyState(source, m),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_after_builtins_body(
+      prelude,
+      program,
+      source,
+      declared,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+      frame_ordered(c, run_builtins(c), run_builtins_frame(c), decls),
+      Eq::trans(Eq::congr(written_context_borrow, body_builtins_context(c)), ordinary),
+      Eq::trans(Eq::congr(written_context_position, body_builtins_context(c)), position),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        run_summary_unf(c, prelude, program),
+        clean
+      )
+    )
+  )
+}

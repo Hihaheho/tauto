@@ -1,0 +1,212 @@
+import "inference_frame.taut"
+import "../../surface/src/surface.taut"
+pub def BodyFunctionsIH(
+  rest: List(Pair(SurfaceFn, Scheme))
+): Prop := ∀ c: Checker. ∀ ordered: CkOrdered(c). CkRunFrame(c, ck_check_fns(rest, c))
+pub def BodyTopIH(
+  rest: List(SurfaceStmt)
+): Prop := ∀ c: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+  c
+). CkScopeFrame(c, ck_top_level(rest, c, env))
+
+pub fn body_function(p: Pair(SurfaceFn, Scheme)): SurfaceFn { (p: SurfaceFn) }
+
+pub fn body_scheme(p: Pair(SurfaceFn, Scheme)): Scheme { (p: Scheme) }
+
+pub fn body_functions_cons(
+  p: Pair(SurfaceFn, Scheme),
+  rest: List(Pair(SurfaceFn, Scheme)),
+  c: Checker
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (checked: Unit, c1: Checker) => ck_rewrap1(ck_check_fns(rest, c1)),
+    ck_check_fn(c, body_function(p), body_scheme(p), Nil)
+  )
+}
+
+pub theorem body_functions_cons_frame(
+  p: Pair(SurfaceFn, Scheme),
+  rest: List(Pair(SurfaceFn, Scheme)),
+  c: Checker,
+  ih: BodyFunctionsIH(rest),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, body_functions_cons(p, rest, c)) {
+  run_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (checked: Unit, c1: Checker) => ck_rewrap1(ck_check_fns(rest, c1)),
+    ck_check_fn(c, body_function(p), body_scheme(p), Nil),
+    ck_check_fn_frame(c, body_function(p), body_scheme(p), Nil, ordered),
+    checked => c1 => o_c1 => run_frame_rewrap(c1, ck_check_fns(rest, c1), ih(c1, o_c1))
+  )
+}
+
+pub theorem body_functions_unf(
+  p: Pair(SurfaceFn, Scheme),
+  rest: List(Pair(SurfaceFn, Scheme)),
+  c: Checker
+): ck_check_fns(Cons(p, rest), c) = body_functions_cons(p, rest, c) { Refl }
+
+pub theorem ck_check_fns_frame(
+  fs: List(Pair(SurfaceFn, Scheme)),
+  c: Checker,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_check_fns(fs, c)
+) { match fs: CkRunFrame(c, ck_check_fns(fs, c)) { Nil => AndIntro(ordered, Refl)
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+      Eq::sym(body_functions_unf(p, rest, c)),
+      body_functions_cons_frame(p, rest, c, next => o => ck_check_fns_frame(rest, next, o), ordered)
+    ) } }
+
+pub theorem ck_top_let_frame(
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope
+): CkReadFrame(c, ck_top_let(c, s, env)) { match s: CkReadFrame(c, ck_top_let(c, s, env)) {
+    StLet(name, ty, value, borrow, bm) => match env: CkReadFrame(
+      c,
+      ck_top_let(c, StLet(name, ty, value, borrow, bm), env)
+    ) { ScopeMk(items) => match items: CkReadFrame(
+      c,
+      ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))
+    ) { Nil => Refl
+        Cons(l, older) => Refl } }
+    StVar(name, ty, value, vb) => Refl
+    StAssign(name, name_place, value) => Refl
+    StCalled(name_generates, value) => Refl
+    StFn(f) => Refl
+    StEffect(e) => Refl
+    StWhile(condition, body) => Refl
+    StReturn(e) => Refl
+    StExpr(e) => Refl
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => Refl
+    StTheorem(pat_t) => Refl
+    StDef(pat_t) => Refl
+    StMutual(pat_stmts, pat_start, pat_end) => Refl
+    StImport(pat_path, pat_start, pat_end) => Refl
+    StInductive(pat_i) => Refl
+    StStruct(pat_d) => Refl
+    StEnum(pat_d) => Refl
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => Refl
+    StClass(pat_c) => Refl
+    StInstance(pat_i) => Refl
+    StMacro(pat_name, pat_function, pat_start, pat_end) => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => Refl
+    StOther(what, start, end) => Refl
+  } }
+
+pub fn body_top_one(
+  s: SurfaceStmt,
+  c: Checker,
+  env: Scope,
+  check: Bool
+): Mut2(Unit, Checker, Scope) {
+  match check: Mut2(Unit, Checker, Scope) {
+    true => pattern_bind(
+      Ty,
+      Unit,
+      (t: Ty, c1: Checker, env1: Scope) => pattern_lift(env1, ck_top_let(c1, s, env1)),
+      ck_stmt(c, s, env)
+    )
+    false => mut2(Star, c, env)
+  }
+}
+
+pub theorem body_top_one_frame(
+  s: SurfaceStmt,
+  c: Checker,
+  env: Scope,
+  check: Bool,
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, body_top_one(s, c, env, check)) {
+  match check: CkScopeFrame(c, body_top_one(s, c, env, check)) {
+    true => pattern_bind_frame(
+      Ty,
+      Unit,
+      c,
+      (t: Ty, c1: Checker, env1: Scope) => pattern_lift(env1, ck_top_let(c1, s, env1)),
+      ck_stmt(c, s, env),
+      ck_stmt_frame(c, s, env, ordered),
+      t => c1 => env1 => o_c1 => pattern_lift_frame(
+        c1,
+        env1,
+        ck_top_let(c1, s, env1),
+        run_frame_read(c1, ck_top_let(c1, s, env1), ck_top_let_frame(c1, s, env1), o_c1)
+      )
+    )
+    false => pattern_return_frame(c, env, Star, ordered)
+  }
+}
+
+pub fn body_top_cons(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  env: Scope
+): Mut2(Unit, Checker, Scope) {
+  pattern_bind(
+    Unit,
+    Unit,
+    (checked: Unit, c1: Checker, env1: Scope) => pattern_rewrap(ck_top_level(rest, c1, env1)),
+    body_top_one(s, c, env, not(stmt_is_declaration(s)))
+  )
+}
+
+pub theorem body_top_cons_frame(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  env: Scope,
+  ih: BodyTopIH(rest),
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, body_top_cons(s, rest, c, env)) {
+  pattern_bind_frame(
+    Unit,
+    Unit,
+    c,
+    (checked: Unit, c1: Checker, env1: Scope) => pattern_rewrap(ck_top_level(rest, c1, env1)),
+    body_top_one(s, c, env, not(stmt_is_declaration(s))),
+    body_top_one_frame(s, c, env, not(stmt_is_declaration(s)), ordered),
+    checked => c1 => env1 => o_c1 => pattern_rewrap_frame(
+      c1,
+      ck_top_level(rest, c1, env1),
+      ih(c1, env1, o_c1)
+    )
+  )
+}
+
+pub theorem body_top_unf(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  env: Scope
+): ck_top_level(Cons(s, rest), c, env) = body_top_cons(s, rest, c, env) { Refl }
+
+pub theorem ck_top_level_frame(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  env: Scope,
+  ordered: CkOrdered(c)
+): CkScopeFrame(
+  c,
+  ck_top_level(ss, c, env)
+) { match ss: CkScopeFrame(c, ck_top_level(ss, c, env)) { Nil => AndIntro(ordered, Refl)
+    Cons(s, rest) => Eq::subst(
+      (z: Mut2(Unit, Checker, Scope)) => CkScopeFrame(c, z),
+      Eq::sym(body_top_unf(s, rest, c, env)),
+      body_top_cons_frame(
+        s,
+        rest,
+        c,
+        env,
+        next => local => o => ck_top_level_frame(rest, next, local, o),
+        ordered
+      )
+    ) } }

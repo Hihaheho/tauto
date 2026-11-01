@@ -1,0 +1,172 @@
+import "instantiation_allocation_bind.taut"
+
+pub def InstantiationAllocationIH(
+  rest: List(Pair(Text, Kind)),
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan
+): Prop := ∀ next: Checker. ∀ map: Ordmap(
+  Text,
+  Ty
+). ∀ state: CheckerAllocation(
+  next
+). ∀ ordered: Ordmap::ordered(
+  map,
+  Ordmap::compare_text
+). ∀ values: GenericMapAllocated(
+  ck_next_of(next),
+  map
+). InstanceAllocation(next, ck_instantiate_map_ctors(rest, next, ctors, name, span, map))
+pub theorem instantiation_cons_allocation(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  state: CheckerAllocation(c),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(ck_next_of(c), map),
+  ih: InstantiationAllocationIH(rest, ctors, name, span)
+): InstanceAllocation(c, instantiation_cons(g, rest, c, ctors, name, span, map)) {
+  map_allocation_fresh_bind(
+    c,
+    (value: Ty, next: Checker) => frame_bind(
+      Unit,
+      Ordmap(Text, Ty),
+      (ignored: Unit, last: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          last,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+        )
+      ),
+      instantiation_bound(next, g, value, name, span, ctor_arg_of(ctors, instantiation_name(g)))
+    ),
+    state,
+    value => next => advanced => current => bounded => map_allocation_bind(
+      Unit,
+      next,
+      (ignored: Unit, last: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          last,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+        )
+      ),
+      instantiation_bound(next, g, value, name, span, ctor_arg_of(ctors, instantiation_name(g))),
+      instantiation_bound_allocation(
+        next,
+        g,
+        value,
+        name,
+        span,
+        current,
+        ctor_arg_of(ctors, instantiation_name(g))
+      ),
+      ignored => last => further => final_state => map_allocation_rewrap(
+        last,
+        ck_instantiate_map_ctors(
+          rest,
+          last,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text)
+        ),
+        ih(
+          last,
+          Ordmap::insert(map, instantiation_name(g), value, Ordmap::compare_text),
+          final_state,
+          Ordmap::insert_ordered(
+            Ordmap::compare_text,
+            Ordmap::compare_text_law(),
+            map,
+            instantiation_name(g),
+            value,
+            ordered
+          ),
+          generic_map_insert_allocated(
+            ck_next_of(last),
+            map,
+            instantiation_name(g),
+            value,
+            ordered,
+            type_allocated_weaken(value, ck_next_of(next), ck_next_of(last), further, bounded),
+            generic_map_allocation_weaken(
+              ck_next_of(c),
+              ck_next_of(last),
+              map,
+              Nat::le_trans(ck_next_of(c), ck_next_of(next), ck_next_of(last), advanced, further),
+              values
+            )
+          )
+        )
+      )
+    )
+  )
+}
+pub theorem ck_instantiate_map_ctors_allocation(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  state: CheckerAllocation(c),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(ck_next_of(c), map)
+): InstanceAllocation(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+  match gs: InstanceAllocation(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+    Nil => AndIntro(Nat::le_refl(ck_next_of(c)), AndIntro(state, AndIntro(ordered, values)))
+    Cons(g, rest) => Eq::subst(
+      (result: Mut1(Ordmap(Text, Ty), Checker)) => InstanceAllocation(c, result),
+      Eq::sym(instantiation_cons_unf(g, rest, c, ctors, name, span, map)),
+      instantiation_cons_allocation(
+        g,
+        rest,
+        c,
+        ctors,
+        name,
+        span,
+        map,
+        state,
+        ordered,
+        values,
+        next => more => current => order => bounded => ck_instantiate_map_ctors_allocation(
+          rest,
+          next,
+          ctors,
+          name,
+          span,
+          more,
+          current,
+          order,
+          bounded
+        )
+      )
+    )
+  }
+}
+pub theorem ck_instantiate_map_allocation(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  state: CheckerAllocation(c),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(ck_next_of(c), map)
+): InstanceAllocation(c, ck_instantiate_map(gs, c, span, map)) {
+  map_allocation_rewrap(
+    c,
+    ck_instantiate_map_ctors(gs, c, Nil, "", span, map),
+    ck_instantiate_map_ctors_allocation(gs, c, Nil, "", span, map, state, ordered, values)
+  )
+}

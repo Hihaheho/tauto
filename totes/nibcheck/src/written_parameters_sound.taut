@@ -1,0 +1,212 @@
+import "written_list_sound.taut"
+
+pub theorem written_parameters_state(
+  c: Checker,
+  next: Checker,
+  generics: Ordmap(Text, Ty),
+  terms: List(SurfaceParam),
+  types: List(Ty),
+  env: ck_datas_of(next) = ck_datas_of(c),
+  position: frame_constructor_position(next) = frame_constructor_position(c),
+  meaning: WrittenParameters(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    terms,
+    types
+  )
+): WrittenParameters(ck_datas_of(c), generics, frame_constructor_position(c), terms, types) {
+  Eq::subst(
+    (partial: Bool) => WrittenParameters(ck_datas_of(c), generics, partial, terms, types),
+    position,
+    Eq::subst(
+      (datas: Datas) => WrittenParameters(
+        datas,
+        generics,
+        frame_constructor_position(next),
+        terms,
+        types
+      ),
+      env,
+      meaning
+    )
+  )
+}
+pub fn written_parameters_after(
+  rest: List(SurfaceParam),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(List(Ty), Checker) {
+  frame_bind(
+    Ty,
+    List(Ty),
+    (head: Ty, next: Checker) => written_map(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty)) => Cons(head, tail),
+      ck_written_params(rest, next, generics, 0)
+    ),
+    m
+  )
+}
+pub theorem written_parameters_after_sound(
+  c: Checker,
+  name: Option(Text),
+  first: SurfaceTerm,
+  rest: List(SurfaceParam),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker),
+  read: CkReadFrame(c, m),
+  context: CkWrittenReset(c, m),
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, first, ck_val(m)),
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_params(rest, next, generics, 0))
+  ). WrittenParameters(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_written_params(rest, next, generics, 0))
+  ),
+  clean: DiagnosticClean(ck_st(written_parameters_after(rest, generics, m)))
+): WrittenParameters(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(SurfaceParamMk(name, first), rest),
+  ck_val(written_parameters_after(rest, generics, m))
+) {
+  match m: WrittenParameters(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(SurfaceParamMk(name, first), rest),
+    ck_val(written_parameters_after(rest, generics, m))
+  ) {
+    mut1(head, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_written_params(rest, next, generics, 0))
+      ) := written_map_clean(
+        List(Ty),
+        List(Ty),
+        (tail: List(Ty)) => Cons(head, tail),
+        ck_written_params(rest, next, generics, 0),
+        clean
+      )
+      Eq::subst(
+        (types: List(Ty)) => WrittenParameters(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(SurfaceParamMk(name, first), rest),
+          types
+        ),
+        Eq::sym(
+          written_map_value(
+            List(Ty),
+            List(Ty),
+            (tail: List(Ty)) => Cons(head, tail),
+            ck_written_params(rest, next, generics, 0)
+          )
+        ),
+        WrittenParametersCons(
+          name,
+          first,
+          rest,
+          head,
+          ck_val(ck_written_params(rest, next, generics, 0)),
+          ihhead(ck_written_params_frame_errors(rest, next, generics, 0, tail_clean)),
+          written_parameters_state(
+            c,
+            next,
+            generics,
+            rest,
+            ck_val(ck_written_params(rest, next, generics, 0)),
+            Eq::congr(frame_read_datas, read),
+            Eq::congr(written_context_position, context),
+            ihtail(next, Eq::congr(written_context_borrow, context), tail_clean)
+          )
+        )
+      )
+    }
+  }
+}
+
+pub theorem written_parameter_value(
+  name: Option(Text),
+  body: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): ck_written_param(SurfaceParamMk(name, body), c, generics) = ck_written_in(body, c, generics) {
+  Eq::trans(
+    frame_written_param_unf(name, body, c, generics),
+    ck_rewrap1_id(ck_written_in(body, c, generics))
+  )
+}
+pub theorem written_parameters_cons_sound(
+  name: Option(Text),
+  body: SurfaceTerm,
+  rest: List(SurfaceParam),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(body, c, generics))
+  ). WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    false,
+    body,
+    ck_val(ck_written_in(body, c, generics))
+  ),
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_params(rest, next, generics, 0))
+  ). WrittenParameters(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_written_params(rest, next, generics, 0))
+  ),
+  clean: DiagnosticClean(
+    ck_st(frame_written_params_cons(SurfaceParamMk(name, body), rest, c, generics, 0))
+  )
+): WrittenParameters(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(SurfaceParamMk(name, body), rest),
+  ck_val(frame_written_params_cons(SurfaceParamMk(name, body), rest, c, generics, 0))
+) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => WrittenParameters(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      Cons(SurfaceParamMk(name, body), rest),
+      ck_val(written_parameters_after(rest, generics, m))
+    ),
+    Eq::sym(written_parameter_value(name, body, c, generics)),
+    written_parameters_after_sound(
+      c,
+      name,
+      body,
+      rest,
+      generics,
+      ck_written_in(body, c, generics),
+      ck_written_in_frame(body, c, generics),
+      And::left(ck_written_in_frame_context(body, c, generics)),
+      ihhead,
+      ihtail,
+      Eq::subst(
+        (m: Mut1(Ty, Checker)) => DiagnosticClean(
+          ck_st(written_parameters_after(rest, generics, m))
+        ),
+        written_parameter_value(name, body, c, generics),
+        clean
+      )
+    )
+  )
+}

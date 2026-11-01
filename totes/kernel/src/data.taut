@@ -1,19 +1,19 @@
 import "term.taut"
 
-inductive KernelGlobal(): Type {
-  kernel_global(name: Text, ty: KernelTerm, value: Option(KernelTerm)): KernelGlobal
+pub(open) inductive KernelGlobal: Type {
+  Mk(name: Text, ty: KernelTerm, value: Option(KernelTerm)): KernelGlobal
 }
 
-inductive KernelRecArg(): Type {
-  kernel_rec_arg(arg: Nat, ys: Nat, family: Nat, indices: List(KernelTerm)): KernelRecArg
+pub(open) inductive KernelRecArg: Type {
+  Mk(arg: Nat, ys: Nat, family: Nat, indices: List(KernelTerm)): KernelRecArg
 }
 
-inductive KernelCtorInfo(): Type {
-  kernel_ctor_info(name: Text, nargs: Nat, recursive: List(KernelRecArg)): KernelCtorInfo
+pub(open) inductive KernelCtorInfo: Type {
+  Mk(name: Text, nargs: Nat, recursive: List(KernelRecArg)): KernelCtorInfo
 }
 
-inductive KernelIndInfo(): Type {
-  kernel_ind_info(
+pub(open) inductive KernelIndInfo: Type {
+  Mk(
     name: Text,
     params: Nat,
     indices: Nat,
@@ -25,33 +25,34 @@ inductive KernelIndInfo(): Type {
   ): KernelIndInfo
 }
 
-inductive KernelCore(): Type {
-  kernel_core(
+pub(open) inductive KernelCore: Type {
+  Mk(
     globals: List(KernelGlobal),
     inductives: List(KernelIndInfo),
     constructors: List(Pair(Text, Pair(Text, Nat))),
     eliminators: List(Pair(Text, Text)),
     locals: List(Pair(Nat, KernelTerm)),
     next: Nat,
-    exhausted: Yn
+    exhausted: Bool,
+    quotient: List(Text)
   ): KernelCore
 }
 
-inductive KernelFamily(): Type {
-  kernel_family(
+pub(open) inductive KernelFamily: Type {
+  Mk(
     name: Text,
     ty: KernelTerm,
     constructors: List(Pair(Text, KernelTerm))
   ): KernelFamily
 }
 
-inductive KernelCommand(): Type {
+pub(open) inductive KernelCommand: Type {
   KernelForget(name: Text): KernelCommand
   KernelDeclare(
     name: Text,
     ty: KernelTerm,
     value: Option(KernelTerm),
-    transparent: Yn
+    transparent: Bool
   ): KernelCommand
   KernelConstant(name: Text, value: KernelTerm): KernelCommand
   KernelSetValue(name: Text, value: KernelTerm): KernelCommand
@@ -61,105 +62,104 @@ inductive KernelCommand(): Type {
   KernelConvert(left: KernelTerm, right: KernelTerm): KernelCommand
 }
 
-inductive KernelVerdict(): Type {
-  KernelAccepted(): KernelVerdict
-  KernelRejected(): KernelVerdict
-  KernelExhausted(): KernelVerdict
+pub(open) inductive KernelVerdict: Type {
+  KernelAccepted: KernelVerdict
+  KernelRejected: KernelVerdict
+  KernelExhausted: KernelVerdict
 }
 
-fn kernel_list_find_KernelGlobal_Yn(
-  f: (KernelGlobal) -> Yn,
+pub fn kernel_list_find_KernelGlobal_Bool(
+  f: (KernelGlobal) -> Bool,
   xs: List(KernelGlobal)
-) -> Option(KernelGlobal) { list_find(f, xs) }
+): Option(KernelGlobal) { List::find(f, xs) }
 
-fn kernel_list_find_KernelIndInfo_Yn(
-  f: (KernelIndInfo) -> Yn,
+pub fn kernel_list_find_KernelIndInfo_Bool(
+  f: (KernelIndInfo) -> Bool,
   xs: List(KernelIndInfo)
-) -> Option(KernelIndInfo) { list_find(f, xs) }
+): Option(KernelIndInfo) { List::find(f, xs) }
 
-fn kernel_list_filter_KernelGlobal_Yn(
-  f: (KernelGlobal) -> Yn,
+pub fn kernel_list_filter_KernelGlobal_Bool(
+  f: (KernelGlobal) -> Bool,
   xs: List(KernelGlobal)
-) -> List(KernelGlobal) { list_filter(f, xs) }
+): List(KernelGlobal) { List::filter(f, xs) }
 
-fn kernel_list_map_Text_KernelGlobal(
+pub fn kernel_list_map_Text_KernelGlobal(
   f: (Text) -> KernelGlobal,
   xs: List(Text)
-) -> List(KernelGlobal) { list_map(f, xs) }
+): List(KernelGlobal) { List::map(f, xs) }
 
-fn kernel_list_all_Nat_Yn(f: (Nat) -> Yn, xs: List(Nat)) -> Yn { list_all(f, xs) }
+pub fn kernel_list_all_Nat_Bool(f: (Nat) -> Bool, xs: List(Nat)): Bool { List::all(f, xs) }
 
-fn kernel_lookup<A>(entries: List(Pair(Text, A)), key: Text) -> Option(A) {
-  match entries -> Option(A) {
+pub fn kernel_lookup<A>(entries: List(Pair(Text, A)), key: Text): Option(A) {
+  match entries: Option(A) {
     Nil => None
     Cons(entry, rest) => if entry.fst == key { Some(entry.snd) } else { kernel_lookup(rest, key) }
   }
 }
 
-fn kernel_global_named(g: KernelGlobal, name: Text) -> Yn { g.name == name }
-fn kernel_ind_named(i: KernelIndInfo, name: Text) -> Yn { i.name == name }
+pub fn kernel_global_named(g: KernelGlobal, name: Text): Bool { g.name == name }
+pub fn kernel_ind_named(i: KernelIndInfo, name: Text): Bool { i.name == name }
 
-fn kernel_global_get(gs: List(KernelGlobal), name: Text) -> Option(KernelGlobal) {
-  kernel_list_find_KernelGlobal_Yn((g: KernelGlobal) => kernel_global_named(g, name), gs)
+pub fn kernel_global_get(gs: List(KernelGlobal), name: Text): Option(KernelGlobal) {
+  kernel_list_find_KernelGlobal_Bool((g: KernelGlobal) => kernel_global_named(g, name), gs)
 }
 
-fn kernel_ind_get(is: List(KernelIndInfo), name: Text) -> Option(KernelIndInfo) {
-  kernel_list_find_KernelIndInfo_Yn((i: KernelIndInfo) => kernel_ind_named(i, name), is)
+pub fn kernel_ind_get(is: List(KernelIndInfo), name: Text): Option(KernelIndInfo) {
+  kernel_list_find_KernelIndInfo_Bool((i: KernelIndInfo) => kernel_ind_named(i, name), is)
 }
 
-fn kernel_local_get(ls: List(Pair(Nat, KernelTerm)), atom: Nat) -> Option(KernelTerm) {
-  match ls -> Option(KernelTerm) {
+pub fn kernel_local_get(ls: List(Pair(Nat, KernelTerm)), atom: Nat): Option(KernelTerm) {
+  match ls: Option(KernelTerm) {
     Nil => None
 
-    Cons(
-      entry,
-      rest
-    ) => if entry.fst == atom { Some(entry.snd) } else { kernel_local_get(rest, atom) }
+    Cons(entry, rest) => if entry.fst == atom { Some(entry.snd) } else {
+      kernel_local_get(rest, atom)
+    }
   }
 }
 
-fn kernel_set_to<A>(&mut slot: A, value: A) -> () {
+pub fn kernel_set_to<A>(&mut slot: A, value: A): Unit {
   slot := value
 }
 
-fn kernel_fresh(&mut c: KernelCore, ty: KernelTerm) -> Nat {
-  kernel_set_to(&mut c.next, succ(c.next))
+pub fn kernel_fresh(&mut c: KernelCore, ty: KernelTerm): Nat {
+  kernel_set_to(&mut c.next, Succ(c.next))
   kernel_set_to(&mut c.locals, Cons(Pair { fst: c.next, snd: ty }, c.locals))
   c.next
 }
 
-fn kernel_put_global(
+pub fn kernel_put_global(
   &mut c: KernelCore,
   name: Text,
   ty: KernelTerm,
   value: Option(KernelTerm)
-) -> () {
+): Unit {
   kernel_set_to(
     &mut c.globals,
     Cons(
-      kernel_global(name, ty, value),
-      kernel_list_filter_KernelGlobal_Yn(
-        (g: KernelGlobal) => !kernel_global_named(g, name),
+      KernelGlobal::Mk(name, ty, value),
+      kernel_list_filter_KernelGlobal_Bool(
+        (g: KernelGlobal) => not(kernel_global_named(g, name)),
         c.globals
       )
     )
   )
 }
 
-fn kernel_fresh_name(c: KernelCore, name: Text) -> Yn {
-  match kernel_global_get(c.globals, name) -> Yn {
-    None => yes
-    Some(g) => no }
+pub fn kernel_fresh_name(c: KernelCore, name: Text): Bool {
+  match kernel_global_get(c.globals, name): Bool {
+    None => true
+    Some(g) => false }
 }
 
-fn kernel_new() -> KernelCore {
-  let nat = KernelConst("Nat")
-  let binary = KernelPi(nat, KernelPi(nat, nat))
-  kernel_core(
+pub fn kernel_new(): KernelCore {
+  let nat := KernelConst("Nat")
+  let binary := KernelPi(nat, KernelPi(nat, nat))
+  KernelCore::Mk(
     Cons(
-      kernel_global("Bool", KernelSortTerm(KernelType(kernel_level(0, Nil))), None),
+      KernelGlobal::Mk("Bool", KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil))), None),
       kernel_list_map_Text_KernelGlobal(
-        (op: Text) => kernel_global(op, binary, None),
+        (op: Text) => KernelGlobal::Mk(op, binary, None),
         Cons("+", Cons("*", Cons("-", Nil)))
       )
     ),
@@ -168,44 +168,142 @@ fn kernel_new() -> KernelCore {
     Nil,
     Nil,
     0,
-    no
+    false,
+    Nil
   )
 }
 
-fn kernel_closed(t: KernelTerm) -> Yn {
-  !kernel_has_loose(t, 0) && !kernel_mentions_fvar(t)
+pub fn kernel_text_in(xs: List(Text), name: Text): Bool {
+  match xs: Bool {
+    Nil => false
+    Cons(x, rest) => if x == name { true } else { kernel_text_in(rest, name) }
+  }
 }
 
-fn kernel_valid_digits(ds: List(Nat)) -> Yn {
-  list_length(
+fn kernel_quot_sort_type(): KernelTerm { KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil))) }
+
+// `(A, A) -> Prop`, where `A` is the bound variable `a`.
+fn kernel_quot_rel(a: Nat): KernelTerm {
+  KernelPi(KernelBVar(a), KernelPi(KernelBVar(Succ(a)), KernelSortTerm(KernelProp)))
+}
+
+fn kernel_quot_of(a: Nat, r: Nat): KernelTerm {
+  KernelApp(KernelApp(KernelConst("Quot"), KernelBVar(a)), KernelBVar(r))
+}
+
+fn kernel_quot_over(rest: KernelTerm): KernelTerm {
+  KernelPi(kernel_quot_sort_type(), KernelPi(kernel_quot_rel(0), rest))
+}
+
+// The type each of the quotient's constants must be declared with, the
+// same as `quot_type` of `crates/tauto-kernel/src/check/core.rs`; `None`
+// for every other name.
+pub fn kernel_quot_type(name: Text): Option(KernelTerm) {
+  if name == "Quot" {
+    Some(kernel_quot_over(kernel_quot_sort_type()))
+  } else {
+    if name == "Quot::mk" {
+      Some(kernel_quot_over(KernelPi(KernelBVar(1), kernel_quot_of(2, 1))))
+    } else {
+      if name == "Quot::lift" {
+        let respects := KernelPi(
+          KernelBVar(3),
+          KernelPi(
+            KernelBVar(4),
+            KernelPi(
+              KernelApp(KernelApp(KernelBVar(4), KernelBVar(1)), KernelBVar(0)),
+              KernelApp(
+                KernelApp(
+                  KernelApp(KernelConst("Eq"), KernelBVar(4)),
+                  KernelApp(KernelBVar(3), KernelBVar(2))
+                ),
+                KernelApp(KernelBVar(3), KernelBVar(1))
+              )
+            )
+          )
+        )
+        Some(
+          kernel_quot_over(
+            KernelPi(
+              kernel_quot_sort_type(),
+              KernelPi(
+                KernelPi(KernelBVar(2), KernelBVar(1)),
+                KernelPi(respects, KernelPi(kernel_quot_of(4, 3), KernelBVar(3)))
+              )
+            )
+          )
+        )
+      } else {
+        if name == "Quot::ind" {
+          let mk := KernelApp(
+            KernelApp(KernelApp(KernelConst("Quot::mk"), KernelBVar(3)), KernelBVar(2)),
+            KernelBVar(0)
+          )
+          Some(
+            kernel_quot_over(
+              KernelPi(
+                KernelPi(kernel_quot_of(1, 0), KernelSortTerm(KernelProp)),
+                KernelPi(
+                  KernelPi(KernelBVar(2), KernelApp(KernelBVar(1), mk)),
+                  KernelPi(kernel_quot_of(3, 2), KernelApp(KernelBVar(2), KernelBVar(0)))
+                )
+              )
+            )
+          )
+        } else { None }
+      }
+    }
+  }
+}
+
+// The constants a quotient constant mentions, which must be declared first.
+pub fn kernel_quot_needs(name: Text): List(Text) {
+  if name == "Quot" { Nil } else {
+    if name == "Quot::ind" { Cons("Quot", Cons("Quot::mk", Nil)) } else { Cons("Quot", Nil) }
+  }
+}
+
+pub fn kernel_all_in(names: List(Text), xs: List(Text)): Bool {
+  match names: Bool {
+    Nil => true
+    Cons(n, rest) => if kernel_text_in(xs, n) { kernel_all_in(rest, xs) } else { false }
+  }
+}
+
+pub fn kernel_closed(t: KernelTerm): Bool {
+  not(kernel_has_loose(t, 0)) && not(kernel_mentions_fvar(t))
+}
+
+pub fn kernel_valid_digits(ds: List(Nat)): Bool {
+  List::length(
     ds
-  ) <= 8 && kernel_list_all_Nat_Yn(
+  ) <= 8 && kernel_list_all_Nat_Bool(
     (d: Nat) => d < 65536,
     ds
   ) && kernel_digits_eq(ds, kernel_digits_normal(ds))
 }
 
-fn kernel_term_valid(t: KernelTerm, depth: Nat) -> Yn {
-  match t -> Yn {
+pub fn kernel_term_valid(t: KernelTerm, depth: Nat): Bool {
+  match t: Bool {
     KernelBVar(i) => i < depth
-    KernelFVar(x) => no
-    KernelSortTerm(s) => yes
-    KernelConst(n) => yes
-    KernelPi(a, b) => kernel_term_valid(a, depth) && kernel_term_valid(b, succ(depth))
-    KernelLam(b) => kernel_term_valid(b, succ(depth))
+    KernelFVar(x) => false
+    KernelSortTerm(s) => true
+    KernelConst(n) => true
+    KernelPi(a, b) => kernel_term_valid(a, depth) && kernel_term_valid(b, Succ(depth))
+    KernelLam(b) => kernel_term_valid(b, Succ(depth))
     KernelApp(f, a) => kernel_term_valid(f, depth) && kernel_term_valid(a, depth)
     KernelLit(ds) => kernel_valid_digits(ds)
-    KernelBool(v) => yes
+    KernelBool(v) => true
   }
 }
 
-fn kernel_as_pi(t: KernelTerm) -> Option(Pair(KernelTerm, KernelTerm)) {
-  match t -> Option(Pair(KernelTerm, KernelTerm)) {
+pub fn kernel_as_pi(t: KernelTerm): Option(@domain KernelTerm × @codomain KernelTerm) {
+  match t: Option(@domain KernelTerm × @codomain KernelTerm) {
     KernelBVar(i) => None
     KernelFVar(x) => None
     KernelSortTerm(s) => None
     KernelConst(n) => None
-    KernelPi(a, b) => Some(Pair { fst: a, snd: b })
+    KernelPi(a, b) => Some(#(@domain a, @codomain b))
     KernelLam(b) => None
     KernelApp(f, a) => None
     KernelLit(ds) => None
@@ -213,8 +311,8 @@ fn kernel_as_pi(t: KernelTerm) -> Option(Pair(KernelTerm, KernelTerm)) {
   }
 }
 
-fn kernel_as_lam(t: KernelTerm) -> Option(KernelTerm) {
-  match t -> Option(KernelTerm) {
+pub fn kernel_as_lam(t: KernelTerm): Option(KernelTerm) {
+  match t: Option(KernelTerm) {
     KernelBVar(i) => None
     KernelFVar(x) => None
     KernelSortTerm(s) => None
@@ -227,8 +325,8 @@ fn kernel_as_lam(t: KernelTerm) -> Option(KernelTerm) {
   }
 }
 
-fn kernel_as_const(t: KernelTerm) -> Option(Text) {
-  match t -> Option(Text) {
+pub fn kernel_as_const(t: KernelTerm): Option(Text) {
+  match t: Option(Text) {
     KernelBVar(i) => None
     KernelFVar(x) => None
     KernelSortTerm(s) => None
@@ -241,8 +339,8 @@ fn kernel_as_const(t: KernelTerm) -> Option(Text) {
   }
 }
 
-fn kernel_as_sort(t: KernelTerm) -> Option(KernelSort) {
-  match t -> Option(KernelSort) {
+pub fn kernel_as_sort(t: KernelTerm): Option(KernelSort) {
+  match t: Option(KernelSort) {
     KernelBVar(i) => None
     KernelFVar(x) => None
     KernelSortTerm(s) => Some(s)
@@ -255,8 +353,8 @@ fn kernel_as_sort(t: KernelTerm) -> Option(KernelSort) {
   }
 }
 
-fn kernel_as_lit(t: KernelTerm) -> Option(List(Nat)) {
-  match t -> Option(List(Nat)) {
+pub fn kernel_as_lit(t: KernelTerm): Option(List(Nat)) {
+  match t: Option(List(Nat)) {
     KernelBVar(i) => None
     KernelFVar(x) => None
     KernelSortTerm(s) => None
@@ -269,45 +367,45 @@ fn kernel_as_lit(t: KernelTerm) -> Option(List(Nat)) {
   }
 }
 
-fn kernel_nat_view(t: KernelTerm) -> Option(Option(KernelTerm)) {
-  match kernel_as_lit(t) -> Option(Option(KernelTerm)) {
+pub fn kernel_nat_view(t: KernelTerm): Option(Option(KernelTerm)) {
+  match kernel_as_lit(t): Option(Option(KernelTerm)) {
     Some(ds) => if kernel_digits_eq(ds, Nil) { Some(None) } else {
       Some(Some(KernelLit(kernel_digits_normal(kernel_digits_sub(ds, Cons(1, Nil), 0)))))
     }
-    None => match kernel_as_const(t) -> Option(Option(KernelTerm)) {
-      Some(n) => if n == "zero" { Some(None) } else { None }
-      None => { let sp = kernel_spine(t)
-        match kernel_as_const(sp.fst) -> Option(Option(KernelTerm)) {
+    None => match kernel_as_const(t): Option(Option(KernelTerm)) {
+      Some(n) => if n == "Zero" { Some(None) } else { None }
+      None => { let sp := kernel_spine(t)
+        match kernel_as_const(sp.fst): Option(Option(KernelTerm)) {
           None => None
 
-          Some(
-            n
-          ) => if n == "succ" && list_length(sp.snd) == 1 { Some(list_head(sp.snd)) } else { None }
+          Some(n) => if n == "Succ" && List::length(
+            sp.snd
+          ) == 1 { Some(List::head(sp.snd)) } else { None }
         }
       }
     }
   }
 }
 
-fn kernel_expand_lit(t: KernelTerm) -> KernelTerm {
-  match kernel_as_lit(t) -> KernelTerm {
+pub fn kernel_expand_lit(t: KernelTerm): KernelTerm {
+  match kernel_as_lit(t): KernelTerm {
     None => t
-    Some(ds) => if kernel_digits_eq(ds, Nil) { KernelConst("zero") } else {
+    Some(ds) => if kernel_digits_eq(ds, Nil) { KernelConst("Zero") } else {
       KernelApp(
-        KernelConst("succ"),
+        KernelConst("Succ"),
         KernelLit(kernel_digits_normal(kernel_digits_sub(ds, Cons(1, Nil), 0)))
       )
     }
   }
 }
 
-fn kernel_unfold_head(c: KernelCore, t: KernelTerm) -> Option(KernelTerm) {
-  let sp = kernel_spine(t)
-  match kernel_as_const(sp.fst) -> Option(KernelTerm) {
+pub fn kernel_unfold_head(c: KernelCore, t: KernelTerm): Option(KernelTerm) {
+  let sp := kernel_spine(t)
+  match kernel_as_const(sp.fst): Option(KernelTerm) {
     None => None
-    Some(n) => match kernel_global_get(c.globals, n) -> Option(KernelTerm) {
+    Some(n) => match kernel_global_get(c.globals, n): Option(KernelTerm) {
       None => None
-      Some(g) => match g.value -> Option(KernelTerm) {
+      Some(g) => match g.value: Option(KernelTerm) {
         None => None
         Some(v) => Some(kernel_apps(v, sp.snd))
       }
@@ -315,15 +413,15 @@ fn kernel_unfold_head(c: KernelCore, t: KernelTerm) -> Option(KernelTerm) {
   }
 }
 
-fn kernel_bind_pis(xs: List(Pair(Nat, KernelTerm)), body: KernelTerm) -> KernelTerm {
-  match xs -> KernelTerm {
+pub fn kernel_bind_pis(xs: List(Pair(Nat, KernelTerm)), body: KernelTerm): KernelTerm {
+  match xs: KernelTerm {
     Nil => body
     Cons(x, rest) => kernel_pi_over(x.fst, x.snd, kernel_bind_pis(rest, body))
   }
 }
 
-fn kernel_bind_lams(xs: List(Nat), body: KernelTerm) -> KernelTerm {
-  match xs -> KernelTerm {
+pub fn kernel_bind_lams(xs: List(Nat), body: KernelTerm): KernelTerm {
+  match xs: KernelTerm {
     Nil => body
     Cons(x, rest) => kernel_lam_over(x, kernel_bind_lams(rest, body)) }
 }

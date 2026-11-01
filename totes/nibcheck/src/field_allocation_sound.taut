@@ -1,0 +1,393 @@
+import "lookup_allocation_sound.taut"
+import "join_allocation_sound.taut"
+
+pub fn allocation_field_name(field: DataField): Option(Text) { field.name }
+pub fn allocation_find_choice(ty: Ty, rest: Option(Ty), same: Bool): Option(Ty) {
+  match same: Option(Ty) { true => Some(ty)
+    false => rest }
+}
+pub fn allocation_find_name(
+  field: DataField,
+  rest: Option(Ty),
+  name: Text,
+  named: Option(Text)
+): Option(Ty) {
+  match named: Option(Ty) { None => rest
+    Some(n) => allocation_find_choice(allocation_field_ty(field), rest, Text::eq(n, name)) }
+}
+pub theorem allocation_find_choice_ok(
+  ty: Ty,
+  rest: Option(Ty),
+  limit: Nat,
+  bounded: TypeAllocated(limit, ty),
+  tail: OptionTypeAllocated(limit, rest),
+  same: Bool
+): OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) {
+  match same: OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) { true => bounded
+    false => tail }
+}
+pub theorem allocation_find_name_ok(
+  field: DataField,
+  rest: Option(Ty),
+  name: Text,
+  limit: Nat,
+  bounded: TypeAllocated(limit, allocation_field_ty(field)),
+  tail: OptionTypeAllocated(limit, rest),
+  named: Option(Text)
+): OptionTypeAllocated(limit, allocation_find_name(field, rest, name, named)) {
+  match named: OptionTypeAllocated(
+    limit,
+    allocation_find_name(field, rest, name, named)
+  ) { None => tail
+    Some(n) => allocation_find_choice_ok(
+      allocation_field_ty(field),
+      rest,
+      limit,
+      bounded,
+      tail,
+      Text::eq(n, name)
+    ) }
+}
+pub theorem allocation_find_unf(
+  field: DataField,
+  rest: List(DataField),
+  name: Text
+): ck_field_find(Cons(field, rest), name) = allocation_find_name(field, ck_field_find(rest, name), name, allocation_field_name(field)) { Refl }
+pub theorem ck_field_find_allocated(
+  fields: List(DataField),
+  name: Text,
+  limit: Nat,
+  bounded: FieldsAllocated(limit, fields)
+): OptionTypeAllocated(limit, ck_field_find(fields, name)) {
+  match fields: OptionTypeAllocated(limit, ck_field_find(fields, name)) { Nil => Trivial
+    Cons(head, tail) => Eq::subst(
+      (found: Option(Ty)) => OptionTypeAllocated(limit, found),
+      Eq::sym(allocation_find_unf(head, tail, name)),
+      allocation_find_name_ok(
+        head,
+        ck_field_find(tail, name),
+        name,
+        limit,
+        And::left(bounded),
+        ck_field_find_allocated(tail, name, limit, And::right(bounded)),
+        allocation_field_name(head)
+      )
+    ) }
+}
+pub theorem ty_unborrowed_allocated(
+  ty: Ty,
+  limit: Nat,
+  bounded: TypeAllocated(limit, ty)
+): TypeAllocated(limit, ty_unborrowed(ty)) {
+  match ty: TypeAllocated(limit, ty_unborrowed(ty)) {
+    TyInt(w) => bounded
+    TyBool => bounded
+    TyText => bounded
+    TyUnit => bounded
+    TyNever => bounded
+    TyDecimal => bounded
+    TyFloat => bounded
+    TyFn(ps, r, k) => bounded
+    TyUnion(ts) => bounded
+    TyProduct(ts) => bounded
+    TyTagged(tags, inner) => bounded
+    TyNamed(d, args) => bounded
+    TyParam(n, k) => bounded
+    TyInfo(h) => bounded
+    TyBorrow(inner, mutable) => ty_unborrowed_allocated(inner, limit, bounded)
+    TyVar(v) => bounded
+    TyPoly(gs, inner) => bounded
+    TyApp(h, a) => bounded
+  }
+}
+pub theorem allocation_error_fresh(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  state: CheckerAllocation(c)
+): AllocationResult(
+  c,
+  frame_bind(
+    Unit,
+    Ty,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
+    ck_error(c, message, span)
+  )
+) {
+  allocation_result_bind(
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
+    ck_error(c, message, span),
+    AndIntro(Nat::le_refl(ck_next_of(c)), state),
+    ignored => next => advanced => current => allocation_result_rewrap(
+      next,
+      ck_fresh(next),
+      ck_fresh_allocation_result(next, current)
+    )
+  )
+}
+pub theorem ck_field_missing_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  ty: Ty,
+  name: Text,
+  state: CheckerAllocation(c)
+): AllocationResult(c, ck_field_missing(c, term, ty, name)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(leaf_ck_field_missing_unf(c, term, ty, name)),
+    allocation_error_fresh(c, cat4(ty_show(ty), " has no field `", name, "`"), span_of(term), state)
+  )
+}
+pub theorem access_info_unbounded_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), h),
+  unbounded: Bool
+): AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) {
+  match unbounded: AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) {
+    true => allocation_result_return(c, TyFn(Nil, h, KindShared), state, AndIntro(Trivial, bounded))
+
+    false => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, TyInfo(h), name),
+      ck_field_missing_allocation(c, term, TyInfo(h), name, state)
+    ) }
+}
+pub theorem access_info_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), h),
+  more: Bool
+): AllocationResult(c, access_info(c, term, name, h, more)) {
+  match more: AllocationResult(c, access_info(c, term, name, h, more)) {
+    true => allocation_result_return(
+      c,
+      TyFn(Cons(TyInt(Width64), Nil), h, KindShared),
+      state,
+      AndIntro(AndIntro(Trivial, Trivial), bounded)
+    )
+
+    false => access_info_unbounded_allocation(
+      c,
+      term,
+      name,
+      h,
+      state,
+      bounded,
+      Text::eq(name, "unbounded")
+    ) }
+}
+pub theorem access_borrow_allocation(
+  c: Checker,
+  ty: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), ty),
+  borrow: Bool
+): AllocationResult(c, access_borrow(c, ty, borrow)) {
+  match borrow: AllocationResult(c, access_borrow(c, ty, borrow)) {
+    true => allocation_result_return(c, TyBorrow(ty, false), state, bounded)
+
+    false => allocation_result_return(c, ty, state, bounded) }
+}
+pub theorem access_found_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  borrowed: Bool,
+  state: CheckerAllocation(c),
+  found: Option(Ty),
+  bounded: OptionTypeAllocated(ck_next_of(c), found)
+): AllocationResult(c, access_found(c, term, name, d, borrowed, found)) {
+  match found: AllocationResult(c, access_found(c, term, name, d, borrowed, found)) {
+    None => allocation_error_fresh(c, cat4(d, " has no field `", name, "`"), span_of(term), state)
+    Some(t) => access_borrow_allocation(
+      c,
+      t,
+      state,
+      bounded,
+      Bool::and(borrowed, not(kind_dup(ck_kind(c, t))))
+    ) }
+}
+pub theorem access_struct_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  args: List(Ty),
+  borrowed: Bool,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  bounded: TypeListAllocated(ck_next_of(c), args),
+  structural: Bool
+): AllocationResult(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+  match structural: AllocationResult(
+    c,
+    access_struct(c, term, name, d, args, borrowed, structural)
+  ) {
+    true => access_found_allocation(
+      c,
+      term,
+      name,
+      d,
+      borrowed,
+      state,
+      ck_field_find(datas_fields(ck_datas_of(c), d, 0, args), name),
+      ck_field_find_allocated(
+        datas_fields(ck_datas_of(c), d, 0, args),
+        name,
+        ck_next_of(c),
+        datas_fields_allocated(ck_datas_of(c), d, 0, args, ck_next_of(c), declarations, bounded)
+      )
+    )
+
+    false => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, TyNamed(d, args), name),
+      ck_field_missing_allocation(c, term, TyNamed(d, args), name, state)
+    ) }
+}
+pub theorem access_field_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  original: Ty,
+  borrowed: Bool,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  ty: Ty,
+  bounded: TypeAllocated(ck_next_of(c), ty)
+): AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) {
+  match ty: AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) {
+    TyInt(w) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyBool => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyText => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyUnit => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyNever => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyDecimal => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyFloat => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyFn(ps, r, k) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyUnion(ts) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyProduct(ts) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyTagged(tags, inner) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyNamed(d, args) => access_struct_allocation(
+      c,
+      term,
+      name,
+      d,
+      args,
+      borrowed,
+      state,
+      declarations,
+      bounded,
+      data_is_struct(ck_datas_of(c), d)
+    )
+    TyParam(n, k) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyInfo(h) => access_info_allocation(c, term, name, h, state, bounded, Text::eq(name, "more"))
+    TyBorrow(inner, mutable) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyVar(v) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyPoly(gs, inner) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+    TyApp(h, a) => allocation_result_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_allocation(c, term, original, name, state)
+    )
+  }
+}
+pub theorem ck_field_of_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  b: Ty,
+  name: Text,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  bounded: TypeAllocated(ck_next_of(c), b)
+): AllocationResult(c, ck_field_of(c, term, b, name)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(access_field_unf(c, term, b, name)),
+    access_field_allocation(
+      c,
+      term,
+      name,
+      ty_unborrowed(ck_resolve(c, b)),
+      ty_is_borrow(ck_resolve(c, b)),
+      state,
+      declarations,
+      ty_unborrowed(ck_resolve(c, b)),
+      ty_unborrowed_allocated(
+        ck_resolve(c, b),
+        ck_next_of(c),
+        ck_resolve_allocated(c, b, And::right(state), bounded)
+      )
+    )
+  )
+}

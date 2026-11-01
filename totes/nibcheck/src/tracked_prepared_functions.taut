@@ -1,0 +1,90 @@
+import "tracked_finish_sound.taut"
+import "prepare_function_registered.taut"
+import "finish_error_sound.taut"
+
+pub fn prepared_body_finish(
+  program: List(SurfaceStmt),
+  prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)
+): Mut1(TypeReport, Checker) {
+  match prepared: Mut1(TypeReport, Checker) {
+    mut1(schemes, state) => ck_finish(ck_st(names_function_body(state, program, schemes)))
+  }
+}
+pub theorem prepared_body_finish_registered(
+  program: List(SurfaceStmt),
+  prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  ordered: CkOrdered(ck_st(prepared)),
+  registered: RegisteredSignatures(stable_functions(ck_st(prepared)), ck_val(prepared)),
+  clean: DiagnosticReportClean(prepared_body_finish(program, prepared))
+): RegisteredSignatures(
+  stable_functions(ck_st(prepared_body_finish(program, prepared))),
+  ck_val(prepared)
+) {
+  match prepared: RegisteredSignatures(
+    stable_functions(ck_st(prepared_body_finish(program, prepared))),
+    ck_val(prepared)
+  ) {
+    mut1(schemes, state) => body_finish_registered_signatures(
+      state,
+      program,
+      schemes,
+      ordered,
+      registered,
+      clean
+    )
+  }
+}
+pub theorem prepared_body_finish_input_clean(
+  program: List(SurfaceStmt),
+  prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker),
+  ordered: CkOrdered(ck_st(prepared)),
+  clean: DiagnosticReportClean(prepared_body_finish(program, prepared))
+): DiagnosticClean(ck_st(prepared)) {
+  match prepared: DiagnosticClean(ck_st(prepared)) {
+    mut1(schemes, state) => And::right(
+      names_function_body_checked(state, program, schemes, ordered)
+    )(ck_finish_input_clean(ck_st(names_function_body(state, program, schemes)), clean))
+  }
+}
+pub theorem ck_prepare_fns_registered_final(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c),
+  fns_ordered: CkFnsOrdered(c),
+  clean: DiagnosticReportClean(
+    prepared_body_finish(program, ck_prepare_fns(c, prelude, program, own))
+  )
+): RegisteredSignatures(
+  stable_functions(ck_st(prepared_body_finish(program, ck_prepare_fns(c, prelude, program, own)))),
+  ck_val(ck_prepare_fns(c, prelude, program, own))
+) {
+  let prepared_ordered: CkOrdered(
+    ck_st(ck_prepare_fns(c, prelude, program, own))
+  ) := frame_subst_ordered(
+    c,
+    ck_prepare_fns(c, prelude, program, own),
+    ck_prepare_fns_frame(c, prelude, program, own),
+    ordered
+  )
+  prepared_body_finish_registered(
+    program,
+    ck_prepare_fns(c, prelude, program, own),
+    prepared_ordered,
+    ck_prepare_fns_registered(
+      c,
+      prelude,
+      program,
+      own,
+      fns_ordered,
+      prepared_body_finish_input_clean(
+        program,
+        ck_prepare_fns(c, prelude, program, own),
+        prepared_ordered,
+        clean
+      )
+    ),
+    clean
+  )
+}

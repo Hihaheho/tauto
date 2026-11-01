@@ -1,0 +1,97 @@
+module Quot {
+  // Quotients: what the kernel's `Quot`, `Quot::mk`, `Quot::lift`, `Quot::ind` and
+  // `Quot::sound` give with a little more. The declarations here that use
+  // `Quot::sound` list it among their axioms; elsewhere in `std/` only
+  // `std/RatField.taut` uses it.
+
+  // A function of two quotients, from a function of two values that gives
+  // related values the same result on either side. The proof that the outer
+  // function respects `r` takes the inner quotient apart with `Quot::ind`, so no
+  // equality of functions is needed.
+  pub fn lift2<A, B, C>(
+    r: (A, A) -> Prop,
+    s: (B, B) -> Prop,
+    f: (A, B) -> C,
+    hl: ∀ a1: A, a2: A, b: B. (r(a1, a2)) -> (f(a1, b) = f(a2, b)),
+    hr: ∀ a: A, b1: B, b2: B. (s(b1, b2)) -> (f(a, b1) = f(a, b2)),
+    q1: Quot(A, r),
+    q2: Quot(B, s)
+  ): C {
+    Quot::lift(
+      a => Quot::lift(b => f(a, b), b1 => b2 => p => hr(a, b1, b2, p), q2),
+      a1 => a2 => p => Quot::ind(
+        q => Quot::lift(
+          b => f(a1, b),
+          b1 => b2 => e => hr(a1, b1, b2, e),
+          q
+        ) = Quot::lift(b => f(a2, b), b1 => b2 => e => hr(a2, b1, b2, e), q),
+        b => hl(a1, a2, b, p),
+        q2
+      ),
+      q1
+    )
+  }
+
+  // Equal classes have related values, when a test `d` decides `r` from the
+  // first value's side: `d(a, a)` holds, `d(a, _)` respects `r`, and `d(a, b)`
+  // holds only of related values. The test is a `Bool`, so no equality of
+  // propositions is needed.
+  pub theorem exact<A: Type, r: (
+    A,
+    A
+  ) -> Prop, a: A, b: A>(
+    d: (A, A) -> Bool,
+    d_refl: ∀ x: A. d(x, x) = true,
+    d_respects: ∀ x: A, y: A, z: A. (r(y, z)) -> (d(x, y) = d(x, z)),
+    d_sound: ∀ x: A, y: A. (d(x, y) = true) -> r(x, y),
+    e: Quot::mk(A, r, a) = Quot::mk(A, r, b)
+  ): r(a, b) {
+    let tested: d(
+      a,
+      a
+    ) = d(
+      a,
+      b
+    ) := Eq::congr(
+      Quot(A, r),
+      Bool,
+      Quot::mk(A, r, a),
+      Quot::mk(A, r, b),
+      q => Quot::lift(y => d(a, y), y => z => p => d_respects(a, y, z, p), q),
+      e
+    );
+    d_sound(a, b, Eq::trans(Eq::sym(tested), d_refl(a)))
+  }
+}
+
+pub def Pointwise(A: Type, B: (A) -> Type, f: ∀ x: A. B(x), g: ∀ x: A. B(x)): Prop :=
+∀ x: A. f(x) = g(x)
+
+// Function extensionality. In the quotient of the functions by `Pointwise`,
+// the classes of `f` and `g` are equal (`Quot::sound`); reading each class at
+// `y` with `Quot::lift` computes to `f(y)` and `g(y)`, so the two functions
+// `y => f(y)` and `y => g(y)` are equal, and these are `f` and `g`.
+pub theorem funext<A: Type, B: (
+  A
+) -> Type>(
+  f: ∀ x: A. B(x),
+  g: ∀ x: A. B(x),
+  pointwise: ∀ x: A. f(x) = g(x)
+): f = g {
+  Eq::congr(
+    Quot(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v)),
+    ∀ x: A. B(x),
+    Quot::mk(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v), f),
+    Quot::mk(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v), g),
+    q => y => Quot::lift(k => k(y), u => v => p => p(y), q),
+    Quot::sound(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v), f, g, pointwise)
+  )
+}
+
+pub theorem funext_nondependent<A: Type, B: Type>(
+  f: (A) -> B,
+  g: (A) -> B,
+  pointwise: ∀ x: A. f(x) = g(x)
+): f = g {
+  funext(A, x => B, f, g, pointwise)
+}

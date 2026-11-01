@@ -1,0 +1,178 @@
+import "allocation_normalization.taut"
+
+pub def SubstValuesAllocated(
+  limit: Nat,
+  subst: Ordmap(Nat, Ty)
+): Prop := ∀ index: Nat. ∀ value: Ty. ∀ found: Ordmap::get(subst, index, Ordmap::compare_nat) = Some(value). TypeAllocated(limit, value)
+pub def ResolveAllocatedIH(
+  fuel: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty)
+): Prop := ∀ ty: Ty. ∀ allocated: TypeAllocated(
+  limit,
+  ty
+). TypeAllocated(limit, ty_resolve_in(fuel, subst, ty))
+pub theorem allocated_resolve_variable(
+  fuel: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  index: Nat,
+  bounded: TypeAllocated(limit, TyVar(index)),
+  values: SubstValuesAllocated(limit, subst),
+  ih: ResolveAllocatedIH(fuel, limit, subst),
+  found: Option(Ty),
+  equal: Ordmap::get(subst, index, Ordmap::compare_nat) = found
+): TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) {
+  match found: TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) {
+    None => bounded
+    Some(value) => ih(value, values(index, value, equal))
+  }
+}
+pub def ResolveListAllocatedIH(
+  fuel: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty)
+): Prop := ∀ types: List(
+  Ty
+). ∀ allocated: TypeListAllocated(
+  limit,
+  types
+). TypeListAllocated(limit, ty_resolve_list_in(fuel, subst, types))
+pub theorem allocated_resolve_step(
+  rest: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  values: SubstValuesAllocated(limit, subst),
+  ty_ih: ResolveAllocatedIH(rest, limit, subst),
+  list_ih: ResolveListAllocatedIH(rest, limit, subst),
+  ty: Ty,
+  allocated: TypeAllocated(limit, ty)
+): TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) {
+  match ty: TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) {
+    TyInt(width) => Trivial
+    TyBool => Trivial
+    TyText => Trivial
+    TyUnit => Trivial
+    TyNever => Trivial
+    TyDecimal => Trivial
+    TyFloat => Trivial
+    TyParam(name, kind) => Trivial
+    TyVar(index) => allocated_resolve_variable(
+      rest,
+      limit,
+      subst,
+      index,
+      allocated,
+      values,
+      next => bound => ty_ih(next, bound),
+      Ordmap::get(subst, index, Ordmap::compare_nat),
+      Refl
+    )
+    TyFn(params, result, kind) => AndIntro(
+      list_ih(params, And::left(allocated)),
+      ty_ih(result, And::right(allocated))
+    )
+    TyUnion(members) => allocated_union(
+      ty_resolve_list_in(rest, subst, members),
+      limit,
+      list_ih(members, allocated)
+    )
+    TyProduct(members) => allocated_product(
+      ty_resolve_list_in(rest, subst, members),
+      limit,
+      list_ih(members, allocated)
+    )
+    TyNamed(name, params) => list_ih(params, allocated)
+    TyTagged(tags, inner) => allocated_tagged(
+      ty_resolve_in(rest, subst, inner),
+      tags,
+      limit,
+      ty_ih(inner, allocated)
+    )
+    TyInfo(inner) => ty_ih(inner, allocated)
+    TyBorrow(inner, mutable) => ty_ih(inner, allocated)
+    TyPoly(gs, inner) => ty_ih(inner, allocated)
+    TyApp(head, arg) => allocated_apply(
+      ty_resolve_in(rest, subst, head),
+      ty_resolve_in(rest, subst, arg),
+      limit,
+      ty_ih(head, And::left(allocated)),
+      ty_ih(arg, And::right(allocated))
+    )
+  }
+}
+pub theorem allocated_resolve_list_step(
+  rest: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  ty_ih: ResolveAllocatedIH(rest, limit, subst),
+  list_ih: ResolveListAllocatedIH(rest, limit, subst),
+  types: List(Ty),
+  allocated: TypeListAllocated(limit, types)
+): TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) {
+  match types: TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) {
+    Nil => Trivial
+    Cons(head, tail) => AndIntro(
+      ty_ih(head, And::left(allocated)),
+      list_ih(tail, And::right(allocated))
+    )
+  }
+}
+pub theorem allocated_resolve_both(
+  fuel: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  values: SubstValuesAllocated(limit, subst)
+): And(ResolveAllocatedIH(fuel, limit, subst), ResolveListAllocatedIH(fuel, limit, subst)) {
+  match fuel: And(
+    ResolveAllocatedIH(fuel, limit, subst),
+    ResolveListAllocatedIH(fuel, limit, subst)
+  ) {
+    Zero => AndIntro(ty => allocated => allocated, types => allocated => allocated)
+    Succ(rest) => {
+      let ih: And(
+        ResolveAllocatedIH(rest, limit, subst),
+        ResolveListAllocatedIH(rest, limit, subst)
+      ) := allocated_resolve_both(rest, limit, subst, values)
+      AndIntro(
+        ty => allocated => allocated_resolve_step(
+          rest,
+          limit,
+          subst,
+          values,
+          And::left(ih),
+          And::right(ih),
+          ty,
+          allocated
+        ),
+        types => allocated => allocated_resolve_list_step(
+          rest,
+          limit,
+          subst,
+          And::left(ih),
+          And::right(ih),
+          types,
+          allocated
+        )
+      )
+    }
+  }
+}
+pub theorem allocated_resolve(
+  fuel: Nat,
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  ty: Ty,
+  values: SubstValuesAllocated(limit, subst),
+  allocated: TypeAllocated(limit, ty)
+): TypeAllocated(limit, ty_resolve_in(fuel, subst, ty)) {
+  And::left(allocated_resolve_both(fuel, limit, subst, values))(ty, allocated)
+}
+pub theorem ck_resolve_allocated(
+  c: Checker,
+  ty: Ty,
+  values: SubstValuesAllocated(ck_next_of(c), ck_subst_of(c)),
+  allocated: TypeAllocated(ck_next_of(c), ty)
+): TypeAllocated(ck_next_of(c), ck_resolve(c, ty)) {
+  allocated_resolve(ck_steps_of(c), ck_next_of(c), ck_subst_of(c), ty, values, allocated)
+}

@@ -1,0 +1,96 @@
+import "mval.taut"
+
+// The program representation consumed by the bytecode compiler and direct evaluator.
+
+// ---- the continuation-passing form ---------------------------------------------------
+
+pub(open) inductive CVal: Type {
+  CvUnit: CVal
+  CvInt(i: Int): CVal
+  CvFloat(x: Float): CVal
+  CvBool(b: Bool): CVal
+  CvText(t: Text): CVal
+  CvFn(f: Nat): CVal
+}
+
+pub(open) inductive CPat: Type {
+  CpWild: CPat
+  CpBind(id: Nat, borrow: Bool): CPat
+  CpLit(v: CVal): CPat
+  CpCtor(ctor: Nat, fields: List(CPat)): CPat
+}
+
+// As `MOp`, of the operations the lowering writes.
+pub(open) inductive CPrim: Type {
+  CprArith(a: Nat, w: Nat): CPrim
+  CprFloat(a: Nat): CPrim
+  CprFloat32(a: Nat): CPrim
+  CprCmp(c: Nat): CPrim
+  CprEq(negate: Bool): CPrim
+  CprConstruct(ctor: Nat, order: List(Nat)): CPrim
+  CprProduct(picks: List(Pair(Nat, Option(Nat)))): CPrim
+  CprConcat: CPrim
+  CprTextOfInt: CPrim
+  CprTextLen: CPrim
+  CprTextCompare: CPrim
+  CprDivide(modulo: Bool, w: Nat): CPrim
+  CprSynParse(parser: SynParser): CPrim
+}
+
+pub(open) inductive CUnary: Type {
+  CuNot: CUnary
+  CuMember(i: Nat): CUnary
+  CuField(step: MPath): CUnary
+  CuShown: CUnary
+  CuTempRef: CUnary
+  CuDeref: CUnary
+  CuInject(union: Nat, variant: Nat): CUnary
+  CuRemap(to: Option(Nat), table: List(Option(Nat))): CUnary
+}
+
+pub(open) inductive Cps: Type {
+  CPure(v: CVal): Cps
+  CRead(id: Nat, deref: Bool): Cps
+  CCall(callee: Cps, args: List(Cps), ticked: Bool): Cps
+  CTail(inst: Nat, args: List(Cps)): Cps
+  CBuiltin(name: Text, args: List(Cps)): Cps
+  MkCPrim(op: CPrim, args: List(Cps)): Cps
+  CMap(value: Cps, op: CUnary): Cps
+  CBranch(cond: Cps, then: Cps, otherwise: Cps): Cps
+  CSeq(items: List(Cps)): Cps
+  CDefine(id: Nat, r#shared: Bool, init: Cps): Cps
+  CAssign(id: Nat, path: List(MPath), through: Bool, value: Cps): Cps
+  CWhile(cond: Cps, body: Cps, ticked: Bool): Cps
+  CReturn(value: Cps): Cps
+  CMatch(scrut: Cps, pats: List(CPat), guards: List(Cps), bodies: List(Cps)): Cps
+  CClosure(
+    body: Cps,
+    params: List(Nat),
+    captures: List(Nat),
+    borrowed: Bool,
+    refs: List(Pair(Nat, Nat))
+  ): Cps
+  CPerform(op: Text, quant: Nat, args: List(Cps)): Cps
+  // The arms: their operations, patterns, the local each binds its continuation to
+  // (plus one; 0 for none), and bodies; then the return arm, if there is one.
+  CHandle(
+    body: Cps,
+    ops: List(Text),
+    pats: List(List(CPat)),
+    ks: List(Nat),
+    bodies: List(Cps),
+    rpats: List(CPat),
+    rguards: List(Cps),
+    rbodies: List(Cps)
+  ): Cps
+  CBorrow(id: Nat, path: List(MPath), through: Bool): Cps
+  CBudget(memory: Bool, steps: Cps, body: Cps): Cps
+}
+
+pub(open) inductive CFn: Type {
+  Cfn(params: List(Nat), body: Cps): CFn
+}
+
+pub(open) inductive CProgram: Type {
+  Cprogram(fns: List(CFn), ctors: List(MCtor), main: Nat): CProgram
+}

@@ -1,4 +1,5 @@
 import "lin_flow.taut"
+import "../../surface/src/surface.taut"
 
 // What `match` and `handle` need that walks no expression: the names a
 // pattern binds, what `_` drops, what a handle answers, the continuations a
@@ -7,8 +8,8 @@ import "lin_flow.taut"
 
 // The names a pattern binds, in the order they are written.
 mutual {
-  fn pattern_names_ordered(p: SurfacePattern) -> List(Text) {
-    match p -> List(Text) {
+  pub fn pattern_names_ordered(p: SurfacePattern): List(Text) {
+    match p: List(Text) {
       PtBind(n) => Cons(n, Nil)
       PtCtor(name, args) => patterns_names_ordered(args)
       PtRecord(name, fields) => fields_names_ordered(fields)
@@ -16,45 +17,45 @@ mutual {
     }
   }
 
-  fn patterns_names_ordered(ps: List(SurfacePattern)) -> List(Text) {
-    match ps -> List(Text) {
+  pub fn patterns_names_ordered(ps: List(SurfacePattern)): List(Text) {
+    match ps: List(Text) {
       Nil => Nil
-      Cons(p, rest) => list_append(pattern_names_ordered(p), patterns_names_ordered(rest))
+      Cons(p, rest) => List::append(pattern_names_ordered(p), patterns_names_ordered(rest))
     }
   }
 
-  fn fields_names_ordered(fs: List(SurfacePatternField)) -> List(Text) {
-    match fs -> List(Text) {
+  pub fn fields_names_ordered(fs: List(SurfacePatternField)): List(Text) {
+    match fs: List(Text) {
       Nil => Nil
-      Cons(f, rest) => list_append(field_names_ordered(f), fields_names_ordered(rest))
+      Cons(f, rest) => List::append(field_names_ordered(f), fields_names_ordered(rest))
     }
   }
 
-  fn field_names_ordered(f: SurfacePatternField) -> List(Text) {
-    match f -> List(Text) {
-      surface_pattern_field_mk(name, p) => pattern_names_ordered(p)
+  pub fn field_names_ordered(f: SurfacePatternField): List(Text) {
+    match f: List(Text) {
+      SurfacePatternFieldMk(name, p) => pattern_names_ordered(p)
     }
   }
 }
 
-fn cont_names(cont: Option(Text)) -> List(Text) {
-  match cont -> List(Text) {
+pub fn cont_names(cont: Option(Text)): List(Text) {
+  match cont: List(Text) {
     Some(k) => Cons(k, Nil)
     None => Nil
   }
 }
 
-fn lin_push_typed(&mut c: Lin, n: Text, site: Nat) -> () {
-  match lin_local_type(c, n, site) -> () {
-    Some(ty) => lin_push_unit(&mut c, n, site, no)
-    None => ()
+pub fn lin_push_typed(&mut c: Lin, n: Text, site: Nat): Unit {
+  match lin_local_type(c, n, site): Unit {
+    Some(ty) => lin_push_unit(&mut c, n, site, false)
+    None => #()
   }
 }
 
 // Pushes the names that have a type where `body` starts.
-fn lin_push_names(names: List(Text), &mut c: Lin, site: Nat) -> () {
-  match names -> () {
-    Nil => ()
+pub fn lin_push_names(names: List(Text), &mut c: Lin, site: Nat): Unit {
+  match names: Unit {
+    Nil => #()
     Cons(n, rest) => {
       lin_push_typed(&mut c, n, site)
       lin_push_names(rest, &mut c, site)
@@ -65,65 +66,67 @@ fn lin_push_names(names: List(Text), &mut c: Lin, site: Nat) -> () {
 // `_` in a pattern drops what it stands for, which must not be linear. The
 // record patterns are read positionally, so this takes the program's steps.
 mutual {
-  fn lin_dropped_fields_in(k: Nat, &mut c: Lin, p: SurfacePattern, ty0: Ty, span: TySpan) -> () {
-    match k -> () {
-      zero => ()
-      succ(j) => match p -> () {
+  pub fn lin_dropped_fields_in(k: Nat, &mut c: Lin, p: SurfacePattern, ty0: Ty, span: TySpan): Unit {
+    match k: Unit {
+      Zero => #()
+      Succ(j) => match p: Unit {
         PtWild => if class_is_linear(lin_kind(c, ty_unborrowed(ty0))) {
           lin_error(&mut c, cat2("`_` drops a linear ", ty_show(ty_unborrowed(ty0))), span)
         }
         PtCtor(name, args) => lin_dropped_ctor_in(j, &mut c, name, args, ty_unborrowed(ty0), span)
-        PtRecord(name, fields) => match datas_positional(c.types.datas, name, fields) -> () {
+        PtRecord(name, fields) => match datas_positional_expected(
+          c.types.datas,
+          name,
+          fields,
+          ty_unborrowed(ty0)
+        ): Unit {
           PositionalOk(args) => lin_dropped_ctor_in(j, &mut c, name, args, ty_unborrowed(ty0), span)
-          PositionalErr(e) => ()
+          PositionalErr(e) => #()
         }
-        _ => ()
+        _ => #()
       }
     }
   }
 
-  fn lin_dropped_ctor_in(
+  pub fn lin_dropped_ctor_in(
     k: Nat,
     &mut c: Lin,
     name: Text,
     args: List(SurfacePattern),
     ty: Ty,
     span: TySpan
-  ) -> () {
-    match k -> () {
-      zero => ()
-      succ(j) => match datas_ctor(c.types.datas, name) -> () {
-        None => ()
-        Some(dc) => match ty -> () {
-          TyNamed(
-            n,
-            targs
-          ) => lin_dropped_each_in(
+  ): Unit {
+    match k: Unit {
+      Zero => #()
+      Succ(j) => match datas_ctor_expected(c.types.datas, name, ty): Unit {
+        None => #()
+        Some(dc) => match ty: Unit {
+          TyNamed(n, targs) => lin_dropped_each_in(
             j,
             &mut c,
             args,
-            datas_fields(c.types.datas, dc.fst, dc.snd, targs),
+            datas_fields(c.types.datas, (dc: Text), (dc: Nat), targs),
             span
           )
-          _ => ()
+          _ => #()
         }
       }
     }
   }
 
-  fn lin_dropped_each_in(
+  pub fn lin_dropped_each_in(
     k: Nat,
     &mut c: Lin,
     args: List(SurfacePattern),
     fields: List(DataField),
     span: TySpan
-  ) -> () {
-    match k -> () {
-      zero => ()
-      succ(j) => match args -> () {
-        Nil => ()
-        Cons(a, rest) => match fields -> () {
-          Nil => ()
+  ): Unit {
+    match k: Unit {
+      Zero => #()
+      Succ(j) => match args: Unit {
+        Nil => #()
+        Cons(a, rest) => match fields: Unit {
+          Nil => #()
           Cons(f, more) => {
             lin_dropped_fields_in(j, &mut c, a, f.ty, span)
             lin_dropped_each_in(j, &mut c, rest, more, span)
@@ -134,40 +137,45 @@ mutual {
   }
 }
 
-fn lin_dropped(&mut c: Lin, p: SurfacePattern, ty: Option(Ty), span: TySpan) -> () {
-  match ty -> () {
+pub fn lin_dropped(&mut c: Lin, p: SurfacePattern, ty: Option(Ty), span: TySpan): Unit {
+  match ty: Unit {
     Some(t) => lin_dropped_fields_in(c.steps, &mut c, p, t, span)
-    None => ()
+    None => #()
   }
 }
 
-fn lin_is_view_call(c: Lin, t: SurfaceTerm) -> Yn {
-  match lin_term_type(c, t) -> Yn {
-    Some(ty) => match datas_view_borrow(c.types.datas, ty) -> Yn {
-      Some(m) => yes
-      None => no
+pub fn lin_is_view_call(c: Lin, t: SurfaceTerm): Bool {
+  match lin_term_type(c, t): Bool {
+    Some(ty) => match datas_view_borrow(c.types.datas, ty): Bool {
+      Some(m) => true
+      None => false
     }
-    None => no
+    None => false
   }
 }
 
-fn lin_push_arm_name(&mut c: Lin, n: Text, site: Nat, lent: List(Pair(Nat, Yn))) -> () {
-  match lin_local_type(c, n, site) -> () {
+pub fn lin_push_arm_name(&mut c: Lin, n: Text, site: Nat, lent: List(Pair(Nat, Bool))): Unit {
+  match lin_local_type(c, n, site): Unit {
     Some(t) => {
-      let i = lin_push(&mut c, n, site, no)
-      if !class_is_dup(lin_get(c, i).class) {
+      let i := lin_push(&mut c, n, site, false)
+      if not(class_is_dup(lin_get(c, i).r#class)) {
         lin_freeze_all(lent, &mut c, i)
       }
     }
-    None => ()
+    None => #()
   }
 }
 
 // The names an arm binds; one that is not duplicable freezes what the
 // scrutinee's call lent.
-fn lin_push_arm_names(names: List(Text), &mut c: Lin, site: Nat, lent: List(Pair(Nat, Yn))) -> () {
-  match names -> () {
-    Nil => ()
+pub fn lin_push_arm_names(
+  names: List(Text),
+  &mut c: Lin,
+  site: Nat,
+  lent: List(Pair(Nat, Bool))
+): Unit {
+  match names: Unit {
+    Nil => #()
     Cons(n, rest) => {
       lin_push_arm_name(&mut c, n, site, lent)
       lin_push_arm_names(rest, &mut c, site, lent)
@@ -176,47 +184,47 @@ fn lin_push_arm_names(names: List(Text), &mut c: Lin, site: Nat, lent: List(Pair
 }
 
 // `match &v`, or a borrowed name: the arms' names borrow.
-fn lin_borrowed_place(c: Lin, scrutinee: SurfaceTerm) -> Option(Nat) {
-  match lin_place(scrutinee) -> Option(Nat) {
-    Some(p) => match lin_find(c, p.fst) -> Option(Nat) {
-      Some(i) => if mode_is_borrow(lin_get(c, i).mode) { Some(i) } else { None() }
-      None => None()
+pub fn lin_borrowed_place(c: Lin, scrutinee: SurfaceTerm): Option(Nat) {
+  match lin_place(scrutinee): Option(Nat) {
+    Some(p) => match lin_find(c, (p: Text)): Option(Nat) {
+      Some(i) => if mode_is_borrow(lin_get(c, i).mode) { Some(i) } else { None }
+      None => None
     }
-    None => None()
+    None => None
   }
 }
 
-fn lin_place_found(c: Lin, t: SurfaceTerm) -> Option(Nat) {
-  match lin_place(t) -> Option(Nat) {
-    Some(p) => lin_find(c, p.fst)
-    None => None()
+pub fn lin_place_found(c: Lin, t: SurfaceTerm): Option(Nat) {
+  match lin_place(t): Option(Nat) {
+    Some(p) => lin_find(c, (p: Text))
+    None => None
   }
 }
 
 // ----- handle -----
 
-fn pattern_binds_all(p: SurfacePattern) -> Yn {
-  match p -> Yn {
-    PtWild => yes
-    PtBind(n) => yes
-    _ => no
+pub fn pattern_binds_all(p: SurfacePattern): Bool {
+  match p: Bool {
+    PtWild => true
+    PtBind(n) => true
+    _ => false
   }
 }
 
-fn patterns_all_binding(ps: List(SurfacePattern)) -> Yn {
-  match ps -> Yn {
-    Nil => yes
+pub fn patterns_all_binding(ps: List(SurfacePattern)): Bool {
+  match ps: Bool {
+    Nil => true
     Cons(p, rest) => pattern_binds_all(p) && patterns_all_binding(rest)
   }
 }
 
-fn lin_find_each(names: List(Text), c: Lin, bound: List(Text)) -> List(Nat) {
-  match names -> List(Nat) {
+pub fn lin_find_each(names: List(Text), c: Lin, bound: List(Text)): List(Nat) {
+  match names: List(Nat) {
     Nil => Nil
     Cons(n, rest) => if list_has_text(bound, n) {
       lin_find_each(rest, c, bound)
     } else {
-      match lin_find(c, n) -> List(Nat) {
+      match lin_find(c, n): List(Nat) {
         Some(i) => Cons(i, lin_find_each(rest, c, bound))
         None => lin_find_each(rest, c, bound)
       }
@@ -224,23 +232,23 @@ fn lin_find_each(names: List(Text), c: Lin, bound: List(Text)) -> List(Nat) {
   }
 }
 
-inductive HandleScan(): Type {
-  handle_scan_mk(answers: Ordmap(Text, Yn), return_uses: List(Nat)): HandleScan
+pub(open) inductive HandleScan: Type {
+  HandleScanMk(answers: Ordmap(Text, Bool), return_uses: List(Nat)): HandleScan
 }
 
-fn answered_name(eff: Text) -> Text {
-  if eff == "exceeded" { "Exceeded" } else { eff }
+pub fn answered_name(eff: Text): Text {
+  if eff == "exceeded" { "exceeded" } else { eff }
 }
 
-fn scan_answers(
-  answers: Ordmap(Text, Yn),
+pub fn scan_answers(
+  answers: Ordmap(Text, Bool),
   eff: Text,
   patterns: List(SurfacePattern),
   guard: Option(SurfaceTerm)
-) -> Ordmap(Text, Yn) {
-  match guard -> Ordmap(Text, Yn) {
+): Ordmap(Text, Bool) {
+  match guard: Ordmap(Text, Bool) {
     None => if patterns_all_binding(patterns) {
-      ordmap_insert(answers, answered_name(eff), yes, ordmap_compare_text)
+      Ordmap::insert(answers, answered_name(eff), true, Ordmap::compare_text)
     } else {
       answers
     }
@@ -248,15 +256,15 @@ fn scan_answers(
   }
 }
 
-fn lin_handler_scan(c: Lin, h: SurfaceHandler, scan: HandleScan) -> HandleScan {
-  match h -> HandleScan {
-    HdOperation(eff, patterns, cont, guard, body) => HandleScan {
+pub fn lin_handler_scan(c: Lin, h: SurfaceHandler, scan: HandleScan): HandleScan {
+  match h: HandleScan {
+    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => HandleScan {
       answers: scan_answers(scan.answers, eff, patterns, guard),
       return_uses: scan.return_uses
     }
     HdReturn(pattern, body) => HandleScan {
       answers: scan.answers,
-      return_uses: list_append(
+      return_uses: List::append(
         scan.return_uses,
         lin_find_each(free_vars(body), c, pattern_names_ordered(pattern))
       )
@@ -264,8 +272,8 @@ fn lin_handler_scan(c: Lin, h: SurfaceHandler, scan: HandleScan) -> HandleScan {
   }
 }
 
-fn lin_handle_scan(hs: List(SurfaceHandler), c: Lin, scan: HandleScan) -> HandleScan {
-  match hs -> HandleScan {
+pub fn lin_handle_scan(hs: List(SurfaceHandler), c: Lin, scan: HandleScan): HandleScan {
+  match hs: HandleScan {
     Nil => scan
     Cons(h, rest) => lin_handle_scan(rest, c, lin_handler_scan(c, h, scan))
   }
@@ -275,150 +283,169 @@ fn lin_handle_scan(hs: List(SurfaceHandler), c: Lin, scan: HandleScan) -> Handle
 // a closure or a nested handle, which may keep it. The last first. `head`: the
 // term is a callee, which is a use only when it is kept.
 mutual {
-  fn stray_conts(t: SurfaceTerm, k: Text, kept: Yn, acc: List(TySpan), head: Yn) -> List(TySpan) {
-    match t -> List(TySpan) {
-      surface_term_mk(
+  pub fn stray_conts(
+    t: SurfaceTerm,
+    k: Text,
+    kept: Bool,
+    acc: List(TySpan),
+    head: Bool
+  ): List(TySpan) {
+    match t: List(TySpan) {
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => stray_kind(
         sk,
-        start,
-        end
-      ) => stray_kind(sk, k, kept, acc, surface_term_mk(sk, start, end), head)
+        k,
+        kept,
+        acc,
+        SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+        head
+      )
     }
   }
 
-  fn stray_kind(
+  pub fn stray_kind(
     sk: SurfaceKind,
     k: Text,
-    kept: Yn,
+    kept: Bool,
     acc: List(TySpan),
     whole: SurfaceTerm,
-    head: Yn
-  ) -> List(TySpan) {
-    match sk -> List(TySpan) {
-      SkVar(n) => if n == k && (kept || !head) { Cons(span_of(whole), acc) } else { acc }
-      SkApp(f, args) => stray_each(args, k, kept, stray_conts(f, k, kept, acc, yes))
-      SkLam(params, body) => stray_conts(body, k, yes, acc, no)
-      SkBorrowLam(borrows, lam) => stray_conts(lam, k, yes, acc, no)
-      SkHandle(body, handlers) => list_append(var_spans(subterms(whole, Nil), k), acc)
+    head: Bool
+  ): List(TySpan) {
+    match sk: List(TySpan) {
+      SkVar(n) => if n == k && (kept || not(head)) { Cons(span_of(whole), acc) } else { acc }
+      SkApp(f, args) => stray_each(args, k, kept, stray_conts(f, k, kept, acc, true))
+      SkLam(params, body) => stray_conts(body, k, true, acc, false)
+      SkBorrowLam(borrows, lam) => stray_conts(lam, k, true, acc, false)
+      SkHandle(body, handlers) => List::append(var_spans(subterms(whole, Nil), k), acc)
       SkBlock(stmts) => stray_stmts(stmts, k, kept, acc)
-      SkMatch(s, mk, arms, hb) => stray_arms(arms, k, kept, stray_conts(s, k, kept, acc, no))
-      SkIf(
-        cond,
-        th,
-        el
-      ) => stray_opt(el, k, kept, stray_conts(th, k, kept, stray_conts(cond, k, kept, acc, no), no))
+      SkMatch(s, mk, arms, hb) => stray_arms(arms, k, kept, stray_conts(s, k, kept, acc, false))
+      SkIf(cond, th, el) => stray_opt(
+        el,
+        k,
+        kept,
+        stray_conts(th, k, kept, stray_conts(cond, k, kept, acc, false), false)
+      )
       SkRecord(name, fields) => stray_fields(fields, k, kept, acc)
-      SkField(base, name) => stray_conts(base, k, kept, acc, no)
-      SkTagged(tag, x) => stray_conts(x, k, kept, acc, no)
-      SkBorrow(m, x) => stray_conts(x, k, kept, acc, no)
+      SkField(base, name) => stray_conts(base, k, kept, acc, false)
+      SkTagged(tag, x) => stray_conts(x, k, kept, acc, false)
+      SkBorrow(m, x) => stray_conts(x, k, kept, acc, false)
       SkPerform(eff, args) => stray_each(args, k, kept, acc)
-      SkBudget(steps, body) => stray_conts(body, k, kept, stray_conts(steps, k, kept, acc, no), no)
+      SkBudget(steps_memory, steps, body) => stray_conts(
+        body,
+        k,
+        kept,
+        stray_conts(steps, k, kept, acc, false),
+        false
+      )
       _ => acc
     }
   }
 
-  fn stray_opt(t: Option(SurfaceTerm), k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match t -> List(TySpan) {
+  pub fn stray_opt(t: Option(SurfaceTerm), k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match t: List(TySpan) {
       None => acc
-      Some(x) => stray_conts(x, k, kept, acc, no)
+      Some(x) => stray_conts(x, k, kept, acc, false)
     }
   }
 
-  fn stray_each(ts: List(SurfaceTerm), k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match ts -> List(TySpan) {
+  pub fn stray_each(ts: List(SurfaceTerm), k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match ts: List(TySpan) {
       Nil => acc
-      Cons(t, rest) => stray_each(rest, k, kept, stray_conts(t, k, kept, acc, no))
+      Cons(t, rest) => stray_each(rest, k, kept, stray_conts(t, k, kept, acc, false))
     }
   }
 
-  fn stray_fields(fs: List(SurfaceField), k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match fs -> List(TySpan) {
+  pub fn stray_fields(fs: List(SurfaceField), k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match fs: List(TySpan) {
       Nil => acc
       Cons(f, rest) => stray_fields(rest, k, kept, stray_field(f, k, kept, acc))
     }
   }
 
-  fn stray_field(f: SurfaceField, k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match f -> List(TySpan) {
-      surface_field_mk(name, value) => stray_conts(value, k, kept, acc, no)
+  pub fn stray_field(f: SurfaceField, k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match f: List(TySpan) {
+      SurfaceFieldMk(name, value) => stray_conts(value, k, kept, acc, false)
     }
   }
 
-  fn stray_arms(arms: List(SurfaceArm), k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match arms -> List(TySpan) {
+  pub fn stray_arms(arms: List(SurfaceArm), k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match arms: List(TySpan) {
       Nil => acc
       Cons(arm, rest) => stray_arms(rest, k, kept, stray_arm(arm, k, kept, acc))
     }
   }
 
-  fn stray_arm(arm: SurfaceArm, k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match arm -> List(TySpan) {
-      surface_arm_mk(
-        pattern,
-        guard,
-        goal,
-        body
-      ) => stray_conts(body, k, kept, stray_opt(guard, k, kept, acc), no)
+  pub fn stray_arm(arm: SurfaceArm, k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match arm: List(TySpan) {
+      SurfaceArmMk(pattern, guard, goal, body) => stray_conts(
+        body,
+        k,
+        kept,
+        stray_opt(guard, k, kept, acc),
+        false
+      )
     }
   }
 
-  fn stray_stmts(ss: List(SurfaceStmt), k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match ss -> List(TySpan) {
+  pub fn stray_stmts(ss: List(SurfaceStmt), k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match ss: List(TySpan) {
       Nil => acc
       Cons(s, rest) => stray_stmts(rest, k, kept, stray_stmt(s, k, kept, acc))
     }
   }
 
-  fn stray_stmt(s: SurfaceStmt, k: Text, kept: Yn, acc: List(TySpan)) -> List(TySpan) {
-    match s -> List(TySpan) {
+  pub fn stray_stmt(s: SurfaceStmt, k: Text, kept: Bool, acc: List(TySpan)): List(TySpan) {
+    match s: List(TySpan) {
       StFn(f) => stray_fn(f, k, acc)
-      StLet(name, ty, value, borrow, bm) => stray_conts(value, k, kept, acc, no)
-      StVar(name, ty, value, vb) => stray_conts(value, k, kept, acc, no)
-      StAssign(name, value) => stray_conts(value, k, kept, acc, no)
-      StExpr(e) => stray_conts(e, k, kept, acc, no)
+      StLet(name, ty, value, borrow, bm) => stray_conts(value, k, kept, acc, false)
+      StVar(name, ty, value, vb) => stray_conts(value, k, kept, acc, false)
+      StAssign(name, name_place, value) => stray_conts(value, k, kept, acc, false)
+      StExpr(e) => stray_conts(e, k, kept, acc, false)
       StReturn(e) => stray_opt(e, k, kept, acc)
-      StWhile(cond, body) => stray_conts(body, k, kept, stray_conts(cond, k, kept, acc, no), no)
+      StWhile(cond, body) => stray_conts(body, k, kept, stray_conts(cond, k, kept, acc, false), false)
       _ => acc
     }
   }
 
-  fn stray_fn(f: SurfaceFn, k: Text, acc: List(TySpan)) -> List(TySpan) {
-    match f -> List(TySpan) {
-      surface_fn_mk(
+  pub fn stray_fn(f: SurfaceFn, k: Text, acc: List(TySpan)): List(TySpan) {
+    match f: List(TySpan) {
+      SurfaceFnMk(
         name,
         generics,
         bounds,
         params,
         borrows,
-        param_types,
+        ParamTypes,
         result,
         effects,
         wheres,
         start,
         end,
         body
-      ) => stray_conts(body, k, yes, acc, no)
+      ) => stray_conts(body, k, true, acc, false)
     }
   }
 }
 
-fn lin_lent_name(c: Lin, n: Text, bound: List(Text), roots: List(Text)) -> Yn {
+pub fn lin_lent_name(c: Lin, n: Text, bound: List(Text), roots: List(Text)): Bool {
   if list_has_text(bound, n) {
-    no
+    false
   } else {
-    match lin_find(c, n) -> Yn {
-      None => no
+    match lin_find(c, n): Bool {
+      None => false
       Some(i) => list_has_text(roots, n) || mode_borrows(lin_get(c, i).mode)
     }
   }
 }
 
-fn lin_lent_among(names: List(Text), c: Lin, bound: List(Text), roots: List(Text)) -> Option(Text) {
-  match names -> Option(Text) {
-    Nil => None()
-    Cons(
-      n,
-      rest
-    ) => if lin_lent_name(
+pub fn lin_lent_among(
+  names: List(Text),
+  c: Lin,
+  bound: List(Text),
+  roots: List(Text)
+): Option(Text) {
+  match names: Option(Text) {
+    Nil => None
+    Cons(n, rest) => if lin_lent_name(
       c,
       n,
       bound,
@@ -429,21 +456,21 @@ fn lin_lent_among(names: List(Text), c: Lin, bound: List(Text), roots: List(Text
 
 // A binding from here out that `body` borrows: `&x`, or a borrow or borrow
 // closure it uses. The names in `bound` are `body`'s own.
-fn lin_lent_outside(c: Lin, body: SurfaceTerm, bound: List(Text)) -> Option(Text) {
+pub fn lin_lent_outside(c: Lin, body: SurfaceTerm, bound: List(Text)): Option(Text) {
   lin_lent_among(free_vars(body), c, bound, borrow_roots(subterms(body, Nil)))
 }
 
-fn lin_handler_lent(c: Lin, h: SurfaceHandler) -> Option(Text) {
-  match h -> Option(Text) {
+pub fn lin_handler_lent(c: Lin, h: SurfaceHandler): Option(Text) {
+  match h: Option(Text) {
     HdReturn(pattern, body) => lin_lent_outside(c, body, pattern_names(pattern, Nil))
-    HdOperation(eff, patterns, cont, guard, body) => None()
+    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => None
   }
 }
 
-fn lin_return_lent(hs: List(SurfaceHandler), c: Lin) -> Option(Text) {
-  match hs -> Option(Text) {
-    Nil => None()
-    Cons(h, rest) => match lin_handler_lent(c, h) -> Option(Text) {
+pub fn lin_return_lent(hs: List(SurfaceHandler), c: Lin): Option(Text) {
+  match hs: Option(Text) {
+    Nil => None
+    Cons(h, rest) => match lin_handler_lent(c, h): Option(Text) {
       Some(n) => Some(n)
       None => lin_return_lent(rest, c)
     }
@@ -452,43 +479,43 @@ fn lin_return_lent(hs: List(SurfaceHandler), c: Lin) -> Option(Text) {
 
 // A `var` that `t` uses from outside: a continuation that carries the code of
 // `t` carries the `var`'s cell with it.
-fn lin_var_name(c: Lin, n: Text, bound: List(Text)) -> Yn {
+pub fn lin_var_name(c: Lin, n: Text, bound: List(Text)): Bool {
   if list_has_text(bound, n) {
-    no
+    false
   } else {
-    match lin_find(c, n) -> Yn {
-      None => no
-      Some(i) => match lin_get(c, i).mode -> Yn {
-        ModeVar => yes
-        ModeVarInClosure => yes
-        _ => no
+    match lin_find(c, n): Bool {
+      None => false
+      Some(i) => match lin_get(c, i).mode: Bool {
+        ModeVar => true
+        ModeVarInClosure => true
+        _ => false
       }
     }
   }
 }
 
-fn lin_var_among(names: List(Text), c: Lin, bound: List(Text)) -> Option(Text) {
-  match names -> Option(Text) {
-    Nil => None()
+pub fn lin_var_among(names: List(Text), c: Lin, bound: List(Text)): Option(Text) {
+  match names: Option(Text) {
+    Nil => None
     Cons(n, rest) => if lin_var_name(c, n, bound) { Some(n) } else { lin_var_among(rest, c, bound) }
   }
 }
 
-fn lin_stmts_declare_var(ss: List(SurfaceStmt)) -> Option(Text) {
-  match ss -> Option(Text) {
-    Nil => None()
-    Cons(s, rest) => match s -> Option(Text) {
+pub fn lin_stmts_declare_var(ss: List(SurfaceStmt)): Option(Text) {
+  match ss: Option(Text) {
+    Nil => None
+    Cons(s, rest) => match s: Option(Text) {
       StVar(name, ty, value, vb) => Some(name)
       _ => lin_stmts_declare_var(rest)
     }
   }
 }
 
-fn lin_declared_among(ts: List(SurfaceTerm)) -> Option(Text) {
-  match ts -> Option(Text) {
-    Nil => None()
-    Cons(t, rest) => match t.kind -> Option(Text) {
-      SkBlock(ss) => match lin_stmts_declare_var(ss) -> Option(Text) {
+pub fn lin_declared_among(ts: List(SurfaceTerm)): Option(Text) {
+  match ts: Option(Text) {
+    Nil => None
+    Cons(t, rest) => match t.kind: Option(Text) {
+      SkBlock(ss) => match lin_stmts_declare_var(ss): Option(Text) {
         Some(n) => Some(n)
         None => lin_declared_among(rest)
       }
@@ -499,44 +526,44 @@ fn lin_declared_among(ts: List(SurfaceTerm)) -> Option(Text) {
 
 // A `var` that `t` uses from outside or declares inside. The names in `bound`
 // are `t`'s own.
-fn lin_var_in(c: Lin, t: SurfaceTerm, bound: List(Text)) -> Option(Text) {
-  match lin_var_among(free_vars(t), c, bound) -> Option(Text) {
+pub fn lin_var_in(c: Lin, t: SurfaceTerm, bound: List(Text)): Option(Text) {
+  match lin_var_among(free_vars(t), c, bound): Option(Text) {
     Some(n) => Some(n)
-    None => lin_declared_among(list_reverse(subterms(t, Nil)))
+    None => lin_declared_among(List::reverse(subterms(t, Nil)))
   }
 }
 
-fn lin_first_some(a: Option(Text), b: Option(Text)) -> Option(Text) {
-  match a -> Option(Text) {
+pub fn lin_first_some(a: Option(Text), b: Option(Text)): Option(Text) {
+  match a: Option(Text) {
     Some(n) => Some(n)
     None => b
   }
 }
 
-fn lin_guard_var(c: Lin, guard: Option(SurfaceTerm), bound: List(Text)) -> Option(Text) {
-  match guard -> Option(Text) {
+pub fn lin_guard_var(c: Lin, guard: Option(SurfaceTerm), bound: List(Text)): Option(Text) {
+  match guard: Option(Text) {
     Some(g) => lin_var_in(c, g, bound)
-    None => None()
+    None => None
   }
 }
 
-fn lin_arm_bound(patterns: List(SurfacePattern), cont: Option(Text)) -> List(Text) {
-  list_append(pattern_names_each(patterns, Nil), cont_names(cont))
+pub fn lin_arm_bound(patterns: List(SurfacePattern), cont: Option(Text)): List(Text) {
+  List::append(pattern_names_each(patterns, Nil), cont_names(cont))
 }
 
-fn lin_handler_var(c: Lin, h: SurfaceHandler) -> Option(Text) {
-  match h -> Option(Text) {
+pub fn lin_handler_var(c: Lin, h: SurfaceHandler): Option(Text) {
+  match h: Option(Text) {
     HdReturn(pattern, body) => lin_var_in(c, body, pattern_names(pattern, Nil))
-    HdOperation(eff, patterns, cont, guard, body) => {
-      let bound: List(Text) = lin_arm_bound(patterns, cont)
+    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => {
+      let bound: List(Text) := lin_arm_bound(patterns, cont)
       lin_first_some(lin_var_in(c, body, bound), lin_guard_var(c, guard, bound))
     }
   }
 }
 
-fn lin_handlers_var(hs: List(SurfaceHandler), c: Lin) -> Option(Text) {
-  match hs -> Option(Text) {
-    Nil => None()
+pub fn lin_handlers_var(hs: List(SurfaceHandler), c: Lin): Option(Text) {
+  match hs: Option(Text) {
+    Nil => None
     Cons(h, rest) => lin_first_some(lin_handler_var(c, h), lin_handlers_var(rest, c))
   }
 }
@@ -544,25 +571,25 @@ fn lin_handlers_var(hs: List(SurfaceHandler), c: Lin) -> Option(Text) {
 // What pins a handle's continuations: a borrow its body or `return` arm takes
 // from outside, or a `var` in its body or arms, shared by every copy of a
 // continuation. The reason, as the message gives it.
-fn lin_pinned(c: Lin, body: SurfaceTerm, handlers: List(SurfaceHandler)) -> Option(Text) {
-  match lin_lent_outside(c, body, Nil) -> Option(Text) {
+pub fn lin_pinned(c: Lin, body: SurfaceTerm, handlers: List(SurfaceHandler)): Option(Text) {
+  match lin_lent_outside(c, body, Nil): Option(Text) {
     Some(n) => Some(cat2("holds a borrow of ", n))
-    None => match lin_return_lent(handlers, c) -> Option(Text) {
+    None => match lin_return_lent(handlers, c): Option(Text) {
       Some(n) => Some(cat2("holds a borrow of ", n))
       None => match lin_first_some(
         lin_var_in(c, body, Nil),
         lin_handlers_var(handlers, c)
-      ) -> Option(Text) {
+      ): Option(Text) {
         Some(n) => Some(cat2("shares var ", n))
-        None => None()
+        None => None
       }
     }
   }
 }
 
-fn lin_stray_errors(spans: List(TySpan), &mut c: Lin, message: Text) -> () {
-  match spans -> () {
-    Nil => ()
+pub fn lin_stray_errors(spans: List(TySpan), &mut c: Lin, message: Text): Unit {
+  match spans: Unit {
+    Nil => #()
     Cons(sp, rest) => {
       lin_error(&mut c, message, sp)
       lin_stray_errors(rest, &mut c, message)
@@ -570,30 +597,28 @@ fn lin_stray_errors(spans: List(TySpan), &mut c: Lin, message: Text) -> () {
   }
 }
 
-fn lin_pinned_arm(&mut c: Lin, h: SurfaceHandler, lent: Text) -> () {
-  match h -> () {
-    HdOperation(eff, patterns, cont, guard, body) => match cont -> () {
-      Some(
-        k
-      ) => lin_stray_errors(
-        list_reverse(stray_opt(guard, k, no, stray_conts(body, k, no, Nil, no))),
+pub fn lin_pinned_arm(&mut c: Lin, h: SurfaceHandler, lent: Text): Unit {
+  match h: Unit {
+    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => match cont: Unit {
+      Some(k) => lin_stray_errors(
+        List::reverse(stray_opt(guard, k, false, stray_conts(body, k, false, Nil, false))),
         &mut c,
-        text_concat_all(
+        Text::concat_all(
           Cons(k, Cons(" ", Cons(lent, Cons(", so it may only be called in its arm", Nil))))
         )
       )
-      None => ()
+      None => #()
     }
-    HdReturn(pattern, body) => ()
+    HdReturn(pattern, body) => #()
   }
 }
 
 // A body that borrows from outside the handle pins its continuations: kept
 // in a value or a closure, or returned, `k` would carry the borrows past
 // their owner.
-fn lin_pinned_arms(hs: List(SurfaceHandler), &mut c: Lin, lent: Text) -> () {
-  match hs -> () {
-    Nil => ()
+pub fn lin_pinned_arms(hs: List(SurfaceHandler), &mut c: Lin, lent: Text): Unit {
+  match hs: Unit {
+    Nil => #()
     Cons(h, rest) => {
       lin_pinned_arm(&mut c, h, lent)
       lin_pinned_arms(rest, &mut c, lent)
@@ -601,67 +626,65 @@ fn lin_pinned_arms(hs: List(SurfaceHandler), &mut c: Lin, lent: Text) -> () {
   }
 }
 
-fn lin_pin(&mut c: Lin, body: SurfaceTerm, handlers: List(SurfaceHandler)) -> () {
-  match lin_pinned(c, body, handlers) -> () {
+pub fn lin_pin(&mut c: Lin, body: SurfaceTerm, handlers: List(SurfaceHandler)): Unit {
+  match lin_pinned(c, body, handlers): Unit {
     Some(lent) => lin_pinned_arms(handlers, &mut c, lent)
-    None => ()
+    None => #()
   }
 }
 
-fn lin_is_direct(c: Lin, eff: Text) -> Yn {
-  match ordmap_get(c.rows.quants, eff, ordmap_compare_text) -> Yn {
+pub fn lin_is_direct(c: Lin, eff: Text): Bool {
+  match Ordmap::get(c.rows.quants, eff, Ordmap::compare_text): Bool {
     Some(q) => quant_is_direct(q)
-    None => no
+    None => false
   }
 }
 
-fn lin_roots_has(rs: List(Pair(Nat, Yn)), i: Nat) -> Yn {
-  match rs -> Yn {
-    Nil => no
+pub fn lin_roots_has(rs: List(Pair(Nat, Bool)), i: Nat): Bool {
+  match rs: Bool {
+    Nil => false
     Cons(r, rest) => r.fst == i || lin_roots_has(rest, i)
   }
 }
 
-fn guard_lends_mutably(guard: Option(SurfaceTerm), name: Text) -> Yn {
-  match guard -> Yn {
+pub fn guard_lends_mutably(guard: Option(SurfaceTerm), name: Text): Bool {
+  match guard: Bool {
     Some(g) => dir_lends_mutably(g, name)
-    None => no
+    None => false
   }
 }
 
-fn mode_is_closure(m: LinMode) -> Yn {
-  match m -> Yn {
-    ModeBorrowClosure(names, x) => yes
-    _ => no
+pub fn mode_is_closure(m: LinMode): Bool {
+  match m: Bool {
+    ModeBorrowClosure(names, x) => true
+    _ => false
   }
 }
 
-fn lin_direct_root(
+pub fn lin_direct_root(
   c: Lin,
   name: Text,
   bound: List(Text),
   guard: Option(SurfaceTerm),
   body: SurfaceTerm,
-  acc: List(Pair(Nat, Yn))
-) -> List(Pair(Nat, Yn)) {
+  acc: List(Pair(Nat, Bool))
+): List(Pair(Nat, Bool)) {
   if list_has_text(bound, name) {
     acc
   } else {
-    match lin_find(c, name) -> List(Pair(Nat, Yn)) {
+    match lin_find(c, name): List(Pair(Nat, Bool)) {
       None => acc
-      Some(
-        i
-      ) => if class_is_dup(
-        lin_get(c, i).class
+      Some(i) => if class_is_dup(
+        lin_get(c, i).r#class
       ) || mode_is_closure(lin_get(c, i).mode) || lin_roots_has(acc, i) {
         acc
       } else {
-        list_append(
+        List::append(
           acc,
           Cons(
             Pair {
               fst: i,
-              snd: !mode_is_shared_borrow(lin_get(c, i).mode) && (dir_lends_mutably(body, name) || guard_lends_mutably(guard, name))
+              snd: not(mode_is_shared_borrow(lin_get(c, i).mode)) && (dir_lends_mutably(body, name) || guard_lends_mutably(guard, name))
             },
             Nil
           )
@@ -671,20 +694,17 @@ fn lin_direct_root(
   }
 }
 
-fn lin_direct_roots(
+pub fn lin_direct_roots(
   free: List(Text),
   c: Lin,
   bound: List(Text),
   guard: Option(SurfaceTerm),
   body: SurfaceTerm,
-  acc: List(Pair(Nat, Yn))
-) -> List(Pair(Nat, Yn)) {
-  match free -> List(Pair(Nat, Yn)) {
+  acc: List(Pair(Nat, Bool))
+): List(Pair(Nat, Bool)) {
+  match free: List(Pair(Nat, Bool)) {
     Nil => acc
-    Cons(
-      name,
-      rest
-    ) => lin_direct_roots(
+    Cons(name, rest) => lin_direct_roots(
       rest,
       c,
       bound,
@@ -695,8 +715,8 @@ fn lin_direct_roots(
   }
 }
 
-fn guard_free(guard: Option(SurfaceTerm)) -> List(Text) {
-  match guard -> List(Text) {
+pub fn guard_free(guard: Option(SurfaceTerm)): List(Text) {
+  match guard: List(Text) {
     Some(g) => free_vars(g)
     None => Nil
   }
@@ -705,38 +725,38 @@ fn guard_free(guard: Option(SurfaceTerm)) -> List(Text) {
 // The arm of the direct operation `eff` borrows, from outside the handle, what
 // it lends (`&x`, `&mut x`) or assigns: a synthetic binding freezes those names
 // while the handle's body runs.
-fn lin_lend_to_direct_arm(
+pub fn lin_lend_to_direct_arm(
   &mut c: Lin,
   eff: Text,
   patterns: List(SurfacePattern),
   cont: Option(Text),
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
-) -> () {
-  let bound = list_append(patterns_names_ordered(patterns), cont_names(cont))
-  let free = list_append(free_vars(body), guard_free(guard))
-  let roots = lin_direct_roots(free, c, bound, guard, body, Nil)
-  match roots -> () {
-    Nil => ()
+): Unit {
+  let bound := List::append(patterns_names_ordered(patterns), cont_names(cont))
+  let free := List::append(free_vars(body), guard_free(guard))
+  let roots := lin_direct_roots(free, c, bound, guard, body, Nil)
+  match roots: Unit {
+    Nil => #()
     Cons(r, more) => {
-      let arm = lin_push_binding(&mut c, cat2("the arm of ", eff), ClassDup, ModeOwned)
+      let arm := lin_push_binding(&mut c, cat2("the arm of ", eff), ClassDup, ModeOwned)
       lin_freeze_all(Cons(r, more), &mut c, arm)
     }
   }
 }
 
-fn lin_lend_to_direct(&mut c: Lin, h: SurfaceHandler) -> () {
-  match h -> () {
-    HdReturn(pattern, body) => ()
-    HdOperation(eff, patterns, cont, guard, body) => if lin_is_direct(c, eff) {
+pub fn lin_lend_to_direct(&mut c: Lin, h: SurfaceHandler): Unit {
+  match h: Unit {
+    HdReturn(pattern, body) => #()
+    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => if lin_is_direct(c, eff) {
       lin_lend_to_direct_arm(&mut c, eff, patterns, cont, guard, body)
     }
   }
 }
 
-fn lin_lend_to_direct_arms(hs: List(SurfaceHandler), &mut c: Lin) -> () {
-  match hs -> () {
-    Nil => ()
+pub fn lin_lend_to_direct_arms(hs: List(SurfaceHandler), &mut c: Lin): Unit {
+  match hs: Unit {
+    Nil => #()
     Cons(h, rest) => {
       lin_lend_to_direct(&mut c, h)
       lin_lend_to_direct_arms(rest, &mut c)
@@ -746,28 +766,25 @@ fn lin_lend_to_direct_arms(hs: List(SurfaceHandler), &mut c: Lin) -> () {
 
 // An operation arm runs outside the handle: a direct one may not move what
 // it uses from outside, another may capture only duplicable bindings.
-fn lin_enter_arm(&mut c: Lin, eff: Text, start: Nat) -> () {
+pub fn lin_enter_arm(&mut c: Lin, eff: Text, start: Nat): Unit {
   if lin_is_direct(c, eff) {
     set_to(&mut c.arm_direct, Some(Pair { fst: start, snd: eff }))
-    set_to(&mut c.arm_floor, None())
+    set_to(&mut c.arm_floor, None)
   } else {
     set_to(&mut c.arm_floor, Some(start))
   }
 }
 
-fn lin_dump_errors(es: List(LinError)) -> List(Text) {
-  match es -> List(Text) {
+pub fn lin_dump_errors(es: List(LinError)): List(Text) {
+  match es: List(Text) {
     Nil => Nil
-    Cons(
-      e,
-      rest
-    ) => Cons(
+    Cons(e, rest) => Cons(
       dump_line(
         Cons(
           "error ",
           Cons(
-            text_of_nat(e.start),
-            Cons(" ", Cons(text_of_nat(e.end), Cons(" ", Cons(e.message, Nil))))
+            Text::of_nat(e.start),
+            Cons(" ", Cons(Text::of_nat(e.end), Cons(" ", Cons(e.message, Nil))))
           )
         )
       ),

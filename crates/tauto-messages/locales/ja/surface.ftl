@@ -1,0 +1,59 @@
+# The messages of reading a program (tauto-surface): syntax declarations,
+# modules, visibility, effect sets and quotes. `macro.…` codes stay as they are.
+
+surface-tables-missing = この syntax の表がない (文法 { $grammar }…)。`tauto syntax gen` を実行すること
+surface-tables-of-another-grammar = { $path } は別の文法の表である。`tauto syntax gen` を実行すること
+surface-grammar-not-par = syntax { $name } の文法は par という名前のブロックで書く
+surface-syntax-declared-twice = syntax { $name } が二度宣言されている
+surface-syntax-error = syntax { $name }: { $error }
+surface-syntax-generates-mismatch = syntax { $name }: 作るものの一覧が実際に作ったものと合わない
+surface-made-not-listed = { $before }。作ったが一覧にない: { $items }
+surface-listed-not-made = { $before }。一覧にあるが作っていない: { $items }
+surface-syntax-with-role = syntax { $name }: `with` が登録するのは `fmt` と `tokens` であり、`{ $role }` ではない
+surface-syntax-registered-twice = syntax { $name }: `{ $role }` が二度登録されている
+surface-not-a-syntax = `{ $name }` は syntax ではない
+surface-literal-needs-name = syntax リテラルには name`…` のように syntax の名前が要る。テキストには plaintext`…` と書くこと
+surface-expr-no-inductive = `${"{"}…{"}"}` には inductive の形がない (その終端記号は SynExpr を作る)
+surface-effect-set-generic = エフェクト集合 { $name } に型パラメータがある。エフェクト集合はまだ型パラメータを取らない
+surface-effect-set-names-itself = エフェクト集合 { $name } が自分自身を含む: { $path } -> { $name }
+surface-module-collides-with-class = module { $name } が class { $name } と衝突する
+surface-module-declared-twice = module { $name } が二度宣言されている
+surface-dot-names-a-declaration = `.` はフィールドの取り出しだけに使う。宣言の名前は `::` で書く：`{ $name }`
+surface-name-of-a-module = { $name } は module の名前である
+surface-block-indent = macro.block_indent: この行の字下げは { $lead }、閉じフェンスは { $indent } である
+surface-extern-rust-path = extern {"{"} … {"}"} と書くこと。rust のパスは Tauto.eure に書く
+surface-expected-one-expression = 式が一つであるべきだ
+surface-pub-before-statement = { $what }: `pub` と `pub(open)` は `fn`、`theorem`、`axiom`、`def`、`inductive`、`struct`、`enum`、`effect`、`class` の前に書く。`syntax`、`macro` などの文はどのファイルからも見える
+surface-the-file = ファイル `{ $file }`
+surface-the-prelude = prelude
+surface-names-and = { $before } と { $name }
+surface-ambiguous = `{ $name }` は曖昧である: { $names } として宣言されている。完全な名前を書くこと
+surface-ambiguous-prelude = `{ $name }` は曖昧である: { $names } として宣言されている。完全な名前を書くか、意図した宣言のあるファイルを import すること
+surface-ambiguous-constructor = `{ $name }` は曖昧である: 複数の型のコンストラクタ（{ $names }）で、ここで期待される型からはどれか決まらない。型を付けて `T.{ $name }` と書くこと
+surface-private = `{ $name }` は { $file } で private である。別のファイルから使うには、そこで宣言の前に `pub` を書くこと
+surface-sealed-constructor = `{ $name }` は `{ $ty }` のコンストラクタであり、{ $file } はこの型を `pub(open)` なしで宣言している: そのファイルの外では型は抽象的である。公開されている関数を使うこと
+surface-sealed-field = `{ $field }` は `{ $ty }` のフィールドであり、{ $file } はこの型を `pub(open)` なしで宣言している: そのファイルの外では型は抽象的である。公開されている関数を使うこと
+surface-sealed-effect = `{ $name }` は { $file } が `pub(open)` なしで宣言したエフェクトである: それを処理できるのはそのファイルだけだ。ここでは perform し、答えはそのファイルのハンドラに任せること
+surface-sealed-extern = `{ $name }` は tote { $tote } の extern であり、呼べるのは { $tote } だけだ。{ $tote } がそれを包んで書く関数を呼ぶこと
+surface-not-a-constructor-of = `{ $name }` は照合する値の型 `{ $ty }` のコンストラクタではない。{ $names } として宣言されている
+surface-quote-spread-expr = `{ $name }` はリストの値を展開するもので、リストが来る場所 (呼び出しの引数、λ のパラメータ、コンストラクタのパターンの引数、文) にだけ書ける
+surface-quote-spread-pattern = `{ $name }` はリストの値を展開するもので、リストが来る場所 (コンストラクタのパターンの引数) にだけ書ける
+surface-quote-splice-outside = $ は quote の中にだけ書ける
+surface-quote-float = Float リテラル { $literal } はマクロの構文木ではサポートされていない
+surface-quote-in-quote = quote の中に quote は書けない
+surface-quote-syntax-literal = quote の中に syntax リテラルは書けない。マクロを呼ぶこと
+surface-quote-step = quote の中に step は書けない
+surface-quote-row = quote の中にエフェクト行の引数は書けない
+surface-quote-product = quote の中にはまだ積を書けない
+surface-quote-other = quote の中にはまだ { $what } を書けない
+surface-quote-field-assign = マクロはまだフィールドへの代入 (`x.f := v`) を取れない
+surface-quote-statement = この文は quote の中に書けない
+surface-quote-pattern = パターン { $what } は quote の中に書けない
+surface-scope-extrusion = macro.scope_extrusion: アトム { $atom } が、それを開いた束縛子の外で使われている
+surface-bare-kind = 種別 `{ $kind }` は `{ $written }` と書く
+surface-old-effect-operation = effect の操作は `effect ask(question: Text): i64` と、引数を括弧に、結果の型を `:` の後ろに書く
+surface-row-variables = 行に書ける行変数は高々一つ
+surface-row-repeats-effect = 集合のリテラルに effect `{ $name }` が二度書かれている
+surface-raw-underscore = `r#_` は名前ではない：`_` は生の名前として書けない
+surface-syntax-macro-shape = `{ $macro }` は名前と文法のブロックを取り、関数を登録するときは `with(fmt: f, tokens: g)` を取る
+surface-match-scrutinee-ascription = 型つきの `match` の判別対象 `match (e: T): G` はまだ読めない。先に `let x: T := e` で束縛すること

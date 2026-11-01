@@ -1,0 +1,195 @@
+// The examples of docs/design/totebag.md and further cases of the policy,
+// checked by computing.
+
+import "../src/policy.taut"
+
+pub theorem tb_url_https(): tb_check_url("https://example.com/tauto/monorepo") = None { Refl }
+pub theorem tb_url_file(): tb_check_url("file:///srv/git/text.git") = None { Refl }
+pub theorem tb_url_http(): tb_check_url("http://github.com/a/b") = Some(UrlScheme) { Refl }
+pub theorem tb_url_credentials(): tb_check_url(
+  "https://user:pw@github.com/a/b"
+) = Some(UrlCredentials) { Refl }
+pub theorem tb_url_query(): tb_check_url("https://github.com/a/b?x=1") = Some(UrlQuery) { Refl }
+pub theorem tb_url_fragment(): tb_check_url("https://github.com/a/b#main") = Some(UrlQuery) { Refl }
+pub theorem tb_url_no_host(): tb_check_url("https://") = Some(UrlNoHost) { Refl }
+pub theorem tb_url_relative_file(): tb_check_url("file://relative/path") = Some(UrlFilePath) {
+  Refl
+}
+pub theorem tb_url_file_up(): tb_check_url("file:///srv/../etc") = Some(UrlFilePath) { Refl }
+pub theorem tb_url_scp(): tb_check_url("git@github.com:a/b") = Some(UrlScheme) { Refl }
+// Written another way than the URL Standard writes it.
+pub theorem tb_url_upper_host(): tb_check_url("https://GitHub.com/a/b") = Some(UrlNotNormal) {
+  Refl
+}
+pub theorem tb_url_dot_segment(): tb_check_url(
+  "https://github.com/a/./b"
+) = Some(UrlNotNormal) { Refl }
+pub theorem tb_url_default_port(): tb_check_url(
+  "https://github.com:443/a/b"
+) = Some(UrlNotNormal) { Refl }
+pub theorem tb_url_space(): tb_check_url("https://github.com/a b") = Some(UrlCharacters) { Refl }
+
+pub theorem tb_ref_main(): tb_check_ref("refs/heads/main") = true { Refl }
+pub theorem tb_ref_tag(): tb_check_ref("refs/tags/v1.0.0") = true { Refl }
+pub theorem tb_ref_nested(): tb_check_ref("refs/heads/release/1.x") = true { Refl }
+pub theorem tb_ref_short(): tb_check_ref("main") = false { Refl }
+pub theorem tb_ref_head(): tb_check_ref("HEAD") = false { Refl }
+pub theorem tb_ref_empty(): tb_check_ref("refs/heads/") = false { Refl }
+pub theorem tb_ref_remote(): tb_check_ref("refs/remotes/origin/main") = false { Refl }
+pub theorem tb_ref_range(): tb_check_ref("refs/heads/a..b") = false { Refl }
+pub theorem tb_ref_glob(): tb_check_ref("refs/heads/*") = false { Refl }
+pub theorem tb_ref_hidden(): tb_check_ref("refs/heads/.hidden") = false { Refl }
+pub theorem tb_ref_lock(): tb_check_ref("refs/heads/a.lock") = false { Refl }
+pub theorem tb_ref_double_slash(): tb_check_ref("refs/heads/a//b") = false { Refl }
+pub theorem tb_ref_reflog(): tb_check_ref("refs/heads/a@{1}") = false { Refl }
+pub theorem tb_ref_dot(): tb_check_ref("refs/heads/a.") = false { Refl }
+
+pub theorem tb_dir_root(): tb_check_dir("") = true { Refl }
+pub theorem tb_dir_one(): tb_check_dir("semver") = true { Refl }
+pub theorem tb_dir_two(): tb_check_dir("libs/text") = true { Refl }
+pub theorem tb_dir_marks(): tb_check_dir("a.b_c-d") = true { Refl }
+pub theorem tb_dir_absolute(): tb_check_dir("/abs") = false { Refl }
+pub theorem tb_dir_trailing(): tb_check_dir("a/") = false { Refl }
+pub theorem tb_dir_empty_component(): tb_check_dir("a//b") = false { Refl }
+pub theorem tb_dir_up(): tb_check_dir("..") = false { Refl }
+pub theorem tb_dir_through_up(): tb_check_dir("a/../b") = false { Refl }
+pub theorem tb_dir_here(): tb_check_dir(".") = false { Refl }
+pub theorem tb_dir_space(): tb_check_dir("a b") = false { Refl }
+pub theorem tb_dir_backslash(): tb_check_dir("a\\b") = false { Refl }
+
+pub theorem tb_rev_sha1(): tb_check_rev(
+  "sha1:0123456789abcdef0123456789abcdef01234567"
+) = true { Refl }
+pub theorem tb_rev_short(): tb_check_rev("sha1:0123") = false { Refl }
+pub theorem tb_rev_upper(): tb_check_rev(
+  "sha1:0123456789ABCDEF0123456789ABCDEF01234567"
+) = false { Refl }
+pub theorem tb_source_bare(): tb_check_source_id(
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+) = false { Refl }
+pub theorem tb_source_ok(): tb_check_source_id(
+  "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+) = true { Refl }
+
+pub theorem tb_name_ok(): tb_valid_name("semver-2") = true { Refl }
+pub theorem tb_name_digit(): tb_valid_name("2semver") = false { Refl }
+pub theorem tb_name_upper(): tb_valid_name("Semver") = false { Refl }
+
+pub theorem tb_path_ok(): tb_check_path("src/main.taut") = None { Refl }
+pub theorem tb_path_empty(): tb_check_path("") = Some(PathLength) { Refl }
+pub theorem tb_path_absolute(): tb_check_path("/etc/passwd") = Some(PathAbsolute) { Refl }
+pub theorem tb_path_up(): tb_check_path("a/../b") = Some(PathComponents) { Refl }
+pub theorem tb_path_backslash(): tb_check_path("a\\b") = Some(PathCharacters) { Refl }
+pub theorem tb_path_c1(): tb_check_path("a\u{85}b") = Some(PathCharacters) { Refl }
+
+// ---- the lock ----------------------------------------------------------------------
+
+fn semver(rev: Text): TbLocked {
+  MkLocked(
+    "semver",
+    "https://example.com/tauto/monorepo",
+    "refs/heads/main",
+    "semver",
+    None,
+    rev,
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  )
+}
+
+fn text_tote(): TbLocked {
+  MkLocked(
+    "text",
+    "file:///srv/git/text.git",
+    "refs/tags/v1",
+    "",
+    None,
+    "sha1:1111111111111111111111111111111111111111",
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  )
+}
+
+pub theorem tb_put_in_order(): tb_put(
+  Cons(text_tote(), Nil),
+  semver("sha1:0")
+) = Cons(semver("sha1:0"), Cons(text_tote(), Nil)) { Refl }
+pub theorem tb_put_replaces(): tb_put(
+  Cons(semver("sha1:0"), Nil),
+  semver("sha1:1")
+) = Cons(semver("sha1:1"), Nil) { Refl }
+
+pub theorem tb_render_sample(): tb_render(
+  Cons(semver("sha1:0123456789abcdef0123456789abcdef01234567"), Cons(text_tote(), Nil))
+) =
+"// Written by `tauto lock` and `tauto update`: the exact commit and content\n// of each tote fetched from Git. Commit it with the project.\nformat = 1\n\n@ totes[] {\n  name = \"semver\"\n  git = \"https://example.com/tauto/monorepo\"\n  ref = \"refs/heads/main\"\n  dir = \"semver\"\n  rev = \"sha1:0123456789abcdef0123456789abcdef01234567\"\n  source = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n}\n\n@ totes[] {\n  name = \"text\"\n  git = \"file:///srv/git/text.git\"\n  ref = \"refs/tags/v1\"\n  rev = \"sha1:1111111111111111111111111111111111111111\"\n  source = \"sha256:2222222222222222222222222222222222222222222222222222222222222222\"\n}\n" {
+  Refl
+}
+
+pub theorem tb_changes_sample(): tb_changes(
+  Cons(semver("sha1:0"), Cons(text_tote(), Nil)),
+  Cons(semver("sha1:1"), Nil),
+  Nil
+) = Cons(Moved(semver("sha1:0"), semver("sha1:1")), Cons(Removed(text_tote()), Nil)) { Refl }
+
+pub theorem tb_changes_unlocked_kept(): tb_changes(
+  Cons(text_tote(), Nil),
+  Nil,
+  Cons("text", Nil)
+) = Nil { Refl }
+pub theorem tb_changes_added(): tb_changes(
+  Nil,
+  Cons(text_tote(), Nil),
+  Nil
+) = Cons(Added(text_tote()), Nil) { Refl }
+
+pub theorem tb_plan_keep(): tb_plan(false, false, false, true, true) = KeepLocked { Refl }
+pub theorem tb_plan_refetch(): tb_plan(false, false, false, true, false) = FetchLocked { Refl }
+pub theorem tb_plan_offline_locked(): tb_plan(
+  false,
+  false,
+  true,
+  true,
+  false
+) = LockedNotFetched { Refl }
+pub theorem tb_plan_check_locked(): tb_plan(false, true, true, true, false) = KeepUnread { Refl }
+pub theorem tb_plan_update(): tb_plan(true, false, false, true, true) = FetchHead { Refl }
+pub theorem tb_plan_offline_new(): tb_plan(false, false, true, false, false) = NeedsNetwork { Refl }
+pub theorem tb_plan_check_new(): tb_plan(false, true, true, false, false) = ReportUnlocked { Refl }
+
+// ---- the paths of a tree -----------------------------------------------------------
+
+fn tp(p: Text, f: Text): TbTreePath { MkTreePath(p, f) }
+
+pub theorem tb_tree_ok(): tb_check_tree(
+  Cons(tp("src/a.taut", "src/a.taut"), Cons(tp("Tauto.eure", "tauto.eure"), Nil))
+) = None { Refl }
+pub theorem tb_tree_twice(): tb_check_tree(
+  Cons(tp("a", "a"), Cons(tp("a", "a"), Nil))
+) = Some(PathTwice("a")) { Refl }
+pub theorem tb_tree_case(): tb_check_tree(
+  Cons(tp("README", "readme"), Cons(tp("readme", "readme"), Nil))
+) = Some(PathCaseClash("README", "readme")) { Refl }
+pub theorem tb_tree_file_dir(): tb_check_tree(
+  Cons(tp("a/b", "a/b"), Cons(tp("A", "a"), Nil))
+) = Some(FileAndDirectory("A", "a/b")) { Refl }
+
+// ---- trust policies ----------------------------------------------------------------
+
+fn alice(): TbIndex { MkIndex("alice", "1", "https://example.org/alice/index", "refs/heads/main") }
+fn bob(): TbIndex { MkIndex("bob", "2", "https://example.org/bob/index", "refs/heads/main") }
+fn alice_mirror(): TbIndex {
+  MkIndex("mirror", "3", "https://example.org/alice/index", "refs/heads/main")
+}
+
+pub theorem tb_independent_ok(): tb_independent(Cons(alice(), Nil), Cons(bob(), Nil)) = None {
+  Refl
+}
+pub theorem tb_independent_same(): tb_independent(
+  Cons(alice(), Nil),
+  Cons(alice(), Nil)
+) = Some(NotIndependent("alice", "alice")) { Refl }
+pub theorem tb_independent_same_place(): tb_independent(
+  Cons(alice(), Nil),
+  Cons(alice_mirror(), Nil)
+) = Some(NotIndependent("mirror", "alice")) { Refl }
+pub theorem tb_twice_found(): tb_twice(Cons("a", Cons("b", Cons("a", Nil)))) = Some("a") { Refl }
+pub theorem tb_twice_none(): tb_twice(Cons("a", Cons("b", Nil))) = None { Refl }

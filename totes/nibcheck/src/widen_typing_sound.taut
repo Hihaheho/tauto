@@ -1,0 +1,46 @@
+import "substitution_freshness.taut"
+import "argument_sound.taut"
+
+pub theorem ck_handle_widen_typing_snapshot(
+  snapshot: Checker,
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  ordered: CkOrdered(c),
+  fresh: CheckerFresh(snapshot),
+  prior: TypingStateExt(snapshot, c)
+): TypingStateExt(snapshot, ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot)))) {
+  AndIntro(
+    ck_handle_widen_fresh_snapshot(snapshot, c, a, result, ordered, fresh, And::left(prior)),
+    type_records_trans(
+      snapshot,
+      c,
+      ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))),
+      And::right(prior),
+      And::right(
+        And::right(ck_handle_widen_run_frame_except(c, a, result, ck_next_of(snapshot), ordered))
+      )
+    )
+  )
+}
+pub theorem ck_handle_widen_preserves_arguments(
+  snapshot: Checker,
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  actual: List(Ty),
+  expected: List(Ty),
+  ordered: CkOrdered(c),
+  fresh: CheckerFresh(snapshot),
+  prior: TypingStateExt(snapshot, c),
+  arguments: ArgumentTypes(snapshot, actual, expected)
+): ArgumentTypes(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))), actual, expected) {
+  typing_state_arguments(
+    snapshot,
+    ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))),
+    ck_handle_widen_typing_snapshot(snapshot, c, a, result, ordered, fresh, prior),
+    actual,
+    expected,
+    arguments
+  )
+}

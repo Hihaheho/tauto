@@ -1,0 +1,202 @@
+import "signature_table_frame.taut"
+
+pub theorem fnt_ck_effect_param_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  p: Option(SurfaceTerm),
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_effect_param(c, e, p, generics)) {
+  match p: CkFnsFrame(c, ck_effect_param(c, e, p, generics)) {
+    None => Refl
+    Some(x) => fnt_frame_rewrap(c, ck_written(c, x, generics), fnt_ck_written_frame(c, x, generics))
+  }
+}
+
+pub theorem fnt_registration_effect_params_cons_ok(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_effect_params(rest, next, e, generics))
+): CkFnsFrame(c, registration_effect_params_cons(p, rest, c, e, generics)) {
+  fnt_frame_bind_ok(
+    Ty,
+    List(Ty),
+    c,
+    (head: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics)
+    ),
+    ck_effect_param(c, e, p, generics),
+    fnt_ck_effect_param_frame(c, e, p, generics),
+    head => c1 => fnt_frame_bind_ok(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics),
+      ih(c1),
+      tail => c2 => Refl
+    )
+  )
+}
+
+pub theorem fnt_ck_effect_params_frame(
+  ps: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_effect_params(ps, c, e, generics)) {
+  match ps: CkFnsFrame(c, ck_effect_params(ps, c, e, generics)) {
+    Nil => Refl
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(List(Ty), Checker)) => CkFnsFrame(c, z),
+      Eq::sym(registration_effect_params_unf(p, rest, c, e, generics)),
+      fnt_registration_effect_params_cons_ok(
+        p,
+        rest,
+        c,
+        e,
+        generics,
+        next => fnt_ck_effect_params_frame(rest, next, e, generics)
+      )
+    )
+  }
+}
+
+pub theorem fnt_registration_quant_parsed_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  q: Text,
+  o: Option(Quant)
+): CkFnsFrame(c, registration_quant_parsed(c, e, q, o)) {
+  match o: CkFnsFrame(c, registration_quant_parsed(c, e, q, o)) {
+    Some(x) => Refl
+    None => Refl
+  }
+}
+pub theorem fnt_registration_quant_resume_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  r#resume: Option(Text)
+): CkFnsFrame(c, registration_quant_resume(c, e, r#resume)) {
+  match r#resume: CkFnsFrame(c, registration_quant_resume(c, e, r#resume)) {
+    None => Refl
+    Some(q) => fnt_registration_quant_parsed_frame(c, e, q, quant_parse(q))
+  }
+}
+pub theorem fnt_ck_effect_quant_frame(
+  c: Checker,
+  e: SurfaceEffect
+): CkFnsFrame(c, ck_effect_quant(c, e)) {
+  Eq::subst(
+    (z: Mut1(Quant, Checker)) => CkFnsFrame(c, z),
+    Eq::sym(registration_quant_unf(c, e)),
+    fnt_registration_quant_resume_frame(c, e, registration_effect_resume(e))
+  )
+}
+
+pub theorem fnt_registration_effect_result_frame(
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  o: Option(SurfaceTerm)
+): CkFnsFrame(c, registration_effect_result_k(c, generics, o)) {
+  match o: CkFnsFrame(c, registration_effect_result_k(c, generics, o)) {
+    None => Refl
+    Some(r) => fnt_frame_rewrap(c, ck_written(c, r, generics), fnt_ck_written_frame(c, r, generics))
+  }
+}
+
+pub theorem fnt_ck_effect_result_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_effect_result(c, e, generics)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkFnsFrame(c, z),
+    Eq::sym(registration_effect_result_unf(c, e, generics)),
+    fnt_registration_effect_result_frame(c, generics, registration_effect_result(e))
+  )
+}
+
+pub theorem fnt_registration_effect_store_frame(
+  c: Checker,
+  e: SurfaceEffect,
+  params: List(Ty),
+  result: Ty,
+  quant: Quant
+): CkFnsFrame(c, registration_effect_store(c, e, params, result, quant)) { Refl }
+
+pub theorem fnt_registration_effect_declare_frame(
+  c: Checker,
+  e: SurfaceEffect
+): CkFnsFrame(c, registration_effect_declare(c, e)) {
+  fnt_frame_bind_ok(
+    List(Ty),
+    Unit,
+    c,
+    (params: List(Ty), c1: Checker) => frame_bind(
+      Ty,
+      Unit,
+      (result: Ty, c2: Checker) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), Ordmap::empty()))
+    ),
+    ck_effect_params(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), Ordmap::empty())
+    ),
+    fnt_ck_effect_params_frame(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), Ordmap::empty())
+    ),
+    params => c1 => fnt_frame_bind_ok(
+      Ty,
+      Unit,
+      c1,
+      (result: Ty, c2: Checker) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), Ordmap::empty())),
+      fnt_ck_effect_result_frame(
+        c1,
+        e,
+        ck_named_generics(registration_effect_generics(e), Ordmap::empty())
+      ),
+      result => c2 => fnt_frame_bind_ok(
+        Quant,
+        Unit,
+        c2,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e),
+        fnt_ck_effect_quant_frame(c2, e),
+        quant => c3 => fnt_registration_effect_store_frame(c3, e, params, result, quant)
+      )
+    )
+  )
+}
+
+pub theorem fnt_ck_declare_effect_frame(
+  c: Checker,
+  e: SurfaceEffect
+): CkFnsFrame(c, ck_declare_effect(c, e)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkFnsFrame(c, z),
+    Eq::sym(registration_effect_declare_unf(c, e)),
+    fnt_registration_effect_declare_frame(c, e)
+  )
+}

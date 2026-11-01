@@ -1,0 +1,131 @@
+import "prepare_body_recheck_sound.taut"
+import "run_data_names_sound.taut"
+
+pub def BodyPreparationReady(
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  c: Checker
+): Prop := And(
+  frame_under_borrow(c) = false,
+  And(
+    frame_constructor_position(c) = false,
+    ∀ fresh: UniqueDataNames(types_data_decls(program)). DataBodyRegistered(ck_datas_of(c), source)
+  )
+)
+pub fn body_prepare_fns_after(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker)
+): Mut1(List(Pair(SurfaceFn, Scheme)), Checker) {
+  frame_bind(
+    Unit,
+    List(Pair(SurfaceFn, Scheme)),
+    (ignored: Unit, next: Checker) => ck_prepare_fns(next, prelude, program, own),
+    m
+  )
+}
+pub theorem body_prepare_fns_after_sound(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  member: Mem(SurfaceData, source, types_data_decls(program)),
+  m: Mut1(Unit, Checker),
+  ready: ∀ accepted: DiagnosticClean(ck_st(m)). BodyPreparationReady(program, source, ck_st(m)),
+  clean: DiagnosticClean(ck_st(body_prepare_fns_after(prelude, program, own, m)))
+): DataBodyChecked(ck_datas_of(ck_st(body_prepare_fns_after(prelude, program, own, m))), source) {
+  match m: DataBodyChecked(
+    ck_datas_of(ck_st(body_prepare_fns_after(prelude, program, own, m))),
+    source
+  ) {
+    mut1(ignored, next) => {
+      let prepared: BodyPreparationReady(
+        program,
+        source,
+        next
+      ) := ready(ck_prepare_fns_frame_errors(next, prelude, program, own, clean))
+      ck_prepare_fns_body(
+        next,
+        prelude,
+        program,
+        own,
+        source,
+        member,
+        And::right(
+          And::right(prepared)
+        )(ck_prepare_fns_data_names_unique(next, prelude, program, own, clean)),
+        And::left(prepared),
+        And::left(And::right(prepared)),
+        clean
+      )
+    }
+  }
+}
+pub theorem body_prepare_data_ready(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  declared: DeclaresData(program, source),
+  clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
+): BodyPreparationReady(program, source, ck_st(ck_prepare_datas(c, prelude, program, own))) {
+  let context: written_context(ck_st(ck_prepare_datas(c, prelude, program, own))) = written_context(c) := ck_prepare_datas_context(c, prelude, program, own, ordinary, clean)
+  AndIntro(
+    Eq::trans(Eq::congr(written_context_borrow, context), ordinary),
+    AndIntro(
+      Eq::trans(Eq::congr(written_context_position, context), position),
+      fresh => ck_prepare_datas_bodies(
+        c,
+        prelude,
+        program,
+        own,
+        source,
+        ordered,
+        ordinary,
+        position,
+        declared,
+        fresh,
+        clean
+      )
+    )
+  )
+}
+pub theorem registration_all_body(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  declared: DeclaresData(program, source),
+  clean: DiagnosticClean(ck_st(registration_after_datas(c, prelude, program, own)))
+): DataBodyChecked(ck_datas_of(ck_st(registration_after_datas(c, prelude, program, own))), source) {
+  body_prepare_fns_after_sound(
+    prelude,
+    program,
+    own,
+    source,
+    declared_data_member(declared),
+    ck_prepare_datas(c, prelude, program, own),
+    accepted => body_prepare_data_ready(
+      c,
+      prelude,
+      program,
+      own,
+      source,
+      ordered,
+      ordinary,
+      position,
+      declared,
+      accepted
+    ),
+    clean
+  )
+}

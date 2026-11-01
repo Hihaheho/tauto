@@ -1,0 +1,31 @@
+import "program_data_presence_sound.taut"
+import "run_data_invariant_sound.taut"
+
+// Every top-level source declaration has an entry in the returned environment.
+// This does not identify that entry's fields with the source fields.
+pub theorem types_check_registers_data(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  d: SurfaceData,
+  declared: DeclaresData(program, d)
+): DataPresent(
+  summary_decls(finish_report_datas(types_check(prelude, program, errors))),
+  registration_name(d)
+) {
+  types_check_data_invariant(
+    (env: Datas) => DataPresent(summary_decls(env), registration_name(d)),
+    prelude,
+    program,
+    errors,
+    c => own => ordered => ck_prepare_datas_registers(
+      c,
+      prelude,
+      program,
+      own,
+      d,
+      ordered,
+      declared
+    )
+  )
+}

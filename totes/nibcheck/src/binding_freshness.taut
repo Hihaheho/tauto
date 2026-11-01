@@ -1,0 +1,182 @@
+import "substitution_freshness.taut"
+
+pub theorem fresh_rewrap<A: Type>(
+  m: Mut1(A, Checker),
+  fresh: CheckerFresh(ck_st(m))
+): CheckerFresh(ck_st(ck_rewrap1(m))) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => CheckerFresh(ck_st(result)),
+    Eq::sym(ck_rewrap1_id(m)),
+    fresh
+  )
+}
+pub theorem ck_bind_value_fresh(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_bind_value(c, v, t))) {
+  Bool::cases(
+    (flag: Bool) => CheckerFresh(ck_st(ck_bind_value_k(c, v, t, flag))),
+    ck_occurs(c, v, t),
+    ignored => ck_set_subst_preserves_freshness(c, v, t, ordered, below, fresh),
+    ignored => fresh
+  )
+}
+pub theorem ck_bind_other_fresh(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_bind_other(c, v, t))) {
+  Bool::cases(
+    (flag: Bool) => CheckerFresh(ck_st(ck_bind_other_k(c, v, t, flag))),
+    ck_is_int(c, v),
+    ignored => fresh_rewrap(
+      ck_bind_value(c, v, t),
+      ck_bind_value_fresh(c, v, t, ordered, below, fresh)
+    ),
+    ignored => fresh
+  )
+}
+pub theorem ck_var_set_fresh(
+  c: Checker,
+  v: Nat,
+  w: Nat,
+  flag: Bool,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) {
+  match flag: CheckerFresh(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) {
+    true => ck_set_subst_preserves_freshness(
+      ck_st(ck_add_int(c, w)),
+      v,
+      TyVar(w),
+      ordered,
+      below,
+      fresh
+    )
+    false => ck_set_subst_preserves_freshness(c, v, TyVar(w), ordered, below, fresh)
+  }
+}
+pub theorem ck_bind_var_fresh(
+  c: Checker,
+  v: Nat,
+  w: Nat,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_bind_var(c, v, w))) {
+  Bool::cases(
+    (flag: Bool) => CheckerFresh(ck_st(ck_bind_var_k(c, v, w, flag))),
+    Nat::eq(w, v),
+    ignored => ck_var_set_fresh(c, v, w, ck_is_int(c, v), ordered, below, fresh),
+    ignored => fresh
+  )
+}
+pub theorem ck_bind_unbound_fresh(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_bind_unbound(c, v, t))) {
+  match t: CheckerFresh(ck_st(ck_bind_unbound(c, v, t))) {
+    TyVar(w) => fresh_rewrap(
+      ck_bind_var(c, v, w),
+      ck_bind_var_fresh(c, v, w, ordered, below, fresh)
+    )
+    TyInt(width) => fresh_rewrap(
+      ck_bind_value(c, v, TyInt(width)),
+      ck_bind_value_fresh(c, v, TyInt(width), ordered, below, fresh)
+    )
+    TyBool => fresh_rewrap(
+      ck_bind_other(c, v, TyBool),
+      ck_bind_other_fresh(c, v, TyBool, ordered, below, fresh)
+    )
+    TyText => fresh_rewrap(
+      ck_bind_other(c, v, TyText),
+      ck_bind_other_fresh(c, v, TyText, ordered, below, fresh)
+    )
+    TyUnit => fresh_rewrap(
+      ck_bind_other(c, v, TyUnit),
+      ck_bind_other_fresh(c, v, TyUnit, ordered, below, fresh)
+    )
+    TyNever => fresh_rewrap(
+      ck_bind_other(c, v, TyNever),
+      ck_bind_other_fresh(c, v, TyNever, ordered, below, fresh)
+    )
+    TyDecimal => fresh_rewrap(
+      ck_bind_other(c, v, TyDecimal),
+      ck_bind_other_fresh(c, v, TyDecimal, ordered, below, fresh)
+    )
+    TyFloat => fresh_rewrap(
+      ck_bind_other(c, v, TyFloat),
+      ck_bind_other_fresh(c, v, TyFloat, ordered, below, fresh)
+    )
+    TyFn(ps, result, kind) => fresh_rewrap(
+      ck_bind_other(c, v, TyFn(ps, result, kind)),
+      ck_bind_other_fresh(c, v, TyFn(ps, result, kind), ordered, below, fresh)
+    )
+    TyUnion(members) => fresh_rewrap(
+      ck_bind_other(c, v, TyUnion(members)),
+      ck_bind_other_fresh(c, v, TyUnion(members), ordered, below, fresh)
+    )
+    TyProduct(members) => fresh_rewrap(
+      ck_bind_other(c, v, TyProduct(members)),
+      ck_bind_other_fresh(c, v, TyProduct(members), ordered, below, fresh)
+    )
+    TyTagged(tags, inner) => fresh_rewrap(
+      ck_bind_other(c, v, TyTagged(tags, inner)),
+      ck_bind_other_fresh(c, v, TyTagged(tags, inner), ordered, below, fresh)
+    )
+    TyNamed(name, params) => fresh_rewrap(
+      ck_bind_other(c, v, TyNamed(name, params)),
+      ck_bind_other_fresh(c, v, TyNamed(name, params), ordered, below, fresh)
+    )
+    TyParam(name, kind) => fresh_rewrap(
+      ck_bind_other(c, v, TyParam(name, kind)),
+      ck_bind_other_fresh(c, v, TyParam(name, kind), ordered, below, fresh)
+    )
+    TyInfo(inner) => fresh_rewrap(
+      ck_bind_other(c, v, TyInfo(inner)),
+      ck_bind_other_fresh(c, v, TyInfo(inner), ordered, below, fresh)
+    )
+    TyBorrow(inner, mutable) => fresh_rewrap(
+      ck_bind_other(c, v, TyBorrow(inner, mutable)),
+      ck_bind_other_fresh(c, v, TyBorrow(inner, mutable), ordered, below, fresh)
+    )
+    TyPoly(gs, inner) => fresh_rewrap(
+      ck_bind_other(c, v, TyPoly(gs, inner)),
+      ck_bind_other_fresh(c, v, TyPoly(gs, inner), ordered, below, fresh)
+    )
+    TyApp(head, arg) => fresh_rewrap(
+      ck_bind_other(c, v, TyApp(head, arg)),
+      ck_bind_other_fresh(c, v, TyApp(head, arg), ordered, below, fresh)
+    )
+  }
+}
+pub theorem ck_bind_fresh(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_bind(c, v, t))) {
+  Bool::cases(
+    (flag: Bool) => CheckerFresh(ck_st(ck_bind_k(c, v, t, flag))),
+    ck_is_bound(c, v),
+    ignored => fresh_rewrap(
+      ck_bind_unbound(c, v, t),
+      ck_bind_unbound_fresh(c, v, t, ordered, below, fresh)
+    ),
+    ignored => fresh
+  )
+}

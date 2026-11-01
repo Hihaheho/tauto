@@ -1,0 +1,568 @@
+import "checker_frame.taut"
+
+pub fn instantiation_name(g: Pair(Text, Kind)): Text { (g: Text) }
+pub fn instantiation_kind(g: Pair(Text, Kind)): Kind { (g: Kind) }
+pub fn instantiation_constraint(p: Pair(Text, Text)): Text { p.fst }
+pub fn instantiation_parameter(p: Pair(Text, Text)): Text { p.snd }
+pub fn instantiation_bound(
+  &mut c: Checker,
+  g: Pair(Text, Kind),
+  v: Ty,
+  name: Text,
+  span: TySpan,
+  arg: Option(Kind)
+): Unit {
+  match arg: Unit {
+    Some(k) => set_to(
+      &mut c.ctor_bounds,
+      Cons(
+        TyCtorBound { ty: v, arg: k, result: (g: Kind), what: name, start: span.start, end: span.end },
+        c.ctor_bounds
+      )
+    )
+    None => set_to(
+      &mut c.bounds,
+      Cons(TyBound { ty: v, kind: (g: Kind), start: span.start, end: span.end }, c.bounds)
+    )
+  }
+}
+pub theorem instantiation_bound_frame(
+  c: Checker,
+  g: Pair(Text, Kind),
+  v: Ty,
+  name: Text,
+  span: TySpan,
+  arg: Option(Kind)
+): CkReadFrame(c, instantiation_bound(c, g, v, name, span, arg)) {
+  match arg: CkReadFrame(c, instantiation_bound(c, g, v, name, span, arg)) { Some(k) => Refl
+    None => Refl }
+}
+
+pub fn instantiation_cons(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty)
+): Mut1(Ordmap(Text, Ty), Checker) {
+  frame_bind(
+    Ty,
+    Ordmap(Text, Ty),
+    (v: Ty, c1: Checker) => frame_bind(
+      Unit,
+      Ordmap(Text, Ty),
+      (ignored: Unit, c2: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          c2,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), v, Ordmap::compare_text)
+        )
+      ),
+      instantiation_bound(c1, g, v, name, span, ctor_arg_of(ctors, instantiation_name(g)))
+    ),
+    ck_fresh(c)
+  )
+}
+
+pub theorem instantiation_cons_frame(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. ∀ more: Ordmap(
+    Text,
+    Ty
+  ). CkReadFrame(next, ck_instantiate_map_ctors(rest, next, ctors, name, span, more))
+): CkReadFrame(c, instantiation_cons(g, rest, c, ctors, name, span, map)) {
+  frame_bind_ok(
+    Ty,
+    Ordmap(Text, Ty),
+    c,
+    (v: Ty, c1: Checker) => frame_bind(
+      Unit,
+      Ordmap(Text, Ty),
+      (ignored: Unit, c2: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          c2,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), v, Ordmap::compare_text)
+        )
+      ),
+      instantiation_bound(c1, g, v, name, span, ctor_arg_of(ctors, instantiation_name(g)))
+    ),
+    ck_fresh(c),
+    ck_fresh_frame(c),
+    v => c1 => frame_bind_ok(
+      Unit,
+      Ordmap(Text, Ty),
+      c1,
+      (ignored: Unit, c2: Checker) => ck_rewrap1(
+        ck_instantiate_map_ctors(
+          rest,
+          c2,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), v, Ordmap::compare_text)
+        )
+      ),
+      instantiation_bound(c1, g, v, name, span, ctor_arg_of(ctors, instantiation_name(g))),
+      instantiation_bound_frame(c1, g, v, name, span, ctor_arg_of(ctors, instantiation_name(g))),
+      ignored => c2 => frame_rewrap(
+        c2,
+        ck_instantiate_map_ctors(
+          rest,
+          c2,
+          ctors,
+          name,
+          span,
+          Ordmap::insert(map, instantiation_name(g), v, Ordmap::compare_text)
+        ),
+        ih(c2, Ordmap::insert(map, instantiation_name(g), v, Ordmap::compare_text))
+      )
+    )
+  )
+}
+
+pub theorem instantiation_cons_unf(
+  g: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty)
+): ck_instantiate_map_ctors(Cons(g, rest), c, ctors, name, span, map) = instantiation_cons(g, rest, c, ctors, name, span, map) { Refl }
+
+pub theorem ck_instantiate_map_ctors_frame(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+  match gs: CkReadFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+    Nil => Refl
+    Cons(g, rest) => Eq::subst(
+      (z: Mut1(Ordmap(Text, Ty), Checker)) => CkReadFrame(c, z),
+      Eq::sym(instantiation_cons_unf(g, rest, c, ctors, name, span, map)),
+      instantiation_cons_frame(
+        g,
+        rest,
+        c,
+        ctors,
+        name,
+        span,
+        map,
+        next => more => ck_instantiate_map_ctors_frame(rest, next, ctors, name, span, more)
+      )
+    )
+  }
+}
+pub theorem ck_instantiate_map_frame(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  span: TySpan,
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_instantiate_map(gs, c, span, map)) {
+  frame_rewrap(
+    c,
+    ck_instantiate_map_ctors(gs, c, Nil, "", span, map),
+    ck_instantiate_map_ctors_frame(gs, c, Nil, "", span, map)
+  )
+}
+pub theorem ck_pend_frame(
+  c: Checker,
+  r#class: Text,
+  t: Ty,
+  what: Text,
+  span: TySpan
+): CkReadFrame(c, ck_pend(c, r#class, t, what, span)) { Refl }
+
+pub fn instantiation_pred(
+  c: Checker,
+  p: Pair(Text, Text),
+  what: Text,
+  span: TySpan,
+  found: Option(Ty)
+): Mut1(Unit, Checker) {
+  match found: Mut1(Unit, Checker) {
+    None => mut1(Star, c)
+    Some(t) => ck_rewrap1(ck_pend(c, instantiation_constraint(p), t, what, span))
+  }
+}
+
+pub theorem instantiation_pred_frame(
+  c: Checker,
+  p: Pair(Text, Text),
+  what: Text,
+  span: TySpan,
+  found: Option(Ty)
+): CkReadFrame(c, instantiation_pred(c, p, what, span, found)) {
+  match found: CkReadFrame(c, instantiation_pred(c, p, what, span, found)) {
+    None => Refl
+    Some(t) => frame_rewrap(
+      c,
+      ck_pend(c, instantiation_constraint(p), t, what, span),
+      ck_pend_frame(c, instantiation_constraint(p), t, what, span)
+    )
+  }
+}
+
+pub fn instantiation_preds_cons(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_pend_preds(rest, c1, map, what, span)),
+    instantiation_pred(
+      c,
+      p,
+      what,
+      span,
+      Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text)
+    )
+  )
+}
+
+pub theorem instantiation_preds_cons_frame(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_pend_preds(rest, next, map, what, span))
+): CkReadFrame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_pend_preds(rest, c1, map, what, span)),
+    instantiation_pred(
+      c,
+      p,
+      what,
+      span,
+      Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text)
+    ),
+    instantiation_pred_frame(
+      c,
+      p,
+      what,
+      span,
+      Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text)
+    ),
+    ignored => c1 => frame_rewrap(c1, ck_pend_preds(rest, c1, map, what, span), ih(c1))
+  )
+}
+
+pub theorem instantiation_preds_cons_unf(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan
+): ck_pend_preds(Cons(p, rest), c, map, what, span) = instantiation_preds_cons(p, rest, c, map, what, span) { Refl }
+
+pub theorem ck_pend_preds_frame(
+  ps: List(Pair(Text, Text)),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan
+): CkReadFrame(c, ck_pend_preds(ps, c, map, what, span)) {
+  match ps: CkReadFrame(c, ck_pend_preds(ps, c, map, what, span)) {
+    Nil => Refl
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq::sym(instantiation_preds_cons_unf(p, rest, c, map, what, span)),
+      instantiation_preds_cons_frame(
+        p,
+        rest,
+        c,
+        map,
+        what,
+        span,
+        next => ck_pend_preds_frame(rest, next, map, what, span)
+      )
+    )
+  }
+}
+
+pub fn instantiation_named_cons(
+  g: Text,
+  rest: List(Text),
+  c: Checker,
+  map: Ordmap(Text, Ty)
+): Mut1(Ordmap(Text, Ty), Checker) {
+  frame_bind(
+    Ty,
+    Ordmap(Text, Ty),
+    (v: Ty, c1: Checker) => ck_rewrap1(
+      ck_instantiate_named_map(rest, c1, Ordmap::insert(map, g, v, Ordmap::compare_text))
+    ),
+    ck_fresh(c)
+  )
+}
+
+pub theorem instantiation_named_cons_frame(
+  g: Text,
+  rest: List(Text),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. ∀ more: Ordmap(
+    Text,
+    Ty
+  ). CkReadFrame(next, ck_instantiate_named_map(rest, next, more))
+): CkReadFrame(c, instantiation_named_cons(g, rest, c, map)) {
+  frame_bind_ok(
+    Ty,
+    Ordmap(Text, Ty),
+    c,
+    (v: Ty, c1: Checker) => ck_rewrap1(
+      ck_instantiate_named_map(rest, c1, Ordmap::insert(map, g, v, Ordmap::compare_text))
+    ),
+    ck_fresh(c),
+    ck_fresh_frame(c),
+    v => c1 => frame_rewrap(
+      c1,
+      ck_instantiate_named_map(rest, c1, Ordmap::insert(map, g, v, Ordmap::compare_text)),
+      ih(c1, Ordmap::insert(map, g, v, Ordmap::compare_text))
+    )
+  )
+}
+
+pub theorem instantiation_named_cons_unf(
+  g: Text,
+  rest: List(Text),
+  c: Checker,
+  map: Ordmap(Text, Ty)
+): ck_instantiate_named_map(Cons(g, rest), c, map) = instantiation_named_cons(g, rest, c, map) { Refl }
+
+pub theorem ck_instantiate_named_map_frame(
+  gs: List(Text),
+  c: Checker,
+  map: Ordmap(Text, Ty)
+): CkReadFrame(c, ck_instantiate_named_map(gs, c, map)) {
+  match gs: CkReadFrame(c, ck_instantiate_named_map(gs, c, map)) {
+    Nil => Refl
+    Cons(g, rest) => Eq::subst(
+      (z: Mut1(Ordmap(Text, Ty), Checker)) => CkReadFrame(c, z),
+      Eq::sym(instantiation_named_cons_unf(g, rest, c, map)),
+      instantiation_named_cons_frame(
+        g,
+        rest,
+        c,
+        map,
+        next => more => ck_instantiate_named_map_frame(rest, next, more)
+      )
+    )
+  }
+}
+
+pub fn instantiation_ck_instantiate(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  span: TySpan
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ordmap(Text, Ty),
+    Ty,
+    (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+    ck_instantiate_map(gs, c, span, Ordmap::empty())
+  )
+}
+
+pub theorem instantiation_ck_instantiate_frame(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  span: TySpan
+): CkReadFrame(c, instantiation_ck_instantiate(c, gs, t, span)) {
+  frame_bind_ok(
+    Ordmap(Text, Ty),
+    Ty,
+    c,
+    (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+    ck_instantiate_map(gs, c, span, Ordmap::empty()),
+    ck_instantiate_map_frame(gs, c, span, Ordmap::empty()),
+    map => c1 => Refl
+  )
+}
+
+pub theorem instantiation_ck_instantiate_unf(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  span: TySpan
+): ck_instantiate(c, gs, t, span) = instantiation_ck_instantiate(c, gs, t, span) { Refl }
+
+pub theorem ck_instantiate_frame(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  t: Ty,
+  span: TySpan
+): CkReadFrame(c, ck_instantiate(c, gs, t, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq::sym(instantiation_ck_instantiate_unf(c, gs, t, span)),
+    instantiation_ck_instantiate_frame(c, gs, t, span)
+  )
+}
+
+pub fn instantiation_ck_instantiate_named(c: Checker, gs: List(Text), t: Ty): Mut1(Ty, Checker) {
+  frame_bind(
+    Ordmap(Text, Ty),
+    Ty,
+    (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+    ck_instantiate_named_map(gs, c, Ordmap::empty())
+  )
+}
+
+pub theorem instantiation_ck_instantiate_named_frame(
+  c: Checker,
+  gs: List(Text),
+  t: Ty
+): CkReadFrame(c, instantiation_ck_instantiate_named(c, gs, t)) {
+  frame_bind_ok(
+    Ordmap(Text, Ty),
+    Ty,
+    c,
+    (map: Ordmap(Text, Ty), c1: Checker) => mut1(ty_substitute(t, map), c1),
+    ck_instantiate_named_map(gs, c, Ordmap::empty()),
+    ck_instantiate_named_map_frame(gs, c, Ordmap::empty()),
+    map => c1 => Refl
+  )
+}
+
+pub theorem instantiation_ck_instantiate_named_unf(
+  c: Checker,
+  gs: List(Text),
+  t: Ty
+): ck_instantiate_named(c, gs, t) = instantiation_ck_instantiate_named(c, gs, t) { Refl }
+
+pub theorem ck_instantiate_named_frame(
+  c: Checker,
+  gs: List(Text),
+  t: Ty
+): CkReadFrame(c, ck_instantiate_named(c, gs, t)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq::sym(instantiation_ck_instantiate_named_unf(c, gs, t)),
+    instantiation_ck_instantiate_named_frame(c, gs, t)
+  )
+}
+
+pub fn instantiation_scheme_generics(s: Scheme): List(Pair(Text, Kind)) { s.generics }
+
+pub fn instantiation_scheme_ctors(s: Scheme): List(Pair(Text, Kind)) { s.ctors }
+
+pub fn instantiation_scheme_preds(s: Scheme): List(Pair(Text, Text)) { s.preds }
+
+pub fn instantiation_scheme_ty(s: Scheme): Ty { s.ty }
+
+pub fn instantiation_scheme(c: Checker, name: Text, s: Scheme, span: TySpan): Mut1(Ty, Checker) {
+  frame_bind(
+    Ordmap(Text, Ty),
+    Ty,
+    (map: Ordmap(Text, Ty), c1: Checker) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span)
+    ),
+    ck_instantiate_map_ctors(
+      instantiation_scheme_generics(s),
+      c,
+      instantiation_scheme_ctors(s),
+      name,
+      span,
+      Ordmap::empty()
+    )
+  )
+}
+
+pub theorem instantiation_scheme_frame(
+  c: Checker,
+  name: Text,
+  s: Scheme,
+  span: TySpan
+): CkReadFrame(c, instantiation_scheme(c, name, s, span)) {
+  frame_bind_ok(
+    Ordmap(Text, Ty),
+    Ty,
+    c,
+    (map: Ordmap(Text, Ty), c1: Checker) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span)
+    ),
+    ck_instantiate_map_ctors(
+      instantiation_scheme_generics(s),
+      c,
+      instantiation_scheme_ctors(s),
+      name,
+      span,
+      Ordmap::empty()
+    ),
+    ck_instantiate_map_ctors_frame(
+      instantiation_scheme_generics(s),
+      c,
+      instantiation_scheme_ctors(s),
+      name,
+      span,
+      Ordmap::empty()
+    ),
+    map => c1 => frame_bind_ok(
+      Unit,
+      Ty,
+      c1,
+      (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
+      ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span),
+      ck_pend_preds_frame(instantiation_scheme_preds(s), c1, map, name, span),
+      ignored => c2 => Refl
+    )
+  )
+}
+
+pub theorem instantiation_scheme_unf(
+  c: Checker,
+  name: Text,
+  s: Scheme,
+  span: TySpan
+): ck_instantiate_scheme(c, name, s, span) = instantiation_scheme(c, name, s, span) { Refl }
+
+pub theorem ck_instantiate_scheme_frame(
+  c: Checker,
+  name: Text,
+  s: Scheme,
+  span: TySpan
+): CkReadFrame(c, ck_instantiate_scheme(c, name, s, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq::sym(instantiation_scheme_unf(c, name, s, span)),
+    instantiation_scheme_frame(c, name, s, span)
+  )
+}

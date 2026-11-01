@@ -1,0 +1,113 @@
+import "run_summary.taut"
+import "body_checked_sound.taut"
+import "prepare_error_sound.taut"
+
+pub theorem run_after_datas_frame_checked(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, run_after_datas(c, prelude, program, own)) {
+  checked_frame_bind(
+    List(Pair(SurfaceFn, Scheme)),
+    Unit,
+    c,
+    (fns: List(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
+      Unit,
+      Unit,
+      (checked: Unit, c2: Checker) => inference_bind_scope(
+        Unit,
+        Unit,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil))
+      ),
+      ck_check_fns(fns, c1)
+    ),
+    ck_prepare_fns(c, prelude, program, own),
+    checked_frame_read(
+      c,
+      ck_prepare_fns(c, prelude, program, own),
+      ck_prepare_fns_frame(c, prelude, program, own),
+      ck_prepare_fns_frame_errors(c, prelude, program, own),
+      ordered
+    ),
+    fns => c1 => o_c1 => checked_frame_bind(
+      Unit,
+      Unit,
+      c1,
+      (checked: Unit, c2: Checker) => inference_bind_scope(
+        Unit,
+        Unit,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil))
+      ),
+      ck_check_fns(fns, c1),
+      ck_check_fns_frame_checked(fns, c1, o_c1),
+      checked => c2 => o_c2 => inference_bind_scope_frame_checked(
+        Unit,
+        Unit,
+        c2,
+        (finished: Unit, c3: Checker, env: Scope) => mut1(finished, c3),
+        ck_top_level(program, c2, ScopeMk(Nil)),
+        ck_top_level_frame_checked(program, c2, ScopeMk(Nil), o_c2),
+        finished => c3 => env => o_c3 => checked_frame_return(c3, finished, o_c3)
+      )
+    )
+  )
+}
+
+pub theorem run_after_data_result_ordered(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(run_after_data_result(prelude, program, own, m))) {
+  match m: CkOrdered(ck_st(run_after_data_result(prelude, program, own, m))) {
+    mut1(value, next) => And::left(
+      run_after_datas_frame_checked(next, prelude, program, own, ordered)
+    )
+  }
+}
+
+pub theorem run_after_builtins_ordered(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(run_after_builtins(prelude, program, m))) {
+  match m: CkOrdered(ck_st(run_after_builtins(prelude, program, m))) {
+    mut1(value, next) => run_after_data_result_ordered(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      ck_prepare_datas_subst_ordered(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem ck_run_ordered(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_run(c, prelude, program))) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => CkOrdered(ck_st(m)),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_after_builtins_ordered(
+      prelude,
+      program,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered)
+    )
+  )
+}

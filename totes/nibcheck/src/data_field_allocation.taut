@@ -1,0 +1,247 @@
+import "fresh_allocation_sound.taut"
+
+pub fn allocation_field_ty(field: DataField): Ty { field.ty }
+pub fn FieldsAllocated(limit: Nat, fields: List(DataField)): Prop {
+  match fields: Prop { Nil => True
+    Cons(head, tail) => And(
+      TypeAllocated(limit, allocation_field_ty(head)),
+      FieldsAllocated(limit, tail)
+    ) }
+}
+pub fn allocation_ctor_fields(ctor: DataCtor): List(DataField) { ctor.fields }
+pub fn CtorsAllocated(limit: Nat, ctors: List(DataCtor)): Prop {
+  match ctors: Prop { Nil => True
+    Cons(head, tail) => And(
+      FieldsAllocated(limit, allocation_ctor_fields(head)),
+      CtorsAllocated(limit, tail)
+    ) }
+}
+pub fn allocation_data_ctors(data: Data): List(DataCtor) { data.constructors }
+pub fn allocation_data_generics(data: Data): List(Text) { data.generics }
+pub fn OptionDataAllocated(limit: Nat, found: Option(Data)): Prop {
+  match found: Prop { None => True
+    Some(data) => CtorsAllocated(limit, allocation_data_ctors(data)) }
+}
+pub def DatasAllocated(
+  limit: Nat,
+  datas: Datas
+): Prop := ∀ name: Text. OptionDataAllocated(limit, datas_decl(datas, name))
+pub theorem fields_allocated_weaken(
+  fields: List(DataField),
+  before: Nat,
+  after: Nat,
+  advanced: Nat::le(before, after) = true,
+  h: FieldsAllocated(before, fields)
+): FieldsAllocated(after, fields) {
+  match fields: FieldsAllocated(after, fields) { Nil => Trivial
+    Cons(head, tail) => AndIntro(
+      type_allocated_weaken(allocation_field_ty(head), before, after, advanced, And::left(h)),
+      fields_allocated_weaken(tail, before, after, advanced, And::right(h))
+    ) }
+}
+pub theorem ctors_allocated_weaken(
+  ctors: List(DataCtor),
+  before: Nat,
+  after: Nat,
+  advanced: Nat::le(before, after) = true,
+  h: CtorsAllocated(before, ctors)
+): CtorsAllocated(after, ctors) {
+  match ctors: CtorsAllocated(after, ctors) { Nil => Trivial
+    Cons(head, tail) => AndIntro(
+      fields_allocated_weaken(allocation_ctor_fields(head), before, after, advanced, And::left(h)),
+      ctors_allocated_weaken(tail, before, after, advanced, And::right(h))
+    ) }
+}
+pub theorem option_data_allocated_weaken(
+  found: Option(Data),
+  before: Nat,
+  after: Nat,
+  advanced: Nat::le(before, after) = true,
+  h: OptionDataAllocated(before, found)
+): OptionDataAllocated(after, found) {
+  match found: OptionDataAllocated(after, found) { None => Trivial
+    Some(data) => ctors_allocated_weaken(allocation_data_ctors(data), before, after, advanced, h) }
+}
+pub theorem datas_allocated_weaken(
+  datas: Datas,
+  before: Nat,
+  after: Nat,
+  advanced: Nat::le(before, after) = true,
+  h: DatasAllocated(before, datas)
+): DatasAllocated(after, datas) {
+  name => option_data_allocated_weaken(datas_decl(datas, name), before, after, advanced, h(name))
+}
+pub theorem data_instance_from_allocated(
+  gs: List(Text),
+  args: List(Ty),
+  limit: Nat,
+  map: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(limit, map),
+  bounded: TypeListAllocated(limit, args)
+): RigidMapAllocation(limit, data_instance_from(gs, args, map)) {
+  match gs: RigidMapAllocation(limit, data_instance_from(gs, args, map)) {
+    Nil => AndIntro(ordered, values)
+    Cons(name, rest) => match args: RigidMapAllocation(
+      limit,
+      data_instance_from(Cons(name, rest), args, map)
+    ) {
+      Nil => AndIntro(ordered, values)
+      Cons(value, more) => data_instance_from_allocated(
+        rest,
+        more,
+        limit,
+        Ordmap::insert(map, name, value, Ordmap::compare_text),
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          map,
+          name,
+          value,
+          ordered
+        ),
+        generic_map_insert_allocated(limit, map, name, value, ordered, And::left(bounded), values),
+        And::right(bounded)
+      )
+    }
+  }
+}
+pub theorem data_instance_allocated(
+  data: Data,
+  args: List(Ty),
+  limit: Nat,
+  bounded: TypeListAllocated(limit, args)
+): RigidMapAllocation(limit, data_instance(data, args)) {
+  data_instance_from_allocated(
+    allocation_data_generics(data),
+    args,
+    limit,
+    Ordmap::empty(),
+    Trivial,
+    generic_map_allocation_empty(limit),
+    bounded
+  )
+}
+pub theorem substituted_fields_allocated(
+  fields: List(DataField),
+  limit: Nat,
+  map: Ordmap(Text, Ty),
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  values: GenericMapAllocated(limit, map),
+  bounded: FieldsAllocated(limit, fields)
+): FieldsAllocated(limit, substituted_fields(fields, map)) {
+  match fields: FieldsAllocated(limit, substituted_fields(fields, map)) {
+    Nil => Trivial
+    Cons(head, tail) => AndIntro(
+      allocated_substitute(
+        allocation_field_ty(head),
+        limit,
+        map,
+        ordered,
+        values,
+        And::left(bounded)
+      ),
+      substituted_fields_allocated(tail, limit, map, ordered, values, And::right(bounded))
+    )
+  }
+}
+pub fn OptionCtorAllocated(limit: Nat, found: Option(DataCtor)): Prop {
+  match found: Prop { None => True
+    Some(ctor) => FieldsAllocated(limit, allocation_ctor_fields(ctor)) }
+}
+pub theorem nth_ctor_allocated(
+  ctors: List(DataCtor),
+  index: Nat,
+  limit: Nat,
+  bounded: CtorsAllocated(limit, ctors)
+): OptionCtorAllocated(limit, nth_item(ctors, index)) {
+  match ctors: OptionCtorAllocated(limit, nth_item(ctors, index)) {
+    Nil => Trivial
+    Cons(head, tail) => match index: OptionCtorAllocated(
+      limit,
+      nth_item(Cons(head, tail), index)
+    ) { Zero => And::left(bounded)
+      Succ(previous) => nth_ctor_allocated(tail, previous, limit, And::right(bounded)) }
+  }
+}
+pub fn allocation_fields_ctor(
+  data: Data,
+  args: List(Ty),
+  found: Option(DataCtor)
+): List(DataField) {
+  match found: List(DataField) { None => Nil
+    Some(ctor) => substituted_fields(ctor.fields, data_instance(data, args)) }
+}
+pub fn allocation_fields_decl(index: Nat, args: List(Ty), found: Option(Data)): List(DataField) {
+  match found: List(DataField) { None => Nil
+    Some(data) => allocation_fields_ctor(data, args, nth_item(data.constructors, index)) }
+}
+pub theorem allocation_fields_ctor_ok(
+  data: Data,
+  args: List(Ty),
+  limit: Nat,
+  bounded: TypeListAllocated(limit, args),
+  found: Option(DataCtor),
+  fields: OptionCtorAllocated(limit, found)
+): FieldsAllocated(limit, allocation_fields_ctor(data, args, found)) {
+  match found: FieldsAllocated(limit, allocation_fields_ctor(data, args, found)) {
+    None => Trivial
+    Some(ctor) => substituted_fields_allocated(
+      allocation_ctor_fields(ctor),
+      limit,
+      data_instance(data, args),
+      And::left(data_instance_allocated(data, args, limit, bounded)),
+      And::right(data_instance_allocated(data, args, limit, bounded)),
+      fields
+    )
+  }
+}
+pub theorem allocation_fields_decl_ok(
+  index: Nat,
+  args: List(Ty),
+  limit: Nat,
+  bounded: TypeListAllocated(limit, args),
+  found: Option(Data),
+  declaration: OptionDataAllocated(limit, found)
+): FieldsAllocated(limit, allocation_fields_decl(index, args, found)) {
+  match found: FieldsAllocated(limit, allocation_fields_decl(index, args, found)) {
+    None => Trivial
+    Some(data) => allocation_fields_ctor_ok(
+      data,
+      args,
+      limit,
+      bounded,
+      nth_item(allocation_data_ctors(data), index),
+      nth_ctor_allocated(allocation_data_ctors(data), index, limit, declaration)
+    )
+  }
+}
+pub theorem datas_fields_allocated(
+  datas: Datas,
+  name: Text,
+  index: Nat,
+  args: List(Ty),
+  limit: Nat,
+  declarations: DatasAllocated(limit, datas),
+  bounded: TypeListAllocated(limit, args)
+): FieldsAllocated(limit, datas_fields(datas, name, index, args)) {
+  allocation_fields_decl_ok(
+    index,
+    args,
+    limit,
+    bounded,
+    datas_decl(datas, name),
+    declarations(name)
+  )
+}
+pub theorem field_tys_allocated(
+  fields: List(DataField),
+  limit: Nat,
+  bounded: FieldsAllocated(limit, fields)
+): TypeListAllocated(limit, field_tys(fields)) {
+  match fields: TypeListAllocated(limit, field_tys(fields)) { Nil => Trivial
+    Cons(head, tail) => AndIntro(
+      And::left(bounded),
+      field_tys_allocated(tail, limit, And::right(bounded))
+    ) }
+}

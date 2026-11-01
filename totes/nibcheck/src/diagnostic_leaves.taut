@@ -1,0 +1,381 @@
+import "finish_obligations.taut"
+pub fn DiagnosticLiteralType(l: TyLiteral, t: Ty): Prop { match t: Prop {
+    TyInt(pat_w) => width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l)) = true
+    TyBool => False
+    TyText => False
+    TyUnit => False
+    TyNever => False
+    TyDecimal => False
+    TyFloat => False
+    TyFn(pat_params, pat_result, pat_kind) => False
+    TyUnion(pat_members) => False
+    TyProduct(pat_members) => False
+    TyTagged(pat_tags, pat_inner) => False
+    TyNamed(pat_name, pat_args) => False
+    TyParam(pat_name, pat_bound) => False
+    TyInfo(pat_inner) => False
+    TyBorrow(pat_inner, pat_mutable) => False
+    TyVar(pat_v) => False
+    TyPoly(pat_generics, pat_inner) => False
+    TyApp(pat_head, pat_arg) => False
+  } }
+pub def DiagnosticLiteral(
+  c: Checker,
+  l: TyLiteral
+): Prop := DiagnosticLiteralType(l, ck_resolve(c, finish_literal_ty(l)))
+pub theorem diagnostic_literal_step(
+  c: Checker,
+  l: TyLiteral,
+  t: Ty,
+  clean: DiagnosticClean(ck_st(finish_literal(c, l, t)))
+): And(
+  DiagnosticLiteralType(l, t),
+  finish_literal(c, l, t) = mut1(Star, c)
+) { match t: And(
+  DiagnosticLiteralType(l, t),
+  finish_literal(c, l, t) = mut1(Star, c)
+) {
+    TyInt(pat_w) => { let accepted: And(
+      not(width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l))) = false,
+      frame_error_if(
+          c,
+          cat3(literal_text(l), " does not fit ", ty_show(TyInt(pat_w))),
+          finish_literal_span(l),
+          not(width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l)))
+        ) = mut1(Star, c)
+    ) := diagnostic_if_sound(
+      c,
+      cat3(literal_text(l), " does not fit ", ty_show(TyInt(pat_w))),
+      finish_literal_span(l),
+      not(width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l))),
+      clean
+    )
+      AndIntro(
+        diagnostic_not_no(
+          width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l)),
+          And::left(accepted)
+        ),
+        And::right(accepted)
+      ) }
+    TyBool => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyText => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyUnit => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyNever => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyDecimal => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyFloat => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyFn(pat_params, pat_result, pat_kind) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyUnion(pat_members) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyProduct(pat_members) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyTagged(pat_tags, pat_inner) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyNamed(pat_name, pat_args) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyParam(pat_name, pat_bound) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyInfo(pat_inner) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyBorrow(pat_inner, pat_mutable) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyVar(pat_v) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyPoly(pat_generics, pat_inner) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+    TyApp(pat_head, pat_arg) => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "an integer literal has no integer type",
+        finish_literal_span(l),
+        clean
+      )
+    )
+  } }
+pub theorem ck_check_literal_accepts(
+  c: Checker,
+  l: TyLiteral,
+  clean: DiagnosticClean(ck_st(ck_check_literal(c, l)))
+): And(DiagnosticLiteral(c, l), ck_check_literal(c, l) = mut1(Star, c)) {
+  let accepted: And(
+    DiagnosticLiteral(c, l),
+    finish_literal(c, l, ck_resolve(c, finish_literal_ty(l))) = mut1(Star, c)
+  ) := diagnostic_literal_step(
+    c,
+    l,
+    ck_resolve(c, finish_literal_ty(l)),
+    Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), finish_literal_unf(c, l), clean)
+  )
+  AndIntro(And::left(accepted), Eq::trans(finish_literal_unf(c, l), And::right(accepted)))
+}
+pub theorem diagnostic_class_step(
+  c: Checker,
+  p: TyPending,
+  r: Unresolved,
+  clean: DiagnosticClean(ck_st(finish_class(c, p, r)))
+): And(
+  r = UnresolvedNone,
+  finish_class(c, p, r) = mut1(Star, c)
+) { match r: And(
+  r = UnresolvedNone,
+  finish_class(c, p, r) = mut1(Star, c)
+) {
+    UnresolvedNone => AndIntro(Refl, Refl)
+    UnresolvedUndetermined => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    UnresolvedAssumption(shown) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    UnresolvedNoInstance(shown) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+  } }
+pub def DiagnosticClass(
+  c: Checker,
+  p: TyPending
+): Prop := ck_resolve_class(c, finish_pending_class(p), finish_pending_ty(p), finish_pending_assume(p)) = UnresolvedNone
+pub theorem ck_check_class_pending_accepts(
+  c: Checker,
+  p: TyPending,
+  clean: DiagnosticClean(ck_st(ck_check_class_pending(c, p)))
+): And(DiagnosticClass(c, p), ck_check_class_pending(c, p) = mut1(Star, c)) {
+  let accepted: And(
+    DiagnosticClass(c, p),
+    finish_class(
+        c,
+        p,
+        ck_resolve_class(c, finish_pending_class(p), finish_pending_ty(p), finish_pending_assume(p))
+      ) = mut1(Star, c)
+  ) := diagnostic_class_step(
+    c,
+    p,
+    ck_resolve_class(c, finish_pending_class(p), finish_pending_ty(p), finish_pending_assume(p)),
+    Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), finish_class_unf(c, p), clean)
+  )
+  AndIntro(And::left(accepted), Eq::trans(finish_class_unf(c, p), And::right(accepted)))
+}
+
+pub fn DiagnosticConstructorType(c: Checker, b: TyCtorBound, made: Option(Ty)): Prop {
+  match made: Prop { None => True
+    Some(m) => kind_fits(ck_kind(c, m), finish_ctor_result(b)) = true }
+}
+pub def DiagnosticConstructor(
+  c: Checker,
+  b: TyCtorBound
+): Prop := DiagnosticConstructorType(
+  c,
+  b,
+  finish_ctor_made(b, ck_resolve(c, finish_ctor_ty(b)), ck_resolve(c, finish_ctor_ty(b)))
+)
+pub theorem diagnostic_constructor_step(
+  c: Checker,
+  b: TyCtorBound,
+  made: Option(Ty),
+  clean: DiagnosticClean(ck_st(finish_ctor(c, b, made)))
+): And(
+  DiagnosticConstructorType(c, b, made),
+  finish_ctor(c, b, made) = mut1(Star, c)
+) {
+  match made: And(
+    DiagnosticConstructorType(c, b, made),
+    finish_ctor(c, b, made) = mut1(Star, c)
+  ) {
+    None => AndIntro(Trivial, Refl)
+    Some(m) => {
+      let accepted: And(
+        not(kind_fits(ck_kind(c, m), finish_ctor_result(b))) = false,
+        finish_ctor(c, b, Some(m)) = mut1(Star, c)
+      ) := diagnostic_if_sound(
+        c,
+        cat5(
+          finish_ctor_what(b),
+          cat4(
+            " takes constructors from ",
+            kind_name(finish_ctor_arg(b)),
+            " to ",
+            kind_name(finish_ctor_result(b))
+          ),
+          ", and ",
+          ty_show(ck_shown(c, m)),
+          cat2(" is ", kind_name(ck_kind(c, m)))
+        ),
+        finish_ctor_span(b),
+        not(kind_fits(ck_kind(c, m), finish_ctor_result(b))),
+        clean
+      )
+      AndIntro(
+        diagnostic_not_no(kind_fits(ck_kind(c, m), finish_ctor_result(b)), And::left(accepted)),
+        And::right(accepted)
+      )
+    }
+  }
+}
+pub theorem ck_check_ctor_bound_accepts(
+  c: Checker,
+  b: TyCtorBound,
+  clean: DiagnosticClean(ck_st(ck_check_ctor_bound(c, b)))
+): And(
+  DiagnosticConstructor(c, b),
+  ck_check_ctor_bound(c, b) = mut1(Star, c)
+) {
+  let accepted: And(
+    DiagnosticConstructor(c, b),
+    finish_ctor(
+        c,
+        b,
+        finish_ctor_made(b, ck_resolve(c, finish_ctor_ty(b)), ck_resolve(c, finish_ctor_ty(b)))
+      ) = mut1(Star, c)
+  ) := diagnostic_constructor_step(
+    c,
+    b,
+    finish_ctor_made(b, ck_resolve(c, finish_ctor_ty(b)), ck_resolve(c, finish_ctor_ty(b))),
+    Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), finish_ctor_unf(c, b), clean)
+  )
+  AndIntro(And::left(accepted), Eq::trans(finish_ctor_unf(c, b), And::right(accepted)))
+}
+
+pub fn DiagnosticPendingKind(c: Checker, p: TyPending, nonstructural: Bool): Prop {
+  match nonstructural: Prop { true => DiagnosticClass(c, p)
+    false => finish_pending_bad(c, p) = false }
+}
+pub def DiagnosticPending(
+  c: Checker,
+  p: TyPending
+): Prop := DiagnosticPendingKind(c, p, not(class_is_structural(finish_pending_class(p))))
+pub theorem diagnostic_pending_step(
+  c: Checker,
+  p: TyPending,
+  nonstructural: Bool,
+  clean: DiagnosticClean(ck_st(finish_pending(c, p, nonstructural)))
+): And(
+  DiagnosticPendingKind(c, p, nonstructural),
+  finish_pending(c, p, nonstructural) = mut1(Star, c)
+) {
+  match nonstructural: And(
+    DiagnosticPendingKind(c, p, nonstructural),
+    finish_pending(c, p, nonstructural) = mut1(Star, c)
+  ) {
+    true => {
+      let accepted: And(
+        DiagnosticClass(c, p),
+        ck_check_class_pending(c, p) = mut1(Star, c)
+      ) := ck_check_class_pending_accepts(
+        c,
+        p,
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          ck_rewrap1_id(ck_check_class_pending(c, p)),
+          clean
+        )
+      )
+      AndIntro(
+        And::left(accepted),
+        Eq::trans(ck_rewrap1_id(ck_check_class_pending(c, p)), And::right(accepted))
+      )
+    }
+    false => diagnostic_if_sound(
+      c,
+      finish_pending_message(c, p),
+      finish_pending_span(p),
+      finish_pending_bad(c, p),
+      clean
+    )
+  }
+}

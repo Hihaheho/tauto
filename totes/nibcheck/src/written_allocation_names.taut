@@ -1,0 +1,169 @@
+import "control_allocation_sound.taut"
+import "written_sound.taut"
+
+pub theorem written_name_option_allocated(
+  ty: Ty,
+  rest: Option(Ty),
+  limit: Nat,
+  bounded: TypeAllocated(limit, ty),
+  tail: OptionTypeAllocated(limit, rest),
+  flag: Bool
+): OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) {
+  match flag: OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) {
+    true => bounded
+    false => tail }
+}
+pub theorem primitive_type_name_allocated(
+  name: Text,
+  limit: Nat
+): OptionTypeAllocated(limit, primitive_type_name(name)) {
+  let o0: Option(Ty) := None
+  let h0: OptionTypeAllocated(limit, o0) := Trivial
+  let o1: Option(Ty) := written_name_choose_option(TyFloat, o0, Text::eq(name, "Float"))
+  let h1: OptionTypeAllocated(
+    limit,
+    o1
+  ) := written_name_option_allocated(TyFloat, o0, limit, Trivial, h0, Text::eq(name, "Float"))
+  let o2: Option(Ty) := written_name_choose_option(TyDecimal, o1, Text::eq(name, "Decimal"))
+  let h2: OptionTypeAllocated(
+    limit,
+    o2
+  ) := written_name_option_allocated(TyDecimal, o1, limit, Trivial, h1, Text::eq(name, "Decimal"))
+  let o3: Option(Ty) := written_name_choose_option(TyNever, o2, Text::eq(name, "Never"))
+  let h3: OptionTypeAllocated(
+    limit,
+    o3
+  ) := written_name_option_allocated(TyNever, o2, limit, Trivial, h2, Text::eq(name, "Never"))
+  let o4: Option(Ty) := written_name_choose_option(TyText, o3, Text::eq(name, "Text"))
+  let h4: OptionTypeAllocated(
+    limit,
+    o4
+  ) := written_name_option_allocated(TyText, o3, limit, Trivial, h3, Text::eq(name, "Text"))
+  let o5: Option(Ty) := written_name_choose_option(TyBool, o4, Text::eq(name, "Bool"))
+  let h5: OptionTypeAllocated(
+    limit,
+    o5
+  ) := written_name_option_allocated(TyBool, o4, limit, Trivial, h4, Text::eq(name, "Bool"))
+  let o6: Option(Ty) := written_name_choose_option(TyInt(WidthU64), o5, Text::eq(name, "u64"))
+  let h6: OptionTypeAllocated(
+    limit,
+    o6
+  ) := written_name_option_allocated(TyInt(WidthU64), o5, limit, Trivial, h5, Text::eq(name, "u64"))
+  let o7: Option(Ty) := written_name_choose_option(TyInt(WidthU32), o6, Text::eq(name, "u32"))
+  let h7: OptionTypeAllocated(
+    limit,
+    o7
+  ) := written_name_option_allocated(TyInt(WidthU32), o6, limit, Trivial, h6, Text::eq(name, "u32"))
+  let o8: Option(Ty) := written_name_choose_option(TyInt(WidthU8), o7, Text::eq(name, "u8"))
+  let h8: OptionTypeAllocated(
+    limit,
+    o8
+  ) := written_name_option_allocated(TyInt(WidthU8), o7, limit, Trivial, h7, Text::eq(name, "u8"))
+  let o9: Option(Ty) := written_name_choose_option(TyInt(Width64), o8, Text::eq(name, "i64"))
+  let h9: OptionTypeAllocated(
+    limit,
+    o9
+  ) := written_name_option_allocated(TyInt(Width64), o8, limit, Trivial, h8, Text::eq(name, "i64"))
+  let o10: Option(Ty) := written_name_choose_option(TyInt(Width32), o9, Text::eq(name, "i32"))
+  let h10: OptionTypeAllocated(
+    limit,
+    o10
+  ) := written_name_option_allocated(TyInt(Width32), o9, limit, Trivial, h9, Text::eq(name, "i32"))
+  h10
+}
+pub theorem written_type_name_allocated<generics: Ordmap(
+  Text,
+  Ty
+), name: Text, ty: Ty>(
+  meaning: WrittenTypeName(generics, name, ty),
+  limit: Nat,
+  bounded: GenericMapAllocated(limit, generics)
+): TypeAllocated(limit, ty) {
+  match meaning: TypeAllocated(limit, ty) {
+    WrittenNamePrimitive(t, builtin) => Eq::subst(
+      (found: Option(Ty)) => OptionTypeAllocated(limit, found),
+      builtin,
+      primitive_type_name_allocated(name, limit)
+    )
+    WrittenNameParameter(t, ordinary, bound) => bounded(name, t, bound)
+    WrittenNameNominal(ordinary, unbound) => Trivial }
+}
+pub theorem written_atomic_allocated<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), name: Text, ty: Ty>(
+  meaning: WrittenAtomicType(env, generics, name, ty),
+  limit: Nat,
+  bounded: GenericMapAllocated(limit, generics)
+): TypeAllocated(limit, ty) {
+  match meaning: TypeAllocated(limit, ty) {
+    AtomicPrimitive(t, builtin) => Eq::subst(
+      (found: Option(Ty)) => OptionTypeAllocated(limit, found),
+      builtin,
+      primitive_type_name_allocated(name, limit)
+    )
+    AtomicParameter(t, ordinary, bound) => bounded(name, t, bound)
+    AtomicNominal(ordinary, unbound, arity) => Trivial }
+}
+pub theorem written_name_type_allocated<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), name: Text, partial: Bool, ty: Ty>(
+  meaning: WrittenNameType(env, generics, name, partial, ty),
+  limit: Nat,
+  bounded: GenericMapAllocated(limit, generics)
+): TypeAllocated(limit, ty) {
+  match meaning: TypeAllocated(limit, ty) {
+    WrittenNameValue(t, atomic) => written_atomic_allocated(atomic, limit, bounded)
+    WrittenNameConstructor(t, named) => written_type_name_allocated(named, limit, bounded) }
+}
+pub theorem written_binder_map_allocated<bs: List(
+  Pair(Text, Kind)
+), initial: Ordmap(
+  Text,
+  Ty
+), final: Ordmap(
+  Text,
+  Ty
+)>(
+  meaning: WrittenBinderMap(bs, initial, final),
+  limit: Nat,
+  bounded: RigidMapAllocation(limit, initial)
+): RigidMapAllocation(limit, final) {
+  match meaning: RigidMapAllocation(limit, final) {
+    WrittenBinderMapNil(map) => bounded
+    WrittenBinderMapCons(name, kind, rest, first, last, tail) => written_binder_map_allocated(
+      tail,
+      limit,
+      AndIntro(
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          first,
+          name,
+          TyParam(name, kind),
+          And::left(bounded)
+        ),
+        generic_map_insert_allocated(
+          limit,
+          first,
+          name,
+          TyParam(name, kind),
+          And::left(bounded),
+          Trivial,
+          And::right(bounded)
+        )
+      )
+    ) }
+}
+pub theorem written_polymorphic_allocated<bs: List(
+  Pair(Text, Kind)
+), body: Ty, ty: Ty>(
+  meaning: WrittenPolymorphicType(bs, body, ty),
+  limit: Nat,
+  bounded: TypeAllocated(limit, body)
+): TypeAllocated(limit, ty) {
+  match meaning: TypeAllocated(limit, ty) {
+    WrittenMonomorphic(inner) => bounded
+    WrittenPolymorphic(first, rest, inner) => bounded }
+}

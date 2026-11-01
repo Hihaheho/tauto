@@ -1,0 +1,130 @@
+import "tracked_finish_sound.taut"
+import "instantiation_obligations.taut"
+
+pub theorem tracked_recorded_instantiation<gs: List(
+  Pair(Text, Kind)
+), initial: Ordmap(
+  Text,
+  Ty
+), result: Ordmap(
+  Text,
+  Ty
+)>(
+  c: Checker,
+  next: Checker,
+  ctors: List(Pair(Text, Kind)),
+  name: Text,
+  span: TySpan,
+  recorded: RecordedInstantiation(c, ctors, name, span, gs, initial, result),
+  retained: TrackedState(c, next)
+): RecordedInstantiation(next, ctors, name, span, gs, initial, result) {
+  recorded_instantiation_move(
+    c,
+    next,
+    ctors,
+    name,
+    span,
+    And::left(And::right(And::right(retained))),
+    recorded
+  )
+}
+pub theorem tracked_instance_predicate(
+  c: Checker,
+  next: Checker,
+  assume: List(Pair(Text, Text)),
+  p: Pair(Text, Text),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  recorded: InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(c)),
+  retained: TrackedState(c, next)
+): InstancePredicateRecorded(assume, p, map, what, span, finish_pending_items(next)) {
+  match recorded: InstancePredicateRecorded(
+    assume,
+    p,
+    map,
+    what,
+    span,
+    finish_pending_items(next)
+  ) {
+    Mk(ty, found, member) => InstancePredicateRecorded::Mk(
+      ty,
+      found,
+      And::right(
+        And::right(And::right(retained))
+      )(instantiated_pending(instantiation_constraint(p), ty, what, span, assume), member)
+    )
+  }
+}
+pub theorem tracked_instance_predicates(
+  c: Checker,
+  next: Checker,
+  assume: List(Pair(Text, Text)),
+  ps: List(Pair(Text, Text)),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  recorded: InstancePredicatesRecorded(assume, ps, map, what, span, finish_pending_items(c)),
+  retained: TrackedState(c, next)
+): InstancePredicatesRecorded(assume, ps, map, what, span, finish_pending_items(next)) {
+  p => member => tracked_instance_predicate(
+    c,
+    next,
+    assume,
+    p,
+    map,
+    what,
+    span,
+    recorded(p, member),
+    retained
+  )
+}
+pub theorem tracked_scheme_instance_obligations(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ty, Checker),
+  next: Checker,
+  recorded: SchemeInstanceObligations(c, name, scheme, span, m),
+  retained: TrackedState(ck_st(m), next)
+): SchemeInstanceObligations(c, name, scheme, span, mut1(ck_val(m), next)) {
+  match recorded: SchemeInstanceObligations(c, name, scheme, span, mut1(ck_val(m), next)) {
+    Mk(
+      map,
+      covered,
+      substituted,
+      predicates,
+      requirements
+    ) => SchemeInstanceObligations::Mk(
+      c,
+      name,
+      scheme,
+      span,
+      mut1(ck_val(m), next),
+      map,
+      covered,
+      substituted,
+      tracked_instance_predicates(
+        ck_st(m),
+        next,
+        inference_assume(c),
+        instantiation_scheme_preds(scheme),
+        map,
+        name,
+        span,
+        predicates,
+        retained
+      ),
+      tracked_recorded_instantiation(
+        ck_st(m),
+        next,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        requirements,
+        retained
+      )
+    )
+  }
+}

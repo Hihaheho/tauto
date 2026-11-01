@@ -1,0 +1,64 @@
+import "expr_leaf_frame.taut"
+import "checked_frame.taut"
+import "operation_checked_sound.taut"
+import "widen_error_sound.taut"
+import "written_error_sound.taut"
+import "pattern_read_error_sound.taut"
+import "instantiation_error_sound.taut"
+import "expr_leaf_error_sound.taut"
+
+pub theorem leaf_stmt_ty_frame_checked(
+  c: Checker,
+  v: Ty,
+  value: SurfaceTerm,
+  name: Text,
+  ty: Option(SurfaceTerm),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, leaf_stmt_ty(c, v, value, name, ty)) {
+  match ty: CkCheckedFrame(c, leaf_stmt_ty(c, v, value, name, ty)) {
+    None => checked_frame_return(c, v, ordered)
+    Some(tt) => checked_frame_bind(
+      Ty,
+      Ty,
+      c,
+      (w: Ty, c1: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (ignored: Unit, c2: Checker) => mut1(w, c2),
+        ck_expect(c1, v, w, span_of(value), cat3("`", name, "`"))
+      ),
+      ck_written_here(c, tt),
+      checked_frame_read(
+        c,
+        ck_written_here(c, tt),
+        ck_written_here_frame(c, tt),
+        ck_written_here_frame_errors(c, tt),
+        ordered
+      ),
+      w => c1 => o_c1 => checked_frame_bind(
+        Unit,
+        Ty,
+        c1,
+        (ignored: Unit, c2: Checker) => mut1(w, c2),
+        ck_expect(c1, v, w, span_of(value), cat3("`", name, "`")),
+        ck_expect_run_frame_checked(c1, v, w, span_of(value), cat3("`", name, "`"), o_c1),
+        ignored => c2 => o_c2 => checked_frame_return(c2, w, o_c2)
+      )
+    )
+  }
+}
+
+pub theorem ck_stmt_ty_run_frame_checked(
+  c: Checker,
+  ty: Option(SurfaceTerm),
+  v: Ty,
+  value: SurfaceTerm,
+  name: Text,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_stmt_ty(c, ty, v, value, name)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(leaf_stmt_ty_unf(c, ty, v, value, name)),
+    leaf_stmt_ty_frame_checked(c, v, value, name, ty, ordered)
+  )
+}

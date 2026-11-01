@@ -1,0 +1,158 @@
+import "rules_written.taut"
+import "written_atomic_sound.taut"
+
+// A constructor-position name is elaborated before its caller checks its kind.
+pub theorem written_name_mode_sound(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  partial: Bool,
+  position: frame_constructor_position(c) = partial,
+  clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
+): WrittenNameType(
+  ck_datas_of(c),
+  generics,
+  name,
+  partial,
+  ck_val(ck_written_var(c, name, generics, span))
+) {
+  match partial: WrittenNameType(
+    ck_datas_of(c),
+    generics,
+    name,
+    partial,
+    ck_val(ck_written_var(c, name, generics, span))
+  ) {
+    false => WrittenNameValue(ck_written_var_sound(c, name, generics, span, position, clean))
+    true => WrittenNameConstructor(
+      Eq::subst(
+        (t: Ty) => WrittenTypeName(generics, name, t),
+        Eq::sym(ck_written_var_value(c, name, generics, span)),
+        ck_written_name_sound(name, generics)
+      )
+    )
+  }
+}
+
+pub theorem ck_written_var_kind_sound(
+  c: Checker,
+  name: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  under_borrow: Bool,
+  clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkVar(name),
+  ck_val(ck_written_var(c, name, generics, span))
+) {
+  WrittenKindName(
+    name,
+    ck_val(ck_written_var(c, name, generics, span)),
+    written_name_mode_sound(c, name, generics, span, frame_constructor_position(c), Refl, clean)
+  )
+}
+
+pub theorem written_arity_mode_sound(
+  c: Checker,
+  name: Text,
+  args: List(Ty),
+  span: TySpan,
+  partial: Bool,
+  position: frame_constructor_position(c) = partial,
+  clean: DiagnosticClean(ck_st(ck_arity(c, name, list_len(args), span)))
+): WrittenArity(ck_datas_of(c), name, args, partial) {
+  match partial: WrittenArity(ck_datas_of(c), name, args, partial) {
+    true => WrittenArityConstructor
+    false => WrittenArityValue(
+      data => found => ck_declared_arity_sound(c, name, args, span, data, position, found, clean)
+    )
+  }
+}
+
+pub theorem ck_written_arity_mode_sound(
+  c: Checker,
+  name: Text,
+  args: List(Ty),
+  span: TySpan,
+  clean: DiagnosticClean(ck_st(ck_arity(c, name, list_len(args), span)))
+): WrittenArity(ck_datas_of(c), name, args, frame_constructor_position(c)) {
+  written_arity_mode_sound(c, name, args, span, frame_constructor_position(c), Refl, clean)
+}
+
+pub fn written_function_kind_value(o: Option(Kind)): Kind {
+  match o: Kind {
+    None => KindShared
+    Some(k) => k
+  }
+}
+pub theorem written_function_kind_sound(
+  spelling: Text,
+  o: Option(Kind),
+  parsed: kind_parse(spelling) = o
+): WrittenFunctionKind(spelling, written_function_kind_value(o)) {
+  match o: WrittenFunctionKind(spelling, written_function_kind_value(o)) {
+    None => WrittenFunctionKindDefault(parsed)
+    Some(k) => MkWrittenFunctionKind(k, parsed)
+  }
+}
+pub theorem ck_written_fn_kind_sound(
+  w: Ty,
+  c: Checker,
+  spelling: Text,
+  span: TySpan,
+  generics: Ordmap(Text, Ty),
+  partial: Bool,
+  under_borrow: Bool,
+  body: SurfaceTerm,
+  meaning: WrittenTerm(ck_datas_of(c), generics, partial, false, body, w),
+  clean: DiagnosticClean(ck_st(ck_written_fn_kind(w, c, spelling, span)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  partial,
+  under_borrow,
+  SkFnKind(spelling, body),
+  ck_val(ck_written_fn_kind(w, c, spelling, span))
+) {
+  match w: WrittenKind(
+    ck_datas_of(c),
+    generics,
+    partial,
+    under_borrow,
+    SkFnKind(spelling, body),
+    ck_val(ck_written_fn_kind(w, c, spelling, span))
+  ) {
+    TyInt(width) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyBool => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyText => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyUnit => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyNever => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyDecimal => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyFloat => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyFn(params, result, kind) => WrittenKindFunctionKind(
+      spelling,
+      body,
+      params,
+      result,
+      kind,
+      written_function_kind_value(kind_parse(spelling)),
+      meaning,
+      written_function_kind_sound(spelling, kind_parse(spelling), Refl)
+    )
+    TyUnion(members) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyProduct(members) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyTagged(tags, inner) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyNamed(n, args) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyParam(n, bound) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyInfo(inner) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyBorrow(inner, mutable) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyVar(index) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyPoly(gs, inner) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyApp(head, arg) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+  }
+}

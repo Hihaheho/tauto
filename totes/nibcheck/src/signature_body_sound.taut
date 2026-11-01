@@ -1,0 +1,391 @@
+import "rules_signature_body.taut"
+import "signature_context_sound.taut"
+
+pub fn signature_finish_preds(
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(List(Pair(Text, Text)), Checker)
+): Mut1(Scheme, Checker) {
+  frame_bind(
+    List(Pair(Text, Text)),
+    Scheme,
+    (preds: List(Pair(Text, Text)), next: Checker) => mut1(
+      signature_scheme(g, params, result, preds),
+      next
+    ),
+    m
+  )
+}
+pub theorem signature_finish_preds_type(
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(List(Pair(Text, Text)), Checker)
+): signature_scheme_ty(ck_val(signature_finish_preds(g, params, result, m))) = TyFn(params, result, KindShared) {
+  match m: signature_scheme_ty(ck_val(signature_finish_preds(g, params, result, m))) = TyFn(params, result, KindShared) {
+    mut1(preds, next) => Refl
+  }
+}
+pub fn signature_finish_report(
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(Unit, Checker)
+): Mut1(Scheme, Checker) {
+  frame_bind(
+    Unit,
+    Scheme,
+    (ignored: Unit, next: Checker) => signature_finish_preds(
+      g,
+      params,
+      result,
+      ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil)
+    ),
+    m
+  )
+}
+pub theorem signature_finish_report_type(
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(Unit, Checker)
+): signature_scheme_ty(ck_val(signature_finish_report(f, g, params, result, m))) = TyFn(params, result, KindShared) {
+  match m: signature_scheme_ty(ck_val(signature_finish_report(f, g, params, result, m))) = TyFn(params, result, KindShared) {
+    mut1(ignored, next) => signature_finish_preds_type(
+      g,
+      params,
+      result,
+      ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil)
+    )
+  }
+}
+pub fn signature_finish(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty
+): Mut1(Scheme, Checker) {
+  signature_finish_report(
+    f,
+    g,
+    params,
+    result,
+    ck_report(c, ck_view_result_message(c, params, result), ck_sig_span(f))
+  )
+}
+pub theorem signature_finish_errors(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty
+): CkErrorFrame(c, signature_finish(c, f, g, params, result)) {
+  error_frame_bind(
+    Unit,
+    Scheme,
+    c,
+    (ignored: Unit, next: Checker) => signature_finish_preds(
+      g,
+      params,
+      result,
+      ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil)
+    ),
+    ck_report(c, ck_view_result_message(c, params, result), ck_sig_span(f)),
+    ck_report_frame_errors(c, ck_view_result_message(c, params, result), ck_sig_span(f)),
+    ignored => next => error_frame_bind(
+      List(Pair(Text, Text)),
+      Scheme,
+      next,
+      (preds: List(Pair(Text, Text)), final: Checker) => mut1(
+        signature_scheme(g, params, result, preds),
+        final
+      ),
+      ck_where_preds(signature_wheres(f), next, signature_gens(g), signature_name(f), Nil),
+      ck_where_preds_frame_errors(
+        signature_wheres(f),
+        next,
+        signature_gens(g),
+        signature_name(f),
+        Nil
+      ),
+      preds => final => clean => clean
+    )
+  )
+}
+pub fn signature_answer_after(
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(Scheme, Checker) {
+  frame_bind(
+    Ty,
+    Scheme,
+    (result: Ty, next: Checker) => signature_finish(next, f, g, params, result),
+    m
+  )
+}
+pub theorem signature_answer_after_sound(
+  env: Datas,
+  partial: Bool,
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  m: Mut1(Ty, Checker),
+  parameters: SignatureParameters(
+    env,
+    signature_map(g),
+    partial,
+    signature_source_parameters(f),
+    signature_source_borrows(f),
+    params
+  ),
+  answer: ∀ accepted: DiagnosticClean(
+    ck_st(m)
+  ). SignatureType(env, signature_map(g), partial, false, signature_source_result(f), ck_val(m)),
+  clean: DiagnosticClean(ck_st(signature_answer_after(f, g, params, m)))
+): SignatureBody(
+  env,
+  signature_map(g),
+  partial,
+  f,
+  signature_scheme_ty(ck_val(signature_answer_after(f, g, params, m)))
+) {
+  match m: SignatureBody(
+    env,
+    signature_map(g),
+    partial,
+    f,
+    signature_scheme_ty(ck_val(signature_answer_after(f, g, params, m)))
+  ) {
+    mut1(result, next) => Eq::subst(
+      (t: Ty) => SignatureBody(env, signature_map(g), partial, f, t),
+      Eq::sym(
+        signature_finish_report_type(
+          f,
+          g,
+          params,
+          result,
+          ck_report(next, ck_view_result_message(next, params, result), ck_sig_span(f))
+        )
+      ),
+      SignatureBody::Mk(
+        params,
+        result,
+        parameters,
+        answer(signature_finish_errors(next, f, g, params, result, clean))
+      )
+    )
+  }
+}
+pub theorem signature_answer_after_errors(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty)
+): CkErrorFrame(c, signature_answer_after(f, g, params, ck_sig_result(c, f, signature_map(g)))) {
+  error_frame_bind(
+    Ty,
+    Scheme,
+    c,
+    (result: Ty, next: Checker) => signature_finish(next, f, g, params, result),
+    ck_sig_result(c, f, signature_map(g)),
+    ck_sig_result_frame_errors(c, f, signature_map(g)),
+    result => next => signature_finish_errors(next, f, g, params, result)
+  )
+}
+
+pub theorem signature_result_original(
+  c: Checker,
+  next: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  same: ck_datas_of(next) = ck_datas_of(c),
+  position: frame_constructor_position(next) = frame_constructor_position(c),
+  ordinary: frame_under_borrow(next) = false,
+  clean: DiagnosticClean(ck_st(ck_sig_result(next, f, signature_map(g))))
+): SignatureType(
+  ck_datas_of(c),
+  signature_map(g),
+  frame_constructor_position(c),
+  false,
+  signature_source_result(f),
+  ck_val(ck_sig_result(next, f, signature_map(g)))
+) {
+  Eq::subst(
+    (env: Datas) => SignatureType(
+      env,
+      signature_map(g),
+      frame_constructor_position(c),
+      false,
+      signature_source_result(f),
+      ck_val(ck_sig_result(next, f, signature_map(g)))
+    ),
+    same,
+    Eq::subst(
+      (partial: Bool) => SignatureType(
+        ck_datas_of(next),
+        signature_map(g),
+        partial,
+        false,
+        signature_source_result(f),
+        ck_val(ck_sig_result(next, f, signature_map(g)))
+      ),
+      position,
+      Eq::subst(
+        (borrowing: Bool) => SignatureType(
+          ck_datas_of(next),
+          signature_map(g),
+          frame_constructor_position(next),
+          borrowing,
+          signature_source_result(f),
+          ck_val(ck_sig_result(next, f, signature_map(g)))
+        ),
+        ordinary,
+        ck_sig_result_sound(next, f, signature_map(g), clean)
+      )
+    )
+  )
+}
+pub fn signature_parameters_finish(
+  f: SurfaceFn,
+  g: SigGenerics,
+  m: Mut1(List(Ty), Checker)
+): Mut1(Scheme, Checker) {
+  frame_bind(
+    List(Ty),
+    Scheme,
+    (params: List(Ty), next: Checker) => signature_answer_after(
+      f,
+      g,
+      params,
+      ck_sig_result(next, f, signature_map(g))
+    ),
+    m
+  )
+}
+pub theorem signature_parameters_finish_sound(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  m: Mut1(List(Ty), Checker),
+  read: CkReadFrame(c, m),
+  context: CkContextFrame(c, m),
+  ordinary: frame_under_borrow(c) = false,
+  parameters: ∀ accepted: DiagnosticClean(
+    ck_st(m)
+  ). SignatureParameters(
+    ck_datas_of(c),
+    signature_map(g),
+    frame_constructor_position(c),
+    signature_source_parameters(f),
+    signature_source_borrows(f),
+    ck_val(m)
+  ),
+  clean: DiagnosticClean(ck_st(signature_parameters_finish(f, g, m)))
+): SignatureBody(
+  ck_datas_of(c),
+  signature_map(g),
+  frame_constructor_position(c),
+  f,
+  signature_scheme_ty(ck_val(signature_parameters_finish(f, g, m)))
+) {
+  match m: SignatureBody(
+    ck_datas_of(c),
+    signature_map(g),
+    frame_constructor_position(c),
+    f,
+    signature_scheme_ty(ck_val(signature_parameters_finish(f, g, m)))
+  ) {
+    mut1(params, next) => signature_answer_after_sound(
+      ck_datas_of(c),
+      frame_constructor_position(c),
+      f,
+      g,
+      params,
+      ck_sig_result(next, f, signature_map(g)),
+      parameters(signature_answer_after_errors(next, f, g, params, clean)),
+      accepted => signature_result_original(
+        c,
+        next,
+        f,
+        g,
+        Eq::congr(frame_read_datas, read),
+        Eq::congr(written_context_position, context(ordinary)),
+        Eq::trans(Eq::congr(written_context_borrow, context(ordinary)), ordinary),
+        accepted
+      ),
+      clean
+    )
+  }
+}
+pub theorem signature_read_body(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics,
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(signature_read(c, f, g)))
+): SignatureBody(
+  ck_datas_of(c),
+  signature_map(g),
+  frame_constructor_position(c),
+  f,
+  signature_scheme_ty(ck_val(signature_read(c, f, g)))
+) {
+  signature_parameters_finish_sound(
+    c,
+    f,
+    g,
+    ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    ck_sig_params_frame(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    ck_sig_params_context(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    ordinary,
+    accepted => ck_sig_params_sound(
+      signature_ptypes(f),
+      c,
+      signature_borrows(f),
+      signature_map(g),
+      accepted
+    ),
+    clean
+  )
+}
+
+pub theorem ck_signature_body_sound(
+  c: Checker,
+  source: SurfaceFn,
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_signature(c, source)))
+): SignatureBody(
+  ck_datas_of(c),
+  signature_map(signature_generics(source)),
+  frame_constructor_position(c),
+  source,
+  signature_scheme_ty(ck_val(ck_signature(c, source)))
+) {
+  Eq::subst(
+    (m: Mut1(Scheme, Checker)) => SignatureBody(
+      ck_datas_of(c),
+      signature_map(signature_generics(source)),
+      frame_constructor_position(c),
+      source,
+      signature_scheme_ty(ck_val(m))
+    ),
+    Eq::sym(signature_read_unf(c, source)),
+    signature_read_body(
+      c,
+      source,
+      signature_generics(source),
+      ordinary,
+      Eq::subst(
+        (m: Mut1(Scheme, Checker)) => DiagnosticClean(ck_st(m)),
+        signature_read_unf(c, source),
+        clean
+      )
+    )
+  )
+}

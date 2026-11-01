@@ -1,92 +1,282 @@
 // What proofs may use without declaring it. Everything here is an inductive
-// family (whose eliminators the kernel generates) or a theorem proved from
-// those; nothing is assumed, so nothing is tracked as an axiom.
+// family (whose eliminators the kernel generates), a theorem proved from
+// those, or one of the kernel's quotient constants. The one assumption is
+// `Quot::sound`, which is tracked as an axiom wherever it is used.
 // Generics `<A>` are implicit: a call may leave them out (they are inferred),
 // or write every argument. The parameters of an inductive type are implicit
 // in its constructors and eliminators in the same way.
 
-inductive Nat(): Type {
-  zero(): Nat
-  succ(n: Nat): Nat
+pub(open) inductive Nat: Type {
+  Zero: Nat
+  Succ(n: Nat): Nat
 }
 
-inductive True(): Prop {
-  trivial(): True
+pub(open) inductive True: Prop {
+  Trivial: True
 }
 
-inductive False(): Prop {
+pub(open) inductive False: Prop {
 }
 
-inductive Eq(A: Type, a: A): (A) -> Prop {
-  refl(): Eq(A, a, a)
+pub(open) inductive Eq(A: Type, a: A): (A) -> Prop {
+  Refl: Eq(A, a, a)
 }
 
-inductive And(A: Prop, B: Prop): Prop {
-  and_intro(a: A, b: B): And(A, B)
+pub(open) inductive And(A: Prop, B: Prop): Prop {
+  AndIntro(a: A, b: B): And(A, B)
 }
 
-inductive Or(A: Prop, B: Prop): Prop {
-  or_inl(a: A): Or(A, B)
-  or_inr(b: B): Or(A, B)
+pub(open) inductive Or(A: Prop, B: Prop): Prop {
+  OrInl(a: A): Or(A, B)
+  OrInr(b: B): Or(A, B)
 }
 
-inductive Not(A: Prop): Prop {
-  not_intro(f: (A) -> False): Not(A)
+pub(open) inductive Exists(A: Type, P: (A) -> Prop): Prop {
+  ExIntro(w: A, h: P(w)): Exists(A, P)
 }
 
-inductive Iff(A: Prop, B: Prop): Prop {
-  iff_intro(f: (A) -> B, g: (B) -> A): Iff(A, B)
+pub(open) inductive Iff(A: Prop, B: Prop): Prop {
+  IffIntro(f: (A) -> B, g: (B) -> A): Iff(A, B)
 }
 
-theorem False_elim<P: Prop>(f: False): P {
-  False_ind(t => P, f)
+module False {
+  pub theorem elim<P: Prop>(f: False): P {
+    False::ind(t => P, f)
+  }
 }
 
-theorem Eq_subst<A: Type, a: A, b: A>(P: (A) -> Prop, e: Eq(A, a, b), p: P(a)): P(b) {
-  Eq_ind(A, a, y => e2 => P(y), p, b, e)
+module Eq {
+  pub theorem subst<A: Type, a: A, b: A>(P: (A) -> Prop, e: a = b, p: P(a)): P(b) {
+    Eq::ind(A, a, y => e2 => P(y), p, b, e)
+  }
 }
 
-theorem and_left<A: Prop, B: Prop>(p: And(A, B)): A {
-  And_ind(A, B, t => A, x => y => x, p)
+module And {
+  pub theorem left<A: Prop, B: Prop>(p: And(A, B)): A {
+    And::ind(A, B, t => A, x => y => x, p)
+  }
+
+  pub theorem right<A: Prop, B: Prop>(p: And(A, B)): B {
+    And::ind(A, B, t => B, x => y => y, p)
+  }
 }
 
-theorem and_right<A: Prop, B: Prop>(p: And(A, B)): B {
-  And_ind(A, B, t => B, x => y => y, p)
+module Or {
+  pub theorem elim<A: Prop, B: Prop, C: Prop>(p: Or(A, B), f: (A) -> C, g: (B) -> C): C {
+    Or::ind(A, B, t => C, x => f(x), y => g(y), p)
+  }
 }
 
-theorem or_elim<A: Prop, B: Prop, C: Prop>(p: Or(A, B), f: (A) -> C, g: (B) -> C): C {
-  Or_ind(A, B, t => C, x => f(x), y => g(y), p)
+module Iff {
+  pub theorem mp<A: Prop, B: Prop>(p: Iff(A, B), a: A): B {
+    Iff::ind(A, B, t => B, f => g => f(a), p)
+  }
+
+  pub theorem mpr<A: Prop, B: Prop>(p: Iff(A, B), b: B): A {
+    Iff::ind(A, B, t => A, f => g => g(b), p)
+  }
+
+  // The composition `calc` gives a chain of `↔`, as `Eq::trans` is for a chain of `=`.
+  pub theorem trans<A: Prop, B: Prop, C: Prop>(p: Iff(A, B), q: Iff(B, C)): Iff(A, C) {
+    IffIntro((a: A) => mp(q, mp(p, a)), (c: C) => mpr(p, mpr(q, c)))
+  }
 }
 
-theorem not_elim<A: Prop>(n: Not(A), a: A): False {
-  Not_ind(A, t => False, h => h(a), n)
+pub(open) inductive Unit: Type =>
+  fn Unit::beq, theorem Unit::beq_refl, theorem Unit::beq_sound, theorem Unit::deq {
+  Star: Unit
 }
 
-theorem iff_mp<A: Prop, B: Prop>(p: Iff(A, B), a: A): B {
-  Iff_ind(A, B, t => B, f => g => f(a), p)
+// Two values of data. A recursion on parts of the matched value deeper than
+// its fields pairs each value with the values at its parts in this type
+// (`And` for proofs).
+pub(open) inductive BelowPair(A: Type, B: Type): Type {
+  Mk(here: A, parts: B): BelowPair(A, B)
 }
 
-theorem iff_mpr<A: Prop, B: Prop>(p: Iff(A, B), b: B): A {
-  Iff_ind(A, B, t => A, f => g => g(b), p)
+module Eq {
+  pub theorem sym<A: Type, a: A, b: A>(e: a = b): (b = a) {
+    subst(A, a, b, y => y = a, e, Refl(A, a))
+  }
+
+  pub theorem trans<A: Type, a: A, b: A, c: A>(e1: a = b, e2: b = c): (a = c) {
+    subst(A, b, c, y => a = y, e2, e1)
+  }
+
+  pub theorem congr<A: Type, B: Type, a: A, b: A>(f: (A) -> B, e: a = b): (f(a) = f(b)) {
+    subst(A, a, b, y => f(a) = f(y), e, Refl(B, f(a)))
+  }
 }
 
-inductive Unit(): Type =>
-  fn Unit_beq, theorem Unit_beq_refl, theorem Unit_beq_sound, theorem Unit_deq {
-  star(): Unit
+// The quotient of `A` by a relation `r`: `Quot::mk(a)` is the class of `a`, and
+// `Quot::lift(f, h, q)` reads a function of the class from one of the value
+// (`f`) that gives related values the same result (`h`). The kernel computes
+// `Quot::lift(f, h, Quot::mk(a))` to `f(a)` and `Quot::ind(P, m, Quot::mk(a))` to
+// `m(a)`. A quotient cannot be matched: a function out of it goes through
+// `Quot::lift`, so it never tells two related values apart. These four are
+// constants of the kernel, not axioms.
+pub axiom Quot(A: Type, r: (A, A) -> Prop): Type
+
+module Quot {
+  pub axiom mk<A: Type, r: (A, A) -> Prop>(a: A): Quot(A, r)
+
+  pub axiom lift<A: Type, r: (A, A) -> Prop, B: Type>(
+    f: (A) -> B,
+    h: ∀ a: A. ∀ b: A. (r(a, b)) -> (f(a) = f(b)),
+    q: Quot(A, r)
+  ): B
+
+  pub axiom ind<A: Type, r: (A, A) -> Prop>(
+    P: (Quot(A, r)) -> Prop,
+    m: ∀ a: A. P(mk(A, r, a)),
+    q: Quot(A, r)
+  ): P(q)
+
+  // Related values have the same class. This one is an axiom: a declaration
+  // that uses it, directly or through others, lists `Quot::sound` among its
+  // axioms.
+  pub axiom sound<A: Type, r: (A, A) -> Prop, a: A, b: A>(
+    p: r(a, b)
+  ): mk(A, r, a) = mk(A, r, b)
 }
 
-theorem Eq_sym<A: Type, a: A, b: A>(e: Eq(A, a, b)): Eq(A, b, a) {
-  Eq_subst(A, a, b, y => Eq(A, y, a), e, refl(A, a))
-}
-
-theorem Eq_trans<A: Type, a: A, b: A, c: A>(e1: Eq(A, a, b), e2: Eq(A, b, c)): Eq(A, a, c) {
-  Eq_subst(A, b, c, y => Eq(A, a, y), e2, e1)
-}
-
-theorem Eq_congr<A: Type, B: Type, a: A, b: A>(f: (A) -> B, e: Eq(A, a, b)): Eq(B, f(a), f(b)) {
-  Eq_subst(A, a, b, y => Eq(B, f(a), f(y)), e, refl(B, f(a)))
-}
-
-// `let x: T = e` in a proof stands for `the(T, e)` wherever `x` is used: the
+// `let x: T := e` in a proof stands for `the(T, e)` wherever `x` is used: the
 // kernel types it as `T`, and only if `e` has type `T`.
-fn the(A: Type1, x: A) -> A { x }
+pub fn the(A: Type1, x: A): A { x }
+
+// What a function with effects is in proofs: `A ! {e…}` is read as
+// `Comp(Op, Res, A)`, a tree whose leaf `CompPure(a)` has finished with `a`
+// and whose node `CompOp(o, k)` performs `o` and goes on with `k` applied to
+// the answer, of type `Res(o)`. The operations of a row are `OpSum` of the
+// effects' operations, ending in `OpNone`. A handler folds the tree
+// (`Comp::fold`).
+pub(open) inductive Comp(Op: Type, Res: (Op) -> Type, A: Type): Type {
+  CompPure(a: A): Comp(Op, Res, A)
+  CompOp(o: Op, k: (Res(o)) -> Comp(Op, Res, A)): Comp(Op, Res, A)
+}
+
+pub(open) inductive OpSum(L: Type, R: Type): Type {
+  OpHere(o: L): OpSum(L, R)
+  OpThere(o: R): OpSum(L, R)
+}
+
+pub(open) inductive OpNone: Type {
+}
+
+pub fn res_sum(L: Type, R: Type, RL: (L) -> Type, RR: (R) -> Type, o: OpSum(L, R)): Type {
+  match o: Type {
+    OpHere(a) => RL(a)
+    OpThere(b) => RR(b)
+  }
+}
+
+pub fn res_none(o: OpNone): Type {
+  match o: Type {
+  }
+}
+
+module Comp {
+  pub fn bind<A, B>(
+    Op: Type,
+    Res: (Op) -> Type,
+    c: Comp(Op, Res, A),
+    f: (A) -> Comp(Op, Res, B)
+  ): Comp(Op, Res, B) {
+    match c: Comp(Op, Res, B) {
+      CompPure(a) => f(a)
+      CompOp(o, k) => CompOp(Op, Res, B, o, (r: Res(o)) => bind(Op, Res, k(r), f))
+    }
+  }
+
+  pub fn fold<A, B>(
+    Op: Type,
+    Res: (Op) -> Type,
+    ret: (A) -> B,
+    arm: ∀ o: Op. ((Res(o)) -> B) -> B,
+    c: Comp(Op, Res, A)
+  ): B {
+    match c: B {
+      CompPure(a) => ret(a)
+      CompOp(o, k) => arm(o, (r: Res(o)) => fold(Op, Res, ret, arm, k(r)))
+    }
+  }
+
+  // The value of a computation that performs nothing.
+  pub fn value<A>(c: Comp(OpNone, res_none, A)): A {
+    match c: A {
+      CompPure(a) => a
+      CompOp(o, k) => match o: A {
+      }
+    }
+  }
+
+  // The pieces a function with effects is written with in proofs.
+  pub fn ret<A>(Op: Type, Res: (Op) -> Type, a: A): Comp(Op, Res, A) {
+    CompPure(Op, Res, A, a)
+  }
+
+  pub fn op(Op: Type, Res: (Op) -> Type, o: Op): Comp(Op, Res, Res(o)) {
+    CompOp(Op, Res, Res(o), o, r => CompPure(Op, Res, Res(o), r))
+  }
+
+  pub fn forward<A>(Op: Type, Res: (Op) -> Type, o: Op, k: (Res(o)) -> Comp(Op, Res, A)): Comp(Op, Res, A) {
+    CompOp(Op, Res, A, o, k)
+  }
+
+  // `c` in a larger row: every operation is forwarded.
+  pub fn lift<A>(
+    Op: Type,
+    Res: (Op) -> Type,
+    Op2: Type,
+    Res2: (Op2) -> Type,
+    c: Comp(Op, Res, A),
+    arm: ∀ o: Op. ((Res(o)) -> Comp(Op2, Res2, A)) -> Comp(Op2, Res2, A)
+  ): Comp(Op2, Res2, A) {
+    fold(Op, Res, (a: A) => CompPure(Op2, Res2, A, a), arm, c)
+  }
+
+  // `c` handled, with the computation first, so that its type is found first.
+  pub fn handle_in<A, B>(
+    Op: Type,
+    Res: (Op) -> Type,
+    Op2: Type,
+    Res2: (Op2) -> Type,
+    c: Comp(Op, Res, A),
+    ret: (A) -> Comp(Op2, Res2, B),
+    arm: ∀ o: Op. ((Res(o)) -> Comp(Op2, Res2, B)) -> Comp(Op2, Res2, B)
+  ): Comp(Op2, Res2, B) {
+    fold(Op, Res, ret, arm, c)
+  }
+}
+
+// The operation arm of a handler of a row, from an arm for its first effect
+// and one for the rest.
+pub fn arm_sum<B>(
+  L: Type,
+  R: Type,
+  RL: (L) -> Type,
+  RR: (R) -> Type,
+  here: ∀ x: L. ((RL(x)) -> B) -> B,
+  there: ∀ y: R. ((RR(y)) -> B) -> B,
+  o: OpSum(L, R),
+  k: (res_sum(L, R, RL, RR, o)) -> B
+): B {
+  match o: ((res_sum(L, R, RL, RR, o)) -> B) -> B {
+    OpHere(x) => here(x)
+    OpThere(y) => there(y)
+  }(k)
+}
+
+pub fn arm_none<B>(o: OpNone, k: (res_none(o)) -> B): B {
+  match o: B {
+  }
+}
+
+// `A × B`, the product, as the proofs see it: the `Pair` of its members, put in their
+// one order. It is its own name so that the checker tells a product from a `Pair`
+// written by its name: only a product's members are taken by their types (`(p: A)`),
+// and `#(a, b)`, which is `prod_mk(a, b)`, is a product, never a `Pair`. The kernel
+// unfolds it and sees the `Pair`.
+pub fn Prod(A: Type, B: Type): Type { Pair(A, B) }
+
+pub fn prod_mk<A, B>(a: A, b: B): Prod(A, B) { Pair::Mk(A, B, a, b) }

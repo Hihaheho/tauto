@@ -1,0 +1,37 @@
+import "join_allocation_sound.taut"
+import "widen_frame.taut"
+
+pub theorem allocation_advance_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: AllocationAdvance(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(
+    next
+  ). ∀ order: CkOrdered(next). AllocationAdvance(next, k(value, next))
+): AllocationAdvance(c, frame_bind(A, B, k, m)) {
+  match m: AllocationAdvance(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => allocation_advance_start(
+      c,
+      next,
+      k(value, next),
+      And::left(first),
+      tail(value, next, And::left(first), And::right(first), ordered)
+    )
+  }
+}
+pub theorem allocation_advance_set(
+  c: Checker,
+  index: Nat,
+  value: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  variable: TypeAllocated(ck_next_of(c), TyVar(index)),
+  bounded: TypeAllocated(ck_next_of(c), value)
+): AllocationAdvance(c, ck_set_subst(c, index, value)) {
+  AndIntro(
+    Nat::le_refl(ck_next_of(c)),
+    ck_set_subst_allocation(c, index, value, ordered, variable, bounded, state)
+  )
+}

@@ -1,0 +1,142 @@
+import "value.taut"
+import std::List
+
+pub theorem e_pop_onto(
+  prefix: List(MVal),
+  rest: List(MVal),
+  acc: List(MVal)
+): m_pop_onto(List::length(prefix), List::append(prefix, rest), acc) =
+Some(Pair { fst: List::reverse_onto(prefix, acc), snd: rest }) {
+  match prefix {
+    Nil => Refl
+    Cons(v, tail) => e_pop_onto(tail, rest, Cons(v, acc))
+  }
+}
+
+// Left-to-right argument evaluation pushes the last argument at the top.
+pub theorem e_pop_arguments(
+  args: List(MVal),
+  stack: List(MVal)
+): m_pop(List::length(args), List::append(List::reverse(args), stack)) =
+Some(Pair { fst: args, snd: stack }) {
+  Eq::trans(
+    Eq::congr(
+      (n: Nat) => m_pop(n, List::append(List::reverse(args), stack)),
+      Eq::sym(List::length_reverse(args))
+    ),
+    Eq::trans(
+      e_pop_onto(List::reverse(args), stack, Nil),
+      Eq::congr(
+        (values: List(MVal)) => Some(Pair { fst: values, snd: stack }),
+        List::reverse_reverse(args)
+      )
+    )
+  )
+}
+
+pub theorem e_operation_arity(
+  ctors: List(MCtor),
+  cx: MCx,
+  op: MOp,
+  args: List(MVal),
+  arity: m_op_arity(op) = List::length(args)
+): e_operation(ctors, cx, op, args) = e_primitive_out(m_op(ctors, cx, op, args)) {
+  let enough: Nat::eq(m_op_arity(op), List::length(args)) = true :=
+  Eq::trans(
+    Eq::congr((n: Nat) => Nat::eq(n, List::length(args)), arity),
+    Nat::eq_refl(List::length(args))
+  )
+  Eq::congr((same: Bool) => match same: EResult(MVal) {
+    true => e_primitive_out(m_op(ctors, cx, op, args))
+    false => ErError("internal: a primitive has the wrong arity")
+  }, enough)
+}
+
+pub theorem e_operation_step(
+  p: MProgram,
+  op: MOp,
+  args: List(MVal),
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  arity: m_op_arity(op) = List::length(args)
+): step(p, Mstate(McOp(op, k), slots, List::append(List::reverse(args), stack), frames, cx)) =
+m_out(p, m_op(p_ctors(p), cx, op, args), k, slots, stack, frames) {
+  let popped: m_pop(m_op_arity(op), List::append(List::reverse(args), stack)) =
+  Some(Pair { fst: args, snd: stack }) :=
+  Eq::trans(
+    Eq::congr((n: Nat) => m_pop(n, List::append(List::reverse(args), stack)), arity),
+    e_pop_arguments(args, stack)
+  )
+  Eq::congr((values: Option(Pair(List(MVal), List(MVal)))) => match values: MStep {
+    None => m_bad()
+    Some(pair) => match pair: MStep {
+      Pair { fst: operands, snd: rest } => m_out(p, m_op(p_ctors(p), cx, op, operands), k, slots, rest, frames)
+    }
+  }, popped)
+}
+
+pub theorem e_operation_value_agrees(
+  p: MProgram,
+  op: MOp,
+  args: List(MVal),
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  v: MVal,
+  cx2: MCx,
+  arity: m_op_arity(op) = List::length(args),
+  computed: m_op(p_ctors(p), cx, op, args) = MoutVal(v, cx2)
+): (e_operation(p_ctors(p), cx, op, args) = ErValue(v, cx2)) ∧
+(
+  step(
+    p,
+    Mstate(McOp(op, k), slots, List::append(List::reverse(args), stack), frames, cx)
+  ) = MstepNext(Mstate(k, slots, Cons(v, stack), frames, cx2))
+) {
+  AndIntro(
+    Eq::trans(
+      e_operation_arity(p_ctors(p), cx, op, args, arity),
+      Eq::congr(e_primitive_out, computed)
+    ),
+    Eq::trans(
+      e_operation_step(p, op, args, k, slots, stack, frames, cx, arity),
+      Eq::congr((out: MOut) => m_out(p, out, k, slots, stack, frames), computed)
+    )
+  )
+}
+
+pub theorem e_operation_error_agrees(
+  p: MProgram,
+  op: MOp,
+  args: List(MVal),
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  message: Text,
+  arity: m_op_arity(op) = List::length(args),
+  computed: m_op(p_ctors(p), cx, op, args) = MoutErr(message)
+): (e_operation(p_ctors(p), cx, op, args) = ErError(message)) ∧
+(
+  step(
+    p,
+    Mstate(McOp(op, k), slots, List::append(List::reverse(args), stack), frames, cx)
+  ) = MstepError(message)
+) {
+  AndIntro(
+    Eq::trans(
+      e_operation_arity(p_ctors(p), cx, op, args, arity),
+      Eq::congr(e_primitive_out, computed)
+    ),
+    Eq::trans(
+      e_operation_step(p, op, args, k, slots, stack, frames, cx, arity),
+      Eq::congr((out: MOut) => m_out(p, out, k, slots, stack, frames), computed)
+    )
+  )
+}

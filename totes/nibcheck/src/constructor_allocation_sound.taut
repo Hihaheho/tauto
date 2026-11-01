@@ -1,0 +1,250 @@
+import "data_field_allocation.taut"
+
+pub theorem allocation_error_if(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  state: CheckerAllocation(c),
+  flag: Bool
+): AllocationAdvance(c, frame_error_if(c, message, span, flag)) {
+  match flag: AllocationAdvance(c, frame_error_if(c, message, span, flag)) { true => AndIntro(
+    Nat::le_refl(ck_next_of(c)),
+    state
+  )
+    false => AndIntro(Nat::le_refl(ck_next_of(c)), state) }
+}
+pub theorem constructor_return_allocation(
+  c: Checker,
+  name: Text,
+  args: List(Ty),
+  fields: List(DataField),
+  state: CheckerAllocation(c),
+  args_bound: TypeListAllocated(ck_next_of(c), args),
+  fields_bound: FieldsAllocated(ck_next_of(c), fields)
+): AllocationResult(c, leaf_constructor_return(c, name, args, fields)) {
+  match fields: AllocationResult(c, leaf_constructor_return(c, name, args, fields)) {
+    Nil => allocation_result_return(c, TyNamed(name, args), state, args_bound)
+    Cons(head, tail) => allocation_result_return(
+      c,
+      TyFn(field_tys(Cons(head, tail)), TyNamed(name, args), KindShared),
+      state,
+      AndIntro(field_tys_allocated(Cons(head, tail), ck_next_of(c), fields_bound), args_bound)
+    )
+  }
+}
+pub theorem constructor_fields_allocation(
+  c: Checker,
+  data_name: Text,
+  index: Nat,
+  span: TySpan,
+  name: Text,
+  args: List(Ty),
+  fields: List(DataField),
+  state: CheckerAllocation(c),
+  args_bound: TypeListAllocated(ck_next_of(c), args),
+  fields_bound: FieldsAllocated(ck_next_of(c), fields)
+): AllocationResult(c, leaf_constructor_fields(c, data_name, index, span, name, args, fields)) {
+  allocation_result_bind(
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => leaf_constructor_return(next, data_name, args, fields),
+    frame_error_if(
+      c,
+      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      span,
+      data_is_struct(ck_datas_of(c), data_name)
+    ),
+    allocation_error_if(
+      c,
+      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      span,
+      state,
+      data_is_struct(ck_datas_of(c), data_name)
+    ),
+    ignored => next => advanced => current => constructor_return_allocation(
+      next,
+      data_name,
+      args,
+      fields,
+      current,
+      type_list_allocated_weaken(args, ck_next_of(c), ck_next_of(next), advanced, args_bound),
+      fields_allocated_weaken(fields, ck_next_of(c), ck_next_of(next), advanced, fields_bound)
+    )
+  )
+}
+pub theorem constructor_after_allocation(
+  c: Checker,
+  data_name: Text,
+  index: Nat,
+  span: TySpan,
+  name: Text,
+  m: Mut1(List(Ty), Checker),
+  first: TypeListAllocation(c, m),
+  unchanged: CkReadFrame(c, m),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
+): AllocationResult(
+  c,
+  frame_bind(
+    List(Ty),
+    Ty,
+    (args: List(Ty), next: Checker) => leaf_constructor_fields(
+      next,
+      data_name,
+      index,
+      span,
+      name,
+      args,
+      datas_fields(ck_datas_of(next), data_name, index, args)
+    ),
+    m
+  )
+) {
+  match m: AllocationResult(
+    c,
+    frame_bind(
+      List(Ty),
+      Ty,
+      (args: List(Ty), next: Checker) => leaf_constructor_fields(
+        next,
+        data_name,
+        index,
+        span,
+        name,
+        args,
+        datas_fields(ck_datas_of(next), data_name, index, args)
+      ),
+      m
+    )
+  ) {
+    mut1(args, next) => allocation_result_start(
+      c,
+      next,
+      leaf_constructor_fields(
+        next,
+        data_name,
+        index,
+        span,
+        name,
+        args,
+        datas_fields(ck_datas_of(next), data_name, index, args)
+      ),
+      And::left(And::left(first)),
+      constructor_fields_allocation(
+        next,
+        data_name,
+        index,
+        span,
+        name,
+        args,
+        datas_fields(ck_datas_of(next), data_name, index, args),
+        And::right(And::left(first)),
+        And::right(first),
+        datas_fields_allocated(
+          ck_datas_of(next),
+          data_name,
+          index,
+          args,
+          ck_next_of(next),
+          Eq::subst(
+            (datas: Datas) => DatasAllocated(ck_next_of(next), datas),
+            Eq::sym(Eq::congr(frame_read_datas, unchanged)),
+            datas_allocated_weaken(
+              ck_datas_of(c),
+              ck_next_of(c),
+              ck_next_of(next),
+              And::left(And::left(first)),
+              declarations
+            )
+          ),
+          And::right(first)
+        )
+      )
+    )
+  }
+}
+pub theorem ck_constructor_known_allocation(
+  c: Checker,
+  data_name: Text,
+  index: Nat,
+  span: TySpan,
+  name: Text,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
+): AllocationResult(c, ck_constructor_known(c, data_name, index, span, name)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(leaf_constructor_unf(c, data_name, index, span, name)),
+    constructor_after_allocation(
+      c,
+      data_name,
+      index,
+      span,
+      name,
+      ck_fresh_each(data_generics_of(ck_datas_of(c), data_name), c),
+      ck_fresh_each_allocation(data_generics_of(ck_datas_of(c), data_name), c, state),
+      ck_fresh_each_frame(data_generics_of(ck_datas_of(c), data_name), c),
+      declarations
+    )
+  )
+}
+
+pub theorem ck_defer_constructor_allocation(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  state: CheckerAllocation(c)
+): AllocationResult(c, ck_defer_constructor(c, name, span)) {
+  ck_fresh_allocation_result(c, state)
+}
+
+pub theorem constructor_choice_allocation(
+  c: Checker,
+  data_name: Text,
+  index: Nat,
+  span: TySpan,
+  name: Text,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  ambiguous: Bool
+): AllocationResult(c, leaf_constructor_choice(c, data_name, index, span, name, ambiguous)) {
+  match ambiguous: AllocationResult(
+    c,
+    leaf_constructor_choice(c, data_name, index, span, name, ambiguous)
+  ) {
+    true => allocation_result_rewrap(
+      c,
+      ck_defer_constructor(c, name, span),
+      ck_defer_constructor_allocation(c, name, span, state)
+    )
+    false => allocation_result_rewrap(
+      c,
+      ck_constructor_known(c, data_name, index, span, name),
+      ck_constructor_known_allocation(c, data_name, index, span, name, state, declarations)
+    )
+  }
+}
+
+pub theorem ck_constructor_allocation(
+  c: Checker,
+  data_name: Text,
+  index: Nat,
+  span: TySpan,
+  name: Text,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c))
+): AllocationResult(c, ck_constructor(c, data_name, index, span, name)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(leaf_constructor_choice_unf(c, data_name, index, span, name)),
+    constructor_choice_allocation(
+      c,
+      data_name,
+      index,
+      span,
+      name,
+      state,
+      declarations,
+      datas_ctor_ambiguous(ck_datas_of(c), name)
+    )
+  )
+}

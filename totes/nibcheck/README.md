@@ -1,6 +1,6 @@
 # nibcheck
 
-The checkers of `crates/tauto/src`, written in tauto: the rows of effects
+The checkers of `crates/tauto-nibcheck/src`, written in tauto: the rows of effects
 (`rows.rs`), the value types (`types.rs`) and the use check (`lin.rs`).
 
 | File | Port of |
@@ -8,15 +8,15 @@ The checkers of `crates/tauto/src`, written in tauto: the rows of effects
 | `rows.taut` | `rows.rs`, and `Quant` of `types.rs`, in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」): the analysis follows calls with a number of steps it shares |
 | `ty.taut` | `Width`, `Kind`, `Ty`: their order, their text, unions and tagged types, in the proof language |
 | `datas.taut` | `Data`, `Datas`: kinds, `clone`, record patterns, fields, in the proof language: kinds and reachability take a number of steps from the size of the program |
-| `checker.taut` | the state of `types.rs`: fresh variables, unification, `fits`, `join`, in the proof language: written with `&mut c: Checker` as in Nib (`docs/design/self-host.md`「`&mut` と `var`（`crates/tauto/src/check/mutable.rs`）」); resolving, unifying and `fits` take a number of steps from the size of the program |
+| `checker.taut` | the state of `types.rs`: fresh variables, unification, `fits`, `join`, in the proof language: written with `&mut c: Checker` as in Nib (`docs/design/self-host.md`「`&mut` と `var`（`crates/tauto-kernel/src/check/mutable.rs`）」); resolving, unifying and `fits` take a number of steps from the size of the program |
 | `types_decl.taut` | written types, `struct`/`enum`/`effect` declarations, signatures and views, in the proof language |
 | `types_match.taut` | scopes, patterns, what a `match` covers, and the parts of `handle` that check no expression, in the proof language |
 | `types_infer.taut` | statements and expressions, `match` and `handle`, in the proof language: one group that shares the checker's steps |
 | `types_classes.taut` | classes and instances (`types/classes.rs`): their declarations, methods as functions with a `where`, the resolution of a constraint, and the prelude's classes expanded, in the proof language |
-| `direct.taut` | the syntax of a `direct` operation's arm (`direct.rs`), in the proof language |
+| `direct.taut` | the syntax of a `direct` operation's arm (`crates/tauto-surface/src/direct.rs`), in the proof language |
 | `types_run.taut` | the run of `types.rs` and the dump, in the proof language |
 | `freevars.taut` | `free_vars`, `used_vars`, `pattern_names`, places and the subterms `visit` walks, of `lin.rs`, in the proof language |
-| `modules.taut` | `module M { … }` and qualified names, flattened where the program is read (`surface/modules.rs`), in the proof language |
+| `modules.taut` | `module M { … }` and qualified names, flattened where the program is read (`crates/tauto-surface/src/surface/modules.rs`), in the proof language |
 | `lin_state.taut` | the bindings, frames and moves of `lin.rs`, in the proof language |
 | `lin_flow.taut` | effect events, frames and the states paths join with, of `lin.rs`, in the proof language |
 | `lin_arms.taut` | what `match` and `handle` need that walks no expression: pattern names, drops, answers, pinned continuations, direct arms, of `lin.rs`, in the proof language |
@@ -56,7 +56,7 @@ mode prints `== <path>` and the dump of the report for each file, or `error`
 when the file does not parse (`--lin` also when it has type errors, as
 `check_lin` does). The dumps are what `tauto::rows::dump_rows`,
 `tauto::types::dump_types` and `tauto::lin::dump_lin` write; the tests in
-`crates/tauto-selfhost/tests` (`rows.rs`, `types.rs`, `lin.rs`) compare them on
+`tools/selfhost-harness/tests` (`rows.rs`, `types.rs`, `lin.rs`) compare them on
 the whole corpus and on hard cases.
 
 Two things to know when reading the code:

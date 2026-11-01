@@ -1,0 +1,70 @@
+import "../../url/src/parse.taut"
+import std::Text
+
+// Byte lists as the checks read them, beside the ones of `url`.
+
+// What follows `p` in `l`, when `l` begins with `p`.
+pub fn tb_strip(p: List(Nat), l: List(Nat)): Option(List(Nat)) {
+  match p: Option(List(Nat)) {
+    Nil => Some(l)
+    Cons(x, ps) => match l: Option(List(Nat)) {
+      Nil => None
+      Cons(y, ls) => match Nat::eq(x, y): Option(List(Nat)) {
+        true => tb_strip(ps, ls)
+        false => None
+      }
+    }
+  }
+}
+
+pub fn tb_begins(p: List(Nat), l: List(Nat)): Bool {
+  match tb_strip(p, l): Bool {
+    None => false
+    Some(rest) => true
+  }
+}
+
+pub fn tb_ends(p: List(Nat), l: List(Nat)): Bool {
+  tb_begins(List::reverse(p), List::reverse(l))
+}
+
+// Whether `p` occurs in `l`.
+pub fn tb_infix(p: List(Nat), l: List(Nat)): Bool {
+  match l: Bool {
+    Nil => is_empty(p)
+    Cons(b, t) => Bool::or(tb_begins(p, l), tb_infix(p, t))
+  }
+}
+
+pub fn tb_has_byte(c: Nat, l: List(Nat)): Bool {
+  match l: Bool {
+    Nil => false
+    Cons(b, t) => Bool::or(Nat::eq(b, c), tb_has_byte(c, t))
+  }
+}
+
+pub fn tb_some_piece(p: (List(Nat)) -> Bool, ps: List(List(Nat))): Bool {
+  match ps: Bool {
+    Nil => false
+    Cons(x, rest) => Bool::or(p(x), tb_some_piece(p, rest))
+  }
+}
+
+pub fn tb_at_most(n: Nat, l: List(Nat)): Bool {
+  Nat::le(List::length(l), n)
+}
+
+// What a manifest or lock may hold without escapes: printable ASCII but `"`
+// and `\`.
+pub fn tb_plain_byte(b: Nat): Bool {
+  Bool::and(Nat::le(33, b), Bool::and(Nat::le(b, 126), Bool::and(not(Nat::eq(b, 34)), not(Nat::eq(b, 92)))))
+}
+
+pub fn tb_lower_hex(b: Nat): Bool {
+  Bool::or(is_digit(b), Bool::and(Nat::le(97, b), Nat::le(b, 102)))
+}
+
+// `.` or `..`.
+pub fn tb_dots(c: List(Nat)): Bool {
+  Bool::or(bytes_eq(c, Text::bytes(".")), bytes_eq(c, Text::bytes("..")))
+}

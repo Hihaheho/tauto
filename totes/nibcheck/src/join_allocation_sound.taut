@@ -1,0 +1,440 @@
+import "fits_allocation_sound.taut"
+import "join_sound.taut"
+
+pub fn OptionTypeAllocated(limit: Nat, value: Option(Ty)): Prop {
+  match value: Prop { None => True
+    Some(ty) => TypeAllocated(limit, ty) }
+}
+pub def JoinAllocation(
+  c: Checker,
+  m: Mut1(Ty, Checker)
+): Prop := And(AllocationRun(c, m), TypeAllocated(ck_next_of(ck_st(m)), ck_val(m)))
+pub def JoinOptionAllocation(
+  c: Checker,
+  m: Mut1(Option(Ty), Checker)
+): Prop := And(AllocationRun(c, m), OptionTypeAllocated(ck_next_of(ck_st(m)), ck_val(m)))
+pub theorem join_allocation_return(
+  c: Checker,
+  ty: Ty,
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), ty)
+): JoinAllocation(c, mut1(ty, c)) { AndIntro(AndIntro(Refl, state), bounded) }
+pub theorem join_allocation_none(
+  c: Checker,
+  state: CheckerAllocation(c)
+): JoinOptionAllocation(c, mut1(None, c)) { AndIntro(AndIntro(Refl, state), Trivial) }
+pub theorem join_option_rewrap(
+  c: Checker,
+  m: Mut1(Option(Ty), Checker),
+  h: JoinOptionAllocation(c, m)
+): JoinOptionAllocation(c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(Option(Ty), Checker)) => JoinOptionAllocation(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
+}
+pub theorem join_alloc_borrow_result(
+  c: Checker,
+  x: Ty,
+  m: Mut1(Bool, Checker),
+  first: AllocationRun(c, m),
+  bounded: TypeAllocated(ck_next_of(c), x)
+): JoinOptionAllocation(c, ck_jb_k(x, m)) {
+  match m: JoinOptionAllocation(c, ck_jb_k(x, m)) {
+    mut1(flag, next) => match flag: JoinOptionAllocation(c, ck_jb_k(x, mut1(flag, next))) {
+      false => AndIntro(first, Trivial)
+      true => AndIntro(
+        first,
+        ck_resolve_allocated(
+          next,
+          x,
+          And::right(And::right(first)),
+          Eq::subst((limit: Nat) => TypeAllocated(limit, x), And::left(first), bounded)
+        )
+      )
+    }
+  }
+}
+pub theorem join_alloc_second_choice(
+  c: Checker,
+  a: Ty,
+  x: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  x_bound: TypeAllocated(ck_next_of(c), x),
+  flag: Bool
+): JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) {
+  match flag: JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) {
+    false => join_allocation_none(c, state)
+    true => join_alloc_borrow_result(
+      c,
+      x,
+      ck_attempt_unify(c, x, a),
+      ck_attempt_unify_allocation(c, x, a, ordered, state, x_bound, a_bound),
+      x_bound
+    )
+  }
+}
+pub theorem join_alloc_second(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) {
+  match b: JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) {
+    TyInt(width) => join_allocation_none(c, state)
+    TyBool => join_allocation_none(c, state)
+    TyText => join_allocation_none(c, state)
+    TyUnit => join_allocation_none(c, state)
+    TyNever => join_allocation_none(c, state)
+    TyDecimal => join_allocation_none(c, state)
+    TyFloat => join_allocation_none(c, state)
+    TyParam(name, kind) => join_allocation_none(c, state)
+    TyVar(index) => join_allocation_none(c, state)
+    TyFn(params, result, kind) => join_allocation_none(c, state)
+    TyUnion(members) => join_allocation_none(c, state)
+    TyProduct(members) => join_allocation_none(c, state)
+    TyNamed(name, params) => join_allocation_none(c, state)
+    TyTagged(tags, inner) => join_allocation_none(c, state)
+    TyInfo(inner) => join_allocation_none(c, state)
+    TyBorrow(inner, mutable) => join_alloc_second_choice(
+      c,
+      a,
+      inner,
+      ordered,
+      state,
+      a_bound,
+      b_bound,
+      Bool::and(not(ty_is_borrow(a)), kind_dup(ck_kind(c, inner)))
+    )
+    TyPoly(gs, inner) => join_allocation_none(c, state)
+    TyApp(head, arg) => join_allocation_none(c, state)
+  }
+}
+pub theorem join_alloc_first_choice(
+  c: Checker,
+  x: Ty,
+  mutable: Bool,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  x_bound: TypeAllocated(ck_next_of(c), x),
+  b_bound: TypeAllocated(ck_next_of(c), b),
+  flag: Bool
+): JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) {
+  match flag: JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) {
+    true => join_alloc_borrow_result(
+      c,
+      x,
+      ck_attempt_unify(c, x, b),
+      ck_attempt_unify_allocation(c, x, b, ordered, state, x_bound, b_bound),
+      x_bound
+    )
+    false => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyBorrow(x, mutable), b),
+      join_alloc_second(c, TyBorrow(x, mutable), b, ordered, state, x_bound, b_bound)
+    )
+  }
+}
+pub theorem ck_join_borrowed_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) {
+  match a: JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) {
+    TyInt(width) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyInt(width), b),
+      join_alloc_second(c, TyInt(width), b, ordered, state, a_bound, b_bound)
+    )
+    TyBool => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyBool, b),
+      join_alloc_second(c, TyBool, b, ordered, state, a_bound, b_bound)
+    )
+    TyText => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyText, b),
+      join_alloc_second(c, TyText, b, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyUnit, b),
+      join_alloc_second(c, TyUnit, b, ordered, state, a_bound, b_bound)
+    )
+    TyNever => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyNever, b),
+      join_alloc_second(c, TyNever, b, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyDecimal, b),
+      join_alloc_second(c, TyDecimal, b, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyFloat, b),
+      join_alloc_second(c, TyFloat, b, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyParam(name, kind), b),
+      join_alloc_second(c, TyParam(name, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyVar(index), b),
+      join_alloc_second(c, TyVar(index), b, ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyFn(params, result, kind), b),
+      join_alloc_second(c, TyFn(params, result, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyUnion(members), b),
+      join_alloc_second(c, TyUnion(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyProduct(members) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyProduct(members), b),
+      join_alloc_second(c, TyProduct(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyNamed(name, params), b),
+      join_alloc_second(c, TyNamed(name, params), b, ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyTagged(tags, inner), b),
+      join_alloc_second(c, TyTagged(tags, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyInfo(inner), b),
+      join_alloc_second(c, TyInfo(inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => join_alloc_first_choice(
+      c,
+      inner,
+      mutable,
+      b,
+      ordered,
+      state,
+      a_bound,
+      b_bound,
+      Bool::and(not(ty_is_borrow(b)), kind_dup(ck_kind(c, inner)))
+    )
+    TyPoly(gs, inner) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyPoly(gs, inner), b),
+      join_alloc_second(c, TyPoly(gs, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyApp(head, arg) => join_option_rewrap(
+      c,
+      ck_join_borrowed_second(c, TyApp(head, arg), b),
+      join_alloc_second(c, TyApp(head, arg), b, ordered, state, a_bound, b_bound)
+    )
+  }
+}
+pub theorem join_alloc_union_result(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  m: Mut1(Option(Ty), Checker),
+  first: JoinOptionAllocation(c, m),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): JoinAllocation(c, ck_join_e2(a, b, m)) {
+  match m: JoinAllocation(c, ck_join_e2(a, b, m)) {
+    mut1(option, next) => match option: JoinAllocation(c, ck_join_e2(a, b, mut1(option, next))) {
+      Some(ty) => first
+      None => AndIntro(
+        And::left(first),
+        allocated_union(
+          Cons(a, Cons(b, Nil)),
+          ck_next_of(next),
+          AndIntro(
+            Eq::subst((limit: Nat) => TypeAllocated(limit, a), And::left(And::left(first)), a_bound),
+            AndIntro(
+              Eq::subst((limit: Nat) => TypeAllocated(limit, b), And::left(And::left(first)), b_bound),
+              Trivial
+            )
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem join_alloc_e1z(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b),
+  flag: Bool
+): JoinAllocation(c, ck_join_e1z(c, a, b, flag)) {
+  match flag: JoinAllocation(c, ck_join_e1z(c, a, b, flag)) {
+    true => join_allocation_return(c, b, state, b_bound)
+    false => join_alloc_union_result(
+      c,
+      a,
+      b,
+      ck_join_borrowed(c, a, b),
+      ck_join_borrowed_allocation(c, a, b, ordered, state, a_bound, b_bound),
+      a_bound,
+      b_bound
+    )
+  }
+}
+pub theorem join_alloc_e1y(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b),
+  flag: Bool
+): JoinAllocation(c, ck_join_e1y(c, a, b, flag)) {
+  match flag: JoinAllocation(c, ck_join_e1y(c, a, b, flag)) {
+    true => join_allocation_return(c, a, state, a_bound)
+    false => join_alloc_e1z(c, a, b, ordered, state, a_bound, b_bound, ty_is_never(a))
+  }
+}
+pub theorem join_alloc_e(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): JoinAllocation(c, ck_join_e(c, a, b)) {
+  join_alloc_e1y(
+    c,
+    ck_resolve(c, a),
+    ck_resolve(c, b),
+    ordered,
+    state,
+    ck_resolve_allocated(c, a, And::right(state), a_bound),
+    ck_resolve_allocated(c, b, And::right(state), b_bound),
+    Bool::or(ty_eq(ck_resolve(c, a), ck_resolve(c, b)), ty_is_never(ck_resolve(c, b)))
+  )
+}
+pub theorem join_alloc_start(
+  c: Checker,
+  next: Checker,
+  m: Mut1(Ty, Checker),
+  same: ck_next_of(c) = ck_next_of(next),
+  tail: JoinAllocation(next, m)
+): JoinAllocation(c, m) {
+  AndIntro(allocation_run_start(c, next, m, same, And::left(tail)), And::right(tail))
+}
+pub theorem join_alloc_after(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  m: Mut1(Bool, Checker),
+  first: AllocationRun(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): JoinAllocation(c, ck_join_k(a, b, m)) {
+  match m: JoinAllocation(c, ck_join_k(a, b, m)) {
+    mut1(flag, next) => match flag: JoinAllocation(c, ck_join_k(a, b, mut1(flag, next))) {
+      true => AndIntro(
+        first,
+        ck_resolve_allocated(
+          next,
+          a,
+          And::right(And::right(first)),
+          Eq::subst((limit: Nat) => TypeAllocated(limit, a), And::left(first), a_bound)
+        )
+      )
+      false => join_alloc_start(
+        c,
+        next,
+        ck_join_e(next, a, b),
+        And::left(first),
+        join_alloc_e(
+          next,
+          a,
+          b,
+          ordered,
+          And::right(first),
+          Eq::subst((limit: Nat) => TypeAllocated(limit, a), And::left(first), a_bound),
+          Eq::subst((limit: Nat) => TypeAllocated(limit, b), And::left(first), b_bound)
+        )
+      )
+    }
+  }
+}
+pub theorem join_alloc_my(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b),
+  flag: Bool
+): AllocationRun(c, ck_join_my(c, a, b, flag)) {
+  match flag: AllocationRun(c, ck_join_my(c, a, b, flag)) {
+    false => AndIntro(Refl, state)
+    true => allocation_run_rewrap(
+      c,
+      ck_attempt_unify(c, a, b),
+      ck_attempt_unify_allocation(c, a, b, ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem ck_join_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): JoinAllocation(c, ck_join(c, a, b)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => JoinAllocation(c, result),
+    Eq::sym(join_unf(c, a, b)),
+    join_alloc_after(
+      c,
+      a,
+      b,
+      ck_join_my(c, a, b, Bool::or(ck_has_vars(c, a), ck_has_vars(c, b))),
+      join_alloc_my(
+        c,
+        a,
+        b,
+        ordered,
+        state,
+        a_bound,
+        b_bound,
+        Bool::or(ck_has_vars(c, a), ck_has_vars(c, b))
+      ),
+      And::left(And::left(join_my_ok(c, a, b, Bool::or(ck_has_vars(c, a), ck_has_vars(c, b)))(ordered))),
+      a_bound,
+      b_bound
+    )
+  )
+}

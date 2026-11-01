@@ -1,671 +1,2381 @@
 import "Std.taut"
 
-// `#[mode!(spec(…)) => inductive R, fn f]` on an `inductive` relation: a function that
-// computes the one position marked `out` from the others, with the proof that it is
-// right. The rules are read as a program: the constructor at the `rec` position picks the
-// rule, each premise is a call, and what the premises answer is the rule's conclusion.
-//
-// The spec (`docs/design/macro.md`「`mode!`（`std/Mode.taut`）：規則を関数にする属性マクロ」):
-// - `in(x)`: a position the function takes, named `x`; a variable in each rule's conclusion.
-// - `rec(t)`: the position the function takes first and splits on; a constructor in each
-//   rule's conclusion, so one rule is one arm.
-// - `out(A)`: the one position the function computes.
-// - `name(f)`: the name of the function.
-// - `result(Res, ok, bad)`: the type of the answer, `ok(out, proof of the relation)` or `bad()`.
-// - `via(Rel, f, found, none)`: a premise of the relation `Rel` is answered by calling `f`,
-//   which gives `found(x, h)` or `none`.
-// - `eq(T, dec, same, diff)`: an output that is already bound is compared by `dec`, which
-//   gives `same(e)` with the equation or `diff`.
+// A relation's inputs select a rule; premises are processed in their written order.
+// Success carries an output, its derivation and uniqueness. Failure carries a
+// refutation of every output. With no output, success carries only the derivation.
+// The generated terms and contracts are checked by the kernel.
+
+syntax!(mode, ```par
+%start Spec
+%title "mode"
+%%
+Spec: Name LParen Role { Comma Role } RParen Arrow Answer { Clause };
+Role: RoleKind Name;
+RoleKind: RoleIn | RoleRec | RoleOut;
+Answer: Name LBrace Name Pipe Name RBrace;
+Clause: ViaClause | EqClause;
+ViaClause: KwVia Name Colon Answer;
+EqClause: KwEq Name Colon Answer;
+RoleIn: 'in';
+RoleRec: 'rec';
+RoleOut: 'out';
+KwVia: 'via';
+KwEq: 'eq';
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Arrow: '->';
+LParen: '(';
+RParen: ')';
+LBrace: '{';
+RBrace: '}';
+Pipe: '|';
+Comma: ',';
+Colon: ':';
+```) => struct Answer, enum Clause, struct EqClause, struct Role,
+  enum RoleKind, struct Spec, struct Spec_Rep1, struct ViaClause, fn parse
 
 // One element of the spec: `in(G)`, `result(Inferred, inferred, not_inferred)`, …
-struct SpecItem { head: SynIdent, args: List(SynIdent) }
+pub(open) struct SpecItem { head: SynIdent, args: List(SynIdent) }
 
 // What the spec says, with the names this macro writes.
-struct Gen {
+pub(open) struct Gen {
   rel: SynIdent
-  roles: List(Pair(Text, SynIdent))
+  roles: List(SynIdent × Text)
   res: SynIdent
   ok: SynIdent
   bad: SynIdent
   fname: SynIdent
   items: List(SpecItem)
+  ctors: List(SynIndCtor)
+  output_type: Option(SynExpr)
   at: SynSpan
+}
+
+// An explicit parameter of a rule: data, given to the rule as matched, or a premise.
+pub(open) enum MoParam {
+  MoData(SynExpr)
+  MoPremise(SynIdent, SynExpr)
+}
+
+// A rule while the arms are made: its premises and data, what it asks of each
+// matched position (rec first, then the ins), its output, and the names it binds.
+pub(open) struct MoRow {
+  rule: SynIdent
+  params: List(MoParam)
+  pats: List(SynExpr)
+  out: Option(SynExpr)
+  vars: List(Text)
+  types: List(@key SynExpr × @value SynExpr)
 }
 
 // The arguments of a relation, split by the role of their position.
-struct Split { rec: Option(SynExpr), ins: List(SynExpr), out: Option(SynExpr) }
+pub(open) struct Split { rec: Option(SynExpr), ins: List(SynExpr), out: Option(SynExpr) }
 
-// A name the macro makes: it is the macro's own, and the caller cannot see it.
-fn mo_name(at: SynSpan, name: Text) -> SynIdent {
-  SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: at }
-}
-
-// A name of the macro's own file, which resolves there (a constructor, `Type`).
-fn mo_quoted(e: SynExpr, at: SynSpan) -> SynIdent {
-  match syn_ident_of(e) {
-    Some(i) => i
-    None => mo_name(at, "?")
+module Mo {
+  // A name the macro makes: it is the macro's own, and the caller cannot see it.
+  pub fn name(at: SynSpan, name: Text): SynIdent {
+    SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: at }
   }
-}
 
-fn mo_args(es: List(SynExpr), at: SynSpan) -> List(SynIdent) ! {macro_error, Div} {
-  match es {
-    Nil => Nil
-    Cons(e, rest) => match syn_ident_of(e) {
-      Some(i) => Cons(i, mo_args(rest, at))
-      None => syn_error(at, "mode: a name is expected")
+  // A name of the macro's own file, which resolves there (a constructor, `Type`).
+  pub fn quoted(e: SynExpr, at: SynSpan): SynIdent {
+    match Syn::ident_of(e) {
+      Some(i) => i
+      None => Mo::name(at, "?")
     }
   }
-}
 
-fn mo_items_of(es: List(SynExpr), at: SynSpan) -> List(SpecItem) ! {macro_error, Div} {
-  match es {
-    Nil => Nil
-    Cons(x, rest) => match syn_app_parts(x) {
-      Some(p) => match syn_ident_of(p.fst) {
-        Some(h) => Cons(SpecItem { head: h, args: mo_args(p.snd, at) }, mo_items_of(rest, at))
-        None => syn_error(at, "mode: an element of the spec is `name(…)`")
-      }
-      None => syn_error(at, "mode: an element of the spec is `name(…)`")
+  pub fn item(head: Text, args: List(SynToken), at: SynSpan): SpecItem {
+    SpecItem { head: Mo::name(at, head), args: Mo::idents(args) }
+  }
+
+  pub fn idents(ts: List(SynToken)): List(SynIdent) {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(Syn::ident(t), Mo::idents(rest))
     }
   }
-}
 
-fn mo_items(e: SynExpr, at: SynSpan) -> List(SpecItem) ! {macro_error, Div} {
-  match syn_app_parts(e) {
-    Some(p) => mo_items_of(p.snd, at)
-    None => syn_error(at, "mode: the argument is `spec(…)`")
+  pub fn answer_item(head: Text, first: SynToken, a: mode::Answer, at: SynSpan): SpecItem {
+    Mo::item(head, Cons(first, Cons(a.name, Cons(a.name_2, Cons(a.name_3, Nil)))), at)
   }
-}
 
-fn mo_named(items: List(SpecItem), name: Text) -> List(SpecItem) {
-  match items {
-    Nil => Nil
-    Cons(i, rest) => if i.head.name == name {
-      Cons(i, mo_named(rest, name))
-    } else {
-      mo_named(rest, name)
+  pub fn role_item(r: mode::Role, at: SynSpan): SpecItem {
+    let head := match r.role_kind {
+      RoleIn(_) => "in"
+      RoleRec(_) => "rec"
+      RoleOut(_) => "out"
+    }
+    Mo::item(head, Cons(r.name, Nil), at)
+  }
+
+  pub fn more_roles(rs: List(mode::Spec_Rep1), at: SynSpan): List(SpecItem) {
+    match rs {
+      Nil => Nil
+      Cons(r, rest) => Cons(Mo::role_item(r.role, at), Mo::more_roles(rest, at))
     }
   }
-}
 
-fn mo_one(items: List(SpecItem), name: Text, at: SynSpan) -> SpecItem ! {macro_error, Div} {
-  match mo_named(items, name) {
-    Cons(i, rest) => match rest {
-      Nil => i
-      Cons(_, _) => syn_error(at, concat("mode: more than one ", name))
-    }
-    Nil => syn_error(at, concat("mode: ", concat(name, " is missing from the spec")))
-  }
-}
-
-fn mo_arg(i: SpecItem, k: u64, at: SynSpan) -> SynIdent ! {macro_error, Div} {
-  match i.args {
-    Nil => syn_error(at, concat("mode: too few names in ", i.head.name))
-    Cons(
-      a,
-      rest
-    ) => if k == 0 { a } else { mo_arg(SpecItem { head: i.head, args: rest }, k - 1, at) }
-  }
-}
-
-fn mo_roles(items: List(SpecItem), at: SynSpan) -> List(Pair(Text, SynIdent)) ! {macro_error, Div} {
-  match items {
-    Nil => Nil
-    Cons(i, rest) => {
-      let tail = mo_roles(rest, at)
-      if i.head.name == "in" || i.head.name == "rec" || i.head.name == "out" {
-        Cons(Pair { fst: i.head.name, snd: mo_arg(i, 0, at) }, tail)
-      } else {
-        tail
-      }
-    }
-  }
-}
-
-fn mo_split(
-  roles: List(Pair(Text, SynIdent)),
-  args: List(SynExpr),
-  at: SynSpan
-) -> Split ! {macro_error, Div} {
-  match roles {
-    Nil => Split { rec: None, ins: Nil, out: None }
-    Cons(r, rr) => match args {
-      Nil => syn_error(at, "mode: a rule has too few arguments")
-      Cons(a, ar) => {
-        let s = mo_split(rr, ar, at)
-        if r.fst == "in" {
-          Split { rec: s.rec, ins: Cons(a, s.ins), out: s.out }
-        } else {
-          if r.fst == "rec" {
-            Split { rec: Some(a), ins: s.ins, out: s.out }
-          } else {
-            Split { rec: s.rec, ins: s.ins, out: Some(a) }
-          }
+  pub fn clauses(cs: List(mode::Clause), at: SynSpan): List(SpecItem) {
+    match cs {
+      Nil => Nil
+      Cons(c, rest) => {
+        let item := match c {
+          ViaClause(v) => Mo::answer_item("via", v.name, v.answer, at)
+          EqClause(q) => Mo::answer_item("eq", q.name, q.answer, at)
         }
+        Cons(item, Mo::clauses(rest, at))
       }
     }
   }
-}
 
-fn mo_need(o: Option(SynExpr), at: SynSpan) -> SynExpr ! {macro_error, Div} {
-  match o {
-    Some(e) => e
-    None => syn_error(at, "mode: the spec needs one rec and one out")
-  }
-}
-
-// The sort `(A) -> (B) -> Prop`, as the types of its positions.
-fn mo_sort_tys(sort: SynExpr) -> List(SynExpr) {
-  match syn_pi_parts(sort) {
-    Some(p) => syn_append(mo_param_tys(p.fst), mo_sort_tys(p.snd))
-    None => Nil
-  }
-}
-
-fn mo_param_tys(ps: List(SynParam)) -> List(SynExpr) {
-  match ps {
-    Nil => Nil
-    Cons(p, rest) => Cons(p.ty, mo_param_tys(rest))
-  }
-}
-
-fn mo_bound(bound: List(Text), n: Text) -> Bool {
-  match bound {
-    Nil => false
-    Cons(b, rest) => if b == n { true } else { mo_bound(rest, n) }
-  }
-}
-
-fn mo_arm(p: SynPattern, body: SynExpr) -> SynArm {
-  SynArm { pattern: p, guard: None, goal: None, body: body }
-}
-
-fn mo_call(f: SynIdent, args: List(SynExpr), at: SynSpan) -> SynExpr { ExApp(ExVar(f), args, at) }
-
-fn mo_match(scrut: SynExpr, motive: SynExpr, arms: List(SynArm), at: SynSpan) -> SynExpr {
-  ExMatch(scrut, Some(motive), arms, None, at)
-}
-
-fn mo_vars(is: List(SynIdent)) -> List(SynExpr) {
-  match is {
-    Nil => Nil
-    Cons(i, rest) => Cons(ExVar(i), mo_vars(rest))
-  }
-}
-
-fn mo_pats(is: List(SynIdent)) -> List(SynPattern) {
-  match is {
-    Nil => Nil
-    Cons(i, rest) => Cons(PtBind(i), mo_pats(rest))
-  }
-}
-
-// The arms of the answer of a call: `ok(x, h) => found`, `bad => bad()`.
-fn mo_answer(g: Gen, x: SynIdent, h: SynIdent, found: SynExpr) -> List(SynArm) {
-  Cons(
-    mo_arm(PtCtor(g.ok, Cons(PtBind(x), Cons(PtBind(h), Nil))), found),
-    Cons(mo_arm(PtBind(g.bad), mo_call(g.bad, Nil, g.at)), Nil)
-  )
-}
-
-// The names `x, y` of the arguments of a constructor `c(x, y)` in a premise, each of
-// which must be a name.
-fn mo_pattern_vars(es: List(SynExpr), at: SynSpan) -> List(SynIdent) ! {macro_error, Div} {
-  mo_args(es, at)
-}
-
-fn mo_names(is: List(SynIdent)) -> List(Text) {
-  match is {
-    Nil => Nil
-    Cons(i, rest) => Cons(i.name, mo_names(rest))
-  }
-}
-
-// The premises of a rule, one after the other, then the answer `ok(out, rule(proofs))`.
-fn mo_premises(
-  g: Gen,
-  ps: List(Pair(SynIdent, SynExpr)),
-  bound: List(Text),
-  motive: SynExpr,
-  out: SynExpr,
-  rule: SynIdent,
-  proofs: List(SynExpr)
-) -> SynExpr ! {macro_error, Div} {
-  match ps {
-    Nil => mo_call(g.ok, Cons(out, Cons(mo_call(rule, proofs, g.at), Nil)), g.at)
-    Cons(p, rest) => {
-      let h = p.fst
-      let more = Cons(ExVar(h), Nil)
-      match syn_app_parts(p.snd) {
-        None => syn_error(g.at, "mode: a premise is a relation applied to arguments")
-        Some(pp) => match syn_ident_of(pp.fst) {
-          Some(name) => if name.name == g.rel.name {
-            mo_recursive(g, h, pp.snd, rest, bound, motive, out, rule, syn_append(proofs, more))
-          } else {
-            mo_via(g, h, name, pp.snd, rest, bound, motive, out, rule, syn_append(proofs, more))
-          }
-          None => syn_error(g.at, "mode: a premise is a relation applied to arguments")
-        }
-      }
-    }
-  }
-}
-
-// A premise that is a rule of another relation, answered by the function the spec names.
-fn mo_via(
-  g: Gen,
-  h: SynIdent,
-  name: SynIdent,
-  args: List(SynExpr),
-  rest: List(Pair(SynIdent, SynExpr)),
-  bound: List(Text),
-  motive: SynExpr,
-  out: SynExpr,
-  rule: SynIdent,
-  proofs: List(SynExpr)
-) -> SynExpr ! {macro_error, Div} {
-  let v = mo_via_item(mo_named(g.items, "via"), name, g.at)
-  let f = mo_arg(v, 1, g.at)
-  let found = mo_arg(v, 2, g.at)
-  let none = mo_arg(v, 3, g.at)
-  let init = mo_init(args)
-  let o = mo_last(args, g.at)
-  match syn_ident_of(o) {
-    Some(x) => {
-      let body = mo_premises(g, rest, Cons(x.name, bound), motive, out, rule, proofs)
-      mo_match(
-        mo_call(f, init, g.at),
-        motive,
-        Cons(
-          mo_arm(PtCtor(found, Cons(PtBind(x), Cons(PtBind(h), Nil))), body),
-          Cons(mo_arm(PtBind(none), mo_call(g.bad, Nil, g.at)), Nil)
-        ),
-        g.at
-      )
-    }
-    None => syn_error(g.at, "mode: the output of a via premise is a name")
-  }
-}
-
-fn mo_via_item(vs: List(SpecItem), name: SynIdent, at: SynSpan) -> SpecItem ! {macro_error, Div} {
-  match vs {
-    Nil => syn_error(at, concat("mode: no via(…) for the premise ", name.name))
-    Cons(v, rest) => if mo_arg(
-      v,
-      0,
+  // The spec as its items: the roles in order, then `name`, `result`, and the clauses.
+  pub fn items(t: mode::Spec, at: SynSpan): List(SpecItem) {
+    let roles := Cons(Mo::role_item(t.role, at), Mo::more_roles(t.rep, at))
+    let result := Mo::item(
+      "result",
+      Cons(t.answer.name, Cons(t.answer.name_2, Cons(t.answer.name_3, Nil))),
       at
-    ).name == name.name { v } else { mo_via_item(rest, name, at) }
-  }
-}
-
-fn mo_init(es: List(SynExpr)) -> List(SynExpr) {
-  match es {
-    Nil => Nil
-    Cons(e, rest) => match rest {
-      Nil => Nil
-      Cons(_, _) => Cons(e, mo_init(rest))
-    }
-  }
-}
-
-fn mo_last(es: List(SynExpr), at: SynSpan) -> SynExpr ! {macro_error, Div} {
-  match es {
-    Nil => syn_error(at, "mode: a premise without arguments")
-    Cons(e, rest) => match rest {
-      Nil => e
-      Cons(_, _) => mo_last(rest, at)
-    }
-  }
-}
-
-// A premise that is a rule of the relation itself: a call of the function being made.
-fn mo_recursive(
-  g: Gen,
-  h: SynIdent,
-  args: List(SynExpr),
-  rest: List(Pair(SynIdent, SynExpr)),
-  bound: List(Text),
-  motive: SynExpr,
-  out: SynExpr,
-  rule: SynIdent,
-  proofs: List(SynExpr)
-) -> SynExpr ! {macro_error, Div} {
-  let s = mo_split(g.roles, args, g.at)
-  let x = mo_need(s.rec, g.at)
-  let o = mo_need(s.out, g.at)
-  let call = mo_call(g.fname, Cons(x, s.ins), g.at)
-  match syn_ident_of(o) {
-    Some(v) => if mo_bound(bound, v.name) {
-      mo_equal(g, h, v, call, rest, bound, motive, out, rule, proofs)
-    } else {
-      mo_fresh(
-        mo_premises(g, rest, Cons(v.name, bound), motive, out, rule, proofs),
-        g,
-        call,
-        v,
-        h,
-        motive
-      )
-    }
-    None => match syn_app_parts(o) {
-      Some(q) => mo_shape(g, h, args, q.fst, q.snd, call, rest, bound, motive, out, rule, proofs)
-      None => syn_error(
-        g.at,
-        "mode: the output of a premise is a name or a constructor applied to names"
-      )
-    }
-  }
-}
-
-fn mo_fresh(
-  body: SynExpr,
-  g: Gen,
-  call: SynExpr,
-  v: SynIdent,
-  h: SynIdent,
-  motive: SynExpr
-) -> SynExpr {
-  mo_match(call, motive, mo_answer(g, v, h, body), g.at)
-}
-
-// The output is already known: ask the equality function, and rewrite by it.
-fn mo_equal(
-  g: Gen,
-  h: SynIdent,
-  v: SynIdent,
-  call: SynExpr,
-  rest: List(Pair(SynIdent, SynExpr)),
-  bound: List(Text),
-  motive: SynExpr,
-  out: SynExpr,
-  rule: SynIdent,
-  proofs: List(SynExpr)
-) -> SynExpr ! {macro_error, Div} {
-  let q = mo_one(g.items, "eq", g.at)
-  let dec = mo_arg(q, 1, g.at)
-  let same = mo_arg(q, 2, g.at)
-  let diff = mo_arg(q, 3, g.at)
-  let got = mo_name(g.at, concat(h.name, "_got"))
-  let e = mo_name(g.at, concat(h.name, "_eq"))
-  let body = mo_premises(g, rest, bound, motive, out, rule, proofs)
-  let rewrite = mo_match(
-    ExVar(e),
-    motive,
-    Cons(mo_arm(PtCtor(mo_quoted(quote { refl }, g.at), Nil), body), Nil),
-    g.at
-  )
-  let decide = mo_match(
-    mo_call(dec, Cons(ExVar(v), Cons(ExVar(got), Nil)), g.at),
-    motive,
-    Cons(
-      mo_arm(PtCtor(same, Cons(PtBind(e), Nil)), rewrite),
-      Cons(mo_arm(PtBind(diff), mo_call(g.bad, Nil, g.at)), Nil)
-    ),
-    g.at
-  )
-  mo_match(call, motive, mo_answer(g, got, h, decide), g.at)
-}
-
-// The output is a constructor applied to new names: match on the answer, and carry the
-// proof across the match as an argument of the arms (the type of the proof mentions it).
-fn mo_shape(
-  g: Gen,
-  h: SynIdent,
-  args: List(SynExpr),
-  c: SynExpr,
-  vs: List(SynExpr),
-  call: SynExpr,
-  rest: List(Pair(SynIdent, SynExpr)),
-  bound: List(Text),
-  motive: SynExpr,
-  out: SynExpr,
-  rule: SynIdent,
-  proofs: List(SynExpr)
-) -> SynExpr ! {macro_error, Div} {
-  match syn_ident_of(c) {
-    Some(cn) => {
-      let names = mo_pattern_vars(vs, g.at)
-      let t = mo_name(g.at, concat(h.name, "_out"))
-      let premise = mo_app_out(g, args, ExVar(t))
-      let arrow = ExPi(Cons(SynParam { name: None, ty: premise }, Nil), motive, None, g.at)
-      let body = mo_premises(g, rest, syn_append(mo_names(names), bound), motive, out, rule, proofs)
-      let lam = ExLam(Cons(BName(h, None), Nil), body, g.at)
-      let refuse = ExLam(Cons(BName(h, None), Nil), mo_call(g.bad, Nil, g.at), g.at)
-      let inner = mo_match(
-        ExVar(t),
-        arrow,
-        Cons(mo_arm(PtCtor(cn, mo_pats(names)), lam), Cons(mo_arm(PtWild, refuse), Nil)),
-        g.at
-      )
-      let applied = ExApp(inner, Cons(ExVar(h), Nil), g.at)
-      mo_match(call, motive, mo_answer(g, t, h, applied), g.at)
-    }
-    None => syn_error(
-      g.at,
-      "mode: the output of a premise is a name or a constructor applied to names"
     )
+    let rest := Cons(Mo::item("name", Cons(t.name, Nil), at), Cons(result, Mo::clauses(t.clause, at)))
+    Syn::append(roles, rest)
   }
-}
 
-// The premise with its output replaced.
-fn mo_app_out(g: Gen, args: List(SynExpr), o: SynExpr) -> SynExpr {
-  ExApp(ExVar(g.rel), mo_replace_out(g.roles, args, o), g.at)
-}
-
-fn mo_replace_out(
-  roles: List(Pair(Text, SynIdent)),
-  args: List(SynExpr),
-  o: SynExpr
-) -> List(SynExpr) {
-  match roles {
-    Nil => args
-    Cons(r, rr) => match args {
+  pub fn named(items: List(SpecItem), name: Text): List(SpecItem) {
+    match items {
       Nil => Nil
-      Cons(a, ar) => Cons(if r.fst == "out" { o } else { a }, mo_replace_out(rr, ar, o))
+      Cons(i, rest) => if i.head.name == name {
+        Cons(i, Mo::named(rest, name))
+      } else {
+        Mo::named(rest, name)
+      }
     }
   }
-}
 
-fn mo_drop<T>(n: u64, l: List(T)) -> List(T) {
-  if n == 0 {
-    l
-  } else {
+  pub fn one(items: List(SpecItem), name: Text, at: SynSpan): SpecItem ! {macro_error, Div} {
+    match Mo::named(items, name) {
+      Cons(i, rest) => match rest {
+        Nil => i
+        Cons(_, _) => Syn::error(at, concat("mode: more than one ", name))
+      }
+      Nil => Syn::error(at, concat("mode: ", concat(name, " is missing from the spec")))
+    }
+  }
+
+  pub fn arg(i: SpecItem, k: u64, at: SynSpan): SynIdent ! {macro_error, Div} {
+    match i.args {
+      Nil => Syn::error(at, concat("mode: too few names in ", i.head.name))
+      Cons(a, rest) => if k == 0 { a } else {
+        Mo::arg(SpecItem { head: i.head, args: rest }, k - 1, at)
+      }
+    }
+  }
+
+  pub fn roles(
+    items: List(SpecItem),
+    at: SynSpan
+  ): List(SynIdent × Text) ! {macro_error, Div} {
+    match items {
+      Nil => Nil
+      Cons(i, rest) => {
+        let tail := Mo::roles(rest, at)
+        if i.head.name == "in" || i.head.name == "rec" || i.head.name == "out" {
+          Cons(#(i.head.name, Mo::arg(i, 0, at)), tail)
+        } else {
+          tail
+        }
+      }
+    }
+  }
+
+  pub fn split(
+    roles: List(SynIdent × Text),
+    args: List(SynExpr),
+    at: SynSpan
+  ): Split ! {macro_error, Div} {
+    match roles {
+      Nil => Split { rec: None, ins: Nil, out: None }
+      Cons(r, rr) => match args {
+        Nil => Syn::error(at, "mode: a rule has too few arguments")
+        Cons(a, ar) => {
+          let s := Mo::split(rr, ar, at)
+          if (r: Text) == "in" {
+            Split { rec: s.rec, ins: Cons(a, s.ins), out: s.out }
+          } else {
+            if (r: Text) == "rec" {
+              Split { rec: Some(a), ins: s.ins, out: s.out }
+            } else {
+              Split { rec: s.rec, ins: s.ins, out: Some(a) }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn need(o: Option(SynExpr), at: SynSpan): SynExpr ! {macro_error, Div} {
+    match o {
+      Some(e) => e
+      None => Syn::error(at, "mode: the spec needs one rec and one out")
+    }
+  }
+
+  pub fn bound(bound: List(Text), n: Text): Bool {
+    match bound {
+      Nil => false
+      Cons(b, rest) => if b == n { true } else { Mo::bound(rest, n) }
+    }
+  }
+
+  pub fn arm(p: SynPattern, body: SynExpr): SynArm {
+    SynArm { pattern: p, guard: None, goal: None, body: body }
+  }
+
+  pub fn call(f: SynIdent, args: List(SynExpr), at: SynSpan): SynExpr {
+    match args {
+      Nil => ExVar(f)
+      Cons(_, _) => ExApp(ExVar(f), args, at)
+    }
+  }
+
+  pub fn match_expr(scrut: SynExpr, motive: SynExpr, arms: List(SynArm), at: SynSpan): SynExpr {
+    ExMatch(scrut, Some(motive), arms, None, at)
+  }
+
+  pub fn vars(is: List(SynIdent)): List(SynExpr) {
+    match is {
+      Nil => Nil
+      Cons(i, rest) => Cons(ExVar(i), Mo::vars(rest))
+    }
+  }
+
+  pub fn pats(is: List(SynIdent)): List(SynPattern) {
+    match is {
+      Nil => Nil
+      Cons(i, rest) => Cons(PtBind(i), Mo::pats(rest))
+    }
+  }
+
+  pub fn names(is: List(SynIdent)): List(Text) {
+    match is {
+      Nil => Nil
+      Cons(i, rest) => Cons(i.name, Mo::names(rest))
+    }
+  }
+
+  pub fn with_out(out: Option(SynExpr), proof: SynExpr): List(SynExpr) {
+    match out {
+      Some(o) => Cons(o, Cons(proof, Nil))
+      None => Cons(proof, Nil)
+    }
+  }
+
+  pub fn via_item(vs: List(SpecItem), name: SynIdent, at: SynSpan): SpecItem ! {macro_error, Div} {
+    match vs {
+      Nil => Syn::error(at, concat("mode: no via(…) for the premise ", name.name))
+      Cons(v, rest) => if Mo::arg(
+        v,
+        0,
+        at
+      ).name == name.name { v } else { Mo::via_item(rest, name, at) }
+    }
+  }
+
+  pub fn init(es: List(SynExpr)): List(SynExpr) {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => match rest {
+        Nil => Nil
+        Cons(_, _) => Cons(e, Mo::init(rest))
+      }
+    }
+  }
+
+  pub fn last(es: List(SynExpr), at: SynSpan): SynExpr ! {macro_error, Div} {
+    match es {
+      Nil => Syn::error(at, "mode: a premise without arguments")
+      Cons(e, rest) => match rest {
+        Nil => e
+        Cons(_, _) => Mo::last(rest, at)
+      }
+    }
+  }
+
+  pub fn app_out(g: Gen, args: List(SynExpr), o: SynExpr): SynExpr {
+    ExApp(ExVar(g.rel), Mo::replace_out(g.roles, args, o), g.at)
+  }
+
+  pub fn replace_out(
+    roles: List(SynIdent × Text),
+    args: List(SynExpr),
+    o: SynExpr
+  ): List(SynExpr) {
+    match roles {
+      Nil => args
+      Cons(r, rr) => match args {
+        Nil => Nil
+        Cons(a, ar) => Cons(if (r: Text) == "out" { o } else { a }, Mo::replace_out(rr, ar, o))
+      }
+    }
+  }
+
+  pub fn drop<T>(n: u64, l: List(T)): List(T) {
+    if n == 0 {
+      l
+    } else {
+      match l {
+        Nil => Nil
+        Cons(_, rest) => Mo::drop(n - 1, rest)
+      }
+    }
+  }
+
+  // The names of the positions with this role, each with its type, in order.
+  pub fn of_role(
+    roles: List(SynIdent × Text),
+    tys: List(SynExpr),
+    want: Text
+  ): List(SynExpr × SynIdent) {
+    match roles {
+      Nil => Nil
+      Cons(r, rr) => match tys {
+        Nil => Nil
+        Cons(t, tr) => if (r: Text) == want {
+          Cons(#((r: SynIdent), t), Mo::of_role(rr, tr, want))
+        } else {
+          Mo::of_role(rr, tr, want)
+        }
+      }
+    }
+  }
+
+  pub fn first_names(ps: List(SynExpr × SynIdent)): List(SynIdent) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons((p: SynIdent), Mo::first_names(rest))
+    }
+  }
+
+  pub fn role_names(roles: List(SynIdent × Text), want: Text): List(SynIdent) {
+    match roles {
+      Nil => Nil
+      Cons(r, rr) => if (r: Text) == want { Cons((r: SynIdent), Mo::role_names(rr, want)) } else {
+        Mo::role_names(rr, want)
+      }
+    }
+  }
+
+  // ---- the rules as arms: a match on each position a rule asks a constructor of ----
+
+  pub fn nth(l: List(SynExpr), k: u64, at: SynSpan): SynExpr ! {macro_error, Div} {
+    match l {
+      Nil => Syn::error(at, "mode: a rule has too few arguments")
+      Cons(x, rest) => if k == 0 { x } else { Mo::nth(rest, k - 1, at) }
+    }
+  }
+
+  pub fn param_names(ps: List(SynExpr × SynIdent)): List(Text) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons((p: SynIdent).name, Mo::param_names(rest))
+    }
+  }
+
+  pub fn remove(l: List(Text), x: Text): List(Text) {
     match l {
       Nil => Nil
-      Cons(_, rest) => mo_drop(n - 1, rest)
+      Cons(y, rest) => if y == x { Mo::remove(rest, x) } else { Cons(y, Mo::remove(rest, x)) }
     }
   }
-}
 
-// The names of the positions with this role, each with its type, in order.
-fn mo_with(
-  roles: List(Pair(Text, SynIdent)),
-  tys: List(SynExpr),
-  want: Text
-) -> List(Pair(SynIdent, SynExpr)) {
-  match roles {
-    Nil => Nil
-    Cons(r, rr) => match tys {
-      Nil => Nil
-      Cons(t, tr) => if r.fst == want {
-        Cons(Pair { fst: r.snd, snd: t }, mo_with(rr, tr, want))
-      } else {
-        mo_with(rr, tr, want)
-      }
-    }
-  }
-}
-
-fn mo_first_names(ps: List(Pair(SynIdent, SynExpr))) -> List(SynIdent) {
-  match ps {
-    Nil => Nil
-    Cons(p, rest) => Cons(p.fst, mo_first_names(rest))
-  }
-}
-
-fn mo_role_names(roles: List(Pair(Text, SynIdent)), want: Text) -> List(SynIdent) {
-  match roles {
-    Nil => Nil
-    Cons(
-      r,
-      rr
-    ) => if r.fst == want { Cons(r.snd, mo_role_names(rr, want)) } else { mo_role_names(rr, want) }
-  }
-}
-
-fn mo_same_names(a: List(SynIdent), b: List(SynIdent)) -> Bool {
-  match a {
-    Nil => match b {
-      Nil => true
-      Cons(_, _) => false
-    }
-    Cons(x, xr) => match b {
+  // Whether a premise's type is one of the relations the spec answers: this one, or a `via`.
+  pub fn is_via(vs: List(SpecItem), name: Text): Bool {
+    match vs {
       Nil => false
-      Cons(y, yr) => x.name == y.name && mo_same_names(xr, yr)
-    }
-  }
-}
-
-fn mo_pattern(r: SynExpr, at: SynSpan) -> SynPattern ! {macro_error, Div} {
-  match syn_ident_of(r) {
-    Some(cn) => PtBind(cn)
-    None => match syn_app_parts(r) {
-      Some(q) => match syn_ident_of(q.fst) {
-        Some(cn) => PtCtor(cn, mo_pats(mo_args(q.snd, at)))
-        None => syn_error(at, "mode: the rec position of a rule is a constructor applied to names")
+      Cons(v, rest) => match v.args {
+        Cons(a, _) => a.name == name || Mo::is_via(rest, name)
+        Nil => Mo::is_via(rest, name)
       }
-      None => syn_error(at, "mode: the rec position of a rule is a constructor applied to names")
+    }
+  }
+
+  // `a = b` arrives as `=` applied to its two sides; the kernel reads it as the
+  // relation `Eq`, so a premise written that way names `Eq` too.
+  pub fn relation_name(n: SynIdent): SynIdent {
+    if n.name == "=" { SynIdent { name: "Eq", ctx: n.ctx, span: n.span } } else { n }
+  }
+
+  pub fn is_premise(g: Gen, ty: SynExpr): Bool {
+    match Syn::app_parts(ty) {
+      Some(q) => match Syn::ident_of((q: SynExpr)) {
+        Some(n0) => {
+          let n := Mo::relation_name(n0)
+          n.name == g.rel.name || Mo::is_via(Mo::named(g.items, "via"), n.name)
+        }
+        None => false
+      }
+      None => false
+    }
+  }
+
+  // Parameters whose types are relations are premises; the others are data.
+  pub fn params_of(
+    g: Gen,
+    ps: List(SynExpr × SynIdent),
+    result: SynExpr
+  ): List(MoParam) ! {Div, elab} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => {
+        let here := if Mo::is_premise(g, (p: SynExpr)) || Mp::prop_type((p: SynExpr)) {
+          MoPremise((p: SynIdent), (p: SynExpr))
+        } else {
+          MoData(ExVar((p: SynIdent)))
+        }
+        Cons(here, Mo::params_of(g, rest, result))
+      }
+    }
+  }
+
+  pub fn mentions(e: SynExpr, name: Text): Bool {
+    match Syn::ident_of(e) {
+      Some(x) => x.name == name
+      None => match Syn::app_parts(e) {
+        Some(q) => Mo::mentions((q: SynExpr), name) || Mo::mentions_any((q: List(SynExpr)), name)
+        None => false
+      }
+    }
+  }
+
+  pub fn mentions_any(es: List(SynExpr), name: Text): Bool {
+    match es {
+      Nil => false
+      Cons(e, rest) => Mo::mentions(e, name) || Mo::mentions_any(rest, name)
+    }
+  }
+
+  pub fn row(g: Gen, c: SynIndCtor): MoRow ! {macro_error, Div, elab} {
+    match Syn::app_parts(c.result) {
+      None => Syn::error(g.at, "mode: a rule ends in the relation applied to arguments")
+      Some(pp) => {
+        let s := Mo::split(g.roles, (pp: List(SynExpr)), g.at)
+        MoRow {
+          rule: c.name
+          params: Mo::params_of(g, Mo::drop(c.implicit, c.params), c.result)
+          pats: Cons(Mo::need(s.rec, g.at), s.ins)
+          out: s.out
+          vars: Mo::param_names(c.params)
+          types: Mp::param_types(c.params)
+        }
+      }
+    }
+  }
+
+  pub fn rows(g: Gen, cs: List(SynIndCtor)): List(MoRow) ! {macro_error, Div, elab} {
+    match cs {
+      Nil => Nil
+      Cons(c, rest) => {
+        let row := Mo::row(g, c)
+        Mp::validate_row(g, row, c)
+        Cons(row, Mo::rows(g, rest))
+      }
+    }
+  }
+
+  // `x` written for `old_name` in the row; `binds` are the names `to` brings, renamed in the
+  // row first where it already has them for something else.
+  pub fn subst_e(e: SynExpr, orig: Text, to: SynExpr, at: SynSpan): SynExpr {
+    Syn::replace(e, ExVar(Mo::name(at, orig)), to)
+  }
+
+  pub fn subst_all(es: List(SynExpr), orig: Text, to: SynExpr, at: SynSpan): List(SynExpr) {
+    Syn::replace_all(es, ExVar(Mo::name(at, orig)), to)
+  }
+
+  pub fn subst_params(ps: List(MoParam), orig: Text, to: SynExpr, at: SynSpan): List(MoParam) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(
+        match p {
+          MoData(e) => MoData(Mo::subst_e(e, orig, to, at))
+          MoPremise(h, ty) => MoPremise(h, Mo::subst_e(ty, orig, to, at))
+        },
+        Mo::subst_params(rest, orig, to, at)
+      )
+    }
+  }
+
+  pub fn subst_out(o: Option(SynExpr), orig: Text, to: SynExpr, at: SynSpan): Option(SynExpr) {
+    match o {
+      Some(e) => Some(Mo::subst_e(e, orig, to, at))
+      None => None
+    }
+  }
+
+  pub fn unused(vars: List(Text), name: Text): Text {
+    if Mo::bound(vars, name) { Mo::unused(vars, concat(name, "_")) } else { name }
+  }
+
+  pub fn subst_row(
+    r: MoRow,
+    orig: Text,
+    to: SynExpr,
+    binds: List(Text),
+    at: SynSpan
+  ): MoRow ! {Div} {
+    let r1 := Mo::free(r, orig, binds, at)
+    MoRow {
+      rule: r1.rule
+      params: Mo::subst_params(r1.params, orig, to, at)
+      pats: Mo::subst_all(r1.pats, orig, to, at)
+      out: Mo::subst_out(r1.out, orig, to, at)
+      vars: Syn::append(binds, Mo::remove(r1.vars, orig))
+      types: Mp::pending_sub(r1.types, ExVar(Mo::name(at, orig)), to)
+    }
+  }
+
+  pub fn free(r: MoRow, orig: Text, binds: List(Text), at: SynSpan): MoRow ! {Div} {
+    match binds {
+      Nil => r
+      Cons(b, rest) => if b != orig && Mo::bound(r.vars, b) {
+        let fresh := Mo::unused(Syn::append(binds, r.vars), b)
+        Mo::free(
+          Mo::subst_row(r, b, ExVar(Mo::name(at, fresh)), Cons(fresh, Nil), at),
+          orig,
+          rest,
+          at
+        )
+      } else {
+        Mo::free(r, orig, rest, at)
+      }
+    }
+  }
+
+  // What a rule asks of a position: one of its variables, or a constructor.
+  pub fn var_of(r: MoRow, e: SynExpr): Option(SynIdent) {
+    match Syn::ident_of(e) {
+      Some(x) => if Mo::bound(r.vars, x.name) { Some(x) } else { None }
+      None => None
+    }
+  }
+
+  pub fn head(e: SynExpr, at: SynSpan): SynIdent ! {macro_error, Div, elab} {
+    if Syn::same(e, quote { true }) { Mo::name(at, "true") } else {
+      if Syn::same(e, quote { false }) { Mo::name(at, "false") } else {
+        match Syn::ident_of(e) {
+          Some(c) => c
+          None => match Syn::app_parts(e) {
+            Some(q) => match Syn::ident_of((q: SynExpr)) {
+              Some(c) => c
+              None => Syn::error(
+                at,
+                "mode: an input of a rule is a name or a constructor applied to names"
+              )
+            }
+            None => Syn::error(
+              at,
+              "mode: an input of a rule is a name or a constructor applied to names"
+            )
+          }
+        }
+      }
+    }
+  }
+
+  pub fn ctor_args(e: SynExpr): List(SynExpr) {
+    match Syn::app_parts(e) {
+      Some(q) => (q: List(SynExpr))
+      None => Nil
+    }
+  }
+
+  pub fn any_ctor(rows: List(MoRow), k: u64, at: SynSpan): Bool ! {macro_error, Div, elab} {
+    match rows {
+      Nil => false
+      Cons(r, rest) => match Mo::var_of(r, Mo::nth(r.pats, k, at)) {
+        Some(_) => Mo::any_ctor(rest, k, at)
+        None => true
+      }
+    }
+  }
+
+  pub fn expr_names(es: List(SynExpr)): List(Text) {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => Syn::append(
+        match Syn::ident_of(e) {
+          Some(x) => Cons(x.name, Nil)
+          None => Mo::expr_names(Mo::ctor_args(e))
+        },
+        Mo::expr_names(rest)
+      )
+    }
+  }
+
+  pub fn motive(g: Gen, cur: List(SynExpr)): SynExpr { ExApp(ExVar(g.res), cur, g.at) }
+
+  pub fn types(ps: List(SynExpr × SynIdent)): List(Option(SynExpr)) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(Some((p: SynExpr)), Mo::types(rest))
+    }
+  }
+
+  pub fn nones(ps: List(SynExpr × SynIdent)): List(Option(Bool)) {
+    match ps {
+      Nil => Nil
+      Cons(_, rest) => Cons(None, Mo::nones(rest))
+    }
+  }
+
+  pub fn make(t: mode::Spec, d: SynInductive): List(SynStmt) ! {macro_error, Div, elab} {
+    let at := d.span
+    let items := Mo::items(t, at)
+    let roles := Mo::roles(items, at)
+    Mp::validate_roles(roles, at)
+    Mp::validate_clauses(Mo::named(items, "via"), Nil, at)
+    Mp::validate_clauses(Mo::named(items, "eq"), Nil, at)
+    match d.params {
+      Nil => #()
+      Cons(_, _) => Syn::error(
+        at,
+        "mode: relation parameters must be written as positions in its signature"
+      )
+    }
+    if not(Mp::prop_sort(d.sort)) { Syn::error(at, "mode: the relation must end in Prop") } else { #() }
+    let result := Mo::one(items, "result", at)
+    let signature := Mp::signature(d.sort)
+    let tys := Mp::instantiate_types(signature, Mo::all_names(roles), Nil, at)
+    let g := Gen {
+      rel: d.name
+      roles: roles
+      res: Mo::arg(result, 0, at)
+      ok: Mo::arg(result, 1, at)
+      bad: Mo::arg(result, 2, at)
+      fname: Mo::arg(Mo::one(items, "name", at), 0, at)
+      items: items
+      ctors: d.ctors
+      output_type: Mp::output_type(roles, tys)
+      at: at
+    }
+    if Mo::count(tys) != Mo::count_roles(roles) {
+      Syn::error(
+        at,
+        "mode: the spec gives a role (in, rec or out) to each position of the relation, in order"
+      )
+    } else {
+      #()
+    }
+    let params := Syn::append(Mo::of_role(roles, tys, "rec"), Mo::of_role(roles, tys, "in"))
+    let out := Mo::of_role(roles, tys, "out")
+    Mp::type_order(Syn::append(params, out), Mo::names(Mo::first_names(Mp::role_params(roles))), Nil, at)
+    let all := Mo::all_names(roles)
+    let answer := ExApp(ExVar(g.res), Mo::vars(Mo::first_names(params)), at)
+    let proof := Mo::name(at, Mo::unused(Mo::names(Mo::first_names(Syn::append(params, out))), "h"))
+    let ok := SynIndCtor {
+      name: g.ok
+      implicit: 0
+      params: Syn::append(
+        out,
+        Syn::append(
+          Cons(#(proof, ExApp(ExVar(d.name), all, at)), Nil),
+          Mp::unique_param(g, all, out)
+        )
+      )
+      result: answer
+    }
+    let bad := SynIndCtor { name: g.bad, implicit: 0,
+      params: Cons(
+        #(
+          Mo::name(at, Mo::unused(Mo::expr_names(all), "refute")),
+          Mp::refute_type(g, all)
+        ),
+        Nil
+      ), result: answer }
+    let res := SynInductive {
+      name: g.res
+      params: params
+      sort: ExVar(Mo::quoted(quote { Type }, at))
+      ctors: Cons(ok, Cons(bad, Nil))
+      span: at
+    }
+    let names := Mo::first_names(params)
+    let body := match Mo::role_names(roles, "rec") {
+      Cons(_, _) => Mp::compile(g, Mo::rows(g, d.ctors), Mo::vars(names), Mo::vars(names))
+      Nil => Syn::error(at, "mode: the spec needs a rec")
+    }
+    let f := SynFn {
+      name: g.fname
+      generics: Nil
+      bounds: Nil
+      params: Mo::first_names(params)
+      borrows: Mo::nones(params)
+      param_types: Mo::types(params)
+      result: Some(answer)
+      effects: None
+      body: body
+      span: at
+    }
+    Cons(StInductive(res), Cons(StFn(f), Nil))
+  }
+
+  pub fn all_names(roles: List(SynIdent × Text)): List(SynExpr) {
+    match roles {
+      Nil => Nil
+      Cons(r, rr) => Cons(ExVar((r: SynIdent)), Mo::all_names(rr))
     }
   }
 }
 
-fn mo_pattern_names(r: SynExpr, at: SynSpan) -> List(Text) ! {macro_error, Div} {
-  match syn_app_parts(r) {
-    Some(q) => mo_names(mo_args(q.snd, at))
-    None => Nil
+pub macro fn mode(t: mode::Spec, s: SynStmt): List(SynStmt) ! {macro_error, Div, elab} {
+  match Syn::inductive_of(s) {
+    Some(d) => Mo::make(t, d)
+    None => Syn::error(SynSpan { id: 0 }, "mode! goes on an inductive relation")
   }
 }
 
-// A rule of the relation, as the arm of the constructor at its rec position.
-fn mo_rule(g: Gen, c: SynIndCtor) -> SynArm ! {macro_error, Div} {
-  match syn_app_parts(c.result) {
-    None => syn_error(g.at, "mode: a rule ends in the relation applied to arguments")
-    Some(pp) => {
-      let s = mo_split(g.roles, pp.snd, g.at)
-      let r = mo_need(s.rec, g.at)
-      let out = mo_need(s.out, g.at)
-      let ins = mo_args(s.ins, g.at)
-      if mo_same_names(ins, mo_role_names(g.roles, "in")) {
-        let motive = ExApp(ExVar(g.res), Cons(r, s.ins), g.at)
-        let bound = syn_append(mo_names(ins), mo_pattern_names(r, g.at))
-        let body = mo_premises(g, mo_drop(c.implicit, c.params), bound, motive, out, c.name, Nil)
-        mo_arm(mo_pattern(r, g.at), body)
-      } else {
-        syn_error(
-          g.at,
-          concat(
-            "mode: name the input variables of the rule ",
-            concat(c.name.name, " as the spec does")
-          )
+module Mo {
+  pub fn count(l: List(SynExpr)): u64 {
+    match l {
+      Nil => 0
+      Cons(_, rest) => 1 + Mo::count(rest)
+    }
+  }
+
+  pub fn count_roles(l: List(SynIdent × Text)): u64 {
+    match l {
+      Nil => 0
+      Cons(_, rest) => 1 + Mo::count_roles(rest)
+    }
+  }
+}
+
+// A successful premise supplies the equality used to align any other derivation.
+pub(open) struct MpEvidence { premise: SynIdent, unique: SynIdent, ty: SynExpr, output: SynExpr }
+module Mp {
+  pub fn evidence_params(es: List(MpEvidence)): List(SynExpr × SynIdent) {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => Cons(#(e.unique, e.ty), Mp::evidence_params(rest))
+    }
+  }
+  pub fn evidence_remap(
+    es: List(MpEvidence),
+    env: List(@original SynIdent × @renamed SynIdent)
+  ): List(MpEvidence) {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => Cons(
+        MpEvidence {
+          premise: e.premise,
+          unique: Mp::lookup(env, e.unique),
+          ty: Mp::sub(e.ty, env),
+          output: Mp::sub(e.output, env)
+        },
+        Mp::evidence_remap(rest, env)
+      )
+    }
+  }
+  pub fn end_remap(e: MpEnd, env: List(@original SynIdent × @renamed SynIdent)): MpEnd {
+    match e {
+      MpUnique => MpUnique
+      MpReject(h, no) => MpReject(h, Mp::lookup(env, no))
+      MpDifferent(h, u, no, ty) => MpDifferent(
+        h,
+        Mp::lookup(env, u),
+        Mp::lookup(env, no),
+        Mp::sub(ty, env)
+      )
+      MpShape(h, u) => MpShape(h, Mp::lookup(env, u))
+    }
+  }
+}
+pub(open) enum MpEnd {
+  MpUnique
+  MpReject(SynIdent, SynIdent)
+  MpDifferent(SynIdent, SynIdent, SynIdent, SynExpr)
+  MpShape(SynIdent, SynIdent)
+}
+
+module Mp {
+  pub fn false_prop(): SynExpr { quote { False } }
+  pub fn refl(): SynExpr { quote { Refl } }
+  pub fn eq(ty: SynExpr, a: SynExpr, b: SynExpr): SynExpr { quote { Eq($ty, $a, $b) } }
+  pub fn pi(ps: List(SynExpr × SynIdent), body: SynExpr, at: SynSpan): SynExpr {
+    match ps {
+      Nil => body
+      Cons(_, _) => ExPi(Mp::syn_params(ps), body, None, at)
+    }
+  }
+  pub fn syn_params(ps: List(SynExpr × SynIdent)): List(SynParam) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(SynParam { name: Some((p: SynIdent)), ty: (p: SynExpr) }, Mp::syn_params(rest))
+    }
+  }
+  pub fn lam(ns: List(SynIdent), body: SynExpr, at: SynSpan): SynExpr {
+    match ns {
+      Nil => body
+      Cons(_, _) => ExLam(Mp::binders(ns), body, at)
+    }
+  }
+  pub fn binders(ns: List(SynIdent)): List(SynBinder) {
+    match ns {
+      Nil => Nil
+      Cons(n, rest) => Cons(BName(n, None), Mp::binders(rest))
+    }
+  }
+  pub fn output_type(roles: List(SynIdent × Text), tys: List(SynExpr)): Option(SynExpr) {
+    match roles {
+
+      Nil => None
+
+      Cons(r, rest) => match tys {
+
+        Nil => None
+
+        Cons(t, tail) => if (r: Text) == "out" { Some(t) } else { Mp::output_type(rest, tail) }
+      }
+    }
+  }
+  pub fn unique_type(
+    ty: SynExpr,
+    rel: SynExpr,
+    out: SynExpr,
+    name: SynIdent,
+    at: SynSpan
+  ): SynExpr {
+    let h := Mo::name(
+      at,
+      Mo::unused(Mo::expr_names(Cons(rel, Cons(out, Nil))), concat(name.name, "_proof"))
+    )
+    Mp::pi(
+      Cons(#(name, ty), Cons(#(h, rel), Nil)),
+      Mp::eq(ty, ExVar(name), out),
+      at
+    )
+  }
+  pub fn unique_param(
+    g: Gen,
+    args: List(SynExpr),
+    out: List(SynExpr × SynIdent)
+  ): List(SynExpr × SynIdent) {
+    match out {
+
+      Nil => Nil
+
+      Cons(o, _) => {
+        let y := Mo::name(g.at, Mo::unused(Mo::expr_names(args), "mode_other"))
+        Cons(
+          #(
+            Mo::name(g.at, Mo::unused(Mo::expr_names(args), "unique")),
+            Mp::unique_type((o: SynExpr), Mo::app_out(g, args, ExVar(y)), ExVar((o: SynIdent)), y, g.at)
+          ),
+          Nil
         )
       }
     }
   }
+  pub fn refute_type(g: Gen, args: List(SynExpr)): SynExpr {
+    let y := Mo::name(g.at, Mo::unused(Mo::expr_names(args), "mode_other"))
+    let h := Mo::name(g.at, Mo::unused(Mo::expr_names(args), "mode_derivation"))
+    match g.output_type {
+
+      None => Mp::pi(Cons(#(h, Mo::call(g.rel, args, g.at)), Nil), Mp::false_prop(), g.at)
+
+      Some(ty) => Mp::pi(
+        Cons(
+          #(y, ty),
+          Cons(#(h, Mo::app_out(g, args, ExVar(y))), Nil)
+        ),
+        Mp::false_prop(),
+        g.at
+      )
+    }
+  }
+  pub fn empty(g: Gen): SynExpr {
+    let h := Mo::name(g.at, Mo::unused(Mo::expr_names(Mo::all_names(g.roles)), "mode_impossible"))
+    let ns := match g.output_type {
+
+      None => Cons(h, Nil)
+
+      Some(_) => Cons(
+        Mo::name(g.at, Mo::unused(Mo::expr_names(Mo::all_names(g.roles)), "mode_absent")),
+        Cons(h, Nil)
+      )
+    }
+    Mo::call(g.bad, Cons(Mp::lam(ns, Mo::match_expr(ExVar(h), Mp::false_prop(), Nil, g.at), g.at), Nil), g.at)
+  }
+  pub fn ctor(cs: List(SynIndCtor), name: SynIdent, at: SynSpan): SynIndCtor ! {macro_error, Div} {
+    match cs {
+
+      Nil => Syn::error(at, "mode: the rule is not a constructor of this relation")
+
+      Cons(c, rest) => if c.name.name == name.name { c } else { Mp::ctor(rest, name, at) }
+    }
+  }
+  pub fn sub(e: SynExpr, env: List(@original SynIdent × @renamed SynIdent)): SynExpr {
+    match env {
+
+      Nil => e
+
+      Cons(#(@original original, @renamed renamed), rest) => Mp::sub(Syn::replace(e, ExVar(original), ExVar(renamed)), rest)
+    }
+  }
+  pub fn lookup(env: List(@original SynIdent × @renamed SynIdent), x: SynIdent): SynIdent {
+    match env {
+
+      Nil => x
+
+      Cons(#(@original original, @renamed renamed), rest) => if original.name == x.name { renamed } else { Mp::lookup(rest, x) }
+    }
+  }
+  pub fn env(
+    ps: List(SynExpr × SynIdent),
+    scope: List(Text),
+    at: SynSpan
+  ): List(@original SynIdent × @renamed SynIdent) {
+    match ps {
+
+      Nil => Nil
+
+      Cons(p, rest) => {
+        let n := Mo::name(at, Mo::unused(scope, concat("mode_candidate_", (p: SynIdent).name)))
+        Cons(#(@original (p: SynIdent), @renamed n), Mp::env(rest, Cons(n.name, scope), at))
+      }
+    }
+  }
+  pub fn env_names(env: List(@original SynIdent × @renamed SynIdent)): List(SynIdent) {
+    match env {
+      Nil => Nil
+      Cons(#(@original _, @renamed renamed), rest) => Cons(renamed, Mp::env_names(rest)) }
+  }
+  pub fn param(
+    ps: List(SynExpr × SynIdent),
+    name: SynIdent,
+    at: SynSpan
+  ): SynExpr ! {macro_error, Div} {
+    match ps {
+
+      Nil => Syn::error(at, concat("mode: no premise ", name.name))
+
+      Cons(p, rest) => if (p: SynIdent).name == name.name { (p: SynExpr) } else { Mp::param(rest, name, at) }
+    }
+  }
+  pub fn after(ps: List(SynExpr × SynIdent), name: SynIdent): List(SynExpr × SynIdent) {
+    match ps {
+
+      Nil => Nil
+
+      Cons(p, rest) => if (p: SynIdent).name == name.name { rest } else { Mp::after(rest, name) }
+    }
+  }
+  pub fn premise_out(g: Gen, ty: SynExpr): Option(SynExpr) ! {macro_error, Div} {
+    match Syn::app_parts(ty) {
+
+      None => Syn::error(g.at, "mode: a premise is a relation applied to arguments")
+
+      Some(p) => match Syn::ident_of((p: SynExpr)) {
+
+        None => Syn::error(g.at, "mode: a premise has a named relation")
+
+        Some(n) => if n.name == g.rel.name { Mo::split(g.roles, (p: List(SynExpr)), g.at).out } else {
+          Some(Mo::last((p: List(SynExpr)), g.at))
+        }
+      }
+    }
+  }
+  pub fn goal(
+    g: Gen,
+    r: MoRow,
+    c: SynIndCtor,
+    env: List(@original SynIdent × @renamed SynIdent),
+    end: MpEnd
+  ): SynExpr ! {macro_error, Div} {
+    match end {
+      MpUnique => {
+        let p := match Syn::app_parts(c.result) {
+          Some(v) => v
+          None => Syn::error(g.at, "mode: a rule ends in the relation") }
+        Mp::eq(
+          Mo::need(g.output_type, g.at),
+          Mp::sub(Mo::need(Mo::split(g.roles, (p: List(SynExpr)), g.at).out, g.at), env),
+          Mo::need(r.out, g.at)
+        )
+      }
+      MpReject(_, _) => Mp::false_prop()
+      MpDifferent(_, _, _, _) => Mp::false_prop()
+      MpShape(_, _) => Mp::false_prop()
+    }
+  }
+  pub fn finish(
+    g: Gen,
+    c: SynIndCtor,
+    env: List(@original SynIdent × @renamed SynIdent),
+    end: MpEnd
+  ): SynExpr ! {macro_error, Div} {
+    match end {
+      MpUnique => Mp::refl()
+      MpReject(h, no) => {
+        let o := Mp::premise_out(g, Mp::sub(Mp::param(c.params, h, g.at), env))
+        Mo::call(no, Mo::with_out(o, ExVar(Mp::lookup(env, h))), g.at)
+      }
+      MpDifferent(h, unique, no, projection) => {
+        let o := Mp::premise_out(g, Mp::sub(Mp::param(c.params, h, g.at), env))
+        let equality := Mo::call(unique, Mo::with_out(o, ExVar(Mp::lookup(env, h))), g.at)
+        let projected := quote { Eq::congr($projection, $equality) }
+        Mo::call(no, Cons(projected, Nil), g.at)
+      }
+      MpShape(h, unique) => {
+        let o := Mp::premise_out(g, Mp::sub(Mp::param(c.params, h, g.at), env))
+        Mo::match_expr(
+          Mo::call(unique, Mo::with_out(o, ExVar(Mp::lookup(env, h))), g.at),
+          Mp::false_prop(),
+          Nil,
+          g.at
+        )
+      }
+    }
+  }
+  pub fn rebind(
+    ps: List(SynExpr × SynIdent),
+    env: List(@original SynIdent × @renamed SynIdent),
+    at: SynSpan
+  ): List(@original SynIdent × @renamed SynIdent) {
+    match ps {
+
+      Nil => env
+
+      Cons(p, rest) => {
+        let before := Mp::lookup(env, (p: SynIdent))
+        let next := Mo::name(at, Mo::unused(Mo::names(Mp::env_names(env)), concat(before.name, "_next")))
+        Mp::rebind(rest, Mp::env_set(env, (p: SynIdent), next), at)
+      }
+    }
+  }
+  pub fn env_set(
+    env: List(@original SynIdent × @renamed SynIdent),
+    key: SynIdent,
+    value: SynIdent
+  ): List(@original SynIdent × @renamed SynIdent) {
+    match env {
+
+      Nil => Nil
+
+      Cons(#(@original original, @renamed renamed), rest) => Cons(
+        if original.name == key.name { #(@original key, @renamed value) } else { #(@original original, @renamed renamed) },
+        Mp::env_set(rest, key, value)
+      )
+    }
+  }
+  pub fn remap(
+    ps: List(SynExpr × SynIdent),
+    env: List(@original SynIdent × @renamed SynIdent)
+  ): List(SynExpr × SynIdent) {
+    match ps {
+
+      Nil => Nil
+
+      Cons(p, rest) => Cons(
+        #(Mp::lookup(env, (p: SynIdent)), Mp::sub((p: SynExpr), env)),
+        Mp::remap(rest, env)
+      )
+    }
+  }
+
+  // Certificate binders are fresh. Transport reaches the nested goals of the generated proof.
+  pub fn transport(e: SynExpr, orig: SynExpr, to: SynExpr): SynExpr ! {Div} {
+    if Syn::same(e, orig) { to } else {
+      match e {
+        ExApp(f, args, at) => ExApp(
+          Mp::transport(f, orig, to),
+          Mp::transport_all(args, orig, to),
+          at
+        )
+        ExPi(params, body, effects, at) => ExPi(
+          Mp::transport_params(params, orig, to),
+          Mp::transport(body, orig, to),
+          effects,
+          at
+        )
+        ExLam(binders, body, at) => ExLam(
+          Mp::transport_binders(binders, orig, to),
+          Mp::transport(body, orig, to),
+          at
+        )
+        ExMatch(subject, goal, arms, equation_name, at) => ExMatch(
+          Mp::transport(subject, orig, to),
+          Mp::transport_option(goal, orig, to),
+          Mp::transport_arms(arms, orig, to),
+          equation_name,
+          at
+        )
+        ExVar(_) => e
+        ExAtom(_, _) => e
+        ExNat(_, _) => e
+        ExText(_, _) => e
+        ExBool(_, _) => e
+        ExIf(_, _, _, _) => e
+        ExField(_, _, _) => e
+        ExBlock(_, _) => e
+        ExPerform(_, _, _) => e
+        ExHandle(_, _, _) => e
+        ExBudget(_, _, _) => e
+        ExBudgetMemory(_, _, _) => e
+        ExRecord(_, _, _) => e
+        ExBorrow(_, _, _) => e
+        ExUnion(_, _) => e
+        ExTagged(_, _, _) => e
+        ExExists(_, _, _, _) => e
+        ExFnKind(_, _, _) => e
+        ExBorrowLam(_, _, _) => e
+        ExMacroCall(_, _, _) => e
+        ExMacroExpr(_, _, _) => e
+        ExHole(_, _) => e
+        ExUnit(_) => e
+      }
+    }
+  }
+  pub fn transport_all(es: List(SynExpr), orig: SynExpr, to: SynExpr): List(SynExpr) ! {Div} {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => Cons(Mp::transport(e, orig, to), Mp::transport_all(rest, orig, to))
+    }
+  }
+  pub fn transport_option(
+    e: Option(SynExpr),
+    orig: SynExpr,
+    to: SynExpr
+  ): Option(SynExpr) ! {Div} {
+    match e {
+      None => None
+      Some(value) => Some(Mp::transport(value, orig, to))
+    }
+  }
+  pub fn transport_params(
+    ps: List(SynParam),
+    orig: SynExpr,
+    to: SynExpr
+  ): List(SynParam) ! {Div} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(
+        SynParam { name: p.name, ty: Mp::transport(p.ty, orig, to) },
+        Mp::transport_params(rest, orig, to)
+      )
+    }
+  }
+  pub fn transport_binders(
+    bs: List(SynBinder),
+    orig: SynExpr,
+    to: SynExpr
+  ): List(SynBinder) ! {Div} {
+    match bs {
+      Nil => Nil
+      Cons(b, rest) => Cons(match b {
+        BName(name, ty) => BName(name, Mp::transport_option(ty, orig, to))
+        BAtom(atom, ty) => BAtom(atom, Mp::transport_option(ty, orig, to))
+      }, Mp::transport_binders(rest, orig, to))
+    }
+  }
+  pub fn transport_arms(arms: List(SynArm), orig: SynExpr, to: SynExpr): List(SynArm) ! {Div} {
+    match arms {
+      Nil => Nil
+      Cons(arm, rest) => Cons(SynArm {
+        pattern: arm.pattern,
+        guard: Mp::transport_option(arm.guard, orig, to),
+        goal: Mp::transport_option(arm.goal, orig, to),
+        body: Mp::transport(arm.body, orig, to)
+      }, Mp::transport_arms(rest, orig, to))
+    }
+  }
+  pub fn inverse_inputs(
+    params: List(SynExpr × SynIdent),
+    values: List(@key SynExpr × @value SynExpr),
+    inputs: List(SynExpr),
+    env: List(@original SynIdent × @renamed SynIdent),
+    body: SynExpr
+  ): SynExpr ! {Div} {
+    match params {
+      Nil => body
+      Cons(p, rest) => match values {
+        Nil => body
+        Cons(#(@key key, @value _), tail) => Mp::inverse_inputs(rest, tail, inputs, env,
+          if Mo::mentions_any(inputs, (p: SynIdent).name) {
+            Mp::transport(body, key, ExVar(Mp::lookup(env, (p: SynIdent))))
+          } else { body }
+        )
+      }
+    }
+  }
+  pub fn align(
+    g: Gen,
+    r: MoRow,
+    c: SynIndCtor,
+    env: List(@original SynIdent × @renamed SynIdent),
+    done: List(MpEvidence),
+    end: MpEnd,
+    captures: List(SynExpr × SynIdent)
+  ): SynExpr ! {macro_error, Div} {
+    match done {
+
+      Nil => Mp::finish(g, c, env, end)
+
+      Cons(e, rest) => {
+        let o := Mp::premise_out(g, Mp::sub(Mp::param(c.params, e.premise, g.at), env))
+        let equation := Mo::call(e.unique, Mo::with_out(o, ExVar(Mp::lookup(env, e.premise))), g.at)
+        let tail := Mp::after(c.params, e.premise)
+        let next := Mp::rebind(tail, env, g.at)
+        // Later calls and refutations may depend on this premise's output as well.
+        let carried := Syn::append(Mp::evidence_params(rest), captures)
+        let bindings := Mp::env(carried, Syn::append(r.vars, Mo::names(Mp::env_names(next))), g.at)
+        let params := Syn::append(Mp::remap(tail, next), Mp::remap(carried, bindings))
+        let aligned := Mp::align(
+          g,
+          r,
+          c,
+          next,
+          Mp::evidence_remap(rest, bindings),
+          Mp::end_remap(end, bindings),
+          Mp::remap(captures, bindings)
+        )
+        let body := Mp::lam(
+          Mo::first_names(params),
+          Mp::transport(aligned, e.output, Mo::need(o, g.at)),
+          g.at
+        )
+        let goal := Mp::pi(params, Mp::goal(g, r, c, next, end), g.at)
+        let rewritten := Mo::match_expr(
+          equation,
+          goal,
+          Cons(Mo::arm(PtCtor(Mo::quoted(Mp::refl(), g.at), Nil), body), Nil),
+          g.at
+        )
+        let args := Syn::append(Mo::first_names(Mp::remap(tail, env)), Mo::first_names(carried))
+        match args {
+
+          Nil => rewritten
+
+          Cons(_, _) => ExApp(rewritten, Mo::vars(args), g.at)
+        }
+      }
+    }
+  }
+  pub fn certificate(
+    g: Gen,
+    r: MoRow,
+    done: List(MpEvidence),
+    end: MpEnd,
+    captures: List(SynExpr × SynIdent)
+  ): SynExpr ! {macro_error, Div} {
+    let c := Mp::ctor(g.ctors, r.rule, g.at)
+    let y := Mo::name(g.at, Mo::unused(r.vars, "mode_candidate_output"))
+    let h := Mo::name(g.at, Mo::unused(r.vars, "mode_candidate_derivation"))
+    let env := Mp::env(
+      c.params,
+      Syn::append(Mo::param_names(c.params), Syn::append(r.vars, Mo::names(Cons(y, Cons(h, Nil))))),
+      g.at
+    )
+    let goal := match end {
+      MpUnique => Mp::eq(Mo::need(g.output_type, g.at), ExVar(y), Mo::need(r.out, g.at))
+      MpReject(_, _) => Mp::false_prop()
+      MpDifferent(_, _, _, _) => Mp::false_prop()
+      MpShape(_, _) => Mp::false_prop()
+    }
+    let original := Syn::append(Mp::evidence_params(done), captures)
+    let bindings := Mp::env(original, Syn::append(r.vars, Mo::names(Mp::env_names(env))), g.at)
+    let params := Mp::remap(original, bindings)
+    let conclusion := match Syn::app_parts(c.result) {
+      Some(parts) => Mo::split(g.roles, (parts: List(SynExpr)), g.at)
+      None => Syn::error(g.at, "mode: a rule ends in the relation")
+    }
+    let aligned := Mp::inverse_inputs(
+      c.params,
+      r.types,
+      Cons(Mo::need(conclusion.rec, g.at), conclusion.ins),
+      env,
+      Mp::align(
+        g,
+        r,
+        c,
+        env,
+        Mp::evidence_remap(done, bindings),
+        Mp::end_remap(end, bindings),
+        Mp::remap(captures, bindings)
+      )
+    )
+    let inverse := Mo::match_expr(
+      ExVar(h),
+      Mp::pi(params, goal, g.at),
+      Cons(
+        Mo::arm(
+          PtCtor(c.name, Mo::pats(Mp::env_names(env))),
+          Mp::lam(Mo::first_names(params), aligned, g.at)
+        ),
+        Nil
+      ),
+      g.at
+    )
+    let body := match original {
+      Nil => inverse
+      Cons(_, _) => ExApp(inverse, Mo::vars(Mo::first_names(original)), g.at)
+    }
+    let names := match g.output_type {
+      None => Cons(h, Nil)
+      Some(_) => Cons(y, Cons(h, Nil)) }
+    Mp::lam(names, body, g.at)
+  }
 }
 
-fn mo_rules(g: Gen, cs: List(SynIndCtor)) -> List(SynArm) ! {macro_error, Div} {
-  match cs {
-    Nil => Nil
-    Cons(c, rest) => Cons(mo_rule(g, c), mo_rules(g, rest))
+pub(open) struct MpCall {
+  term: SynExpr, ok: SynIdent, bad: SynIdent,
+  rel: SynIdent, args: List(SynExpr), roles: List(SynIdent × Text),
+  output: Option(SynExpr), output_type: Option(SynExpr)
+}
+pub(open) struct MpWork {
+  row: MoRow, cur: List(SynExpr), rest: List(MoParam), bound: List(Text),
+  proofs: List(SynExpr), done: List(MpEvidence), premise: SynIdent, call: MpCall
+}
+module Mp {
+  pub fn via_roles(args: List(SynExpr), at: SynSpan): List(SynIdent × Text) {
+    match args {
+
+      Nil => Nil
+
+      Cons(_, rest) => Cons(#(match rest {
+      Nil => "out"
+      Cons(_, _) => "in" }, Mo::name(at, "mode_position")), Mp::via_roles(rest, at))
+    }
+  }
+  pub fn call(g: Gen, ty: SynExpr): MpCall ! {macro_error, Div, elab} {
+    let parts := match Syn::app_parts(ty) {
+      Some(p) => p
+      None => Syn::error(g.at, "mode: a premise is a relation applied to arguments") }
+    let name := match Syn::ident_of((parts: SynExpr)) {
+      Some(n) => Mo::relation_name(n)
+      None => Syn::error(g.at, "mode: a premise has a named relation") }
+    if name.name == g.rel.name {
+      let s := Mo::split(g.roles, (parts: List(SynExpr)), g.at)
+      MpCall { term: Mo::call(g.fname, Cons(Mo::need(s.rec, g.at), s.ins), g.at), ok: g.ok, bad: g.bad,
+        rel: name, args: (parts: List(SynExpr)), roles: g.roles, output: s.out, output_type: match g.output_type {
+          None => None
+          Some(ty) => Some(Mp::apply(ty, Mp::pairs(Mo::all_names(g.roles), (parts: List(SynExpr))))) } }
+    } else {
+      let v := Mo::via_item(Mo::named(g.items, "via"), name, g.at)
+      Mp::contract_constructor(
+        Mo::arg(v, 2, g.at),
+        3,
+        concat("via ", concat(name.name, " success needs output, derivation and uniqueness")),
+        g.at
+      )
+      Mp::contract_constructor(
+        Mo::arg(v, 3, g.at),
+        1,
+        concat("via ", concat(name.name, " rejection needs a refutation")),
+        g.at
+      )
+      let ty0 := match Elab::global(name.name) {
+        Some(c) => c.ty
+        None => Syn::error(g.at, concat("mode: unknown relation ", name.name)) }
+      MpCall { term: Mo::call(
+        Mo::arg(v, 1, g.at),
+        Mo::init((parts: List(SynExpr))),
+        g.at
+      ), ok: Mo::arg(v, 2, g.at), bad: Mo::arg(v, 3, g.at),
+        rel: name, args: (parts: List(SynExpr)), roles: Mp::via_roles(
+          (parts: List(SynExpr)),
+          g.at
+        ), output: Some(
+          Mo::last((parts: List(SynExpr)), g.at)
+        ), output_type: Some(
+          Mo::last(Mp::instantiate_types(Mp::signature(ty0), (parts: List(SynExpr)), Nil, g.at), g.at)
+        ) }
+    }
+  }
+  pub fn rel(c: MpCall, out: SynExpr, at: SynSpan): SynExpr {
+    Mo::call(c.rel, Mo::replace_out(c.roles, c.args, out), at)
+  }
+  pub fn call_unique(g: Gen, c: MpCall, out: SynExpr): SynExpr ! {macro_error, Div} {
+    let y := Mo::name(g.at, Mo::unused(Mo::expr_names(c.args), "mode_other_answer"))
+    Mp::unique_type(Mo::need(c.output_type, g.at), Mp::rel(c, ExVar(y), g.at), out, y, g.at)
+  }
+  pub fn call_refute(g: Gen, c: MpCall): SynExpr ! {macro_error, Div} {
+    let y := Mo::name(g.at, Mo::unused(Mo::expr_names(c.args), "mode_absent_answer"))
+    let h := Mo::name(g.at, Mo::unused(Mo::expr_names(c.args), "mode_absent_proof"))
+    match c.output_type {
+      None => Mp::pi(Cons(#(h, Mo::call(c.rel, c.args, g.at)), Nil), Mp::false_prop(), g.at)
+      Some(ty) => Mp::pi(
+        Cons(#(y, ty), Cons(#(h, Mp::rel(c, ExVar(y), g.at)), Nil)),
+        Mp::false_prop(),
+        g.at
+      )
+    }
+  }
+  pub fn work_sub(w: MpWork, orig: SynIdent, to: SynExpr, at: SynSpan): MpWork ! {Div} {
+    let names := Mo::expr_names(Cons(to, Nil))
+    MpWork { row: Mo::subst_row(w.row, orig.name, to, names, at), cur: w.cur,
+      rest: Mo::subst_params(w.rest, orig.name, to, at), bound: Syn::append(names, w.bound),
+      proofs: Syn::replace_all(
+        w.proofs,
+        ExVar(orig),
+        to
+      ), done: w.done, premise: w.premise, call: w.call }
+  }
+  pub fn accept(
+    g: Gen,
+    w: MpWork,
+    h: SynIdent,
+    unique: SynIdent,
+    whole: SynExpr
+  ): SynExpr ! {macro_error, Div, elab} {
+    let done := match w.call.output {
+      None => w.done
+      Some(_) => Syn::append(
+        w.done,
+        Cons(
+          MpEvidence {
+            premise: w.premise,
+            unique: unique,
+            ty: Mp::call_unique(g, w.call, whole),
+            output: whole
+          },
+          Nil
+        )
+      ) }
+    Mp::process(g, w.row, w.cur, w.rest, w.bound, Syn::append(w.proofs, Cons(ExVar(h), Nil)), done)
+  }
+  pub fn process(
+    g: Gen,
+    r: MoRow,
+    cur: List(SynExpr),
+    ps: List(MoParam),
+    bound: List(Text),
+    proofs: List(SynExpr),
+    done: List(MpEvidence)
+  ): SynExpr ! {macro_error, Div, elab} {
+    match ps {
+
+      Nil => {
+        let args := Mo::with_out(r.out, Mo::call(r.rule, proofs, g.at))
+        Mo::call(g.ok, match r.out {
+      None => args
+      Some(_) => Syn::append(args, Cons(Mp::certificate(g, r, done, MpUnique, Nil), Nil)) }, g.at)
+      }
+
+      Cons(p, rest) => match p {
+        MoData(e) => Mp::process(g, r, cur, rest, bound, Syn::append(proofs, Cons(e, Nil)), done)
+        MoPremise(h, ty) => {
+          let c := Mp::call(g, ty)
+          let w := MpWork {
+            row: r,
+            cur: cur,
+            rest: rest,
+            bound: bound,
+            proofs: proofs,
+            done: done,
+            premise: h,
+            call: c
+          }
+          let got := Mo::name(g.at, Mo::unused(r.vars, concat(h.name, "_value")))
+          let hp := Mo::name(g.at, Mo::unused(r.vars, concat(h.name, "_proof")))
+          let u := Mo::name(g.at, Mo::unused(r.vars, concat(h.name, "_unique")))
+          let no := Mo::name(g.at, Mo::unused(r.vars, concat(h.name, "_refute")))
+          let names := match c.output {
+            None => Cons(hp, Nil)
+            Some(_) => Cons(got, Cons(hp, Cons(u, Nil))) }
+          let success := match c.output {
+
+            None => Mp::accept(g, w, hp, u, quote { Zero })
+
+            Some(o) => Mp::output(g, w, hp, u, ExVar(got), Cons(#(@key o, @value ExVar(got)), Nil))
+          }
+          let failure := Mo::call(
+            g.bad,
+            Cons(
+              Mp::certificate(
+                g,
+                r,
+                done,
+                MpReject(h, no),
+                Cons(#(no, Mp::call_refute(g, c)), Nil)
+              ),
+              Nil
+            ),
+            g.at
+          )
+          Mo::match_expr(
+            c.term,
+            Mo::motive(g, cur),
+            Cons(
+              Mo::arm(PtCtor(c.ok, Mo::pats(names)), success),
+              Cons(Mo::arm(PtCtor(c.bad, Cons(PtBind(no), Nil)), failure), Nil)
+            ),
+            g.at
+          )
+        }
+      }
+    }
+  }
+  pub fn pending_sub(
+    ps: List(@key SynExpr × @value SynExpr),
+    orig: SynExpr,
+    to: SynExpr
+  ): List(@key SynExpr × @value SynExpr) {
+    match ps {
+      Nil => Nil
+      Cons(#(@key key, @value value), rest) => Cons(
+        #(@key Syn::replace(key, orig, to), @value Syn::replace(value, orig, to)),
+        Mp::pending_sub(rest, orig, to)
+      ) }
+  }
+  pub fn pairs(xs: List(SynExpr), ys: List(SynExpr)): List(@key SynExpr × @value SynExpr) {
+    match xs {
+      Nil => Nil
+      Cons(x, xr) => match ys {
+        Nil => Nil
+        Cons(y, yr) => Cons(#(@key x, @value y), Mp::pairs(xr, yr)) } }
+  }
+  pub fn fields(es: List(SynExpr), scope: List(Text), at: SynSpan): List(SynIdent) {
+    match es {
+
+      Nil => Nil
+
+      Cons(_, rest) => {
+        let n := Mo::name(at, Mo::unused(scope, "mode_field"))
+        Cons(n, Mp::fields(rest, Cons(n.name, scope), at))
+      }
+    }
+  }
+  pub fn carry(
+    g: Gen,
+    w: MpWork,
+    whole: SynExpr,
+    h: SynIdent,
+    u: SynIdent
+  ): List(SynExpr × SynIdent) ! {macro_error, Div} {
+    let y := Mo::name(g.at, Mo::unused(w.row.vars, "mode_equal_output"))
+    Cons(#(h, Mp::rel(w.call, whole, g.at)), Cons(#(u,
+      Mp::unique_type(Mo::need(w.call.output_type, g.at), Mp::rel(w.call, ExVar(y), g.at), whole, y, g.at)), Nil))
+  }
+  pub fn eq_item(items: List(SpecItem), ty: SynExpr, at: SynSpan): SpecItem ! {macro_error, Div} {
+    match items {
+
+      Nil => Syn::error(at, "mode: no eq clause for the compared output type")
+
+      Cons(q, rest) => if Syn::same(ExVar(Mo::arg(q, 0, at)), ty) {
+        if Mp::has_eq(
+          rest,
+          ty,
+          at
+        ) { Syn::error(at, "mode: more than one eq clause for the output type") } else { q }
+      } else { Mp::eq_item(rest, ty, at) }
+    }
+  }
+  pub fn has_eq(items: List(SpecItem), ty: SynExpr, at: SynSpan): Bool ! {macro_error, Div} {
+    match items {
+      Nil => false
+      Cons(q, rest) => Syn::same(ExVar(Mo::arg(q, 0, at)), ty) || Mp::has_eq(rest, ty, at) }
+  }
+  pub fn output(
+    g: Gen,
+    w: MpWork,
+    h: SynIdent,
+    u: SynIdent,
+    whole: SynExpr,
+    pending: List(@key SynExpr × @value SynExpr)
+  ): SynExpr ! {macro_error, Div, elab} {
+    match pending {
+
+      Nil => Mp::accept(g, w, h, u, whole)
+
+      Cons(#(@key key, @value value), rest) => match Mo::var_of(w.row, key) {
+
+        Some(v) => if Mo::bound(w.bound, v.name) {
+          Mp::compare(g, w, h, u, whole, value, key, rest)
+        } else {
+          Mp::output(
+            g,
+            Mp::work_sub(w, v, value, g.at),
+            h,
+            u,
+            whole,
+            Mp::pending_sub(rest, key, value)
+          )
+        }
+
+        None => match Syn::ident_of(key) {
+
+          Some(v) => if Mo::bound(w.bound, v.name) {
+            Mp::compare(g, w, h, u, whole, value, key, rest)
+          } else { Mp::output_ctor(g, w, h, u, whole, key, value, rest) }
+
+          None => Mp::output_ctor(g, w, h, u, whole, key, value, rest)
+        }
+      }
+    }
+  }
+  pub fn param_types(ps: List(SynExpr × SynIdent)): List(@key SynExpr × @value SynExpr) {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(#(@key ExVar((p: SynIdent)), @value (p: SynExpr)), Mp::param_types(rest))
+    }
+  }
+  pub fn expr_type(
+    ps: List(@key SynExpr × @value SynExpr),
+    e: SynExpr,
+    at: SynSpan
+  ): SynExpr ! {macro_error, Div} {
+    match ps {
+      Nil => Syn::error(at, "mode: the compared variable has no declared type")
+      Cons(#(@key key, @value value), rest) => if Syn::same(key, e) { value } else { Mp::expr_type(rest, e, at) }
+    }
+  }
+  // A projection of the field being compared turns whole-output uniqueness into
+  // the equality required by that field's equality decision.
+  pub fn contains(e: SynExpr, part: SynExpr): Bool {
+    if Syn::same(e, part) { true } else { Mp::contains_any(Mo::ctor_args(e), part) }
+  }
+  pub fn contains_any(es: List(SynExpr), part: SynExpr): Bool {
+    match es {
+      Nil => false
+      Cons(e, rest) => Mp::contains(e, part) || Mp::contains_any(rest, part)
+    }
+  }
+  pub fn projection(
+    g: Gen,
+    w: MpWork,
+    whole: SynExpr,
+    field: SynExpr,
+    fallback: SynExpr,
+    ty: SynExpr
+  ): SynExpr ! {macro_error, Div, elab} {
+    let arg := Mo::name(g.at, Mo::unused(w.row.vars, "mode_projected"))
+    ExLam(
+      Cons(BName(arg, w.call.output_type), Nil),
+      Mp::project(g, whole, field, fallback, ty, ExVar(arg), Cons(arg.name, w.row.vars)),
+      g.at
+    )
+  }
+  pub fn project(
+    g: Gen,
+    shape: SynExpr,
+    field: SynExpr,
+    fallback: SynExpr,
+    ty: SynExpr,
+    subject: SynExpr,
+    scope: List(Text)
+  ): SynExpr ! {macro_error, Div, elab} {
+    if Syn::same(shape, field) { subject } else {
+      let c := Mo::head(shape, g.at)
+      let siblings := match Elab::siblings(c.name) {
+        Some(xs) => xs
+        None => Syn::error(g.at, "mode: a compared field is under a constructor") }
+      Mo::match_expr(
+        subject,
+        ty,
+        Mp::project_arms(g, siblings, c, Mo::ctor_args(shape), field, fallback, ty, scope),
+        g.at
+      )
+    }
+  }
+  pub fn project_args(
+    g: Gen,
+    shapes: List(SynExpr),
+    values: List(SynExpr),
+    field: SynExpr,
+    fallback: SynExpr,
+    ty: SynExpr,
+    scope: List(Text)
+  ): SynExpr ! {macro_error, Div, elab} {
+    match shapes {
+      Nil => Syn::error(g.at, "mode: the compared field is absent from the output")
+      Cons(shape, rest) => match values {
+        Nil => Syn::error(g.at, "mode: a constructor has too few fields")
+        Cons(value, tail) => if Mp::contains(shape, field) {
+          Mp::project(g, shape, field, fallback, ty, value, scope)
+        } else { Mp::project_args(g, rest, tail, field, fallback, ty, scope) }
+      }
+    }
+  }
+  pub fn project_arms(
+    g: Gen,
+    names: List(Text),
+    c: SynIdent,
+    shapes: List(SynExpr),
+    field: SynExpr,
+    fallback: SynExpr,
+    ty: SynExpr,
+    scope: List(Text)
+  ): List(SynArm) ! {macro_error, Div, elab} {
+    match names {
+      Nil => Nil
+      Cons(name, rest) => {
+        let ctor := Mo::name(g.at, name)
+        let fields := Mp::ctor_fields(ctor, scope, g.at)
+        let body := if name == c.name {
+          Mp::project_args(
+            g,
+            shapes,
+            Mo::vars(fields),
+            field,
+            fallback,
+            ty,
+            Syn::append(Mo::names(fields), scope)
+          )
+        } else { fallback }
+        Cons(
+          Mo::arm(PtCtor(ctor, Mo::pats(fields)), body),
+          Mp::project_arms(g, rest, c, shapes, field, fallback, ty, scope)
+        )
+      }
+    }
+  }
+  pub fn compare(
+    g: Gen,
+    w: MpWork,
+    h: SynIdent,
+    u: SynIdent,
+    whole: SynExpr,
+    got: SynExpr,
+    want: SynExpr,
+    rest: List(@key SynExpr × @value SynExpr)
+  ): SynExpr ! {macro_error, Div, elab} {
+    let compared := Mp::expr_type(w.row.types, want, g.at)
+    let q := Mp::eq_item(Mo::named(g.items, "eq"), compared, g.at)
+    Mp::contract_constructor(Mo::arg(q, 2, g.at), 1, "eq success needs an equality proof", g.at)
+    Mp::contract_constructor(Mo::arg(q, 3, g.at), 1, "eq rejection needs a refutation", g.at)
+    let e := Mo::name(g.at, Mo::unused(w.row.vars, "mode_equal"))
+    let no := Mo::name(g.at, Mo::unused(w.row.vars, "mode_unequal"))
+    let hp := Mo::name(g.at, Mo::unused(w.row.vars, concat(h.name, "_equal")))
+    let up := Mo::name(g.at, Mo::unused(w.row.vars, concat(u.name, "_equal")))
+    let params := Mp::carry(g, w, whole, hp, up)
+    let success := Mp::output(
+      g,
+      w,
+      hp,
+      up,
+      Syn::replace(whole, got, want),
+      Mp::pending_sub(rest, got, want)
+    )
+    let rewrite := Mo::match_expr(
+      ExVar(e),
+      Mp::pi(params, Mo::motive(g, w.cur), g.at),
+      Cons(
+        Mo::arm(
+          PtCtor(Mo::quoted(Mp::refl(), g.at), Nil),
+          Mp::lam(Cons(hp, Cons(up, Nil)), success, g.at)
+        ),
+        Nil
+      ),
+      g.at
+    )
+    let applied := ExApp(rewrite, Cons(ExVar(h), Cons(ExVar(u), Nil)), g.at)
+    let failure := Mo::call(
+      g.bad,
+      Cons(
+        Mp::certificate(
+          g,
+          w.row,
+          w.done,
+          MpDifferent(w.premise, u, no, Mp::projection(g, w, whole, got, want, compared)),
+          Cons(
+            #(u, Mp::call_unique(g, w.call, whole)),
+            Cons(
+              #(
+                no,
+                ExPi(
+                  Cons(SynParam { name: None, ty: Mp::eq(compared, want, got) }, Nil),
+                  Mp::false_prop(),
+                  None,
+                  g.at
+                )
+              ),
+              Nil
+            )
+          )
+        ),
+        Nil
+      ),
+      g.at
+    )
+    Mo::match_expr(
+      Mo::call(Mo::arg(q, 1, g.at), Cons(want, Cons(got, Nil)), g.at),
+      Mo::motive(g, w.cur),
+      Cons(
+        Mo::arm(PtCtor(Mo::arg(q, 2, g.at), Cons(PtBind(e), Nil)), applied),
+        Cons(Mo::arm(PtCtor(Mo::arg(q, 3, g.at), Cons(PtBind(no), Nil)), failure), Nil)
+      ),
+      g.at
+    )
+  }
+  pub fn output_ctor(
+    g: Gen,
+    w: MpWork,
+    h: SynIdent,
+    u: SynIdent,
+    whole: SynExpr,
+    pat: SynExpr,
+    subject: SynExpr,
+    rest: List(@key SynExpr × @value SynExpr)
+  ): SynExpr ! {macro_error, Div, elab} {
+    let c := Mo::head(pat, g.at)
+    let fields := Mp::fields(
+      Mo::ctor_args(pat),
+      Syn::append(w.row.vars, Mo::expr_names(Cons(whole, Nil))),
+      g.at
+    )
+    let value := Mo::call(c, Mo::vars(fields), g.at)
+    let hp := Mo::name(g.at, Mo::unused(w.row.vars, concat(h.name, "_shape")))
+    let up := Mo::name(g.at, Mo::unused(w.row.vars, concat(u.name, "_shape")))
+    let params := Mp::carry(g, w, whole, hp, up)
+    let body := Mp::output(
+      g,
+      w,
+      hp,
+      up,
+      Syn::replace(whole, subject, value),
+      Syn::append(Mp::pairs(Mo::ctor_args(pat), Mo::vars(fields)), rest)
+    )
+    let arm := Mo::arm(PtCtor(c, Mo::pats(fields)), Mp::lam(Cons(hp, Cons(up, Nil)), body, g.at))
+    let siblings := match Elab::siblings(c.name) {
+      Some(xs) => xs
+      None => Syn::error(g.at, concat("mode: not a constructor: ", c.name)) }
+    let arms := Cons(arm, Mp::output_missing(g, w, hp, up, whole, subject, c.name, siblings))
+    ExApp(
+      Mo::match_expr(subject, Mp::pi(params, Mo::motive(g, w.cur), g.at), arms, g.at),
+      Cons(ExVar(h), Cons(ExVar(u), Nil)),
+      g.at
+    )
+  }
+
+  pub fn nfields(n: u64, scope: List(Text), at: SynSpan): List(SynIdent) ! {Div} {
+    if n == 0 { Nil } else {
+      let field := Mo::name(at, Mo::unused(scope, "mode_field"))
+      Cons(field, Mp::nfields(n - 1, Cons(field.name, scope), at))
+    }
+  }
+  pub fn ctor_fields(
+    c: SynIdent,
+    scope: List(Text),
+    at: SynSpan
+  ): List(SynIdent) ! {macro_error, Div, elab} {
+    match Elab::constructor_arity(c.name) {
+      Some(n) => Mp::nfields(n, scope, at)
+      None => Syn::error(at, concat("mode: not a constructor: ", c.name))
+    }
+  }
+  pub fn output_missing(
+    g: Gen,
+    w: MpWork,
+    h: SynIdent,
+    u: SynIdent,
+    whole: SynExpr,
+    subject: SynExpr,
+    matched: Text,
+    siblings: List(Text)
+  ): List(SynArm) ! {macro_error, Div, elab} {
+    match siblings {
+      Nil => Nil
+      Cons(name, tail) => {
+        let rest := Mp::output_missing(g, w, h, u, whole, subject, matched, tail)
+        if name == matched { rest } else {
+          let c := Mo::name(g.at, name)
+          let fields := Mp::ctor_fields(
+            c,
+            Syn::append(w.row.vars, Mo::expr_names(Cons(whole, Nil))),
+            g.at
+          )
+          let failed := Syn::replace(whole, subject, Mo::call(c, Mo::vars(fields), g.at))
+          let certificate := Mp::certificate(
+            g,
+            w.row,
+            w.done,
+            MpShape(w.premise, u),
+            Cons(#(u, Mp::call_unique(g, w.call, failed)), Nil)
+          )
+          let body := Mp::lam(
+            Cons(h, Cons(u, Nil)),
+            Mo::call(g.bad, Cons(certificate, Nil), g.at),
+            g.at
+          )
+          Cons(Mo::arm(PtCtor(c, Mo::pats(fields)), body), rest)
+        }
+      }
+    }
+  }
+
+  pub fn remove(es: List(SynExpr), k: u64): List(SynExpr) {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => if k == 0 { rest } else { Cons(e, Mp::remove(rest, k - 1)) } }
+  }
+  pub fn pats_row(r: MoRow, pats: List(SynExpr)): MoRow {
+    MoRow { rule: r.rule, params: r.params, pats: pats, out: r.out, vars: r.vars, types: r.types }
+  }
+  pub fn split_position(
+    rows: List(MoRow),
+    subjects: List(SynExpr),
+    k: u64,
+    at: SynSpan
+  ): Option(u64) ! {macro_error, Div, elab} {
+    match subjects {
+      Nil => None
+      Cons(_, rest) => if Mo::any_ctor(
+        rows,
+        k,
+        at
+      ) { Some(k) } else { Mp::split_position(rows, rest, k + 1, at) } }
+  }
+  pub fn reps(
+    rows: List(MoRow),
+    k: u64,
+    seen: List(Text),
+    at: SynSpan
+  ): List(MoRow) ! {macro_error, Div, elab} {
+    match rows {
+
+      Nil => Nil
+
+      Cons(r, rest) => {
+        let pat := Mo::nth(r.pats, k, at)
+        match Mo::var_of(r, pat) {
+
+          Some(_) => Mp::reps(rest, k, seen, at)
+
+          None => {
+            let c := Mo::head(pat, at)
+            if Mo::bound(seen, c.name) { Mp::reps(rest, k, seen, at) } else {
+              Cons(r, Mp::reps(rest, k, Cons(c.name, seen), at))
+            }
+          }
+        }
+      }
+    }
+  }
+  pub fn specialize(
+    rows: List(MoRow),
+    k: u64,
+    c: SynIdent,
+    fields: List(SynIdent),
+    at: SynSpan
+  ): List(MoRow) ! {macro_error, Div, elab} {
+    match rows {
+
+      Nil => Nil
+
+      Cons(r, rest) => {
+        let tail := Mp::specialize(rest, k, c, fields, at)
+        let pat := Mo::nth(r.pats, k, at)
+        match Mo::var_of(r, pat) {
+
+          Some(v) => {
+            let row := Mo::subst_row(r, v.name, Mo::call(c, Mo::vars(fields), at), Mo::names(fields), at)
+            Cons(Mp::pats_row(row, Syn::append(Mp::remove(row.pats, k), Mo::vars(fields))), tail)
+          }
+
+          None => if Mo::head(pat, at).name == c.name {
+            Cons(Mp::pats_row(r, Syn::append(Mp::remove(r.pats, k), Mo::ctor_args(pat))), tail)
+          } else { tail }
+        }
+      }
+    }
+  }
+  pub fn bind(
+    r: MoRow,
+    subjects: List(SynExpr),
+    k: u64,
+    at: SynSpan
+  ): MoRow ! {macro_error, Div, elab} {
+    match subjects {
+
+      Nil => r
+
+      Cons(value, rest) => match Mo::var_of(r, Mo::nth(r.pats, k, at)) {
+
+        None => Syn::error(at, "mode: an input pattern was not split")
+
+        Some(v) => Mp::bind(
+          Mo::subst_row(r, v.name, value, Mo::expr_names(Cons(value, Nil)), at),
+          rest,
+          k + 1,
+          at
+        )
+      }
+    }
+  }
+  pub fn rows_scope(rows: List(MoRow)): List(Text) {
+    match rows {
+      Nil => Nil
+      Cons(r, rest) => Syn::append(r.vars, Mp::rows_scope(rest))
+    }
+  }
+  pub fn input_arms(
+    g: Gen,
+    names: List(Text),
+    rows: List(MoRow),
+    cur: List(SynExpr),
+    subjects: List(SynExpr),
+    k: u64
+  ): List(SynArm) ! {macro_error, Div, elab} {
+    match names {
+      Nil => Nil
+      Cons(name, rest) => {
+        let c := Mo::name(g.at, name)
+        let fields := Mp::ctor_fields(c, Syn::append(Mp::rows_scope(rows), Mo::expr_names(cur)), g.at)
+        let value := Mo::call(c, Mo::vars(fields), g.at)
+        let nextcur := Syn::replace_all(cur, Mo::nth(subjects, k, g.at), value)
+        let nextsubjects := Syn::append(Mp::remove(subjects, k), Mo::vars(fields))
+        let body := Mp::compile(g, Mp::specialize(rows, k, c, fields, g.at), nextcur, nextsubjects)
+        Cons(Mo::arm(PtCtor(c, Mo::pats(fields)), body), Mp::input_arms(g, rest, rows, cur, subjects, k))
+      }
+    }
+  }
+  pub fn compile(
+    g: Gen,
+    rows: List(MoRow),
+    cur: List(SynExpr),
+    subjects: List(SynExpr)
+  ): SynExpr ! {macro_error, Div, elab} {
+    match rows {
+
+      Nil => Mp::empty(g)
+
+      Cons(r, more) => match Mp::split_position(rows, subjects, 0, g.at) {
+
+        None => match more {
+
+          Cons(other, _) => Syn::error(
+            g.at,
+            concat(
+              "mode: the rules ",
+              concat(
+                r.rule.name,
+                concat(" and ", concat(other.rule.name, " apply to the same inputs"))
+              )
+            )
+          )
+
+          Nil => {
+            let row := Mp::bind(r, subjects, 0, g.at)
+            Mp::process(g, row, cur, row.params, Mo::expr_names(cur), Nil, Nil)
+          }
+        }
+
+        Some(k) => {
+          let reps := Mp::reps(rows, k, Nil, g.at)
+          let first := match reps {
+            Cons(rep, _) => Mo::head(Mo::nth(rep.pats, k, g.at), g.at)
+            Nil => Syn::error(g.at, "mode: a constructor pattern is required") }
+          let names := match Elab::siblings(first.name) {
+            Some(xs) => xs
+            None => Syn::error(g.at, concat("mode: not a constructor: ", first.name)) }
+          let arms := Mp::input_arms(g, names, rows, cur, subjects, k)
+          Mo::match_expr(Mo::nth(subjects, k, g.at), Mo::motive(g, cur), arms, g.at)
+        }
+      }
+    }
+  }
+
+  // Validate the explicit data flow before generating terms. The kernel still
+  // checks the generated contracts, proof terms and recursive calls.
+  pub fn prop_sort(ty: SynExpr): Bool {
+    match Syn::pi_parts(ty) {
+      Some(p) => Mp::prop_sort((p: SynExpr))
+      None => Syn::same(ty, quote { Prop })
+    }
+  }
+  pub fn prop_type(ty: SynExpr): Bool ! {Div, elab} {
+    let head := match Syn::app_parts(ty) {
+      Some(p) => (p: SynExpr)
+      None => ty }
+    match Syn::ident_of(head) {
+      None => false
+      Some(n) => match Elab::global(Mo::relation_name(n).name) {
+        None => false
+        Some(c) => Mp::prop_sort(c.ty)
+      }
+    }
+  }
+  pub fn role_count(rs: List(SynIdent × Text), role: Text): u64 {
+    match rs {
+      Nil => 0
+      Cons(r, rest) => (if (r: Text) == role { 1 } else { 0 }) + Mp::role_count(rest, role)
+    }
+  }
+  pub fn distinct_names(
+    ns: List(SynIdent),
+    seen: List(Text),
+    at: SynSpan
+  ): Unit ! {macro_error, Div} {
+    match ns {
+      Nil => #()
+      Cons(n, rest) => if Mo::bound(seen, n.name) {
+        Syn::error(at, concat("mode: repeated position name ", n.name))
+      } else { Mp::distinct_names(rest, Cons(n.name, seen), at) }
+    }
+  }
+  pub fn validate_roles(rs: List(SynIdent × Text), at: SynSpan): Unit ! {macro_error, Div} {
+    if Mp::role_count(
+      rs,
+      "rec"
+    ) != 1 { Syn::error(at, "mode: exactly one rec position is required") } else { #() }
+    if Mp::role_count(
+      rs,
+      "out"
+    ) > 1 { Syn::error(at, "mode: at most one out position is allowed") } else { #() }
+    Mp::distinct_names(Mo::first_names(Mp::role_params(rs)), Nil, at)
+  }
+  pub fn role_params(rs: List(SynIdent × Text)): List(SynExpr × SynIdent) {
+    match rs {
+      Nil => Nil
+      Cons(r, rest) => Cons(#((r: SynIdent), ExVar((r: SynIdent))), Mp::role_params(rest))
+    }
+  }
+  pub fn validate_clauses(
+    cs: List(SpecItem),
+    seen: List(Text),
+    at: SynSpan
+  ): Unit ! {macro_error, Div} {
+    match cs {
+      Nil => #()
+      Cons(c, rest) => {
+        let key := Mo::arg(c, 0, at)
+        if Mo::bound(seen, key.name) {
+          Syn::error(
+            at,
+            concat("mode: duplicate ", concat(c.head.name, concat(" clause for ", key.name)))
+          )
+        } else { Mp::validate_clauses(rest, Cons(key.name, seen), at) }
+      }
+    }
+  }
+  pub fn patterns(
+    g: Gen,
+    r: MoRow,
+    es: List(SynExpr),
+    seen: List(Text),
+    require_linear: Bool
+  ): List(Text) ! {macro_error, Div, elab} {
+    match es {
+      Nil => seen
+      Cons(e, rest) => {
+        let next := match Mo::var_of(r, e) {
+          Some(v) => if require_linear && Mo::bound(seen, v.name) {
+            Syn::error(
+              r.rule.span,
+              concat("mode: rule ", concat(r.rule.name, concat(" repeats input variable ", v.name)))
+            )
+          } else { Cons(v.name, seen) }
+          None => {
+            let ctor := Mo::head(e, r.rule.span)
+            let arity := match Elab::constructor_arity(ctor.name) {
+              Some(n) => n
+              None => Syn::error(
+                r.rule.span,
+                concat(
+                  "mode: rule ",
+                  concat(r.rule.name, concat(" has a non-constructor pattern ", ctor.name))
+                )
+              ) }
+            if arity != Mo::count(Mo::ctor_args(e)) {
+              Syn::error(r.rule.span, concat("mode: write all fields of constructor ", ctor.name))
+            } else { Mp::patterns(g, r, Mo::ctor_args(e), seen, require_linear) }
+          }
+        }
+        Mp::patterns(g, r, rest, next, require_linear)
+      }
+    }
+  }
+  pub fn require_bound(
+    r: MoRow,
+    es: List(SynExpr),
+    bound: List(Text),
+    where_: Text
+  ): Unit ! {macro_error, Div} {
+    match es {
+      Nil => #()
+      Cons(e, rest) => {
+        match Syn::ident_of(e) {
+          Some(v) => if Mo::bound(r.vars, v.name) && not(Mo::bound(bound, v.name)) {
+            Syn::error(
+              r.rule.span,
+              concat(
+                "mode: rule ",
+                concat(r.rule.name, concat(" has unbound ", concat(v.name, concat(" in ", where_))))
+              )
+            )
+          } else { #() }
+          None => match Syn::app_parts(e) {
+            Some(p) => Mp::require_bound(r, Cons((p: SynExpr), (p: List(SynExpr))), bound, where_)
+            None => if Mp::literal(e) { #() } else {
+              Syn::error(
+                r.rule.span,
+                concat(
+                  "mode: rule ",
+                  concat(r.rule.name, concat(" needs first-order data in ", where_))
+                )
+              )
+            }
+          }
+        }
+        Mp::require_bound(r, rest, bound, where_)
+      }
+    }
+  }
+  pub fn flow(
+    g: Gen,
+    r: MoRow,
+    ps: List(MoParam),
+    bound: List(Text)
+  ): List(Text) ! {macro_error, Div, elab} {
+    match ps {
+      Nil => bound
+      Cons(p, rest) => match p {
+        MoData(_) => Mp::flow(g, r, rest, bound)
+        MoPremise(h, ty) => {
+          let call := Mp::call(g, ty)
+          let split := Mo::split(call.roles, call.args, g.at)
+          let inputs := match split.rec {
+            None => split.ins
+            Some(v) => Cons(v, split.ins) }
+          Mp::require_bound(r, inputs, bound, concat("inputs of premise ", h.name))
+          if call.rel.name == g.rel.name && not(
+            Mp::contains_any(Mo::ctor_args(Mo::nth(r.pats, 0, g.at)), Mo::need(split.rec, g.at))
+          ) {
+            Syn::error(
+              h.span,
+              concat("mode: premise ", concat(h.name, " does not recurse on a strict input subterm"))
+            )
+          } else { #() }
+          let next := match call.output {
+            None => bound
+            Some(o) => Mp::patterns(g, r, Cons(o, Nil), bound, false) }
+          Mp::flow(g, r, rest, Cons(h.name, next))
+        }
+      }
+    }
+  }
+  pub fn validate_row(g: Gen, r: MoRow, c: SynIndCtor): Unit ! {macro_error, Div, elab} {
+    let bound := Mp::patterns(g, r, r.pats, Nil, true)
+    let available := Mp::flow(g, r, r.params, bound)
+    let values := match r.out {
+      None => Nil
+      Some(o) => Cons(o, Nil) }
+    Mp::require_bound(r, values, available, "the conclusion output")
+    Mp::require_bound(r, Mo::vars(Mo::first_names(c.params)), available, "constructor arguments")
+  }
+
+  pub fn literal(e: SynExpr): Bool {
+    Syn::same(e, quote { true }) || Syn::same(e, quote { false })
+  }
+
+  // Written binders are renamed to the declared mode positions before reordering.
+  pub fn signature(ty: SynExpr): List(SynParam) {
+    match Syn::pi_parts(ty) {
+      None => Nil
+      Some(p) => Syn::append((p: List(SynParam)), Mp::signature((p: SynExpr)))
+    }
+  }
+  pub fn apply(ty: SynExpr, bindings: List(@key SynExpr × @value SynExpr)): SynExpr {
+    match Mp::binding(ty, bindings) {
+      Some(value) => value
+      None => match Syn::app_parts(ty) {
+        None => ty
+        Some(p) => ExApp(
+          Mp::apply((p: SynExpr), bindings),
+          Mp::apply_all((p: List(SynExpr)), bindings),
+          SynSpan { id: Syn::expr_span(ty) }
+        )
+      }
+    }
+  }
+  pub fn binding(e: SynExpr, bindings: List(@key SynExpr × @value SynExpr)): Option(SynExpr) {
+    match bindings {
+      Nil => None
+      Cons(#(@key key, @value value), rest) => if Syn::same(e, key) { Some(value) } else { Mp::binding(e, rest) }
+    }
+  }
+  pub fn apply_all(es: List(SynExpr), bindings: List(@key SynExpr × @value SynExpr)): List(SynExpr) {
+    match es {
+      Nil => Nil
+      Cons(e, rest) => Cons(Mp::apply(e, bindings), Mp::apply_all(rest, bindings))
+    }
+  }
+  pub fn instantiate_types(
+    ps: List(SynParam),
+    args: List(SynExpr),
+    bindings: List(@key SynExpr × @value SynExpr),
+    at: SynSpan
+  ): List(SynExpr) ! {macro_error, Div} {
+    match ps {
+      Nil => match args {
+        Nil => Nil
+        Cons(_, _) => Syn::error(
+          at,
+          "mode: the spec gives a role (in, rec or out) to each position of the relation, in order"
+        ) }
+      Cons(p, rest) => match args {
+        Nil => Syn::error(
+          at,
+          "mode: the spec gives a role (in, rec or out) to each position of the relation, in order"
+        )
+        Cons(arg, tail) => {
+          let next := match p.name {
+            None => bindings
+            Some(name) => Cons(#(@key ExVar(name), @value arg), bindings) }
+          Cons(Mp::apply(p.ty, bindings), Mp::instantiate_types(rest, tail, next, at))
+        }
+      }
+    }
+  }
+  pub fn type_order(
+    ps: List(SynExpr × SynIdent),
+    names: List(Text),
+    bound: List(Text),
+    at: SynSpan
+  ): Unit ! {macro_error, Div} {
+    match ps {
+      Nil => #()
+      Cons(p, rest) => {
+        Mp::type_dependencies((p: SynExpr), names, bound, (p: SynIdent), at)
+        Mp::type_order(rest, names, Cons((p: SynIdent).name, bound), at)
+      }
+    }
+  }
+  pub fn type_dependencies(
+    ty: SynExpr,
+    names: List(Text),
+    bound: List(Text),
+    position: SynIdent,
+    at: SynSpan
+  ): Unit ! {macro_error, Div} {
+    match names {
+      Nil => #()
+      Cons(name, rest) => {
+        if Mo::mentions(ty, name) && not(Mo::bound(bound, name)) {
+          Syn::error(
+            at,
+            concat(
+              "mode: type of position ",
+              concat(position.name, concat(" depends on unavailable position ", name))
+            )
+          )
+        } else { #() }
+        Mp::type_dependencies(ty, rest, bound, position, at)
+      }
+    }
+  }
+
+  pub fn contract_constructor(
+    name: SynIdent,
+    fields: u64,
+    requirement: Text,
+    at: SynSpan
+  ): Unit ! {macro_error, Div, elab} {
+    match Elab::constructor_arity(name.name) {
+      Some(n) => if n == fields { #() } else {
+        Syn::error(at, concat("mode: ", concat(requirement, concat(" in ", name.name))))
+      }
+      None => Syn::error(at, concat("mode: unknown result constructor ", name.name))
+    }
   }
 }
-
-fn mo_types(ps: List(Pair(SynIdent, SynExpr))) -> List(Option(SynExpr)) {
-  match ps {
-    Nil => Nil
-    Cons(p, rest) => Cons(Some(p.snd), mo_types(rest))
-  }
-}
-
-fn mo_nones(ps: List(Pair(SynIdent, SynExpr))) -> List(Option(Bool)) {
-  match ps {
-    Nil => Nil
-    Cons(_, rest) => Cons(None, mo_nones(rest))
-  }
-}
-
-fn mo_make(e: SynExpr, d: SynInductive) -> List(SynStmt) ! {macro_error, Div} {
-  let at = d.span
-  let items = mo_items(e, at)
-  let roles = mo_roles(items, at)
-  let result = mo_one(items, "result", at)
-  let g = Gen {
-    rel: d.name
-    roles: roles
-    res: mo_arg(result, 0, at)
-    ok: mo_arg(result, 1, at)
-    bad: mo_arg(result, 2, at)
-    fname: mo_arg(mo_one(items, "name", at), 0, at)
-    items: items
-    at: at
-  }
-  let tys = mo_sort_tys(d.sort)
-  let params = syn_append(mo_with(roles, tys, "rec"), mo_with(roles, tys, "in"))
-  let out = mo_with(roles, tys, "out")
-  let outp = match out {
-    Cons(o, _) => o
-    Nil => syn_error(at, "mode: the spec needs an out")
-  }
-  let all = mo_all_names(roles)
-  let answer = ExApp(ExVar(g.res), mo_vars(mo_first_names(params)), at)
-  let proof = mo_name(at, "h")
-  let ok = SynIndCtor {
-    name: g.ok
-    implicit: 0
-    params: Cons(outp, Cons(Pair { fst: proof, snd: ExApp(ExVar(d.name), all, at) }, Nil))
-    result: answer
-  }
-  let bad = SynIndCtor { name: g.bad, implicit: 0, params: Nil, result: answer }
-  let res = SynInductive {
-    name: g.res
-    params: params
-    sort: ExVar(mo_quoted(quote { Type }, at))
-    ctors: Cons(ok, Cons(bad, Nil))
-    span: at
-  }
-  let recname = match mo_role_names(roles, "rec") {
-    Cons(r, _) => r
-    Nil => syn_error(at, "mode: the spec needs a rec")
-  }
-  let body = mo_match(ExVar(recname), answer, mo_rules(g, d.ctors), at)
-  let f = SynFn {
-    name: g.fname
-    generics: Nil
-    bounds: Nil
-    params: mo_first_names(params)
-    borrows: mo_nones(params)
-    param_types: mo_types(params)
-    result: Some(answer)
-    effects: None
-    body: body
-    span: at
-  }
-  Cons(StInductive(d), Cons(StInductive(res), Cons(StFn(f), Nil)))
-}
-
-fn mo_all_names(roles: List(Pair(Text, SynIdent))) -> List(SynExpr) {
-  match roles {
-    Nil => Nil
-    Cons(r, rr) => Cons(ExVar(r.snd), mo_all_names(rr))
-  }
-}
-
-fn mode(e: SynExpr, s: SynStmt) -> List(SynStmt) ! {macro_error, Div} {
-  match syn_inductive_of(s) {
-    Some(d) => mo_make(e, d)
-    None => syn_error(SynSpan { id: 0 }, "mode! goes on an inductive relation")
-  }
-}
-
-macro mode = mode

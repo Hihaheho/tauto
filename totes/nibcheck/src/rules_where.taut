@@ -1,0 +1,85 @@
+import "checker.taut"
+import std::Row
+
+pub(open) inductive WhereClass(classes: Ordmap(Text, ClassInfo)): (Text) -> Prop {
+  WhereClassPartialEq: WhereClass(classes, "PartialEq")
+  WhereClassDecEq: WhereClass(classes, "DecEq")
+  WhereClassHash: WhereClass(classes, "Hash")
+  WhereClassDeclared(
+    name: Text,
+    info: ClassInfo,
+    found: Ordmap::get(classes, name, Ordmap::compare_text) = Some(info)
+  ): WhereClass(classes, name)
+}
+pub(open) inductive WhereGeneric(generics: List(Pair(Text, Kind)), name: Text): Prop {
+  Mk(
+    kind: Kind,
+    present: Mem(Pair(Text, Kind), Pair { fst: name, snd: kind }, generics)
+  ): WhereGeneric(generics, name)
+}
+pub(open) inductive WhereGenericTerm(
+  generics: List(Pair(Text, Kind))
+): (SurfaceTerm, Text) -> Prop {
+  Mk<ast_occurrence: Option(
+    TermOccurrence
+  )>(
+    name: Text,
+    start: Nat,
+    end: Nat,
+    declared: WhereGeneric(generics, name)
+  ): WhereGenericTerm(generics, SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), name)
+}
+pub fn where_source_class(source: SurfaceConstraint): Text { source.r#class }
+pub fn where_source_type(source: SurfaceConstraint): SurfaceTerm { source.ty }
+pub(open) inductive WhereConstraint(
+  classes: Ordmap(Text, ClassInfo),
+  generics: List(Pair(Text, Kind)),
+  source: SurfaceConstraint,
+  previous: List(Pair(Text, Text))
+): (List(Pair(Text, Text))) -> Prop {
+  Mk(
+    name: Text,
+    r#class: WhereClass(classes, where_source_class(source)),
+    generic: WhereGenericTerm(generics, where_source_type(source), name),
+    fresh: (
+      Mem(Pair(Text, Text), Pair { fst: where_source_class(source), snd: name }, previous)
+    ) -> False
+  ): WhereConstraint(
+    classes,
+    generics,
+    source,
+    previous,
+    Cons(Pair { fst: where_source_class(source), snd: name }, previous)
+  )
+}
+
+pub(open) inductive WhereConstraints(
+  classes: Ordmap(Text, ClassInfo),
+  generics: List(Pair(Text, Kind))
+): (List(SurfaceConstraint), List(Pair(Text, Text)), List(Pair(Text, Text))) -> Prop {
+  WhereConstraintsNil(
+    previous: List(Pair(Text, Text))
+  ): WhereConstraints(classes, generics, Nil, previous, previous)
+  WhereConstraintsCons(
+    source: SurfaceConstraint,
+    rest: List(SurfaceConstraint),
+    previous: List(Pair(Text, Text)),
+    next: List(Pair(Text, Text)),
+    final: List(Pair(Text, Text)),
+    head: WhereConstraint(classes, generics, source, previous, next),
+    tail: WhereConstraints(classes, generics, rest, next, final)
+  ): WhereConstraints(classes, generics, Cons(source, rest), previous, final)
+}
+
+pub(open) inductive WhereClauses(
+  classes: Ordmap(Text, ClassInfo),
+  generics: List(Pair(Text, Kind)),
+  sources: List(SurfaceConstraint),
+  predicates: List(Pair(Text, Text))
+): Prop {
+  Mk(
+    reversed: List(Pair(Text, Text)),
+    derived: WhereConstraints(classes, generics, sources, Nil, reversed),
+    ordered: predicates = List::reverse(reversed)
+  ): WhereClauses(classes, generics, sources, predicates)
+}

@@ -1,0 +1,93 @@
+import "handler_result_frame.taut"
+import "widen_error_sound.taut"
+
+pub theorem handler_fits_any_frame_checked(
+  k: Nat,
+  c: Checker,
+  a: Ty,
+  choices: List(Ty),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_fits_any_in(k, c, a, choices)) {
+  checked_frame_grows(
+    c,
+    ck_fits_any_in(k, c, a, choices),
+    And::left(handler_fits_any_ok(k, c, a, choices)(ordered))
+  )
+}
+
+pub theorem handler_validate_after_frame_checked(
+  c: Checker,
+  arm: Ty,
+  result: Ty,
+  span: TySpan,
+  fits: Bool,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, handler_validate_after(c, arm, result, span, fits)) {
+  match fits: CkCheckedFrame(c, handler_validate_after(c, arm, result, span, fits)) {
+    true => checked_frame_return(c, Star, ordered)
+    false => checked_frame_rewrap(
+      c,
+      ck_expect(c, arm, result, span, "a handler arm"),
+      ck_expect_run_frame_checked(c, arm, result, span, "a handler arm", ordered)
+    )
+  }
+}
+
+pub theorem handler_validate_unfolded_frame_checked(
+  c: Checker,
+  arm: Ty,
+  result: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, handler_validate_unfolded(c, arm, result, span)) {
+  checked_frame_bind(
+    Bool,
+    Unit,
+    c,
+    (fits: Bool, c1: Checker) => handler_validate_after(c1, arm, result, span, fits),
+    ck_fits_any_in(ck_steps_of(c), c, arm, ck_handle_result_choices(ck_resolve(c, result))),
+    handler_fits_any_frame_checked(
+      ck_steps_of(c),
+      c,
+      arm,
+      ck_handle_result_choices(ck_resolve(c, result)),
+      ordered
+    ),
+    fits => c1 => o_c1 => handler_validate_after_frame_checked(c1, arm, result, span, fits, o_c1)
+  )
+}
+
+pub theorem ck_handle_validate_frame_checked(
+  c: Checker,
+  arm: Ty,
+  result: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_handle_validate(c, arm, result, span)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => CkCheckedFrame(c, m),
+    Eq::sym(handler_validate_unf(c, arm, result, span)),
+    handler_validate_unfolded_frame_checked(c, arm, result, span, ordered)
+  )
+}
+pub theorem ck_handle_arm_result_run_frame_checked(
+  c: Checker,
+  arm: Ty,
+  result: Ty,
+  variable: Option(Nat),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) {
+  match variable: CkCheckedFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) {
+    Some(rv) => checked_frame_rewrap(
+      c,
+      ck_handle_widen(c, arm, result, rv),
+      ck_handle_widen_run_frame_checked(c, arm, result, rv, ordered)
+    )
+    None => checked_frame_rewrap(
+      c,
+      ck_handle_validate(c, arm, result, span),
+      ck_handle_validate_frame_checked(c, arm, result, span, ordered)
+    )
+  }
+}

@@ -1,0 +1,514 @@
+// Whether a candidate may be adopted: the required observers and witnesses,
+// their origins and pins, coverage, waiting and freshness.
+
+import "history.taut"
+
+// Origin and local-receipt values are supplied only by the protected runtime.
+// Downloaded records cannot create these facts. Their provenance is not proved here.
+
+pub(open) inductive IxTrust: Type {
+  Mk(index: Nat, source: Nat, pin: IxPoint): IxTrust
+}
+
+pub fn ix_trust_index(
+  value: IxTrust
+): Nat { match value: Nat { Mk(index, source, pin) => index } }
+
+pub fn ix_trust_source(
+  value: IxTrust
+): Nat { match value: Nat { Mk(index, source, pin) => source } }
+
+pub fn ix_trust_pin(
+  value: IxTrust
+): IxPoint { match value: IxPoint { Mk(index, source, pin) => pin } }
+
+pub(open) inductive IxOrigin: Type {
+  Mk(index: Nat, source: Nat, head: IxPoint, checked: Nat): IxOrigin
+}
+
+pub fn ix_origin_index(
+  value: IxOrigin
+): Nat { match value: Nat { Mk(index, source, head, checked) => index } }
+
+pub fn ix_origin_source(
+  value: IxOrigin
+): Nat { match value: Nat { Mk(index, source, head, checked) => source } }
+
+pub fn ix_origin_head(
+  value: IxOrigin
+): IxPoint { match value: IxPoint { Mk(index, source, head, checked) => head } }
+
+pub fn ix_origin_checked(
+  value: IxOrigin
+): Nat { match value: Nat { Mk(index, source, head, checked) => checked } }
+
+pub(open) inductive IxLimits: Type {
+  Mk(age: Nat, lifetime: Nat, source_age: Nat): IxLimits
+}
+
+pub fn ix_limits_age(
+  value: IxLimits
+): Nat { match value: Nat { Mk(age, lifetime, source_age) => age } }
+
+pub fn ix_limits_lifetime(
+  value: IxLimits
+): Nat { match value: Nat { Mk(age, lifetime, source_age) => lifetime } }
+
+pub fn ix_limits_source_age(
+  value: IxLimits
+): Nat { match value: Nat { Mk(age, lifetime, source_age) => source_age } }
+
+pub(open) inductive IxWitness: Type {
+  IxLocal: IxWitness
+  IxRemote(trust: IxTrust): IxWitness
+}
+
+pub fn ix_checkpoint_known(point: IxPoint, state: IxState): Bool {
+  ix_any(
+    (checkpoint: IxCheckpoint) => ix_point_eq(point, ix_checkpoint_point(checkpoint)),
+    ix_state_checkpoints(state)
+  )
+}
+
+pub fn ix_mature(
+  first: Nat,
+  now: Nat,
+  age: Nat
+): Bool { Bool::and(Nat::le(first, now), Nat::le(age, Nat::sub(now, first))) }
+
+pub fn ix_fresh(state: IxState, now: Nat, limits: IxLimits): Bool {
+  Bool::and(
+    Nat::le(ix_state_issued(state), now),
+    Bool::and(
+      Nat::lt(now, ix_state_until(state)),
+      Nat::le(Nat::sub(ix_state_until(state), ix_state_issued(state)), ix_limits_lifetime(limits))
+    )
+  )
+}
+
+pub fn ix_origin_matches(
+  trust: IxTrust,
+  state: IxState,
+  now: Nat,
+  limits: IxLimits,
+  origin: IxOrigin
+): Bool {
+  Bool::and(
+    Nat::eq(ix_trust_index(trust), ix_origin_index(origin)),
+    Bool::and(
+      Nat::eq(ix_trust_source(trust), ix_origin_source(origin)),
+      Bool::and(
+        ix_point_eq(ix_state_head(state), ix_origin_head(origin)),
+        Bool::and(
+          Nat::le(ix_origin_checked(origin), now),
+          Nat::le(Nat::sub(now, ix_origin_checked(origin)), ix_limits_source_age(limits))
+        )
+      )
+    )
+  )
+}
+
+// A snapshot has ONE latest authenticated ref reply per index. Historical checks
+// must not coexist here: an old matching head must not mask a newer unmatched head.
+pub fn ix_origins_unique(origins: List(IxOrigin)): Bool {
+  match origins: Bool {
+    Nil => true
+    Cons(origin, rest) => Bool::and(
+      not(
+        ix_any(
+          (candidate: IxOrigin) => Nat::eq(ix_origin_index(origin), ix_origin_index(candidate)),
+          rest
+        )
+      ),
+      ix_origins_unique(rest)
+    )
+  }
+}
+
+pub fn ix_grounded(
+  trust: IxTrust,
+  state: IxState,
+  now: Nat,
+  limits: IxLimits,
+  origins: List(IxOrigin)
+): Bool {
+  Bool::and(
+    ix_origins_unique(origins),
+    Bool::and(
+      Nat::eq(ix_trust_index(trust), ix_state_index(state)),
+      Bool::and(
+        not(ix_state_retired(state)),
+        Bool::and(
+          ix_checkpoint_known(ix_trust_pin(trust), state),
+          Bool::and(
+            ix_fresh(state, now, limits),
+            ix_any(
+              (origin: IxOrigin) => ix_origin_matches(trust, state, now, limits, origin),
+              origins
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn ix_find_state(index: Nat, states: List(IxState)): Option(IxState) {
+  match states: Option(IxState) {
+    Nil => None
+    Cons(state, rest) => ix_choose(
+      Nat::eq(index, ix_state_index(state)),
+      ix_find_state(index, rest),
+      Some(state)
+    )
+  }
+}
+
+pub fn ix_live(
+  trust: IxTrust,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  now: Nat,
+  limits: IxLimits
+): Option(IxState) {
+  ix_bind(
+    ix_find_state(ix_trust_index(trust), states),
+    (state: IxState) => ix_gate(ix_grounded(trust, state, now, limits, origins), Some(state))
+  )
+}
+
+// Coverage includes the full prefix, not just events in the named batch.
+pub fn ix_covers(state: IxState, observation: IxObservation, point: IxPoint): Bool {
+  ix_any(
+    (checkpoint: IxCheckpoint) => Bool::and(
+      ix_point_eq(point, ix_checkpoint_point(checkpoint)),
+      Nat::le(ix_observation_born(observation), ix_checkpoint_sequence(checkpoint))
+    ),
+    ix_state_checkpoints(state)
+  )
+}
+
+pub fn ix_receipt_ready(
+  trust: IxTrust,
+  state: IxState,
+  observation: IxObservation,
+  now: Nat,
+  age: Nat,
+  receipt: IxReceipt
+): Bool {
+  Bool::and(
+    Nat::eq(ix_trust_index(trust), ix_receipt_index(receipt)),
+    Bool::and(
+      Nat::eq(ix_trust_source(trust), ix_receipt_source(receipt)),
+      Bool::and(
+        ix_covers(state, observation, ix_receipt_point(receipt)),
+        ix_mature(ix_receipt_first(receipt), now, age)
+      )
+    )
+  )
+}
+
+pub fn ix_on_some<A>(predicate: (A) -> Bool, value: Option(A)): Bool {
+  match value: Bool {
+    None => false
+    Some(item) => predicate(item)
+  }
+}
+
+pub fn ix_witness_ready(
+  trust: IxTrust,
+  state: IxState,
+  observation: IxObservation,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  limits: IxLimits,
+  witness: IxWitness
+): Bool {
+  match witness: Bool {
+    IxLocal => ix_any(
+      (receipt: IxReceipt) => ix_receipt_ready(
+        trust,
+        state,
+        observation,
+        now,
+        ix_limits_age(limits),
+        receipt
+      ),
+      local_receipts
+    )
+    IxRemote(peer) => ix_on_some(
+      (peer_state: IxState) => ix_any(
+        (receipt: IxReceipt) => ix_receipt_ready(
+          trust,
+          state,
+          observation,
+          now,
+          ix_limits_age(limits),
+          receipt
+        ),
+        ix_state_receipts(peer_state)
+      ),
+      ix_live(peer, states, origins, now, limits)
+    )
+  }
+}
+
+pub fn ix_observation_ready(
+  trust: IxTrust,
+  state: IxState,
+  key: IxKey,
+  digest: Nat,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  witnesses: List(IxWitness),
+  now: Nat,
+  limits: IxLimits,
+  observation: IxObservation
+): Bool {
+  Bool::and(
+    ix_key_eq(key, ix_observation_key(observation)),
+    Bool::and(
+      Nat::eq(digest, ix_observation_digest(observation)),
+      Bool::and(
+        ix_mature(ix_observation_first(observation), now, ix_limits_age(limits)),
+        ix_all(
+          (witness: IxWitness) => ix_witness_ready(
+            trust,
+            state,
+            observation,
+            states,
+            origins,
+            local_receipts,
+            now,
+            limits,
+            witness
+          ),
+          witnesses
+        )
+      )
+    )
+  )
+}
+
+pub fn ix_state_ready(
+  trust: IxTrust,
+  key: IxKey,
+  digest: Nat,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  witnesses: List(IxWitness),
+  now: Nat,
+  limits: IxLimits,
+  state: IxState
+): Bool {
+  Bool::and(
+    not(ix_has_key(key, ix_state_withdrawals(state))),
+    Bool::and(
+      ix_vote_for(key, ix_state_votes(state)),
+      ix_any(
+        (observation: IxObservation) => ix_observation_ready(
+          trust,
+          state,
+          key,
+          digest,
+          states,
+          origins,
+          local_receipts,
+          witnesses,
+          now,
+          limits,
+          observation
+        ),
+        ix_state_observations(state)
+      )
+    )
+  )
+}
+
+pub fn ix_observer_ready(
+  key: IxKey,
+  digest: Nat,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  witnesses: List(IxWitness),
+  now: Nat,
+  limits: IxLimits,
+  trust: IxTrust
+): Bool {
+  ix_on_some(
+    (state: IxState) => ix_state_ready(
+      trust,
+      key,
+      digest,
+      states,
+      origins,
+      local_receipts,
+      witnesses,
+      now,
+      limits,
+      state
+    ),
+    ix_live(trust, states, origins, now, limits)
+  )
+}
+
+pub fn ix_trust_distinct(left: IxTrust, right: IxTrust): Bool {
+  Bool::and(
+    not(Nat::eq(ix_trust_index(left), ix_trust_index(right))),
+    not(Nat::eq(ix_trust_source(left), ix_trust_source(right)))
+  )
+}
+
+pub fn ix_observers_unique(observers: List(IxTrust)): Bool {
+  match observers: Bool {
+    Nil => true
+    Cons(trust, rest) => Bool::and(
+      ix_all((peer: IxTrust) => ix_trust_distinct(trust, peer), rest),
+      ix_observers_unique(rest)
+    )
+  }
+}
+
+pub fn ix_witness_distinct(left: IxWitness, right: IxWitness): Bool {
+  match left: Bool {
+    IxLocal => match right: Bool {
+      IxLocal => false
+      IxRemote(peer) => true
+    }
+    IxRemote(trust) => match right: Bool {
+      IxLocal => true
+      IxRemote(peer) => ix_trust_distinct(trust, peer)
+    }
+  }
+}
+
+pub fn ix_witnesses_unique(witnesses: List(IxWitness)): Bool {
+  match witnesses: Bool {
+    Nil => true
+    Cons(witness, rest) => Bool::and(
+      ix_all((peer: IxWitness) => ix_witness_distinct(witness, peer), rest),
+      ix_witnesses_unique(rest)
+    )
+  }
+}
+
+pub fn ix_witness_independent(observers: List(IxTrust), witness: IxWitness): Bool {
+  match witness: Bool {
+    IxLocal => true
+    IxRemote(trust) => ix_all((observer: IxTrust) => ix_trust_distinct(trust, observer), observers)
+  }
+}
+
+pub fn ix_states_unique(states: List(IxState)): Bool {
+  match states: Bool {
+    Nil => true
+    Cons(state, rest) => Bool::and(
+      not(
+        ix_any(
+          (candidate: IxState) => Nat::eq(ix_state_index(state), ix_state_index(candidate)),
+          rest
+        )
+      ),
+      ix_states_unique(rest)
+    )
+  }
+}
+
+pub fn ix_policy_ok(observers: List(IxTrust), witnesses: List(IxWitness), limits: IxLimits): Bool {
+  Bool::and(
+    ix_nonempty(observers),
+    Bool::and(
+      ix_nonempty(witnesses),
+      Bool::and(
+        ix_observers_unique(observers),
+        Bool::and(
+          ix_witnesses_unique(witnesses),
+          Bool::and(
+            ix_all((witness: IxWitness) => ix_witness_independent(observers, witness), witnesses),
+            Bool::and(
+              Nat::lt(0, ix_limits_lifetime(limits)),
+              Nat::lt(0, ix_limits_source_age(limits))
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// Eligibility is binary: no means not eligible, including missing evidence.
+// It does not distinguish pending, rejected and conflicting evidence.
+pub fn ix_eligible(
+  observers: List(IxTrust),
+  witnesses: List(IxWitness),
+  limits: IxLimits,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  key: IxKey,
+  digest: Nat
+): Bool {
+  Bool::and(
+    ix_policy_ok(observers, witnesses, limits),
+    Bool::and(
+      ix_states_unique(states),
+      ix_all(
+        (trust: IxTrust) => ix_observer_ready(
+          key,
+          digest,
+          states,
+          origins,
+          local_receipts,
+          witnesses,
+          now,
+          limits,
+          trust
+        ),
+        observers
+      )
+    )
+  )
+}
+
+pub fn ix_usable(
+  observers: List(IxTrust),
+  witnesses: List(IxWitness),
+  limits: IxLimits,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  key: IxKey,
+  expected: Nat,
+  actual: Nat
+): Bool {
+  Bool::and(
+    ix_eligible(observers, witnesses, limits, states, origins, local_receipts, now, key, expected),
+    Nat::eq(expected, actual)
+  )
+}
+
+// previous_now is a persisted high-water mark, advanced on EVERY evaluation, even no.
+pub fn ix_evaluate(
+  previous_now: Nat,
+  observers: List(IxTrust),
+  witnesses: List(IxWitness),
+  limits: IxLimits,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  key: IxKey,
+  digest: Nat
+): Bool {
+  Bool::and(
+    Nat::le(previous_now, now),
+    ix_eligible(observers, witnesses, limits, states, origins, local_receipts, now, key, digest)
+  )
+}

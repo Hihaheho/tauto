@@ -1,0 +1,40 @@
+import "../src/resolve.taut"
+
+// A pattern of text alone formats to its text, without errors, given enough depth.
+
+fn all_text(p: List(Elem)): Prop {
+  match p: Prop {
+    Nil => True
+    Cons(x, rest) => match x: Prop {
+      ElText(bs) => all_text(rest)
+      ElPlace(e) => False
+    }
+  }
+}
+
+fn text_of(p: List(Elem)): List(Nat) {
+  match p: List(Nat) {
+    Nil => Nil
+    Cons(x, rest) => match x: List(Nat) {
+      ElText(bs) => List::append(bs, text_of(rest))
+      ElPlace(e) => text_of(rest)
+    }
+  }
+}
+
+theorem text_only(
+  k: Nat,
+  b: Bundle,
+  args: List(Arg),
+  on: Bool,
+  p: List(Elem),
+  h: all_text(p)
+): r_elems(Nat::add(Succ(k), List::length(p)), b, args, on, p) = Out::Mk(text_of(p), Nil) {
+  match p {
+    Nil => Refl
+    Cons(x, rest) => match x {
+      ElText(bs) => Eq::congr((o: Out) => prepend(bs, Nil, o), text_only(k, b, args, on, rest, h))
+      ElPlace(e) => False::elim(h)
+    }
+  }
+}

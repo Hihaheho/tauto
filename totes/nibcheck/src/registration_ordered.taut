@@ -1,0 +1,593 @@
+import "checker_frame.taut"
+import "../../surface/src/surface.taut"
+pub theorem ck_register_ctors_subst_ordered(
+  cs: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  is_struct: Bool,
+  i: Nat,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_register_ctors(cs, c, dname, i))) {
+  match cs: CkOrdered(ck_st(ck_register_ctors(cs, c, dname, i))) {
+    Nil => ordered
+    Cons(ctor, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(
+        Eq::trans(
+          registration_register_unf(ctor, rest, c, dname, i),
+          ck_rewrap1_id(
+            ck_register_ctors(
+              rest,
+              registration_ctor_state(c, ctor, dname, i),
+              dname,
+              Nat::add(i, 1)
+            )
+          )
+        )
+      ),
+      ck_register_ctors_subst_ordered(
+        rest,
+        registration_ctor_state(c, ctor, dname, i),
+        dname,
+        is_struct,
+        Nat::add(i, 1),
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem registration_bind_subst_ordered<A: Type, B: Type>(
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: CkOrdered(ck_st(m)),
+  hk: ∀ v: A. ∀ next: Checker. (CkOrdered(next)) -> CkOrdered(ck_st(k(v, next)))
+): CkOrdered(ck_st(frame_bind(k, m))) {
+  match m: CkOrdered(ck_st(frame_bind(k, m))) {
+    mut1(v, next) => hk(v, next, hm)
+  }
+}
+
+pub theorem registration_insert_subst_ordered(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(registration_insert(c, d, is_struct, builtin, constructors))) { ordered
+}
+
+pub theorem registration_declare_subst_ordered(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(registration_declare(c, d, is_struct, builtin))) {
+  registration_bind_subst_ordered(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      Bool::and(
+        surface_data_is_view(d),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    frame_subst_ordered(
+      c,
+      frame_error_if(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      frame_error_if_ok(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      ordered
+    ),
+    ignored => c1 => o1 => registration_bind_subst_ordered(
+      List(DataCtor),
+      Unit,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      ),
+      frame_subst_ordered(
+        c1,
+        ck_data_ctors(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        ck_data_ctors_frame(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        o1
+      ),
+      constructors => c2 => o2 => registration_bind_subst_ordered(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0),
+        ck_register_ctors_subst_ordered(constructors, c2, registration_name(d), is_struct, 0, o2),
+        ignored2 => c3 => o3 => registration_insert_subst_ordered(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors,
+          o3
+        )
+      )
+    )
+  )
+}
+
+pub theorem ck_declare_data_subst_ordered(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_declare_data(c, d, is_struct, builtin))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+    Eq::sym(registration_declare_unf(c, d, is_struct, builtin)),
+    registration_declare_subst_ordered(c, d, is_struct, builtin, ordered)
+  )
+}
+
+pub theorem registration_rewrap_subst_ordered<A: Type>(
+  m: Mut1(A, Checker),
+  h: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(ck_rewrap1(m))) {
+  Eq::subst((z: Mut1(A, Checker)) => CkOrdered(ck_st(z)), Eq::sym(ck_rewrap1_id(m)), h)
+}
+
+pub theorem registration_if_subst_ordered(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  take: Bool,
+  ordered: CkOrdered(c),
+  hm: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(registration_if(c, m, take))) {
+  match take: CkOrdered(ck_st(registration_if(c, m, take))) {
+    true => registration_rewrap_subst_ordered(m, hm)
+    false => ordered
+  }
+}
+
+pub theorem ck_program_data_one_subst_ordered(
+  c: Checker,
+  s: SurfaceStmt,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_program_data_one(c, s))) {
+  match s: CkOrdered(ck_st(ck_program_data_one(c, s))) {
+    StLet(name, ty, value, borrow, mutable) => ordered
+    StVar(name, ty, value, borrow) => ordered
+    StModule(name, stmts, start, end) => ordered
+    StAssign(name, name_place, value) => ordered
+    StCalled(name_generates, value) => ordered
+    StFn(f) => ordered
+    StTheorem(t) => ordered
+    StDef(t) => ordered
+    StMutual(stmts, start, end) => ordered
+    StImport(path, start, end) => ordered
+    StInductive(i) => ordered
+    StEffect(e) => ordered
+    StStruct(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_program_StStruct_unf(d, c)),
+      registration_rewrap_subst_ordered(
+        ck_declare_data(c, d, true, false),
+        ck_declare_data_subst_ordered(c, d, true, false, ordered)
+      )
+    )
+    StEnum(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_program_StEnum_unf(d, c)),
+      registration_rewrap_subst_ordered(
+        ck_declare_data(c, d, false, false),
+        ck_declare_data_subst_ordered(c, d, false, false, ordered)
+      )
+    )
+    StExtern(abi, fns, start, end) => ordered
+    StClass(c) => ordered
+    StInstance(i) => ordered
+    StWhile(cond, body) => ordered
+    StReturn(value) => ordered
+    StExpr(value) => ordered
+    StOther(what, start, end) => ordered
+    StMacro(name, function, start, end) => ordered
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered
+    StSyntax(name, grammar, start, end) => ordered
+  }
+}
+
+pub theorem ck_program_data_subst_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_program_data(ss, c))) {
+  match ss: CkOrdered(ck_st(ck_program_data(ss, c))) {
+    Nil => ordered
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_program_unf(s, rest, c)),
+      registration_bind_subst_ordered(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s),
+        ck_program_data_one_subst_ordered(c, s, ordered),
+        ignored => next => hn => registration_rewrap_subst_ordered(
+          ck_program_data(rest, next),
+          ck_program_data_subst_ordered(rest, next, hn)
+        )
+      )
+    )
+  }
+}
+
+pub theorem ck_prelude_data_one_subst_ordered(
+  c: Checker,
+  s: SurfaceStmt,
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
+  match s: CkOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
+    StLet(name, ty, value, borrow, mutable) => ordered
+    StVar(name, ty, value, borrow) => ordered
+    StModule(name, stmts, start, end) => ordered
+    StAssign(name, name_place, value) => ordered
+    StCalled(name_generates, value) => ordered
+    StFn(f) => ordered
+    StTheorem(t) => ordered
+    StDef(t) => ordered
+    StMutual(stmts, start, end) => ordered
+    StImport(path, start, end) => ordered
+    StInductive(i) => ordered
+    StEffect(e) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_prelude_StEffect_unf(e, c, own)),
+      registration_if_subst_ordered(
+        c,
+        ck_declare_effect(c, e),
+        not(types_is_own(own, registration_effect_name(e))),
+        ordered,
+        frame_subst_ordered(c, ck_declare_effect(c, e), ck_declare_effect_frame(c, e), ordered)
+      )
+    )
+    StStruct(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_prelude_StStruct_unf(d, c, own)),
+      registration_if_subst_ordered(
+        c,
+        ck_declare_data(c, d, true, data_is_opaque(registration_ctors(d))),
+        not(types_is_own(own, registration_name(d))),
+        ordered,
+        ck_declare_data_subst_ordered(c, d, true, data_is_opaque(registration_ctors(d)), ordered)
+      )
+    )
+    StEnum(d) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_prelude_StEnum_unf(d, c, own)),
+      registration_if_subst_ordered(
+        c,
+        ck_declare_data(c, d, false, false),
+        not(types_is_own(own, registration_name(d))),
+        ordered,
+        ck_declare_data_subst_ordered(c, d, false, false, ordered)
+      )
+    )
+    StExtern(abi, fns, start, end) => ordered
+    StClass(c) => ordered
+    StInstance(i) => ordered
+    StWhile(cond, body) => ordered
+    StReturn(value) => ordered
+    StExpr(value) => ordered
+    StOther(what, start, end) => ordered
+    StMacro(name, function, start, end) => ordered
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordered
+    StSyntax(name, grammar, start, end) => ordered
+  }
+}
+
+pub theorem ck_prelude_data_subst_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_prelude_data(ss, c, own))) {
+  match ss: CkOrdered(ck_st(ck_prelude_data(ss, c, own))) {
+    Nil => ordered
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(registration_prelude_unf(s, rest, c, own)),
+      registration_bind_subst_ordered(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
+        ck_prelude_data_one(c, s, own),
+        ck_prelude_data_one_subst_ordered(c, s, own, ordered),
+        ignored => next => hn => registration_rewrap_subst_ordered(
+          ck_prelude_data(rest, next, own),
+          ck_prelude_data_subst_ordered(rest, next, own, hn)
+        )
+      )
+    )
+  }
+}
+
+pub theorem ck_mark_subst_ordered(
+  es: List(Pair(Text, Data)),
+  c: Checker,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_mark_recursive(es, c))) {
+  match es: CkOrdered(ck_st(ck_mark_recursive(es, c))) {
+    Nil => ordered
+    Cons(e, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(
+        Eq::trans(
+          summary_mark_step(e, rest, c),
+          ck_rewrap1_id(
+            ck_mark_recursive(
+              rest,
+              summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
+            )
+          )
+        )
+      ),
+      ck_mark_subst_ordered(
+        rest,
+        summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e))),
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem summary_finish_decl_k_same_subst(
+  c: Checker,
+  d: SurfaceData,
+  o: Option(Text)
+): ck_subst_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_subst_of(c) {
+  match o: ck_subst_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_subst_of(c) {
+    None => Refl
+    Some(m) => Refl
+  }
+}
+
+pub theorem ck_finish_decl_datas_subst(
+  c: Checker,
+  d: SurfaceData
+): ck_subst_of(ck_st(ck_finish_decl(c, d))) = ck_subst_of(c) {
+  Eq::trans(
+    Eq::congr((z: Mut1(Unit, Checker)) => ck_subst_of(ck_st(z)), summary_finish_decl_unf(c, d)),
+    summary_finish_decl_k_same_subst(c, d, ck_finish_message(ck_datas_of(c), d))
+  )
+}
+
+pub theorem ck_finish_stmt_datas_subst(
+  c: Checker,
+  s: SurfaceStmt
+): ck_subst_of(ck_st(ck_finish_stmt(c, s))) = ck_subst_of(c) {
+  match s: ck_subst_of(ck_st(ck_finish_stmt(c, s))) = ck_subst_of(c) {
+    StLet(n, ty, v, b, m) => Refl
+    StVar(n, ty, v, b) => Refl
+    StModule(n, ss, start, end) => Refl
+    StAssign(n, n_place, v) => Refl
+    StCalled(n_generates, v) => Refl
+    StFn(f) => Refl
+    StTheorem(t) => Refl
+    StDef(t) => Refl
+    StMutual(ss, start, end) => Refl
+    StImport(path, start, end) => Refl
+    StInductive(i) => Refl
+    StEffect(e) => Refl
+    StStruct(d) => Eq::trans(
+      Eq::congr(
+        (z: Mut1(Unit, Checker)) => ck_subst_of(ck_st(z)),
+        ck_rewrap1_id(ck_finish_decl(c, d))
+      ),
+      ck_finish_decl_datas_subst(c, d)
+    )
+    StEnum(d) => Eq::trans(
+      Eq::congr(
+        (z: Mut1(Unit, Checker)) => ck_subst_of(ck_st(z)),
+        ck_rewrap1_id(ck_finish_decl(c, d))
+      ),
+      ck_finish_decl_datas_subst(c, d)
+    )
+    StExtern(abi, fs, start, end) => Refl
+    StClass(cl) => Refl
+    StInstance(i) => Refl
+    StWhile(cond, body) => Refl
+    StReturn(v) => Refl
+    StExpr(v) => Refl
+    StOther(what, start, end) => Refl
+    StMacro(n, f, start, end) => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
+    StSyntax(n, grammar, start, end) => Refl
+  }
+}
+
+pub theorem summary_finish_stmts_k_same_subst(
+  rest: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ih: ∀ c: Checker. ck_subst_of(ck_st(ck_finish_stmts(rest, c))) = ck_subst_of(c)
+): ck_subst_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_subst_of(ck_st(m)) {
+  match m: ck_subst_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_subst_of(ck_st(m)) {
+    mut1(v, next) => Eq::trans(
+      Eq::congr(
+        (z: Mut1(Unit, Checker)) => ck_subst_of(ck_st(z)),
+        ck_rewrap1_id(ck_finish_stmts(rest, next))
+      ),
+      ih(next)
+    )
+  }
+}
+
+pub theorem ck_finish_stmts_datas_subst(
+  ss: List(SurfaceStmt),
+  c: Checker
+): ck_subst_of(ck_st(ck_finish_stmts(ss, c))) = ck_subst_of(c) {
+  match ss: ck_subst_of(ck_st(ck_finish_stmts(ss, c))) = ck_subst_of(c) {
+    Nil => Refl
+    Cons(s, rest) => Eq::trans(
+      Eq::congr(
+        (z: Mut1(Unit, Checker)) => ck_subst_of(ck_st(z)),
+        summary_finish_stmts_unf(s, rest, c)
+      ),
+      Eq::trans(
+        summary_finish_stmts_k_same_subst(
+          rest,
+          ck_finish_stmt(c, s),
+          next => ck_finish_stmts_datas_subst(rest, next)
+        ),
+        ck_finish_stmt_datas_subst(c, s)
+      )
+    )
+  }
+}
+
+pub theorem registration_finish_subst_k(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(summary_finish_datas_k(program, m))) {
+  match m: CkOrdered(ck_st(summary_finish_datas_k(program, m))) {
+    mut1(v, next) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+      Eq::sym(
+        ck_rewrap1_id(
+          ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+        )
+      ),
+      Eq::subst(
+        (s: Ordmap(Nat, Ty)) => Ordmap::ordered(s, Ordmap::compare_nat),
+        Eq::sym(
+          ck_finish_stmts_datas_subst(
+            program,
+            summary_replace(next, datas_summarize(ck_datas_of(next)))
+          )
+        ),
+        ordered
+      )
+    )
+  }
+}
+pub theorem ck_finish_datas_subst_ordered(
+  c: Checker,
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_finish_datas(c, program))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+    Eq::sym(summary_finish_datas_unf(c, program)),
+    registration_finish_subst_k(
+      program,
+      ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c),
+      ck_mark_subst_ordered(Ordmap::entries(summary_decls(ck_datas_of(c))), c, ordered)
+    )
+  )
+}
+pub theorem registration_finish_after_subst(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(registration_finish_after(program, m))) {
+  match m: CkOrdered(ck_st(registration_finish_after(program, m))) {
+    mut1(v, next) => registration_rewrap_subst_ordered(
+      ck_finish_datas(next, program),
+      ck_finish_datas_subst_ordered(next, program, ordered)
+    )
+  }
+}
+pub theorem registration_program_after_subst(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m))
+): CkOrdered(ck_st(registration_program_after(program, m))) {
+  match m: CkOrdered(ck_st(registration_program_after(program, m))) {
+    mut1(v, next) => registration_finish_after_subst(
+      program,
+      ck_program_data(program, next),
+      ck_program_data_subst_ordered(program, next, ordered)
+    )
+  }
+}
+pub theorem ck_prepare_datas_subst_ordered(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_prepare_datas(c, prelude, program, own))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
+    Eq::sym(registration_prepare_unf(c, prelude, program, own)),
+    registration_program_after_subst(
+      program,
+      ck_prelude_data(prelude, c, own),
+      ck_prelude_data_subst_ordered(prelude, c, own, ordered)
+    )
+  )
+}

@@ -1,0 +1,171 @@
+import "fits_sound.taut"
+
+// Only the state components used by the declarative type judgments.
+pub def TypeRecordsExt(
+  c: Checker,
+  next: Checker
+): Prop := And(
+  OkExt(KeptOk(ck_kept_of(c)), KeptOk(ck_kept_of(next))),
+  And(BoundsExt(ck_bounds_of(c), ck_bounds_of(next)), ck_datas_of(c) = ck_datas_of(next))
+)
+pub def TypingStateExt(
+  c: Checker,
+  next: Checker
+): Prop := And(SubstExt(ck_subst_of(c), ck_subst_of(next)), TypeRecordsExt(c, next))
+pub theorem type_records_refl(c: Checker): TypeRecordsExt(c, c) {
+  AndIntro(gs => rigid => a => b => kept => kept, AndIntro(bound => member => member, Refl))
+}
+pub theorem type_records_trans(
+  c: Checker,
+  middle: Checker,
+  last: Checker,
+  first: TypeRecordsExt(c, middle),
+  tail: TypeRecordsExt(middle, last)
+): TypeRecordsExt(c, last) {
+  AndIntro(
+    gs => rigid => a => b => kept => And::left(
+      tail
+    )(gs, rigid, a, b, And::left(first)(gs, rigid, a, b, kept)),
+    AndIntro(
+      bound => member => And::left(
+        And::right(tail)
+      )(bound, And::left(And::right(first))(bound, member)),
+      Eq::trans(And::right(And::right(first)), And::right(And::right(tail)))
+    )
+  )
+}
+pub theorem grows_type_records(
+  c: Checker,
+  next: Checker,
+  grows: Grows(c, next)
+): TypeRecordsExt(c, next) {
+  match And::right(And::right(And::right(grows))): TypeRecordsExt(c, next) {
+    AndIntro(datas, rest) => match rest: TypeRecordsExt(c, next) {
+      AndIntro(bounds, other) => AndIntro(
+        And::left(And::right(And::right(grows))),
+        AndIntro(bounds, datas)
+      )
+    }
+  }
+}
+pub theorem grows_typing_state(
+  c: Checker,
+  next: Checker,
+  grows: Grows(c, next)
+): TypingStateExt(c, next) {
+  AndIntro(And::left(And::right(grows)), grows_type_records(c, next, grows))
+}
+pub theorem typing_state_trans(
+  c: Checker,
+  middle: Checker,
+  last: Checker,
+  first: TypingStateExt(c, middle),
+  tail: TypingStateExt(middle, last)
+): TypingStateExt(c, last) {
+  AndIntro(
+    index => value => found => And::left(tail)(index, value, And::left(first)(index, value, found)),
+    type_records_trans(c, middle, last, And::right(first), And::right(tail))
+  )
+}
+pub theorem typing_state_dup(
+  c: Checker,
+  next: Checker,
+  extension: TypingStateExt(c, next),
+  ty: Ty,
+  h: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), ty)
+): DupBy(ck_subst_of(next), KeptOk(ck_kept_of(next)), ck_datas_of(next), ty) {
+  match h: DupBy(ck_subst_of(next), KeptOk(ck_kept_of(next)), ck_datas_of(next), ty) {
+    Mk(original, resolved, equal, kind) => DupBy::Mk(
+      resolved,
+      tyeq_move(
+        ck_subst_of(c),
+        KeptOk(ck_kept_of(c)),
+        ck_subst_of(next),
+        KeptOk(ck_kept_of(next)),
+        And::left(extension),
+        And::left(And::right(extension)),
+        original,
+        resolved,
+        equal
+      ),
+      Eq::subst(
+        (datas: Datas) => kind_dup(datas_kind(datas, resolved)) = true,
+        And::right(And::right(And::right(extension))),
+        kind
+      )
+    )
+  }
+}
+pub theorem typing_state_sub(
+  c: Checker,
+  next: Checker,
+  extension: TypingStateExt(c, next),
+  a: Ty,
+  b: Ty,
+  h: SubAt(c, a, b)
+): SubAt(next, a, b) {
+  tysub_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    InstAt(c),
+    DupAt(c),
+    ck_subst_of(next),
+    KeptOk(ck_kept_of(next)),
+    InstAt(next),
+    DupAt(next),
+    And::left(extension),
+    And::left(And::right(extension)),
+    gs => map => instantiated => inst_by_move(
+      ck_bounds_of(c),
+      ck_bounds_of(next),
+      And::left(And::right(And::right(extension))),
+      gs,
+      map,
+      instantiated
+    ),
+    ty => proof => typing_state_dup(c, next, extension, ty, proof),
+    a,
+    b,
+    h
+  )
+}
+pub theorem typing_state_arguments(
+  c: Checker,
+  next: Checker,
+  extension: TypingStateExt(c, next),
+  actual: List(Ty),
+  expected: List(Ty),
+  h: TySubList(ck_subst_of(c), KeptOk(ck_kept_of(c)), InstAt(c), DupAt(c), actual, expected)
+): TySubList(
+  ck_subst_of(next),
+  KeptOk(ck_kept_of(next)),
+  InstAt(next),
+  DupAt(next),
+  actual,
+  expected
+) {
+  tysub_list_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    InstAt(c),
+    DupAt(c),
+    ck_subst_of(next),
+    KeptOk(ck_kept_of(next)),
+    InstAt(next),
+    DupAt(next),
+    And::left(extension),
+    And::left(And::right(extension)),
+    gs => map => instantiated => inst_by_move(
+      ck_bounds_of(c),
+      ck_bounds_of(next),
+      And::left(And::right(And::right(extension))),
+      gs,
+      map,
+      instantiated
+    ),
+    ty => proof => typing_state_dup(c, next, extension, ty, proof),
+    actual,
+    expected,
+    h
+  )
+}

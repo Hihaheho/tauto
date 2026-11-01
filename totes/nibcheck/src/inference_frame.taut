@@ -1,0 +1,1053 @@
+import "inference_terms.taut"
+
+// A single fuel induction covers the mutually recursive checker entry points.
+pub theorem inference_zero_ck_infer_in(): Inference_ck_infer_in(
+  Zero
+) { c => term => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_infer_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_infer_in(Succ(j)) {
+  c => term => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_infer_in(j, c, term, env)),
+    inference_step_ck_infer_in_frame(j, c, term, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_infer_term_in(): Inference_ck_infer_term_in(
+  Zero
+) { c => term => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_infer_term_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_infer_term_in(Succ(j)) {
+  c => term => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_infer_term_in(j, c, term, env)),
+    inference_step_ck_infer_term_in_frame(j, c, term, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_else_in(): Inference_ck_else_in(
+  Zero
+) { c => t => el => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_else_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_else_in(Succ(j)) {
+  c => t => el => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_else_in(j, c, t, el, env)),
+    inference_step_ck_else_in_frame(j, c, t, el, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_infer_each_in(): Inference_ck_infer_each_in(
+  Zero
+) { c => ts => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_infer_each_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_infer_each_in(Succ(j)) {
+  c => ts => env => ordered => Eq::subst(
+    (z: Mut1(List(Ty), Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_infer_each_in(j, c, ts, env)),
+    inference_step_ck_infer_each_in_frame(j, c, ts, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_guard_in(): Inference_ck_guard_in(
+  Zero
+) { c => guard => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_guard_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_guard_in(Succ(j)) {
+  c => guard => env => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_guard_in(j, c, guard, env)),
+    inference_step_ck_guard_in_frame(j, c, guard, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_stmt_in(): Inference_ck_stmt_in(
+  Zero
+) { c => s => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_stmt_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_stmt_in(Succ(j)) {
+  c => s => env => ordered => Eq::subst(
+    (z: Mut2(Ty, Checker, Scope)) => CkScopeFrame(c, z),
+    Eq::sym(inference_unf_ck_stmt_in(j, c, s, env)),
+    inference_step_ck_stmt_in_frame(j, c, s, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_returned_in(): Inference_ck_returned_in(
+  Zero
+) { c => e => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_returned_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_returned_in(Succ(j)) {
+  c => e => env => ordered => Eq::subst(
+    (z: Mut1(Pair(Ty, TySpan), Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_returned_in(j, c, e, env)),
+    inference_step_ck_returned_in_frame(j, c, e, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_check_fn_in(): Inference_ck_check_fn_in(
+  Zero
+) { c => f => scheme => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_check_fn_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_check_fn_in(Succ(j)) {
+  c => f => scheme => env => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_check_fn_in(j, c, f, scheme, env)),
+    inference_step_ck_check_fn_in_frame(j, c, f, scheme, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_block_in(): Inference_ck_block_in(
+  Zero
+) { c => stmts => env => stopped => last => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_block_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_block_in(Succ(j)) {
+  c => stmts => env => stopped => last => ordered => Eq::subst(
+    (z: Mut2(Ty, Checker, Scope)) => CkScopeFrame(c, z),
+    Eq::sym(inference_unf_ck_block_in(j, c, stmts, env, stopped, last)),
+    inference_step_ck_block_in_frame(j, c, stmts, env, stopped, last, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_app_args_in(): Inference_ck_app_args_in(
+  Zero
+) { c => arguments => known => env => i => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_app_args_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_app_args_in(Succ(j)) {
+  c => arguments => known => env => i => ordered => Eq::subst(
+    (z: Mut1(List(Ty), Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_app_args_in(j, c, arguments, known, env, i)),
+    inference_step_ck_app_args_in_frame(j, c, arguments, known, env, i, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_app_in(): Inference_ck_app_in(
+  Zero
+) { c => term => function => arguments => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_app_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_app_in(Succ(j)) {
+  c => term => function => arguments => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_app_in(j, c, term, function, arguments, env)),
+    inference_step_ck_app_in_frame(j, c, term, function, arguments, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_app_call_in(): Inference_ck_app_call_in(
+  Zero
+) { c => term => function => arguments => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_app_call_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_app_call_in(Succ(j)) {
+  c => term => function => arguments => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_app_call_in(j, c, term, function, arguments, env)),
+    inference_step_ck_app_call_in_frame(j, c, term, function, arguments, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_operands_in(): Inference_ck_operands_in(
+  Zero
+) { c => arguments => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_operands_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_operands_in(Succ(j)) {
+  c => arguments => env => ordered => Eq::subst(
+    (z: Mut1(List(Ty), Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_operands_in(j, c, arguments, env)),
+    inference_step_ck_operands_in_frame(j, c, arguments, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_clone_of_in(): Inference_ck_clone_of_in(
+  Zero
+) { c => arguments => env => span => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_clone_of_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_clone_of_in(Succ(j)) {
+  c => arguments => env => span => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_clone_of_in(j, c, arguments, env, span)),
+    inference_step_ck_clone_of_in_frame(j, c, arguments, env, span, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_lambda_in(): Inference_ck_lambda_in(
+  Zero
+) { c => lam => borrows => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_lambda_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_lambda_in(Succ(j)) {
+  c => lam => borrows => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_lambda_in(j, c, lam, borrows, env)),
+    inference_step_ck_lambda_in_frame(j, c, lam, borrows, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_record_fields_in(): Inference_ck_record_fields_in(
+  Zero
+) { c => name => fields => declared => env => seen => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_record_fields_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_record_fields_in(Succ(j)) {
+  c => name => fields => declared => env => seen => ordered => Eq::subst(
+    (z: Mut1(List(Text), Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_record_fields_in(j, c, name, fields, declared, env, seen)),
+    inference_step_ck_record_fields_in_frame(j, c, name, fields, declared, env, seen, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_record_in(): Inference_ck_record_in(
+  Zero
+) { c => name => fields => env => span => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_record_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_record_in(Succ(j)) {
+  c => name => fields => env => span => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_record_in(j, c, name, fields, env, span)),
+    inference_step_ck_record_in_frame(j, c, name, fields, env, span, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_match_arms_in(): Inference_ck_match_arms_in(
+  Zero
+) { c => arms => s => env => result => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_match_arms_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_match_arms_in(Succ(j)) {
+  c => arms => s => env => result => ordered => Eq::subst(
+    (z: Mut1(Option(Ty), Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_match_arms_in(j, c, arms, s, env, result)),
+    inference_step_ck_match_arms_in_frame(j, c, arms, s, env, result, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_match_expr_in(): Inference_ck_match_expr_in(
+  Zero
+) { c => scrutinee => arms => env => span => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_match_expr_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_match_expr_in(Succ(j)) {
+  c => scrutinee => arms => env => span => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_match_expr_in(j, c, scrutinee, arms, env, span)),
+    inference_step_ck_match_expr_in_frame(j, c, scrutinee, arms, env, span, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_handle_in(): Inference_ck_handle_in(
+  Zero
+) { c => body => handlers => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_handle_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_in(Succ(j)) {
+  c => body => handlers => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_handle_in(j, c, body, handlers, env)),
+    inference_step_ck_handle_in_frame(j, c, body, handlers, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_handle_first_in(): Inference_ck_handle_first_in(
+  Zero
+) { c => handlers => b => env => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_handle_first_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_first_in(Succ(j)) {
+  c => handlers => b => env => ordered => Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_handle_first_in(j, c, handlers, b, env)),
+    inference_step_ck_handle_first_in_frame(j, c, handlers, b, env, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_handle_result_in(): Inference_ck_handle_result_in(
+  Zero
+) { c => handlers => env => result => first => budget_ty => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_handle_result_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_result_in(Succ(j)) {
+  c => handlers => env => result => first => budget_ty => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_handle_result_in(j, c, handlers, env, result, first, budget_ty)),
+    inference_step_ck_handle_result_in_frame(
+      j,
+      c,
+      handlers,
+      env,
+      result,
+      first,
+      budget_ty,
+      ih,
+      ordered
+    )
+  )
+}
+pub theorem inference_zero_ck_handle_arms_in(): Inference_ck_handle_arms_in(
+  Zero
+) { c => hs => env => result => rv => budget_ty => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_handle_arms_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_arms_in(Succ(j)) {
+  c => hs => env => result => rv => budget_ty => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_handle_arms_in(j, c, hs, env, result, rv, budget_ty)),
+    inference_step_ck_handle_arms_in_frame(j, c, hs, env, result, rv, budget_ty, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_handle_one_in(): Inference_ck_handle_one_in(
+  Zero
+) { c => h => env => result => rv => budget_ty => ordered => AndIntro(ordered, Refl) }
+pub theorem inference_successor_ck_handle_one_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_one_in(Succ(j)) {
+  c => h => env => result => rv => budget_ty => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(inference_unf_ck_handle_one_in(j, c, h, env, result, rv, budget_ty)),
+    inference_step_ck_handle_one_in_frame(j, c, h, env, result, rv, budget_ty, ih, ordered)
+  )
+}
+pub theorem inference_zero_ck_handle_arm_in(): Inference_ck_handle_arm_in(
+  Zero
+) {
+  c => env => result => rv => budget_ty => eff => binds => types => patterns => cont => guard => body => ordered => AndIntro(
+    ordered,
+    Refl
+  )
+}
+pub theorem inference_successor_ck_handle_arm_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_arm_in(
+  Succ(j)
+) {
+  c => env => result => rv => budget_ty => eff => binds => types => patterns => cont => guard => body => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(
+      inference_unf_ck_handle_arm_in(
+        j,
+        c,
+        env,
+        result,
+        rv,
+        budget_ty,
+        eff,
+        binds,
+        types,
+        patterns,
+        cont,
+        guard,
+        body
+      )
+    ),
+    inference_step_ck_handle_arm_in_frame(
+      j,
+      c,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      ih,
+      ordered
+    )
+  )
+}
+pub theorem inference_zero_ck_handle_body_in(): Inference_ck_handle_body_in(
+  Zero
+) {
+  c => env => result => rv => eff => params => answer => rigid => names => patterns => cont => guard => body => ordered => AndIntro(
+    ordered,
+    Refl
+  )
+}
+pub theorem inference_successor_ck_handle_body_in(
+  j: Nat,
+  ih: InferenceFrames(j)
+): Inference_ck_handle_body_in(
+  Succ(j)
+) {
+  c => env => result => rv => eff => params => answer => rigid => names => patterns => cont => guard => body => ordered => Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(
+      inference_unf_ck_handle_body_in(
+        j,
+        c,
+        env,
+        result,
+        rv,
+        eff,
+        params,
+        answer,
+        rigid,
+        names,
+        patterns,
+        cont,
+        guard,
+        body
+      )
+    ),
+    inference_step_ck_handle_body_in_frame(
+      j,
+      c,
+      env,
+      result,
+      rv,
+      eff,
+      params,
+      answer,
+      rigid,
+      names,
+      patterns,
+      cont,
+      guard,
+      body,
+      ih,
+      ordered
+    )
+  )
+}
+pub theorem inference_frames(k: Nat): InferenceFrames(k) {
+  match k: InferenceFrames(k) {
+    Zero => AndIntro(
+      inference_zero_ck_infer_in(),
+      AndIntro(
+        inference_zero_ck_infer_term_in(),
+        AndIntro(
+          inference_zero_ck_else_in(),
+          AndIntro(
+            inference_zero_ck_infer_each_in(),
+            AndIntro(
+              inference_zero_ck_guard_in(),
+              AndIntro(
+                inference_zero_ck_stmt_in(),
+                AndIntro(
+                  inference_zero_ck_returned_in(),
+                  AndIntro(
+                    inference_zero_ck_check_fn_in(),
+                    AndIntro(
+                      inference_zero_ck_block_in(),
+                      AndIntro(
+                        inference_zero_ck_app_args_in(),
+                        AndIntro(
+                          inference_zero_ck_app_in(),
+                          AndIntro(
+                            inference_zero_ck_app_call_in(),
+                            AndIntro(
+                              inference_zero_ck_operands_in(),
+                              AndIntro(
+                                inference_zero_ck_clone_of_in(),
+                                AndIntro(
+                                  inference_zero_ck_lambda_in(),
+                                  AndIntro(
+                                    inference_zero_ck_record_fields_in(),
+                                    AndIntro(
+                                      inference_zero_ck_record_in(),
+                                      AndIntro(
+                                        inference_zero_ck_match_arms_in(),
+                                        AndIntro(
+                                          inference_zero_ck_match_expr_in(),
+                                          AndIntro(
+                                            inference_zero_ck_handle_in(),
+                                            AndIntro(
+                                              inference_zero_ck_handle_first_in(),
+                                              AndIntro(
+                                                inference_zero_ck_handle_result_in(),
+                                                AndIntro(
+                                                  inference_zero_ck_handle_arms_in(),
+                                                  AndIntro(
+                                                    inference_zero_ck_handle_one_in(),
+                                                    AndIntro(
+                                                      inference_zero_ck_handle_arm_in(),
+                                                      AndIntro(
+                                                        inference_zero_ck_handle_body_in(),
+                                                        Trivial
+                                                      )
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+    Succ(j) => {
+      let ih: InferenceFrames(j) := inference_frames(j)
+      AndIntro(
+        inference_successor_ck_infer_in(j, ih),
+        AndIntro(
+          inference_successor_ck_infer_term_in(j, ih),
+          AndIntro(
+            inference_successor_ck_else_in(j, ih),
+            AndIntro(
+              inference_successor_ck_infer_each_in(j, ih),
+              AndIntro(
+                inference_successor_ck_guard_in(j, ih),
+                AndIntro(
+                  inference_successor_ck_stmt_in(j, ih),
+                  AndIntro(
+                    inference_successor_ck_returned_in(j, ih),
+                    AndIntro(
+                      inference_successor_ck_check_fn_in(j, ih),
+                      AndIntro(
+                        inference_successor_ck_block_in(j, ih),
+                        AndIntro(
+                          inference_successor_ck_app_args_in(j, ih),
+                          AndIntro(
+                            inference_successor_ck_app_in(j, ih),
+                            AndIntro(
+                              inference_successor_ck_app_call_in(j, ih),
+                              AndIntro(
+                                inference_successor_ck_operands_in(j, ih),
+                                AndIntro(
+                                  inference_successor_ck_clone_of_in(j, ih),
+                                  AndIntro(
+                                    inference_successor_ck_lambda_in(j, ih),
+                                    AndIntro(
+                                      inference_successor_ck_record_fields_in(j, ih),
+                                      AndIntro(
+                                        inference_successor_ck_record_in(j, ih),
+                                        AndIntro(
+                                          inference_successor_ck_match_arms_in(j, ih),
+                                          AndIntro(
+                                            inference_successor_ck_match_expr_in(j, ih),
+                                            AndIntro(
+                                              inference_successor_ck_handle_in(j, ih),
+                                              AndIntro(
+                                                inference_successor_ck_handle_first_in(j, ih),
+                                                AndIntro(
+                                                  inference_successor_ck_handle_result_in(j, ih),
+                                                  AndIntro(
+                                                    inference_successor_ck_handle_arms_in(j, ih),
+                                                    AndIntro(
+                                                      inference_successor_ck_handle_one_in(j, ih),
+                                                      AndIntro(
+                                                        inference_successor_ck_handle_arm_in(j, ih),
+                                                        AndIntro(
+                                                          inference_successor_ck_handle_body_in(
+                                                            j,
+                                                            ih
+                                                          ),
+                                                          Trivial
+                                                        )
+                                                      )
+                                                    )
+                                                  )
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+pub theorem ck_infer_in_frame(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_infer_in(k, c, term, env)
+) { inference_use_ck_infer_in(k, c, term, env, ordered, inference_frames(k)) }
+
+pub theorem ck_infer_term_in_frame(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_infer_term_in(k, c, term, env)
+) { inference_use_ck_infer_term_in(k, c, term, env, ordered, inference_frames(k)) }
+
+pub theorem ck_else_in_frame(
+  k: Nat,
+  c: Checker,
+  t: Ty,
+  el: Option(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_else_in(k, c, t, el, env)
+) { inference_use_ck_else_in(k, c, t, el, env, ordered, inference_frames(k)) }
+
+pub theorem ck_infer_each_in_frame(
+  k: Nat,
+  c: Checker,
+  ts: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_infer_each_in(k, c, ts, env)
+) { inference_use_ck_infer_each_in(k, c, ts, env, ordered, inference_frames(k)) }
+
+pub theorem ck_guard_in_frame(
+  k: Nat,
+  c: Checker,
+  guard: Option(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_guard_in(k, c, guard, env)
+) { inference_use_ck_guard_in(k, c, guard, env, ordered, inference_frames(k)) }
+
+pub theorem ck_stmt_in_frame(
+  k: Nat,
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope,
+  ordered: CkOrdered(c)
+): CkScopeFrame(
+  c,
+  ck_stmt_in(k, c, s, env)
+) { inference_use_ck_stmt_in(k, c, s, env, ordered, inference_frames(k)) }
+
+pub theorem ck_returned_in_frame(
+  k: Nat,
+  c: Checker,
+  e: Option(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_returned_in(k, c, e, env)
+) { inference_use_ck_returned_in(k, c, e, env, ordered, inference_frames(k)) }
+
+pub theorem ck_check_fn_in_frame(
+  k: Nat,
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme,
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_check_fn_in(k, c, f, scheme, env)
+) { inference_use_ck_check_fn_in(k, c, f, scheme, env, ordered, inference_frames(k)) }
+
+pub theorem ck_block_in_frame(
+  k: Nat,
+  c: Checker,
+  stmts: List(SurfaceStmt),
+  env: Scope,
+  stopped: Bool,
+  last: Ty,
+  ordered: CkOrdered(c)
+): CkScopeFrame(
+  c,
+  ck_block_in(k, c, stmts, env, stopped, last)
+) { inference_use_ck_block_in(k, c, stmts, env, stopped, last, ordered, inference_frames(k)) }
+
+pub theorem ck_app_args_in_frame(
+  k: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_app_args_in(k, c, arguments, known, env, i)
+) { inference_use_ck_app_args_in(k, c, arguments, known, env, i, ordered, inference_frames(k)) }
+
+pub theorem ck_app_in_frame(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_app_in(k, c, term, function, arguments, env)
+) { inference_use_ck_app_in(k, c, term, function, arguments, env, ordered, inference_frames(k)) }
+
+pub theorem ck_app_call_in_frame(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_app_call_in(k, c, term, function, arguments, env)) {
+  inference_use_ck_app_call_in(k, c, term, function, arguments, env, ordered, inference_frames(k))
+}
+
+pub theorem ck_operands_in_frame(
+  k: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_operands_in(k, c, arguments, env)
+) { inference_use_ck_operands_in(k, c, arguments, env, ordered, inference_frames(k)) }
+
+pub theorem ck_clone_of_in_frame(
+  k: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_clone_of_in(k, c, arguments, env, span)
+) { inference_use_ck_clone_of_in(k, c, arguments, env, span, ordered, inference_frames(k)) }
+
+pub theorem ck_lambda_in_frame(
+  k: Nat,
+  c: Checker,
+  lam: SurfaceTerm,
+  borrows: List(Option(Bool)),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_lambda_in(k, c, lam, borrows, env)
+) { inference_use_ck_lambda_in(k, c, lam, borrows, env, ordered, inference_frames(k)) }
+
+pub theorem ck_record_fields_in_frame(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  fields: List(SurfaceField),
+  declared: List(DataField),
+  env: List(Local),
+  seen: List(Text),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_record_fields_in(k, c, name, fields, declared, env, seen)) {
+  inference_use_ck_record_fields_in(
+    k,
+    c,
+    name,
+    fields,
+    declared,
+    env,
+    seen,
+    ordered,
+    inference_frames(k)
+  )
+}
+
+pub theorem ck_record_in_frame(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  fields: List(SurfaceField),
+  env: List(Local),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_record_in(k, c, name, fields, env, span)
+) { inference_use_ck_record_in(k, c, name, fields, env, span, ordered, inference_frames(k)) }
+
+pub theorem ck_match_arms_in_frame(
+  k: Nat,
+  c: Checker,
+  arms: List(SurfaceArm),
+  s: Ty,
+  env: List(Local),
+  result: Option(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_match_arms_in(k, c, arms, s, env, result)
+) { inference_use_ck_match_arms_in(k, c, arms, s, env, result, ordered, inference_frames(k)) }
+
+pub theorem ck_match_expr_in_frame(
+  k: Nat,
+  c: Checker,
+  scrutinee: SurfaceTerm,
+  arms: List(SurfaceArm),
+  env: List(Local),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_match_expr_in(k, c, scrutinee, arms, env, span)
+) { inference_use_ck_match_expr_in(k, c, scrutinee, arms, env, span, ordered, inference_frames(k)) }
+
+pub theorem ck_handle_in_frame(
+  k: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_handle_in(k, c, body, handlers, env)
+) { inference_use_ck_handle_in(k, c, body, handlers, env, ordered, inference_frames(k)) }
+
+pub theorem ck_handle_first_in_frame(
+  k: Nat,
+  c: Checker,
+  handlers: List(SurfaceHandler),
+  b: Ty,
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_handle_first_in(k, c, handlers, b, env)
+) { inference_use_ck_handle_first_in(k, c, handlers, b, env, ordered, inference_frames(k)) }
+
+pub theorem ck_handle_result_in_frame(
+  k: Nat,
+  c: Checker,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  result: Ty,
+  first: Ty,
+  budget_ty: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_handle_result_in(k, c, handlers, env, result, first, budget_ty)) {
+  inference_use_ck_handle_result_in(
+    k,
+    c,
+    handlers,
+    env,
+    result,
+    first,
+    budget_ty,
+    ordered,
+    inference_frames(k)
+  )
+}
+
+pub theorem ck_handle_arms_in_frame(
+  k: Nat,
+  c: Checker,
+  hs: List(SurfaceHandler),
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty)) {
+  inference_use_ck_handle_arms_in(
+    k,
+    c,
+    hs,
+    env,
+    result,
+    rv,
+    budget_ty,
+    ordered,
+    inference_frames(k)
+  )
+}
+
+pub theorem ck_handle_one_in_frame(
+  k: Nat,
+  c: Checker,
+  h: SurfaceHandler,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_handle_one_in(k, c, h, env, result, rv, budget_ty)) {
+  inference_use_ck_handle_one_in(k, c, h, env, result, rv, budget_ty, ordered, inference_frames(k))
+}
+
+pub theorem ck_handle_arm_in_frame(
+  k: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_handle_arm_in(k, c, env, result, rv, budget_ty, eff, binds, types, patterns, cont, guard, body)
+) {
+  inference_use_ck_handle_arm_in(
+    k,
+    c,
+    env,
+    result,
+    rv,
+    budget_ty,
+    eff,
+    binds,
+    types,
+    patterns,
+    cont,
+    guard,
+    body,
+    ordered,
+    inference_frames(k)
+  )
+}
+
+pub theorem ck_handle_body_in_frame(
+  k: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  ck_handle_body_in(
+    k,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body
+  )
+) {
+  inference_use_ck_handle_body_in(
+    k,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body,
+    ordered,
+    inference_frames(k)
+  )
+}
+
+pub theorem ck_infer_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_infer(c, term, env)) {
+  run_frame_rewrap(
+    c,
+    ck_infer_in(ck_steps_of(c), c, term, env),
+    ck_infer_in_frame(ck_steps_of(c), c, term, env, ordered)
+  )
+}
+
+pub theorem ck_stmt_frame(
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope,
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, ck_stmt(c, s, env)) {
+  pattern_rewrap_frame(
+    c,
+    ck_stmt_in(ck_steps_of(c), c, s, env),
+    ck_stmt_in_frame(ck_steps_of(c), c, s, env, ordered)
+  )
+}
+
+pub theorem ck_check_fn_frame(
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme,
+  env: List(Local),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_check_fn(c, f, scheme, env)) {
+  run_frame_rewrap(
+    c,
+    ck_check_fn_in(ck_steps_of(c), c, f, scheme, env),
+    ck_check_fn_in_frame(ck_steps_of(c), c, f, scheme, env, ordered)
+  )
+}

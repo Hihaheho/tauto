@@ -1,0 +1,47 @@
+import "datas.taut"
+import std::Std
+
+// Exhaustion cannot discharge an unexamined structural-class obligation.
+pub theorem structural_type_exhausted(
+  d: Datas,
+  r#class: Text,
+  ty: Ty,
+  assume: List(Pair(Text, Text)),
+  visiting: List(Ty)
+): datas_structural_in(0, d, r#class, ty, assume, visiting) = false { Refl }
+pub theorem structural_list_exhausted(
+  d: Datas,
+  r#class: Text,
+  types: List(Ty),
+  assume: List(Pair(Text, Text)),
+  visiting: List(Ty)
+): datas_structural_all_in(0, d, r#class, types, assume, visiting) = false { Refl }
+pub theorem structural_ctors_exhausted(
+  d: Datas,
+  r#class: Text,
+  ctors: List(DataCtor),
+  map: Ordmap(Text, Ty),
+  assume: List(Pair(Text, Text)),
+  visiting: List(Ty)
+): datas_structural_ctors_in(0, d, r#class, ctors, map, assume, visiting) = false { Refl }
+pub theorem structural_fields_exhausted(
+  d: Datas,
+  r#class: Text,
+  fields: List(DataField),
+  map: Ordmap(Text, Ty),
+  assume: List(Pair(Text, Text)),
+  visiting: List(Ty)
+): datas_structural_fields_in(0, d, r#class, fields, map, assume, visiting) = false { Refl }
+pub theorem structural_function_rejected(
+  k: Nat,
+  d: Datas,
+  r#class: Text,
+  params: List(Ty),
+  result: Ty,
+  kind: Kind,
+  assume: List(Pair(Text, Text)),
+  visiting: List(Ty)
+): datas_structural_in(k, d, r#class, TyFn(params, result, kind), assume, visiting) = false {
+  match k: datas_structural_in(k, d, r#class, TyFn(params, result, kind), assume, visiting) = false { Zero => Refl
+    Succ(j) => Refl }
+}

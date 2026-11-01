@@ -1,0 +1,26 @@
+import "rules_program_signatures.taut"
+import "rules_decls.taut"
+
+// Body checking and expression lookup must use the same declared scheme.
+pub(open) inductive RegisteredSignatures(
+  table: Ordmap(Text, Scheme)
+): (List(Pair(SurfaceFn, Scheme))) -> Prop {
+  RegisteredSignaturesNil: RegisteredSignatures(table, Nil)
+  RegisteredSignaturesCons(
+    source: SurfaceFn,
+    scheme: Scheme,
+    rest: List(Pair(SurfaceFn, Scheme)),
+    here: Ordmap::get(table, decl_fn_name(source), Ordmap::compare_text) = Some(scheme),
+    tail: RegisteredSignatures(table, rest)
+  ): RegisteredSignatures(table, Cons(Pair {fst: source, snd: scheme}, rest))
+}
+pub(open) inductive RegisteredOptionalSignature(
+  table: Ordmap(Text, Scheme)
+): (Option(Pair(SurfaceFn, Scheme))) -> Prop {
+  RegisteredOptionalNone: RegisteredOptionalSignature(table, None)
+  RegisteredOptionalSome(
+    source: SurfaceFn,
+    scheme: Scheme,
+    here: Ordmap::get(table, decl_fn_name(source), Ordmap::compare_text) = Some(scheme)
+  ): RegisteredOptionalSignature(table, Some(Pair {fst: source, snd: scheme}))
+}

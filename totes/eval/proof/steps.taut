@@ -1,0 +1,245 @@
+import "../../vm/proof/machine.taut"
+
+// Finite runs stop at a machine state, before executing its following instruction.
+pub(open) inductive ERuns(p: MProgram): (Nat, MState, MState) -> Prop {
+  ErunRefl(s: MState): ERuns(p, Zero, s, s)
+  ErunStep<n: Nat, a: MState, b: MState, c: MState>(
+    edge: step(p, a) = MstepNext(b),
+    rest: ERuns(p, n, b, c)
+  ): ERuns(p, Succ(n), a, c)
+}
+
+pub theorem e_runs_one<p: MProgram, a: MState, b: MState>(
+  edge: step(p, a) = MstepNext(b)
+): ERuns(p, 1, a, b) {
+  ErunStep(edge, ErunRefl(b))
+}
+
+pub theorem e_runs_trans<p: MProgram, n: Nat, a: MState, b: MState>(
+  first: ERuns(p, n, a, b),
+  m: Nat,
+  c: MState,
+  second: ERuns(p, m, b, c)
+): ERuns(p, Nat::add(m, n), a, c) {
+  match first {
+    ErunRefl(s) => ⊢ ERuns(p, m, s, c) from second
+    ErunStep<n: count, a: start, b: middle, c: end>(edge, rest) =>
+    ⊢ ERuns(
+      p,
+      Succ(Nat::add(m, count)),
+      start,
+      c
+    ) from ErunStep(edge, e_runs_trans(rest, m, c, second))
+  }
+}
+
+pub theorem e_runs_snoc<p: MProgram, n: Nat, a: MState, b: MState>(
+  run: ERuns(p, n, a, b),
+  c: MState,
+  edge: step(p, b) = MstepNext(c)
+): ERuns(p, Succ(n), a, c) {
+  match run {
+    ErunRefl(s) => ⊢ ERuns(p, 1, s, c) from e_runs_one(edge)
+    ErunStep<n: count, a: start, b: middle, c: end>(first, rest) =>
+    ⊢ ERuns(p, Succ(Succ(count)), start, c) from ErunStep(first, e_runs_snoc(rest, c, edge))
+  }
+}
+
+pub fn e_continue(p: MProgram, fuel: Nat, r: MStep): MStep {
+  match r {
+    MstepNext(s) => meval(p, fuel, s)
+    MstepDone => MstepDone
+    MstepExit(code) => MstepExit(code)
+    MstepShow(name, v, s) => MstepShow(name, v, s)
+    MstepAsk(name, args, s) => MstepAsk(name, args, s)
+    MstepSleep(until, cx) => MstepSleep(until, cx)
+    MstepError(message) => MstepError(message)
+  }
+}
+
+// A result that does not take another machine step is retained.
+pub theorem e_meval_add(
+  n: Nat,
+  m: Nat,
+  p: MProgram,
+  s: MState
+): meval(p, Nat::add(m, n), s) = e_continue(p, m, meval(p, n, s)) {
+  match n {
+    Zero => Refl
+    Succ(f) => match step(
+      p,
+      s
+    ) eqn first: meval(p, Succ(Nat::add(m, f)), s) = e_continue(p, m, meval(p, Succ(f), s)) {
+      MstepNext(middle) => ⊢ meval(p, Nat::add(m, f), middle) =
+      e_continue(p, m, meval(p, f, middle)) from e_meval_add(f, m, p, middle)
+      MstepDone => ⊢ Eq(MStep, MstepDone, MstepDone) from Refl
+      MstepExit(code) => ⊢ Eq(MStep, MstepExit(code), MstepExit(code)) from Refl
+      MstepShow(name, v, middle) => ⊢ Eq(
+        MStep,
+        MstepShow(name, v, middle),
+        MstepShow(name, v, middle)
+      ) from Refl
+      MstepAsk(name, args, middle) => ⊢ Eq(
+        MStep,
+        MstepAsk(name, args, middle),
+        MstepAsk(name, args, middle)
+      ) from Refl
+      MstepSleep(until, cx) => ⊢ Eq(MStep, MstepSleep(until, cx), MstepSleep(until, cx)) from Refl
+      MstepError(message) => ⊢ Eq(MStep, MstepError(message), MstepError(message)) from Refl
+    }
+  }
+}
+
+pub fn e_resume(p: MProgram, fuel: Nat, r: MStep): MStep {
+  match r {
+    MstepNext(s) => mrun(p, fuel, s)
+    MstepDone => MstepDone
+    MstepExit(code) => MstepExit(code)
+    MstepShow(name, v, s) => MstepShow(name, v, s)
+    MstepAsk(name, args, s) => MstepAsk(name, args, s)
+    MstepSleep(until, cx) => MstepSleep(until, cx)
+    MstepError(message) => MstepError(message)
+  }
+}
+
+pub theorem e_resume_correct(
+  p: MProgram,
+  fuel: Nat,
+  r: MStep
+): e_resume(p, fuel, r) = e_continue(p, fuel, r) {
+  match r {
+    MstepNext(s) => mrun_correct(p, fuel, s)
+    MstepDone => Refl
+    MstepExit(code) => Refl
+    MstepShow(name, v, s) => Refl
+    MstepAsk(name, args, s) => Refl
+    MstepSleep(until, cx) => Refl
+    MstepError(message) => Refl
+  }
+}
+
+pub theorem e_mrun_add(
+  n: Nat,
+  m: Nat,
+  p: MProgram,
+  s: MState
+): mrun(p, Nat::add(m, n), s) = e_resume(p, m, mrun(p, n, s)) {
+  Eq::trans(
+    mrun_correct(p, Nat::add(m, n), s),
+    Eq::trans(
+      e_meval_add(n, m, p, s),
+      Eq::trans(
+        Eq::congr((r: MStep) => e_continue(p, m, r), Eq::sym(mrun_correct(p, n, s))),
+        Eq::sym(e_resume_correct(p, m, mrun(p, n, s)))
+      )
+    )
+  )
+}
+
+pub theorem e_runs_meval<p: MProgram, n: Nat, a: MState, b: MState>(
+  run: ERuns(p, n, a, b)
+): meval(p, n, a) = MstepNext(b) {
+  match run {
+    ErunRefl(s) => ⊢ meval(p, Zero, s) = MstepNext(s) from Refl
+    ErunStep<n: count, a: start, b: middle, c: end>(edge, rest) =>
+    ⊢ meval(
+      p,
+      Succ(count),
+      start
+    ) = MstepNext(
+      end
+    ) from Eq::trans(Eq::congr((r: MStep) => e_continue(p, count, r), edge), e_runs_meval(rest))
+  }
+}
+
+pub theorem e_runs_mrun<p: MProgram, n: Nat, a: MState, b: MState>(
+  run: ERuns(p, n, a, b)
+): mrun(p, n, a) = MstepNext(b) {
+  Eq::trans(mrun_correct(p, n, a), e_runs_meval(run))
+}
+
+pub theorem e_meval_runs(
+  fuel: Nat,
+  p: MProgram,
+  a: MState,
+  b: MState,
+  done: meval(p, fuel, a) = MstepNext(b)
+): ERuns(p, fuel, a, b) {
+  match fuel {
+    Zero => match done: ERuns(p, Zero, a, b) {
+      Refl => ⊢ ERuns(p, Zero, a, a) from ErunRefl(a)
+    }
+    Succ(f) => {
+      let advanced: e_continue(p, f, step(p, a)) = MstepNext(b) := done
+      match step(p, a) eqn edge: ERuns(p, Succ(f), a, b) {
+        MstepNext(middle) => ⊢ ERuns(p, Succ(f), a, b) from
+        ErunStep(edge, e_meval_runs(f, p, middle, b, advanced))
+        MstepDone => ⊢ ERuns(p, Succ(f), a, b) from match advanced: ERuns(p, Succ(f), a, b) {}
+        MstepExit(code) => ⊢ ERuns(p, Succ(f), a, b) from match advanced: ERuns(p, Succ(f), a, b) {}
+        MstepShow(name, value, middle) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        MstepAsk(name, args, middle) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        MstepSleep(until, cx) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        MstepError(message) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+      }
+    }
+  }
+}
+
+pub theorem e_mrun_runs(
+  fuel: Nat,
+  p: MProgram,
+  a: MState,
+  b: MState,
+  done: mrun(p, fuel, a) = MstepNext(b)
+): ERuns(p, fuel, a, b) {
+  e_meval_runs(fuel, p, a, b, Eq::trans(Eq::sym(mrun_correct(p, fuel, a)), done))
+}
+
+pub fn EReaches(p: MProgram, a: MState, b: MState): Prop {
+  Exists(Nat, (n: Nat) => ERuns(p, n, a, b))
+}
+
+pub theorem e_reaches_one<p: MProgram, a: MState, b: MState>(
+  edge: step(p, a) = MstepNext(b)
+): EReaches(p, a, b) {
+  ExIntro(1, e_runs_one(edge))
+}
+
+pub theorem e_reaches_trans<p: MProgram, a: MState, b: MState, c: MState>(
+  first: EReaches(p, a, b),
+  second: EReaches(p, b, c)
+): EReaches(p, a, c) {
+  match first {
+    ExIntro(n, run1) => match second: EReaches(p, a, c) {
+      ExIntro(m, run2) => ExIntro(Nat::add(m, n), e_runs_trans(run1, m, c, run2))
+    }
+  }
+}
+
+pub theorem e_reaches_mrun<p: MProgram, a: MState, b: MState>(
+  run: EReaches(p, a, b)
+): Exists(Nat, (n: Nat) => mrun(p, n, a) = MstepNext(b)) {
+  match run {
+    ExIntro(n, path) => ExIntro(n, e_runs_mrun(path))
+  }
+}

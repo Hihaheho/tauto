@@ -1,0 +1,143 @@
+import "surface.taut"
+import "occurrence.taut"
+
+pub fn surface_occurrence_term_start(value: SurfaceTerm): Nat {
+  match value: Nat {
+    SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_start
+  }
+}
+pub fn surface_occurrence_term_end(value: SurfaceTerm): Nat {
+  match value: Nat {
+    SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_end
+  }
+}
+pub fn surface_occurrence_term_id(value: SurfaceTerm): Option(TermOccurrence) {
+  match value: Option(TermOccurrence) {
+    SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_occurrence
+  }
+}
+
+// Diagnostic spans are independent of lexical metadata.
+pub theorem surface_index_start(
+  kind: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  old: Option(TermOccurrence),
+  path: List(Nat),
+  keep: Bool
+): surface_occurrence_term_start(
+    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, keep)
+  ) = start {
+  Refl
+}
+
+pub theorem surface_index_end(
+  kind: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  old: Option(TermOccurrence),
+  path: List(Nat),
+  keep: Bool
+): surface_occurrence_term_end(
+    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, keep)
+  ) = end {
+  Refl
+}
+
+pub theorem surface_index_identity(
+  kind: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  old: Option(TermOccurrence),
+  path: List(Nat)
+): surface_occurrence_term_id(
+    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, true)
+  ) = Some(TermOccurrenceMk(path)) {
+  Refl
+}
+
+pub theorem surface_index_erase_text(
+  value: Text,
+  start: Nat,
+  end: Nat,
+  old: Option(TermOccurrence),
+  path: List(Nat)
+): surface_erase_occurrences(
+    surface_index_surfaceterm(SurfaceTermIndexedMk(SkText(value), start, end, old), path, true)
+  ) = surface_term_mk(SkText(value), start, end) {
+  Refl
+}
+
+// This concrete assignment law does not assert global path injectivity.
+pub theorem surface_same_span_child_identity(
+  value: Text,
+  start: Nat,
+  end: Nat
+): surface_occurrence_term_id(
+    surface_index_surfaceterm(
+      surface_term_mk(SkText(value), start, end),
+      Cons(0, Cons(1, Nil)),
+      true
+    )
+  ) = Some(TermOccurrenceMk(Cons(0, Cons(1, Nil)))) {
+  Refl
+}
+
+pub theorem surface_index_replaces_prior_identity(
+  kind: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  old: Option(TermOccurrence),
+  first: List(Nat),
+  next: List(Nat)
+): surface_occurrence_term_id(
+    surface_index_surfaceterm(
+      surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), first, true),
+      next,
+      true
+    )
+  ) = Some(TermOccurrenceMk(next)) {
+  Refl
+}
+
+// Sibling terms with the same span retain different lexical positions.
+pub theorem surface_index_equal_span_siblings(
+  name: Text,
+  text: Text,
+  start: Nat,
+  end: Nat
+): surface_index_surfaceterm(
+    surface_term_mk(
+      SkApp(
+        surface_term_mk(SkVar(name), start, end),
+        Cons(surface_term_mk(SkText(text), start, end), Nil)
+      ),
+      start,
+      end
+    ),
+    Cons(0, Nil),
+    true
+  ) = SurfaceTermIndexedMk(
+    SkApp(
+      SurfaceTermIndexedMk(
+        SkVar(name),
+        start,
+        end,
+        Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(0, Nil)))))
+      ),
+      Cons(
+        SurfaceTermIndexedMk(
+          SkText(text),
+          start,
+          end,
+          Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(1, Cons(0, Nil))))))
+        ),
+        Nil
+      )
+    ),
+    start,
+    end,
+    Some(TermOccurrenceMk(Cons(0, Nil)))
+  ) {
+  Refl
+}

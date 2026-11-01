@@ -1,0 +1,1762 @@
+import "classes_function_table_ordered.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem inf_law_duplicate_fns_ordered(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  bad: Bool,
+  ih: ∀ ns: List(Text). ∀ next: Checker. CkFnsStep(next, ck_instance_laws(rest, ns, next, i, decl))
+): CkFnsStep(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
+  match bad: CkFnsStep(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
+    true => fnt_step_bind(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
+      ck_error(
+        c,
+        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        cf_law_span(l)
+      ),
+      fnt_error_step(
+        c,
+        cat3("the law ", cf_law_name(l), " of the instance is written twice"),
+        cf_law_span(l)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_laws(rest, seen, c1, i, decl), ih(seen, c1))
+    )
+    false => fnt_step_rewrap(
+      c,
+      ck_instance_laws(rest, Cons(cf_law_name(l), seen), c, i, decl),
+      ih(Cons(cf_law_name(l), seen), c)
+    )
+  }
+}
+
+pub theorem inf_law_missing_fns_ordered(
+  l: SurfaceLaw,
+  rest: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  bad: Bool,
+  ih: ∀ ns: List(Text). ∀ next: Checker. CkFnsStep(next, ck_instance_laws(rest, ns, next, i, decl))
+): CkFnsStep(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
+  match bad: CkFnsStep(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
+    true => fnt_step_bind(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_laws(rest, seen, c1, i, decl)),
+      ck_error(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l)),
+      fnt_error_step(c, cat3(inf_class(i), " has no law ", cf_law_name(l)), cf_law_span(l)),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_laws(rest, seen, c1, i, decl), ih(seen, c1))
+    )
+    false => inf_law_duplicate_fns_ordered(
+      l,
+      rest,
+      seen,
+      c,
+      i,
+      decl,
+      text_list_has(seen, cf_law_name(l)),
+      ih
+    )
+  }
+}
+
+pub theorem ck_instance_laws_fns_ordered(
+  ls: List(SurfaceLaw),
+  seen: List(Text),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): CkFnsStep(c, ck_instance_laws(ls, seen, c, i, decl)) {
+  match ls: CkFnsStep(c, ck_instance_laws(ls, seen, c, i, decl)) {
+    Nil => ordered => ordered
+    Cons(l, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_laws_unf(l, rest, seen, c, i, decl)),
+      inf_law_missing_fns_ordered(
+        l,
+        rest,
+        seen,
+        c,
+        i,
+        decl,
+        not(law_named(cf_class_laws(decl), cf_law_name(l))),
+        ns => next => ck_instance_laws_fns_ordered(rest, ns, next, i, decl)
+      )
+    )
+  }
+}
+
+pub theorem inf_extra_cons_fns_ordered(
+  m: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ih: ∀ next: Checker. CkFnsStep(next, ck_instance_extra(rest, next, i, decl))
+): CkFnsStep(c, inf_extra_cons(m, rest, c, i, decl)) {
+  fnt_step_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_extra(rest, c1, i, decl)),
+    frame_error_if(
+      c,
+      cat3(inf_class(i), " has no method ", signature_name(m)),
+      cf_method_span(m),
+      not(method_names_have(cf_class_methods(decl), signature_name(m)))
+    ),
+    fnt_error_if_step(
+      c,
+      cat3(inf_class(i), " has no method ", signature_name(m)),
+      cf_method_span(m),
+      not(method_names_have(cf_class_methods(decl), signature_name(m)))
+    ),
+    ignored => c1 => fnt_step_rewrap(c1, ck_instance_extra(rest, c1, i, decl), ih(c1))
+  )
+}
+
+pub theorem ck_instance_extra_fns_ordered(
+  ms: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass
+): CkFnsStep(c, ck_instance_extra(ms, c, i, decl)) {
+  match ms: CkFnsStep(c, ck_instance_extra(ms, c, i, decl)) {
+    Nil => ordered => ordered
+    Cons(m, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_extra_unf(m, rest, c, i, decl)),
+      inf_extra_cons_fns_ordered(
+        m,
+        rest,
+        c,
+        i,
+        decl,
+        next => ck_instance_extra_fns_ordered(rest, next, i, decl)
+      )
+    )
+  }
+}
+
+pub theorem inf_same_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  head: Text,
+  want: SurfaceFn
+): CkFnsStep(c, inf_same(c, i, got, scheme, expected, head, want)) {
+  fnt_step_bind(
+    Scheme,
+    Unit,
+    c,
+    (wanted: Scheme, c1: Checker) => frame_error_if(
+      c1,
+      inf_signature_message(c1, i, expected, head, want, wanted),
+      cf_method_span(got),
+      inf_signature_diff(wanted, scheme, got, want)
+    ),
+    ck_signature(c, want),
+    fnt_signature_step(c, want),
+    wanted => c1 => fnt_error_if_step(
+      c1,
+      inf_signature_message(c1, i, expected, head, want, wanted),
+      cf_method_span(got),
+      inf_signature_diff(wanted, scheme, got, want)
+    )
+  )
+}
+
+pub theorem ck_same_signature_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  got: SurfaceFn,
+  scheme: Scheme,
+  expected: SurfaceFn,
+  param: Text,
+  head: Text
+): CkFnsStep(c, ck_same_signature(c, i, got, scheme, expected, param, head)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkFnsStep(c, z),
+    Eq::sym(inf_same_unf(c, i, got, scheme, expected, param, head)),
+    inf_same_fns_ordered(c, i, got, scheme, expected, head, inf_want(i, got, expected, param))
+  )
+}
+
+pub theorem inf_method_found_fns_ordered(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn),
+  made: SurfaceFn,
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkFnsStep(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
+): CkFnsStep(c, inf_method_found(e, rest, c, i, decl, ctor, shown, out, made)) {
+  fnt_step_bind(
+    Scheme,
+    List(SurfaceFn),
+    c,
+    (scheme: Scheme, c1: Checker) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c2: Checker) => ck_rewrap1(
+        ck_instance_methods(
+          rest,
+          cf_store_state(c2, made, scheme),
+          i,
+          decl,
+          ctor,
+          shown,
+          Cons(made, out)
+        )
+      ),
+      ck_same_signature(c1, i, made, scheme, e, cf_class_param(decl), shown)
+    ),
+    ck_signature(c, made),
+    fnt_signature_step(c, made),
+    scheme => c1 => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c1,
+      (ignored: Unit, c2: Checker) => ck_rewrap1(
+        ck_instance_methods(
+          rest,
+          cf_store_state(c2, made, scheme),
+          i,
+          decl,
+          ctor,
+          shown,
+          Cons(made, out)
+        )
+      ),
+      ck_same_signature(c1, i, made, scheme, e, cf_class_param(decl), shown),
+      ck_same_signature_fns_ordered(c1, i, made, scheme, e, cf_class_param(decl), shown),
+      ignored => c2 => fnt_step_changed(
+        c2,
+        cf_store_state(c2, made, scheme),
+        ck_rewrap1(
+          ck_instance_methods(
+            rest,
+            cf_store_state(c2, made, scheme),
+            i,
+            decl,
+            ctor,
+            shown,
+            Cons(made, out)
+          )
+        ),
+        cf_store_state_same_fns_ordered(c2, made, scheme),
+        fnt_step_rewrap(
+          cf_store_state(c2, made, scheme),
+          ck_instance_methods(
+            rest,
+            cf_store_state(c2, made, scheme),
+            i,
+            decl,
+            ctor,
+            shown,
+            Cons(made, out)
+          ),
+          ih(cf_store_state(c2, made, scheme), Cons(made, out))
+        )
+      )
+    )
+  )
+}
+
+pub theorem inf_method_get_fns_ordered(
+  e: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn),
+  o: Option(SurfaceFn),
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkFnsStep(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
+): CkFnsStep(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
+  match o: CkFnsStep(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
+    None => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(
+        ck_instance_methods(rest, c1, i, decl, ctor, shown, out)
+      ),
+      ck_error(
+        c,
+        cat5(
+          "the instance ",
+          inf_class(i),
+          cat3("(", shown, ")"),
+          " does not define ",
+          signature_name(e)
+        ),
+        inf_span(i)
+      ),
+      fnt_error_step(
+        c,
+        cat5(
+          "the instance ",
+          inf_class(i),
+          cat3("(", shown, ")"),
+          " does not define ",
+          signature_name(e)
+        ),
+        inf_span(i)
+      ),
+      ignored => c1 => fnt_step_rewrap(
+        c1,
+        ck_instance_methods(rest, c1, i, decl, ctor, shown, out),
+        ih(c1, out)
+      )
+    )
+    Some(m) => inf_method_found_fns_ordered(
+      e,
+      rest,
+      c,
+      i,
+      decl,
+      ctor,
+      shown,
+      out,
+      inf_method_fn(i, ctor, m),
+      ih
+    )
+  }
+}
+
+pub theorem ck_instance_methods_fns_ordered(
+  expected: List(SurfaceFn),
+  c: Checker,
+  i: SurfaceInstance,
+  decl: SurfaceClass,
+  ctor: Text,
+  shown: Text,
+  out: List(SurfaceFn)
+): CkFnsStep(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
+  match expected: CkFnsStep(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
+    Nil => ordered => ordered
+    Cons(e, rest) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_methods_unf(e, rest, c, i, decl, ctor, shown, out)),
+      inf_method_get_fns_ordered(
+        e,
+        rest,
+        c,
+        i,
+        decl,
+        ctor,
+        shown,
+        out,
+        method_named(inf_methods(i), signature_name(e)),
+        next => fs => ck_instance_methods_fns_ordered(rest, next, i, decl, ctor, shown, fs)
+      )
+    )
+  }
+}
+
+pub theorem inf_preds_dup_fns_ordered(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Bool,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkFnsStep(next, ck_instance_preds(rest, next, gs, ps))
+): CkFnsStep(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
+  match dup: CkFnsStep(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
+    true => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(
+        c,
+        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        signature_constraint_span(w)
+      ),
+      fnt_error_step(
+        c,
+        cat5(signature_constraint_class(w), "(", g, ") is written twice", ""),
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    false => fnt_step_rewrap(
+      c,
+      ck_instance_preds(
+        rest,
+        c,
+        gs,
+        Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds)
+      ),
+      ih(c, Cons(Pair { fst: signature_constraint_class(w), snd: g }, preds))
+    )
+  }
+}
+
+pub theorem inf_preds_has_fns_ordered(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  has: Bool,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkFnsStep(next, ck_instance_preds(rest, next, gs, ps))
+): CkFnsStep(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
+  match has: CkFnsStep(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
+    true => inf_preds_dup_fns_ordered(
+      w,
+      rest,
+      c,
+      gs,
+      preds,
+      g,
+      preds_have(preds, signature_constraint_class(w), g),
+      ih
+    )
+    false => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+  }
+}
+
+pub theorem inf_preds_kind_fns_ordered(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  k: SurfaceKind,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkFnsStep(next, ck_instance_preds(rest, next, gs, ps))
+): CkFnsStep(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
+  match k: CkFnsStep(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
+    SkVar(g) => inf_preds_has_fns_ordered(w, rest, c, gs, preds, g, text_list_has(gs, g), ih)
+    SkNat(digits) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkText(value) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBool(value) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkApp(head, args) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkPi(params, result, effects) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkExists(binder, domain, body) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkLam(params, body) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkUnion(parts) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkTagged(tag, value) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkIf(cond, then, otherwise) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkField(value, name) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBlock(stmts) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkPerform(op, args) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkHandle(body, handlers) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBudget(amount_memory, amount, body) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkMatch(scrutinee, motive, arms, binder) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkHole(name) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkRecord(name, fields) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBorrow(mutable, value) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkFnKind(kind, ty) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkBorrowLam(borrows, lam) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkOther(what) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkRow(what_effects) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkFloat(what) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkProduct(what) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkProject(what, what_ty) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkMacroCall(name, arg) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkQuote(stmts_form, stmts) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkSplice(value) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkSyntaxLit(name, body) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    SkStep(tactic, arg, call_start, CallEnd, before, arms) => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w)),
+      fnt_error_step(
+        c,
+        "where constrains only generics of the instance",
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+  }
+}
+
+pub theorem inf_preds_missing_fns_ordered(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text)),
+  missing: Bool,
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkFnsStep(next, ck_instance_preds(rest, next, gs, ps))
+): CkFnsStep(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
+  match missing: CkFnsStep(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
+    true => fnt_step_bind(
+      Unit,
+      List(Pair(Text, Text)),
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
+      ck_error(
+        c,
+        cat2(signature_constraint_class(w), " is not a class"),
+        signature_constraint_span(w)
+      ),
+      fnt_error_step(
+        c,
+        cat2(signature_constraint_class(w), " is not a class"),
+        signature_constraint_span(w)
+      ),
+      ignored => c1 => fnt_step_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
+    )
+    false => inf_preds_kind_fns_ordered(w, rest, c, gs, preds, inf_pred_kind(w), ih)
+  }
+}
+
+pub theorem ck_instance_preds_fns_ordered(
+  ws: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Text),
+  preds: List(Pair(Text, Text))
+): CkFnsStep(c, ck_instance_preds(ws, c, gs, preds)) {
+  match ws: CkFnsStep(c, ck_instance_preds(ws, c, gs, preds)) {
+    Nil => ordered => ordered
+    Cons(w, rest) => Eq::subst(
+      (z: Mut1(List(Pair(Text, Text)), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_preds_unf(w, rest, c, gs, preds)),
+      inf_preds_missing_fns_ordered(
+        w,
+        rest,
+        c,
+        gs,
+        preds,
+        signature_class_missing(c, w),
+        next => ps => ck_instance_preds_fns_ordered(rest, next, gs, ps)
+      )
+    )
+  }
+}
+
+pub theorem inf_store_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  ctor: Text,
+  g: SigGenerics,
+  head: Ty,
+  preds: List(Pair(Text, Text)),
+  made: List(SurfaceFn)
+): CkFnsStep(c, inf_store(c, i, ctor, g, head, preds, made)) { ordered => ordered }
+
+pub theorem inf_rest_duplicate_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text,
+  bad: Bool
+): CkFnsStep(
+  c,
+  inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+) {
+  match bad: CkFnsStep(
+    c,
+    inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+  ) {
+    true => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i)),
+      fnt_error_step(c, cat3(inf_class(i), " already has an instance for ", ctor), inf_span(i)),
+      ignored => c1 => ordered => ordered
+    )
+    false => fnt_step_bind(
+      List(Pair(Text, Text)),
+      List(SurfaceFn),
+      c,
+      (preds: List(Pair(Text, Text)), c1: Checker) => frame_bind(
+        Unit,
+        List(SurfaceFn),
+        (ignored1: Unit, c2: Checker) => frame_bind(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          (made: List(SurfaceFn), c3: Checker) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          )
+        ),
+        ck_instance_laws(inf_laws(i), Nil, c1, i, inf_info_decl(info))
+      ),
+      ck_instance_preds(inf_wheres(i), c, inf_generics(i), Nil),
+      ck_instance_preds_fns_ordered(inf_wheres(i), c, inf_generics(i), Nil),
+      preds => c1 => fnt_step_bind(
+        Unit,
+        List(SurfaceFn),
+        c1,
+        (ignored1: Unit, c2: Checker) => frame_bind(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          (made: List(SurfaceFn), c3: Checker) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          )
+        ),
+        ck_instance_laws(inf_laws(i), Nil, c1, i, inf_info_decl(info)),
+        ck_instance_laws_fns_ordered(inf_laws(i), Nil, c1, i, inf_info_decl(info)),
+        ignored1 => c2 => fnt_step_bind(
+          List(SurfaceFn),
+          List(SurfaceFn),
+          c2,
+          (made: List(SurfaceFn), c3: Checker) => frame_bind(
+            Unit,
+            List(SurfaceFn),
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info))
+          ),
+          ck_instance_methods(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          ),
+          ck_instance_methods_fns_ordered(
+            cf_class_methods(inf_info_decl(info)),
+            c2,
+            i,
+            inf_info_decl(info),
+            ctor,
+            shown,
+            out
+          ),
+          made => c3 => fnt_step_bind(
+            Unit,
+            List(SurfaceFn),
+            c3,
+            (ignored2: Unit, c4: Checker) => inf_store(c4, i, ctor, g, head, preds, made),
+            ck_instance_extra(inf_methods(i), c3, i, inf_info_decl(info)),
+            ck_instance_extra_fns_ordered(inf_methods(i), c3, i, inf_info_decl(info)),
+            ignored2 => c4 => inf_store_fns_ordered(c4, i, ctor, g, head, preds, made)
+          )
+        )
+      )
+    )
+  }
+}
+
+pub theorem inf_rest_orphan_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text,
+  bad: Bool
+): CkFnsStep(
+  c,
+  inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+) {
+  match bad: CkFnsStep(
+    c,
+    inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
+  ) {
+    true => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(
+        c,
+        cat5(
+          inf_class(i),
+          cat3("(", ctor, ")"),
+          " must be in the tote of ",
+          inf_class(i),
+          cat2(" or of ", ctor)
+        ),
+        inf_span(i)
+      ),
+      fnt_error_step(
+        c,
+        cat5(
+          inf_class(i),
+          cat3("(", ctor, ")"),
+          " must be in the tote of ",
+          inf_class(i),
+          cat2(" or of ", ctor)
+        ),
+        inf_span(i)
+      ),
+      ignored => c1 => ordered => ordered
+    )
+    false => inf_rest_duplicate_fns_ordered(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      g,
+      head,
+      ctor,
+      shown,
+      inf_duplicate(c, i, ctor)
+    )
+  }
+}
+
+pub theorem ck_declare_instance_rest_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  g: SigGenerics,
+  head: Ty,
+  ctor: Text,
+  shown: Text
+): CkFnsStep(
+  c,
+  ck_declare_instance_rest(c, i, info, own_classes, own_types, out, g, head, ctor, shown)
+) {
+  Eq::subst(
+    (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+    Eq::sym(inf_rest_unf(c, i, info, own_classes, own_types, out, g, head, ctor, shown)),
+    inf_rest_orphan_fns_ordered(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      g,
+      head,
+      ctor,
+      shown,
+      Bool::and(
+        not(text_list_has(own_classes, inf_class(i))),
+        not(text_list_has(own_types, ctor))
+      )
+    )
+  )
+}
+
+pub theorem inf_head_message_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  head: Ty,
+  ctor: Text,
+  message: Option(Pair(Text, TySpan))
+): CkFnsStep(c, inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)) {
+  match message: CkFnsStep(
+    c,
+    inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)
+  ) {
+    None => fnt_step_rewrap(
+      c,
+      ck_declare_instance_rest(
+        c,
+        i,
+        info,
+        own_classes,
+        own_types,
+        out,
+        inf_gens(i),
+        head,
+        ctor,
+        ty_show(ck_shown(c, head))
+      ),
+      ck_declare_instance_rest_fns_ordered(
+        c,
+        i,
+        info,
+        own_classes,
+        own_types,
+        out,
+        inf_gens(i),
+        head,
+        ctor,
+        ty_show(ck_shown(c, head))
+      )
+    )
+    Some(m) => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, inf_message_text(m), inf_message_span(m)),
+      fnt_error_step(c, inf_message_text(m), inf_message_span(m)),
+      ignored => c1 => ordered => ordered
+    )
+  }
+}
+
+pub theorem inf_head_ctor_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  head: Ty,
+  found: Option(Text)
+): CkFnsStep(c, inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)) {
+  match found: CkFnsStep(c, inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)) {
+    None => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      fnt_error_step(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ignored => c1 => ordered => ordered
+    )
+    Some(ctor) => inf_head_message_fns_ordered(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      head,
+      ctor,
+      ck_instance_head_message(c, i, info, head, ctor)
+    )
+  }
+}
+
+pub theorem inf_head_missing_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  missing: Option(Text)
+): CkFnsStep(c, inf_head_missing(c, i, info, own_classes, own_types, out, missing)) {
+  match missing: CkFnsStep(c, inf_head_missing(c, i, info, own_classes, own_types, out, missing)) {
+    Some(name) => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(name, " does not appear in the head"), inf_head_span(i)),
+      fnt_error_step(c, cat2(name, " does not appear in the head"), inf_head_span(i)),
+      ignored => c1 => ordered => ordered
+    )
+    None => fnt_step_changed(
+      c,
+      frame_set_constructor_position(c, true),
+      frame_bind(
+        Ty,
+        List(SurfaceFn),
+        (head: Ty, c1: Checker) => inf_head_ctor(
+          frame_set_constructor_position(c1, false),
+          i,
+          info,
+          own_classes,
+          own_types,
+          out,
+          head,
+          ty_constructor(head)
+        ),
+        ck_written(frame_set_constructor_position(c, true), inf_head(i), signature_map(inf_gens(i)))
+      ),
+      fnt_constructor_step(c, true),
+      fnt_step_bind(
+        Ty,
+        List(SurfaceFn),
+        frame_set_constructor_position(c, true),
+        (head: Ty, c1: Checker) => inf_head_ctor(
+          frame_set_constructor_position(c1, false),
+          i,
+          info,
+          own_classes,
+          own_types,
+          out,
+          head,
+          ty_constructor(head)
+        ),
+        ck_written(frame_set_constructor_position(c, true), inf_head(i), signature_map(inf_gens(i))),
+        fnt_written_step(
+          frame_set_constructor_position(c, true),
+          inf_head(i),
+          signature_map(inf_gens(i))
+        ),
+        head => c1 => fnt_step_changed(
+          c1,
+          frame_set_constructor_position(c1, false),
+          inf_head_ctor(
+            frame_set_constructor_position(c1, false),
+            i,
+            info,
+            own_classes,
+            own_types,
+            out,
+            head,
+            ty_constructor(head)
+          ),
+          fnt_constructor_step(c1, false),
+          inf_head_ctor_fns_ordered(
+            frame_set_constructor_position(c1, false),
+            i,
+            info,
+            own_classes,
+            own_types,
+            out,
+            head,
+            ty_constructor(head)
+          )
+        )
+      )
+    )
+  }
+}
+
+pub theorem inf_head_shape_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  bad: Bool
+): CkFnsStep(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
+  match bad: CkFnsStep(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
+    true => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      fnt_error_step(c, "an instance head applies a type to distinct generics", inf_head_span(i)),
+      ignored => c1 => ordered => ordered
+    )
+    false => inf_head_missing_fns_ordered(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      generic_not_in_head(inf_generics(i), inf_head(i))
+    )
+  }
+}
+
+pub theorem ck_declare_instance_at_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  info: ClassInfo,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): CkFnsStep(c, ck_declare_instance_at(c, i, info, own_classes, own_types, out)) {
+  Eq::subst(
+    (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+    Eq::sym(inf_at_unf(c, i, info, own_classes, own_types, out)),
+    inf_head_shape_fns_ordered(
+      c,
+      i,
+      info,
+      own_classes,
+      own_types,
+      out,
+      not(head_shape_ok(inf_head(i), inf_generics(i)))
+    )
+  )
+}
+
+pub theorem inf_class_lookup_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  o: Option(ClassInfo)
+): CkFnsStep(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
+  match o: CkFnsStep(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
+    None => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(inf_class(i), " is not a class"), inf_span(i)),
+      fnt_error_step(c, cat2(inf_class(i), " is not a class"), inf_span(i)),
+      ignored => c1 => ordered => ordered
+    )
+    Some(info) => fnt_step_rewrap(
+      c,
+      ck_declare_instance_at(c, i, info, own_classes, own_types, out),
+      ck_declare_instance_at_fns_ordered(c, i, info, own_classes, own_types, out)
+    )
+  }
+}
+
+pub theorem inf_class_structural_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  structural: Bool
+): CkFnsStep(c, inf_class_structural(c, i, own_classes, own_types, out, structural)) {
+  match structural: CkFnsStep(
+    c,
+    inf_class_structural(c, i, own_classes, own_types, out, structural)
+  ) {
+    true => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(out, c1),
+      ck_error(c, cat2(inf_class(i), " is structural and has no instances to write"), inf_span(i)),
+      fnt_error_step(
+        c,
+        cat2(inf_class(i), " is structural and has no instances to write"),
+        inf_span(i)
+      ),
+      ignored => c1 => ordered => ordered
+    )
+    false => inf_class_lookup_fns_ordered(c, i, own_classes, own_types, out, inf_class_get(c, i))
+  }
+}
+
+pub theorem ck_declare_instance_fns_ordered(
+  c: Checker,
+  i: SurfaceInstance,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): CkFnsStep(c, ck_declare_instance(c, i, own_classes, own_types, out)) {
+  Eq::subst(
+    (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+    Eq::sym(inf_declare_unf(c, i, own_classes, own_types, out)),
+    inf_class_structural_fns_ordered(
+      c,
+      i,
+      own_classes,
+      own_types,
+      out,
+      class_is_structural(inf_class(i))
+    )
+  )
+}
+
+pub theorem inf_list_cons_fns_ordered(
+  i: SurfaceInstance,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkFnsStep(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
+): CkFnsStep(c, inf_list_cons(i, rest, c, own_classes, own_types, out)) {
+  fnt_step_bind(
+    List(SurfaceFn),
+    List(SurfaceFn),
+    c,
+    (made: List(SurfaceFn), c1: Checker) => ck_rewrap1(
+      ck_declare_instances(rest, c1, own_classes, own_types, made)
+    ),
+    ck_declare_instance(c, i, own_classes, own_types, out),
+    ck_declare_instance_fns_ordered(c, i, own_classes, own_types, out),
+    made => c1 => fnt_step_rewrap(
+      c1,
+      ck_declare_instances(rest, c1, own_classes, own_types, made),
+      ih(c1, made)
+    )
+  )
+}
+
+pub theorem inf_list_step_fns_ordered(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn),
+  ih: ∀ next: Checker. ∀ fs: List(
+    SurfaceFn
+  ). CkFnsStep(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
+): CkFnsStep(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
+  match s: CkFnsStep(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
+    StLet(name, ty, value, borrow, mutable) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(
+        inf_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_classes, own_types, out)
+      ),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StVar(name, ty, value, borrow) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StVar_unf(name, ty, value, borrow, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StModule(name, stmts, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StModule_unf(name, stmts, start, end, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StAssign(name, name_place, value) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StAssign_unf(name, name_place, value, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StCalled(name_generates, value) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StCalled_unf(name_generates, value, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StFn(f) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StFn_unf(f, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StTheorem(t) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StTheorem_unf(t, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StDef(t) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StDef_unf(t, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StMutual(stmts, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StMutual_unf(stmts, start, end, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StImport(path, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StImport_unf(path, start, end, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StInductive(i) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StInductive_unf(i, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StEffect(e) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StEffect_unf(e, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StStruct(d) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StStruct_unf(d, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StEnum(d) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StEnum_unf(d, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StExtern_unf(abi, fns, start, end, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StClass(cl) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StClass_unf(cl, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StInstance(i) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StInstance_unf(i, rest, c, own_classes, own_types, out)),
+      inf_list_cons_fns_ordered(i, rest, c, own_classes, own_types, out, ih)
+    )
+    StWhile(cond, body) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StWhile_unf(cond, body, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StReturn(value) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StReturn_unf(value, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StExpr(value) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StExpr_unf(value, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StOther(what, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(inf_list_StOther_unf(what, start, end, rest, c, own_classes, own_types, out)),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StMacro(name, function, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(
+        inf_list_StMacro_unf(name, function, start, end, rest, c, own_classes, own_types, out)
+      ),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(
+        inf_list_StAttributed_unf(
+          attr_name,
+          attr_arg,
+          attr_generates,
+          attr_stmt,
+          rest,
+          c,
+          own_classes,
+          own_types,
+          out
+        )
+      ),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+    StSyntax(name, grammar, start, end) => Eq::subst(
+      (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+      Eq::sym(
+        inf_list_StSyntax_unf(name, grammar, start, end, rest, c, own_classes, own_types, out)
+      ),
+      fnt_step_rewrap(c, ck_declare_instances(rest, c, own_classes, own_types, out), ih(c, out))
+    )
+  }
+}
+
+pub theorem ck_declare_instances_fns_ordered(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own_classes: List(Text),
+  own_types: List(Text),
+  out: List(SurfaceFn)
+): CkFnsStep(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
+  match ss: CkFnsStep(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
+    Nil => ordered => ordered
+    Cons(s, rest) => inf_list_step_fns_ordered(
+      s,
+      rest,
+      c,
+      own_classes,
+      own_types,
+      out,
+      next => fs => ck_declare_instances_fns_ordered(rest, next, own_classes, own_types, fs)
+    )
+  }
+}
+
+pub theorem inf_declare_classes_fns_ordered(
+  c: Checker,
+  program: List(SurfaceStmt)
+): CkFnsStep(c, inf_declare_classes(c, program)) {
+  fnt_step_bind(
+    List(SurfaceClass),
+    List(SurfaceFn),
+    c,
+    (declared: List(SurfaceClass), c1: Checker) => frame_bind(
+      Unit,
+      List(SurfaceFn),
+      (ignored: Unit, c2: Checker) => frame_bind(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        (fs: List(SurfaceFn), c3: Checker) => mut1(List::reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        )
+      ),
+      ck_declare_methods(declared, c1)
+    ),
+    ck_declare_class_list(program, c, stmts_type_names(program)),
+    ck_declare_class_list_fns_ordered(program, c, stmts_type_names(program)),
+    declared => c1 => fnt_step_bind(
+      Unit,
+      List(SurfaceFn),
+      c1,
+      (ignored: Unit, c2: Checker) => frame_bind(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        (fs: List(SurfaceFn), c3: Checker) => mut1(List::reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        )
+      ),
+      ck_declare_methods(declared, c1),
+      ck_declare_methods_fns_ordered(declared, c1),
+      ignored => c2 => fnt_step_bind(
+        List(SurfaceFn),
+        List(SurfaceFn),
+        c2,
+        (fs: List(SurfaceFn), c3: Checker) => mut1(List::reverse(fs), c3),
+        ck_declare_instances(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        ),
+        ck_declare_instances_fns_ordered(
+          program,
+          c2,
+          stmts_class_names(program),
+          stmts_type_names(program),
+          Nil
+        ),
+        fs => c3 => ordered => ordered
+      )
+    )
+  )
+}
+
+pub theorem ck_declare_classes_fns_ordered(
+  c: Checker,
+  program: List(SurfaceStmt)
+): CkFnsStep(c, ck_declare_classes(c, program)) {
+  Eq::subst(
+    (z: Mut1(List(SurfaceFn), Checker)) => CkFnsStep(c, z),
+    Eq::sym(inf_classes_unf(c, program)),
+    inf_declare_classes_fns_ordered(c, program)
+  )
+}

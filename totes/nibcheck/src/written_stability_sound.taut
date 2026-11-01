@@ -1,0 +1,44 @@
+import "written_unique_sound.taut"
+import "written_sound.taut"
+
+// Rechecking the same source with a completed declaration environment cannot
+// change the type recorded during registration, provided both checks succeed.
+pub theorem ck_written_value_stable(
+  c: Checker,
+  next: Checker,
+  term: SurfaceTerm,
+  generics: Ordmap(Text, Ty),
+  position: frame_constructor_position(c) = frame_constructor_position(next),
+  borrow: frame_under_borrow(c) = frame_under_borrow(next),
+  first_clean: DiagnosticClean(ck_st(ck_written(c, term, generics))),
+  second_clean: DiagnosticClean(ck_st(ck_written(next, term, generics)))
+): ck_val(ck_written(c, term, generics)) = ck_val(ck_written(next, term, generics)) {
+  written_term_unique(
+    ck_written_sound(c, term, generics, first_clean),
+    ck_datas_of(next),
+    ck_val(ck_written(next, term, generics)),
+    Eq::subst(
+      (mode: Bool) => WrittenTerm(
+        ck_datas_of(next),
+        generics,
+        mode,
+        frame_under_borrow(c),
+        term,
+        ck_val(ck_written(next, term, generics))
+      ),
+      Eq::sym(position),
+      Eq::subst(
+        (borrowing: Bool) => WrittenTerm(
+          ck_datas_of(next),
+          generics,
+          frame_constructor_position(next),
+          borrowing,
+          term,
+          ck_val(ck_written(next, term, generics))
+        ),
+        Eq::sym(borrow),
+        ck_written_sound(next, term, generics, second_clean)
+      )
+    )
+  )
+}

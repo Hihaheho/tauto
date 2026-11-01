@@ -1,0 +1,189 @@
+import "allocation_state.taut"
+
+pub theorem allocation_rewrap<A: Type>(
+  m: Mut1(A, Checker),
+  fresh: CheckerAllocation(ck_st(m))
+): CheckerAllocation(ck_st(ck_rewrap1(m))) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => CheckerAllocation(ck_st(result)),
+    Eq::sym(ck_rewrap1_id(m)),
+    fresh
+  )
+}
+pub theorem ck_bind_value_allocation(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  item: TypeAllocated(ck_next_of(c), t),
+  fresh: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_bind_value(c, v, t))) {
+  Bool::cases(
+    (flag: Bool) => CheckerAllocation(ck_st(ck_bind_value_k(c, v, t, flag))),
+    ck_occurs(c, v, t),
+    ignored => ck_set_subst_allocation(c, v, t, ordered, below, item, fresh),
+    ignored => fresh
+  )
+}
+pub theorem ck_bind_other_allocation(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  item: TypeAllocated(ck_next_of(c), t),
+  fresh: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_bind_other(c, v, t))) {
+  Bool::cases(
+    (flag: Bool) => CheckerAllocation(ck_st(ck_bind_other_k(c, v, t, flag))),
+    ck_is_int(c, v),
+    ignored => allocation_rewrap(
+      ck_bind_value(c, v, t),
+      ck_bind_value_allocation(c, v, t, ordered, below, item, fresh)
+    ),
+    ignored => fresh
+  )
+}
+pub theorem ck_var_set_allocation(
+  c: Checker,
+  v: Nat,
+  w: Nat,
+  flag: Bool,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  item: TypeAllocated(ck_next_of(c), TyVar(w)),
+  fresh: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) {
+  match flag: CheckerAllocation(ck_st(ck_var_set(v, w, ck_int_k(c, w, flag)))) {
+    true => ck_set_subst_allocation(
+      ck_st(ck_add_int(c, w)),
+      v,
+      TyVar(w),
+      ordered,
+      below,
+      item,
+      fresh
+    )
+    false => ck_set_subst_allocation(c, v, TyVar(w), ordered, below, item, fresh)
+  }
+}
+pub theorem ck_bind_var_allocation(
+  c: Checker,
+  v: Nat,
+  w: Nat,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  item: TypeAllocated(ck_next_of(c), TyVar(w)),
+  fresh: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_bind_var(c, v, w))) {
+  Bool::cases(
+    (flag: Bool) => CheckerAllocation(ck_st(ck_bind_var_k(c, v, w, flag))),
+    Nat::eq(w, v),
+    ignored => ck_var_set_allocation(c, v, w, ck_is_int(c, v), ordered, below, item, fresh),
+    ignored => fresh
+  )
+}
+pub theorem ck_bind_unbound_allocation(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  item: TypeAllocated(ck_next_of(c), t),
+  fresh: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_bind_unbound(c, v, t))) {
+  match t: CheckerAllocation(ck_st(ck_bind_unbound(c, v, t))) {
+    TyVar(w) => allocation_rewrap(
+      ck_bind_var(c, v, w),
+      ck_bind_var_allocation(c, v, w, ordered, below, item, fresh)
+    )
+    TyInt(width) => allocation_rewrap(
+      ck_bind_value(c, v, TyInt(width)),
+      ck_bind_value_allocation(c, v, TyInt(width), ordered, below, item, fresh)
+    )
+    TyBool => allocation_rewrap(
+      ck_bind_other(c, v, TyBool),
+      ck_bind_other_allocation(c, v, TyBool, ordered, below, item, fresh)
+    )
+    TyText => allocation_rewrap(
+      ck_bind_other(c, v, TyText),
+      ck_bind_other_allocation(c, v, TyText, ordered, below, item, fresh)
+    )
+    TyUnit => allocation_rewrap(
+      ck_bind_other(c, v, TyUnit),
+      ck_bind_other_allocation(c, v, TyUnit, ordered, below, item, fresh)
+    )
+    TyNever => allocation_rewrap(
+      ck_bind_other(c, v, TyNever),
+      ck_bind_other_allocation(c, v, TyNever, ordered, below, item, fresh)
+    )
+    TyDecimal => allocation_rewrap(
+      ck_bind_other(c, v, TyDecimal),
+      ck_bind_other_allocation(c, v, TyDecimal, ordered, below, item, fresh)
+    )
+    TyFloat => allocation_rewrap(
+      ck_bind_other(c, v, TyFloat),
+      ck_bind_other_allocation(c, v, TyFloat, ordered, below, item, fresh)
+    )
+    TyFn(ps, result, kind) => allocation_rewrap(
+      ck_bind_other(c, v, TyFn(ps, result, kind)),
+      ck_bind_other_allocation(c, v, TyFn(ps, result, kind), ordered, below, item, fresh)
+    )
+    TyUnion(members) => allocation_rewrap(
+      ck_bind_other(c, v, TyUnion(members)),
+      ck_bind_other_allocation(c, v, TyUnion(members), ordered, below, item, fresh)
+    )
+    TyProduct(members) => allocation_rewrap(
+      ck_bind_other(c, v, TyProduct(members)),
+      ck_bind_other_allocation(c, v, TyProduct(members), ordered, below, item, fresh)
+    )
+    TyTagged(tags, inner) => allocation_rewrap(
+      ck_bind_other(c, v, TyTagged(tags, inner)),
+      ck_bind_other_allocation(c, v, TyTagged(tags, inner), ordered, below, item, fresh)
+    )
+    TyNamed(name, params) => allocation_rewrap(
+      ck_bind_other(c, v, TyNamed(name, params)),
+      ck_bind_other_allocation(c, v, TyNamed(name, params), ordered, below, item, fresh)
+    )
+    TyParam(name, kind) => allocation_rewrap(
+      ck_bind_other(c, v, TyParam(name, kind)),
+      ck_bind_other_allocation(c, v, TyParam(name, kind), ordered, below, item, fresh)
+    )
+    TyInfo(inner) => allocation_rewrap(
+      ck_bind_other(c, v, TyInfo(inner)),
+      ck_bind_other_allocation(c, v, TyInfo(inner), ordered, below, item, fresh)
+    )
+    TyBorrow(inner, mutable) => allocation_rewrap(
+      ck_bind_other(c, v, TyBorrow(inner, mutable)),
+      ck_bind_other_allocation(c, v, TyBorrow(inner, mutable), ordered, below, item, fresh)
+    )
+    TyPoly(gs, inner) => allocation_rewrap(
+      ck_bind_other(c, v, TyPoly(gs, inner)),
+      ck_bind_other_allocation(c, v, TyPoly(gs, inner), ordered, below, item, fresh)
+    )
+    TyApp(head, arg) => allocation_rewrap(
+      ck_bind_other(c, v, TyApp(head, arg)),
+      ck_bind_other_allocation(c, v, TyApp(head, arg), ordered, below, item, fresh)
+    )
+  }
+}
+pub theorem ck_bind_allocation(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(v), ck_next_of(c)) = true,
+  item: TypeAllocated(ck_next_of(c), t),
+  fresh: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_bind(c, v, t))) {
+  Bool::cases(
+    (flag: Bool) => CheckerAllocation(ck_st(ck_bind_k(c, v, t, flag))),
+    ck_is_bound(c, v),
+    ignored => allocation_rewrap(
+      ck_bind_unbound(c, v, t),
+      ck_bind_unbound_allocation(c, v, t, ordered, below, item, fresh)
+    ),
+    ignored => fresh
+  )
+}

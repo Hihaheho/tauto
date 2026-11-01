@@ -1,77 +1,366 @@
 // Parallel primitives. A task is started by performing `spawn` and its result
-// is taken by `task_join`;
+// is taken by `Task::join`;
 // where its body runs is up to the handler of `spawn`.
 
 // What a task will return: the value, or the task still running. The host
 // that runs the bodies in parallel makes it the second.
-affine struct Pending<A> { holds: () -> A }
+pub affine struct Pending(A: Type) { holds: () -> A }
 
-extern {
-  fn pending_ready<A>(v: A) -> Pending(A)
-  fn pending_take<A>(p: Pending(A)) -> A
+module Pending {
+  extern {
+    fn ready<A>(v: A): Pending(A)
+    // The result, once the signal of `Pending::signal` is raised.
+    fn take<A>(p: Pending(A)): A
+    // Whether the result is there, without waiting.
+    fn is_ready<A>(&p: Pending(A)): Bool
+    // Raised when the result is there.
+    fn signal<A>(&p: Pending(A)): Signal
+  }
 }
 
 // A started task. Linear, so a task is joined or detached, never dropped.
-linear struct Task<A> { result: Pending(A) }
+pub(open) linear struct Task(A: Type) { result: Pending(A) }
 
-effect spawn<A>: (f: () -> A ! {}) -> Task(A) resume 1
+// What a task may perform: it may diverge and may ask the host what a
+// program may ask it, but for standard input and the exit
+// (`docs/design/host-effects.md`). What the host answers is listed here only.
+effect Host {
+  Div,
+  stdout,
+  stderr,
+  argv,
+  wall_clock,
+  monotonic_clock,
+  sleep,
+  random,
+  secure_random,
+  fs_read,
+  fs_write,
+  fs_read_bytes,
+  fs_write_bytes,
+  fs_create_dir,
+  fs_list_dir,
+  fs_remove,
+  fs_temp_dir,
+  proc_run,
+  env,
+  permission,
+  net,
+  net_addr,
+  net_resolve,
+  tcp_listen,
+  tcp_accept,
+  tcp_connect,
+  tcp_read,
+  tcp_write,
+  tcp_shutdown,
+  tcp_close,
+  tcp_unlisten,
+  tls_accept,
+  tls_connect,
+  tls_read,
+  tls_write,
+  tls_shutdown,
+  tls_close,
+  wait
+}
 
-fn task_join<A>(t: Task(A)) -> A {
-  match t {
-    Task { result } => pending_take(result)
+// The host answers what a task performs, under the run's permissions: a task
+// runs apart from the handlers around its `spawn`, so none of them answers
+// what it asks. A task that performs an effect of its own puts its handler
+// in its body. A function that starts tasks takes their bodies with a row
+// variable bounded by `Host` (`<h: Host>`, `() -> A ! h`), and its caller
+// passes a body wrapped in its own handler.
+pub(open) effect spawn<A>(f: () -> A ! {Host}): Task(A) resume 1
+
+module Pending {
+  // Waits for the result and gives it.
+  pub fn join<A>(p: Pending(A)): A ! {wait} {
+    perform wait(signal(&p))
+    take(p)
   }
 }
 
-fn task_detach<A>(t: Task(A)) -> () {
-  match t {
-    Task { result } => ()
+module Task {
+  // Waits for the task to end and gives its result.
+  pub fn join<A>(t: Task(A)): A ! {wait} {
+    match t {
+      Task { result } => Pending::join(result)
+    }
   }
 }
 
-// The handler that runs each spawned body to its end at the `spawn`.
-fn run_eager<A, e>(&body: () -> A ! {spawn | e}) -> A ! {|e} {
-  handle { body() } with {
-    spawn(f), k => k(Task { result: pending_ready(f()) })
-    return v => v
+// A task looked at without waiting: its result, or the task given back to
+// be looked at or joined later.
+pub(open) linear enum Polled(A: Type) {
+  Finished(A),
+  Running(Task(A)),
+}
+
+module Task {
+  // Whether the task has ended, without waiting for it: a loop that has other
+  // work can look again later instead of blocking in `Task::join`.
+  pub fn poll<A>(t: Task(A)): Polled(A) {
+    match t {
+      Task { result } => if Pending::is_ready(&result) {
+        Finished(Pending::take(result))
+      } else {
+        Running(Task { result: result })
+      }
+    }
+  }
+
+  pub fn detach<A>(t: Task(A)): Unit {
+    match t {
+      Task { result } => #()
+    }
+  }
+
+  pub fn join_all<A>(ts: List(Task(A))): List(A) ! {wait} {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => {
+        let a := join(t)
+        Cons(a, join_all(rest))
+      }
+    }
   }
 }
 
-// Two bodies at once: both are started before either is joined.
-fn par<A, B>(f: () -> A, g: () -> B) -> Pair(A, B) ! {spawn} {
-  let a = perform spawn(f)
-  let b = perform spawn(g)
-  Pair { fst: task_join(a), snd: task_join(b) }
+// Two bodies at once: both are started before either is joined. A body
+// may wait for another task, as through a mutex or a channel.
+pub fn par<A, B>(
+  f: () -> A ! {Div, wait},
+  g: () -> B ! {Div, wait}
+): Pair(A, B) ! {∀ T. spawn(T), wait} {
+  let a := perform spawn(f)
+  let b := perform spawn(g)
+  Pair { fst: Task::join(a), snd: Task::join(b) }
+}
+
+// Any number of bodies at once: all are started before any is joined. As
+// with `par`, the bodies perform only `Div` and `wait`: what a task asks of
+// the host is in the row of the `spawn` that starts it, which here is the
+// row the list writes for its bodies. The recursion is structural, so it
+// performs no `Div` and the started tasks may stay live across it; a
+// recursion that may not end could leave them unjoined (`budget` drops what
+// follows a `Div`).
+pub fn spawn_all<A>(bs: List(() -> A ! {Div, wait})): List(A) ! {∀ T. spawn(T), wait} {
+  Task::join_all(spawn_bodies(bs))
+}
+
+// Starts the last body first, so that no task is live across the
+// recursion; `spawn` resumes once, so the started ones may stay live
+// across it.
+pub fn spawn_bodies<A>(bs: List(() -> A ! {Div, wait})): List(Task(A)) ! {∀ T. spawn(T)} {
+  match bs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let ts := spawn_bodies(rest)
+      Cons(perform spawn(f), ts)
+    }
+  }
 }
 
 // A cell any number of closures and tasks share. A `Ref` is a plain slot; a
 // `Mutex` hands its content to one task at a time; an `Atomic` is a
-// number tasks update without a lock. `ref_get` copies the value and leaves
-// it in the cell, so it asks `A: shared`; `ref_set` moves `v` in and drops
+// number tasks update without a lock. `Ref::get` copies the value and leaves
+// it in the cell, so it asks `A: shared`; `Ref::set` moves `v` in and drops
 // the value it replaces, which any `A` but a linear one allows.
-shared struct Ref<A> {}
-// The content is reached only through `mutex_with`, so a `Mutex` is shared
+pub shared struct Ref(A: Type) {}
+// The content is reached only through `Mutex::lock`, so a `Mutex` is shared
 // whatever it holds; the field only says the type mentions `A`.
-shared struct Mutex<A> { holds: () -> A }
-shared struct Atomic {}
+pub shared struct Mutex(A: Type) { holds: () -> A }
+pub shared struct Atomic {}
+// A handle on a `Ref` that does not keep it alive: it is no edge of the
+// graph the cycle check keeps acyclic (`docs/design/shared-levels.md`).
+// `Weak::get` gives the `Ref` back while a strong handle on it remains. When
+// it stops doing so is the backend's: after the last use of the last handle
+// where storages are counted, after a collection where a collector frees
+// them.
+pub shared struct Weak(A: Type) {}
 
-extern {
-  fn ref_new<A>(v: A) -> Ref(A)
-  fn ref_get<A: shared>(r: Ref(A)) -> A
-  fn ref_set<A>(r: Ref(A), v: A) -> ()
-  fn mutex_new<A>(v: A) -> Mutex(A)
-  fn mutex_take<A>(m: Mutex(A)) -> A
-  fn mutex_put<A>(m: Mutex(A), v: A) -> ()
-  fn atomic_new(n: u64) -> Atomic
-  fn atomic_load(a: Atomic) -> u64
-  fn atomic_store(a: Atomic, n: u64) -> ()
-  fn atomic_fetch_add(a: Atomic, n: u64) -> u64
+module Ref {
+  extern {
+    fn new<A>(v: A): Ref(A)
+    fn get<A: Shared>(r: Ref(A)): A
+    fn set<A>(r: Ref(A), v: A): Unit
+  }
 }
 
-// Runs `f` on the mutex's value; no other task sees it in between, as `f`
-// performs no effect.
-fn mutex_with<A, R>(m: Mutex(A), &f: (&mut x: A) -> R) -> R {
-  var v = mutex_take(m)
-  let r = f(&mut v)
-  mutex_put(m, v)
-  r
+module Weak {
+  extern {
+    fn of<A>(r: Ref(A)): Weak(A)
+    fn get<A>(w: Weak(A)): Option(Ref(A))
+  }
+}
+
+module Mutex {
+  extern {
+    fn new<A>(v: A): Mutex(A)
+    // A place in the line for the mutex's content. The signal is raised
+    // once the content is handed to this place: at once if the mutex is full
+    // and no one is ahead, or at the `Mutex::put` that comes to its turn.
+    fn claim<A>(m: Mutex(A)): Signal
+    // The content handed to the place `s` of the line, once `s` is raised.
+    fn take_claimed<A>(m: Mutex(A), s: Signal): A
+    // Hands `v` to the first place in the line, or keeps it if there is none.
+    fn put<A>(m: Mutex(A), v: A): Unit
+  }
+
+  // Takes the mutex's content, waiting while another task has it. The slot
+  // stays empty until `Mutex::put` gives a content back.
+  pub fn take<A>(m: Mutex(A)): A ! {wait} {
+    let s := claim(m)
+    perform wait(s)
+    take_claimed(m, s)
+  }
+
+  // Runs `f` on the mutex's value; no other task sees it in between, as `f`
+  // performs no effect.
+  pub fn lock<A, R>(m: Mutex(A), &f: (&mut x: A) -> R): R ! {wait} {
+    var v := take(m)
+    let r := f(&mut v)
+    put(m, v)
+    r
+  }
+}
+
+module Atomic {
+  extern {
+    fn new(n: u64): Atomic
+    fn load(a: Atomic): u64
+    fn store(a: Atomic, n: u64): Unit
+    fn fetch_add(a: Atomic, n: u64): u64
+  }
+}
+
+// A count of permits tasks take and give back: `Semaphore::acquire` waits
+// while none is left, so at most the starting count of tasks are between an
+// acquire and its release.
+//
+// It is built on two mutexes, as in Barz's semaphore: `count` holds the
+// number of permits left, and `gate` is full exactly when that number is
+// above zero, so a task that finds none left waits on `gate` without holding
+// `count`.
+pub(open) shared struct Semaphore { count: Mutex(u64), gate: Mutex(Unit) }
+
+module Semaphore {
+  pub fn new(n: u64): Semaphore {
+    let gate := Mutex::new(#())
+    // No one else has the new `gate` yet, so the claim is handed it at once.
+    if n == 0 { Mutex::take_claimed(gate, Mutex::claim(gate)) } else { #() }
+    Semaphore { count: Mutex::new(n), gate: gate }
+  }
+
+  pub fn acquire(s: Semaphore): Unit ! {wait} {
+    match s {
+      Semaphore { count, gate } => {
+        Mutex::take(gate)
+        let n := Mutex::take(count)
+        if n > 1 { Mutex::put(gate, #()) } else { #() }
+        Mutex::put(count, n - 1)
+      }
+    }
+  }
+
+  pub fn release(s: Semaphore): Unit ! {wait} {
+    match s {
+      Semaphore { count, gate } => {
+        let n := Mutex::take(count)
+        if n == 0 { Mutex::put(gate, #()) } else { #() }
+        Mutex::put(count, n + 1)
+      }
+    }
+  }
+}
+
+// A queue of values between tasks that holds at most `capacity` of them:
+// `Channel::send` waits while it is full, which slows a sender down to the
+// pace of its receivers, and `Channel::recv` waits while it is empty. Values
+// come out in the order they went in. `slots` counts the free places and
+// `items` the values in the queue, plus one once the channel is closed.
+pub(open) shared struct Channel(A: Type) { queue: Mutex(Fifo(A)), slots: Semaphore, items: Semaphore }
+
+// Values are pushed on `back` and popped from `front`; when `front` runs
+// out, `back` is moved onto it in reverse.
+pub(open) affine struct Fifo(A: Type) { front: Vec(A), back: Vec(A), closed: Bool }
+
+module Channel {
+  pub fn new<A>(capacity: u64): Channel(A) {
+    Channel {
+      queue: Mutex::new(Fifo { front: Vec::new(), back: Vec::new(), closed: false }),
+      slots: Semaphore::new(capacity),
+      items: Semaphore::new(0),
+    }
+  }
+
+  pub fn send<A>(ch: Channel(A), v: A): Unit ! {wait} {
+    match ch {
+      Channel { queue, slots, items } => {
+        Semaphore::acquire(slots)
+        match Mutex::take(queue) {
+          Fifo { front, back, closed } => {
+            var b := back
+            Vec::push(&mut b, v)
+            Mutex::put(queue, Fifo { front: front, back: b, closed: closed })
+          }
+        }
+        Semaphore::release(items)
+      }
+    }
+  }
+
+  // Tells the receivers that no more values come: once the values sent before
+  // are taken, `Channel::recv` gives `None` instead of waiting.
+  pub fn close<A>(ch: Channel(A)): Unit ! {wait} {
+    match ch {
+      Channel { queue, slots, items } => {
+        match Mutex::take(queue) {
+          Fifo { front, back, closed } => Mutex::put(
+            queue,
+            Fifo { front: front, back: back, closed: true }
+          )
+        }
+        Semaphore::release(items)
+      }
+    }
+  }
+
+  // The next value, or `None` when the channel is closed and empty. A
+  // receiver that finds it so gives the permit of the close back, for the
+  // next receiver to find the same.
+  pub fn recv<A>(ch: Channel(A)): Option(A) ! {wait} {
+    match ch {
+      Channel { queue, slots, items } => {
+        Semaphore::acquire(items)
+        match Mutex::take(queue) {
+          Fifo { front, back, closed } => {
+            var f := front
+            var b := back
+            if Vec::len(&f) == 0 {
+              while 0 < Vec::len(&b) {
+                match Vec::pop(&mut b) {
+                  Some(x) => Vec::push(&mut f, x)
+                  None => #()
+                }
+              }
+            } else { #() }
+            let got := Vec::pop(&mut f)
+            Mutex::put(queue, Fifo { front: f, back: b, closed: closed })
+            match got {
+              Some(v) => {
+                Semaphore::release(slots)
+                Some(v)
+              }
+              None => {
+                Semaphore::release(items)
+                None
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }

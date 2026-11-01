@@ -1,4 +1,4 @@
-import "../../../std/List.taut"
+import std::List
 import "datas.taut"
 
 // The checker of `types.rs`: its state, fresh variables, unification, what
@@ -6,20 +6,20 @@ import "datas.taut"
 // (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」). Resolving, unifying and `fits` follow the
 // substitution, so they take a number of steps, the checker's `steps`.
 
-inductive TySpan(): Type {
-  ty_span_mk(start: Nat, end: Nat): TySpan
+pub(open) inductive TySpan: Type {
+  TySpanMk(start: Nat, end: Nat): TySpan
 }
 
-inductive TypeError(): Type {
-  type_error_mk(message: Text, start: Nat, end: Nat): TypeError
+pub(open) inductive TypeError: Type {
+  TypeErrorMk(message: Text, start: Nat, end: Nat): TypeError
 }
 
 // A function's type with its type parameters and their bounds, instantiated
 // at each use, and its `where` constraints: the class and the generic it
 // constrains. The generics that are type constructors are in `ctors` too, with
 // the kind each takes; the kind in `generics` is the one it makes.
-inductive Scheme(): Type {
-  scheme_mk(
+pub(open) inductive Scheme: Type {
+  SchemeMk(
     generics: List(Pair(Text, Kind)),
     ty: Ty,
     preds: List(Pair(Text, Text)),
@@ -29,9 +29,9 @@ inductive Scheme(): Type {
 
 // A constraint to check once the types are known: `ty` has the `class` the
 // use of `what` asks for, given what the enclosing function assumes.
-inductive TyPending(): Type {
-  ty_pending_mk(
-    class: Text,
+pub(open) inductive TyPending: Type {
+  TyPendingMk(
+    r#class: Text,
     ty: Ty,
     what: Text,
     assume: List(Pair(Text, Text)),
@@ -40,48 +40,111 @@ inductive TyPending(): Type {
   ): TyPending
 }
 
-inductive EffectSig(): Type {
-  effect_sig_mk(generics: List(Text), params: List(Ty), result: Ty): EffectSig
+// A constructor whose owner is determined after the surrounding types are known.
+pub(open) inductive TyConstructorUse: Type {
+  TyConstructorUseMk(name: Text, ty: Ty, start: Nat, end: Nat): TyConstructorUse
+}
+
+pub(open) inductive EffectSig: Type {
+  EffectSigMk(generics: List(Text), params: List(Ty), result: Ty): EffectSig
 }
 
 // `view`: a `var &x`, advanced through `&mut x`, never assigned.
-inductive Local(): Type {
-  local_mk(name: Text, ty: Ty, mutable: Yn, view: Yn): Local
+pub(open) inductive Local: Type {
+  LocalMk(name: Text, ty: Ty, mutable: Bool, r#view: Bool): Local
 }
 
-inductive LocalKey(): Type {
-  local_key_mk(name: Text, site: Nat): LocalKey
+pub(open) inductive LocalKey: Type {
+  LocalKeyMk(name: Text, site: Nat): LocalKey
 }
 
-inductive TyOp(): Type {
-  ty_op_mk(start: Nat, end: Nat, ty: Ty): TyOp
+pub(open) inductive TyOp: Type {
+  TyOpMk(start: Nat, end: Nat, occurrence: Option(TermOccurrence), ty: Ty): TyOp
+}
+
+// Where a term's type or an operator's width was observed: its span, and the
+// node itself. Two nodes may share a span; one node checked again keeps its
+// occurrence.
+pub(open) inductive TermAt: Type {
+  TermAtMk(start: Nat, end: Nat, occurrence: Option(TermOccurrence)): TermAt
+}
+
+pub fn term_at_of(t: SurfaceTerm): TermAt {
+  TermAt { start: t.start, end: t.end, occurrence: t.occurrence }
+}
+
+pub fn term_at_compare_path(a: List(Nat), b: List(Nat)): Ordering {
+  match a: Ordering {
+    Nil => match b: Ordering {
+      Nil => Equal
+      Cons(y, ys) => Less
+    }
+    Cons(x, xs) => match b: Ordering {
+      Nil => Greater
+      Cons(y, ys) => match Ordmap::compare_nat(x, y): Ordering {
+        Equal => term_at_compare_path(xs, ys)
+        Less => Less
+        Greater => Greater
+      }
+    }
+  }
+}
+
+pub fn term_at_compare_occurrence(a: Option(TermOccurrence), b: Option(TermOccurrence)): Ordering {
+  match a: Ordering {
+    None => match b: Ordering {
+      None => Equal
+      Some(y) => Less
+    }
+    Some(x) => match b: Ordering {
+      None => Greater
+      Some(y) => match x: Ordering {
+        TermOccurrenceMk(xp) => match y: Ordering {
+          TermOccurrenceMk(yp) => term_at_compare_path(xp, yp)
+        }
+      }
+    }
+  }
+}
+
+// By span first, so that the report reads in source order.
+pub fn term_at_compare(a: TermAt, b: TermAt): Ordering {
+  match Ordmap::compare_nat(a.start, b.start): Ordering {
+    Equal => match Ordmap::compare_nat(a.end, b.end): Ordering {
+      Equal => term_at_compare_occurrence(a.occurrence, b.occurrence)
+      Less => Less
+      Greater => Greater
+    }
+    Less => Less
+    Greater => Greater
+  }
 }
 
 // An integer literal, `-magnitude` when `negative` (never `-0`).
-inductive TyLiteral(): Type {
-  ty_literal_mk(start: Nat, end: Nat, negative: Yn, magnitude: Nat, ty: Ty): TyLiteral
+pub(open) inductive TyLiteral: Type {
+  TyLiteralMk(start: Nat, end: Nat, negative: Bool, magnitude: Nat, ty: Ty): TyLiteral
 }
 
-inductive TyLet(): Type {
-  ty_let_mk(name: Text, ty: Ty): TyLet
+pub(open) inductive TyLet: Type {
+  TyLetMk(name: Text, ty: Ty): TyLet
 }
 
 // A type that must fit a bound: an instantiated type parameter.
-inductive TyBound(): Type {
-  ty_bound_mk(ty: Ty, kind: Kind, start: Nat, end: Nat): TyBound
+pub(open) inductive TyBound: Type {
+  TyBoundMk(ty: Ty, kind: Kind, start: Nat, end: Nat): TyBound
 }
 
 // A type constructor variable at a use: what it takes and makes, and the
 // function it was for.
-inductive TyCtorBound(): Type {
-  ty_ctor_bound_mk(ty: Ty, arg: Kind, result: Kind, what: Text, start: Nat, end: Nat): TyCtorBound
+pub(open) inductive TyCtorBound: Type {
+  TyCtorBoundMk(ty: Ty, arg: Kind, result: Kind, what: Text, start: Nat, end: Nat): TyCtorBound
 }
 
 // Two types made the same, or one fitted to the other, with the generics
 // `gs` read as `rigid`: the rigid types are checked again to be in neither at
 // the end (`ck_rigid_kept`).
-inductive TyKept(): Type {
-  ty_kept_mk(
+pub(open) inductive TyKept: Type {
+  TyKeptMk(
     kept_generics: List(Pair(Text, Kind)),
     kept_rigid: Ordmap(Text, Ty),
     kept_a: Ty,
@@ -89,66 +152,92 @@ inductive TyKept(): Type {
   ): TyKept
 }
 
-inductive TyClosure(): Type {
-  ty_closure_mk(ty: Ty, start: Nat, end: Nat): TyClosure
+// A product whose members are told apart once the types are known.
+pub(open) inductive TyProductCheck: Type {
+  TyProductCheckMk(members: List(Ty), start: Nat, end: Nat): TyProductCheck
 }
 
-fn local_key_compare(a: LocalKey, b: LocalKey) -> Ordering {
-  ty_then(ordmap_compare_text(a.name, b.name), ordmap_compare_nat(a.site, b.site))
+pub(open) inductive TyClosure: Type {
+  TyClosureMk(ty: Ty, start: Nat, end: Nat): TyClosure
+}
+
+pub fn local_key_compare(a: LocalKey, b: LocalKey): Ordering {
+  ty_then(Ordmap::compare_text(a.name, b.name), Ordmap::compare_nat(a.site, b.site))
 }
 
 // Whether a literal fits in the integers of width `w`.
-fn width_fits(w: Width, negative: Yn, magnitude: Nat) -> Yn {
-  match negative -> Yn {
-    yes => match w -> Yn {
+pub fn width_fits(w: Width, negative: Bool, magnitude: Nat): Bool {
+  match negative: Bool {
+    true => match w: Bool {
       Width32 => magnitude <= 2147483648
-      Width64 => yes
-      _ => no
+      Width64 => true
+      _ => false
     }
-    no => match w -> Yn {
+    false => match w: Bool {
       Width32 => magnitude <= 2147483647
-      Width64 => yes
+      Width64 => true
       WidthU8 => magnitude <= 255
       WidthU32 => magnitude <= 4294967295
-      WidthU64 => yes
+      WidthU64 => true
     }
   }
 }
 
 // The text of a literal's value.
-fn literal_text(l: TyLiteral) -> Text {
-  match l.negative -> Text {
-    yes => cat2("-", text_of_nat(l.magnitude))
-    no => text_of_nat(l.magnitude)
+pub fn literal_text(l: TyLiteral): Text {
+  match l.negative: Text {
+    true => cat2("-", Text::of_nat(l.magnitude))
+    false => Text::of_nat(l.magnitude)
   }
 }
 
 // A class the program declares, and the kind its parameter is bounded by. For
 // a class of type constructors, `arg` is the kind its parameter takes; the
 // `bound` is what it makes.
-inductive ClassInfo(): Type {
-  class_info_mk(decl: SurfaceClass, bound: Kind, arg: Option(Kind)): ClassInfo
+pub(open) inductive ClassInfo: Type {
+  ClassInfoMk(decl: SurfaceClass, bound: Kind, arg: Option(Kind)): ClassInfo
 }
 
 // An instance: its generics with their bounds, the type it is for over
 // them, and its `where` (a class and the generic it constrains).
-inductive InstanceInfo(): Type {
-  instance_info_mk(
+pub(open) inductive InstanceInfo: Type {
+  InstanceInfoMk(
     generics: List(Pair(Text, Kind)),
     head: Ty,
     preds: List(Pair(Text, Text))
   ): InstanceInfo
 }
 
-inductive Checker(): Type {
-  checker_mk(
+// A name a type written in a body may use: a generic of the function being
+// checked (`A` for its `A`), or the name an arm for every instance gives a
+// type argument (`T` for the rigid type of `∀ T. res<T>(…)`).
+pub(open) inductive TypeName: Type {
+  TypeNameMk(name: Text, param: Text, kind: Kind): TypeName
+}
+
+// What a type written in a body reads each name as, the first of the names
+// standing.
+pub fn type_scope(xs: List(TypeName)): Ordmap(Text, Ty) {
+  match xs: Ordmap(Text, Ty) {
+    Nil => Ordmap::empty()
+    Cons(x, rest) => Ordmap::insert(
+      type_scope(rest),
+      x.name,
+      TyParam(x.param, x.kind),
+      Ordmap::compare_text
+    )
+  }
+}
+
+pub(open) inductive Checker: Type {
+  CheckerMk(
     classes: Ordmap(Text, ClassInfo),
     // Keyed by `instance_key`: the class's name and the constructor at the
     // head of the instance, joined by a space.
     instances: Ordmap(Text, InstanceInfo),
     subst: Ordmap(Nat, Ty),
     next: Nat,
-    ints: Ordmap(Nat, Yn),
+    ints: Ordmap(Nat, Bool),
     fns: Ordmap(Text, Scheme),
     effects: Ordmap(Text, EffectSig),
     quants: Ordmap(Text, Quant),
@@ -165,7 +254,7 @@ inductive Checker(): Type {
     // Type constructor variables at their uses, newest first.
     ctor_bounds: List(TyCtorBound),
     // Writing a type where a constructor is wanted: an instance's head.
-    constructor_position: Yn,
+    constructor_position: Bool,
     // How many rigid generics `fits` has made, for their names.
     rigids: Nat,
     // The uses of rigid generics, newest first.
@@ -174,33 +263,39 @@ inductive Checker(): Type {
     assume: List(Pair(Text, Text)),
     // Constraints of the uses, checked in `ck_finish`.
     pending: List(TyPending),
+    constructor_uses: List(TyConstructorUse),
     locals: Ordmap(LocalKey, Ty),
     // The type of each term as it was inferred, newest first: a term inferred
     // again is in it again, and the newest is the one that stands.
-    terms: List(Pair(RowSpan, Ty)),
+    terms: List(Pair(TermAt, Ty)),
     // Each closure's result type, which may not be a borrow: checked once the
     // types are known.
     closure_results: List(TyClosure),
+    product_checks: List(TyProductCheck),
     // The expected type of the lambda being checked.
     hint: Option(Ty),
     // The type being written is the one directly under a `&`: `Slice(A)` may be
     // written there only.
-    under_borrow: Yn,
+    under_borrow: Bool,
+    // The generics of the function being checked, and the names an arm for
+    // every instance (`∀ A. res<A>(…)`) gives its type arguments: what a
+    // type written in a body reads a name as.
+    type_params: List(TypeName),
     // Enough steps to follow the substitution through the program's types.
     steps: Nat
   ): Checker
 }
 
-fn checker_new(steps: Nat) -> Checker {
+pub fn checker_new(steps: Nat): Checker {
   Checker {
-    classes: ordmap_empty(),
-    instances: ordmap_empty(),
-    subst: ordmap_empty(),
+    classes: Ordmap::empty(),
+    instances: Ordmap::empty(),
+    subst: Ordmap::empty(),
     next: 0,
-    ints: ordmap_empty(),
-    fns: ordmap_empty(),
-    effects: ordmap_empty(),
-    quants: ordmap_empty(),
+    ints: Ordmap::empty(),
+    fns: Ordmap::empty(),
+    effects: Ordmap::empty(),
+    quants: Ordmap::empty(),
     datas: datas_empty(steps),
     errors: Nil,
     ops: Nil,
@@ -210,86 +305,90 @@ fn checker_new(steps: Nat) -> Checker {
     lets: Nil,
     bounds: Nil,
     ctor_bounds: Nil,
-    constructor_position: no,
+    constructor_position: false,
     rigids: 0,
     kept: Nil,
     assume: Nil,
     pending: Nil,
-    locals: ordmap_empty(),
+    constructor_uses: Nil,
+    locals: Ordmap::empty(),
     terms: Nil,
     closure_results: Nil,
-    hint: None(),
-    under_borrow: no,
+    product_checks: Nil,
+    hint: None,
+    under_borrow: false,
+    type_params: Nil,
     steps: steps
   }
 }
 
 // ----- setters, for the fields that are borrowed whole -----
 
-fn set_to<A>(&mut slot: A, v: A) -> () {
+pub fn set_to<A>(&mut slot: A, v: A): Unit {
   slot := v
 }
 
-fn bump(&mut n: Nat) -> () {
+pub fn bump(&mut n: Nat): Unit {
   n := n + 1
 }
 
-fn ck_error(&mut c: Checker, message: Text, span: TySpan) -> () {
+pub fn ck_error(&mut c: Checker, message: Text, span: TySpan): Unit {
   set_to(
     &mut c.errors,
     Cons(TypeError { message: message, start: span.start, end: span.end }, c.errors)
   )
 }
 
-fn span_of(t: SurfaceTerm) -> TySpan {
+pub fn span_of(t: SurfaceTerm): TySpan {
   TySpan { start: t.start, end: t.end }
 }
 
-fn ck_add_int(&mut c: Checker, v: Nat) -> () {
-  set_to(&mut c.ints, ordmap_insert(c.ints, v, yes, ordmap_compare_nat))
+pub fn ck_add_int(&mut c: Checker, v: Nat): Unit {
+  set_to(&mut c.ints, Ordmap::insert(c.ints, v, true, Ordmap::compare_nat))
 }
 
-fn ck_fresh(&mut c: Checker) -> Ty {
-  let v = c.next
+pub fn ck_fresh(&mut c: Checker): Ty {
+  let v := c.next
   bump(&mut c.next)
   TyVar(v)
 }
 
-fn ck_fresh_int(&mut c: Checker) -> Ty {
-  let v = c.next
+pub fn ck_fresh_int(&mut c: Checker): Ty {
+  let v := c.next
   bump(&mut c.next)
   ck_add_int(&mut c, v)
   TyVar(v)
 }
 
-fn ck_is_int(&c: Checker, v: Nat) -> Yn {
-  ordmap_contains(c.ints, v, ordmap_compare_nat)
+pub fn ck_is_int(&c: Checker, v: Nat): Bool {
+  Ordmap::contains(c.ints, v, Ordmap::compare_nat)
 }
 
 // ----- resolving -----
 
 // The type with every bound variable replaced.
 mutual {
-  fn ty_resolve_list_in(k: Nat, subst: Ordmap(Nat, Ty), ts: List(Ty)) -> List(Ty) {
-    match k -> List(Ty) {
-      zero => ts
-      succ(j) => match ts -> List(Ty) {
+  pub fn ty_resolve_list_in(k: Nat, subst: Ordmap(Nat, Ty), ts: List(Ty)): List(Ty) {
+    match k: List(Ty) {
+      Zero => ts
+      Succ(j) => match ts: List(Ty) {
         Nil => Nil
         Cons(t, rest) => Cons(ty_resolve_in(j, subst, t), ty_resolve_list_in(j, subst, rest))
       }
     }
   }
 
-  fn ty_resolve_in(k: Nat, subst: Ordmap(Nat, Ty), t: Ty) -> Ty {
-    match k -> Ty {
-      zero => t
-      succ(j) => match t -> Ty {
-        TyVar(i) => match ordmap_get(subst, i, ordmap_compare_nat) -> Ty {
+  pub fn ty_resolve_in(k: Nat, subst: Ordmap(Nat, Ty), t: Ty): Ty {
+    match k: Ty {
+      Zero => t
+      Succ(j) => match t: Ty {
+        TyVar(i) => match Ordmap::get(subst, i, Ordmap::compare_nat): Ty {
           Some(x) => ty_resolve_in(j, subst, x)
           None => TyVar(i)
         }
         TyFn(ps, r, fk) => TyFn(ty_resolve_list_in(j, subst, ps), ty_resolve_in(j, subst, r), fk)
         TyUnion(ts) => ty_union(ty_resolve_list_in(j, subst, ts))
+        TyProduct(ts) => ty_product(ty_resolve_list_in(j, subst, ts))
         TyTagged(tags, x) => ty_tagged(tags, ty_resolve_in(j, subst, x))
         TyNamed(n, args) => TyNamed(n, ty_resolve_list_in(j, subst, args))
         TyInfo(x) => TyInfo(ty_resolve_in(j, subst, x))
@@ -309,126 +408,128 @@ mutual {
   }
 }
 
-fn ck_resolve(&c: Checker, t: Ty) -> Ty {
+pub fn ck_resolve(&c: Checker, t: Ty): Ty {
   ty_resolve_in(c.steps, c.subst, t)
 }
 
-fn ck_kind(&c: Checker, t: Ty) -> Kind {
+pub fn ck_kind(&c: Checker, t: Ty): Kind {
   datas_kind(c.datas, ck_resolve(&c, t))
 }
 
 mutual {
-  fn ck_occurs_any_in(k: Nat, &c: Checker, v: Nat, ts: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ts -> Yn {
-        Nil => no
+  pub fn ck_occurs_any_in(k: Nat, &c: Checker, v: Nat, ts: List(Ty)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ts: Bool {
+        Nil => false
         Cons(t, rest) => ck_occurs_in(j, &c, v, t) || ck_occurs_any_in(j, &c, v, rest)
       }
     }
   }
 
-  fn ck_occurs_in(k: Nat, &c: Checker, v: Nat, t: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ck_resolve(&c, t) -> Yn {
+  pub fn ck_occurs_in(k: Nat, &c: Checker, v: Nat, t: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ck_resolve(&c, t): Bool {
         TyVar(i) => i == v
         TyFn(ps, r, fk) => ck_occurs_any_in(j, &c, v, ps) || ck_occurs_in(j, &c, v, r)
         TyUnion(ts) => ck_occurs_any_in(j, &c, v, ts)
+        TyProduct(ts) => ck_occurs_any_in(j, &c, v, ts)
         TyTagged(tags, x) => ck_occurs_in(j, &c, v, x)
         TyInfo(x) => ck_occurs_in(j, &c, v, x)
         TyBorrow(x, m) => ck_occurs_in(j, &c, v, x)
         TyPoly(gs, x) => ck_occurs_in(j, &c, v, x)
         TyApp(h, x) => ck_occurs_in(j, &c, v, h) || ck_occurs_in(j, &c, v, x)
         TyNamed(n, args) => ck_occurs_any_in(j, &c, v, args)
-        _ => no
+        _ => false
       }
     }
   }
 }
 
-fn ck_occurs(&c: Checker, v: Nat, t: Ty) -> Yn {
+pub fn ck_occurs(&c: Checker, v: Nat, t: Ty): Bool {
   ck_occurs_in(c.steps, &c, v, t)
 }
 
 mutual {
-  fn ck_has_vars_any_in(k: Nat, &c: Checker, ts: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ts -> Yn {
-        Nil => no
+  pub fn ck_has_vars_any_in(k: Nat, &c: Checker, ts: List(Ty)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ts: Bool {
+        Nil => false
         Cons(t, rest) => ck_has_vars_in(j, &c, t) || ck_has_vars_any_in(j, &c, rest)
       }
     }
   }
 
-  fn ck_has_vars_in(k: Nat, &c: Checker, t: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ck_resolve(&c, t) -> Yn {
-        TyVar(i) => yes
+  pub fn ck_has_vars_in(k: Nat, &c: Checker, t: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ck_resolve(&c, t): Bool {
+        TyVar(i) => true
         TyFn(ps, r, fk) => ck_has_vars_any_in(j, &c, ps) || ck_has_vars_in(j, &c, r)
         TyUnion(ts) => ck_has_vars_any_in(j, &c, ts)
+        TyProduct(ts) => ck_has_vars_any_in(j, &c, ts)
         TyTagged(tags, x) => ck_has_vars_in(j, &c, x)
         TyInfo(x) => ck_has_vars_in(j, &c, x)
         TyBorrow(x, m) => ck_has_vars_in(j, &c, x)
         TyPoly(gs, x) => ck_has_vars_in(j, &c, x)
         TyApp(h, x) => ck_has_vars_in(j, &c, h) || ck_has_vars_in(j, &c, x)
         TyNamed(n, args) => ck_has_vars_any_in(j, &c, args)
-        _ => no
+        _ => false
       }
     }
   }
 }
 
-fn ck_has_vars(&c: Checker, t: Ty) -> Yn {
+pub fn ck_has_vars(&c: Checker, t: Ty): Bool {
   ck_has_vars_in(c.steps, &c, t)
 }
 
 // ----- unifying -----
 
-fn ck_set_subst(&mut c: Checker, v: Nat, t: Ty) -> () {
-  set_to(&mut c.subst, ordmap_insert(c.subst, v, t, ordmap_compare_nat))
+pub fn ck_set_subst(&mut c: Checker, v: Nat, t: Ty): Unit {
+  set_to(&mut c.subst, Ordmap::insert(c.subst, v, t, Ordmap::compare_nat))
 }
 
 // `v := t`, unless `v` occurs in `t`.
-fn ck_bind_value(&mut c: Checker, v: Nat, t: Ty) -> Yn {
+pub fn ck_bind_value(&mut c: Checker, v: Nat, t: Ty): Bool {
   if ck_occurs(&c, v, t) {
-    no
+    false
   } else {
     ck_set_subst(&mut c, v, t)
-    yes
+    true
   }
 }
 
 // `t` is not a variable or an integer type: a variable that must be an
 // integer (`ck_is_int`) is not bound to it.
-fn ck_bind_other(&mut c: Checker, v: Nat, t: Ty) -> Yn {
+pub fn ck_bind_other(&mut c: Checker, v: Nat, t: Ty): Bool {
   if ck_is_int(&c, v) {
-    no
+    false
   } else {
     ck_bind_value(&mut c, v, t)
   }
 }
 
-fn ck_bind_var(&mut c: Checker, v: Nat, w: Nat) -> Yn {
+pub fn ck_bind_var(&mut c: Checker, v: Nat, w: Nat): Bool {
   if w == v {
-    yes
+    true
   } else {
     if ck_is_int(&c, v) {
       ck_add_int(&mut c, w)
     }
     ck_set_subst(&mut c, v, TyVar(w))
-    yes
+    true
   }
 }
 
-fn ck_is_bound(&c: Checker, v: Nat) -> Yn {
-  ordmap_contains(c.subst, v, ordmap_compare_nat)
+pub fn ck_is_bound(&c: Checker, v: Nat): Bool {
+  Ordmap::contains(c.subst, v, Ordmap::compare_nat)
 }
 
-fn ck_bind_unbound(&mut c: Checker, v: Nat, t: Ty) -> Yn {
-  match t -> Yn {
+pub fn ck_bind_unbound(&mut c: Checker, v: Nat, t: Ty): Bool {
+  match t: Bool {
     TyVar(w) => ck_bind_var(&mut c, v, w)
     TyInt(w) => ck_bind_value(&mut c, v, TyInt(w))
     _ => ck_bind_other(&mut c, v, t)
@@ -436,54 +537,54 @@ fn ck_bind_unbound(&mut c: Checker, v: Nat, t: Ty) -> Yn {
 }
 
 // A variable already bound (resolving ran out of steps) is not bound again.
-fn ck_bind(&mut c: Checker, v: Nat, t: Ty) -> Yn {
+pub fn ck_bind(&mut c: Checker, v: Nat, t: Ty): Bool {
   if ck_is_bound(&c, v) {
-    no
+    false
   } else {
     ck_bind_unbound(&mut c, v, t)
   }
 }
 
-fn ty_is_var(t: Ty) -> Yn {
-  match t -> Yn {
-    TyVar(v) => yes
-    _ => no
+pub fn ty_is_var(t: Ty): Bool {
+  match t: Bool {
+    TyVar(v) => true
+    _ => false
   }
 }
 
 // The generics of a `TyPoly` as types no other is equal to.
-fn ck_rigid(gs: List(Pair(Text, Kind)), &mut c: Checker) -> Ordmap(Text, Ty) {
-  match gs -> Ordmap(Text, Ty) {
-    Nil => ordmap_empty()
+pub fn ck_rigid(gs: List(Pair(Text, Kind)), &mut c: Checker): Ordmap(Text, Ty) {
+  match gs: Ordmap(Text, Ty) {
+    Nil => Ordmap::empty()
     Cons(g, rest) => {
       bump(&mut c.rigids)
-      let t = TyParam(cat3(g.fst, "#", text_of_nat(c.rigids)), g.snd)
-      ordmap_insert(ck_rigid(rest, &mut c), g.fst, t, ordmap_compare_text)
+      let t := TyParam(cat3(g.fst, "#", Text::of_nat(c.rigids)), g.snd)
+      Ordmap::insert(ck_rigid(rest, &mut c), g.fst, t, Ordmap::compare_text)
     }
   }
 }
 
 // The names `ck_rigid` gave the generics, or `None` if one has none.
-fn ty_rigid_names(gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty)) -> Option(List(Text)) {
-  match gs -> Option(List(Text)) {
+pub fn ty_rigid_names(gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty)): Option(List(Text)) {
+  match gs: Option(List(Text)) {
     Nil => Some(Nil)
-    Cons(g, rest) => match ordmap_get(rigid, g.fst, ordmap_compare_text) -> Option(List(Text)) {
-      Some(t) => match t -> Option(List(Text)) {
-        TyParam(n, k) => match ty_rigid_names(rest, rigid) -> Option(List(Text)) {
+    Cons(g, rest) => match Ordmap::get(rigid, g.fst, Ordmap::compare_text): Option(List(Text)) {
+      Some(t) => match t: Option(List(Text)) {
+        TyParam(n, k) => match ty_rigid_names(rest, rigid): Option(List(Text)) {
           Some(ns) => Some(Cons(n, ns))
-          None => None()
+          None => None
         }
-        _ => None()
+        _ => None
       }
-      None => None()
+      None => None
     }
   }
 }
 
-fn text_list_distinct(xs: List(Text)) -> Yn {
-  match xs -> Yn {
-    Nil => yes
-    Cons(x, rest) => !list_has_text(rest, x) && text_list_distinct(rest)
+pub fn text_list_distinct(xs: List(Text)): Bool {
+  match xs: Bool {
+    Nil => true
+    Cons(x, rest) => not(list_has_text(rest, x)) && text_list_distinct(rest)
   }
 }
 
@@ -491,31 +592,32 @@ fn text_list_distinct(xs: List(Text)) -> Yn {
 // bound (resolving ran out of steps) or running out of steps here counts as
 // one.
 mutual {
-  fn ck_mentions_any_in(k: Nat, &c: Checker, ns: List(Text), ts: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => yes
-      succ(j) => match ts -> Yn {
-        Nil => no
+  pub fn ck_mentions_any_in(k: Nat, &c: Checker, ns: List(Text), ts: List(Ty)): Bool {
+    match k: Bool {
+      Zero => true
+      Succ(j) => match ts: Bool {
+        Nil => false
         Cons(t, rest) => ck_mentions_in(j, &c, ns, t) || ck_mentions_any_in(j, &c, ns, rest)
       }
     }
   }
 
-  fn ck_mentions_in(k: Nat, &c: Checker, ns: List(Text), t: Ty) -> Yn {
-    match k -> Yn {
-      zero => yes
-      succ(j) => match ck_resolve(&c, t) -> Yn {
+  pub fn ck_mentions_in(k: Nat, &c: Checker, ns: List(Text), t: Ty): Bool {
+    match k: Bool {
+      Zero => true
+      Succ(j) => match ck_resolve(&c, t): Bool {
         TyVar(i) => ck_is_bound(&c, i)
         TyParam(n, pk) => list_has_text(ns, n)
         TyFn(ps, r, fk) => ck_mentions_any_in(j, &c, ns, ps) || ck_mentions_in(j, &c, ns, r)
         TyUnion(ts) => ck_mentions_any_in(j, &c, ns, ts)
+        TyProduct(ts) => ck_mentions_any_in(j, &c, ns, ts)
         TyTagged(tags, x) => ck_mentions_in(j, &c, ns, x)
         TyInfo(x) => ck_mentions_in(j, &c, ns, x)
         TyBorrow(x, m) => ck_mentions_in(j, &c, ns, x)
         TyPoly(gs, x) => ck_mentions_in(j, &c, ns, x)
         TyApp(h, x) => ck_mentions_in(j, &c, ns, h) || ck_mentions_in(j, &c, ns, x)
         TyNamed(n, args) => ck_mentions_any_in(j, &c, ns, args)
-        _ => no
+        _ => false
       }
     }
   }
@@ -524,97 +626,92 @@ mutual {
 // After `a` and `b` were made the same with `gs` read as `rigid`: the rigid
 // types are distinct and none of them got into `a` or `b` (through a variable
 // bound to one).
-fn ck_rigid_kept(
+pub fn ck_rigid_kept(
   &c: Checker,
   gs: List(Pair(Text, Kind)),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty
-) -> Yn {
-  match ty_rigid_names(gs, rigid) -> Yn {
-    None => no
-    Some(
+): Bool {
+  match ty_rigid_names(gs, rigid): Bool {
+    None => false
+    Some(ns) => text_list_distinct(
       ns
-    ) => text_list_distinct(
-      ns
-    ) && !ck_mentions_in(c.steps, &c, ns, a) && !ck_mentions_in(c.steps, &c, ns, b)
+    ) && not(ck_mentions_in(c.steps, &c, ns, a)) && not(ck_mentions_in(c.steps, &c, ns, b))
   }
 }
 
-fn ck_keep(
+pub fn ck_keep(
   &mut c: Checker,
   gs: List(Pair(Text, Kind)),
   rigid: Ordmap(Text, Ty),
   a: Ty,
   b: Ty
-) -> Yn {
+): Bool {
   if ck_rigid_kept(&c, gs, rigid, a, b) {
     set_to(
       &mut c.kept,
       Cons(TyKept { kept_generics: gs, kept_rigid: rigid, kept_a: a, kept_b: b }, c.kept)
     )
-    yes
+    true
   } else {
-    no
+    false
   }
 }
 
 // Two lists of generics have the same kinds, in order.
-fn ty_kinds_match(ga: List(Pair(Text, Kind)), gb: List(Pair(Text, Kind))) -> Yn {
-  match ga -> Yn {
-    Nil => match gb -> Yn {
-      Nil => yes
-      Cons(b, brest) => no
+pub fn ty_kinds_match(ga: List(Pair(Text, Kind)), gb: List(Pair(Text, Kind))): Bool {
+  match ga: Bool {
+    Nil => match gb: Bool {
+      Nil => true
+      Cons(b, brest) => false
     }
-    Cons(a, arest) => match gb -> Yn {
-      Nil => no
+    Cons(a, arest) => match gb: Bool {
+      Nil => false
       Cons(b, brest) => kind_eq(a.snd, b.snd) && ty_kinds_match(arest, brest)
     }
   }
 }
 
 // The generics of a `TyPoly` as fresh variables, at a use.
-fn ck_instance_of(gs: List(Pair(Text, Kind)), &mut c: Checker) -> Ordmap(Text, Ty) {
-  match gs -> Ordmap(Text, Ty) {
-    Nil => ordmap_empty()
+pub fn ck_instance_of(gs: List(Pair(Text, Kind)), &mut c: Checker): Ordmap(Text, Ty) {
+  match gs: Ordmap(Text, Ty) {
+    Nil => Ordmap::empty()
     Cons(g, rest) => {
-      let v = ck_fresh(&mut c)
+      let v := ck_fresh(&mut c)
       set_to(&mut c.bounds, Cons(TyBound { ty: v, kind: g.snd, start: 0, end: 0 }, c.bounds))
-      ordmap_insert(ck_instance_of(rest, &mut c), g.fst, v, ordmap_compare_text)
+      Ordmap::insert(ck_instance_of(rest, &mut c), g.fst, v, Ordmap::compare_text)
     }
   }
 }
 
 // `gb`'s generics, named as `ga`'s are in `rigid`.
-fn ty_poly_map(
+pub fn ty_poly_map(
   gb: List(Pair(Text, Kind)),
   ga: List(Pair(Text, Kind)),
   rigid: Ordmap(Text, Ty)
-) -> Ordmap(Text, Ty) {
-  match gb -> Ordmap(Text, Ty) {
-    Nil => ordmap_empty()
-    Cons(b, brest) => match ga -> Ordmap(Text, Ty) {
-      Nil => ordmap_empty()
-      Cons(
-        a,
-        arest
-      ) => ordmap_insert(
+): Ordmap(Text, Ty) {
+  match gb: Ordmap(Text, Ty) {
+    Nil => Ordmap::empty()
+    Cons(b, brest) => match ga: Ordmap(Text, Ty) {
+      Nil => Ordmap::empty()
+      Cons(a, arest) => Ordmap::insert(
         ty_poly_map(brest, arest, rigid),
         b.fst,
         ty_substitute_name(a.fst, rigid, TyVar(0)),
-        ordmap_compare_text
+        Ordmap::compare_text
       )
     }
   }
 }
 
 // All but the last of a constructor's arguments, and the last.
-fn ty_split_last(args: List(Ty)) -> Option(Pair(List(Ty), Ty)) {
-  match args -> Option(Pair(List(Ty), Ty)) {
-    Nil => None()
-    Cons(a, rest) => match ty_split_last(rest) -> Option(Pair(List(Ty), Ty)) {
+pub fn ty_split_last(args: List(Ty)): Option(Pair(List(Ty), Ty)) {
+  match args: Option(Pair(List(Ty), Ty)) {
+    Nil => None
+    Cons(a, rest) => match ty_split_last(rest): Option(Pair(List(Ty), Ty)) {
       None => Some(Pair { fst: Nil, snd: a })
-      Some(p) => Some(Pair { fst: Cons(a, p.fst), snd: p.snd })
+      Some(p) => Some(Pair { fst: Cons(a, (p: List(Ty))), snd: (p: Ty) })
     }
   }
 }
@@ -622,30 +719,30 @@ fn ty_split_last(args: List(Ty)) -> Option(Pair(List(Ty), Ty)) {
 // Makes `a` and `b` the same type. The two duplicable kinds of a function are
 // the same here: they differ only at run time.
 mutual {
-  fn ck_unify_pairs_in(k: Nat, &mut c: Checker, xs: List(Ty), ys: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match xs -> Yn {
-        Nil => yes
-        Cons(x, xrest) => match ys -> Yn {
-          Nil => yes
+  pub fn ck_unify_pairs_in(k: Nat, &mut c: Checker, xs: List(Ty), ys: List(Ty)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match xs: Bool {
+        Nil => true
+        Cons(x, xrest) => match ys: Bool {
+          Nil => true
           Cons(y, yrest) => if ck_unify_in(j, &mut c, x, y) {
             ck_unify_pairs_in(j, &mut c, xrest, yrest)
           } else {
-            no
+            false
           }
         }
       }
     }
   }
 
-  fn ck_unify_in(k: Nat, &mut c: Checker, a0: Ty, b0: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => {
-        let a = ck_resolve(&c, a0)
-        let b = ck_resolve(&c, b0)
-        match a -> Yn {
+  pub fn ck_unify_in(k: Nat, &mut c: Checker, a0: Ty, b0: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => {
+        let a := ck_resolve(&c, a0)
+        let b := ck_resolve(&c, b0)
+        match a: Bool {
           TyVar(v) => ck_bind(&mut c, v, b)
           _ => ck_unify_rest_in(j, &mut c, a, b)
         }
@@ -653,24 +750,26 @@ mutual {
     }
   }
 
-  fn ck_unify_rest_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
+  pub fn ck_unify_rest_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
         TyVar(v) => ck_bind(&mut c, v, a)
         // `F(X) ~ H(U₁, …, Uₙ)`: `F := H(U₁, …, Uₙ₋₁)` and `X ~ Uₙ`. The
         // solution is the only one.
-        TyApp(hb, xb) => match a -> Yn {
-          TyApp(
+        TyApp(hb, xb) => match a: Bool {
+          TyApp(ha, xa) => if ck_unify_in(
+            j,
+            &mut c,
             ha,
-            xa
-          ) => if ck_unify_in(j, &mut c, ha, hb) { ck_unify_in(j, &mut c, xa, xb) } else { no }
+            hb
+          ) { ck_unify_in(j, &mut c, xa, xb) } else { false }
           TyNamed(na, xa) => ck_unify_app_in(j, &mut c, hb, xb, na, xa)
-          _ => no
+          _ => false
         }
-        TyPoly(gb, tb) => match a -> Yn {
+        TyPoly(gb, tb) => match a: Bool {
           TyPoly(ga, ta) => if ty_kinds_match(ga, gb) {
-            let rigid = ck_rigid(ga, &mut c)
+            let rigid := ck_rigid(ga, &mut c)
             if ck_unify_in(
               j,
               &mut c,
@@ -679,58 +778,62 @@ mutual {
             ) {
               ck_keep(&mut c, ga, rigid, a, b)
             } else {
-              no
+              false
             }
           } else {
             ty_eq(a, b)
           }
-          _ => no
+          _ => false
         }
-        TyFn(pb, rb, kb) => match a -> Yn {
-          TyFn(
-            pa,
-            ra,
-            ka
-          ) => if list_len(
+        TyFn(pb, rb, kb) => match a: Bool {
+          TyFn(pa, ra, ka) => if list_len(
             pa
           ) == list_len(pb) && (kind_eq(ka, kb) || (kind_dup(ka) && kind_dup(kb))) {
-            if ck_unify_pairs_in(j, &mut c, pa, pb) { ck_unify_in(j, &mut c, ra, rb) } else { no }
+            if ck_unify_pairs_in(j, &mut c, pa, pb) { ck_unify_in(j, &mut c, ra, rb) } else { false }
           } else {
             ty_eq(a, b)
           }
-          _ => no
+          _ => false
         }
-        TyNamed(nb, xb) => match a -> Yn {
+        TyNamed(nb, xb) => match a: Bool {
           TyNamed(na, xa) => if na == nb && list_len(xa) == list_len(xb) {
             ck_unify_pairs_in(j, &mut c, xa, xb)
           } else {
             ty_eq(a, b)
           }
           TyApp(ha, xa) => ck_unify_app_in(j, &mut c, ha, xa, nb, xb)
-          _ => no
+          _ => false
         }
-        TyInfo(y) => match a -> Yn {
+        TyInfo(y) => match a: Bool {
           TyInfo(x) => ck_unify_in(j, &mut c, x, y)
-          _ => no
+          _ => false
         }
-        TyBorrow(y, mb) => match a -> Yn {
+        TyBorrow(y, mb) => match a: Bool {
           TyBorrow(x, ma) => if ma == mb { ck_unify_in(j, &mut c, x, y) } else { ty_eq(a, b) }
-          _ => no
+          _ => false
         }
-        TyTagged(tb, y) => match a -> Yn {
-          TyTagged(
+        TyTagged(tb, y) => match a: Bool {
+          TyTagged(ta, x) => if text_list_eq(
             ta,
-            x
-          ) => if text_list_eq(ta, tb) { ck_unify_in(j, &mut c, x, y) } else { ty_eq(a, b) }
-          _ => no
+            tb
+          ) { ck_unify_in(j, &mut c, x, y) } else { ty_eq(a, b) }
+          _ => false
         }
-        TyUnion(xb) => match a -> Yn {
+        TyUnion(xb) => match a: Bool {
           TyUnion(xa) => if list_len(xa) == list_len(xb) {
             ck_unify_pairs_in(j, &mut c, xa, xb)
           } else {
             ty_eq(a, b)
           }
-          _ => no
+          _ => false
+        }
+        TyProduct(xb) => match a: Bool {
+          TyProduct(xa) => if list_len(xa) == list_len(xb) {
+            ck_unify_pairs_in(j, &mut c, xa, xb)
+          } else {
+            ty_eq(a, b)
+          }
+          _ => false
         }
         _ => ty_eq(a, b)
       }
@@ -738,127 +841,123 @@ mutual {
   }
 
   // `h(x) ~ n(args)`, `args` not empty.
-  fn ck_unify_app_in(k: Nat, &mut c: Checker, h: Ty, x: Ty, n: Text, args: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ty_split_last(args) -> Yn {
-        None => no
-        Some(p) => if ck_unify_in(j, &mut c, h, TyNamed(n, p.fst)) {
-          ck_unify_in(j, &mut c, x, p.snd)
+  pub fn ck_unify_app_in(k: Nat, &mut c: Checker, h: Ty, x: Ty, n: Text, args: List(Ty)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ty_split_last(args): Bool {
+        None => false
+        Some(p) => if ck_unify_in(j, &mut c, h, TyNamed(n, (p: List(Ty)))) {
+          ck_unify_in(j, &mut c, x, (p: Ty))
         } else {
-          no
+          false
         }
       }
     }
   }
 }
 
-fn ck_unify(&mut c: Checker, a: Ty, b: Ty) -> Yn {
+pub fn ck_unify(&mut c: Checker, a: Ty, b: Ty): Bool {
   ck_unify_in(c.steps, &mut c, a, b)
 }
 
 // ----- trying -----
 
-fn ck_attempt_unify(&mut c: Checker, a: Ty, b: Ty) -> Yn {
-  let subst = c.subst
-  let ints = c.ints
-  let next = c.next
-  let kept = c.kept
+pub fn ck_attempt_unify(&mut c: Checker, a: Ty, b: Ty): Bool {
+  let subst := c.subst
+  let ints := c.ints
+  let next := c.next
+  let kept := c.kept
   if ck_unify(&mut c, a, b) {
-    yes
+    true
   } else {
     set_to(&mut c.subst, subst)
     set_to(&mut c.ints, ints)
     set_to(&mut c.next, next)
     set_to(&mut c.kept, kept)
-    no
+    false
   }
 }
 
 // A value of type `a` may stand where `b` is expected.
 mutual {
-  fn ck_attempt_fits_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => {
-        let subst = c.subst
-        let ints = c.ints
-        let next = c.next
-        let kept = c.kept
+  pub fn ck_attempt_fits_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => {
+        let subst := c.subst
+        let ints := c.ints
+        let next := c.next
+        let kept := c.kept
         if ck_fits_in(j, &mut c, a, b) {
-          yes
+          true
         } else {
           set_to(&mut c.subst, subst)
           set_to(&mut c.ints, ints)
           set_to(&mut c.next, next)
           set_to(&mut c.kept, kept)
-          no
+          false
         }
       }
     }
   }
 
-  fn ck_fits_each_in(k: Nat, &mut c: Checker, xs: List(Ty), b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match xs -> Yn {
-        Nil => yes
-        Cons(
+  pub fn ck_fits_each_in(k: Nat, &mut c: Checker, xs: List(Ty), b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match xs: Bool {
+        Nil => true
+        Cons(x, rest) => if ck_fits_in(
+          j,
+          &mut c,
           x,
-          rest
-        ) => if ck_fits_in(j, &mut c, x, b) { ck_fits_each_in(j, &mut c, rest, b) } else { no }
+          b
+        ) { ck_fits_each_in(j, &mut c, rest, b) } else { false }
       }
     }
   }
 
-  fn ck_fits_any_in(k: Nat, &mut c: Checker, a: Ty, ys: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ys -> Yn {
-        Nil => no
-        Cons(
-          y,
-          rest
-        ) => if ck_attempt_fits_in(
+  pub fn ck_fits_any_in(k: Nat, &mut c: Checker, a: Ty, ys: List(Ty)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ys: Bool {
+        Nil => false
+        Cons(y, rest) => if ck_attempt_fits_in(
           j,
           &mut c,
           a,
           y
-        ) { yes } else { ck_fits_any_in(j, &mut c, a, rest) }
+        ) { true } else { ck_fits_any_in(j, &mut c, a, rest) }
       }
     }
   }
 
   // Contravariant in the parameters.
-  fn ck_fits_params_in(k: Nat, &mut c: Checker, pa: List(Ty), pb: List(Ty)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match pa -> Yn {
-        Nil => yes
-        Cons(x, xrest) => match pb -> Yn {
-          Nil => yes
-          Cons(
-            y,
-            yrest
-          ) => if ck_fits_in(
+  pub fn ck_fits_params_in(k: Nat, &mut c: Checker, pa: List(Ty), pb: List(Ty)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match pa: Bool {
+        Nil => true
+        Cons(x, xrest) => match pb: Bool {
+          Nil => true
+          Cons(y, yrest) => if ck_fits_in(
             j,
             &mut c,
             y,
             x
-          ) { ck_fits_params_in(j, &mut c, xrest, yrest) } else { no }
+          ) { ck_fits_params_in(j, &mut c, xrest, yrest) } else { false }
         }
       }
     }
   }
 
-  fn ck_fits_in(k: Nat, &mut c: Checker, a0: Ty, b0: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => {
-        let a = ck_resolve(&c, a0)
-        let b = ck_resolve(&c, b0)
+  pub fn ck_fits_in(k: Nat, &mut c: Checker, a0: Ty, b0: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => {
+        let a := ck_resolve(&c, a0)
+        let b := ck_resolve(&c, b0)
         if ty_is_never(a) {
-          yes
+          true
         } else if ty_is_var(a) || ty_is_var(b) {
           ck_unify(&mut c, a, b)
         } else {
@@ -870,16 +969,16 @@ mutual {
 
   // What is wanted is general: `a` has to be as general. What is given is
   // general: some instance of it will do.
-  fn ck_fits_poly_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
+  pub fn ck_fits_poly_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
         TyPoly(gs, t) => {
-          let rigid = ck_rigid(gs, &mut c)
+          let rigid := ck_rigid(gs, &mut c)
           if ck_fits_in(j, &mut c, a, ty_substitute(t, rigid)) {
             ck_keep(&mut c, gs, rigid, a, b)
           } else {
-            no
+            false
           }
         }
         _ => ck_fits_inst_in(j, &mut c, a, b)
@@ -888,12 +987,12 @@ mutual {
   }
 
   // `b` is not general.
-  fn ck_fits_inst_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match a -> Yn {
+  pub fn ck_fits_inst_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match a: Bool {
         TyPoly(gs, t) => {
-          let fresh = ck_instance_of(gs, &mut c)
+          let fresh := ck_instance_of(gs, &mut c)
           ck_fits_in(j, &mut c, ty_substitute(t, fresh), b)
         }
         _ => ck_fits_borrow_in(j, &mut c, a, b)
@@ -901,10 +1000,10 @@ mutual {
     }
   }
 
-  fn ck_fits_borrow_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match a -> Yn {
+  pub fn ck_fits_borrow_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match a: Bool {
         TyBorrow(x, ma) => ck_fits_lend_in(j, &mut c, x, ma, b)
         _ => ck_fits_value_in(j, &mut c, a, b)
       }
@@ -913,29 +1012,25 @@ mutual {
 
   // A `&mut` borrow may be lent as a `&` one; a borrow used as a value:
   // `lin.rs` says whether it may be.
-  fn ck_fits_lend_in(k: Nat, &mut c: Checker, x: Ty, ma: Yn, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
-        TyBorrow(
-          y,
-          mb
-        ) => if ma == mb || !mb { ck_fits_in(j, &mut c, x, y) } else { ck_fits_in(j, &mut c, x, b) }
+  pub fn ck_fits_lend_in(k: Nat, &mut c: Checker, x: Ty, ma: Bool, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
+        TyBorrow(y, mb) => if ma == mb || not(mb) { ck_fits_in(j, &mut c, x, y) } else {
+          ck_fits_in(j, &mut c, x, b)
+        }
         _ => ck_fits_in(j, &mut c, x, b)
       }
     }
   }
 
   // `a` is not a borrow.
-  fn ck_fits_value_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
+  pub fn ck_fits_value_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
         // `&A ≡ A` when `A` is duplicable.
-        TyBorrow(
-          y,
-          m
-        ) => if kind_dup(
+        TyBorrow(y, m) => if kind_dup(
           ck_kind(&c, a)
         ) { ck_fits_in(j, &mut c, a, y) } else { ck_fits_shape_in(j, &mut c, a, b) }
         _ => ck_fits_shape_in(j, &mut c, a, b)
@@ -944,10 +1039,10 @@ mutual {
   }
 
   // Unions, tags and functions.
-  fn ck_fits_shape_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match a -> Yn {
+  pub fn ck_fits_shape_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match a: Bool {
         TyUnion(xs) => ck_fits_each_in(j, &mut c, xs, b)
         _ => ck_fits_into_in(j, &mut c, a, b)
       }
@@ -955,23 +1050,25 @@ mutual {
   }
 
   // `a` is not a union.
-  fn ck_fits_into_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
-        TyUnion(
-          ys
-        ) => if ck_attempt_unify(&mut c, a, b) { yes } else { ck_fits_any_in(j, &mut c, a, ys) }
+  pub fn ck_fits_into_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
+        TyUnion(ys) => if ck_attempt_unify(
+          &mut c,
+          a,
+          b
+        ) { true } else { ck_fits_any_in(j, &mut c, a, ys) }
         _ => ck_fits_tagged_in(j, &mut c, a, b)
       }
     }
   }
 
   // Tags are forgotten, never added.
-  fn ck_fits_tagged_in(k: Nat, &mut c: Checker, a: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match a -> Yn {
+  pub fn ck_fits_tagged_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match a: Bool {
         TyTagged(ta, x) => ck_fits_untag_in(j, &mut c, ta, x, b)
         TyFn(pa, ra, ka) => ck_fits_fn_in(j, &mut c, pa, ra, ka, b)
         _ => ck_unify(&mut c, a, b)
@@ -979,14 +1076,11 @@ mutual {
     }
   }
 
-  fn ck_fits_untag_in(k: Nat, &mut c: Checker, ta: List(Text), x: Ty, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
-        TyTagged(
-          tb,
-          y
-        ) => if tags_subset(
+  pub fn ck_fits_untag_in(k: Nat, &mut c: Checker, ta: List(Text), x: Ty, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
+        TyTagged(tb, y) => if tags_subset(
           tb,
           ta
         ) { ck_fits_in(j, &mut c, x, y) } else { ck_unify(&mut c, TyTagged(ta, x), b) }
@@ -995,12 +1089,12 @@ mutual {
     }
   }
 
-  fn ck_fits_fn_in(k: Nat, &mut c: Checker, pa: List(Ty), ra: Ty, ka: Kind, b: Ty) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match b -> Yn {
+  pub fn ck_fits_fn_in(k: Nat, &mut c: Checker, pa: List(Ty), ra: Ty, ka: Kind, b: Ty): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match b: Bool {
         TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && kind_fits(ka, kb) {
-          if ck_fits_params_in(j, &mut c, pa, pb) { ck_fits_in(j, &mut c, ra, rb) } else { no }
+          if ck_fits_params_in(j, &mut c, pa, pb) { ck_fits_in(j, &mut c, ra, rb) } else { false }
         } else {
           ck_unify(&mut c, TyFn(pa, ra, ka), b)
         }
@@ -1010,39 +1104,40 @@ mutual {
   }
 }
 
-fn ck_fits(&mut c: Checker, a: Ty, b: Ty) -> Yn {
+pub fn ck_fits(&mut c: Checker, a: Ty, b: Ty): Bool {
   ck_fits_in(c.steps, &mut c, a, b)
 }
 
-fn ck_attempt_fits(&mut c: Checker, a: Ty, b: Ty) -> Yn {
+pub fn ck_attempt_fits(&mut c: Checker, a: Ty, b: Ty): Bool {
   ck_attempt_fits_in(c.steps, &mut c, a, b)
 }
 
 // ----- shown, expect, join -----
 
-fn ty_shown_var(ints: Ordmap(Nat, Yn), v: Nat) -> Ty {
-  if ordmap_contains(ints, v, ordmap_compare_nat) { TyInt(Width64) } else { TyVar(v) }
+pub fn ty_shown_var(ints: Ordmap(Nat, Bool), v: Nat): Ty {
+  if Ordmap::contains(ints, v, Ordmap::compare_nat) { TyInt(Width64) } else { TyVar(v) }
 }
 
 // `t` for a message: an integer of unknown width reads as `i64`.
 mutual {
-  fn ty_shown_list_in(k: Nat, &c: Checker, ts: List(Ty)) -> List(Ty) {
-    match k -> List(Ty) {
-      zero => ts
-      succ(j) => match ts -> List(Ty) {
+  pub fn ty_shown_list_in(k: Nat, &c: Checker, ts: List(Ty)): List(Ty) {
+    match k: List(Ty) {
+      Zero => ts
+      Succ(j) => match ts: List(Ty) {
         Nil => Nil
         Cons(t, rest) => Cons(ty_shown_in(j, &c, t), ty_shown_list_in(j, &c, rest))
       }
     }
   }
 
-  fn ty_shown_in(k: Nat, &c: Checker, t0: Ty) -> Ty {
-    match k -> Ty {
-      zero => t0
-      succ(j) => match ck_resolve(&c, t0) -> Ty {
+  pub fn ty_shown_in(k: Nat, &c: Checker, t0: Ty): Ty {
+    match k: Ty {
+      Zero => t0
+      Succ(j) => match ck_resolve(&c, t0): Ty {
         TyVar(v) => ty_shown_var(c.ints, v)
         TyFn(ps, r, fk) => TyFn(ty_shown_list_in(j, &c, ps), ty_shown_in(j, &c, r), fk)
         TyUnion(ts) => ty_union(ty_shown_list_in(j, &c, ts))
+        TyProduct(ts) => ty_product(ty_shown_list_in(j, &c, ts))
         TyTagged(tags, x) => ty_tagged(tags, ty_shown_in(j, &c, x))
         TyNamed(n, args) => TyNamed(n, ty_shown_list_in(j, &c, args))
         TyInfo(x) => TyInfo(ty_shown_in(j, &c, x))
@@ -1062,62 +1157,60 @@ mutual {
   }
 }
 
-fn ck_shown(&c: Checker, t: Ty) -> Ty {
+pub fn ck_shown(&c: Checker, t: Ty): Ty {
   ty_shown_in(c.steps, &c, t)
 }
 
-fn expect_closure_kinds_fn(pa: List(Ty), ka: Kind, b: Ty) -> Option(Pair(Kind, Kind)) {
-  match ty_unborrowed(b) -> Option(Pair(Kind, Kind)) {
-    TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && !kind_fits(ka, kb) {
-      Some(Pair { fst: ka, snd: kb })
+pub fn expect_closure_kinds_fn(pa: List(Ty), ka: Kind, b: Ty): Option(@found Kind × @expected Kind) {
+  match ty_unborrowed(b): Option(@found Kind × @expected Kind) {
+    TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && not(kind_fits(ka, kb)) {
+      Some(#(@found ka, @expected kb))
     } else {
-      None()
+      None
     }
-    _ => None()
+    _ => None
   }
 }
 
 // The functions' kinds when both types are functions of one arity and the
 // first does not fit the second.
-fn expect_closure_kinds(a: Ty, b: Ty) -> Option(Pair(Kind, Kind)) {
-  match ty_unborrowed(a) -> Option(Pair(Kind, Kind)) {
+pub fn expect_closure_kinds(a: Ty, b: Ty): Option(@found Kind × @expected Kind) {
+  match ty_unborrowed(a): Option(@found Kind × @expected Kind) {
     TyFn(pa, ra, ka) => expect_closure_kinds_fn(pa, ka, b)
-    _ => None()
+    _ => None
   }
 }
 
 // `F(X)` against a type that is not an application: that type.
-fn expect_not_app(a: Ty, b: Ty) -> Option(Ty) {
-  match a -> Option(Ty) {
-    TyApp(h, x) => match b -> Option(Ty) {
-      TyApp(h2, x2) => None()
-      TyVar(v) => None()
-      TyNamed(n, args) => None()
+pub fn expect_not_app(a: Ty, b: Ty): Option(Ty) {
+  match a: Option(Ty) {
+    TyApp(h, x) => match b: Option(Ty) {
+      TyApp(h2, x2) => None
+      TyVar(v) => None
+      TyNamed(n, args) => None
       _ => Some(b)
     }
-    TyVar(v) => None()
-    TyNamed(n, args) => None()
-    _ => match b -> Option(Ty) {
+    TyVar(v) => None
+    TyNamed(n, args) => None
+    _ => match b: Option(Ty) {
       TyApp(h, x) => Some(a)
-      _ => None()
+      _ => None
     }
   }
 }
 
-fn ck_expect_message(a: Ty, b: Ty, what: Text) -> Text {
-  match expect_closure_kinds(a, b) -> Text {
-    Some(
-      ks
-    ) => cat5(
+pub fn ck_expect_message(a: Ty, b: Ty, what: Text): Text {
+  match expect_closure_kinds(a, b): Text {
+    Some(#(@found found, @expected expected)) => cat5(
       what,
       ": an ",
-      kind_name(ks.fst),
+      kind_name(found),
       " closure where ",
-      cat2(kind_name(ks.snd), " is expected")
+      cat2(kind_name(expected), " is expected")
     )
-    None => match expect_not_app(ty_unborrowed(a), ty_unborrowed(b)) -> Text {
+    None => match expect_not_app(ty_unborrowed(a), ty_unborrowed(b)): Text {
       Some(other) => cat2(ty_show(other), " is not an application of a type constructor")
-      None => if ty_is_borrow(b) && !ty_is_borrow(a) {
+      None => if ty_is_borrow(b) && not(ty_is_borrow(a)) {
         cat5(what, ": ", ty_show(a), " does not fit ", cat2(ty_show(b), ": lend it with `&`"))
       } else {
         cat5(what, ": ", ty_show(a), " does not fit ", ty_show(b))
@@ -1126,29 +1219,29 @@ fn ck_expect_message(a: Ty, b: Ty, what: Text) -> Text {
   }
 }
 
-fn ck_expect(&mut c: Checker, a0: Ty, b0: Ty, span: TySpan, what: Text) -> () {
-  if !ck_fits(&mut c, a0, b0) {
-    let message = ck_expect_message(ck_shown(&c, a0), ck_shown(&c, b0), what)
+pub fn ck_expect(&mut c: Checker, a0: Ty, b0: Ty, span: TySpan, what: Text): Unit {
+  if not(ck_fits(&mut c, a0, b0)) {
+    let message := ck_expect_message(ck_shown(&c, a0), ck_shown(&c, b0), what)
     ck_error(&mut c, message, span)
   }
 }
 
 // The alternative `(y, Borrow(x, _))` of the pattern.
-fn ck_join_borrowed_second(&mut c: Checker, a: Ty, b: Ty) -> Option(Ty) {
-  match b -> Option(Ty) {
-    TyBorrow(x, m) => if !ty_is_borrow(a) && kind_dup(ck_kind(&c, x)) {
-      if ck_attempt_unify(&mut c, x, a) { Some(ck_resolve(&c, x)) } else { None() }
+pub fn ck_join_borrowed_second(&mut c: Checker, a: Ty, b: Ty): Option(Ty) {
+  match b: Option(Ty) {
+    TyBorrow(x, m) => if not(ty_is_borrow(a)) && kind_dup(ck_kind(&c, x)) {
+      if ck_attempt_unify(&mut c, x, a) { Some(ck_resolve(&c, x)) } else { None }
     } else {
-      None()
+      None
     }
-    _ => None()
+    _ => None
   }
 }
 
-fn ck_join_borrowed(&mut c: Checker, a: Ty, b: Ty) -> Option(Ty) {
-  match a -> Option(Ty) {
-    TyBorrow(x, m) => if !ty_is_borrow(b) && kind_dup(ck_kind(&c, x)) {
-      if ck_attempt_unify(&mut c, x, b) { Some(ck_resolve(&c, x)) } else { None() }
+pub fn ck_join_borrowed(&mut c: Checker, a: Ty, b: Ty): Option(Ty) {
+  match a: Option(Ty) {
+    TyBorrow(x, m) => if not(ty_is_borrow(b)) && kind_dup(ck_kind(&c, x)) {
+      if ck_attempt_unify(&mut c, x, b) { Some(ck_resolve(&c, x)) } else { None }
     } else {
       ck_join_borrowed_second(&mut c, a, b)
     }
@@ -1157,19 +1250,19 @@ fn ck_join_borrowed(&mut c: Checker, a: Ty, b: Ty) -> Option(Ty) {
 }
 
 // The type of two branches: the same type, or their union.
-fn ck_join(&mut c: Checker, a0: Ty, b0: Ty) -> Ty {
+pub fn ck_join(&mut c: Checker, a0: Ty, b0: Ty): Ty {
   if (ck_has_vars(&c, a0) || ck_has_vars(&c, b0)) && ck_attempt_unify(&mut c, a0, b0) {
     ck_resolve(&c, a0)
   } else {
-    let a = ck_resolve(&c, a0)
-    let b = ck_resolve(&c, b0)
+    let a := ck_resolve(&c, a0)
+    let b := ck_resolve(&c, b0)
     if ty_eq(a, b) || ty_is_never(b) {
       a
     } else if ty_is_never(a) {
       b
     } else {
       // A borrow of a duplicable value is the value (`&A ≡ A`).
-      match ck_join_borrowed(&mut c, a, b) -> Ty {
+      match ck_join_borrowed(&mut c, a, b): Ty {
         Some(t) => t
         None => ty_union(Cons(a, Cons(b, Nil)))
       }

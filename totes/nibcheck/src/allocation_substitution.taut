@@ -1,0 +1,111 @@
+import "allocation_generic_map.taut"
+pub theorem allocated_named_substitution(
+  params: List(Ty),
+  limit: Nat,
+  map: Ordmap(Text, Ty),
+  name: Text,
+  values: GenericMapAllocated(limit, map),
+  mapped: TypeListAllocated(limit, ty_map_list(params, map))
+): TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) {
+  match params: TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) {
+    Nil => allocated_substitute_name(limit, map, name, TyNamed(name, Nil), Trivial, values)
+    Cons(first, rest) => mapped
+  }
+}
+mutual {
+  pub theorem allocated_substitute(
+    ty: Ty,
+    limit: Nat,
+    map: Ordmap(Text, Ty),
+    ordered: Ordmap::ordered(map, Ordmap::compare_text),
+    values: GenericMapAllocated(limit, map),
+    allocated: TypeAllocated(limit, ty)
+  ): TypeAllocated(limit, ty_substitute(ty, map)) {
+    match ty: TypeAllocated(limit, ty_substitute(ty, map)) {
+      TyInt(width) => Trivial
+      TyBool => Trivial
+      TyText => Trivial
+      TyUnit => Trivial
+      TyNever => Trivial
+      TyDecimal => Trivial
+      TyFloat => Trivial
+      TyParam(name, kind) => allocated_substitute_name(
+        limit,
+        map,
+        name,
+        TyParam(name, kind),
+        Trivial,
+        values
+      )
+      TyVar(index) => allocated
+      TyFn(params, result, kind) => AndIntro(
+        allocated_map_list(params, limit, map, ordered, values, And::left(allocated)),
+        allocated_substitute(result, limit, map, ordered, values, And::right(allocated))
+      )
+      TyUnion(members) => allocated_union(
+        ty_map_list(members, map),
+        limit,
+        allocated_map_list(members, limit, map, ordered, values, allocated)
+      )
+      TyProduct(members) => allocated_product(
+        ty_map_list(members, map),
+        limit,
+        allocated_map_list(members, limit, map, ordered, values, allocated)
+      )
+      TyNamed(name, params) => allocated_named_substitution(
+        params,
+        limit,
+        map,
+        name,
+        values,
+        allocated_map_list(params, limit, map, ordered, values, allocated)
+      )
+      TyTagged(tags, inner) => allocated_tagged(
+        ty_substitute(inner, map),
+        tags,
+        limit,
+        allocated_substitute(inner, limit, map, ordered, values, allocated)
+      )
+      TyInfo(inner) => allocated_substitute(inner, limit, map, ordered, values, allocated)
+      TyBorrow(inner, mutable) => allocated_substitute(
+        inner,
+        limit,
+        map,
+        ordered,
+        values,
+        allocated
+      )
+      TyPoly(gs, inner) => allocated_substitute(
+        inner,
+        limit,
+        ty_map_without(gs, map),
+        And::left(generic_map_without_allocated(gs, limit, map, ordered, values)),
+        And::right(generic_map_without_allocated(gs, limit, map, ordered, values)),
+        allocated
+      )
+      TyApp(head, arg) => allocated_apply(
+        ty_substitute(head, map),
+        ty_substitute(arg, map),
+        limit,
+        allocated_substitute(head, limit, map, ordered, values, And::left(allocated)),
+        allocated_substitute(arg, limit, map, ordered, values, And::right(allocated))
+      )
+    }
+  }
+  pub theorem allocated_map_list(
+    types: List(Ty),
+    limit: Nat,
+    map: Ordmap(Text, Ty),
+    ordered: Ordmap::ordered(map, Ordmap::compare_text),
+    values: GenericMapAllocated(limit, map),
+    allocated: TypeListAllocated(limit, types)
+  ): TypeListAllocated(limit, ty_map_list(types, map)) {
+    match types: TypeListAllocated(limit, ty_map_list(types, map)) {
+      Nil => Trivial
+      Cons(head, tail) => AndIntro(
+        allocated_substitute(head, limit, map, ordered, values, And::left(allocated)),
+        allocated_map_list(tail, limit, map, ordered, values, And::right(allocated))
+      )
+    }
+  }
+}

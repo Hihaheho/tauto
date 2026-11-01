@@ -1,0 +1,1091 @@
+// Reading the grammar of a `syntax` (the language `docs/design/macro.md`
+// describes): its directives and its productions, EBNF still in.
+//
+// Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import std::Text
+
+// ---------------------------------------------------------------- the tree
+
+// A terminal: its text without the delimiters, how it is read (0 `"…"`,
+// 1 `/…/`, 2 `'…'`), the scanner modes it is read in, whether the tree
+// leaves it out (`^`), its lookahead and, for a terminal written with
+// `%capture` or `%validate`, what it does with the scanner's state.
+pub(open) struct PTerm {
+  text: Text
+  kind: u64
+  states: List(u64)
+  clipped: Bool
+  la: Option(PLa)
+  dynamic: Option(PDyn)
+}
+
+// A state of the scanner (`%state`, scnr2's dynamic state): a count of a
+// unit from `min` to `max`, or a text that the regular expression `pattern`
+// matches.
+pub(open) struct PState { name: Text, count: Bool, min: u64, max: u64, pattern: Text }
+
+// A side of the range of a `%validate`: `a`, or `a + b` (op 1) or `a - b`
+// (op 2), where each is a number or, with `a_state` or `b_state`, `n`, the
+// value the state holds.
+pub(open) struct PExpr { a_state: Bool, a: u64, op: u64, b_state: Bool, b: u64 }
+
+// What a terminal with `%capture` or `%validate` does: the regular
+// expressions before and after the operator, the number of the state and,
+// for a count, the unit. The range a validated count must be in (from `min`,
+// below `max`) is `None` when it must equal the state's value.
+pub(open) struct PDyn {
+  prefix: Text
+  suffix: Text
+  capture: Bool
+  state: u64
+  unit: Text
+  range: Option(Pair(PExpr, PExpr))
+}
+
+// `?=` (positive) or `?!` and the expression.
+pub(open) struct PLa { positive: Bool, text: Text, kind: u64 }
+
+pub(open) enum PFactor {
+  PGroup(List(PAlt))
+  PRepeat(List(PAlt))
+  POptional(List(PAlt))
+  PTermF(PTerm)
+  PNt(Text)
+}
+
+// An alternative and the attribute its production gets: 0 none,
+// 1 starts a collection, 2 adds to it, 3 an optional that is there, 4 one
+// that is not.
+pub(open) struct PAlt { factors: List(PFactor), attr: u64 }
+
+pub(open) struct PProd { lhs: Text, alts: List(PAlt) }
+
+// What a scanner mode says: `%on` a terminal go to (0), push (1) or pop (2) a
+// mode.
+pub(open) struct PTrans { terminal: Text, action: u64, target: Text }
+
+pub(open) struct PScanner {
+  name: Text
+  line_comments: List(Text)
+  block_comments: List(Pair(Text, Text))
+  auto_newline_off: Bool
+  auto_ws_off: Bool
+  allow_unmatched: Bool
+  skip: List(Text)
+  transitions: List(PTrans)
+}
+
+pub(open) struct PGrammar {
+  start: Text
+  // `%grammar_type 'lalr(1)'`: the tables are LALR(1), not LL(k).
+  lalr: Bool
+  states: List(PState)
+  title: Option(Text)
+  comment: Option(Text)
+  scanners: List(PScanner)
+  prods: List(PProd)
+}
+
+// ---------------------------------------------------------------- the tokens
+
+// kind: 0 a name, 1 a directive (`%start`, `%%`), 2 `"…"`, 3 `'…'`, 4 `/…/`,
+// 5 a mark, 6 `?=`, 7 `?!`, 8 the end, 9 a number.
+pub(open) struct PTok { kind: u64, text: Text }
+
+pub fn par_die(why: Text): Never {
+  perform fail(Text::concat_all(Cons("the grammar: ", Cons(why, Nil))))
+}
+
+pub fn par_is_name_start(b: u64): Bool {
+  (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+pub fn par_is_name(b: u64): Bool {
+  par_is_name_start(b) || (b >= 48 && b <= 57)
+}
+
+pub fn par_name_end(t: Text, at: u64): u64 {
+  if par_is_name(lk_byte(t, at)) && at < std::prelude::Text::len(t) {
+    par_name_end(t, at + 1)
+  } else {
+    at
+  }
+}
+
+// The end of a name that may be a path of a user type: `a::b::C`.
+pub fn par_path_end(t: Text, at: u64): u64 {
+  let end := par_name_end(t, at)
+  if lk_byte(
+    t,
+    end
+  ) == 58 && lk_byte(
+    t,
+    end + 1
+  ) == 58 && end + 2 < std::prelude::Text::len(t) && par_is_name_start(lk_byte(t, end + 2)) {
+    par_path_end(t, end + 2)
+  } else {
+    end
+  }
+}
+
+// The end of a literal that starts at `at` with the delimiter `d`: the place
+// after the closing one.
+pub fn par_literal_end(t: Text, at: u64, d: u64): u64 {
+  if at >= std::prelude::Text::len(t) {
+    par_die("a literal is not closed")
+  } else {
+    let b := lk_byte(t, at)
+    if b == d {
+      at + 1
+    } else if b == 92 {
+      par_literal_end(t, at + 2, d)
+    } else {
+      par_literal_end(t, at + 1, d)
+    }
+  }
+}
+
+pub fn par_block_end(t: Text, at: u64): u64 {
+  if at + 1 >= std::prelude::Text::len(t) {
+    par_die("a comment is not closed")
+  } else if lk_byte(t, at) == 42 && lk_byte(t, at + 1) == 47 {
+    at + 2
+  } else {
+    par_block_end(t, at + 1)
+  }
+}
+
+pub fn par_line_end(t: Text, at: u64): u64 {
+  if at >= std::prelude::Text::len(t) || lk_byte(t, at) == 10 {
+    at
+  } else {
+    par_line_end(t, at + 1)
+  }
+}
+
+pub fn par_tokens(t: Text): Vec(PTok) {
+  var out: Vec(PTok) := Vec::new()
+  var at: u64 := 0
+  let n := std::prelude::Text::len(t)
+  while at < n {
+    let b := lk_byte(t, at)
+    let next := lk_byte(t, at + 1)
+    if b == 32 || b == 9 || b == 10 || b == 13 {
+      at := at + 1
+    } else if b == 47 && next == 47 {
+      at := par_line_end(t, at)
+    } else if b == 47 && next == 42 {
+      at := par_block_end(t, at + 2)
+    } else if par_is_name_start(b) {
+      let end := par_path_end(t, at)
+      Vec::push(&mut out, PTok { kind: 0, text: lk_slice(t, at, end) })
+      at := end
+    } else if b == 37 {
+      let end := if next == 37 { at + 2 } else { par_name_end(t, at + 1) }
+      Vec::push(&mut out, PTok { kind: 1, text: lk_slice(t, at, end) })
+      at := end
+    } else if b == 34 || b == 39 || b == 47 {
+      let end := par_literal_end(t, at + 1, b)
+      Vec::push(&mut out, PTok { kind: if b == 34 {
+        2
+      } else if b == 39 {
+        3
+      } else {
+        4
+      }, text: lk_slice(t, at + 1, end - 1) })
+      at := end
+    } else if b >= 48 && b <= 57 {
+      var end := at + 1
+      while end < n && lk_byte(t, end) >= 48 && lk_byte(t, end) <= 57 {
+        end := end + 1
+      }
+      Vec::push(&mut out, PTok { kind: 9, text: lk_slice(t, at, end) })
+      at := end
+    } else if b == 46 && next == 46 {
+      let wide := lk_byte(t, at + 2) == 61
+      Vec::push(&mut out, PTok { kind: 5, text: if wide { "..=" } else { ".." } })
+      at := at + if wide { 3 } else { 2 }
+    } else if b == 63 && next == 61 {
+      Vec::push(&mut out, PTok { kind: 6, text: "?=" })
+      at := at + 2
+    } else if b == 63 && next == 33 {
+      Vec::push(&mut out, PTok { kind: 7, text: "?!" })
+      at := at + 2
+    } else if b == 58 || b == 59 || b == 124 || b == 40 || b == 41 || b == 91 || b == 93 || b == 123 || b == 125 || b == 60 || b == 62 || b == 44 || b == 94 || b == 64 || b == 61 || b == 43 || b == 45 {
+      Vec::push(&mut out, PTok { kind: 5, text: lk_slice(t, at, at + 1) })
+      at := at + 1
+    } else {
+      par_die("a character that has no place in a grammar")
+    }
+  }
+  Vec::push(&mut out, PTok { kind: 8, text: "" })
+  out
+}
+
+// ---------------------------------------------------------------- the parser
+
+pub fn par_tok(a: Array(PTok), i: u64): PTok {
+  match Array::get(a, i) {
+    Some(t) => t
+    None => PTok { kind: 8, text: "" }
+  }
+}
+
+pub fn par_is_mark(a: Array(PTok), i: u64, m: Text): Bool {
+  let t := par_tok(a, i)
+  t.kind == 5 && t.text == m
+}
+
+pub fn par_expect_mark(a: Array(PTok), i: u64, m: Text): u64 {
+  if par_is_mark(a, i, m) {
+    i + 1
+  } else {
+    par_die(Text::concat_all(Cons("expected ", Cons(m, Nil))))
+  }
+}
+
+pub fn par_expect_name(a: Array(PTok), i: u64): Pair(Text, u64) {
+  let t := par_tok(a, i)
+  if t.kind == 0 {
+    Pair { fst: t.text, snd: i + 1 }
+  } else {
+    par_die("expected a name")
+  }
+}
+
+pub fn par_is_literal(t: PTok): Bool {
+  t.kind == 2 || t.kind == 3 || t.kind == 4
+}
+
+// The kind of a terminal written with the token: 0 `"…"` (read as a regular
+// expression), 1 `/…/`, 2 `'…'` (written as it is).
+pub fn par_literal_kind(t: PTok): u64 {
+  if t.kind == 2 {
+    0
+  } else if t.kind == 4 {
+    1
+  } else {
+    2
+  }
+}
+
+pub fn par_expect_literal(a: Array(PTok), i: u64): PTok {
+  let t := par_tok(a, i)
+  if par_is_literal(t) {
+    t
+  } else {
+    par_die("expected a string")
+  }
+}
+
+// `name, name, …`.
+pub fn par_names(a: Array(PTok), i: u64): Pair(List(Text), u64) {
+  let first := par_expect_name(a, i)
+  var out: List(Text) := Cons(first.fst, Nil)
+  var at := first.snd
+  while par_is_mark(a, at, ",") {
+    let next := par_expect_name(a, at + 1)
+    out := Cons(next.fst, out)
+    at := next.snd
+  }
+  Pair { fst: text_list_reverse(out), snd: at }
+}
+
+pub fn par_index_of(names: List(Text), n: Text, at: u64): Option(u64) {
+  match names {
+    Nil => None
+    Cons(x, rest) => if x == n { Some(at) } else { par_index_of(rest, n, at + 1) }
+  }
+}
+
+pub fn par_state_numbers(names: List(Text), scanners: List(Text)): List(u64) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(match par_index_of(scanners, n, 0) {
+      Some(i) => i
+      None => par_die(Text::concat_all(Cons("an unknown scanner ", Cons(n, Nil))))
+    }, par_state_numbers(rest, scanners))
+  }
+}
+
+pub fn par_sort_states(xs: List(u64)): List(u64) {
+  lg_sort(xs)
+}
+
+pub fn par_is_dynamic_op(t: PTok): Bool {
+  t.kind == 1 && (t.text == "%capture" || t.text == "%validate")
+}
+
+pub fn par_number(a: Array(PTok), i: u64): @value u64 × @next u64 {
+  let t := par_tok(a, i)
+  if t.kind != 9 {
+    par_die("expected a number")
+  } else {
+    match text_parse_u64(t.text) {
+      Some(v) => #(@value U64::of_nat(v), @next (i + 1))
+      None => par_die("expected a number")
+    }
+  }
+}
+
+pub fn par_state_index(states: List(PState), name: Text, at: u64): Pair(PState, u64) {
+  match states {
+    Nil => par_die(Text::concat_all(Cons("the state ", Cons(name, Cons(" is not declared", Nil)))))
+    Cons(s, rest) => if s.name == name { Pair { fst: s, snd: at } } else {
+      par_state_index(rest, name, at + 1)
+    }
+  }
+}
+
+// A number or `n` in the range of a `%validate`: whether it is `n`, the
+// number, and where the next token is.
+pub fn par_primary(a: Array(PTok), i: u64): Pair(Pair(Bool, u64), u64) {
+  let t := par_tok(a, i)
+  if t.kind == 0 && t.text == "n" {
+    Pair { fst: Pair { fst: true, snd: 0 }, snd: i + 1 }
+  } else if t.kind == 9 {
+    let v := par_number(a, i)
+    let value: u64 := (v: @value u64)
+    let next: u64 := (v: @next u64)
+    Pair { fst: Pair { fst: false, snd: value }, snd: next }
+  } else {
+    par_die("a range of %validate is made of `n`, numbers, `+` and `-`")
+  }
+}
+
+pub fn par_expr(a: Array(PTok), i: u64): Pair(PExpr, u64) {
+  let l := par_primary(a, i)
+  let op := if par_is_mark(a, l.snd, "+") { 1 } else if par_is_mark(a, l.snd, "-") { 2 } else { 0 }
+  if op == 0 {
+    Pair {
+      fst: PExpr { a_state: l.fst.fst, a: l.fst.snd, op: 0, b_state: false, b: 0 },
+      snd: l.snd
+    }
+  } else {
+    let r := par_primary(a, l.snd + 1)
+    Pair {
+      fst: PExpr { a_state: l.fst.fst, a: l.fst.snd, op: op, b_state: r.fst.fst, b: r.fst.snd },
+      snd: r.snd
+    }
+  }
+}
+
+pub fn par_lit_expr(v: u64): PExpr {
+  PExpr { a_state: false, a: v, op: 0, b_state: false, b: 0 }
+}
+
+pub fn par_is_range_end(a: Array(PTok), i: u64): Bool {
+  par_is_mark(a, i, ")")
+}
+
+// The range of a `%validate` of a count, after its comma: `n` (equal to the
+// state), `a..b`, `a..` or `..b` (the open ends are the bounds of the state).
+pub fn par_range(a: Array(PTok), i: u64, st: PState): Pair(Option(Pair(PExpr, PExpr)), u64) {
+  let top := par_lit_expr(st.max + 1)
+  if par_is_mark(a, i, "..") {
+    if par_is_range_end(a, i + 1) {
+      Pair { fst: Some(Pair { fst: par_lit_expr(st.min), snd: top }), snd: i + 1 }
+    } else {
+      let hi := par_expr(a, i + 1)
+      Pair { fst: Some(Pair { fst: par_lit_expr(st.min), snd: hi.fst }), snd: hi.snd }
+    }
+  } else {
+    let lo := par_expr(a, i)
+    if par_is_mark(a, lo.snd, "..") {
+      if par_is_range_end(a, lo.snd + 1) {
+        Pair { fst: Some(Pair { fst: lo.fst, snd: top }), snd: lo.snd + 1 }
+      } else {
+        let hi := par_expr(a, lo.snd + 1)
+        Pair { fst: Some(Pair { fst: lo.fst, snd: hi.fst }), snd: hi.snd }
+      }
+    } else if lo.fst.a_state && lo.fst.op == 0 {
+      Pair { fst: None, snd: lo.snd }
+    } else {
+      par_die("a range of %validate is `n`, `a..b`, `a..` or `..b`")
+    }
+  }
+}
+
+// The regular expression a literal of a terminal is read as.
+pub fn par_regex_of(lit: PTok): Text {
+  md_expand(
+    PTerm {
+      text: lit.text,
+      kind: par_literal_kind(lit),
+      states: Nil,
+      clipped: false,
+      la: None,
+      dynamic: None
+    }
+  )
+}
+
+// `%capture(…)` or `%validate(…)` from its directive: what it does, the
+// regular expression it stands for in the terminal, and where the next token is.
+pub fn par_dynamic_op(a: Array(PTok), i: u64, states: List(PState)): Pair(Pair(PDyn, Text), u64) {
+  let capture := par_tok(a, i).text == "%capture"
+  var at := par_expect_mark(a, i + 1, "(")
+  var unit: Option(Text) := None
+  if par_is_literal(par_tok(a, at)) {
+    let u := par_tok(a, at)
+    if std::prelude::Text::len(u.text) == 0 {
+      par_die("the unit of a count is empty")
+    }
+    unit := Some(par_unescape(u.text))
+    at := par_expect_mark(a, at + 1, ",")
+  }
+  let name := par_expect_name(a, at)
+  let found := par_state_index(states, name.fst, 0)
+  let st := found.fst
+  at := name.snd
+  var range: Option(Pair(PExpr, PExpr)) := None
+  let regex := match unit {
+    Some(u) => {
+      if not(st.count) {
+        par_die(
+          Text::concat_all(
+            Cons("the state ", Cons(st.name, Cons(" is a str, used as a count", Nil)))
+          )
+        )
+      }
+      if not(capture) && par_is_mark(a, at, ",") {
+        let r := par_range(a, at + 1, st)
+        range := r.fst
+        at := r.snd
+      }
+      Text::concat_all(
+        Cons(
+          "(?:",
+          Cons(
+            par_regex_of(PTok { kind: 3, text: u }),
+            Cons(
+              "){",
+              Cons(Text::of_u64(st.min), Cons(",", Cons(Text::of_u64(st.max), Cons("}", Nil))))
+            )
+          )
+        )
+      )
+    }
+    None => {
+      if st.count {
+        par_die(
+          Text::concat_all(
+            Cons("the state ", Cons(st.name, Cons(" is a count, used as a str", Nil)))
+          )
+        )
+      }
+      Text::concat_all(Cons("(?:", Cons(st.pattern, Cons(")", Nil))))
+    }
+  }
+  at := par_expect_mark(a, at, ")")
+  Pair { fst: Pair { fst: PDyn { prefix: "", suffix: "", capture: capture, state: found.snd, unit: match unit {
+          Some(u) => u
+          None => ""
+        }, range: range }, snd: regex }, snd: at }
+}
+
+// A terminal after its states are read: its literals joined by `+` with at
+// most one `%capture` or `%validate`, its lookahead and `^`.
+pub fn par_terminal(a: Array(PTok), i: u64, states: List(u64), cx: PCx): Pair(PFactor, u64) {
+  var at := i
+  var before: List(Text) := Nil
+  var after: List(Text) := Nil
+  var op: Option(Pair(PDyn, Text)) := None
+  var pieces: u64 := 0
+  let first := par_tok(a, i)
+  var running := true
+  while running {
+    let t := par_tok(a, at)
+    if par_is_dynamic_op(t) {
+      if match op {
+        Some(o) => true
+        None => false
+      } {
+        par_die("a terminal has one %capture or %validate")
+      }
+      let o := par_dynamic_op(a, at, cx.dyn_states)
+      op := Some(o.fst)
+      at := o.snd
+    } else {
+      let lit := par_expect_literal(a, at)
+      match op {
+        None => {
+          before := Cons(par_regex_of(lit), before)
+        }
+        Some(o) => {
+          after := Cons(par_regex_of(lit), after)
+        }
+      }
+      at := at + 1
+    }
+    pieces := pieces + 1
+    if par_is_mark(a, at, "+") {
+      at := at + 1
+    } else {
+      running := false
+    }
+  }
+  var la: Option(PLa) := None
+  let t := par_tok(a, at)
+  if t.kind == 6 || t.kind == 7 {
+    let e := par_expect_literal(a, at + 1)
+    la := Some(PLa { positive: t.kind == 6, text: e.text, kind: par_literal_kind(e) })
+    at := at + 2
+  }
+  let clipped := par_is_mark(a, at, "^")
+  at := par_ast_control(a, at)
+  let term := match op {
+    None => if pieces == 1 {
+      PTerm {
+        text: first.text,
+        kind: par_literal_kind(first),
+        states: states,
+        clipped: clipped,
+        la: la,
+        dynamic: None
+      }
+    } else {
+      par_die("`+` joins the parts of a terminal with %capture or %validate")
+    }
+    Some(o) => {
+      let prefix := Text::concat_all(text_list_reverse(before))
+      let suffix := Text::concat_all(text_list_reverse(after))
+      PTerm {
+        text: Text::concat_all(Cons(prefix, Cons(o.snd, Cons(suffix, Nil)))),
+        kind: 0,
+        states: states,
+        clipped: clipped,
+        la: la,
+        dynamic: Some(
+          PDyn {
+            prefix: prefix,
+            suffix: suffix,
+            capture: o.fst.capture,
+            state: o.fst.state,
+            unit: o.fst.unit,
+            range: o.fst.range
+          }
+        )
+      }
+    }
+  }
+  Pair { fst: PTermF(term), snd: at }
+}
+
+// What reading a production needs: the names of the scanner modes and the
+// states of the scanner.
+pub(open) struct PCx { scanners: List(Text), dyn_states: List(PState) }
+
+// After a symbol: `^`, `@member`, `: UserType` or `@member: UserType`. They
+// name and type the generated tree, not the tables, so they are read past.
+pub fn par_ast_control(a: Array(PTok), i: u64): u64 {
+  if par_is_mark(a, i, "^") {
+    i + 1
+  } else {
+    let at := if par_is_mark(a, i, "@") { par_expect_name(a, i + 1).snd } else { i }
+    if par_is_mark(a, at, ":") { par_expect_name(a, at + 1).snd } else { at }
+  }
+}
+
+pub fn par_factor(a: Array(PTok), i: u64, cx: PCx): Pair(PFactor, u64) {
+  let t := par_tok(a, i)
+  if par_is_literal(t) || par_is_dynamic_op(t) {
+    par_terminal(a, i, Cons(0, Nil), cx)
+  } else if t.kind == 5 && t.text == "<" {
+    let names := par_names(a, i + 1)
+    let after := par_expect_mark(a, names.snd, ">")
+    par_terminal(a, after, par_sort_states(par_state_numbers(names.fst, cx.scanners)), cx)
+  } else if t.kind == 5 && (t.text == "(" || t.text == "[" || t.text == "{") {
+    let inner := par_alts(a, i + 1, cx)
+    let close := if t.text == "(" {
+      ")"
+    } else if t.text == "[" {
+      "]"
+    } else {
+      "}"
+    }
+    let after := par_expect_mark(a, inner.snd, close)
+    let inner_alts := inner.fst
+    if match inner_alts {
+      Nil => true
+      Cons(alt, rest) => false
+    } {
+      par_die("an empty group")
+    } else {
+      Pair { fst: if t.text == "(" {
+          PGroup(inner.fst)
+        } else if t.text == "[" {
+          POptional(inner.fst)
+        } else {
+          PRepeat(inner.fst)
+        }, snd: after }
+    }
+  } else if t.kind == 0 {
+    Pair { fst: PNt(t.text), snd: par_ast_control(a, i + 1) }
+  } else {
+    par_die("a factor is expected")
+  }
+}
+
+pub fn par_ends_alt(t: PTok): Bool {
+  t.kind == 8 || (
+    t.kind == 5 && (
+      t.text == "|" || t.text == ")" || t.text == "]" || t.text == "}" || t.text == ";"
+    )
+  )
+}
+
+pub fn par_alt(a: Array(PTok), i: u64, cx: PCx): Pair(PAlt, u64) {
+  var out: List(PFactor) := Nil
+  var at := i
+  while not(par_ends_alt(par_tok(a, at))) {
+    let f := par_factor(a, at, cx)
+    out := Cons(f.fst, out)
+    at := f.snd
+  }
+  Pair { fst: PAlt { factors: pf_reverse(out), attr: 0 }, snd: at }
+}
+
+pub fn pf_reverse(xs: List(PFactor)): List(PFactor) {
+  var out: List(PFactor) := Nil
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+pub fn pa_reverse(xs: List(PAlt)): List(PAlt) {
+  var out: List(PAlt) := Nil
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+pub fn par_alts(a: Array(PTok), i: u64, cx: PCx): Pair(List(PAlt), u64) {
+  let first := par_alt(a, i, cx)
+  var out: List(PAlt) := Cons(first.fst, Nil)
+  var at := first.snd
+  while par_is_mark(a, at, "|") {
+    let next := par_alt(a, at + 1, cx)
+    out := Cons(next.fst, out)
+    at := next.snd
+  }
+  Pair { fst: pa_reverse(out), snd: at }
+}
+
+pub fn par_prod(a: Array(PTok), i: u64, cx: PCx): Pair(PProd, u64) {
+  let name := par_expect_name(a, i)
+  let colon := par_expect_mark(a, name.snd, ":")
+  let alts := par_alts(a, colon, cx)
+  let end := par_expect_mark(a, alts.snd, ";")
+  Pair { fst: PProd { lhs: name.fst, alts: alts.fst }, snd: end }
+}
+
+pub fn par_new_scanner(name: Text): PScanner {
+  PScanner {
+    name: name,
+    line_comments: Nil,
+    block_comments: Nil,
+    auto_newline_off: false,
+    auto_ws_off: false,
+    allow_unmatched: false,
+    skip: Nil,
+    transitions: Nil
+  }
+}
+
+// One directive of a scanner (the first one or a `%scanner`): the scanner
+// with it added, and where the next token is.
+pub fn par_directive(a: Array(PTok), i: u64, sc: PScanner): Pair(PScanner, u64) {
+  let d := par_tok(a, i).text
+  if d == "%line_comment" {
+    let lit := par_expect_literal(a, i + 1)
+    Pair {
+      fst: PScanner {
+        name: sc.name,
+        line_comments: Cons(par_expanded(lit), sc.line_comments),
+        block_comments: sc.block_comments,
+        auto_newline_off: sc.auto_newline_off,
+        auto_ws_off: sc.auto_ws_off,
+        allow_unmatched: sc.allow_unmatched,
+        skip: sc.skip,
+        transitions: sc.transitions
+      },
+      snd: i + 2
+    }
+  } else if d == "%block_comment" {
+    let open := par_expect_literal(a, i + 1)
+    let close := par_expect_literal(a, i + 2)
+    Pair {
+      fst: PScanner {
+        name: sc.name,
+        line_comments: sc.line_comments,
+        block_comments: Cons(
+          Pair { fst: par_expanded(open), snd: par_expanded(close) },
+          sc.block_comments
+        ),
+        auto_newline_off: sc.auto_newline_off,
+        auto_ws_off: sc.auto_ws_off,
+        allow_unmatched: sc.allow_unmatched,
+        skip: sc.skip,
+        transitions: sc.transitions
+      },
+      snd: i + 3
+    }
+  } else if d == "%auto_newline_off" {
+    Pair {
+      fst: PScanner {
+        name: sc.name,
+        line_comments: sc.line_comments,
+        block_comments: sc.block_comments,
+        auto_newline_off: true,
+        auto_ws_off: sc.auto_ws_off,
+        allow_unmatched: sc.allow_unmatched,
+        skip: sc.skip,
+        transitions: sc.transitions
+      },
+      snd: i + 1
+    }
+  } else if d == "%auto_ws_off" {
+    Pair {
+      fst: PScanner {
+        name: sc.name,
+        line_comments: sc.line_comments,
+        block_comments: sc.block_comments,
+        auto_newline_off: sc.auto_newline_off,
+        auto_ws_off: true,
+        allow_unmatched: sc.allow_unmatched,
+        skip: sc.skip,
+        transitions: sc.transitions
+      },
+      snd: i + 1
+    }
+  } else if d == "%allow_unmatched" {
+    Pair {
+      fst: PScanner {
+        name: sc.name,
+        line_comments: sc.line_comments,
+        block_comments: sc.block_comments,
+        auto_newline_off: sc.auto_newline_off,
+        auto_ws_off: sc.auto_ws_off,
+        allow_unmatched: true,
+        skip: sc.skip,
+        transitions: sc.transitions
+      },
+      snd: i + 1
+    }
+  } else if d == "%skip" {
+    let names := par_names(a, i + 1)
+    Pair {
+      fst: PScanner {
+        name: sc.name,
+        line_comments: sc.line_comments,
+        block_comments: sc.block_comments,
+        auto_newline_off: sc.auto_newline_off,
+        auto_ws_off: sc.auto_ws_off,
+        allow_unmatched: sc.allow_unmatched,
+        skip: text_append(sc.skip, names.fst),
+        transitions: sc.transitions
+      },
+      snd: names.snd
+    }
+  } else if d == "%on" {
+    let names := par_names(a, i + 1)
+    let act := par_tok(a, names.snd)
+    if act.kind != 1 {
+      par_die("%on needs %enter, %push or %pop")
+    } else if act.text == "%pop" {
+      Pair {
+        fst: PScanner {
+          name: sc.name,
+          line_comments: sc.line_comments,
+          block_comments: sc.block_comments,
+          auto_newline_off: sc.auto_newline_off,
+          auto_ws_off: sc.auto_ws_off,
+          allow_unmatched: sc.allow_unmatched,
+          skip: sc.skip,
+          transitions: text_append_trans(sc.transitions, par_trans(names.fst, 2, ""))
+        },
+        snd: names.snd + 1
+      }
+    } else if act.text == "%enter" || act.text == "%push" {
+      let target := par_expect_name(a, names.snd + 1)
+      Pair {
+        fst: PScanner {
+          name: sc.name,
+          line_comments: sc.line_comments,
+          block_comments: sc.block_comments,
+          auto_newline_off: sc.auto_newline_off,
+          auto_ws_off: sc.auto_ws_off,
+          allow_unmatched: sc.allow_unmatched,
+          skip: sc.skip,
+          transitions: text_append_trans(
+            sc.transitions,
+            par_trans(names.fst, if act.text == "%enter" { 0 } else { 1 }, target.fst)
+          )
+        },
+        snd: target.snd
+      }
+    } else {
+      par_die("%on needs %enter, %push or %pop")
+    }
+  } else {
+    par_die(Text::concat_all(Cons("a directive a syntax does not take: ", Cons(d, Nil))))
+  }
+}
+
+// The text of a literal as a regular expression: one in `'…'` has its meta characters escaped.
+pub fn par_expanded(lit: PTok): Text {
+  if lit.kind == 3 {
+    md_expand(
+      PTerm { text: lit.text, kind: 2, states: Nil, clipped: false, la: None, dynamic: None }
+    )
+  } else {
+    lit.text
+  }
+}
+
+pub fn par_trans(names: List(Text), action: u64, target: Text): List(PTrans) {
+  match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(
+      PTrans { terminal: n, action: action, target: target },
+      par_trans(rest, action, target)
+    )
+  }
+}
+
+pub fn text_append(xs: List(Text), ys: List(Text)): List(Text) {
+  match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, text_append(rest, ys))
+  }
+}
+
+pub fn text_append_trans(xs: List(PTrans), ys: List(PTrans)): List(PTrans) {
+  match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, text_append_trans(rest, ys))
+  }
+}
+
+// The scanner's lists were built backwards while reading.
+pub fn par_finish_scanner(sc: PScanner): PScanner {
+  PScanner {
+    name: sc.name,
+    line_comments: text_list_reverse(sc.line_comments),
+    block_comments: text_list_reverse(sc.block_comments),
+    auto_newline_off: sc.auto_newline_off,
+    auto_ws_off: sc.auto_ws_off,
+    allow_unmatched: sc.allow_unmatched,
+    skip: sc.skip,
+    transitions: sc.transitions
+  }
+}
+
+pub fn par_is_scanner_directive(d: Text): Bool {
+  d == "%line_comment" || d == "%block_comment" || d == "%auto_newline_off" || d == "%auto_ws_off" || d == "%skip" || d == "%on" || d == "%allow_unmatched"
+}
+
+// The grammar from its text.
+pub fn par_read(source: Text): PGrammar {
+  let toks := par_tokens(source)
+  let a := Array::of_list(Vec::into_list(toks))
+  // The names of the scanners come first: `<A, B>` in a production needs them.
+  var scanners: List(Text) := Cons("INITIAL", Nil)
+  var k: u64 := 0
+  while k + 1 < Array::len(a) {
+    if par_tok(a, k).kind == 1 && par_tok(a, k).text == "%scanner" {
+      scanners := Cons(par_tok(a, k + 1).text, scanners)
+    }
+    k := k + 1
+  }
+  let names := text_list_reverse(scanners)
+  var at: u64 := 0
+  var start: Option(Text) := None
+  var title: Option(Text) := None
+  var comment: Option(Text) := None
+  var initial := par_new_scanner("INITIAL")
+  var modes: List(PScanner) := Nil
+  var dyn_states: List(PState) := Nil
+  var lalr := false
+  var running := true
+  while running {
+    let t := par_tok(a, at)
+    if t.kind != 1 {
+      par_die("a directive or %% is expected")
+    } else if t.text == "%%" {
+      running := false
+      at := at + 1
+    } else if t.text == "%start" {
+      let n := par_expect_name(a, at + 1)
+      start := Some(n.fst)
+      at := n.snd
+    } else if t.text == "%title" {
+      title := Some(par_expect_literal(a, at + 1).text)
+      at := at + 2
+    } else if t.text == "%comment" {
+      comment := Some(par_expect_literal(a, at + 1).text)
+      at := at + 2
+    } else if t.text == "%state" {
+      let r := par_state_decl(a, at + 1)
+      if par_has_state(dyn_states, r.fst.name) {
+        par_die(
+          Text::concat_all(Cons("the state ", Cons(r.fst.name, Cons(" is declared twice", Nil))))
+        )
+      }
+      dyn_states := Cons(r.fst, dyn_states)
+      at := r.snd
+    } else if t.text == "%grammar_type" {
+      let g := par_expect_literal(a, at + 1).text
+      if g == "lalr(1)" || g == "LALR(1)" {
+        lalr := true
+      } else if g != "ll(k)" && g != "LL(k)" {
+        par_die(Text::concat_all(Cons("a grammar type that is not read yet: ", Cons(g, Nil))))
+      }
+      at := at + 2
+    } else if t.text == "%user_type" || t.text == "%nt_type" {
+      let n := par_expect_name(a, at + 1)
+      let eq := par_expect_mark(a, n.snd, "=")
+      at := par_expect_name(a, eq).snd
+    } else if t.text == "%t_type" {
+      at := par_expect_name(a, at + 1).snd
+    } else if t.text == "%scanner" {
+      let n := par_expect_name(a, at + 1)
+      var sc := par_new_scanner(n.fst)
+      var j := par_expect_mark(a, n.snd, "{")
+      while not(par_is_mark(a, j, "}")) {
+        let r := par_directive(a, j, sc)
+        sc := r.fst
+        j := r.snd
+      }
+      modes := Cons(par_finish_scanner(sc), modes)
+      at := j + 1
+    } else if par_is_scanner_directive(t.text) {
+      let r := par_directive(a, at, initial)
+      initial := r.fst
+      at := r.snd
+    } else {
+      par_die(Text::concat_all(Cons("a directive a syntax does not take: ", Cons(t.text, Nil))))
+    }
+  }
+  var prods: List(PProd) := Nil
+  while par_tok(a, at).kind != 8 {
+    let p := par_prod(a, at, PCx { scanners: names, dyn_states: text_list_reverse(dyn_states) })
+    prods := Cons(p.fst, prods)
+    at := p.snd
+  }
+  PGrammar {
+    start: match start {
+      Some(s) => s
+      None => par_die("a grammar has a %start")
+    }
+    lalr: lalr
+    states: text_list_reverse(dyn_states)
+    title: title
+    comment: comment
+    scanners: Cons(par_finish_scanner(initial), text_list_reverse(modes))
+    prods: text_list_reverse(prods)
+  }
+}
+
+// Whether a grammar is LALR(1) (`%grammar_type 'lalr(1)'`), or why it is
+// not a grammar.
+pub fn pargen_is_lalr(grammar: Text): Result(Bool, Text) {
+  handle { Ok(par_read(grammar).lalr) } with {
+    fail<Text>(why) => Err(why)
+    out_of_bounds() => Err("pargen: an index is out of bounds")
+  }
+}
+
+// The text of a literal with its backslashes taken out: `\'` is `'`.
+pub fn par_unescape(t: Text): Text {
+  var b := Buf::new()
+  var start: u64 := 0
+  var at: u64 := 0
+  while at < std::prelude::Text::len(t) {
+    if lk_byte(t, at) == 92 && at + 1 < std::prelude::Text::len(t) {
+      Buf::push(&mut b, &lk_slice(t, start, at))
+      start := at + 1
+      at := at + 2
+    } else {
+      at := at + 1
+    }
+  }
+  Buf::push(&mut b, &lk_slice(t, start, std::prelude::Text::len(t)))
+  Text::of(b)
+}
+
+pub fn par_has_state(states: List(PState), name: Text): Bool {
+  match states {
+    Nil => false
+    Cons(s, rest) => s.name == name || par_has_state(rest, name)
+  }
+}
+
+// `%state NAME: count(MIN..=MAX)` (or `MIN..END`, END left out) or
+// `%state NAME: str(PATTERN)`, after the directive.
+pub fn par_state_decl(a: Array(PTok), i: u64): Pair(PState, u64) {
+  let name := par_expect_name(a, i)
+  let colon := par_expect_mark(a, name.snd, ":")
+  let ty := par_expect_name(a, colon)
+  let open := par_expect_mark(a, ty.snd, "(")
+  if ty.fst == "count" {
+    let lo := par_number(a, open)
+    let min: u64 := (lo: @value u64)
+    let lo_next: u64 := (lo: @next u64)
+    let inclusive := par_is_mark(a, lo_next, "..=")
+    if not(inclusive) && not(par_is_mark(a, lo_next, "..")) {
+      par_die("a count state is `count(MIN..=MAX)` or `count(MIN..END)`")
+    }
+    let hi := par_number(a, lo_next + 1)
+    let max: u64 := (hi: @value u64)
+    if inclusive && min > max {
+      par_die("a count state needs MIN <= MAX")
+    }
+    if not(inclusive) && min >= max {
+      par_die("a count state needs MIN < END")
+    }
+    let close := par_expect_mark(a, (hi: @next u64), ")")
+    Pair {
+      fst: PState {
+        name: name.fst,
+        count: true,
+        min: min,
+        max: if inclusive { max } else { max - 1 },
+        pattern: ""
+      },
+      snd: close
+    }
+  } else if ty.fst == "str" {
+    let p := par_expect_literal(a, open)
+    let close := par_expect_mark(a, open + 1, ")")
+    Pair {
+      fst: PState { name: name.fst, count: false, min: 0, max: 0, pattern: par_regex_of(p) },
+      snd: close
+    }
+  } else {
+    par_die("a state is a count or a str")
+  }
+}

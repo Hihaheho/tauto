@@ -1,65 +1,65 @@
 import "../src/Hom.taut"
-import "../../../std/Nat.taut"
+import std::Nat
 
-def natural_addition(): AlgebraMonoid(
+pub def natural_addition(): AlgebraMonoid(
   0,
   Nat
-) := algebra_monoid(
+) := AlgebraMonoid::Mk(
   0,
   Nat,
-  zero,
-  nat_add,
-  x => y => z => algebra_from_eq(nat_add_assoc(x, y, z)),
-  x => algebra_from_eq(nat_add_zero_left(x)),
-  x => algebra_refl(0, Nat, x)
+  Zero,
+  Nat::add,
+  x => y => z => algebra_from_eq(Nat::add_assoc(x, y, z)),
+  x => algebra_from_eq(Nat::add_zero_left(x)),
+  x => AlgebraRefl(0, Nat, x)
 )
 
-def natural_multiplication(): AlgebraMonoid(
+pub def natural_multiplication(): AlgebraMonoid(
   0,
   Nat
-) := algebra_monoid(
+) := AlgebraMonoid::Mk(
   0,
   Nat,
-  succ(zero),
-  nat_mul,
-  x => y => z => algebra_from_eq(nat_mul_assoc(x, y, z)),
-  x => algebra_from_eq(nat_mul_one_left(x)),
-  x => algebra_from_eq(nat_mul_one_right(x))
+  Succ(Zero),
+  Nat::mul,
+  x => y => z => algebra_from_eq(Nat::mul_assoc(x, y, z)),
+  x => algebra_from_eq(Nat::mul_one_left(x)),
+  x => algebra_from_eq(Nat::mul_one_right(x))
 )
 
-theorem addition_unit(): AlgebraEq(
+pub theorem addition_unit(): AlgebraEq(
   0,
   Nat,
   algebra_unit(0, Nat, natural_addition),
-  zero
-) { algebra_refl(0, Nat, zero) }
-theorem multiplication_unit(): AlgebraEq(
+  Zero
+) { AlgebraRefl(0, Nat, Zero) }
+pub theorem multiplication_unit(): AlgebraEq(
   0,
   Nat,
   algebra_unit(0, Nat, natural_multiplication),
-  succ(zero)
-) { algebra_refl(0, Nat, succ(zero)) }
+  Succ(Zero)
+) { AlgebraRefl(0, Nat, Succ(Zero)) }
 
-def additive_zero_map(): AlgebraHom(
+pub def additive_zero_map(): AlgebraHom(
   0,
   0,
   Nat,
   Nat,
   natural_addition,
   natural_addition
-) := algebra_hom(
+) := AlgebraHom::Mk(
   0,
   0,
   Nat,
   Nat,
   natural_addition,
   natural_addition,
-  x => zero,
-  algebra_refl(0, Nat, zero),
-  x => y => algebra_refl(0, Nat, zero)
+  x => Zero,
+  AlgebraRefl(0, Nat, Zero),
+  x => y => AlgebraRefl(0, Nat, Zero)
 )
 
-theorem compose_zero_identity(
+pub theorem compose_zero_identity(
   n: Nat
 ): AlgebraEq(
   0,
@@ -85,34 +85,34 @@ theorem compose_zero_identity(
       algebra_identity(0, Nat, natural_addition)
     )
   )(n),
-  zero
-) { algebra_refl(0, Nat, zero) }
+  Zero
+) { AlgebraRefl(0, Nat, Zero) }
 
 import "../src/Linear.taut"
 
-theorem natural_semiring(): AlgebraSemiring(Nat, natural_addition, natural_multiplication) {
-  algebra_semiring(
+pub theorem natural_semiring(): AlgebraSemiring(Nat, natural_addition, natural_multiplication) {
+  AlgebraSemiring::Mk(
     Nat,
     natural_addition,
     natural_multiplication,
-    x => y => algebra_from_eq(nat_add_comm(x, y)),
-    x => y => z => algebra_from_eq(nat_mul_add_distrib(x, y, z)),
-    x => y => z => algebra_from_eq(nat_mul_add_distrib_right(x, y, z)),
-    x => algebra_from_eq(nat_mul_zero_left(x)),
-    x => algebra_from_eq(nat_mul_zero_right(x))
+    x => y => algebra_from_eq(Nat::add_comm(x, y)),
+    x => y => z => algebra_from_eq(Nat::mul_add_distrib(x, y, z)),
+    x => y => z => algebra_from_eq(Nat::mul_add_distrib_right(x, y, z)),
+    x => algebra_from_eq(Nat::mul_zero_left(x)),
+    x => algebra_from_eq(Nat::mul_zero_right(x))
   )
 }
 
-fn natural_matrix(
+pub fn natural_matrix(
   rows: Nat,
   columns: Nat,
   row: AlgebraFin(rows),
   column: AlgebraFin(columns)
-) -> Nat {
-  succ(nat_add(algebra_fin_value(rows, row), algebra_fin_value(columns, column)))
+): Nat {
+  Succ(Nat::add(algebra_fin_value(rows, row), algebra_fin_value(columns, column)))
 }
 
-theorem natural_rectangular_action(): AlgebraEq(
+pub theorem natural_rectangular_action(): AlgebraEq(
   0,
   Nat,
   algebra_matrix_apply(
@@ -123,13 +123,13 @@ theorem natural_rectangular_action(): AlgebraEq(
     3,
     row => column => natural_matrix(2, 3, row, column),
     column => 1
-  )(algebra_next(1, algebra_first(0))),
+  )(AlgebraNext(1, AlgebraFirst(0))),
   9
 ) {
-  algebra_refl(0, Nat, 9)
+  AlgebraRefl(0, Nat, 9)
 }
 
-theorem natural_rectangular_product(): AlgebraEq(
+pub theorem natural_rectangular_product(): AlgebraEq(
   0,
   Nat,
   algebra_matrix_product(
@@ -141,22 +141,22 @@ theorem natural_rectangular_product(): AlgebraEq(
     4,
     row => column => natural_matrix(2, 3, row, column),
     row => column => natural_matrix(3, 4, row, column)
-  )(algebra_next(1, algebra_first(0)), algebra_next(3, algebra_next(2, algebra_first(1)))),
+  )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(3, AlgebraNext(2, AlgebraFirst(1)))),
   38
 ) {
-  algebra_refl(0, Nat, 38)
+  AlgebraRefl(0, Nat, 38)
 }
 
-theorem natural_empty_sum(): AlgebraEq(
+pub theorem natural_empty_sum(): AlgebraEq(
   0,
   Nat,
   algebra_sum(Nat, natural_addition, 0, index => 7),
   0
 ) {
-  algebra_refl(0, Nat, 0)
+  AlgebraRefl(0, Nat, 0)
 }
 
-theorem natural_empty_inner_product(): AlgebraEq(
+pub theorem natural_empty_inner_product(): AlgebraEq(
   0,
   Nat,
   algebra_matrix_product(
@@ -168,13 +168,13 @@ theorem natural_empty_inner_product(): AlgebraEq(
     1,
     row => column => 8,
     row => column => 9
-  )(algebra_first(0), algebra_first(0)),
+  )(AlgebraFirst(0), AlgebraFirst(0)),
   0
 ) {
-  algebra_refl(0, Nat, 0)
+  AlgebraRefl(0, Nat, 0)
 }
 
-theorem natural_matrix_is_linear(
+pub theorem natural_matrix_is_linear(
   rows: Nat,
   columns: Nat
 ): AlgebraLinear(
@@ -201,16 +201,16 @@ theorem natural_matrix_is_linear(
   )
 }
 
-theorem natural_finite_sum(): AlgebraEq(
+pub theorem natural_finite_sum(): AlgebraEq(
   0,
   Nat,
   algebra_sum(Nat, natural_addition, 5, index => algebra_fin_value(5, index)),
   10
 ) {
-  algebra_refl(0, Nat, 10)
+  AlgebraRefl(0, Nat, 10)
 }
 
-theorem natural_matrix_addition(): AlgebraEq(
+pub theorem natural_matrix_addition(): AlgebraEq(
   0,
   Nat,
   algebra_matrix_add(
@@ -220,13 +220,13 @@ theorem natural_matrix_addition(): AlgebraEq(
     3,
     row => column => natural_matrix(2, 3, row, column),
     row => column => natural_matrix(2, 3, row, column)
-  )(algebra_next(1, algebra_first(0)), algebra_next(2, algebra_next(1, algebra_first(0)))),
+  )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(2, AlgebraNext(1, AlgebraFirst(0)))),
   8
 ) {
-  algebra_refl(0, Nat, 8)
+  AlgebraRefl(0, Nat, 8)
 }
 
-theorem natural_matrix_scaling(): AlgebraEq(
+pub theorem natural_matrix_scaling(): AlgebraEq(
   0,
   Nat,
   algebra_matrix_scale(
@@ -236,8 +236,8 @@ theorem natural_matrix_scaling(): AlgebraEq(
     3,
     row => column => natural_matrix(2, 3, row, column),
     3
-  )(algebra_next(1, algebra_first(0)), algebra_next(2, algebra_next(1, algebra_first(0)))),
+  )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(2, AlgebraNext(1, AlgebraFirst(0)))),
   12
 ) {
-  algebra_refl(0, Nat, 12)
+  AlgebraRefl(0, Nat, 12)
 }

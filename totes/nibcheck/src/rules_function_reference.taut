@@ -1,0 +1,51 @@
+import "rules_local.taut"
+import "rules_ty.taut"
+
+pub(open) inductive LocalAbsent(name: Text): (List(Local)) -> Prop {
+  LocalAbsentNil: LocalAbsent(name, Nil)
+  LocalAbsentCons<rest: List(
+    Local
+  )>(
+    head: Local,
+    different: (expr_local_name(head) = name) -> False,
+    tail: LocalAbsent(name, rest)
+  ): LocalAbsent(name, Cons(head, rest))
+}
+
+// A global callable is visible only when no local shadows its name.
+pub(open) inductive FunctionReference(
+  env: List(Local),
+  functions: Ordmap(Text, Scheme),
+  name: Text,
+  scheme: Scheme
+): Prop {
+  Mk(
+    absent: LocalAbsent(name, env),
+    found: Ordmap::get(functions, name, Ordmap::compare_text) = Some(scheme)
+  ): FunctionReference(env, functions, name, scheme)
+}
+
+// A function with no generics and no class requirements needs no instance
+// arguments. The declared type and the
+// result are equal under `TyEqIn` (`src/rules_ty.taut`) with the substitution.
+pub(open) inductive MonomorphicFunctionTyping(
+  subst: Ordmap(Nat, Ty),
+  env: List(Local),
+  functions: Ordmap(Text, Scheme)
+): (SurfaceTerm, Ty) -> Prop {
+  MonomorphicFunction<result: Ty>(
+    name: Text,
+    declared: Ty,
+    ctors: List(Pair(Text, Kind)),
+    start: Nat,
+    end: Nat,
+    reference: FunctionReference(env, functions, name, SchemeMk(Nil, declared, Nil, ctors)),
+    converted: TyEqIn(subst, declared, result)
+  ): MonomorphicFunctionTyping(
+    subst,
+    env,
+    functions,
+    surface_term_mk(SkVar(name), start, end),
+    result
+  )
+}

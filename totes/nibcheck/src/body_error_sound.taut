@@ -1,0 +1,41 @@
+import "body_frame.taut"
+import "inference_base_error_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem ck_top_let_frame_errors(
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope
+): CkErrorFrame(c, ck_top_let(c, s, env)) { match s: CkErrorFrame(c, ck_top_let(c, s, env)) {
+    StLet(name, ty, value, borrow, bm) => match env: CkErrorFrame(
+      c,
+      ck_top_let(c, StLet(name, ty, value, borrow, bm), env)
+    ) { ScopeMk(items) => match items: CkErrorFrame(
+      c,
+      ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))
+    ) { Nil => (clean_errors => clean_errors)
+        Cons(l, older) => (clean_errors => clean_errors) } }
+    StVar(name, ty, value, vb) => (clean_errors => clean_errors)
+    StAssign(name, name_place, value) => (clean_errors => clean_errors)
+    StCalled(name_generates, value) => (clean_errors => clean_errors)
+    StFn(f) => (clean_errors => clean_errors)
+    StEffect(e) => (clean_errors => clean_errors)
+    StWhile(condition, body) => (clean_errors => clean_errors)
+    StReturn(e) => (clean_errors => clean_errors)
+    StExpr(e) => (clean_errors => clean_errors)
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => (clean_errors => clean_errors)
+    StTheorem(pat_t) => (clean_errors => clean_errors)
+    StDef(pat_t) => (clean_errors => clean_errors)
+    StMutual(pat_stmts, pat_start, pat_end) => (clean_errors => clean_errors)
+    StImport(pat_path, pat_start, pat_end) => (clean_errors => clean_errors)
+    StInductive(pat_i) => (clean_errors => clean_errors)
+    StStruct(pat_d) => (clean_errors => clean_errors)
+    StEnum(pat_d) => (clean_errors => clean_errors)
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => (clean_errors => clean_errors)
+    StClass(pat_c) => (clean_errors => clean_errors)
+    StInstance(pat_i) => (clean_errors => clean_errors)
+    StMacro(pat_name, pat_function, pat_start, pat_end) => (clean_errors => clean_errors)
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => (clean_errors => clean_errors)
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => (clean_errors => clean_errors)
+    StOther(what, start, end) => (clean_errors => clean_errors)
+  } }

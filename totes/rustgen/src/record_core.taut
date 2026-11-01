@@ -1,0 +1,67 @@
+import std::Text
+pub(open) inductive RustgenRecordField: Type {
+  Mk(name: Text, value: RustgenValue, local: Text): RustgenRecordField
+}
+
+pub fn rustgen_record_has_name(name: Text, fields: List(RustgenRecordField)): Bool {
+  match fields: Bool {
+    Nil => false
+    Cons(field, rest) => name == field.name || rustgen_record_has_name(name, rest)
+  }
+}
+pub fn rustgen_record_unique(fields: List(RustgenRecordField)): Bool {
+  match fields: Bool {
+    Nil => true
+    Cons(field, rest) => not(
+      rustgen_record_has_name(field.name, rest)
+    ) && rustgen_record_unique(rest)
+  }
+}
+// Bind written expressions once in their source order before field reordering.
+pub fn rustgen_record_bindings(fields: List(RustgenRecordField)): Text {
+  match fields: Text {
+    Nil => ""
+    Cons(field, rest) => Text::concat(
+      "let ",
+      Text::concat(
+        field.local,
+        Text::concat(
+          " = ",
+          Text::concat(field.value.code, Text::concat("; ", rustgen_record_bindings(rest)))
+        )
+      )
+    )
+  }
+}
+pub fn rustgen_record_value(
+  name: Text,
+  fields: List(RustgenRecordField)
+): RustgenResult(RustgenValue) {
+  match fields: RustgenResult(RustgenValue) {
+    Nil => RustgenErr("missing record field")
+    Cons(field, rest) => if name == field.name {
+      RustgenOk(RustgenValue { ty: field.value.ty, code: field.local })
+    } else { rustgen_record_value(name, rest) }
+  }
+}
+pub fn rustgen_record_arguments(
+  params: List(RustgenBinding),
+  fields: List(RustgenRecordField)
+): RustgenResult(List(RustgenValue)) {
+  match params: RustgenResult(List(RustgenValue)) {
+    Nil => RustgenOk(Nil)
+    Cons(param, rest) => match rustgen_record_value(
+      param.name,
+      fields
+    ): RustgenResult(List(RustgenValue)) {
+      RustgenErr(Message) => RustgenErr(Message)
+      RustgenOk(value) => match rustgen_record_arguments(
+        rest,
+        fields
+      ): RustgenResult(List(RustgenValue)) {
+        RustgenErr(Message) => RustgenErr(Message)
+        RustgenOk(more) => RustgenOk(Cons(value, more))
+      }
+    }
+  }
+}

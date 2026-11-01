@@ -1,0 +1,74 @@
+import "tracked_finish_sound.taut"
+import "natural_final_sound.taut"
+
+// A recorded natural remains valid after any checked continuation preserving
+// existing records, including later function bodies and top-level statements.
+pub theorem ck_infer_natural_continued_sound(
+  k: Nat,
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  next: Checker,
+  retained: TrackedState(
+    ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)),
+    next
+  ),
+  accepted: (
+    DiagnosticClean(next)
+  ) -> DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env))),
+  clean: DiagnosticReportClean(ck_finish(next))
+): NaturalTypingIn(
+  ck_subst_of(ck_st(ck_finish(next))),
+  surface_term_mk(SkNat(value), start, end),
+  ck_val(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env))
+) {
+  tracked_finish_natural_sound(
+    ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)),
+    next,
+    value,
+    start,
+    end,
+    ck_val(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)),
+    ck_infer_natural_recorded(
+      k,
+      c,
+      value,
+      start,
+      end,
+      env,
+      accepted(ck_finish_input_clean(next, clean))
+    ),
+    retained,
+    clean
+  )
+}
+pub theorem body_finish_natural_sound(
+  c: Checker,
+  program: List(SurfaceStmt),
+  schemes: List(Pair(SurfaceFn, Scheme)),
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  ordered: CkOrdered(c),
+  recorded: NaturalRecorded(value, TySpan {start: start, end: end}, ty, stable_literals(c)),
+  clean: DiagnosticReportClean(ck_finish(ck_st(names_function_body(c, program, schemes))))
+): NaturalTypingIn(
+  ck_subst_of(ck_st(ck_finish(ck_st(names_function_body(c, program, schemes))))),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  tracked_finish_natural_sound(
+    c,
+    ck_st(names_function_body(c, program, schemes)),
+    value,
+    start,
+    end,
+    ty,
+    recorded,
+    And::right(names_function_body_tracked(c, program, schemes, ordered)),
+    clean
+  )
+}

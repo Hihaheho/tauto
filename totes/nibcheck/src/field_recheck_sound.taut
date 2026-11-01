@@ -1,0 +1,306 @@
+import "written_stability_sound.taut"
+import "data_ctors_sound.taut"
+import "field_recheck_context_sound.taut"
+import "field_recheck_error_sound.taut"
+
+pub theorem recheck_clean_unwrap<A: Type>(
+  m: Mut1(A, Checker),
+  clean: DiagnosticClean(ck_st(ck_rewrap1(m)))
+): DiagnosticClean(ck_st(m)) {
+  Eq::subst((r: Mut1(A, Checker)) => DiagnosticClean(ck_st(r)), ck_rewrap1_id(m), clean)
+}
+pub fn recheck_fields_after(
+  rest: List(SurfaceDataField),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Ty,
+    Unit,
+    (ignored: Ty, next: Checker) => ck_rewrap1(ck_recheck_fields(rest, next, generics)),
+    m
+  )
+}
+pub theorem recheck_fields_after_sound(
+  old_env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool,
+  name: Option(Text),
+  body: SurfaceTerm,
+  rest: List(SurfaceDataField),
+  t: Ty,
+  types: List(DataField),
+  c: Checker,
+  m: Mut1(Ty, Checker),
+  old_head: WrittenTerm(old_env, generics, partial, false, body, t),
+  read: CkReadFrame(c, m),
+  reset: CkWrittenReset(c, m),
+  position: frame_constructor_position(c) = partial,
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenTerm(ck_datas_of(c), generics, partial, false, body, ck_val(m)),
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ same_position: frame_constructor_position(next) = partial. ∀ clean: DiagnosticClean(
+    ck_st(ck_recheck_fields(rest, next, generics))
+  ). WrittenDataFields(ck_datas_of(next), generics, partial, rest, types),
+  clean: DiagnosticClean(ck_st(recheck_fields_after(rest, generics, m)))
+): WrittenDataFields(
+  ck_datas_of(c),
+  generics,
+  partial,
+  Cons(surface_data_field_mk(name, body), rest),
+  Cons(DataFieldMk(name, t), types)
+) {
+  match m: WrittenDataFields(
+    ck_datas_of(c),
+    generics,
+    partial,
+    Cons(surface_data_field_mk(name, body), rest),
+    Cons(DataFieldMk(name, t), types)
+  ) {
+    mut1(value, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_recheck_fields(rest, next, generics))
+      ) := recheck_clean_unwrap(ck_recheck_fields(rest, next, generics), clean)
+      let head_clean: DiagnosticClean(
+        next
+      ) := ck_recheck_fields_frame_errors(rest, next, generics, tail_clean)
+      WrittenDataFieldsCons(
+        name,
+        body,
+        rest,
+        t,
+        types,
+        Eq::subst(
+          (ty: Ty) => WrittenTerm(ck_datas_of(c), generics, partial, false, body, ty),
+          Eq::sym(written_term_unique(old_head, ck_datas_of(c), value, ihhead(head_clean))),
+          ihhead(head_clean)
+        ),
+        Eq::subst(
+          (env: Datas) => WrittenDataFields(env, generics, partial, rest, types),
+          Eq::congr(frame_read_datas, read),
+          ihtail(
+            next,
+            Eq::congr(written_context_borrow, reset),
+            Eq::trans(Eq::congr(written_context_position, reset), position),
+            tail_clean
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_recheck_fields_sound<old_env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, fields: List(
+  SurfaceDataField
+), types: List(
+  DataField
+)>(
+  old: WrittenDataFields(old_env, generics, partial, fields, types),
+  c: Checker,
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = partial,
+  clean: DiagnosticClean(ck_st(ck_recheck_fields(fields, c, generics)))
+): WrittenDataFields(ck_datas_of(c), generics, partial, fields, types) {
+  match old: WrittenDataFields(ck_datas_of(c), generics, partial, fields, types) {
+    WrittenDataFieldsNil => WrittenDataFieldsNil
+    WrittenDataFieldsCons(name, body, rest, t, values, head, tail) => written_transfer(
+      Unit,
+      (ignored: Unit) => WrittenDataFields(
+        ck_datas_of(c),
+        generics,
+        partial,
+        Cons(surface_data_field_mk(name, body), rest),
+        Cons(DataFieldMk(name, t), values)
+      ),
+      ck_recheck_fields(Cons(surface_data_field_mk(name, body), rest), c, generics),
+      recheck_fields_after(rest, generics, ck_written(c, body, generics)),
+      recheck_fields_cons_unf(surface_data_field_mk(name, body), rest, c, generics),
+      branch_clean => recheck_fields_after_sound(
+        old_env,
+        generics,
+        partial,
+        name,
+        body,
+        rest,
+        t,
+        values,
+        c,
+        ck_written(c, body, generics),
+        head,
+        ck_written_frame(c, body, generics),
+        ck_written_reset(c, body, generics),
+        position,
+        inner_clean => Eq::subst(
+          (mode: Bool) => WrittenTerm(
+            ck_datas_of(c),
+            generics,
+            mode,
+            false,
+            body,
+            ck_val(ck_written(c, body, generics))
+          ),
+          position,
+          written_term_ordinary(
+            c,
+            generics,
+            body,
+            ck_val(ck_written(c, body, generics)),
+            ordinary,
+            ck_written_sound(c, body, generics, inner_clean)
+          )
+        ),
+        next => ordinary_next => next_position => inner_clean => ck_recheck_fields_sound(
+          tail,
+          next,
+          ordinary_next,
+          next_position,
+          inner_clean
+        ),
+        branch_clean
+      ),
+      clean
+    )
+  }
+}
+
+pub fn recheck_ctors_after(
+  rest: List(SurfaceDataCtor),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Unit, Checker)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_ctors(rest, next, generics)),
+    m
+  )
+}
+pub theorem recheck_ctors_after_sound(
+  generics: Ordmap(Text, Ty),
+  partial: Bool,
+  name: Text,
+  fields: List(SurfaceDataField),
+  rest: List(SurfaceDataCtor),
+  types: List(DataField),
+  ctors: List(DataCtor),
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  read: CkReadFrame(c, m),
+  context: written_context(ck_st(m)) = written_context(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = partial,
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenDataFields(ck_datas_of(c), generics, partial, fields, types),
+  ihtail: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ same_position: frame_constructor_position(next) = partial. ∀ clean: DiagnosticClean(
+    ck_st(ck_recheck_ctors(rest, next, generics))
+  ). WrittenDataCtors(ck_datas_of(next), generics, partial, rest, ctors),
+  clean: DiagnosticClean(ck_st(recheck_ctors_after(rest, generics, m)))
+): WrittenDataCtors(
+  ck_datas_of(c),
+  generics,
+  partial,
+  Cons(surface_data_ctor_mk(name, fields), rest),
+  Cons(DataCtorMk(name, types), ctors)
+) {
+  match m: WrittenDataCtors(
+    ck_datas_of(c),
+    generics,
+    partial,
+    Cons(surface_data_ctor_mk(name, fields), rest),
+    Cons(DataCtorMk(name, types), ctors)
+  ) {
+    mut1(ignored, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_recheck_ctors(rest, next, generics))
+      ) := recheck_clean_unwrap(ck_recheck_ctors(rest, next, generics), clean)
+      WrittenDataCtorsCons(
+        name,
+        fields,
+        rest,
+        types,
+        ctors,
+        ihhead(ck_recheck_ctors_frame_errors(rest, next, generics, tail_clean)),
+        Eq::subst(
+          (env: Datas) => WrittenDataCtors(env, generics, partial, rest, ctors),
+          Eq::congr(frame_read_datas, read),
+          ihtail(
+            next,
+            Eq::trans(Eq::congr(written_context_borrow, context), ordinary),
+            Eq::trans(Eq::congr(written_context_position, context), position),
+            tail_clean
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_recheck_ctors_sound<old_env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, source: List(
+  SurfaceDataCtor
+), ctors: List(
+  DataCtor
+)>(
+  old: WrittenDataCtors(old_env, generics, partial, source, ctors),
+  c: Checker,
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = partial,
+  clean: DiagnosticClean(ck_st(ck_recheck_ctors(source, c, generics)))
+): WrittenDataCtors(ck_datas_of(c), generics, partial, source, ctors) {
+  match old: WrittenDataCtors(ck_datas_of(c), generics, partial, source, ctors) {
+    WrittenDataCtorsNil => WrittenDataCtorsNil
+    WrittenDataCtorsCons(name, fields, rest, types, values, head, tail) => written_transfer(
+      Unit,
+      (ignored: Unit) => WrittenDataCtors(
+        ck_datas_of(c),
+        generics,
+        partial,
+        Cons(surface_data_ctor_mk(name, fields), rest),
+        Cons(DataCtorMk(name, types), values)
+      ),
+      ck_recheck_ctors(Cons(surface_data_ctor_mk(name, fields), rest), c, generics),
+      recheck_ctors_after(rest, generics, ck_recheck_fields(fields, c, generics)),
+      recheck_ctors_cons_unf(surface_data_ctor_mk(name, fields), rest, c, generics),
+      branch_clean => recheck_ctors_after_sound(
+        generics,
+        partial,
+        name,
+        fields,
+        rest,
+        types,
+        values,
+        c,
+        ck_recheck_fields(fields, c, generics),
+        ck_recheck_fields_frame(fields, c, generics),
+        ck_recheck_fields_frame_context(fields, c, generics, ordinary),
+        ordinary,
+        position,
+        inner_clean => ck_recheck_fields_sound(
+          old_env,
+          generics,
+          partial,
+          fields,
+          types,
+          head,
+          c,
+          ordinary,
+          position,
+          inner_clean
+        ),
+        next => ordinary_next => next_position => inner_clean => ck_recheck_ctors_sound(
+          tail,
+          next,
+          ordinary_next,
+          next_position,
+          inner_clean
+        ),
+        branch_clean
+      ),
+      clean
+    )
+  }
+}

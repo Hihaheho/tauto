@@ -1,0 +1,213 @@
+import "record_frame.taut"
+import "record_error_sound.taut"
+import "expr_access_checked_sound.taut"
+
+pub theorem record_field_found_frame_checked(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  found: Option(Ty),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, record_field_found(c, name, f, v, found)) {
+  match found: CkCheckedFrame(c, record_field_found(c, name, f, v, found)) {
+    Some(t) => checked_frame_rewrap(
+      c,
+      ck_expect(
+        c,
+        v,
+        t,
+        span_of(record_field_value(f)),
+        cat3("field `", record_field_name(f), "`")
+      ),
+      ck_expect_run_frame_checked(
+        c,
+        v,
+        t,
+        span_of(record_field_value(f)),
+        cat3("field `", record_field_name(f), "`"),
+        ordered
+      )
+    )
+    None => checked_frame_read(
+      c,
+      ck_rewrap1(
+        ck_error(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        )
+      ),
+      frame_rewrap(
+        c,
+        ck_error(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        ),
+        ck_error_frame(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        )
+      ),
+      error_frame_rewrap(
+        c,
+        ck_error(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        ),
+        ck_error_frame_errors(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        )
+      ),
+      ordered
+    )
+  }
+}
+
+pub theorem record_field_after_frame_checked(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  again: Bool,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, record_field_after(c, name, f, v, declared, again)) {
+  checked_frame_bind(
+    Unit,
+    Bool,
+    c,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Unit,
+      Bool,
+      (ignored2: Unit, c2: Checker) => mut1(again, c2),
+      record_field_found(c1, name, f, v, ck_field_find(declared, record_field_name(f)))
+    ),
+    frame_error_if(
+      c,
+      cat3("field `", record_field_name(f), "` is given twice"),
+      span_of(record_field_value(f)),
+      again
+    ),
+    checked_frame_read(
+      c,
+      frame_error_if(
+        c,
+        cat3("field `", record_field_name(f), "` is given twice"),
+        span_of(record_field_value(f)),
+        again
+      ),
+      frame_error_if_ok(
+        c,
+        cat3("field `", record_field_name(f), "` is given twice"),
+        span_of(record_field_value(f)),
+        again
+      ),
+      frame_error_if_ok_errors(
+        c,
+        cat3("field `", record_field_name(f), "` is given twice"),
+        span_of(record_field_value(f)),
+        again
+      ),
+      ordered
+    ),
+    ignored => c1 => o_c1 => checked_frame_bind(
+      Unit,
+      Bool,
+      c1,
+      (ignored2: Unit, c2: Checker) => mut1(again, c2),
+      record_field_found(c1, name, f, v, ck_field_find(declared, record_field_name(f))),
+      record_field_found_frame_checked(
+        c1,
+        name,
+        f,
+        v,
+        ck_field_find(declared, record_field_name(f)),
+        o_c1
+      ),
+      ignored2 => c2 => o_c2 => checked_frame_return(c2, again, o_c2)
+    )
+  )
+}
+
+pub theorem record_field_frame_checked(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  seen: List(Text),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, record_field(c, name, f, v, declared, seen)) {
+  checked_frame_bind(
+    Unit,
+    Bool,
+    c,
+    (ignored: Unit, c1: Checker) => record_field_after(
+      c1,
+      name,
+      f,
+      v,
+      declared,
+      list_has_text(seen, record_field_name(f))
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(record_field_value(f)),
+      term_is_borrow(record_field_value(f))
+    ),
+    checked_frame_read(
+      c,
+      frame_error_if(
+        c,
+        "a borrow cannot be a field",
+        span_of(record_field_value(f)),
+        term_is_borrow(record_field_value(f))
+      ),
+      frame_error_if_ok(
+        c,
+        "a borrow cannot be a field",
+        span_of(record_field_value(f)),
+        term_is_borrow(record_field_value(f))
+      ),
+      frame_error_if_ok_errors(
+        c,
+        "a borrow cannot be a field",
+        span_of(record_field_value(f)),
+        term_is_borrow(record_field_value(f))
+      ),
+      ordered
+    ),
+    ignored => c1 => o_c1 => record_field_after_frame_checked(
+      c1,
+      name,
+      f,
+      v,
+      declared,
+      list_has_text(seen, record_field_name(f)),
+      o_c1
+    )
+  )
+}
+
+pub theorem ck_record_field_check_run_frame_checked(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  seen: List(Text),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_record_field_check(c, name, f, v, declared, seen)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(record_field_unf(c, name, f, v, declared, seen)),
+    record_field_frame_checked(c, name, f, v, declared, seen, ordered)
+  )
+}

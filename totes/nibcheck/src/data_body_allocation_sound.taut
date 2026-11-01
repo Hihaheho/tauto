@@ -1,0 +1,155 @@
+import "written_state_allocation.taut"
+import "report_data_body_sound.taut"
+
+pub theorem data_generic_map_allocated<gs: List(
+  Text
+), initial: Ordmap(
+  Text,
+  Ty
+), final: Ordmap(
+  Text,
+  Ty
+)>(
+  meaning: DataGenericMap(gs, initial, final),
+  limit: Nat,
+  bounded: RigidMapAllocation(limit, initial)
+): RigidMapAllocation(limit, final) {
+  match meaning: RigidMapAllocation(limit, final) {
+    DataGenericMapNil(map) => bounded
+    DataGenericMapCons(name, rest, first, last, tail) => data_generic_map_allocated(
+      tail,
+      limit,
+      AndIntro(
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          first,
+          name,
+          TyParam(name, KindLinear),
+          And::left(bounded)
+        ),
+        generic_map_insert_allocated(
+          limit,
+          first,
+          name,
+          TyParam(name, KindLinear),
+          And::left(bounded),
+          Trivial,
+          And::right(bounded)
+        )
+      )
+    ) }
+}
+pub theorem written_data_fields_allocated<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, fields: List(
+  SurfaceDataField
+), types: List(
+  DataField
+)>(
+  meaning: WrittenDataFields(env, generics, partial, fields, types),
+  limit: Nat,
+  bounded: RigidMapAllocation(limit, generics)
+): FieldsAllocated(limit, types) {
+  match meaning: FieldsAllocated(limit, types) {
+    WrittenDataFieldsNil => Trivial
+    WrittenDataFieldsCons(name, body, rest, t, ts, head, tail) => AndIntro(
+      written_term_allocated(head, limit, bounded),
+      written_data_fields_allocated(tail, limit, bounded)
+    ) }
+}
+pub theorem written_data_ctors_allocated<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, ctors: List(
+  SurfaceDataCtor
+), types: List(
+  DataCtor
+)>(
+  meaning: WrittenDataCtors(env, generics, partial, ctors, types),
+  limit: Nat,
+  bounded: RigidMapAllocation(limit, generics)
+): CtorsAllocated(limit, types) {
+  match meaning: CtorsAllocated(limit, types) {
+    WrittenDataCtorsNil => Trivial
+    WrittenDataCtorsCons(name, fields, rest, ts, cs, head, tail) => AndIntro(
+      written_data_fields_allocated(head, limit, bounded),
+      written_data_ctors_allocated(tail, limit, bounded)
+    ) }
+}
+pub theorem data_body_known_allocated<source: SurfaceData, constructors: List(
+  DataCtor
+)>(meaning: DataBodyKnown(source, constructors), limit: Nat): CtorsAllocated(limit, constructors) {
+  match meaning: CtorsAllocated(limit, constructors) {
+    Mk(env, generics, bindings, fields) => written_data_ctors_allocated(
+      fields,
+      limit,
+      data_generic_map_allocated(
+        bindings,
+        limit,
+        AndIntro(Trivial, generic_map_allocation_empty(limit))
+      )
+    ) }
+}
+pub theorem data_body_formed_allocated<env: Datas, source: SurfaceData, constructors: List(
+  DataCtor
+)>(
+  meaning: DataBodyFormed(env, source, constructors),
+  limit: Nat
+): CtorsAllocated(limit, constructors) {
+  match meaning: CtorsAllocated(limit, constructors) {
+    Mk(generics, bindings, fields) => written_data_ctors_allocated(
+      fields,
+      limit,
+      data_generic_map_allocated(
+        bindings,
+        limit,
+        AndIntro(Trivial, generic_map_allocation_empty(limit))
+      )
+    ) }
+}
+pub fn OptionCtorsAllocated(limit: Nat, found: Option(List(DataCtor))): Prop {
+  match found: Prop { None => True
+    Some(ctors) => CtorsAllocated(limit, ctors) }
+}
+pub theorem data_body_registered_allocated<env: Datas, source: SurfaceData>(
+  meaning: DataBodyRegistered(env, source),
+  limit: Nat
+): OptionCtorsAllocated(limit, body_lookup(env, body_source_name(source))) {
+  match meaning: OptionCtorsAllocated(limit, body_lookup(env, body_source_name(source))) {
+    Mk(ctors, found, known) => Eq::subst(
+      (value: Option(List(DataCtor))) => OptionCtorsAllocated(limit, value),
+      Eq::sym(found),
+      data_body_known_allocated(known, limit)
+    ) }
+}
+pub theorem data_body_checked_allocated<env: Datas, source: SurfaceData>(
+  meaning: DataBodyChecked(env, source),
+  limit: Nat
+): OptionCtorsAllocated(limit, body_lookup(env, body_source_name(source))) {
+  match meaning: OptionCtorsAllocated(limit, body_lookup(env, body_source_name(source))) {
+    Mk(ctors, found, formed) => Eq::subst(
+      (value: Option(List(DataCtor))) => OptionCtorsAllocated(limit, value),
+      Eq::sym(found),
+      data_body_formed_allocated(formed, limit)
+    ) }
+}
+
+pub theorem types_check_data_bodies_allocated(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  declared: DeclaresData(program, source),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil,
+  limit: Nat
+): OptionCtorsAllocated(
+  limit,
+  body_lookup(finish_report_datas(types_check(prelude, program, errors)), body_source_name(source))
+) {
+  data_body_checked_allocated(
+    types_check_data_bodies(prelude, program, source, declared, errors, clean),
+    limit
+  )
+}

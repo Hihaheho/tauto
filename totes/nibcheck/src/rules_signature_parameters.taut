@@ -1,0 +1,46 @@
+import "rules_signature_types.taut"
+
+pub fn signature_parameter_borrow(borrows: List(Option(Bool))): Option(Bool) {
+  match borrows: Option(Bool) {
+    Nil => None
+    Cons(first, rest) => first
+  }
+}
+pub fn signature_remaining_borrows(borrows: List(Option(Bool))): List(Option(Bool)) {
+  match borrows: List(Option(Bool)) {
+    Nil => Nil
+    Cons(first, rest) => rest
+  }
+}
+pub(open) inductive SignatureParameters(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool
+): (List(Option(SurfaceTerm)), List(Option(Bool)), List(Ty)) -> Prop {
+  SignatureParametersNil(
+    borrows: List(Option(Bool))
+  ): SignatureParameters(env, generics, partial, Nil, borrows, Nil)
+  SignatureParametersCons(
+    source: Option(SurfaceTerm),
+    rest: List(Option(SurfaceTerm)),
+    borrows: List(Option(Bool)),
+    t: Ty,
+    types: List(Ty),
+    head: SignatureParameter(
+      env,
+      generics,
+      partial,
+      source,
+      signature_parameter_borrow(borrows),
+      t
+    ),
+    tail: SignatureParameters(
+      env,
+      generics,
+      partial,
+      rest,
+      signature_remaining_borrows(borrows),
+      types
+    )
+  ): SignatureParameters(env, generics, partial, Cons(source, rest), borrows, Cons(t, types))
+}

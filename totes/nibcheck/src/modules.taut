@@ -1,86 +1,92 @@
-import "checker.taut"
+import std::Map
+import "freevars.taut"
+import "../../surface/src/surface.taut"
 
-// `module M { … }` and the names `M.f` (`surface/modules.rs`), in the proof
+// `module M { … }` and the names `M.f` (`crates/tauto-surface/src/surface/modules.rs`), in the proof
 // language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」): modules are flattened where the program is
 // read, so what follows sees plain names with a dot in them (`File.open`).
 // Only functions (and the functions of `extern` blocks) take the module's
 // name.
 
-inductive ModState(): Type {
-  mod_state_mk(
+pub(open) inductive ModState: Type {
+  ModStateMk(
     // Every module, by its full path (`A.B`).
-    modules: Ordmap(Text, Yn),
+    modules: Ordmap(Text, Bool),
     // Every function in a module, by its full name (`A.B.f`).
-    fns: Ordmap(Text, Yn),
+    fns: Ordmap(Text, Bool),
+    // The names bound in the current lexical scope.
+    locals: List(Text),
     // The newest first.
     errors: List(TypeError)
   ): ModState
 }
 
-inductive ModResolved(): Type {
-  mod_resolved_mk(stmts: List(SurfaceStmt), errors: List(TypeError)): ModResolved
+pub(open) inductive ModResolved: Type {
+  ModResolvedMk(stmts: List(SurfaceStmt), errors: List(TypeError)): ModResolved
 }
 
-fn mod_join(path: List(Text), name: Text) -> Text {
-  match path -> Text {
+pub fn mod_join(path: List(Text), name: Text): Text {
+  match path: Text {
     Nil => name
-    Cons(p, rest) => text_concat_all(
+    Cons(p, rest) => Text::concat_all(
       Cons(text_join(Cons(p, rest), "."), Cons(".", Cons(name, Nil)))
     )
   }
 }
 
 // The first `n` names of `path`.
-fn mod_take(n: Nat, path: List(Text)) -> List(Text) {
-  match n -> List(Text) {
-    zero => Nil
-    succ(m) => match path -> List(Text) {
+pub fn mod_take(n: Nat, path: List(Text)): List(Text) {
+  match n: List(Text) {
+    Zero => Nil
+    Succ(m) => match path: List(Text) {
       Nil => Nil
       Cons(p, rest) => Cons(p, mod_take(m, rest))
     }
   }
 }
 
-fn mod_error(&mut s: ModState, message: Text, start: Nat, end: Nat) -> () {
+pub fn mod_error(&mut s: ModState, message: Text, start: Nat, end: Nat): Unit {
   s := ModState {
     modules: s.modules,
     fns: s.fns,
+    locals: s.locals,
     errors: Cons(TypeError { message: message, start: start, end: end }, s.errors)
   }
 }
 
-fn stmt_is_module(st: SurfaceStmt) -> Yn {
-  match st -> Yn {
-    StModule(n, items, a, b) => yes
-    _ => no
+pub fn stmt_is_module(st: SurfaceStmt): Bool {
+  match st: Bool {
+    StModule(n, items, a, b) => true
+    _ => false
   }
 }
 
-fn mod_has_module(stmts: List(SurfaceStmt)) -> Yn {
-  match stmts -> Yn {
-    Nil => no
+pub fn mod_has_module(stmts: List(SurfaceStmt)): Bool {
+  match stmts: Bool {
+    Nil => false
     Cons(st, rest) => stmt_is_module(st) || mod_has_module(rest)
   }
 }
 
 // ----- collecting -----
 
-fn mod_add_fn(&mut s: ModState, path: List(Text), name: Text) -> () {
-  match path -> () {
-    Nil => ()
+pub fn mod_add_fn(&mut s: ModState, path: List(Text), name: Text): Unit {
+  match path: Unit {
+    Nil => #()
     Cons(p, rest) => {
       s := ModState {
         modules: s.modules,
-        fns: ordmap_insert(s.fns, mod_join(Cons(p, rest), name), yes, ordmap_compare_text),
+        fns: Ordmap::insert(s.fns, mod_join(Cons(p, rest), name), true, Ordmap::compare_text),
+        locals: s.locals,
         errors: s.errors
       }
     }
   }
 }
 
-fn mod_add_fns(fns: List(SurfaceFn), &mut s: ModState, path: List(Text)) -> () {
-  match fns -> () {
-    Nil => ()
+pub fn mod_add_fns(fns: List(SurfaceFn), &mut s: ModState, path: List(Text)): Unit {
+  match fns: Unit {
+    Nil => #()
     Cons(f, rest) => {
       mod_add_fn(&mut s, path, f.name)
       mod_add_fns(rest, &mut s, path)
@@ -88,42 +94,43 @@ fn mod_add_fns(fns: List(SurfaceFn), &mut s: ModState, path: List(Text)) -> () {
   }
 }
 
-fn mod_add_module(
+pub fn mod_add_module(
   &mut s: ModState,
-  classes: Ordmap(Text, Yn),
+  classes: Ordmap(Text, Bool),
   path: List(Text),
   name: Text,
   a: Nat,
   b: Nat
-) -> () {
-  let full = mod_join(path, name)
+): Unit {
+  let full := mod_join(path, name)
   // A class's members are the flat names `Class.member`, so a module of the
   // same name would put its functions among them.
-  if ordmap_contains(classes, full, ordmap_compare_text) {
+  if Ordmap::contains(classes, full, Ordmap::compare_text) {
     mod_error(&mut s, cat4("module ", full, " collides with class ", full), a, b)
   } else {
-    ()
+    #()
   }
-  if ordmap_contains(s.modules, full, ordmap_compare_text) {
+  if Ordmap::contains(s.modules, full, Ordmap::compare_text) {
     mod_error(&mut s, cat3("module ", name, " is declared twice"), a, b)
   } else {
     s := ModState {
-      modules: ordmap_insert(s.modules, full, yes, ordmap_compare_text),
+      modules: Ordmap::insert(s.modules, full, true, Ordmap::compare_text),
       fns: s.fns,
+      locals: s.locals,
       errors: s.errors
     }
   }
 }
 
 mutual {
-  fn mod_collect(
+  pub fn mod_collect(
     stmts: List(SurfaceStmt),
     &mut s: ModState,
-    classes: Ordmap(Text, Yn),
+    classes: Ordmap(Text, Bool),
     path: List(Text)
-  ) -> () {
-    match stmts -> () {
-      Nil => ()
+  ): Unit {
+    match stmts: Unit {
+      Nil => #()
       Cons(st, rest) => {
         mod_collect_one(st, &mut s, classes, path)
         mod_collect(rest, &mut s, classes, path)
@@ -131,99 +138,110 @@ mutual {
     }
   }
 
-  fn mod_collect_one(
+  pub fn mod_collect_one(
     st: SurfaceStmt,
     &mut s: ModState,
-    classes: Ordmap(Text, Yn),
+    classes: Ordmap(Text, Bool),
     path: List(Text)
-  ) -> () {
-    match st -> () {
+  ): Unit {
+    match st: Unit {
       StModule(name, items, a, b) => {
         mod_add_module(&mut s, classes, path, name, a, b)
-        mod_collect(items, &mut s, classes, list_append(path, Cons(name, Nil)))
+        mod_collect(items, &mut s, classes, List::append(path, Cons(name, Nil)))
       }
       StFn(f) => mod_add_fn(&mut s, path, f.name)
       StExtern(l, fns, a, b) => mod_add_fns(fns, &mut s, path)
-      _ => ()
+      _ => #()
     }
   }
 }
 
 // ----- names -----
 
+pub fn mod_is_local(names: List(Text), name: Text): Bool {
+  match names: Bool {
+    Nil => false
+    Cons(first, rest) => first == name || mod_is_local(rest, name)
+  }
+}
+
 // The full name of `name` written in the module `path`: the innermost module
 // that has it, then the outer ones, then the top level.
-fn mod_name_from(n: Nat, s: ModState, name: Text, path: List(Text)) -> Text {
-  match n -> Text {
-    zero => name
-    succ(
-      m
-    ) => if ordmap_contains(s.fns, mod_join(mod_take(succ(m), path), name), ordmap_compare_text) {
-      mod_join(mod_take(succ(m), path), name)
+pub fn mod_name_from(n: Nat, s: ModState, name: Text, path: List(Text)): Text {
+  match n: Text {
+    Zero => name
+    Succ(m) => if Ordmap::contains(
+      s.fns,
+      mod_join(mod_take(Succ(m), path), name),
+      Ordmap::compare_text
+    ) {
+      mod_join(mod_take(Succ(m), path), name)
     } else {
       mod_name_from(m, s, name, path)
     }
   }
 }
 
-fn mod_name(s: ModState, name: Text, path: List(Text)) -> Text {
-  mod_name_from(list_len(path), s, name, path)
+pub fn mod_name(s: ModState, name: Text, path: List(Text)): Text {
+  if mod_is_local(s.locals, name) { name } else { mod_name_from(list_len(path), s, name, path) }
 }
 
 // The full path of the module `m` written in `path`.
-fn mod_module_from(n: Nat, s: ModState, m: Text, path: List(Text)) -> Option(Text) {
-  match n -> Option(Text) {
-    zero => if ordmap_contains(s.modules, m, ordmap_compare_text) { Some(m) } else { None() }
-    succ(
-      k
-    ) => if ordmap_contains(s.modules, mod_join(mod_take(succ(k), path), m), ordmap_compare_text) {
-      Some(mod_join(mod_take(succ(k), path), m))
+pub fn mod_module_from(n: Nat, s: ModState, m: Text, path: List(Text)): Option(Text) {
+  match n: Option(Text) {
+    Zero => if Ordmap::contains(s.modules, m, Ordmap::compare_text) { Some(m) } else { None }
+    Succ(k) => if Ordmap::contains(
+      s.modules,
+      mod_join(mod_take(Succ(k), path), m),
+      Ordmap::compare_text
+    ) {
+      Some(mod_join(mod_take(Succ(k), path), m))
     } else {
       mod_module_from(k, s, m, path)
     }
   }
 }
 
-fn mod_module(s: ModState, m: Text, path: List(Text)) -> Option(Text) {
+pub fn mod_module(s: ModState, m: Text, path: List(Text)): Option(Text) {
   mod_module_from(list_len(path), s, m, path)
 }
 
 // `A.B` written as a chain of fields over a name.
 mutual {
-  fn mod_dotted(t: SurfaceTerm) -> Option(List(Text)) {
-    match t -> Option(List(Text)) {
-      surface_term_mk(sk, start, end) => mod_dotted_kind(sk)
+  pub fn mod_dotted(t: SurfaceTerm): Option(List(Text)) {
+    match t: Option(List(Text)) {
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => mod_dotted_kind(sk)
     }
   }
 
-  fn mod_dotted_kind(sk: SurfaceKind) -> Option(List(Text)) {
-    match sk -> Option(List(Text)) {
+  pub fn mod_dotted_kind(sk: SurfaceKind): Option(List(Text)) {
+    match sk: Option(List(Text)) {
       SkVar(n) => Some(Cons(n, Nil))
-      SkField(base, name) => match mod_dotted(base) -> Option(List(Text)) {
-        Some(parts) => Some(list_append(parts, Cons(name, Nil)))
-        None => None()
+      SkField(base, name) => match mod_dotted(base): Option(List(Text)) {
+        Some(parts) => Some(List::append(parts, Cons(name, Nil)))
+        None => None
       }
-      _ => None()
+      _ => None
     }
   }
 }
 
-fn mod_check_local(&mut s: ModState, name: Text, path: List(Text), start: Nat, end: Nat) -> () {
-  match mod_module(s, name, path) -> () {
+pub fn mod_check_local(&mut s: ModState, name: Text, path: List(Text), start: Nat, end: Nat): Unit {
+  match mod_module(s, name, path): Unit {
     Some(m) => mod_error(&mut s, cat3(name, " is the name of a module", ""), start, end)
-    None => ()
+    None => #()
   }
 }
 
-fn mod_check_locals(
+pub fn mod_check_locals(
   names: List(Text),
   &mut s: ModState,
   path: List(Text),
   start: Nat,
   end: Nat
-) -> () {
-  match names -> () {
-    Nil => ()
+): Unit {
+  match names: Unit {
+    Nil => #()
     Cons(n, rest) => {
       mod_check_local(&mut s, n, path, start, end)
       mod_check_locals(rest, &mut s, path, start, end)
@@ -231,231 +249,290 @@ fn mod_check_locals(
   }
 }
 
+pub fn mod_bind_names(
+  names: List(Text),
+  &mut s: ModState,
+  path: List(Text),
+  start: Nat,
+  end: Nat
+): Unit {
+  mod_check_locals(names, &mut s, path, start, end)
+  let outer := s.locals
+  set_to(&mut s.locals, List::append(names, outer))
+}
+
+pub fn mod_optional_name(name: Option(Text)): List(Text) {
+  match name: List(Text) {
+    None => Nil
+    Some(value) => Cons(value, Nil)
+  }
+}
+
 // ----- rewriting -----
 
-fn mod_dots(parts: List(Text)) -> List(Text) {
-  match parts -> List(Text) {
+pub fn mod_dots(parts: List(Text)): List(Text) {
+  match parts: List(Text) {
     Nil => Nil
     Cons(p, rest) => Cons(".", Cons(p, mod_dots(rest)))
   }
 }
 
-fn mod_qualified(s: ModState, parts: List(Text), path: List(Text)) -> Option(Text) {
-  match parts -> Option(Text) {
-    Nil => None()
-    Cons(first, rest) => match mod_module(s, first, path) -> Option(Text) {
-      Some(full) => Some(text_concat_all(Cons(full, mod_dots(rest))))
-      None => None()
+pub fn mod_qualified(s: ModState, parts: List(Text), path: List(Text)): Option(Text) {
+  match parts: Option(Text) {
+    Nil => None
+    Cons(first, rest) => if mod_is_local(s.locals, first) {
+      None
+    } else {
+      match mod_module(s, first, path): Option(Text) {
+        Some(full) => Some(Text::concat_all(Cons(full, mod_dots(rest))))
+        None => None
+      }
     }
   }
 }
 
 // A qualified name: `M.f`, `M.N.f`.
-fn mod_qualified_kind(s: ModState, sk: SurfaceKind, path: List(Text)) -> Option(Text) {
-  match sk -> Option(Text) {
-    SkField(base, name) => match mod_dotted_kind(sk) -> Option(Text) {
+pub fn mod_qualified_kind(s: ModState, sk: SurfaceKind, path: List(Text)): Option(Text) {
+  match sk: Option(Text) {
+    SkField(base, name) => match mod_dotted_kind(sk): Option(Text) {
       Some(parts) => mod_qualified(s, parts, path)
-      None => None()
+      None => None
     }
-    _ => None()
+    _ => None
   }
 }
 
 mutual {
-  fn mod_term(t: SurfaceTerm, &mut s: ModState, path: List(Text)) -> SurfaceTerm {
-    match t -> SurfaceTerm {
-      surface_term_mk(sk, start, end) => match mod_qualified_kind(s, sk, path) -> SurfaceTerm {
-        Some(full) => SurfaceTerm { kind: SkVar(full), start: start, end: end }
+  pub fn mod_term(t: SurfaceTerm, &mut s: ModState, path: List(Text)): SurfaceTerm {
+    match t: SurfaceTerm {
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => match mod_qualified_kind(
+        s,
+        sk,
+        path
+      ): SurfaceTerm {
+        Some(full) => SurfaceTerm { occurrence: None, kind: SkVar(full), start: start, end: end }
         None => {
-          let k2 = mod_kind(sk, &mut s, path, sk, start, end)
-          SurfaceTerm { kind: k2, start: start, end: end }
+          let k2 := mod_kind(sk, &mut s, path, sk, start, end)
+          SurfaceTerm { occurrence: None, kind: k2, start: start, end: end }
         }
       }
     }
   }
 
-  fn mod_kind(
+  pub fn mod_kind(
     sk: SurfaceKind,
     &mut s: ModState,
     path: List(Text),
     whole: SurfaceKind,
     start: Nat,
     end: Nat
-  ) -> SurfaceKind {
-    match sk -> SurfaceKind {
+  ): SurfaceKind {
+    match sk: SurfaceKind {
       SkVar(n) => SkVar(mod_name(s, n, path))
       SkApp(f, args) => {
-        let f2 = mod_term(f, &mut s, path)
-        let args2 = mod_terms(args, &mut s, path)
+        let f2 := mod_term(f, &mut s, path)
+        let args2 := mod_terms(args, &mut s, path)
         SkApp(f2, args2)
       }
       SkLam(params, body) => {
-        mod_check_locals(params, &mut s, path, start, end)
-        let b = mod_term(body, &mut s, path)
+        let outer := s.locals
+        mod_bind_names(params, &mut s, path, start, end)
+        let b := mod_term(body, &mut s, path)
+        set_to(&mut s.locals, outer)
         SkLam(params, b)
       }
       SkBorrowLam(borrows, lam) => {
-        let l = mod_term(lam, &mut s, path)
+        let l := mod_term(lam, &mut s, path)
         SkBorrowLam(borrows, l)
       }
       SkBorrow(m, x) => {
-        let x2 = mod_term(x, &mut s, path)
+        let x2 := mod_term(x, &mut s, path)
         SkBorrow(m, x2)
       }
       SkTagged(tag, x) => {
-        let x2 = mod_term(x, &mut s, path)
+        let x2 := mod_term(x, &mut s, path)
         SkTagged(tag, x2)
       }
       SkRecord(name, fields) => {
-        let fs = mod_fields(fields, &mut s, path)
+        let fs := mod_fields(fields, &mut s, path)
         SkRecord(name, fs)
       }
       SkIf(c, th, el) => {
-        let c2 = mod_term(c, &mut s, path)
-        let t2 = mod_term(th, &mut s, path)
-        let e2 = mod_opt_term(el, &mut s, path)
+        let c2 := mod_term(c, &mut s, path)
+        let t2 := mod_term(th, &mut s, path)
+        let e2 := mod_opt_term(el, &mut s, path)
         SkIf(c2, t2, e2)
       }
       SkField(base, name) => {
-        let b = mod_term(base, &mut s, path)
+        let b := mod_term(base, &mut s, path)
         SkField(b, name)
       }
       SkPerform(eff, args) => {
-        let args2 = mod_terms(args, &mut s, path)
+        let args2 := mod_terms(args, &mut s, path)
         SkPerform(eff, args2)
       }
-      SkBudget(steps, body) => {
-        let a = mod_term(steps, &mut s, path)
-        let b = mod_term(body, &mut s, path)
-        SkBudget(a, b)
+      SkBudget(steps_memory, steps, body) => {
+        let a := mod_term(steps, &mut s, path)
+        let b := mod_term(body, &mut s, path)
+        SkBudget(steps_memory, a, b)
       }
       SkBlock(stmts) => {
-        let ss = mod_stmts(stmts, &mut s, path)
+        let outer := s.locals
+        let ss := mod_stmts(stmts, &mut s, path)
+        set_to(&mut s.locals, outer)
         SkBlock(ss)
       }
       SkHandle(body, handlers) => {
-        let b = mod_term(body, &mut s, path)
-        let hs = mod_handlers(handlers, &mut s, path)
+        let b := mod_term(body, &mut s, path)
+        let hs := mod_handlers(handlers, &mut s, path)
         SkHandle(b, hs)
       }
       SkMatch(scrutinee, r, arms, binder) => {
-        let sc = mod_term(scrutinee, &mut s, path)
-        let as2 = mod_arms(arms, &mut s, path)
-        SkMatch(sc, r, as2, binder)
+        let sc := mod_term(scrutinee, &mut s, path)
+        let result := mod_opt_term(r, &mut s, path)
+        let outer := s.locals
+        mod_bind_names(mod_optional_name(binder), &mut s, path, start, end)
+        let as2 := mod_arms(arms, &mut s, path)
+        set_to(&mut s.locals, outer)
+        SkMatch(sc, result, as2, binder)
       }
       _ => whole
     }
   }
 
-  fn mod_terms(ts: List(SurfaceTerm), &mut s: ModState, path: List(Text)) -> List(SurfaceTerm) {
-    match ts -> List(SurfaceTerm) {
+  pub fn mod_terms(ts: List(SurfaceTerm), &mut s: ModState, path: List(Text)): List(SurfaceTerm) {
+    match ts: List(SurfaceTerm) {
       Nil => Nil
       Cons(t, rest) => {
-        let h = mod_term(t, &mut s, path)
-        let tl = mod_terms(rest, &mut s, path)
+        let h := mod_term(t, &mut s, path)
+        let tl := mod_terms(rest, &mut s, path)
         Cons(h, tl)
       }
     }
   }
 
-  fn mod_opt_term(
+  pub fn mod_opt_term(
     t: Option(SurfaceTerm),
     &mut s: ModState,
     path: List(Text)
-  ) -> Option(SurfaceTerm) {
-    match t -> Option(SurfaceTerm) {
-      None => None()
+  ): Option(SurfaceTerm) {
+    match t: Option(SurfaceTerm) {
+      None => None
       Some(x) => {
-        let x2 = mod_term(x, &mut s, path)
+        let x2 := mod_term(x, &mut s, path)
         Some(x2)
       }
     }
   }
 
-  fn mod_fields(fs: List(SurfaceField), &mut s: ModState, path: List(Text)) -> List(SurfaceField) {
-    match fs -> List(SurfaceField) {
+  pub fn mod_fields(
+    fs: List(SurfaceField),
+    &mut s: ModState,
+    path: List(Text)
+  ): List(SurfaceField) {
+    match fs: List(SurfaceField) {
       Nil => Nil
       Cons(f, rest) => {
-        let h = mod_field(f, &mut s, path)
-        let tl = mod_fields(rest, &mut s, path)
+        let h := mod_field(f, &mut s, path)
+        let tl := mod_fields(rest, &mut s, path)
         Cons(h, tl)
       }
     }
   }
 
-  fn mod_field(f: SurfaceField, &mut s: ModState, path: List(Text)) -> SurfaceField {
-    match f -> SurfaceField {
-      surface_field_mk(name, value) => {
-        let v = mod_term(value, &mut s, path)
+  pub fn mod_field(f: SurfaceField, &mut s: ModState, path: List(Text)): SurfaceField {
+    match f: SurfaceField {
+      SurfaceFieldMk(name, value) => {
+        let v := mod_term(value, &mut s, path)
         SurfaceField { name: name, value: v }
       }
     }
   }
 
-  fn mod_handlers(
+  pub fn mod_handlers(
     hs: List(SurfaceHandler),
     &mut s: ModState,
     path: List(Text)
-  ) -> List(SurfaceHandler) {
-    match hs -> List(SurfaceHandler) {
+  ): List(SurfaceHandler) {
+    match hs: List(SurfaceHandler) {
       Nil => Nil
       Cons(h, rest) => {
-        let h2 = mod_handler(h, &mut s, path)
-        let tl = mod_handlers(rest, &mut s, path)
+        let h2 := mod_handler(h, &mut s, path)
+        let tl := mod_handlers(rest, &mut s, path)
         Cons(h2, tl)
       }
     }
   }
 
-  fn mod_handler(h: SurfaceHandler, &mut s: ModState, path: List(Text)) -> SurfaceHandler {
-    match h -> SurfaceHandler {
+  pub fn mod_handler(h: SurfaceHandler, &mut s: ModState, path: List(Text)): SurfaceHandler {
+    match h: SurfaceHandler {
       HdReturn(p, body) => {
-        let b = mod_term(body, &mut s, path)
+        let outer := s.locals
+        mod_bind_names(pattern_names(p, Nil), &mut s, path, body.start, body.end)
+        let b := mod_term(body, &mut s, path)
+        set_to(&mut s.locals, outer)
         HdReturn(p, b)
       }
-      HdOperation(eff, ps, cont, guard, body) => {
-        let g = mod_opt_term(guard, &mut s, path)
-        let b = mod_term(body, &mut s, path)
-        HdOperation(eff, ps, cont, g, b)
+      HdOperation(eff, hfa, hty, ps, cont, guard, body) => {
+        let outer := s.locals
+        mod_bind_names(
+          List::append(pattern_names_each(ps, Nil), mod_optional_name(cont)),
+          &mut s,
+          path,
+          body.start,
+          body.end
+        )
+        let g := mod_opt_term(guard, &mut s, path)
+        let b := mod_term(body, &mut s, path)
+        set_to(&mut s.locals, outer)
+        HdOperation(eff, hfa, hty, ps, cont, g, b)
       }
     }
   }
 
-  fn mod_arms(arms: List(SurfaceArm), &mut s: ModState, path: List(Text)) -> List(SurfaceArm) {
-    match arms -> List(SurfaceArm) {
+  pub fn mod_arms(arms: List(SurfaceArm), &mut s: ModState, path: List(Text)): List(SurfaceArm) {
+    match arms: List(SurfaceArm) {
       Nil => Nil
       Cons(a, rest) => {
-        let h = mod_arm(a, &mut s, path)
-        let tl = mod_arms(rest, &mut s, path)
+        let h := mod_arm(a, &mut s, path)
+        let tl := mod_arms(rest, &mut s, path)
         Cons(h, tl)
       }
     }
   }
 
-  fn mod_arm(a: SurfaceArm, &mut s: ModState, path: List(Text)) -> SurfaceArm {
-    match a -> SurfaceArm {
-      surface_arm_mk(pattern, guard, goal, body) => {
-        let g = mod_opt_term(guard, &mut s, path)
-        let b = mod_term(body, &mut s, path)
-        SurfaceArm { pattern: pattern, guard: g, goal: goal, body: b }
+  pub fn mod_arm(a: SurfaceArm, &mut s: ModState, path: List(Text)): SurfaceArm {
+    match a: SurfaceArm {
+      SurfaceArmMk(pattern, guard, goal, body) => {
+        let outer := s.locals
+        mod_bind_names(pattern_names(pattern, Nil), &mut s, path, body.start, body.end)
+        let g := mod_opt_term(guard, &mut s, path)
+        let target := mod_opt_term(goal, &mut s, path)
+        let b := mod_term(body, &mut s, path)
+        set_to(&mut s.locals, outer)
+        SurfaceArm { pattern: pattern, guard: g, goal: target, body: b }
       }
     }
   }
 
-  fn mod_stmts(stmts: List(SurfaceStmt), &mut s: ModState, path: List(Text)) -> List(SurfaceStmt) {
-    match stmts -> List(SurfaceStmt) {
+  pub fn mod_stmts(
+    stmts: List(SurfaceStmt),
+    &mut s: ModState,
+    path: List(Text)
+  ): List(SurfaceStmt) {
+    match stmts: List(SurfaceStmt) {
       Nil => Nil
       Cons(st, rest) => {
-        let h = mod_stmt(st, &mut s, path, st)
-        let tl = mod_stmts(rest, &mut s, path)
+        let h := mod_stmt(st, &mut s, path, st)
+        let tl := mod_stmts(rest, &mut s, path)
         Cons(h, tl)
       }
     }
   }
 
-  fn mod_fn(f: SurfaceFn, &mut s: ModState, path: List(Text)) -> SurfaceFn {
-    match f -> SurfaceFn {
-      surface_fn_mk(
+  pub fn mod_fn(f: SurfaceFn, &mut s: ModState, path: List(Text)): SurfaceFn {
+    match f: SurfaceFn {
+      SurfaceFnMk(
         name,
         generics,
         bounds,
@@ -469,8 +546,10 @@ mutual {
         end,
         body
       ) => {
-        mod_check_locals(params, &mut s, path, start, end)
-        let b = mod_term(body, &mut s, path)
+        let outer := s.locals
+        mod_bind_names(List::append(generics, params), &mut s, path, start, end)
+        let b := mod_term(body, &mut s, path)
+        set_to(&mut s.locals, outer)
         SurfaceFn {
           name: name,
           generics: generics,
@@ -489,46 +568,51 @@ mutual {
     }
   }
 
-  fn mod_stmt(
+  pub fn mod_stmt(
     st: SurfaceStmt,
     &mut s: ModState,
     path: List(Text),
     whole: SurfaceStmt
-  ) -> SurfaceStmt {
-    match st -> SurfaceStmt {
+  ): SurfaceStmt {
+    match st: SurfaceStmt {
       StLet(name, ty, value, b, bm) => {
         mod_check_local(&mut s, name, path, value.start, value.end)
-        let v = mod_term(value, &mut s, path)
+        let v := mod_term(value, &mut s, path)
+        let outer := s.locals
+        set_to(&mut s.locals, Cons(name, outer))
         StLet(name, ty, v, b, bm)
       }
       StVar(name, ty, value, vb) => {
         mod_check_local(&mut s, name, path, value.start, value.end)
-        let v = mod_term(value, &mut s, path)
+        let v := mod_term(value, &mut s, path)
+        let outer := s.locals
+        set_to(&mut s.locals, Cons(name, outer))
         StVar(name, ty, v, vb)
       }
-      StAssign(name, value) => {
-        let v = mod_term(value, &mut s, path)
-        StAssign(name, v)
+      StAssign(name, name_place, value) => {
+        let p := mod_opt_term(name_place, &mut s, path)
+        let v := mod_term(value, &mut s, path)
+        StAssign(name, p, v)
       }
       StFn(f) => {
-        let f2 = mod_fn(f, &mut s, path)
+        let f2 := mod_fn(f, &mut s, path)
         StFn(f2)
       }
       StWhile(c, body) => {
-        let c2 = mod_term(c, &mut s, path)
-        let b = mod_term(body, &mut s, path)
+        let c2 := mod_term(c, &mut s, path)
+        let b := mod_term(body, &mut s, path)
         StWhile(c2, b)
       }
       StReturn(e) => {
-        let e2 = mod_opt_term(e, &mut s, path)
+        let e2 := mod_opt_term(e, &mut s, path)
         StReturn(e2)
       }
       StExpr(e) => {
-        let e2 = mod_term(e, &mut s, path)
+        let e2 := mod_term(e, &mut s, path)
         StExpr(e2)
       }
       StMutual(items, a, b) => {
-        let items2 = mod_stmts(items, &mut s, path)
+        let items2 := mod_stmts(items, &mut s, path)
         StMutual(items2, a, b)
       }
       _ => whole
@@ -538,7 +622,7 @@ mutual {
 
 // ----- flattening -----
 
-fn mod_renamed(path: List(Text), f: SurfaceFn) -> SurfaceFn {
+pub fn mod_renamed(path: List(Text), f: SurfaceFn): SurfaceFn {
   SurfaceFn {
     name: mod_join(path, f.name),
     generics: f.generics,
@@ -555,24 +639,24 @@ fn mod_renamed(path: List(Text), f: SurfaceFn) -> SurfaceFn {
   }
 }
 
-fn mod_rename_fns(path: List(Text), fns: List(SurfaceFn)) -> List(SurfaceFn) {
-  match fns -> List(SurfaceFn) {
+pub fn mod_rename_fns(path: List(Text), fns: List(SurfaceFn)): List(SurfaceFn) {
+  match fns: List(SurfaceFn) {
     Nil => Nil
     Cons(f, rest) => Cons(mod_renamed(path, f), mod_rename_fns(path, rest))
   }
 }
 
 // A statement inside a module: its functions take the module's name.
-fn mod_rename_stmt(path: List(Text), st: SurfaceStmt) -> SurfaceStmt {
-  match st -> SurfaceStmt {
+pub fn mod_rename_stmt(path: List(Text), st: SurfaceStmt): SurfaceStmt {
+  match st: SurfaceStmt {
     StFn(f) => StFn(mod_renamed(path, f))
     StExtern(l, fns, a, b) => StExtern(l, mod_rename_fns(path, fns), a, b)
     _ => st
   }
 }
 
-fn mod_placed(path: List(Text), st: SurfaceStmt) -> SurfaceStmt {
-  match path -> SurfaceStmt {
+pub fn mod_placed(path: List(Text), st: SurfaceStmt): SurfaceStmt {
+  match path: SurfaceStmt {
     Nil => st
     Cons(p, more) => mod_rename_stmt(Cons(p, more), st)
   }
@@ -580,37 +664,39 @@ fn mod_placed(path: List(Text), st: SurfaceStmt) -> SurfaceStmt {
 
 // The statements of the modules, flattened, the last first in `out`.
 mutual {
-  fn mod_flatten(
+  pub fn mod_flatten(
     stmts: List(SurfaceStmt),
     &mut s: ModState,
     path: List(Text),
     out: List(SurfaceStmt)
-  ) -> List(SurfaceStmt) {
-    match stmts -> List(SurfaceStmt) {
+  ): List(SurfaceStmt) {
+    match stmts: List(SurfaceStmt) {
       Nil => out
       Cons(st, rest) => {
-        let inner = mod_flatten_one(st, &mut s, path, out, st)
+        let inner := mod_flatten_one(st, &mut s, path, out, st)
         mod_flatten(rest, &mut s, path, inner)
       }
     }
   }
 
-  fn mod_flatten_one(
+  pub fn mod_flatten_one(
     st: SurfaceStmt,
     &mut s: ModState,
     path: List(Text),
     out: List(SurfaceStmt),
     whole: SurfaceStmt
-  ) -> List(SurfaceStmt) {
-    match st -> List(SurfaceStmt) {
-      StModule(
-        name,
-        items,
-        a,
-        b
-      ) => mod_flatten(items, &mut s, list_append(path, Cons(name, Nil)), out)
+  ): List(SurfaceStmt) {
+    match st: List(SurfaceStmt) {
+      StModule(name, items, a, b) => {
+        let outer := s.locals
+        let result := mod_flatten(items, &mut s, List::append(path, Cons(name, Nil)), out)
+        set_to(&mut s.locals, outer)
+        result
+      }
       _ => {
-        let st2 = mod_stmt(whole, &mut s, path, whole)
+        let outer := s.locals
+        let st2 := mod_stmt(whole, &mut s, path, whole)
+        set_to(&mut s.locals, outer)
         Cons(mod_placed(path, st2), out)
       }
     }
@@ -618,26 +704,57 @@ mutual {
 }
 
 // The classes at the top level.
-fn mod_classes(stmts: List(SurfaceStmt), acc: Ordmap(Text, Yn)) -> Ordmap(Text, Yn) {
-  match stmts -> Ordmap(Text, Yn) {
+pub fn mod_classes(stmts: List(SurfaceStmt), acc: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
+  match stmts: Ordmap(Text, Bool) {
     Nil => acc
-    Cons(st, rest) => match st -> Ordmap(Text, Yn) {
-      StClass(c) => mod_classes(rest, ordmap_insert(acc, c.name, yes, ordmap_compare_text))
+    Cons(st, rest) => match st: Ordmap(Text, Bool) {
+      StClass(c) => mod_classes(rest, Ordmap::insert(acc, c.name, true, Ordmap::compare_text))
       _ => mod_classes(rest, acc)
     }
   }
 }
 
-fn mod_resolve_all(stmts: List(SurfaceStmt)) -> ModResolved {
-  var s: ModState = ModState { modules: ordmap_empty(), fns: ordmap_empty(), errors: Nil }
-  mod_collect(stmts, &mut s, mod_classes(stmts, ordmap_empty()), Nil)
-  let out = mod_flatten(stmts, &mut s, Nil, Nil)
-  ModResolved { stmts: list_reverse(out), errors: list_reverse(s.errors) }
+pub fn mod_resolve_all(stmts: List(SurfaceStmt)): ModResolved {
+  var s: ModState := ModState {
+    modules: Ordmap::empty(),
+    fns: Ordmap::empty(),
+    locals: Nil,
+    errors: Nil
+  }
+  mod_collect(stmts, &mut s, mod_classes(stmts, Ordmap::empty()), Nil)
+  let out := mod_flatten(stmts, &mut s, Nil, Nil)
+  ModResolved { stmts: List::reverse(out), errors: List::reverse(s.errors) }
 }
 
-// Flattens the modules of `stmts`.
-fn modules_resolve(stmts: List(SurfaceStmt)) -> ModResolved {
+pub fn modules_flatten(stmts: List(SurfaceStmt)): ModResolved {
   if mod_has_module(
     stmts
   ) { mod_resolve_all(stmts) } else { ModResolved { stmts: stmts, errors: Nil } }
+}
+
+// Flattens the modules of `stmts`, and drops the declarations of sets of
+// effects (`effect Host {Div, stdout}`): a set is a name for effects, not
+// an effect, so what follows never sees it as one.
+pub fn modules_resolve(stmts: List(SurfaceStmt)): ModResolved {
+  let flat := modules_flatten(stmts)
+  ModResolved { stmts: modules_drop_sets(flat.stmts), errors: flat.errors }
+}
+
+pub fn modules_drop_sets(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+  match stmts: List(SurfaceStmt) {
+    Nil => Nil
+    Cons(StEffect(e), rest) => match e.set: List(SurfaceStmt) {
+      Some(names) => modules_drop_sets(rest)
+      None => Cons(StEffect(e), modules_drop_sets(rest))
+    }
+    Cons(StMutual(items, a, b), rest) => Cons(
+      StMutual(modules_drop_sets(items), a, b),
+      modules_drop_sets(rest)
+    )
+    Cons(StModule(name, items, a, b), rest) => Cons(
+      StModule(name, modules_drop_sets(items), a, b),
+      modules_drop_sets(rest)
+    )
+    Cons(s, rest) => Cons(s, modules_drop_sets(rest))
+  }
 }

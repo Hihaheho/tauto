@@ -1,0 +1,302 @@
+import "type_allocation.taut"
+
+pub theorem allocated_list_append(
+  left: List(Ty),
+  right: List(Ty),
+  limit: Nat,
+  first: TypeListAllocated(limit, left),
+  last: TypeListAllocated(limit, right)
+): TypeListAllocated(limit, List::append(left, right)) {
+  match left: TypeListAllocated(limit, List::append(left, right)) {
+    Nil => last
+    Cons(head, tail) => AndIntro(
+      And::left(first),
+      allocated_list_append(tail, right, limit, And::right(first), last)
+    )
+  }
+}
+pub fn allocated_insert_choice(head: Ty, tail: List(Ty), value: Ty, order: Ordering): List(Ty) {
+  match order: List(Ty) {
+    Less => Cons(value, Cons(head, tail))
+    Equal => Cons(head, tail)
+    Greater => Cons(head, members_insert(tail, value))
+  }
+}
+pub theorem allocated_insert_choice_ok(
+  head: Ty,
+  tail: List(Ty),
+  value: Ty,
+  limit: Nat,
+  original: TypeListAllocated(limit, Cons(head, tail)),
+  item: TypeAllocated(limit, value),
+  inserted: TypeListAllocated(limit, members_insert(tail, value)),
+  order: Ordering
+): TypeListAllocated(limit, allocated_insert_choice(head, tail, value, order)) {
+  match order: TypeListAllocated(limit, allocated_insert_choice(head, tail, value, order)) {
+    Less => AndIntro(item, original)
+    Equal => original
+    Greater => AndIntro(And::left(original), inserted)
+  }
+}
+pub theorem allocated_members_insert(
+  members: List(Ty),
+  value: Ty,
+  limit: Nat,
+  original: TypeListAllocated(limit, members),
+  item: TypeAllocated(limit, value)
+): TypeListAllocated(limit, members_insert(members, value)) {
+  match members: TypeListAllocated(limit, members_insert(members, value)) {
+    Nil => AndIntro(item, Trivial)
+    Cons(head, tail) => allocated_insert_choice_ok(
+      head,
+      tail,
+      value,
+      limit,
+      original,
+      item,
+      allocated_members_insert(tail, value, limit, And::right(original), item),
+      ty_compare(value, head)
+    )
+  }
+}
+mutual {
+  pub theorem allocated_members_add(
+    types: List(Ty),
+    members: List(Ty),
+    limit: Nat,
+    input: TypeListAllocated(limit, types),
+    original: TypeListAllocated(limit, members)
+  ): TypeListAllocated(limit, members_add(types, members)) {
+    match types: TypeListAllocated(limit, members_add(types, members)) {
+      Nil => original
+      Cons(head, tail) => allocated_members_add(
+        tail,
+        members_add_one(head, head, members),
+        limit,
+        And::right(input),
+        allocated_members_add_one(
+          head,
+          head,
+          members,
+          limit,
+          And::left(input),
+          And::left(input),
+          original
+        )
+      )
+    }
+  }
+  pub theorem allocated_members_add_one(
+    ty: Ty,
+    whole: Ty,
+    existing: List(Ty),
+    limit: Nat,
+    item: TypeAllocated(limit, ty),
+    full: TypeAllocated(limit, whole),
+    original: TypeListAllocated(limit, existing)
+  ): TypeListAllocated(limit, members_add_one(ty, whole, existing)) {
+    match ty: TypeListAllocated(limit, members_add_one(ty, whole, existing)) {
+      TyInt(width) => allocated_members_insert(existing, whole, limit, original, full)
+      TyBool => allocated_members_insert(existing, whole, limit, original, full)
+      TyText => allocated_members_insert(existing, whole, limit, original, full)
+      TyUnit => allocated_members_insert(existing, whole, limit, original, full)
+      TyNever => original
+      TyDecimal => allocated_members_insert(existing, whole, limit, original, full)
+      TyFloat => allocated_members_insert(existing, whole, limit, original, full)
+      TyParam(name, kind) => allocated_members_insert(existing, whole, limit, original, full)
+      TyVar(index) => allocated_members_insert(existing, whole, limit, original, full)
+      TyFn(params, result, kind) => allocated_members_insert(existing, whole, limit, original, full)
+      TyUnion(members) => allocated_members_add(members, existing, limit, item, original)
+      TyProduct(members) => allocated_members_insert(existing, whole, limit, original, full)
+      TyNamed(name, params) => allocated_members_insert(existing, whole, limit, original, full)
+      TyTagged(tags, inner) => allocated_members_insert(existing, whole, limit, original, full)
+      TyInfo(inner) => allocated_members_insert(existing, whole, limit, original, full)
+      TyBorrow(inner, mutable) => allocated_members_insert(existing, whole, limit, original, full)
+      TyPoly(gs, inner) => allocated_members_insert(existing, whole, limit, original, full)
+      TyApp(head, arg) => allocated_members_insert(existing, whole, limit, original, full)
+    }
+  }
+}
+pub theorem allocated_union_of(
+  members: List(Ty),
+  limit: Nat,
+  h: TypeListAllocated(limit, members)
+): TypeAllocated(limit, ty_union_of(members)) {
+  match members: TypeAllocated(limit, ty_union_of(members)) {
+    Nil => Trivial
+    Cons(head, tail) => match tail: TypeAllocated(limit, ty_union_of(Cons(head, tail))) {
+      Nil => And::left(h)
+      Cons(second, rest) => h
+    }
+  }
+}
+pub theorem allocated_union(
+  types: List(Ty),
+  limit: Nat,
+  h: TypeListAllocated(limit, types)
+): TypeAllocated(limit, ty_union(types)) {
+  allocated_union_of(
+    members_add(types, Nil),
+    limit,
+    allocated_members_add(types, Nil, limit, h, Trivial)
+  )
+}
+mutual {
+  pub theorem allocated_product_members_add(
+    types: List(Ty),
+    members: List(Ty),
+    limit: Nat,
+    input: TypeListAllocated(limit, types),
+    original: TypeListAllocated(limit, members)
+  ): TypeListAllocated(limit, product_members_add(types, members)) {
+    match types: TypeListAllocated(limit, product_members_add(types, members)) {
+      Nil => original
+      Cons(head, tail) => allocated_product_members_add(
+        tail,
+        product_members_add_one(head, head, members),
+        limit,
+        And::right(input),
+        allocated_product_members_add_one(
+          head,
+          head,
+          members,
+          limit,
+          And::left(input),
+          And::left(input),
+          original
+        )
+      )
+    }
+  }
+  pub theorem allocated_product_members_add_one(
+    ty: Ty,
+    whole: Ty,
+    existing: List(Ty),
+    limit: Nat,
+    item: TypeAllocated(limit, ty),
+    full: TypeAllocated(limit, whole),
+    original: TypeListAllocated(limit, existing)
+  ): TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) {
+    match ty: TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) {
+      TyInt(width) => allocated_members_insert(existing, whole, limit, original, full)
+      TyBool => allocated_members_insert(existing, whole, limit, original, full)
+      TyText => allocated_members_insert(existing, whole, limit, original, full)
+      TyUnit => original
+      TyNever => allocated_members_insert(existing, whole, limit, original, full)
+      TyDecimal => allocated_members_insert(existing, whole, limit, original, full)
+      TyFloat => allocated_members_insert(existing, whole, limit, original, full)
+      TyParam(name, kind) => allocated_members_insert(existing, whole, limit, original, full)
+      TyVar(index) => allocated_members_insert(existing, whole, limit, original, full)
+      TyFn(params, result, kind) => allocated_members_insert(existing, whole, limit, original, full)
+      TyUnion(members) => allocated_members_insert(existing, whole, limit, original, full)
+      TyProduct(members) => allocated_product_members_add(members, existing, limit, item, original)
+      TyNamed(name, params) => allocated_members_insert(existing, whole, limit, original, full)
+      TyTagged(tags, inner) => allocated_members_insert(existing, whole, limit, original, full)
+      TyInfo(inner) => allocated_members_insert(existing, whole, limit, original, full)
+      TyBorrow(inner, mutable) => allocated_members_insert(existing, whole, limit, original, full)
+      TyPoly(gs, inner) => allocated_members_insert(existing, whole, limit, original, full)
+      TyApp(head, arg) => allocated_members_insert(existing, whole, limit, original, full)
+    }
+  }
+}
+pub theorem allocated_product_of(
+  members: List(Ty),
+  limit: Nat,
+  h: TypeListAllocated(limit, members)
+): TypeAllocated(limit, ty_product_of(members)) {
+  match members: TypeAllocated(limit, ty_product_of(members)) {
+    Nil => Trivial
+    Cons(head, tail) => match tail: TypeAllocated(limit, ty_product_of(Cons(head, tail))) {
+      Nil => And::left(h)
+      Cons(second, rest) => h
+    }
+  }
+}
+pub theorem allocated_product(
+  types: List(Ty),
+  limit: Nat,
+  h: TypeListAllocated(limit, types)
+): TypeAllocated(limit, ty_product(types)) {
+  allocated_product_of(
+    product_members_add(types, Nil),
+    limit,
+    allocated_product_members_add(types, Nil, limit, h, Trivial)
+  )
+}
+pub theorem allocated_tagged_with(
+  tags: List(Text),
+  ty: Ty,
+  limit: Nat,
+  h: TypeAllocated(limit, ty)
+): TypeAllocated(limit, ty_tagged_with(tags, ty)) {
+  match tags: TypeAllocated(limit, ty_tagged_with(tags, ty)) {
+    Nil => h
+    Cons(head, tail) => h
+  }
+}
+pub theorem allocated_tagged(
+  ty: Ty,
+  tags: List(Text),
+  limit: Nat,
+  h: TypeAllocated(limit, ty)
+): TypeAllocated(limit, ty_tagged(tags, ty)) {
+  match ty: TypeAllocated(limit, ty_tagged(tags, ty)) {
+    TyInt(width) => allocated_tagged_with(tags, TyInt(width), limit, h)
+    TyBool => allocated_tagged_with(tags, TyBool, limit, h)
+    TyText => allocated_tagged_with(tags, TyText, limit, h)
+    TyUnit => allocated_tagged_with(tags, TyUnit, limit, h)
+    TyNever => allocated_tagged_with(tags, TyNever, limit, h)
+    TyDecimal => allocated_tagged_with(tags, TyDecimal, limit, h)
+    TyFloat => allocated_tagged_with(tags, TyFloat, limit, h)
+    TyParam(name, kind) => allocated_tagged_with(tags, TyParam(name, kind), limit, h)
+    TyVar(index) => allocated_tagged_with(tags, TyVar(index), limit, h)
+    TyFn(params, result, kind) => allocated_tagged_with(tags, TyFn(params, result, kind), limit, h)
+    TyUnion(members) => allocated_tagged_with(tags, TyUnion(members), limit, h)
+    TyProduct(members) => allocated_tagged_with(tags, TyProduct(members), limit, h)
+    TyNamed(name, params) => allocated_tagged_with(tags, TyNamed(name, params), limit, h)
+    TyTagged(inner_tags, inner) => allocated_tagged_with(
+      tags_union(tags, inner_tags),
+      inner,
+      limit,
+      h
+    )
+    TyInfo(inner) => allocated_tagged_with(tags, TyInfo(inner), limit, h)
+    TyBorrow(inner, mutable) => allocated_tagged_with(tags, TyBorrow(inner, mutable), limit, h)
+    TyPoly(gs, inner) => allocated_tagged_with(tags, TyPoly(gs, inner), limit, h)
+    TyApp(head, arg) => allocated_tagged_with(tags, TyApp(head, arg), limit, h)
+  }
+}
+pub theorem allocated_apply(
+  head: Ty,
+  arg: Ty,
+  limit: Nat,
+  fn_type: TypeAllocated(limit, head),
+  arg_type: TypeAllocated(limit, arg)
+): TypeAllocated(limit, ty_apply(head, arg)) {
+  match head: TypeAllocated(limit, ty_apply(head, arg)) {
+    TyInt(width) => AndIntro(fn_type, arg_type)
+    TyBool => AndIntro(fn_type, arg_type)
+    TyText => AndIntro(fn_type, arg_type)
+    TyUnit => AndIntro(fn_type, arg_type)
+    TyNever => AndIntro(fn_type, arg_type)
+    TyDecimal => AndIntro(fn_type, arg_type)
+    TyFloat => AndIntro(fn_type, arg_type)
+    TyParam(name, kind) => AndIntro(fn_type, arg_type)
+    TyVar(index) => AndIntro(fn_type, arg_type)
+    TyFn(params, result, kind) => AndIntro(fn_type, arg_type)
+    TyUnion(members) => AndIntro(fn_type, arg_type)
+    TyProduct(members) => AndIntro(fn_type, arg_type)
+    TyNamed(name, params) => allocated_list_append(
+      params,
+      Cons(arg, Nil),
+      limit,
+      fn_type,
+      AndIntro(arg_type, Trivial)
+    )
+    TyTagged(tags, inner) => AndIntro(fn_type, arg_type)
+    TyInfo(inner) => AndIntro(fn_type, arg_type)
+    TyBorrow(inner, mutable) => AndIntro(fn_type, arg_type)
+    TyPoly(gs, inner) => AndIntro(fn_type, arg_type)
+    TyApp(fn_head, fn_arg) => AndIntro(fn_type, arg_type)
+  }
+}

@@ -1,0 +1,999 @@
+import "inference_handlers.taut"
+import "../../surface/src/surface.taut"
+
+pub fn inference_fn_name(f: SurfaceFn): Text { f.name }
+
+pub fn inference_scheme_type(s: Scheme): Ty { s.ty }
+
+pub fn inference_scheme_preds(s: Scheme): List(Pair(Text, Text)) { s.preds }
+
+pub fn inference_fns(c: Checker): Ordmap(Text, Scheme) { c.fns }
+
+pub fn inference_block_end(
+  j: Nat,
+  c: Checker,
+  env: Scope,
+  last: Ty,
+  stopped: Bool
+): Mut2(Ty, Checker, Scope) {
+  match stopped: Mut2(Ty, Checker, Scope) {
+    true => mut2(TyNever, c, env)
+    false => mut2(last, c, env)
+  }
+}
+
+pub theorem inference_block_end_frame(
+  j: Nat,
+  c: Checker,
+  env: Scope,
+  last: Ty,
+  stopped: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, inference_block_end(j, c, env, last, stopped)) {
+  match stopped: CkScopeFrame(c, inference_block_end(j, c, env, last, stopped)) {
+    true => pattern_return_frame(c, env, TyNever, ordered)
+    false => pattern_return_frame(c, env, last, ordered)
+  }
+}
+
+pub fn inference_block(
+  j: Nat,
+  c: Checker,
+  env: Scope,
+  stopped: Bool,
+  last: Ty,
+  stmts: List(SurfaceStmt)
+): Mut2(Ty, Checker, Scope) {
+  match stmts: Mut2(Ty, Checker, Scope) {
+    Nil => inference_block_end(j, c, env, last, stopped)
+    Cons(s, rest) => pattern_bind(
+      Ty,
+      Ty,
+      (t: Ty, c1: Checker, env1: Scope) => pattern_rewrap(
+        ck_block_in(j, c1, rest, env1, Bool::or(stopped, ty_is_never(t)), block_value(s, rest, t))
+      ),
+      ck_stmt_in(j, c, s, env)
+    )
+  }
+}
+
+pub theorem inference_block_frame(
+  j: Nat,
+  c: Checker,
+  env: Scope,
+  stopped: Bool,
+  last: Ty,
+  stmts: List(SurfaceStmt),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) {
+  match stmts: CkScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) {
+    Nil => inference_block_end_frame(j, c, env, last, stopped, ih, ordered)
+    Cons(s, rest) => pattern_bind_frame(
+      Ty,
+      Ty,
+      c,
+      (t: Ty, c1: Checker, env1: Scope) => pattern_rewrap(
+        ck_block_in(j, c1, rest, env1, Bool::or(stopped, ty_is_never(t)), block_value(s, rest, t))
+      ),
+      ck_stmt_in(j, c, s, env),
+      inference_use_ck_stmt_in(j, c, s, env, ordered, ih),
+      t => c1 => env1 => o_c1 => pattern_rewrap_frame(
+        c1,
+        ck_block_in(j, c1, rest, env1, Bool::or(stopped, ty_is_never(t)), block_value(s, rest, t)),
+        inference_use_ck_block_in(
+          j,
+          c1,
+          rest,
+          env1,
+          Bool::or(stopped, ty_is_never(t)),
+          block_value(s, rest, t),
+          o_c1,
+          ih
+        )
+      )
+    )
+  }
+}
+
+pub fn inference_step_ck_block_in(
+  j: Nat,
+  c: Checker,
+  stmts: List(SurfaceStmt),
+  env: Scope,
+  stopped: Bool,
+  last: Ty
+): Mut2(Ty, Checker, Scope) { inference_block(j, c, env, stopped, last, stmts) }
+
+pub theorem inference_step_ck_block_in_frame(
+  j: Nat,
+  c: Checker,
+  stmts: List(SurfaceStmt),
+  env: Scope,
+  stopped: Bool,
+  last: Ty,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkScopeFrame(
+  c,
+  inference_step_ck_block_in(j, c, stmts, env, stopped, last)
+) { inference_block_frame(j, c, env, stopped, last, stmts, ih, ordered) }
+
+pub theorem inference_unf_ck_block_in(
+  j: Nat,
+  c: Checker,
+  stmts: List(SurfaceStmt),
+  env: Scope,
+  stopped: Bool,
+  last: Ty
+): ck_block_in(Succ(j), c, stmts, env, stopped, last) = inference_step_ck_block_in(j, c, stmts, env, stopped, last) { match stmts: ck_block_in(Succ(j), c, stmts, env, stopped, last) = inference_step_ck_block_in(j, c, stmts, env, stopped, last) {
+    Nil => Refl
+    Cons(s, rest) => Refl
+  } }
+
+pub fn inference_app_clone(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  name: Text,
+  clone: Bool
+): Mut1(Ty, Checker) {
+  match clone: Mut1(Ty, Checker) {
+    true => ck_rewrap1(ck_clone_of_in(j, c, arguments, env, span_of(term)))
+    false => ck_rewrap1(ck_app_call_in(j, c, term, function, arguments, env))
+  }
+}
+
+pub theorem inference_app_clone_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  name: Text,
+  clone: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_app_clone(j, c, term, function, arguments, env, name, clone)) {
+  match clone: CkRunFrame(
+    c,
+    inference_app_clone(j, c, term, function, arguments, env, name, clone)
+  ) {
+    true => run_frame_rewrap(
+      c,
+      ck_clone_of_in(j, c, arguments, env, span_of(term)),
+      inference_use_ck_clone_of_in(j, c, arguments, env, span_of(term), ordered, ih)
+    )
+    false => run_frame_rewrap(
+      c,
+      ck_app_call_in(j, c, term, function, arguments, env),
+      inference_use_ck_app_call_in(j, c, term, function, arguments, env, ordered, ih)
+    )
+  }
+}
+
+pub fn inference_app_operator(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  name: Text,
+  operator: Bool
+): Mut1(Ty, Checker) {
+  match operator: Mut1(Ty, Checker) {
+    true => frame_bind(
+      List(Ty),
+      Ty,
+      (args: List(Ty), c1: Checker) => ck_rewrap1(
+        ck_operator_of(c1, name, args, arguments, span_of(term), term.occurrence)
+      ),
+      ck_operands_in(j, c, arguments, env)
+    )
+    false => inference_app_clone(
+      j,
+      c,
+      term,
+      function,
+      arguments,
+      env,
+      name,
+      Bool::and(
+        Text::eq(name, "clone"),
+        not(Ordmap::contains(inference_fns(c), name, Ordmap::compare_text))
+      )
+    )
+  }
+}
+
+pub theorem inference_app_operator_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  name: Text,
+  operator: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_app_operator(j, c, term, function, arguments, env, name, operator)) {
+  match operator: CkRunFrame(
+    c,
+    inference_app_operator(j, c, term, function, arguments, env, name, operator)
+  ) {
+    true => run_frame_bind(
+      List(Ty),
+      Ty,
+      c,
+      (args: List(Ty), c1: Checker) => ck_rewrap1(
+        ck_operator_of(c1, name, args, arguments, span_of(term), term.occurrence)
+      ),
+      ck_operands_in(j, c, arguments, env),
+      inference_use_ck_operands_in(j, c, arguments, env, ordered, ih),
+      args => c1 => o_c1 => run_frame_rewrap(
+        c1,
+        ck_operator_of(c1, name, args, arguments, span_of(term), term.occurrence),
+        ck_operator_of_run_frame(c1, name, args, arguments, span_of(term), term.occurrence, o_c1)
+      )
+    )
+    false => inference_app_clone_frame(
+      j,
+      c,
+      term,
+      function,
+      arguments,
+      env,
+      name,
+      Bool::and(
+        Text::eq(name, "clone"),
+        not(Ordmap::contains(inference_fns(c), name, Ordmap::compare_text))
+      ),
+      ih,
+      ordered
+    )
+  }
+}
+
+pub fn inference_app_tuple(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  name: Text,
+  tuple: Bool
+): Mut1(Ty, Checker) {
+  match tuple: Mut1(Ty, Checker) {
+    true => mut1(TyUnit, c)
+    false => inference_app_operator(j, c, term, function, arguments, env, name, ck_is_operator(name))
+  }
+}
+
+pub theorem inference_app_tuple_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  name: Text,
+  tuple: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_app_tuple(j, c, term, function, arguments, env, name, tuple)) {
+  match tuple: CkRunFrame(
+    c,
+    inference_app_tuple(j, c, term, function, arguments, env, name, tuple)
+  ) {
+    true => run_frame_return(c, TyUnit, ordered)
+    false => inference_app_operator_frame(
+      j,
+      c,
+      term,
+      function,
+      arguments,
+      env,
+      name,
+      ck_is_operator(name),
+      ih,
+      ordered
+    )
+  }
+}
+
+pub fn inference_app_name(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  r#direct: Option(Text)
+): Mut1(Ty, Checker) {
+  match r#direct: Mut1(Ty, Checker) {
+    None => ck_rewrap1(ck_app_call_in(j, c, term, function, arguments, env))
+    Some(name) => inference_app_tuple(
+      j,
+      c,
+      term,
+      function,
+      arguments,
+      env,
+      name,
+      Bool::and(Text::eq(name, "Tuple"), Nat::eq(list_len(arguments), 0))
+    )
+  }
+}
+
+pub theorem inference_app_name_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  r#direct: Option(Text),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) {
+  match r#direct: CkRunFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) {
+    None => run_frame_rewrap(
+      c,
+      ck_app_call_in(j, c, term, function, arguments, env),
+      inference_use_ck_app_call_in(j, c, term, function, arguments, env, ordered, ih)
+    )
+    Some(name) => inference_app_tuple_frame(
+      j,
+      c,
+      term,
+      function,
+      arguments,
+      env,
+      name,
+      Bool::and(Text::eq(name, "Tuple"), Nat::eq(list_len(arguments), 0)),
+      ih,
+      ordered
+    )
+  }
+}
+
+pub fn inference_step_ck_app_in(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local)
+): Mut1(
+  Ty,
+  Checker
+) { inference_app_name(j, c, term, function, arguments, env, ck_direct_name(function, env)) }
+
+pub theorem inference_step_ck_app_in_frame(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_step_ck_app_in(j, c, term, function, arguments, env)) {
+  inference_app_name_frame(
+    j,
+    c,
+    term,
+    function,
+    arguments,
+    env,
+    ck_direct_name(function, env),
+    ih,
+    ordered
+  )
+}
+
+pub theorem inference_unf_ck_app_in(
+  j: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local)
+): ck_app_in(Succ(j), c, term, function, arguments, env) = inference_step_ck_app_in(j, c, term, function, arguments, env) { Refl }
+
+pub fn inference_statement(
+  j: Nat,
+  c: Checker,
+  env: Scope,
+  s: SurfaceStmt
+): Mut2(Ty, Checker, Scope) {
+  match s: Mut2(Ty, Checker, Scope) {
+    StLet(name, ty, value, borrow, bm) => pattern_bind_one(
+      Ty,
+      Ty,
+      (v: Ty, c1: Checker) => pattern_bind(
+        Unit,
+        Ty,
+        (bound: Unit, c2: Checker, env2: Scope) => mut2(TyUnit, c2, env2),
+        ck_let(c1, env, name, ty, v, value, borrow, bm)
+      ),
+      ck_infer_in(j, c, value, inference_scope_items(env))
+    )
+    StVar(name, ty, value, vb) => pattern_bind_one(
+      Ty,
+      Ty,
+      (v: Ty, c1: Checker) => pattern_bind(
+        Unit,
+        Ty,
+        (bound: Unit, c2: Checker, env2: Scope) => mut2(TyUnit, c2, env2),
+        ck_var(c1, env, name, ty, v, value, vb)
+      ),
+      ck_infer_in(j, c, value, inference_scope_items(env))
+    )
+    StAssign(name, name_place, value) => pattern_bind_one(
+      Ty,
+      Ty,
+      (v: Ty, c1: Checker) => pattern_bind_one(
+        Unit,
+        Ty,
+        (assigned: Unit, c2: Checker) => mut2(TyUnit, c2, env),
+        ck_assign(c1, inference_scope_items(env), name, v, value)
+      ),
+      ck_infer_in(j, c, value, inference_scope_items(env))
+    )
+    StCalled(name_generates, value) => pattern_lift(
+      env,
+      ck_stmt_other(c, StCalled(name_generates, value))
+    )
+    StFn(f) => pattern_bind_one(
+      Scheme,
+      Ty,
+      (scheme: Scheme, c1: Checker) => pattern_bind(
+        Unit,
+        Ty,
+        (bound: Unit, c2: Checker, env2: Scope) => pattern_bind_one(
+          Unit,
+          Ty,
+          (checked: Unit, c3: Checker) => mut2(TyUnit, c3, env2),
+          ck_check_fn_in(j, c2, f, scheme, inference_scope_items(env2))
+        ),
+        ck_bind_local(
+          c1,
+          env,
+          inference_fn_name(f),
+          inference_scheme_type(scheme),
+          false,
+          handle_body_start(inference_fn_body(f))
+        )
+      ),
+      ck_signature(c, f)
+    )
+    StEffect(e) => pattern_bind_one(
+      Unit,
+      Ty,
+      (declared: Unit, c1: Checker) => mut2(TyUnit, c1, env),
+      ck_declare_effect(c, e)
+    )
+    StWhile(condition, body) => pattern_bind_one(
+      Ty,
+      Ty,
+      (t: Ty, c1: Checker) => pattern_bind_one(
+        Unit,
+        Ty,
+        (checked: Unit, c2: Checker) => pattern_bind_one(
+          Ty,
+          Ty,
+          (ignored: Ty, c3: Checker) => mut2(TyUnit, c3, env),
+          ck_infer_in(j, c2, body, inference_scope_items(env))
+        ),
+        ck_expect(c1, t, TyBool, span_of(condition), "a `while` condition")
+      ),
+      ck_infer_in(j, c, condition, inference_scope_items(env))
+    )
+    StReturn(e) => pattern_bind_one(
+      Pair(Ty, TySpan),
+      Ty,
+      (returned: Pair(Ty, TySpan), c1: Checker) => pattern_bind_one(
+        Unit,
+        Ty,
+        (checked: Unit, c2: Checker) => mut2(TyNever, c2, env),
+        ck_return_check(c1, inference_pair_ty(returned), inference_pair_span(returned))
+      ),
+      ck_returned_in(j, c, e, inference_scope_items(env))
+    )
+    StExpr(e) => pattern_lift(env, ck_infer_in(j, c, e, inference_scope_items(env)))
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => pattern_lift(
+      env,
+      ck_stmt_other(c, StModule(pat_name, pat_stmts, pat_start, pat_end))
+    )
+    StTheorem(pat_t) => pattern_lift(env, ck_stmt_other(c, StTheorem(pat_t)))
+    StDef(pat_t) => pattern_lift(env, ck_stmt_other(c, StDef(pat_t)))
+    StMutual(pat_stmts, pat_start, pat_end) => pattern_lift(
+      env,
+      ck_stmt_other(c, StMutual(pat_stmts, pat_start, pat_end))
+    )
+    StImport(pat_path, pat_start, pat_end) => pattern_lift(
+      env,
+      ck_stmt_other(c, StImport(pat_path, pat_start, pat_end))
+    )
+    StInductive(pat_i) => pattern_lift(env, ck_stmt_other(c, StInductive(pat_i)))
+    StStruct(pat_d) => pattern_lift(env, ck_stmt_other(c, StStruct(pat_d)))
+    StEnum(pat_d) => pattern_lift(env, ck_stmt_other(c, StEnum(pat_d)))
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => pattern_lift(
+      env,
+      ck_stmt_other(c, StExtern(pat_abi, pat_fns, pat_start, pat_end))
+    )
+    StClass(pat_c) => pattern_lift(env, ck_stmt_other(c, StClass(pat_c)))
+    StInstance(pat_i) => pattern_lift(env, ck_stmt_other(c, StInstance(pat_i)))
+    StMacro(pat_name, pat_function, pat_start, pat_end) => pattern_lift(
+      env,
+      ck_stmt_other(c, StMacro(pat_name, pat_function, pat_start, pat_end))
+    )
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => pattern_lift(
+      env,
+      ck_stmt_other(c, StAttributed(attr_name, attr_arg, attr_generates, attr_stmt))
+    )
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => pattern_lift(
+      env,
+      ck_stmt_other(c, StSyntax(pat_name, pat_grammar, pat_start, pat_end))
+    )
+    StOther(what, start, end) => pattern_lift(env, ck_stmt_other(c, StOther(what, start, end)))
+  }
+}
+
+pub theorem inference_statement_frame(
+  j: Nat,
+  c: Checker,
+  env: Scope,
+  s: SurfaceStmt,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkScopeFrame(c, inference_statement(j, c, env, s)) {
+  match s: CkScopeFrame(c, inference_statement(j, c, env, s)) {
+    StLet(name, ty, value, borrow, bm) => pattern_bind_one_frame(
+      Ty,
+      Ty,
+      c,
+      (v: Ty, c1: Checker) => pattern_bind(
+        Unit,
+        Ty,
+        (bound: Unit, c2: Checker, env2: Scope) => mut2(TyUnit, c2, env2),
+        ck_let(c1, env, name, ty, v, value, borrow, bm)
+      ),
+      ck_infer_in(j, c, value, inference_scope_items(env)),
+      inference_use_ck_infer_in(j, c, value, inference_scope_items(env), ordered, ih),
+      v => c1 => o_c1 => pattern_bind_frame(
+        Unit,
+        Ty,
+        c1,
+        (bound: Unit, c2: Checker, env2: Scope) => mut2(TyUnit, c2, env2),
+        ck_let(c1, env, name, ty, v, value, borrow, bm),
+        ck_let_scope_frame(c1, env, name, ty, v, value, borrow, bm, o_c1),
+        bound => c2 => env2 => o_c2 => pattern_return_frame(c2, env2, TyUnit, o_c2)
+      )
+    )
+    StVar(name, ty, value, vb) => pattern_bind_one_frame(
+      Ty,
+      Ty,
+      c,
+      (v: Ty, c1: Checker) => pattern_bind(
+        Unit,
+        Ty,
+        (bound: Unit, c2: Checker, env2: Scope) => mut2(TyUnit, c2, env2),
+        ck_var(c1, env, name, ty, v, value, vb)
+      ),
+      ck_infer_in(j, c, value, inference_scope_items(env)),
+      inference_use_ck_infer_in(j, c, value, inference_scope_items(env), ordered, ih),
+      v => c1 => o_c1 => pattern_bind_frame(
+        Unit,
+        Ty,
+        c1,
+        (bound: Unit, c2: Checker, env2: Scope) => mut2(TyUnit, c2, env2),
+        ck_var(c1, env, name, ty, v, value, vb),
+        ck_var_scope_frame(c1, env, name, ty, v, value, vb, o_c1),
+        bound => c2 => env2 => o_c2 => pattern_return_frame(c2, env2, TyUnit, o_c2)
+      )
+    )
+    StAssign(name, name_place, value) => pattern_bind_one_frame(
+      Ty,
+      Ty,
+      c,
+      (v: Ty, c1: Checker) => pattern_bind_one(
+        Unit,
+        Ty,
+        (assigned: Unit, c2: Checker) => mut2(TyUnit, c2, env),
+        ck_assign(c1, inference_scope_items(env), name, v, value)
+      ),
+      ck_infer_in(j, c, value, inference_scope_items(env)),
+      inference_use_ck_infer_in(j, c, value, inference_scope_items(env), ordered, ih),
+      v => c1 => o_c1 => pattern_bind_one_frame(
+        Unit,
+        Ty,
+        c1,
+        (assigned: Unit, c2: Checker) => mut2(TyUnit, c2, env),
+        ck_assign(c1, inference_scope_items(env), name, v, value),
+        ck_assign_run_frame(c1, inference_scope_items(env), name, v, value, o_c1),
+        assigned => c2 => o_c2 => pattern_return_frame(c2, env, TyUnit, o_c2)
+      )
+    )
+    StCalled(name_generates, value) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StCalled(name_generates, value)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StCalled(name_generates, value)),
+        ck_stmt_other_frame(c, StCalled(name_generates, value)),
+        ordered
+      )
+    )
+    StFn(f) => pattern_bind_one_frame(
+      Scheme,
+      Ty,
+      c,
+      (scheme: Scheme, c1: Checker) => pattern_bind(
+        Unit,
+        Ty,
+        (bound: Unit, c2: Checker, env2: Scope) => pattern_bind_one(
+          Unit,
+          Ty,
+          (checked: Unit, c3: Checker) => mut2(TyUnit, c3, env2),
+          ck_check_fn_in(j, c2, f, scheme, inference_scope_items(env2))
+        ),
+        ck_bind_local(
+          c1,
+          env,
+          inference_fn_name(f),
+          inference_scheme_type(scheme),
+          false,
+          handle_body_start(inference_fn_body(f))
+        )
+      ),
+      ck_signature(c, f),
+      run_frame_read(c, ck_signature(c, f), ck_signature_frame(c, f), ordered),
+      scheme => c1 => o_c1 => pattern_bind_frame(
+        Unit,
+        Ty,
+        c1,
+        (bound: Unit, c2: Checker, env2: Scope) => pattern_bind_one(
+          Unit,
+          Ty,
+          (checked: Unit, c3: Checker) => mut2(TyUnit, c3, env2),
+          ck_check_fn_in(j, c2, f, scheme, inference_scope_items(env2))
+        ),
+        ck_bind_local(
+          c1,
+          env,
+          inference_fn_name(f),
+          inference_scheme_type(scheme),
+          false,
+          handle_body_start(inference_fn_body(f))
+        ),
+        ck_bind_local_scope_frame(
+          c1,
+          env,
+          inference_fn_name(f),
+          inference_scheme_type(scheme),
+          false,
+          handle_body_start(inference_fn_body(f)),
+          o_c1
+        ),
+        bound => c2 => env2 => o_c2 => pattern_bind_one_frame(
+          Unit,
+          Ty,
+          c2,
+          (checked: Unit, c3: Checker) => mut2(TyUnit, c3, env2),
+          ck_check_fn_in(j, c2, f, scheme, inference_scope_items(env2)),
+          inference_use_ck_check_fn_in(j, c2, f, scheme, inference_scope_items(env2), o_c2, ih),
+          checked => c3 => o_c3 => pattern_return_frame(c3, env2, TyUnit, o_c3)
+        )
+      )
+    )
+    StEffect(e) => pattern_bind_one_frame(
+      Unit,
+      Ty,
+      c,
+      (declared: Unit, c1: Checker) => mut2(TyUnit, c1, env),
+      ck_declare_effect(c, e),
+      run_frame_read(c, ck_declare_effect(c, e), ck_declare_effect_frame(c, e), ordered),
+      declared => c1 => o_c1 => pattern_return_frame(c1, env, TyUnit, o_c1)
+    )
+    StWhile(condition, body) => pattern_bind_one_frame(
+      Ty,
+      Ty,
+      c,
+      (t: Ty, c1: Checker) => pattern_bind_one(
+        Unit,
+        Ty,
+        (checked: Unit, c2: Checker) => pattern_bind_one(
+          Ty,
+          Ty,
+          (ignored: Ty, c3: Checker) => mut2(TyUnit, c3, env),
+          ck_infer_in(j, c2, body, inference_scope_items(env))
+        ),
+        ck_expect(c1, t, TyBool, span_of(condition), "a `while` condition")
+      ),
+      ck_infer_in(j, c, condition, inference_scope_items(env)),
+      inference_use_ck_infer_in(j, c, condition, inference_scope_items(env), ordered, ih),
+      t => c1 => o_c1 => pattern_bind_one_frame(
+        Unit,
+        Ty,
+        c1,
+        (checked: Unit, c2: Checker) => pattern_bind_one(
+          Ty,
+          Ty,
+          (ignored: Ty, c3: Checker) => mut2(TyUnit, c3, env),
+          ck_infer_in(j, c2, body, inference_scope_items(env))
+        ),
+        ck_expect(c1, t, TyBool, span_of(condition), "a `while` condition"),
+        ck_expect_run_frame(c1, t, TyBool, span_of(condition), "a `while` condition", o_c1),
+        checked => c2 => o_c2 => pattern_bind_one_frame(
+          Ty,
+          Ty,
+          c2,
+          (ignored: Ty, c3: Checker) => mut2(TyUnit, c3, env),
+          ck_infer_in(j, c2, body, inference_scope_items(env)),
+          inference_use_ck_infer_in(j, c2, body, inference_scope_items(env), o_c2, ih),
+          ignored => c3 => o_c3 => pattern_return_frame(c3, env, TyUnit, o_c3)
+        )
+      )
+    )
+    StReturn(e) => pattern_bind_one_frame(
+      Pair(Ty, TySpan),
+      Ty,
+      c,
+      (returned: Pair(Ty, TySpan), c1: Checker) => pattern_bind_one(
+        Unit,
+        Ty,
+        (checked: Unit, c2: Checker) => mut2(TyNever, c2, env),
+        ck_return_check(c1, inference_pair_ty(returned), inference_pair_span(returned))
+      ),
+      ck_returned_in(j, c, e, inference_scope_items(env)),
+      inference_use_ck_returned_in(j, c, e, inference_scope_items(env), ordered, ih),
+      returned => c1 => o_c1 => pattern_bind_one_frame(
+        Unit,
+        Ty,
+        c1,
+        (checked: Unit, c2: Checker) => mut2(TyNever, c2, env),
+        ck_return_check(c1, inference_pair_ty(returned), inference_pair_span(returned)),
+        ck_return_check_run_frame(
+          c1,
+          inference_pair_ty(returned),
+          inference_pair_span(returned),
+          o_c1
+        ),
+        checked => c2 => o_c2 => pattern_return_frame(c2, env, TyNever, o_c2)
+      )
+    )
+    StExpr(e) => pattern_lift_frame(
+      c,
+      env,
+      ck_infer_in(j, c, e, inference_scope_items(env)),
+      inference_use_ck_infer_in(j, c, e, inference_scope_items(env), ordered, ih)
+    )
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StModule(pat_name, pat_stmts, pat_start, pat_end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StModule(pat_name, pat_stmts, pat_start, pat_end)),
+        ck_stmt_other_frame(c, StModule(pat_name, pat_stmts, pat_start, pat_end)),
+        ordered
+      )
+    )
+    StTheorem(pat_t) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StTheorem(pat_t)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StTheorem(pat_t)),
+        ck_stmt_other_frame(c, StTheorem(pat_t)),
+        ordered
+      )
+    )
+    StDef(pat_t) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StDef(pat_t)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StDef(pat_t)),
+        ck_stmt_other_frame(c, StDef(pat_t)),
+        ordered
+      )
+    )
+    StMutual(pat_stmts, pat_start, pat_end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StMutual(pat_stmts, pat_start, pat_end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StMutual(pat_stmts, pat_start, pat_end)),
+        ck_stmt_other_frame(c, StMutual(pat_stmts, pat_start, pat_end)),
+        ordered
+      )
+    )
+    StImport(pat_path, pat_start, pat_end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StImport(pat_path, pat_start, pat_end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StImport(pat_path, pat_start, pat_end)),
+        ck_stmt_other_frame(c, StImport(pat_path, pat_start, pat_end)),
+        ordered
+      )
+    )
+    StInductive(pat_i) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StInductive(pat_i)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StInductive(pat_i)),
+        ck_stmt_other_frame(c, StInductive(pat_i)),
+        ordered
+      )
+    )
+    StStruct(pat_d) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StStruct(pat_d)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StStruct(pat_d)),
+        ck_stmt_other_frame(c, StStruct(pat_d)),
+        ordered
+      )
+    )
+    StEnum(pat_d) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StEnum(pat_d)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StEnum(pat_d)),
+        ck_stmt_other_frame(c, StEnum(pat_d)),
+        ordered
+      )
+    )
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StExtern(pat_abi, pat_fns, pat_start, pat_end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StExtern(pat_abi, pat_fns, pat_start, pat_end)),
+        ck_stmt_other_frame(c, StExtern(pat_abi, pat_fns, pat_start, pat_end)),
+        ordered
+      )
+    )
+    StClass(pat_c) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StClass(pat_c)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StClass(pat_c)),
+        ck_stmt_other_frame(c, StClass(pat_c)),
+        ordered
+      )
+    )
+    StInstance(pat_i) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StInstance(pat_i)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StInstance(pat_i)),
+        ck_stmt_other_frame(c, StInstance(pat_i)),
+        ordered
+      )
+    )
+    StMacro(pat_name, pat_function, pat_start, pat_end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StMacro(pat_name, pat_function, pat_start, pat_end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StMacro(pat_name, pat_function, pat_start, pat_end)),
+        ck_stmt_other_frame(c, StMacro(pat_name, pat_function, pat_start, pat_end)),
+        ordered
+      )
+    )
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StAttributed(attr_name, attr_arg, attr_generates, attr_stmt)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StAttributed(attr_name, attr_arg, attr_generates, attr_stmt)),
+        ck_stmt_other_frame(c, StAttributed(attr_name, attr_arg, attr_generates, attr_stmt)),
+        ordered
+      )
+    )
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StSyntax(pat_name, pat_grammar, pat_start, pat_end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StSyntax(pat_name, pat_grammar, pat_start, pat_end)),
+        ck_stmt_other_frame(c, StSyntax(pat_name, pat_grammar, pat_start, pat_end)),
+        ordered
+      )
+    )
+    StOther(what, start, end) => pattern_lift_frame(
+      c,
+      env,
+      ck_stmt_other(c, StOther(what, start, end)),
+      run_frame_read(
+        c,
+        ck_stmt_other(c, StOther(what, start, end)),
+        ck_stmt_other_frame(c, StOther(what, start, end)),
+        ordered
+      )
+    )
+  }
+}
+
+pub fn inference_step_ck_stmt_in(
+  j: Nat,
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope
+): Mut2(Ty, Checker, Scope) { inference_statement(j, c, env, s) }
+
+pub theorem inference_step_ck_stmt_in_frame(
+  j: Nat,
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkScopeFrame(
+  c,
+  inference_step_ck_stmt_in(j, c, s, env)
+) { inference_statement_frame(j, c, env, s, ih, ordered) }
+
+pub theorem inference_unf_ck_stmt_in(
+  j: Nat,
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope
+): ck_stmt_in(Succ(j), c, s, env) = inference_step_ck_stmt_in(j, c, s, env) { match s: ck_stmt_in(Succ(j), c, s, env) = inference_step_ck_stmt_in(j, c, s, env) {
+    StLet(name, ty, value, borrow, bm) => Refl
+    StVar(name, ty, value, vb) => Refl
+    StAssign(name, name_place, value) => Refl
+    StCalled(name_generates, value) => Refl
+    StFn(f) => Refl
+    StEffect(e) => Refl
+    StWhile(condition, body) => Refl
+    StReturn(e) => Refl
+    StExpr(e) => Refl
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => Refl
+    StTheorem(pat_t) => Refl
+    StDef(pat_t) => Refl
+    StMutual(pat_stmts, pat_start, pat_end) => Refl
+    StImport(pat_path, pat_start, pat_end) => Refl
+    StInductive(pat_i) => Refl
+    StStruct(pat_d) => Refl
+    StEnum(pat_d) => Refl
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => Refl
+    StClass(pat_c) => Refl
+    StInstance(pat_i) => Refl
+    StMacro(pat_name, pat_function, pat_start, pat_end) => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => Refl
+    StOther(what, start, end) => Refl
+  } }

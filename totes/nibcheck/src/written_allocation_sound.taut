@@ -1,0 +1,299 @@
+import "written_allocation_names.taut"
+
+mutual {
+  pub theorem written_term_allocated<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, borrow: Bool, term: SurfaceTerm, ty: Ty>(
+    meaning: WrittenTerm(env, generics, partial, borrow, term, ty),
+    limit: Nat,
+    bounded: RigidMapAllocation(limit, generics)
+  ): TypeAllocated(limit, ty) {
+    match meaning: TypeAllocated(limit, ty) {
+      Mk(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        sk,
+        value,
+        start,
+        end,
+        inner
+      ) => written_kind_allocated(inner, limit, bounded) }
+  }
+  pub theorem written_kind_allocated<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, borrow: Bool, sk: SurfaceKind, ty: Ty>(
+    meaning: WrittenKind(env, generics, partial, borrow, sk, ty),
+    limit: Nat,
+    bounded: RigidMapAllocation(limit, generics)
+  ): TypeAllocated(limit, ty) {
+    match meaning: TypeAllocated(limit, ty) {
+      WrittenKindName(gs, Mode, borrowing, name, value, Named) => written_name_type_allocated(
+        Named,
+        limit,
+        And::right(bounded)
+      )
+      WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, start, end) => Trivial
+      WrittenKindInfo(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        arg,
+        value,
+        start,
+        end,
+        argument
+      ) => written_term_allocated(argument, limit, bounded)
+      WrittenKindNamed(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        name,
+        args,
+        types,
+        start,
+        end,
+        NotTuple,
+        not_info,
+        unbound,
+        SliceBorrowed,
+        arguments,
+        arity
+      ) => written_terms_allocated(arguments, limit, bounded)
+      WrittenKindGeneric(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        name,
+        arg,
+        head,
+        value,
+        bound,
+        start,
+        end,
+        not_info,
+        Parameter,
+        Constructor,
+        argument
+      ) => allocated_apply(
+        head,
+        value,
+        limit,
+        written_type_name_allocated(Constructor, limit, And::right(bounded)),
+        written_term_allocated(argument, limit, bounded)
+      )
+      WrittenKindNested(
+        ctor_ast_occurrence,
+        gs,
+        Mode,
+        borrowing,
+        function,
+        before,
+        args,
+        start,
+        end,
+        name,
+        first,
+        last,
+        Constructor,
+        arguments,
+        arity
+      ) => allocated_list_append(
+        first,
+        last,
+        limit,
+        written_term_allocated(Constructor, limit, bounded),
+        written_terms_allocated(arguments, limit, bounded)
+      )
+      WrittenKindFunction(
+        gs,
+        Mode,
+        borrowing,
+        params,
+        result,
+        effects,
+        Binders,
+        remaining,
+        inner,
+        arguments,
+        Returns,
+        value,
+        MkSplit,
+        MkScope,
+        ParameterTypes,
+        ResultType,
+        Polymorphic
+      ) => written_polymorphic_allocated(
+        Polymorphic,
+        limit,
+        AndIntro(
+          written_parameters_allocated(
+            ParameterTypes,
+            limit,
+            written_binder_map_allocated(MkScope, limit, bounded)
+          ),
+          written_term_allocated(
+            ResultType,
+            limit,
+            written_binder_map_allocated(MkScope, limit, bounded)
+          )
+        )
+      )
+      WrittenKindFunctionKind(
+        gs,
+        Mode,
+        borrowing,
+        spelling,
+        body,
+        params,
+        result,
+        original,
+        kind,
+        function,
+        Annotation
+      ) => written_term_allocated(function, limit, bounded)
+      WrittenKindBorrow(gs, Mode, borrowing, mutable, body, value, inner) => written_term_allocated(
+        inner,
+        limit,
+        bounded
+      )
+      WrittenKindUnion(gs, Mode, borrowing, parts, types, Meanings) => allocated_union(
+        types,
+        limit,
+        written_terms_allocated(Meanings, limit, bounded)
+      )
+      WrittenKindProduct(gs, mode, borrowing, parts, types, meanings) => allocated_product(
+        types,
+        limit,
+        written_terms_allocated(meanings, limit, bounded)
+      )
+      WrittenKindTagged(gs, mode, borrowing, tag, body, value, inner) => allocated_tagged(
+        value,
+        Cons(tag, Nil),
+        limit,
+        written_term_allocated(inner, limit, bounded)
+      ) }
+  }
+  pub theorem written_terms_allocated<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, terms: List(
+    SurfaceTerm
+  ), types: List(
+    Ty
+  )>(
+    meaning: WrittenTerms(env, generics, partial, terms, types),
+    limit: Nat,
+    bounded: RigidMapAllocation(limit, generics)
+  ): TypeListAllocated(limit, types) {
+    match meaning: TypeListAllocated(limit, types) {
+      WrittenTermsNil(gs, Mode) => Trivial
+      WrittenTermsCons(gs, Mode, first, rest, t, ts, head, tail) => AndIntro(
+        written_term_allocated(head, limit, bounded),
+        written_terms_allocated(tail, limit, bounded)
+      ) }
+  }
+  pub theorem written_parameters_allocated<env: Datas, generics: Ordmap(
+    Text,
+    Ty
+  ), partial: Bool, params: List(
+    SurfaceParam
+  ), types: List(
+    Ty
+  )>(
+    meaning: WrittenParameters(env, generics, partial, params, types),
+    limit: Nat,
+    bounded: RigidMapAllocation(limit, generics)
+  ): TypeListAllocated(limit, types) {
+    match meaning: TypeListAllocated(limit, types) {
+      WrittenParametersNil(gs, Mode) => Trivial
+      WrittenParametersCons(gs, Mode, name, term, rest, t, ts, head, tail) => AndIntro(
+        written_term_allocated(head, limit, bounded),
+        written_parameters_allocated(tail, limit, bounded)
+      ) }
+  }
+}
+pub theorem ck_written_type_allocated(
+  c: Checker,
+  term: SurfaceTerm,
+  generics: Ordmap(Text, Ty),
+  limit: Nat,
+  bounded: RigidMapAllocation(limit, generics),
+  clean: DiagnosticClean(ck_st(ck_written(c, term, generics)))
+): TypeAllocated(limit, ck_val(ck_written(c, term, generics))) {
+  written_term_allocated(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    frame_under_borrow(c),
+    term,
+    ck_val(ck_written(c, term, generics)),
+    ck_written_sound(c, term, generics, clean),
+    limit,
+    Bounded
+  )
+}
+// The names a body may write a type with stand for rigid types, which hold
+// no variable.
+pub theorem type_scope_allocated(
+  limit: Nat,
+  xs: List(TypeName)
+): RigidMapAllocation(limit, type_scope(xs)) {
+  match xs: RigidMapAllocation(limit, type_scope(xs)) {
+    Nil => AndIntro(Trivial, generic_map_allocation_empty(limit))
+    Cons(x, rest) => match x: RigidMapAllocation(limit, type_scope(Cons(x, rest))) {
+      TypeNameMk(name, param, kind) => AndIntro(
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          type_scope(rest),
+          name,
+          TyParam(param, kind),
+          And::left(type_scope_allocated(limit, rest))
+        ),
+        generic_map_insert_allocated(
+          limit,
+          type_scope(rest),
+          name,
+          TyParam(param, kind),
+          And::left(type_scope_allocated(limit, rest)),
+          Trivial,
+          And::right(type_scope_allocated(limit, rest))
+        )
+      )
+    }
+  }
+}
+pub theorem ck_written_here_allocation_unf(
+  c: Checker,
+  term: SurfaceTerm
+): ck_written_here(c, term) = ck_rewrap1(ck_written(c, term, type_scope(ck_type_params_of(c)))) { Refl }
+pub theorem ck_written_here_type_allocated(
+  c: Checker,
+  term: SurfaceTerm,
+  limit: Nat,
+  clean: DiagnosticClean(ck_st(ck_written_here(c, term)))
+): TypeAllocated(limit, ck_val(ck_written_here(c, term))) {
+  let same: ck_written_here(c, term) = ck_written(c, term, type_scope(ck_type_params_of(c))) := Eq::trans(
+    ck_written_here_allocation_unf(c, term),
+    ck_rewrap1_id(ck_written(c, term, type_scope(ck_type_params_of(c))))
+  )
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => TypeAllocated(limit, ck_val(result)),
+    Eq::sym(same),
+    ck_written_type_allocated(
+      c,
+      term,
+      type_scope(ck_type_params_of(c)),
+      limit,
+      type_scope_allocated(limit, ck_type_params_of(c)),
+      Eq::subst((result: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(result)), same, clean)
+    )
+  )
+}

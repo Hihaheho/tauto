@@ -1,6 +1,6 @@
 # macros
 
-The macro system's hygiene in Nib (`crates/tauto/src/macros/scope.rs`,
+The macro system's hygiene in Nib (`crates/tauto-surface/src/macros/scope.rs`,
 `docs/design/macro.md`「衛生（スコープ集合）」). The directory is `totes/macros` because
 `macro` is a keyword of Rust, which the tote is built through.
 
@@ -15,12 +15,12 @@ out in the order the Rust walk hands them out.
     target/tauto/target/release/macros FILE…
 
 prints `== FILE` and the dump of each program after `rs_resolve`, with `__m`
-between a name and its scopes. `crates/tauto-selfhost/tests/macros.rs` compares
+between a name and its scopes. `tools/selfhost-harness/tests/macros.rs` compares
 that with `scope::resolve_with` on hand-written cases and on the whole corpus
 with some of its names given scopes.
 
 `src/node.taut` is `Node` (`macros/node.rs`) and the one-line text of a value
-(`Node::show`), `src/lift.taut` is `Lift` (`macros/syn.rs`, for the text of a
+(`Node::show`), `src/lift.taut` is `Lift` (`crates/tauto-surface/src/macros/syn.rs`, for the text of a
 macro's input, and of a `quote` body with its `$` splices: atoms by `--lift-atoms`, the table of spans by `--lift-spans`) and `src/lower.taut` is `Lower`. `Node::to_term` is `nd_to_term`.
 
     macros --lift FILE…    each statement as the value Lift makes of it, with the scopes 3 and 7

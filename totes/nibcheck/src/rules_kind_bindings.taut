@@ -1,0 +1,30 @@
+import "rules_kind_inst.taut"
+
+// Kind-correct bindings built in source order. This permits an existing
+// environment and gives later bindings the same name-shadowing behavior as
+// the environment used to read the declaration.
+pub(open) inductive InstanceKindBindings(
+  s: Ordmap(Nat, Ty),
+  d: Datas
+): (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ordmap(Text, Ty)) -> Prop {
+  InstanceKindBindingsNil(
+    initial: Ordmap(Text, Ty)
+  ): InstanceKindBindings(s, d, Nil, initial, initial)
+  InstanceKindBindingsCons(
+    g: Pair(Text, Kind),
+    value: Ty,
+    representative: Ty,
+    rest: List(Pair(Text, Kind)),
+    initial: Ordmap(Text, Ty),
+    result: Ordmap(Text, Ty),
+    equal: TyEqIn(s, value, representative),
+    bound: kind_fits(datas_kind(d, representative), instance_kind_bound(g)) = true,
+    tail: InstanceKindBindings(
+      s,
+      d,
+      rest,
+      Ordmap::insert(initial, instance_kind_name(g), value, Ordmap::compare_text),
+      result
+    )
+  ): InstanceKindBindings(s, d, Cons(g, rest), initial, result)
+}

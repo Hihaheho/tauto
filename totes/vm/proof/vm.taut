@@ -1,0 +1,411 @@
+import "../src/vm.taut"
+
+// The compiler is correct: when the reference semantics gives `v` for a call, the machine
+// runs the compiled program to `v`. No axiom is used.
+
+// ---- runs of the machine ----------------------------------------------------
+
+// `s1` reaches `s2` in zero or more instructions.
+pub(open) inductive Star(prog: List(Bytecode)): (State, State) -> Prop {
+  StarRefl(s: State): Star(prog, s, s)
+  StarStep<s1: State, s2: State, s3: State>(
+    h: step(prog, s1) = Some(s2),
+    rest: Star(prog, s2, s3)
+  ): Star(prog, s1, s3)
+}
+
+pub theorem star_trans<prog: List(
+  Bytecode
+), s1: State, s2: State, s3: State>(
+  a: Star(prog, s1, s2),
+  b: Star(prog, s2, s3)
+): Star(prog, s1, s3) {
+  match a: Star(prog, s1, s3) {
+    StarRefl(s) => b
+    StarStep(h, rest) => StarStep(h, star_trans(rest, b))
+  }
+}
+
+// ---- the compiled program --------------------------------------------------
+
+pub fn opt_comp(o: Option(Expr)): Option(Bytecode) {
+  match o: Option(Bytecode) {
+    None => None
+    Some(e) => Some(comp_body(e))
+  }
+}
+
+pub theorem nth_compile<prog: List(
+  Expr
+), f: Nat, body: Expr>(
+  found: List::nth(prog, f) = Some(body)
+): List::nth(compile(prog), f) = Some(comp_body(body)) {
+  match prog: (
+    List::nth(prog, f) = Some(body)
+  ) -> (List::nth(compile(prog), f) = Some(comp_body(body))) {
+    Nil => (e: List::nth(Nil, f) = Some(body)) => match f: (
+      List::nth(Nil, f) = Some(body)
+    ) -> (List::nth(compile(Nil), f) = Some(comp_body(body))) {
+      Zero => (e0: List::nth(Nil, Zero) = Some(body)) => False::elim(Option::none_ne_some(body, e0))
+      Succ(g) => (e1: List::nth(Nil, Succ(g)) = Some(body)) => False::elim(
+        Option::none_ne_some(body, e1)
+      )
+    }(e)
+    Cons(x, rest) => (e: List::nth(Cons(x, rest), f) = Some(body)) => match f: (
+      List::nth(Cons(x, rest), f) = Some(body)
+    ) -> (List::nth(compile(Cons(x, rest)), f) = Some(comp_body(body))) {
+      Zero => (e0: List::nth(Cons(x, rest), Zero) = Some(body)) => Eq::congr(
+        (o: Option(Expr)) => opt_comp(o),
+        e0
+      )
+      Succ(g) => (e1: List::nth(Cons(x, rest), Succ(g)) = Some(body)) => nth_compile(
+        rest,
+        g,
+        body,
+        e1
+      )
+    }(e)
+  }(found)
+}
+
+// ---- the compiler keeps the meaning -----------------------------------------
+
+// One instruction that goes to `s2`, then the rest.
+pub theorem go<prog: List(
+  Bytecode
+), s1: State, s3: State>(
+  s2: State,
+  h: step(prog, s1) = Some(s2),
+  rest: Star(prog, s2, s3)
+): Star(prog, s1, s3) {
+  StarStep(h, rest)
+}
+
+// Running the code of `e` followed by `k` runs `e` to its value, pushes it and goes on
+// with `k`, in the same environment and frames.
+pub theorem comp_correct<prog: List(
+  Expr
+), env: List(
+  Val
+), e: Expr, v: Val>(
+  h: Eval(prog, env, e, v),
+  k: Bytecode,
+  st: List(Val),
+  fr: List(Frame)
+): Star(compile(prog), StateMk(comp(e, k), env, st, fr), StateMk(k, env, Cons(v, st), fr)) {
+  match h: Star(
+    compile(prog),
+    StateMk(comp(e, k), env, st, fr),
+    StateMk(k, env, Cons(v, st), fr)
+  ) {
+    EvVar(env1, i, v1, hv) => go(
+      StateMk(k, env1, Cons(v1, st), fr),
+      Eq::congr((o: Option(Val)) => step_load(o, k, env1, st, fr), hv),
+      StarRefl(StateMk(k, env1, Cons(v1, st), fr))
+    )
+    EvNat(env1, n) => go(
+      StateMk(k, env1, Cons(VNat(n), st), fr),
+      Refl,
+      StarRefl(StateMk(k, env1, Cons(VNat(n), st), fr))
+    )
+    EvAdd(env1, a, b, n, m, ha, hb) => star_trans(
+      comp_correct(ha, comp(b, CAdd(k)), st, fr),
+      star_trans(
+        comp_correct(hb, CAdd(k), Cons(VNat(n), st), fr),
+        go(
+          StateMk(k, env1, Cons(VNat(Nat::add(n, m)), st), fr),
+          Refl,
+          StarRefl(StateMk(k, env1, Cons(VNat(Nat::add(n, m)), st), fr))
+        )
+      )
+    )
+    EvSub(env1, a, b, n, m, ha, hb) => star_trans(
+      comp_correct(ha, comp(b, CSub(k)), st, fr),
+      star_trans(
+        comp_correct(hb, CSub(k), Cons(VNat(n), st), fr),
+        go(
+          StateMk(k, env1, Cons(VNat(Nat::sub(n, m)), st), fr),
+          Refl,
+          StarRefl(StateMk(k, env1, Cons(VNat(Nat::sub(n, m)), st), fr))
+        )
+      )
+    )
+    EvMul(env1, a, b, n, m, ha, hb) => star_trans(
+      comp_correct(ha, comp(b, CMul(k)), st, fr),
+      star_trans(
+        comp_correct(hb, CMul(k), Cons(VNat(n), st), fr),
+        go(
+          StateMk(k, env1, Cons(VNat(Nat::mul(n, m)), st), fr),
+          Refl,
+          StarRefl(StateMk(k, env1, Cons(VNat(Nat::mul(n, m)), st), fr))
+        )
+      )
+    )
+    EvLt(env1, a, b, n, m, ha, hb) => star_trans(
+      comp_correct(ha, comp(b, CLt(k)), st, fr),
+      star_trans(
+        comp_correct(hb, CLt(k), Cons(VNat(n), st), fr),
+        go(
+          StateMk(k, env1, Cons(VNat(bool_nat(Nat::lt(n, m))), st), fr),
+          Refl,
+          StarRefl(StateMk(k, env1, Cons(VNat(bool_nat(Nat::lt(n, m))), st), fr))
+        )
+      )
+    )
+    EvLet(env1, a, body, va, v1, ha, hb) => star_trans(
+      comp_correct(ha, CBind(comp(body, CUnbind(k))), st, fr),
+      go(
+        StateMk(comp(body, CUnbind(k)), Cons(va, env1), st, fr),
+        Refl,
+        star_trans(
+          comp_correct(hb, CUnbind(k), st, fr),
+          go(StateMk(k, env1, Cons(v1, st), fr), Refl, StarRefl(StateMk(k, env1, Cons(v1, st), fr)))
+        )
+      )
+    )
+    EvIfThen(env1, c, t, e1, n, v1, hc, ht) => star_trans(
+      comp_correct(hc, CBranch(comp(t, CRet), comp(e1, CRet), k), st, fr),
+      go(
+        StateMk(comp(t, CRet), env1, Nil, Cons(FrameMk(k, env1, st), fr)),
+        Refl,
+        star_trans(
+          comp_correct(ht, CRet, Nil, Cons(FrameMk(k, env1, st), fr)),
+          go(StateMk(k, env1, Cons(v1, st), fr), Refl, StarRefl(StateMk(k, env1, Cons(v1, st), fr)))
+        )
+      )
+    )
+    EvIfElse(env1, c, t, e1, v1, hc, he) => star_trans(
+      comp_correct(hc, CBranch(comp(t, CRet), comp(e1, CRet), k), st, fr),
+      go(
+        StateMk(comp(e1, CRet), env1, Nil, Cons(FrameMk(k, env1, st), fr)),
+        Refl,
+        star_trans(
+          comp_correct(he, CRet, Nil, Cons(FrameMk(k, env1, st), fr)),
+          go(StateMk(k, env1, Cons(v1, st), fr), Refl, StarRefl(StateMk(k, env1, Cons(v1, st), fr)))
+        )
+      )
+    )
+    EvPair(env1, a, b, va, vb, ha, hb) => star_trans(
+      comp_correct(ha, comp(b, CMkpair(k)), st, fr),
+      star_trans(
+        comp_correct(hb, CMkpair(k), Cons(va, st), fr),
+        go(
+          StateMk(k, env1, Cons(VPair(va, vb), st), fr),
+          Refl,
+          StarRefl(StateMk(k, env1, Cons(VPair(va, vb), st), fr))
+        )
+      )
+    )
+    EvFst(env1, a, va, vb, ha) => star_trans(
+      comp_correct(ha, CFst(k), st, fr),
+      go(StateMk(k, env1, Cons(va, st), fr), Refl, StarRefl(StateMk(k, env1, Cons(va, st), fr)))
+    )
+    EvSnd(env1, a, va, vb, ha) => star_trans(
+      comp_correct(ha, CSnd(k), st, fr),
+      go(StateMk(k, env1, Cons(vb, st), fr), Refl, StarRefl(StateMk(k, env1, Cons(vb, st), fr)))
+    )
+    EvCall(env1, f, a, body, va, v1, ha, found, hb) => star_trans(
+      comp_correct(ha, CCall(f, k), st, fr),
+      go(
+        StateMk(comp_body(body), Cons(va, Nil), Nil, Cons(FrameMk(k, env1, st), fr)),
+        Eq::congr((o: Option(Bytecode)) => step_call(o, va, k, env1, st, fr), nth_compile(found)),
+        star_trans(
+          comp_correct(hb, CRet, Nil, Cons(FrameMk(k, env1, st), fr)),
+          go(StateMk(k, env1, Cons(v1, st), fr), Refl, StarRefl(StateMk(k, env1, Cons(v1, st), fr)))
+        )
+      )
+    )
+  }
+}
+
+// ---- the machine with fuel --------------------------------------------------
+
+// What `run` with one more fuel does after `s` stepped to `o`.
+pub fn run_from(prog: List(Bytecode), fuel: Nat, s: State, o: Option(State)): Option(State) {
+  match o: Option(State) {
+    None => Some(s)
+    Some(x) => run(prog, fuel, x)
+  }
+}
+
+// `run` with some fuel stops at `s2`.
+pub(open) inductive RunsTo(prog: List(Bytecode), s1: State, s2: State): Prop {
+  Mk(fuel: Nat, e: run(prog, fuel, s1) = Some(s2)): RunsTo(prog, s1, s2)
+}
+
+// A run that ends where the machine stops is what `run` computes, given enough fuel.
+pub theorem star_run<prog: List(
+  Bytecode
+), s1: State, s2: State>(a: Star(prog, s1, s2), stop: step(prog, s2) = None): RunsTo(prog, s1, s2) {
+  match a: RunsTo(prog, s1, s2) {
+    StarRefl(s) => RunsTo::Mk(1, Eq::congr((o: Option(State)) => run_from(prog, Zero, s, o), stop))
+    StarStep(t1, t2, t3, h, rest) => match star_run(rest, stop): RunsTo(prog, t1, t3) {
+      RunsTo::Mk(fuel, e) => RunsTo::Mk(
+        Succ(fuel),
+        Eq::trans(Eq::congr((o: Option(State)) => run_from(prog, fuel, t1, o), h), e)
+      )
+    }
+  }
+}
+
+// `run_program` with some fuel gives `v`.
+pub(open) inductive Computes(prog: List(Expr), f: Nat, arg: Val, v: Val): Prop {
+  Mk(fuel: Nat, e: run_program(prog, fuel, f, arg) = Some(v)): Computes(prog, f, arg, v)
+}
+
+// Calling `f` with `arg` runs to the stopped state that holds `v`.
+pub theorem start_runs<prog: List(
+  Expr
+), f: Nat, body: Expr, arg: Val, v: Val>(
+  found: List::nth(prog, f) = Some(body),
+  h: Eval(prog, Cons(arg, Nil), body, v)
+): RunsTo(compile(prog), start(f, arg), StateMk(CRet, Nil, Cons(v, Nil), Nil)) {
+  star_run(
+    compile(prog),
+    start(f, arg),
+    StateMk(CRet, Nil, Cons(v, Nil), Nil),
+    go(
+      compile(prog),
+      start(f, arg),
+      StateMk(CRet, Nil, Cons(v, Nil), Nil),
+      StateMk(comp_body(body), Cons(arg, Nil), Nil, Cons(FrameMk(CRet, Nil, Nil), Nil)),
+      Eq::congr((o: Option(Bytecode)) => step_call(o, arg, CRet, Nil, Nil, Nil), nth_compile(found)),
+      star_trans(
+        comp_correct(h, CRet, Nil, Cons(FrameMk(CRet, Nil, Nil), Nil)),
+        go(
+          StateMk(CRet, Nil, Cons(v, Nil), Nil),
+          Refl,
+          StarRefl(StateMk(CRet, Nil, Cons(v, Nil), Nil))
+        )
+      )
+    ),
+    Refl
+  )
+}
+
+// The theorem: when the reference semantics gives `v` for calling function `f` of `prog`
+// with `arg`, the machine running the compiled program answers `v`.
+pub theorem compile_correct<prog: List(
+  Expr
+), f: Nat, body: Expr, arg: Val, v: Val>(
+  found: List::nth(prog, f) = Some(body),
+  h: Eval(prog, Cons(arg, Nil), body, v)
+): Computes(prog, f, arg, v) {
+  match start_runs(found, h): Computes(prog, f, arg, v) {
+    RunsTo::Mk(fuel, e) => Computes::Mk(fuel, Eq::congr(answer, e))
+  }
+}
+
+// ---- the answer does not depend on the fuel ---------------------------------
+
+pub theorem run_from_det(
+  prog: List(Bytecode),
+  g1: Nat,
+  g2: Nat,
+  s: State,
+  a: State,
+  b: State,
+  o: Option(State),
+  ih: ∀ x: State. (run(prog, g1, x) = Some(a)) -> (run(prog, g2, x) = Some(b)) -> (a = b),
+  e1: run_from(prog, g1, s, o) = Some(a),
+  e2: run_from(prog, g2, s, o) = Some(b)
+): (a = b) {
+  match o: (
+    run_from(prog, g1, s, o) = Some(a)
+  ) -> (run_from(prog, g2, s, o) = Some(b)) -> (a = b) {
+    None => (h1: Some(s) = Some(a)) => (h2: Some(s) = Some(b)) => Eq::trans(
+      Eq::sym(Option::some_inj(s, a, h1)),
+      Option::some_inj(s, b, h2)
+    )
+    Some(x) => (h1: run(prog, g1, x) = Some(a)) => (h2: run(prog, g2, x) = Some(b)) => ih(x, h1, h2)
+  }(e1, e2)
+}
+
+// Two runs from the same state that both stop, stop at the same state.
+pub theorem run_det(
+  prog: List(Bytecode),
+  f1: Nat,
+  f2: Nat,
+  s: State,
+  a: State,
+  b: State,
+  e1: run(prog, f1, s) = Some(a),
+  e2: run(prog, f2, s) = Some(b)
+): (a = b) {
+  match f1: (run(prog, f1, s) = Some(a)) -> (a = b) {
+    Zero => (d1: run(prog, Zero, s) = Some(a)) => False::elim(Option::none_ne_some(a, d1))
+    Succ(g1) => (d1: run(prog, Succ(g1), s) = Some(a)) => match f2: (
+      run(prog, f2, s) = Some(b)
+    ) -> (a = b) {
+      Zero => (d2: run(prog, Zero, s) = Some(b)) => False::elim(Option::none_ne_some(b, d2))
+      Succ(g2) => (d2: run(prog, Succ(g2), s) = Some(b)) => run_from_det(
+        prog,
+        g1,
+        g2,
+        s,
+        a,
+        b,
+        step(prog, s),
+        (x: State) => (h1: run(prog, g1, x) = Some(a)) => (
+          h2: run(prog, g2, x) = Some(b)
+        ) => run_det(prog, g1, g2, x, a, b, h1, h2),
+        d1,
+        d2
+      )
+    }(e2)
+  }(e1)
+}
+
+pub theorem answer_det(
+  o: Option(State),
+  v: Val,
+  w: Val,
+  e: answer(o) = Some(w),
+  det: ∀ x: State. (o = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))
+): (w = v) {
+  match o: (
+    answer(o) = Some(w)
+  ) -> (∀ x: State. (o = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))) -> (w = v) {
+    None => (e0: None = Some(w)) => (
+      d0: ∀ x: State. (None = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))
+    ) => False::elim(Option::none_ne_some(w, e0))
+    Some(y) => (e1: answer(Some(y)) = Some(w)) => (
+      d1: ∀ x: State. (Some(y) = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))
+    ) => Option::some_inj(
+      w,
+      v,
+      Eq::trans(Eq::sym(e1), Eq::congr((x: State) => answer(Some(x)), d1(y, Refl)))
+    )
+  }(e, det)
+}
+
+// Whatever fuel the machine is given, an answer it gives is the value of the reference
+// semantics: the machine never answers wrongly, it can only run out of fuel.
+pub theorem compile_answer<prog: List(
+  Expr
+), f: Nat, body: Expr, arg: Val, v: Val>(
+  found: List::nth(prog, f) = Some(body),
+  h: Eval(prog, Cons(arg, Nil), body, v),
+  fuel: Nat,
+  w: Val,
+  e: run_program(prog, fuel, f, arg) = Some(w)
+): (w = v) {
+  match start_runs(found, h): (w = v) {
+    RunsTo::Mk(fuel0, e0) => answer_det(
+      run(compile(prog), fuel, start(f, arg)),
+      v,
+      w,
+      e,
+      (x: State) => (ex: run(compile(prog), fuel, start(f, arg)) = Some(x)) => run_det(
+        compile(prog),
+        fuel,
+        fuel0,
+        start(f, arg),
+        x,
+        StateMk(CRet, Nil, Cons(v, Nil), Nil),
+        ex,
+        e0
+      )
+    )
+  }
+}

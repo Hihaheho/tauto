@@ -1,0 +1,77 @@
+import "class_assumption_sound.taut"
+import "structural_fuel_sound.taut"
+import "types_classes.taut"
+
+pub fn class_resolution_success(r: Unresolved): Bool {
+  match r: Bool {
+    UnresolvedNone => true
+    UnresolvedUndetermined => false
+    UnresolvedAssumption(shown) => false
+    UnresolvedNoInstance(shown) => false
+  }
+}
+pub fn class_parameter_choice(c: Checker, name: Text, kind: Kind, present: Bool): Unresolved {
+  match present: Unresolved { true => UnresolvedNone
+    false => UnresolvedAssumption(ty_show(ck_shown(c, TyParam(name, kind)))) }
+}
+pub theorem class_parameter_choice_sound(
+  c: Checker,
+  assume: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  kind: Kind,
+  present: Bool,
+  tested: preds_have(assume, r#class, name) = present,
+  accepted: class_parameter_choice(c, name, kind, present) = UnresolvedNone
+): ClassAssumption(assume, r#class, name) {
+  match present: ClassAssumption(assume, r#class, name) {
+    true => preds_have_assumption(assume, r#class, name, tested)
+    false => False::elim(false_ne_true(Eq::congr(class_resolution_success, accepted)))
+  }
+}
+pub theorem class_parameter_unf(
+  k: Nat,
+  c: Checker,
+  r#class: Text,
+  name: Text,
+  kind: Kind,
+  assume: List(Pair(Text, Text))
+): ck_resolve_class_in(Succ(k), c, r#class, TyParam(name, kind), assume) = class_parameter_choice(c, name, kind, preds_have(assume, r#class, name)) { Refl }
+pub theorem ck_resolve_class_parameter_sound(
+  k: Nat,
+  c: Checker,
+  r#class: Text,
+  name: Text,
+  kind: Kind,
+  assume: List(Pair(Text, Text)),
+  accepted: ck_resolve_class_in(k, c, r#class, TyParam(name, kind), assume) = UnresolvedNone
+): ClassAssumption(assume, r#class, name) {
+  match k: ClassAssumption(assume, r#class, name) {
+    Zero => False::elim(false_ne_true(Eq::congr(class_resolution_success, accepted)))
+    Succ(j) => class_parameter_choice_sound(
+      c,
+      assume,
+      r#class,
+      name,
+      kind,
+      preds_have(assume, r#class, name),
+      Refl,
+      Eq::trans(Eq::sym(class_parameter_unf(j, c, r#class, name, kind, assume)), accepted)
+    )
+  }
+}
+pub theorem structural_parameter_sound(
+  k: Nat,
+  d: Datas,
+  r#class: Text,
+  name: Text,
+  kind: Kind,
+  assume: List(Pair(Text, Text)),
+  visiting: List(Ty),
+  accepted: datas_structural_in(k, d, r#class, TyParam(name, kind), assume, visiting) = true
+): ClassAssumption(assume, r#class, name) {
+  match k: ClassAssumption(assume, r#class, name) {
+    Zero => False::elim(false_ne_true(accepted))
+    Succ(j) => class_assumed_sound(assume, r#class, name, accepted)
+  }
+}

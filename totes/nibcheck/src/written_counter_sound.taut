@@ -1,0 +1,1103 @@
+import "written_allocation_sound.taut"
+
+pub def CounterAdvance<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := Nat::le(ck_next_of(c), ck_next_of(ck_st(m))) = true
+
+pub theorem frame_bind_ok_counter<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: CounterAdvance(c, m),
+  hk: ∀ v: A. ∀ next: Checker. CounterAdvance(next, k(v, next))
+): CounterAdvance(c, frame_bind(k, m)) {
+  match m: CounterAdvance(c, frame_bind(k, m)) {
+    mut1(v, next) => Nat::le_trans(
+      ck_next_of(c),
+      ck_next_of(next),
+      ck_next_of(ck_st(k(v, next))),
+      hm,
+      hk(v, next)
+    )
+  }
+}
+
+pub theorem frame_rewrap_counter<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: CounterAdvance(c, m)
+): CounterAdvance(c, ck_rewrap1(m)) {
+  Eq::subst((z: Mut1(A, Checker)) => CounterAdvance(c, z), Eq::sym(ck_rewrap1_id(m)), h)
+}
+
+pub theorem ck_error_frame_counter(
+  c: Checker,
+  message: Text,
+  span: TySpan
+): CounterAdvance(c, ck_error(c, message, span)) { Nat::le_refl(ck_next_of(c)) }
+
+pub theorem ck_fresh_frame_counter(
+  c: Checker
+): CounterAdvance(c, ck_fresh(c)) { Nat::le_succ(ck_next_of(c)) }
+
+pub theorem ck_written_bad_frame_counter(
+  c: Checker,
+  span: TySpan
+): CounterAdvance(c, ck_written_bad(c, span)) { Nat::le_succ(ck_next_of(c)) }
+
+pub theorem ck_written_ctor_arity_frame_counter(
+  c: Checker,
+  n: Text,
+  span: TySpan
+): CounterAdvance(c, ck_written_ctor_arity(c, n, span)) { Nat::le_succ(ck_next_of(c)) }
+
+pub theorem frame_arity_small_ok_counter(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  data: Data,
+  small: Bool
+): CounterAdvance(c, frame_arity_small(c, n, span, data, small)) {
+  match small: CounterAdvance(c, frame_arity_small(c, n, span, data, small)) {
+    true => Nat::le_refl(ck_next_of(c))
+    false => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem frame_arity_decl_ok_counter(
+  c: Checker,
+  n: Text,
+  given: Nat,
+  span: TySpan,
+  o: Option(Data)
+): CounterAdvance(c, frame_arity_decl(c, n, given, span, o)) {
+  match o: CounterAdvance(c, frame_arity_decl(c, n, given, span, o)) {
+    None => Nat::le_refl(ck_next_of(c))
+    Some(data) => frame_arity_small_ok_counter(
+      c,
+      n,
+      span,
+      data,
+      not(Nat::eq(given, list_len(dgen(data))))
+    )
+  }
+}
+
+pub theorem frame_arity_k_ok_counter(
+  c: Checker,
+  n: Text,
+  given: Nat,
+  span: TySpan,
+  constructor: Bool
+): CounterAdvance(c, frame_arity_k(c, n, given, span, Constructor)) {
+  match Constructor: CounterAdvance(c, frame_arity_k(c, n, given, span, Constructor)) {
+    true => frame_arity_decl_ok_counter(c, n, given, span, datas_decl(ck_datas_of(c), n))
+    false => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem ck_arity_frame_counter(
+  c: Checker,
+  n: Text,
+  given: Nat,
+  span: TySpan
+): CounterAdvance(c, ck_arity(c, n, given, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CounterAdvance(c, z),
+    Eq::sym(frame_arity_unf(c, n, given, span)),
+    frame_arity_k_ok_counter(c, n, given, span, not(frame_constructor_position(c)))
+  )
+}
+
+pub theorem frame_return_ok_counter<A: Type, B: Type>(
+  c: Checker,
+  v: B,
+  m: Mut1(A, Checker),
+  h: CounterAdvance(c, m)
+): CounterAdvance(c, frame_return(v, m)) {
+  match m: CounterAdvance(c, frame_return(v, m)) {
+    mut1(ignored, next) => h
+  }
+}
+
+pub theorem frame_written_var_named_ok_counter(
+  c: Checker,
+  n: Text,
+  span: TySpan,
+  t: Ty,
+  found: Bool
+): CounterAdvance(c, frame_written_var_named(c, n, span, t, found)) {
+  match found: CounterAdvance(c, frame_written_var_named(c, n, span, t, found)) {
+    true => Nat::le_refl(ck_next_of(c))
+    false => frame_return_ok_counter(
+      c,
+      t,
+      ck_arity(c, n, 0, span),
+      ck_arity_frame_counter(c, n, 0, span)
+    )
+  }
+}
+
+pub theorem frame_written_var_k_ok_counter(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  original: Ty,
+  t: Ty
+): CounterAdvance(c, frame_written_var_k(c, n, generics, span, original, t)) {
+  match t: CounterAdvance(c, frame_written_var_k(c, n, generics, span, original, t)) {
+    TyNamed(name, args) => frame_written_var_named_ok_counter(
+      c,
+      n,
+      span,
+      original,
+      Ordmap::contains(generics, n, Ordmap::compare_text)
+    )
+    TyInt(width) => Nat::le_refl(ck_next_of(c))
+    TyBool => Nat::le_refl(ck_next_of(c))
+    TyText => Nat::le_refl(ck_next_of(c))
+    TyUnit => Nat::le_refl(ck_next_of(c))
+    TyNever => Nat::le_refl(ck_next_of(c))
+    TyDecimal => Nat::le_refl(ck_next_of(c))
+    TyFloat => Nat::le_refl(ck_next_of(c))
+    TyFn(params, result, kind) => Nat::le_refl(ck_next_of(c))
+    TyUnion(members) => Nat::le_refl(ck_next_of(c))
+    TyProduct(members) => Nat::le_refl(ck_next_of(c))
+    TyTagged(tags, inner) => Nat::le_refl(ck_next_of(c))
+    TyParam(name, bound) => Nat::le_refl(ck_next_of(c))
+    TyInfo(inner) => Nat::le_refl(ck_next_of(c))
+    TyBorrow(inner, mutable) => Nat::le_refl(ck_next_of(c))
+    TyVar(index) => Nat::le_refl(ck_next_of(c))
+    TyPoly(generics0, inner) => Nat::le_refl(ck_next_of(c))
+    TyApp(head, arg) => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem ck_written_var_frame_counter(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan
+): CounterAdvance(c, ck_written_var(c, n, generics, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+    Eq::sym(frame_written_var_unf(c, n, generics, span)),
+    frame_written_var_k_ok_counter(
+      c,
+      n,
+      generics,
+      span,
+      ck_written_name(n, generics),
+      ck_written_name(n, generics)
+    )
+  )
+}
+
+pub theorem ck_written_fn_kind_frame_counter(
+  w: Ty,
+  c: Checker,
+  fk: Text,
+  span: TySpan
+): CounterAdvance(c, ck_written_fn_kind(w, c, fk, span)) {
+  match w: CounterAdvance(c, ck_written_fn_kind(w, c, fk, span)) {
+    TyFn(ps, r, k) => Nat::le_refl(ck_next_of(c))
+    TyInt(width) => Nat::le_refl(ck_next_of(c))
+    TyBool => Nat::le_refl(ck_next_of(c))
+    TyText => Nat::le_refl(ck_next_of(c))
+    TyUnit => Nat::le_refl(ck_next_of(c))
+    TyNever => Nat::le_refl(ck_next_of(c))
+    TyDecimal => Nat::le_refl(ck_next_of(c))
+    TyFloat => Nat::le_refl(ck_next_of(c))
+    TyUnion(members) => Nat::le_refl(ck_next_of(c))
+    TyProduct(members) => Nat::le_refl(ck_next_of(c))
+    TyTagged(tags, inner) => Nat::le_refl(ck_next_of(c))
+    TyNamed(name, args) => Nat::le_refl(ck_next_of(c))
+    TyParam(name, bound) => Nat::le_refl(ck_next_of(c))
+    TyInfo(inner) => Nat::le_refl(ck_next_of(c))
+    TyBorrow(inner, mutable) => Nat::le_refl(ck_next_of(c))
+    TyVar(index) => Nat::le_refl(ck_next_of(c))
+    TyPoly(generics0, inner) => Nat::le_refl(ck_next_of(c))
+    TyApp(head, arg) => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem frame_set_constructor_position_same_counter(
+  c: Checker,
+  b: Bool
+): ck_next_of(frame_set_constructor_position(c, b)) = ck_next_of(c) { Refl }
+
+pub theorem frame_set_under_borrow_same_counter(
+  c: Checker,
+  b: Bool
+): ck_next_of(frame_set_under_borrow(c, b)) = ck_next_of(c) { Refl }
+
+pub theorem frame_changed_counter<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  eq: ck_next_of(next) = ck_next_of(c),
+  h: CounterAdvance(next, m)
+): CounterAdvance(c, m) {
+  Eq::subst((start: Nat) => Nat::le(start, ck_next_of(ck_st(m))) = true, eq, h)
+}
+
+pub theorem frame_error_if_ok_counter(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  b: Bool
+): CounterAdvance(c, frame_error_if(c, message, span, b)) {
+  match b: CounterAdvance(c, frame_error_if(c, message, span, b)) {
+    true => Nat::le_refl(ck_next_of(c))
+    false => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem frame_app_nested_ok_counter(
+  c: Checker,
+  span: TySpan,
+  after: List(Ty),
+  inner: Ty
+): CounterAdvance(c, frame_app_nested(c, span, MkAfter, inner)) {
+  match inner: CounterAdvance(c, frame_app_nested(c, span, MkAfter, inner)) {
+    TyNamed(n, before) => frame_return_ok_counter(
+      c,
+      TyNamed(n, List::append(before, MkAfter)),
+      ck_arity(c, n, list_len(List::append(before, MkAfter)), span),
+      ck_arity_frame_counter(c, n, list_len(List::append(before, MkAfter)), span)
+    )
+    TyInt(width) => Nat::le_succ(ck_next_of(c))
+    TyBool => Nat::le_succ(ck_next_of(c))
+    TyText => Nat::le_succ(ck_next_of(c))
+    TyUnit => Nat::le_succ(ck_next_of(c))
+    TyNever => Nat::le_succ(ck_next_of(c))
+    TyDecimal => Nat::le_succ(ck_next_of(c))
+    TyFloat => Nat::le_succ(ck_next_of(c))
+    TyFn(params, result, kind) => Nat::le_succ(ck_next_of(c))
+    TyUnion(members) => Nat::le_succ(ck_next_of(c))
+    TyProduct(members) => Nat::le_succ(ck_next_of(c))
+    TyTagged(tags, _) => Nat::le_succ(ck_next_of(c))
+    TyParam(name, bound) => Nat::le_succ(ck_next_of(c))
+    TyInfo(_) => Nat::le_succ(ck_next_of(c))
+    TyBorrow(_, mutable) => Nat::le_succ(ck_next_of(c))
+    TyVar(index) => Nat::le_succ(ck_next_of(c))
+    TyPoly(generics0, _) => Nat::le_succ(ck_next_of(c))
+    TyApp(head, arg) => Nat::le_succ(ck_next_of(c))
+  }
+}
+
+pub theorem frame_app_info_ok_counter(
+  c: Checker,
+  args: List(Ty)
+): CounterAdvance(c, frame_app_info(c, args)) {
+  match args: CounterAdvance(c, frame_app_info(c, args)) {
+    Nil => Nat::le_refl(ck_next_of(c))
+    Cons(a, rest) => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem frame_app_generic_ok_counter(
+  c: Checker,
+  n: Text,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  args: List(Ty)
+): CounterAdvance(c, frame_app_generic(c, n, generics, span, args)) {
+  match args: CounterAdvance(c, frame_app_generic(c, n, generics, span, args)) {
+    Nil => Nat::le_succ(ck_next_of(c))
+    Cons(x, more) => Nat::le_refl(ck_next_of(c))
+  }
+}
+
+pub theorem frame_app_generic_count_ok_counter(
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  n: Text,
+  one: Bool,
+  iheach: ∀ next: Checker. CounterAdvance(next, ck_written_each(arguments, next, generics))
+): CounterAdvance(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
+  match one: CounterAdvance(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
+    true => frame_bind_ok_counter(
+      List(Ty),
+      Ty,
+      c,
+      (ws: List(Ty), c1: Checker) => frame_app_generic(c1, n, generics, span, ws),
+      ck_written_each(arguments, c, generics),
+      iheach(c),
+      ws => c1 => frame_app_generic_ok_counter(c1, n, generics, span, ws)
+    )
+    false => frame_rewrap_counter(
+      c,
+      ck_written_ctor_arity(c, n, span),
+      ck_written_ctor_arity_frame_counter(c, n, span)
+    )
+  }
+}
+
+pub theorem frame_app_kind_ok_counter(
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  under_borrow: Bool,
+  app: WrittenApp,
+  iheach: ∀ next: Checker. CounterAdvance(next, ck_written_each(arguments, next, generics))
+): CounterAdvance(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
+  match app: CounterAdvance(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
+    WrittenUnit => Nat::le_refl(ck_next_of(c))
+    WrittenInfo => frame_bind_ok_counter(
+      List(Ty),
+      Ty,
+      c,
+      (ws: List(Ty), c1: Checker) => frame_app_info(c1, ws),
+      ck_written_each(arguments, c, generics),
+      iheach(c),
+      ws => c1 => frame_app_info_ok_counter(c1, ws)
+    )
+    WrittenNamed(n) => frame_bind_ok_counter(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => frame_bind(
+        List(Ty),
+        Ty,
+        (ws: List(Ty), c2: Checker) => frame_return(
+          TyNamed(n, ws),
+          ck_arity(c2, n, list_len(ws), span)
+        ),
+        ck_written_each(arguments, c1, generics)
+      ),
+      frame_error_if(
+        c,
+        "Slice(A) can only be borrowed",
+        span,
+        Bool::and(Text::eq(n, "Slice"), not(under_borrow))
+      ),
+      frame_error_if_ok_counter(
+        c,
+        "Slice(A) can only be borrowed",
+        span,
+        Bool::and(Text::eq(n, "Slice"), not(under_borrow))
+      ),
+      ignored => c1 => frame_bind_ok_counter(
+        List(Ty),
+        Ty,
+        c1,
+        (ws: List(Ty), c2: Checker) => frame_return(
+          TyNamed(n, ws),
+          ck_arity(c2, n, list_len(ws), span)
+        ),
+        ck_written_each(arguments, c1, generics),
+        iheach(c1),
+        ws => c2 => frame_return_ok_counter(
+          c2,
+          TyNamed(n, ws),
+          ck_arity(c2, n, list_len(ws), span),
+          ck_arity_frame_counter(c2, n, list_len(ws), span)
+        )
+      )
+    )
+    WrittenGeneric(n) => frame_app_generic_count_ok_counter(
+      c,
+      arguments,
+      generics,
+      span,
+      n,
+      Nat::eq(list_len(arguments), 1),
+      iheach
+    )
+    WrittenBad => frame_rewrap_counter(
+      c,
+      ck_written_bad(c, span),
+      ck_written_bad_frame_counter(c, span)
+    )
+  }
+}
+
+pub theorem frame_written_app_ok_counter(
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  function: SurfaceTerm,
+  under_borrow: Bool,
+  nested: Bool,
+  ihterm: ∀ next: Checker. CounterAdvance(next, ck_written_in(function, next, generics)),
+  iheach: ∀ next: Checker. CounterAdvance(next, ck_written_each(arguments, next, generics))
+): CounterAdvance(
+  c,
+  frame_written_app(c, arguments, generics, span, function, under_borrow, nested)
+) {
+  match nested: CounterAdvance(
+    c,
+    frame_written_app(c, arguments, generics, span, function, under_borrow, nested)
+  ) {
+    true => frame_changed_counter(
+      c,
+      frame_set_constructor_position(c, true),
+      frame_bind(
+        Ty,
+        Ty,
+        (before: Ty, c1: Checker) => frame_bind(
+          List(Ty),
+          Ty,
+          (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+          ck_written_each(
+            arguments,
+            frame_set_constructor_position(c1, frame_constructor_position(c)),
+            generics
+          )
+        ),
+        ck_written_in(function, frame_set_constructor_position(c, true), generics)
+      ),
+      frame_set_constructor_position_same_counter(c, true),
+      frame_bind_ok_counter(
+        Ty,
+        Ty,
+        frame_set_constructor_position(c, true),
+        (before: Ty, c1: Checker) => frame_bind(
+          List(Ty),
+          Ty,
+          (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+          ck_written_each(
+            arguments,
+            frame_set_constructor_position(c1, frame_constructor_position(c)),
+            generics
+          )
+        ),
+        ck_written_in(function, frame_set_constructor_position(c, true), generics),
+        ihterm(frame_set_constructor_position(c, true)),
+        before => c1 => frame_changed_counter(
+          c1,
+          frame_set_constructor_position(c1, frame_constructor_position(c)),
+          frame_bind(
+            List(Ty),
+            Ty,
+            (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+            ck_written_each(
+              arguments,
+              frame_set_constructor_position(c1, frame_constructor_position(c)),
+              generics
+            )
+          ),
+          frame_set_constructor_position_same_counter(c1, frame_constructor_position(c)),
+          frame_bind_ok_counter(
+            List(Ty),
+            Ty,
+            frame_set_constructor_position(c1, frame_constructor_position(c)),
+            (after: List(Ty), c2: Checker) => frame_app_nested(c2, span, after, before),
+            ck_written_each(
+              arguments,
+              frame_set_constructor_position(c1, frame_constructor_position(c)),
+              generics
+            ),
+            iheach(frame_set_constructor_position(c1, frame_constructor_position(c))),
+            after => c2 => frame_app_nested_ok_counter(c2, span, after, before)
+          )
+        )
+      )
+    )
+    false => frame_app_kind_ok_counter(
+      c,
+      arguments,
+      generics,
+      span,
+      under_borrow,
+      written_app(function, list_len(arguments), generics),
+      iheach
+    )
+  }
+}
+
+pub theorem frame_written_each_cons_ok_counter(
+  t: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  iht: ∀ next: Checker. CounterAdvance(next, ck_written_in(t, next, generics)),
+  ihr: ∀ next: Checker. CounterAdvance(next, ck_written_each(rest, next, generics))
+): CounterAdvance(c, frame_written_each_cons(t, rest, c, generics)) {
+  frame_bind_ok_counter(
+    Ty,
+    List(Ty),
+    c,
+    (head: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_written_each(rest, c1, generics)
+    ),
+    ck_written_in(t, c, generics),
+    iht(c),
+    head => c1 => frame_bind_ok_counter(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_written_each(rest, c1, generics),
+      ihr(c1),
+      tail => c2 => Nat::le_refl(ck_next_of(c2))
+    )
+  )
+}
+
+pub theorem frame_written_params_cons_ok_counter(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  skip: Nat,
+  ihp: ∀ next: Checker. CounterAdvance(next, ck_written_param(p, next, generics)),
+  ihr: ∀ next: Checker. ∀ count: Nat. CounterAdvance(
+    next,
+    ck_written_params(rest, next, generics, count)
+  )
+): CounterAdvance(c, frame_written_params_cons(p, rest, c, generics, skip)) {
+  match skip: CounterAdvance(c, frame_written_params_cons(p, rest, c, generics, skip)) {
+    Zero => frame_bind_ok_counter(
+      Ty,
+      List(Ty),
+      c,
+      (head: Ty, c1: Checker) => frame_bind(
+        List(Ty),
+        List(Ty),
+        (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+        ck_written_params(rest, c1, generics, 0)
+      ),
+      ck_written_param(p, c, generics),
+      ihp(c),
+      head => c1 => frame_bind_ok_counter(
+        List(Ty),
+        List(Ty),
+        c1,
+        (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+        ck_written_params(rest, c1, generics, 0),
+        ihr(c1, 0),
+        tail => c2 => Nat::le_refl(ck_next_of(c2))
+      )
+    )
+    Succ(n) => frame_rewrap_counter(c, ck_written_params(rest, c, generics, n), ihr(c, n))
+  }
+}
+
+pub theorem frame_written_pi_ok_counter(
+  params: List(SurfaceParam),
+  result: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ihps: ∀ next: Checker. CounterAdvance(
+    next,
+    ck_written_params(
+      params,
+      next,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params))
+    )
+  ),
+  ihr: ∀ next: Checker. CounterAdvance(
+    next,
+    ck_written_in(result, next, frame_pi_generics(params, generics))
+  )
+): CounterAdvance(c, frame_written_pi(params, result, c, generics)) {
+  frame_bind_ok_counter(
+    List(Ty),
+    Ty,
+    c,
+    (ps: List(Ty), c1: Checker) => frame_bind(
+      Ty,
+      Ty,
+      (r: Ty, c2: Checker) => mut1(
+        ty_poly_of(frame_pi_binders(params), TyFn(ps, r, KindShared)),
+        c2
+      ),
+      ck_written_in(result, c1, frame_pi_generics(params, generics))
+    ),
+    ck_written_params(
+      params,
+      c,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params))
+    ),
+    ihps(c),
+    ps => c1 => frame_bind_ok_counter(
+      Ty,
+      Ty,
+      c1,
+      (r: Ty, c2: Checker) => mut1(
+        ty_poly_of(frame_pi_binders(params), TyFn(ps, r, KindShared)),
+        c2
+      ),
+      ck_written_in(result, c1, frame_pi_generics(params, generics)),
+      ihr(c1),
+      r => c2 => Nat::le_refl(ck_next_of(c2))
+    )
+  )
+}
+
+pub theorem frame_written_fnkind_ok_counter(
+  fk: Text,
+  ty: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  span: TySpan,
+  ih: ∀ next: Checker. CounterAdvance(next, ck_written_in(ty, next, generics))
+): CounterAdvance(c, frame_written_fnkind(fk, ty, c, generics, span)) {
+  frame_bind_ok_counter(
+    Ty,
+    Ty,
+    c,
+    (w: Ty, c1: Checker) => ck_rewrap1(ck_written_fn_kind(w, c1, fk, span)),
+    ck_written_in(ty, c, generics),
+    ih(c),
+    w => c1 => frame_rewrap_counter(
+      c1,
+      ck_written_fn_kind(w, c1, fk, span),
+      ck_written_fn_kind_frame_counter(w, c1, fk, span)
+    )
+  )
+}
+
+pub theorem frame_written_borrow_ok_counter(
+  mutable: Bool,
+  x: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CounterAdvance(next, ck_written_in(x, next, generics))
+): CounterAdvance(c, frame_written_borrow(mutable, x, c, generics)) {
+  frame_changed_counter(
+    c,
+    frame_set_under_borrow(c, true),
+    frame_bind(
+      Ty,
+      Ty,
+      (w: Ty, c1: Checker) => mut1(TyBorrow(w, mutable), c1),
+      ck_written_in(x, frame_set_under_borrow(c, true), generics)
+    ),
+    frame_set_under_borrow_same_counter(c, true),
+    frame_bind_ok_counter(
+      Ty,
+      Ty,
+      frame_set_under_borrow(c, true),
+      (w: Ty, c1: Checker) => mut1(TyBorrow(w, mutable), c1),
+      ck_written_in(x, frame_set_under_borrow(c, true), generics),
+      ih(frame_set_under_borrow(c, true)),
+      w => c1 => Nat::le_refl(ck_next_of(c1))
+    )
+  )
+}
+
+pub theorem frame_written_union_ok_counter(
+  ts: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CounterAdvance(next, ck_written_each(ts, next, generics))
+): CounterAdvance(c, frame_written_union(ts, c, generics)) {
+  frame_bind_ok_counter(
+    List(Ty),
+    Ty,
+    c,
+    (w: List(Ty), c1: Checker) => mut1(ty_union(w), c1),
+    ck_written_each(ts, c, generics),
+    ih(c),
+    w => c1 => Nat::le_refl(ck_next_of(c1))
+  )
+}
+
+pub theorem frame_written_product_ok_counter(
+  ts: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CounterAdvance(next, ck_written_each(ts, next, generics))
+): CounterAdvance(c, frame_written_product(ts, c, generics)) {
+  frame_bind_ok_counter(
+    List(Ty),
+    Ty,
+    c,
+    (w: List(Ty), c1: Checker) => mut1(ty_product(w), c1),
+    ck_written_each(ts, c, generics),
+    ih(c),
+    w => c1 => Nat::le_refl(ck_next_of(c1))
+  )
+}
+
+pub theorem frame_written_tagged_ok_counter(
+  tag: Text,
+  x: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CounterAdvance(next, ck_written_in(x, next, generics))
+): CounterAdvance(c, frame_written_tagged(tag, x, c, generics)) {
+  frame_bind_ok_counter(
+    Ty,
+    Ty,
+    c,
+    (w: Ty, c1: Checker) => mut1(ty_tagged(Cons(tag, Nil), w), c1),
+    ck_written_in(x, c, generics),
+    ih(c),
+    w => c1 => Nat::le_refl(ck_next_of(c1))
+  )
+}
+
+mutual {
+  pub theorem ck_written_in_frame_counter(
+    t: SurfaceTerm,
+    c: Checker,
+    generics: Ordmap(Text, Ty)
+  ): CounterAdvance(c, ck_written_in(t, c, generics)) {
+    match t: CounterAdvance(c, ck_written_in(t, c, generics)) {
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_written_in_unf(ast_occurrence, sk, start, end, c, generics)),
+        frame_rewrap_counter(
+          c,
+          ck_written_kind(
+            sk,
+            frame_set_under_borrow(c, false),
+            generics,
+            TySpan { start: start, end: end },
+            frame_under_borrow(c)
+          ),
+          frame_changed_counter(
+            c,
+            frame_set_under_borrow(c, false),
+            ck_written_kind(
+              sk,
+              frame_set_under_borrow(c, false),
+              generics,
+              TySpan { start: start, end: end },
+              frame_under_borrow(c)
+            ),
+            frame_set_under_borrow_same_counter(c, false),
+            ck_written_kind_frame_counter(
+              sk,
+              frame_set_under_borrow(c, false),
+              generics,
+              TySpan { start: start, end: end },
+              frame_under_borrow(c)
+            )
+          )
+        )
+      )
+    }
+  }
+
+  pub theorem ck_written_kind_frame_counter(
+    sk: SurfaceKind,
+    c: Checker,
+    generics: Ordmap(Text, Ty),
+    span: TySpan,
+    under_borrow: Bool
+  ): CounterAdvance(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
+    match sk: CounterAdvance(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
+      SkVar(n) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkVar(n, c, generics, span, under_borrow)),
+        frame_rewrap_counter(
+          c,
+          ck_written_var(c, n, generics, span),
+          ck_written_var_frame_counter(c, n, generics, span)
+        )
+      )
+      SkApp(function, arguments) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkApp(function, arguments, c, generics, span, under_borrow)),
+        frame_written_app_ok_counter(
+          c,
+          arguments,
+          generics,
+          span,
+          function,
+          under_borrow,
+          written_nested(function),
+          next => ck_written_in_frame_counter(function, next, generics),
+          next => ck_written_each_frame_counter(arguments, next, generics)
+        )
+      )
+      SkPi(params, result, effects) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkPi(params, result, effects, c, generics, span, under_borrow)),
+        frame_written_pi_ok_counter(
+          params,
+          result,
+          c,
+          generics,
+          next => ck_written_params_frame_counter(
+            params,
+            next,
+            frame_pi_generics(params, generics),
+            list_len(frame_pi_binders(params))
+          ),
+          next => ck_written_in_frame_counter(result, next, frame_pi_generics(params, generics))
+        )
+      )
+      SkFnKind(fk, ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkFnKind(fk, ty, c, generics, span, under_borrow)),
+        frame_written_fnkind_ok_counter(
+          fk,
+          ty,
+          c,
+          generics,
+          span,
+          next => ck_written_in_frame_counter(ty, next, generics)
+        )
+      )
+      SkBorrow(mutable, x) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkBorrow(mutable, x, c, generics, span, under_borrow)),
+        frame_written_borrow_ok_counter(
+          mutable,
+          x,
+          c,
+          generics,
+          next => ck_written_in_frame_counter(x, next, generics)
+        )
+      )
+      SkUnion(ts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkUnion(ts, c, generics, span, under_borrow)),
+        frame_written_union_ok_counter(
+          ts,
+          c,
+          generics,
+          next => ck_written_each_frame_counter(ts, next, generics)
+        )
+      )
+      SkProduct(ts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkProduct(ts, c, generics, span, under_borrow)),
+        frame_written_product_ok_counter(
+          ts,
+          c,
+          generics,
+          next => ck_written_each_frame_counter(ts, next, generics)
+        )
+      )
+      SkTagged(tag, x) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkTagged(tag, x, c, generics, span, under_borrow)),
+        frame_written_tagged_ok_counter(
+          tag,
+          x,
+          c,
+          generics,
+          next => ck_written_in_frame_counter(x, next, generics)
+        )
+      )
+      SkNat(digits) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkNat(digits, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkText(value) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkText(value, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkBool(value) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkBool(value, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkExists(binder, domain, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkExists(binder, domain, body, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkLam(params, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkLam(params, body, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkIf(cond, then, otherwise) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkIf(cond, then, otherwise, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkField(value, name) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkField(value, name, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkBlock(stmts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkBlock(stmts, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkPerform(op, args) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkPerform(op, args, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkHandle(body, handlers) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkHandle(body, handlers, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkBudget(amount_memory, amount, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkBudget(amount_memory, amount, body, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkMatch(scrutinee, motive, arms, binder) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkHole(name) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkHole(name, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkRecord(name, fields) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkRecord(name, fields, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkBorrowLam(borrows, lam) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkBorrowLam(borrows, lam, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkOther(what) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkOther(what, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkRow(what_effects) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkRow(what_effects, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkFloat(what) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkFloat(what, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkProject(what, what_ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkProject(what, what_ty, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkMacroCall(name, arg) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkMacroCall(name, arg, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkQuote(stmts_form, stmts) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkQuote(stmts_form, stmts, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkSplice(value) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkSplice(value, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkSyntaxLit(name, body) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_unf_SkSyntaxLit(name, body, c, generics, span, under_borrow)),
+        Nat::le_succ(ck_next_of(c))
+      )
+      SkStep(tactic, arg, call_start, CallEnd, before, arms) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(
+          frame_unf_SkStep(
+            tactic,
+            arg,
+            call_start,
+            CallEnd,
+            before,
+            arms,
+            c,
+            generics,
+            span,
+            under_borrow
+          )
+        ),
+        Nat::le_succ(ck_next_of(c))
+      )
+    }
+  }
+
+  pub theorem ck_written_each_frame_counter(
+    ts: List(SurfaceTerm),
+    c: Checker,
+    generics: Ordmap(Text, Ty)
+  ): CounterAdvance(c, ck_written_each(ts, c, generics)) {
+    match ts: CounterAdvance(c, ck_written_each(ts, c, generics)) {
+      Nil => Nat::le_refl(ck_next_of(c))
+      Cons(t, rest) => Eq::subst(
+        (z: Mut1(List(Ty), Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_written_each_unf(t, rest, c, generics)),
+        frame_written_each_cons_ok_counter(
+          t,
+          rest,
+          c,
+          generics,
+          next => ck_written_in_frame_counter(t, next, generics),
+          next => ck_written_each_frame_counter(rest, next, generics)
+        )
+      )
+    }
+  }
+
+  pub theorem ck_written_params_frame_counter(
+    ps: List(SurfaceParam),
+    c: Checker,
+    generics: Ordmap(Text, Ty),
+    skip: Nat
+  ): CounterAdvance(c, ck_written_params(ps, c, generics, skip)) {
+    match ps: CounterAdvance(c, ck_written_params(ps, c, generics, skip)) {
+      Nil => Nat::le_refl(ck_next_of(c))
+      Cons(p, rest) => Eq::subst(
+        (z: Mut1(List(Ty), Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_written_params_unf(p, rest, c, generics, skip)),
+        frame_written_params_cons_ok_counter(
+          p,
+          rest,
+          c,
+          generics,
+          skip,
+          next => ck_written_param_frame_counter(p, next, generics),
+          next => count => ck_written_params_frame_counter(rest, next, generics, count)
+        )
+      )
+    }
+  }
+
+  pub theorem ck_written_param_frame_counter(
+    p: SurfaceParam,
+    c: Checker,
+    generics: Ordmap(Text, Ty)
+  ): CounterAdvance(c, ck_written_param(p, c, generics)) {
+    match p: CounterAdvance(c, ck_written_param(p, c, generics)) {
+      SurfaceParamMk(name, ty) => Eq::subst(
+        (z: Mut1(Ty, Checker)) => CounterAdvance(c, z),
+        Eq::sym(frame_written_param_unf(name, ty, c, generics)),
+        frame_rewrap_counter(
+          c,
+          ck_written_in(ty, c, generics),
+          ck_written_in_frame_counter(ty, c, generics)
+        )
+      )
+    }
+  }
+
+}
+pub theorem ck_written_frame_counter(
+  c: Checker,
+  t: SurfaceTerm,
+  generics: Ordmap(Text, Ty)
+): CounterAdvance(c, ck_written(c, t, generics)) {
+  frame_rewrap_counter(
+    Ty,
+    c,
+    ck_written_in(t, c, generics),
+    ck_written_in_frame_counter(t, c, generics)
+  )
+}

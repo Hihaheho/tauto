@@ -1,0 +1,317 @@
+import "Float.taut"
+
+// `Float32` (IEEE 754 binary32) as the proofs see it: its 32 bits.
+// Extraction maps `Float32` onto Nib's `Float32` and the functions marked
+// "Mapped" onto its operators and builtins (`docs/design/float.md`).
+//
+// Every `Float32` is a `Float`, and IEEE 754's `+ - * /` and square root of
+// two `Float32`s are the `Float` results of the same numbers rounded to the
+// nearest `Float32`: a `Float` keeps more than twice the digits, so the
+// first rounding never changes the second. The definitions here say just
+// that, through `Float::of_float32` and `Float32::of_float`, so a proof reuses
+// what it knows of `Float`. The functions IEEE 754 does not round exactly
+// (`Float32::exp`, …) are axioms, as the `Float` ones are.
+//
+// NaN has one set of bits, `0x7FC00000`, here and at run time.
+
+pub(open) inductive Float32: Type {
+  Mk(bits: U32): Float32
+}
+
+module Float32 {
+  pub fn u32_of_nat_mod(n: Nat): U32 {
+    U32::Mk(Nat::rem_nz(n, 4294967296, Nat::ne_zero(4294967296, Refl)), Nat::mod_lt(n, 4294967296, Refl))
+  }
+
+  // The `Float32` whose bits are `n` (modulo `2^32`).
+  pub fn of_raw(n: Nat): Float32 {
+    Float32::Mk(u32_of_nat_mod(n))
+  }
+
+  // ---- the parts of the bits ----------------------------------------------------
+
+  pub fn sign_of(n: Nat): Nat {
+    Nat::div_nz(n, 2147483648, Nat::ne_zero(2147483648, Refl))
+  }
+
+  pub fn expo_of(n: Nat): Nat {
+    Nat::rem_nz(Nat::div_nz(n, 8388608, Nat::ne_zero(8388608, Refl)), 256, Nat::ne_zero(256, Refl))
+  }
+
+  pub fn frac_of(n: Nat): Nat {
+    Nat::rem_nz(n, 8388608, Nat::ne_zero(8388608, Refl))
+  }
+
+  pub fn nan_of(n: Nat): Bool {
+    expo_of(n) == 255 && not(frac_of(n) == 0)
+  }
+
+  pub fn inf_of(n: Nat): Bool {
+    expo_of(n) == 255 && frac_of(n) == 0
+  }
+
+  // A finite `Float32` is `m * 2^(e - 4000)` with `m < 2^24`, the same scale
+  // as `Float`'s (`Float::m_of`, `Float::e_of`); a subnormal has `e = 3851`.
+  pub fn m_of(n: Nat): Nat {
+    match expo_of(n) == 0: Nat {
+      true => frac_of(n)
+      false => frac_of(n) + 8388608
+    }
+  }
+
+  pub fn e_of(n: Nat): Nat {
+    match expo_of(n) == 0: Nat {
+      true => 3851
+      false => expo_of(n) + 3850
+    }
+  }
+
+  pub fn nan_raw(): Nat {
+    2143289344
+  }
+
+  pub fn inf_raw(s: Nat): Nat {
+    s * 2147483648 + 2139095040
+  }
+
+  pub fn zero_raw(s: Nat): Nat {
+    s * 2147483648
+  }
+
+  // Mapped: the bits of `x` as a number, `0x7FC00000` for every NaN.
+  pub fn raw(x: Float32): Nat {
+    match x: Nat {
+      Mk(b) => match nan_of(U32::val(b)): Nat {
+        true => nan_raw()
+        false => U32::val(b)
+      }
+    }
+  }
+
+  // ---- between `Float` and `Float32` -------------------------------------------
+
+  // The bits of `m * 2^(t - 4000)` with sign `s`, for `m <= 2^24` and
+  // `t >= 3851`, or an infinity when it is too large.
+  pub fn encode(s: Nat, m: Nat, t: Nat): Nat {
+    match (t - 3851) * 8388608 + m < 2139095040: Nat {
+      true => zero_raw(s) + ((t - 3851) * 8388608 + m)
+      false => inf_raw(s)
+    }
+  }
+
+  // `m * 2^(t - k - 4000)` with `k` binary digits dropped from `m`, rounded
+  // to the nearest, ties to even. With `m < 2^120`, 125 digits or more round
+  // to zero.
+  pub fn round_shift(s: Nat, m: Nat, t: Nat, k: Nat): Nat {
+    match k < 125: Nat {
+      false => zero_raw(s)
+      true => round_at(s, Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::pow2(k), t)
+    }
+  }
+
+  pub fn round_at(s: Nat, q: Nat, r: Nat, p: Nat, t: Nat): Nat {
+    match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r: Nat {
+      true => encode(s, Succ(q), t)
+      false => match r == Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1: Nat {
+        true => encode(s, Succ(q), t)
+        false => encode(s, q, t)
+      }
+    }
+  }
+
+  // The nearest `Float32` to `m * 2^(e - 4000)` with sign `s`, for `m < 2^120`.
+  // As `Float::pack`, a last digit of 1 can stand for the part below.
+  pub fn pack(s: Nat, m: Nat, e: Nat): Nat {
+    match m == 0: Nat {
+      true => zero_raw(s)
+      false => pack_at(s, m, e, Nat::max(e + Float::len(m) - 24, 3851))
+    }
+  }
+
+  pub fn pack_at(s: Nat, m: Nat, e: Nat, t: Nat): Nat {
+    match t <= e: Nat {
+      true => encode(s, m * Nat::pow2(e - t), t)
+      false => round_shift(s, m, t, t - e)
+    }
+  }
+
+  pub fn of_float_raw(a: Nat): Nat {
+    match Float::nan_of(a): Nat {
+      true => nan_raw()
+      false => match Float::inf_of(a): Nat {
+        true => inf_raw(Float::sign_of(a))
+        false => pack(Float::sign_of(a), Float::m_of(a), Float::e_of(a))
+      }
+    }
+  }
+
+  // Mapped: the nearest `Float32`, ties to even; an infinity past the largest.
+  pub fn of_float(x: Float): Float32 {
+    of_raw(of_float_raw(Float::raw(x)))
+  }
+}
+
+module Float {
+  pub fn of_float32_raw(a: Nat): Nat {
+    match Float32::nan_of(a): Nat {
+      true => nan_raw()
+      false => match Float32::inf_of(a): Nat {
+        true => inf_raw(Float32::sign_of(a))
+        false => pack(Float32::sign_of(a), Float32::m_of(a), Float32::e_of(a))
+      }
+    }
+  }
+
+  // Mapped: the same number as a `Float`.
+  pub fn of_float32(x: Float32): Float {
+    of_raw(of_float32_raw(Float32::raw(x)))
+  }
+}
+
+module Float32 {
+  // The `Float32` nearest to the `Float` result of `f` on the same numbers.
+  pub fn via(f: (Float) -> Float, x: Float32): Float32 {
+    of_float(f(Float::of_float32(x)))
+  }
+
+  pub fn via2(f: (Float, Float) -> Float, x: Float32, y: Float32): Float32 {
+    of_float(f(Float::of_float32(x), Float::of_float32(y)))
+  }
+
+  // ---- the functions ---------------------------------------------------------------
+
+  // Mapped: the bits of `x`; every NaN has the bits `0x7FC00000`.
+  pub fn bits(x: Float32): U32 {
+    u32_of_nat_mod(raw(x))
+  }
+
+  // Mapped: the `Float32` with bits `b`.
+  pub fn of_bits(b: U32): Float32 {
+    Float32::Mk(b)
+  }
+
+  // Mapped: `a + b`.
+  pub fn add(a: Float32, b: Float32): Float32 {
+    via2(Float::add, a, b)
+  }
+
+  // Mapped: `a - b`.
+  pub fn sub(a: Float32, b: Float32): Float32 {
+    via2(Float::sub, a, b)
+  }
+
+  // Mapped: `a * b`.
+  pub fn mul(a: Float32, b: Float32): Float32 {
+    via2(Float::mul, a, b)
+  }
+
+  // Mapped: `-a`.
+  pub fn neg(a: Float32): Float32 {
+    via(Float::neg, a)
+  }
+
+  // Mapped: whether `x` is `+0` or `-0`.
+  pub fn is_zero(x: Float32): Bool {
+    Float::is_zero(Float::of_float32(x))
+  }
+
+  // Mapped: `a / b`, for a `b` that is not zero.
+  pub fn div(a: Float32, b: Float32, h: is_zero(b) = false): Float32 {
+    of_float(Float::div(Float::of_float32(a), Float::of_float32(b), h))
+  }
+
+  // `a / b`, or `None` when `b` is zero.
+  pub fn checked_div(a: Float32, b: Float32): Option(Float32) {
+    match Float::checked_div(Float::of_float32(a), Float::of_float32(b)): Option(Float32) {
+      None => None
+      Some(q) => Some(of_float(q))
+    }
+  }
+
+  // Mapped: whether `x` is NaN.
+  pub fn is_nan(x: Float32): Bool {
+    Float::is_nan(Float::of_float32(x))
+  }
+
+  // Whether `x` is an infinity.
+  pub fn is_infinite(x: Float32): Bool {
+    Float::is_infinite(Float::of_float32(x))
+  }
+
+  // Mapped: `a == b`, `a < b` and `a <= b`, as IEEE 754 compares.
+  pub fn eq(a: Float32, b: Float32): Bool {
+    Float::eq(Float::of_float32(a), Float::of_float32(b))
+  }
+
+  pub fn lt(a: Float32, b: Float32): Bool {
+    Float::lt(Float::of_float32(a), Float::of_float32(b))
+  }
+
+  pub fn le(a: Float32, b: Float32): Bool {
+    Float::le(Float::of_float32(a), Float::of_float32(b))
+  }
+
+  // Mapped.
+  pub fn abs(x: Float32): Float32 {
+    via(Float::abs, x)
+  }
+
+  pub fn sqrt(x: Float32): Float32 {
+    via(Float::sqrt, x)
+  }
+
+  pub fn trunc(x: Float32): Float32 {
+    via(Float::trunc, x)
+  }
+
+  pub fn floor(x: Float32): Float32 {
+    via(Float::floor, x)
+  }
+
+  pub fn ceil(x: Float32): Float32 {
+    via(Float::ceil, x)
+  }
+
+  pub fn round(x: Float32): Float32 {
+    via(Float::round, x)
+  }
+
+  // Mapped. IEEE 754 does not round these exactly; each backend gives the
+  // `Float` function of the same number rounded to the nearest `Float32`. A
+  // proof may call them but knows nothing of their values, as of the `Float`
+  // ones (`std/Float::taut`).
+  pub axiom cbrt(x: Float32): Float32
+  pub axiom exp(x: Float32): Float32
+  pub axiom ln(x: Float32): Float32
+  pub axiom log2(x: Float32): Float32
+  pub axiom log10(x: Float32): Float32
+  pub axiom pow(x: Float32, y: Float32): Float32
+  pub axiom sin(x: Float32): Float32
+  pub axiom cos(x: Float32): Float32
+  pub axiom tan(x: Float32): Float32
+  pub axiom asin(x: Float32): Float32
+  pub axiom acos(x: Float32): Float32
+  pub axiom atan(x: Float32): Float32
+  pub axiom atan2(y: Float32, x: Float32): Float32
+  pub axiom sinh(x: Float32): Float32
+  pub axiom cosh(x: Float32): Float32
+  pub axiom tanh(x: Float32): Float32
+
+  // ---- examples ------------------------------------------------------------------
+
+  // `0.1` as a `Float32` is `0x3DCCCCCD`, and adding `0.2` gives `0x3E99999A`.
+  pub theorem tenth(): raw(of_float(0.1)) = 1036831949 {
+    Refl
+  }
+
+  pub theorem tenths(): raw(
+    add(of_float(0.1), of_float(0.2))
+  ) = 1050253722 {
+    Refl
+  }
+
+  // A `Float32` is the same number as a `Float`.
+  pub theorem widen_tenth(): Float::of_float32(of_float(0.1)) = 0.10000000149011612 {
+    Refl
+  }
+}

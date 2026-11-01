@@ -1,65 +1,82 @@
 import "inductive.taut"
 
-fn kernel_declare(
+pub fn kernel_declare(
   k: Nat,
   &mut c: KernelCore,
   name: Text,
   ty: KernelTerm,
   value: Option(KernelTerm),
-  transparent: Yn
-) -> Yn {
+  transparent: Bool
+): Bool {
   if kernel_fresh_name(c, name) && kernel_term_valid(ty, 0) {
-    match kernel_infer_sort(k, &mut c, ty) -> Yn {
-      None => no
+    match kernel_infer_sort(k, &mut c, ty): Bool {
+      None => false
       Some(s) => {
-        let good = match value -> Yn {
-          None => yes
+        // A constant of the quotient has no value, the type the kernel
+        // gives it, and comes after the constants it mentions.
+        let quotient := match kernel_quot_type(name): Bool {
+          None => false
+          Some(want) => true
+        }
+        let fits := match kernel_quot_type(name): Bool {
+          None => true
+          Some(want) => match value: Bool {
+            None => kernel_term_eq(ty, want) && kernel_all_in(kernel_quot_needs(name), c.quotient)
+            Some(v) => false
+          }
+        }
+        let good := match value: Bool {
+          None => true
           Some(v) => kernel_term_valid(v, 0) && kernel_check(k, &mut c, v, ty)
         }
-        if good {
-          let body: Option(KernelTerm) = if transparent { value } else { None }
+        if good && fits {
+          let body: Option(KernelTerm) := if transparent { value } else { None }
           kernel_put_global(&mut c, name, ty, body)
-          yes
-        } else { no }
+          if quotient { kernel_set_to(&mut c.quotient, Cons(name, c.quotient)) }
+          true
+        } else { false }
       }
     }
-  } else { no }
+  } else { false }
 }
 
-fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand) -> Yn {
-  match command -> Yn {
-    KernelDeclare(
+pub fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand): Bool {
+  match command: Bool {
+    KernelDeclare(name, ty, value, transparent) => kernel_declare(
+      k,
+      &mut c,
       name,
       ty,
       value,
       transparent
-    ) => kernel_declare(k, &mut c, name, ty, value, transparent)
+    )
     KernelConstant(name, value) => if kernel_fresh_name(c, name) && kernel_term_valid(value, 0) {
-      match kernel_infer(k, &mut c, value) -> Yn {
-        None => no
+      match kernel_infer(k, &mut c, value): Bool {
+        None => false
         Some(ty) => {
           kernel_put_global(&mut c, name, ty, Some(value))
-          yes
+          true
         }
       }
-    } else { no }
-    KernelSetValue(name, value) => match kernel_global_get(c.globals, name) -> Yn {
-      None => no
-      Some(g) => if kernel_term_valid(value, 0) && kernel_check(k, &mut c, value, g.ty) {
+    } else { false }
+    KernelSetValue(name, value) => match kernel_global_get(c.globals, name): Bool {
+      None => false
+      Some(g) => if not(
+        kernel_text_in(c.quotient, name)
+      ) && kernel_term_valid(value, 0) && kernel_check(k, &mut c, value, g.ty) {
         kernel_put_global(&mut c, name, g.ty, Some(value))
-        yes
-      } else { no }
+        true
+      } else { false }
     }
-    KernelInductive(
+    KernelInductive(families, params, sort) => kernel_inductive_inner(
+      k,
+      &mut c,
       families,
       params,
       sort
-    ) => kernel_inductive_inner(k, &mut c, families, params, sort)
+    )
     KernelRecursor(family, level) => kernel_recursor_at(k, &mut c, family, level)
-    KernelCheck(
-      value,
-      ty
-    ) => kernel_term_valid(
+    KernelCheck(value, ty) => kernel_term_valid(
       value,
       0
     ) && kernel_term_valid(ty, 0) && kernel_check(k, &mut c, value, ty)
@@ -67,26 +84,45 @@ fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand) -> Yn {
     KernelForget(name) => {
       kernel_set_to(
         &mut c.globals,
-        kernel_list_filter_KernelGlobal_Yn(
-          (g: KernelGlobal) => !kernel_global_named(g, name),
+        kernel_list_filter_KernelGlobal_Bool(
+          (g: KernelGlobal) => not(kernel_global_named(g, name)),
           c.globals
         )
       )
-      yes
+      kernel_set_to(&mut c.quotient, kernel_text_without(c.quotient, name))
+      true
+    }
+  }
+}
+
+fn kernel_text_without(xs: List(Text), name: Text): List(Text) {
+  match xs: List(Text) {
+    Nil => Nil
+    Cons(x, rest) => if x == name { kernel_text_without(rest, name) } else {
+      Cons(x, kernel_text_without(rest, name))
     }
   }
 }
 
 // Failed registration is transactional, including all inductive metadata.
-fn kernel_snapshot(&c: KernelCore) -> KernelCore {
-  kernel_core(c.globals, c.inductives, c.constructors, c.eliminators, c.locals, c.next, c.exhausted)
+pub fn kernel_snapshot(&c: KernelCore): KernelCore {
+  KernelCore::Mk(
+    c.globals,
+    c.inductives,
+    c.constructors,
+    c.eliminators,
+    c.locals,
+    c.next,
+    c.exhausted,
+    c.quotient
+  )
 }
 
-fn kernel_execute(k: Nat, &mut c: KernelCore, command: KernelCommand) -> KernelVerdict {
-  let saved = kernel_snapshot(&c)
-  kernel_set_to(&mut c.exhausted, no)
-  let good = kernel_command(k, &mut c, command)
-  let exhausted = c.exhausted
+pub fn kernel_execute(k: Nat, &mut c: KernelCore, command: KernelCommand): KernelVerdict {
+  let saved := kernel_snapshot(&c)
+  kernel_set_to(&mut c.exhausted, false)
+  let good := kernel_command(k, &mut c, command)
+  let exhausted := c.exhausted
   if exhausted {
     c := saved
     KernelExhausted

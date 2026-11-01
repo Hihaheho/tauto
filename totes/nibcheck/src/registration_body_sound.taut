@@ -1,0 +1,416 @@
+import "data_body_metadata_sound.taut"
+import "data_body_recheck_sound.taut"
+import "registration_data_error_sound.taut"
+
+pub theorem registration_insert_body(
+  c: Checker,
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  ordered: CkDatasOrdered(c),
+  known: DataBodyKnown(source, constructors)
+): DataBodyRegistered(
+  ck_datas_of(ck_st(registration_insert(c, source, is_struct, builtin, constructors))),
+  source
+) {
+  DataBodyRegistered::Mk(
+    constructors,
+    Eq::congr(
+      body_ctors_option,
+      Ordmap::text_get_insert_same(
+        summary_decls(ck_datas_of(c)),
+        registration_name(source),
+        registration_data(source, is_struct, builtin, constructors),
+        ordered
+      )
+    ),
+    known
+  )
+}
+pub fn body_register_after(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  m: Mut1(Unit, Checker)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, next: Checker) => registration_insert(
+      next,
+      source,
+      is_struct,
+      builtin,
+      constructors
+    ),
+    m
+  )
+}
+pub theorem body_register_after_sound(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  known: DataBodyKnown(source, constructors)
+): DataBodyRegistered(
+  ck_datas_of(ck_st(body_register_after(source, is_struct, builtin, constructors, m))),
+  source
+) {
+  match m: DataBodyRegistered(
+    ck_datas_of(ck_st(body_register_after(source, is_struct, builtin, constructors, m))),
+    source
+  ) {
+    mut1(ignored, next) => registration_insert_body(
+      next,
+      source,
+      is_struct,
+      builtin,
+      constructors,
+      ordered,
+      known
+    )
+  }
+}
+pub fn body_register_and_store(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  c: Checker
+): Mut1(Unit, Checker) {
+  body_register_after(
+    source,
+    is_struct,
+    builtin,
+    constructors,
+    ck_register_ctors(constructors, c, registration_name(source), 0)
+  )
+}
+pub theorem body_register_and_store_sound(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  c: Checker,
+  ordered: CkDatasOrdered(c),
+  known: DataBodyKnown(source, constructors)
+): DataBodyRegistered(
+  ck_datas_of(ck_st(body_register_and_store(source, is_struct, builtin, constructors, c))),
+  source
+) {
+  body_register_after_sound(
+    source,
+    is_struct,
+    builtin,
+    constructors,
+    ck_register_ctors(constructors, c, registration_name(source), 0),
+    ck_register_ctors_ordered(constructors, c, registration_name(source), 0, ordered),
+    known
+  )
+}
+pub theorem body_register_and_store_errors(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  c: Checker
+): CkErrorFrame(c, body_register_and_store(source, is_struct, builtin, constructors, c)) {
+  error_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => registration_insert(
+      next,
+      source,
+      is_struct,
+      builtin,
+      constructors
+    ),
+    ck_register_ctors(constructors, c, registration_name(source), 0),
+    ck_register_ctors_errors(constructors, c, registration_name(source), is_struct, 0),
+    ignored => next => registration_insert_errors(next, source, is_struct, builtin, constructors)
+  )
+}
+pub fn body_declare_after(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  m: Mut1(List(DataCtor), Checker)
+): Mut1(Unit, Checker) {
+  frame_bind(
+    List(DataCtor),
+    Unit,
+    (constructors: List(DataCtor), next: Checker) => body_register_and_store(
+      source,
+      is_struct,
+      builtin,
+      constructors,
+      next
+    ),
+    m
+  )
+}
+pub theorem body_declare_after_sound(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  m: Mut1(List(DataCtor), Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  ih: ∀ clean: DiagnosticClean(ck_st(m)). DataBodyKnown(source, ck_val(m)),
+  clean: DiagnosticClean(ck_st(body_declare_after(source, is_struct, builtin, m)))
+): DataBodyRegistered(
+  ck_datas_of(ck_st(body_declare_after(source, is_struct, builtin, m))),
+  source
+) {
+  match m: DataBodyRegistered(
+    ck_datas_of(ck_st(body_declare_after(source, is_struct, builtin, m))),
+    source
+  ) {
+    mut1(constructors, next) => body_register_and_store_sound(
+      source,
+      is_struct,
+      builtin,
+      constructors,
+      next,
+      ordered,
+      ih(body_register_and_store_errors(source, is_struct, builtin, constructors, next, clean))
+    )
+  }
+}
+pub theorem body_declare_after_errors(
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  c: Checker,
+  m: Mut1(List(DataCtor), Checker),
+  before: CkErrorFrame(c, m)
+): CkErrorFrame(c, body_declare_after(source, is_struct, builtin, m)) {
+  error_frame_bind(
+    List(DataCtor),
+    Unit,
+    c,
+    (constructors: List(DataCtor), next: Checker) => body_register_and_store(
+      source,
+      is_struct,
+      builtin,
+      constructors,
+      next
+    ),
+    m,
+    before,
+    constructors => next => body_register_and_store_errors(
+      source,
+      is_struct,
+      builtin,
+      constructors,
+      next
+    )
+  )
+}
+pub fn body_declare_checked(
+  c: Checker,
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  condition: Bool
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, next: Checker) => body_declare_after(
+      source,
+      is_struct,
+      builtin,
+      ck_data_ctors(
+        registration_ctors(source),
+        next,
+        ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(source),
+      condition
+    )
+  )
+}
+pub theorem body_declare_checked_allowed(
+  c: Checker,
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  condition: Bool,
+  clean: DiagnosticClean(ck_st(body_declare_checked(c, source, is_struct, builtin, condition)))
+): (condition = false) {
+  written_error_if_false(
+    c,
+    "a view struct has no fields: it is an opaque type",
+    registration_span(source),
+    condition,
+    written_bind_input_clean(
+      Unit,
+      Unit,
+      frame_error_if(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(source),
+        condition
+      ),
+      (ignored: Unit, next: Checker) => body_declare_after(
+        source,
+        is_struct,
+        builtin,
+        ck_data_ctors(
+          registration_ctors(source),
+          next,
+          ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+        )
+      ),
+      ignored => next => body_declare_after_errors(
+        source,
+        is_struct,
+        builtin,
+        next,
+        ck_data_ctors(
+          registration_ctors(source),
+          next,
+          ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+        ),
+        ck_data_ctors_frame_errors(
+          registration_ctors(source),
+          next,
+          ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+        )
+      ),
+      clean
+    )
+  )
+}
+pub theorem registration_declare_body(
+  c: Checker,
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(registration_declare(c, source, is_struct, builtin)))
+): DataBodyRegistered(
+  ck_datas_of(ck_st(registration_declare(c, source, is_struct, builtin))),
+  source
+) {
+  let allowed: Bool::and(
+      surface_data_is_view(source),
+      Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
+    ) = false := body_declare_checked_allowed(
+    c,
+    source,
+    is_struct,
+    builtin,
+    Bool::and(
+      surface_data_is_view(source),
+      Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
+    ),
+    clean
+  )
+  Eq::subst(
+    (condition: Bool) => DataBodyRegistered(
+      ck_datas_of(ck_st(body_declare_checked(c, source, is_struct, builtin, condition))),
+      source
+    ),
+    Eq::sym(allowed),
+    body_declare_after_sound(
+      source,
+      is_struct,
+      builtin,
+      ck_data_ctors(
+        registration_ctors(source),
+        c,
+        ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+      ),
+      frame_ordered(
+        c,
+        ck_data_ctors(
+          registration_ctors(source),
+          c,
+          ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+        ),
+        ck_data_ctors_frame(
+          registration_ctors(source),
+          c,
+          ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+        ),
+        ordered
+      ),
+      inner_clean => DataBodyKnown::Mk(
+        ck_datas_of(c),
+        ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty()),
+        data_generic_map_sound(registration_generics(source), Ordmap::empty()),
+        Eq::subst(
+          (mode: Bool) => WrittenDataCtors(
+            ck_datas_of(c),
+            ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty()),
+            mode,
+            registration_ctors(source),
+            ck_val(
+              ck_data_ctors(
+                registration_ctors(source),
+                c,
+                ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty())
+              )
+            )
+          ),
+          position,
+          ck_data_ctors_sound(
+            registration_ctors(source),
+            c,
+            ck_param_generics(registration_generics(source), KindLinear, Ordmap::empty()),
+            ordinary,
+            inner_clean
+          )
+        )
+      ),
+      Eq::subst(
+        (condition: Bool) => DiagnosticClean(
+          ck_st(body_declare_checked(c, source, is_struct, builtin, condition))
+        ),
+        allowed,
+        clean
+      )
+    )
+  )
+}
+pub theorem ck_declare_data_body(
+  c: Checker,
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(ck_st(ck_declare_data(c, source, is_struct, builtin)))
+): DataBodyRegistered(ck_datas_of(ck_st(ck_declare_data(c, source, is_struct, builtin))), source) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(m)), source),
+    Eq::sym(registration_declare_unf(c, source, is_struct, builtin)),
+    registration_declare_body(
+      c,
+      source,
+      is_struct,
+      builtin,
+      ordered,
+      ordinary,
+      position,
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        registration_declare_unf(c, source, is_struct, builtin),
+        clean
+      )
+    )
+  )
+}

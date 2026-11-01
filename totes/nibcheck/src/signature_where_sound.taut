@@ -1,0 +1,172 @@
+import "where_list_sound.taut"
+import "signature_header_sound.taut"
+
+pub fn signature_scheme_predicates(scheme: Scheme): List(Pair(Text, Text)) { scheme.preds }
+pub def SignatureWhereResult(
+  source: SurfaceFn,
+  g: SigGenerics,
+  m: Mut1(Scheme, Checker)
+): Prop := WhereClauses(
+  where_classes(ck_st(m)),
+  signature_acc_generics(g),
+  signature_wheres(source),
+  signature_scheme_predicates(ck_val(m))
+)
+pub theorem signature_finish_preds_clean(
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(List(Pair(Text, Text)), Checker),
+  clean: DiagnosticClean(ck_st(signature_finish_preds(g, params, result, m)))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(preds, next) => clean
+  }
+}
+pub theorem signature_finish_preds_where(
+  source: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(List(Pair(Text, Text)), Checker),
+  derived: WhereConstraints(
+    where_classes(ck_st(m)),
+    signature_acc_generics(g),
+    signature_wheres(source),
+    Nil,
+    ck_val(m)
+  )
+): SignatureWhereResult(source, g, signature_finish_preds(g, params, result, m)) {
+  match m: SignatureWhereResult(source, g, signature_finish_preds(g, params, result, m)) {
+    mut1(preds, next) => WhereClauses::Mk(preds, derived, Refl)
+  }
+}
+pub theorem signature_finish_report_where(
+  source: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  result: Ty,
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(signature_finish_report(source, g, params, result, m)))
+): SignatureWhereResult(source, g, signature_finish_report(source, g, params, result, m)) {
+  match m: SignatureWhereResult(source, g, signature_finish_report(source, g, params, result, m)) {
+    mut1(ignored, next) => signature_finish_preds_where(
+      source,
+      g,
+      params,
+      result,
+      ck_where_preds(
+        signature_wheres(source),
+        next,
+        signature_gens(g),
+        signature_name(source),
+        Nil
+      ),
+      Eq::subst(
+        (classes: Ordmap(Text, ClassInfo)) => WhereConstraints(
+          classes,
+          signature_acc_generics(g),
+          signature_wheres(source),
+          Nil,
+          ck_val(
+            ck_where_preds(
+              signature_wheres(source),
+              next,
+              signature_gens(g),
+              signature_name(source),
+              Nil
+            )
+          )
+        ),
+        Eq::sym(
+          ck_where_preds_classes(
+            signature_wheres(source),
+            next,
+            signature_gens(g),
+            signature_name(source),
+            Nil
+          )
+        ),
+        ck_where_preds_sound(
+          signature_wheres(source),
+          next,
+          signature_gens(g),
+          signature_name(source),
+          Nil,
+          signature_finish_preds_clean(
+            g,
+            params,
+            result,
+            ck_where_preds(
+              signature_wheres(source),
+              next,
+              signature_gens(g),
+              signature_name(source),
+              Nil
+            ),
+            clean
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem signature_answer_where(
+  source: SurfaceFn,
+  g: SigGenerics,
+  params: List(Ty),
+  m: Mut1(Ty, Checker),
+  clean: DiagnosticClean(ck_st(signature_answer_after(source, g, params, m)))
+): SignatureWhereResult(source, g, signature_answer_after(source, g, params, m)) {
+  match m: SignatureWhereResult(source, g, signature_answer_after(source, g, params, m)) {
+    mut1(result, next) => signature_finish_report_where(
+      source,
+      g,
+      params,
+      result,
+      ck_report(next, ck_view_result_message(next, params, result), ck_sig_span(source)),
+      clean
+    )
+  }
+}
+pub theorem signature_parameters_where(
+  source: SurfaceFn,
+  g: SigGenerics,
+  m: Mut1(List(Ty), Checker),
+  clean: DiagnosticClean(ck_st(signature_parameters_finish(source, g, m)))
+): SignatureWhereResult(source, g, signature_parameters_finish(source, g, m)) {
+  match m: SignatureWhereResult(source, g, signature_parameters_finish(source, g, m)) {
+    mut1(params, next) => signature_answer_where(
+      source,
+      g,
+      params,
+      ck_sig_result(next, source, signature_map(g)),
+      clean
+    )
+  }
+}
+pub theorem ck_signature_where_sound(
+  c: Checker,
+  source: SurfaceFn,
+  clean: DiagnosticClean(ck_st(ck_signature(c, source)))
+): SignatureWhereResult(source, signature_generics(source), ck_signature(c, source)) {
+  Eq::subst(
+    (m: Mut1(Scheme, Checker)) => SignatureWhereResult(source, signature_generics(source), m),
+    Eq::sym(signature_read_unf(c, source)),
+    signature_parameters_where(
+      source,
+      signature_generics(source),
+      ck_sig_params(
+        signature_ptypes(source),
+        c,
+        signature_borrows(source),
+        signature_map(signature_generics(source))
+      ),
+      Eq::subst(
+        (m: Mut1(Scheme, Checker)) => DiagnosticClean(ck_st(m)),
+        signature_read_unf(c, source),
+        clean
+      )
+    )
+  )
+}

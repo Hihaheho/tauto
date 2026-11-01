@@ -1,0 +1,49 @@
+import "run_data_presence_sound.taut"
+import "program_data_header_sound.taut"
+import "run_data_invariant_sound.taut"
+import "run_data_names_sound.taut"
+
+pub theorem types_check_data_headers(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  d: SurfaceData,
+  declared: DeclaresData(program, d),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): DataHeaderMatches(finish_report_datas(types_check(prelude, program, errors)), d) {
+  let unique: UniqueDataNames(
+    types_data_decls(program)
+  ) := types_check_data_names_unique(prelude, program, errors, clean)
+  types_check_data_invariant(
+    (env: Datas) => DataHeaderMatches(env, d),
+    prelude,
+    program,
+    errors,
+    c => own => ordered => ck_prepare_datas_headers(
+      c,
+      prelude,
+      program,
+      own,
+      d,
+      ordered,
+      declared,
+      unique
+    )
+  )
+}
+
+pub theorem types_check_source_data_entry(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  d: SurfaceData,
+  declared: DeclaresData(program, d),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): SourceDataEntry(finish_report_datas(types_check(prelude, program, errors)), d) {
+  header_registered_entry(
+    finish_report_datas(types_check(prelude, program, errors)),
+    d,
+    types_check_registers_data(prelude, program, errors, d, declared),
+    types_check_data_headers(prelude, program, errors, d, declared, clean)
+  )
+}

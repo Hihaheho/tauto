@@ -1,0 +1,90 @@
+import "rules_data_kind.taut"
+import "diagnostic_sound.taut"
+
+// Value types use every declared parameter exactly once in the argument list.
+// Constructor positions are checked separately, since partial application is legal.
+pub theorem declaration_arity_test(
+  c: Checker,
+  name: Text,
+  span: TySpan,
+  data: Data,
+  mismatch: Bool,
+  clean: DiagnosticClean(ck_st(frame_arity_small(c, name, span, data, mismatch)))
+): mismatch = false {
+  match mismatch: mismatch = false {
+    true => False::elim(
+      diagnostic_error_impossible(
+        c,
+        cat4(name, " takes ", Text::of_nat(list_len(dgen(data))), " arguments"),
+        span,
+        clean
+      )
+    )
+    false => Refl
+  }
+}
+
+pub theorem ck_arity_sound(
+  c: Checker,
+  name: Text,
+  given: Nat,
+  span: TySpan,
+  data: Data,
+  value_position: frame_constructor_position(c) = false,
+  declared: datas_decl(ck_datas_of(c), name) = Some(data),
+  clean: DiagnosticClean(ck_st(ck_arity(c, name, given, span)))
+): given = list_len(dgen(data)) {
+  let unfolded: DiagnosticClean(
+    ck_st(frame_arity_k(c, name, given, span, not(frame_constructor_position(c))))
+  ) := Eq::subst(
+    (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+    frame_arity_unf(c, name, given, span),
+    clean
+  )
+  let ordinary: DiagnosticClean(
+    ck_st(frame_arity_decl(c, name, given, span, datas_decl(ck_datas_of(c), name)))
+  ) := Eq::subst(
+    (position: Bool) => DiagnosticClean(ck_st(frame_arity_k(c, name, given, span, not(position)))),
+    value_position,
+    unfolded
+  )
+  let found: DiagnosticClean(
+    ck_st(frame_arity_small(c, name, span, data, not(Nat::eq(given, list_len(dgen(data))))))
+  ) := Eq::subst(
+    (o: Option(Data)) => DiagnosticClean(ck_st(frame_arity_decl(c, name, given, span, o))),
+    declared,
+    ordinary
+  )
+  Nat::eq_sound(
+    given,
+    list_len(dgen(data)),
+    diagnostic_not_no(
+      Nat::eq(given, list_len(dgen(data))),
+      declaration_arity_test(
+        c,
+        name,
+        span,
+        data,
+        not(Nat::eq(given, list_len(dgen(data)))),
+        found
+      )
+    )
+  )
+}
+
+pub theorem ck_declared_arity_sound(
+  c: Checker,
+  name: Text,
+  args: List(Ty),
+  span: TySpan,
+  data: Data,
+  value_position: frame_constructor_position(c) = false,
+  declared: datas_decl(ck_datas_of(c), name) = Some(data),
+  clean: DiagnosticClean(ck_st(ck_arity(c, name, list_len(args), span)))
+): DeclaredArity(data, args) {
+  DeclaredArity::Mk(
+    data,
+    args,
+    ck_arity_sound(c, name, list_len(args), span, data, value_position, declared, clean)
+  )
+}

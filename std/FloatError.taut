@@ -1,0 +1,1468 @@
+import "FloatDecode.taut"
+
+// How far `float_of_rat(r)` is from `r`: within `2^-52 |r| + 2^-1074`
+// whenever it is finite (`float_of_rat_error`). The proof follows the steps
+// of `float_of_frac`: the quotient taken with a sticky last digit is within
+// one unit of its place of `2 p / q`, rounding to the nearest moves it by at
+// most half its last place, and the bits written decode to the rounded
+// number. The inequalities are on whole numbers, scaled by `q 2^4000`, and
+// reasoned in `Int` (`std/IntOrder.taut`).
+
+// ---- the number of binary digits --------------------------------------------------
+
+// `n` has `L + 1` binary digits: `2^L <= n < 2^(L + 1)`.
+pub def BitLen(
+  n: Nat,
+  L: Nat
+): Prop := And(NatLe(Nat::pow2(L), n), NatLe(Succ(n), Nat::pow2(Succ(L))))
+
+pub theorem bitlen_zero(j: Nat): Float::bitlen(j, 0) = 0 {
+  match j: Float::bitlen(j, 0) = 0 {
+    Zero => Refl
+    Succ(k) => Refl
+  }
+}
+
+pub theorem bitlen_step(
+  j: Nat,
+  n0: Nat,
+  H: Nat,
+  r: Nat,
+  dm: 2 * H + r = Succ(n0),
+  hr: NatLe(Succ(r), 2),
+  h: NatLe(Succ(Succ(n0)), Nat::pow2(Succ(j)))
+): BitLen(Succ(n0), Float::bitlen(j, H)) {
+  match j: BitLen(Succ(n0), Float::bitlen(j, H)) {
+    Zero => match H: BitLen(Succ(n0), Float::bitlen(Zero, H)) {
+      Zero => bitlen_base(Zero, n0, r, dm, hr)
+      Succ(h0) => False::elim(
+        false_ne_true(
+          Eq::subst((z: Nat) => NatLe(Succ(z), 2), Eq::trans(Eq::sym(dm), nat_two_succ_add(h0, r)), h)
+        )
+      )
+    }
+    Succ(j2) => match H: BitLen(Succ(n0), Float::bitlen(Succ(j2), H)) {
+      Zero => bitlen_base(Succ(j2), n0, r, dm, hr)
+      Succ(h0) => bitlen_step_up(
+        j2,
+        n0,
+        h0,
+        r,
+        dm,
+        hr,
+        h,
+        bitlen_step(
+          j2,
+          h0,
+          Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl)),
+          Nat::rem_nz(Succ(h0), 2, Nat::ne_zero(2, Refl)),
+          Nat::div_mod_eq(Succ(h0), 2, Nat::ne_zero(2, Refl)),
+          nat_le_of_yn(Succ(Nat::rem_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))), 2, Nat::mod_succ_lt(Succ(h0), 1)),
+          nat_half_lt(Succ(h0), Nat::pow2(Succ(j2)), nat_le_two_h(n0, h0, r, j2, dm, h))
+        )
+      )
+    }
+  }
+}
+
+pub theorem bitlen_base(
+  j: Nat,
+  n0: Nat,
+  r: Nat,
+  dm: 2 * Zero + r = Succ(n0),
+  hr: NatLe(Succ(r), 2)
+): BitLen(Succ(n0), Float::bitlen(j, Zero)) {
+  Eq::subst(
+    (z: Nat) => BitLen(Succ(n0), z),
+    Eq::sym(bitlen_zero(j)),
+    AndIntro(
+      nat_le_of_yn(1, Succ(n0), Refl),
+      Eq::subst((z: Nat) => NatLe(Succ(z), 2), Eq::trans(Eq::sym(Nat::add_zero_left(r)), dm), hr)
+    )
+  )
+}
+
+// `float_bitlen(j + 1, n)` is the length of `n` when `n < 2^(j + 1)`.
+pub theorem bitlen_spec(
+  j: Nat,
+  n0: Nat,
+  h: NatLe(Succ(Succ(n0)), Nat::pow2(Succ(j)))
+): BitLen(Succ(n0), Float::bitlen(j, Nat::div_nz(Succ(n0), 2, Nat::ne_zero(2, Refl)))) {
+  bitlen_step(
+    j,
+    n0,
+    Nat::div_nz(Succ(n0), 2, Nat::ne_zero(2, Refl)),
+    Nat::rem_nz(Succ(n0), 2, Nat::ne_zero(2, Refl)),
+    Nat::div_mod_eq(Succ(n0), 2, Nat::ne_zero(2, Refl)),
+    nat_le_of_yn(Succ(Nat::rem_nz(Succ(n0), 2, Nat::ne_zero(2, Refl))), 2, Nat::mod_succ_lt(Succ(n0), 1)),
+    h
+  )
+}
+
+pub theorem nat_two_succ_add(
+  h0: Nat,
+  r: Nat
+): 2 * Succ(h0) + r = Succ(Succ(2 * h0 + r)) {
+  by nat_norm!(): 2 * Succ(h0) + r = Succ(Succ(2 * h0 + r)) {}
+}
+
+// `2 (h0 + 1) + 1 <= n + 1 <= 2^(j2 + 2)`.
+pub theorem nat_le_two_h(
+  n0: Nat,
+  h0: Nat,
+  r: Nat,
+  j2: Nat,
+  dm: 2 * Succ(h0) + r = Succ(n0),
+  h: NatLe(Succ(Succ(n0)), Nat::pow2(Succ(Succ(j2))))
+): NatLe(Succ(2 * Succ(h0)), 2 * Nat::pow2(Succ(j2))) {
+  Int::le_trans(
+    IntOfNat(Succ(2 * Succ(h0))),
+    IntOfNat(Succ(Succ(n0))),
+    IntOfNat(2 * Nat::pow2(Succ(j2))),
+    Eq::subst(
+      (z: Nat) => NatLe(Succ(2 * Succ(h0)), Succ(z)),
+      dm,
+      Int::le_rw(
+        IntOfNat(Succ(2 * Succ(h0))),
+        IntOfNat(Succ(2 * Succ(h0))),
+        Int::add(IntOfNat(Succ(2 * Succ(h0))), IntOfNat(r)),
+        IntOfNat(Succ(2 * Succ(h0) + r)),
+        Refl,
+        int_succ_add_nat(2 * Succ(h0), r),
+        Int::le_intro(IntOfNat(Succ(2 * Succ(h0))), r)
+      )
+    ),
+    h
+  )
+}
+
+pub theorem int_succ_add_nat(
+  a: Nat,
+  r: Nat
+): Int::add(IntOfNat(Succ(a)), IntOfNat(r)) = IntOfNat(Succ(a + r)) {
+  by int_norm!(): Int::add(IntOfNat(Succ(a)), IntOfNat(r)) = IntOfNat(Succ(a + r)) {}
+}
+
+pub theorem bitlen_step_up(
+  j2: Nat,
+  n0: Nat,
+  h0: Nat,
+  r: Nat,
+  dm: 2 * Succ(h0) + r = Succ(n0),
+  hr: NatLe(Succ(r), 2),
+  h: NatLe(Succ(Succ(n0)), Nat::pow2(Succ(Succ(j2)))),
+  ih: BitLen(Succ(h0), Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))
+): BitLen(Succ(n0), Succ(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))) {
+  match ih: BitLen(Succ(n0), Succ(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))) {
+    AndIntro(lo, hi) => AndIntro(
+      bitlen_lo(Nat::pow2(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl)))), n0, h0, r, dm, lo),
+      bitlen_hi(Nat::pow2(Succ(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))), n0, h0, r, dm, hr, hi)
+    )
+  }
+}
+
+// `2^L <= h0 + 1` gives `2 2^L <= 2 (h0 + 1) + r = n0 + 1`.
+pub theorem bitlen_lo(
+  P: Nat,
+  n0: Nat,
+  h0: Nat,
+  r: Nat,
+  dm: 2 * Succ(h0) + r = Succ(n0),
+  lo: NatLe(P, Succ(h0))
+): NatLe(2 * P, Succ(n0)) {
+  Eq::subst(
+    (z: Nat) => NatLe(2 * P, z),
+    dm,
+    Int::le_trans(
+      IntOfNat(2 * P),
+      IntOfNat(2 * Succ(h0)),
+      IntOfNat(2 * Succ(h0) + r),
+      Int::le_rw(
+        Int::mul(IntOfNat(P), 2),
+        IntOfNat(2 * P),
+        Int::mul(IntOfNat(Succ(h0)), 2),
+        IntOfNat(2 * Succ(h0)),
+        int_two_mul(P),
+        int_two_mul(Succ(h0)),
+        int_le_mul_nat(IntOfNat(P), IntOfNat(Succ(h0)), 2, lo)
+      ),
+      Int::le_rw(
+        IntOfNat(2 * Succ(h0)),
+        IntOfNat(2 * Succ(h0)),
+        Int::add(IntOfNat(2 * Succ(h0)), IntOfNat(r)),
+        IntOfNat(2 * Succ(h0) + r),
+        Refl,
+        Refl,
+        Int::le_intro(IntOfNat(2 * Succ(h0)), r)
+      )
+    )
+  )
+}
+
+// `h0 + 2 <= 2^(L + 1)` gives `n0 + 2 = 2 (h0 + 1) + r + 1 <= 2 (h0 + 2) <= 2 2^(L + 1)`.
+pub theorem bitlen_hi(
+  P: Nat,
+  n0: Nat,
+  h0: Nat,
+  r: Nat,
+  dm: 2 * Succ(h0) + r = Succ(n0),
+  hr: NatLe(Succ(r), 2),
+  hi: NatLe(Succ(Succ(h0)), P)
+): NatLe(Succ(Succ(n0)), 2 * P) {
+  Eq::subst(
+    (z: Nat) => NatLe(Succ(z), 2 * P),
+    dm,
+    Int::le_trans(
+      IntOfNat(Succ(2 * Succ(h0) + r)),
+      IntOfNat(2 * Succ(Succ(h0))),
+      IntOfNat(2 * P),
+      Int::le_rw(
+        Int::add(IntOfNat(Succ(r)), IntOfNat(2 * Succ(h0))),
+        IntOfNat(Succ(2 * Succ(h0) + r)),
+        Int::add(2, IntOfNat(2 * Succ(h0))),
+        IntOfNat(2 * Succ(Succ(h0))),
+        int_succ_r_shape(h0, r),
+        int_two_h_shape(h0),
+        Int::le_add(IntOfNat(Succ(r)), IntOfNat(2), IntOfNat(2 * Succ(h0)), hr)
+      ),
+      Int::le_rw(
+        Int::mul(IntOfNat(Succ(Succ(h0))), 2),
+        IntOfNat(2 * Succ(Succ(h0))),
+        Int::mul(IntOfNat(P), 2),
+        IntOfNat(2 * P),
+        int_two_mul(Succ(Succ(h0))),
+        int_two_mul(P),
+        int_le_mul_nat(IntOfNat(Succ(Succ(h0))), IntOfNat(P), 2, hi)
+      )
+    )
+  )
+}
+
+pub theorem int_succ_r_shape(
+  h0: Nat,
+  r: Nat
+): Int::add(IntOfNat(Succ(r)), IntOfNat(2 * Succ(h0))) = IntOfNat(Succ(2 * Succ(h0) + r)) {
+  by int_norm!(): Int::add(IntOfNat(Succ(r)), IntOfNat(2 * Succ(h0))) = IntOfNat(Succ(2 * Succ(h0) + r)) {}
+}
+
+pub theorem int_two_h_shape(
+  h0: Nat
+): Int::add(2, IntOfNat(2 * Succ(h0))) = IntOfNat(2 * Succ(Succ(h0))) {
+  by int_norm!(): Int::add(IntOfNat(2), IntOfNat(2 * Succ(h0))) = IntOfNat(2 * Succ(Succ(h0))) {}
+}
+
+// `2^n > n`.
+pub theorem nat_lt_pow2(n: Nat): NatLe(Succ(n), Nat::pow2(n)) {
+  match n: NatLe(Succ(n), Nat::pow2(n)) {
+    Zero => Int::le_refl(IntOfNat(1))
+    Succ(k) => Int::le_trans(
+      IntOfNat(Succ(Succ(k))),
+      Int::add(IntOfNat(Nat::pow2(k)), 1),
+      IntOfNat(2 * Nat::pow2(k)),
+      Int::le_rw(
+        Int::add(IntOfNat(Succ(k)), 1),
+        IntOfNat(Succ(Succ(k))),
+        Int::add(IntOfNat(Nat::pow2(k)), 1),
+        Int::add(IntOfNat(Nat::pow2(k)), 1),
+        Refl,
+        Refl,
+        Int::le_add(IntOfNat(Succ(k)), IntOfNat(Nat::pow2(k)), IntOfNat(1), nat_lt_pow2(k))
+      ),
+      nat_pow2_double_ge(k)
+    )
+  }
+}
+
+// `2^k + 1 <= 2 2^k`.
+pub theorem nat_pow2_double_ge(
+  k: Nat
+): IntLe(Int::add(IntOfNat(Nat::pow2(k)), 1), IntOfNat(2 * Nat::pow2(k))) {
+  int_le_by(
+    Int::add(IntOfNat(Nat::pow2(k)), 1),
+    IntOfNat(2 * Nat::pow2(k)),
+    Nat::pow2(k) - 1,
+    Eq::subst(
+      (z: Nat) => IntOfNat(2 * z) = Int::add(Int::add(IntOfNat(z), 1), IntOfNat(Nat::pow2(k) - 1)),
+      Eq::sym(nat_pow2_succ(k)),
+      int_pow2_shape(Nat::pow2(k) - 1)
+    )
+  )
+}
+
+pub theorem int_pow2_shape(
+  a: Nat
+): IntOfNat(2 * Succ(a)) = Int::add(Int::add(IntOfNat(Succ(a)), 1), IntOfNat(a)) {
+  by int_norm!(): IntOfNat(2 * Succ(a)) = Int::add(Int::add(IntOfNat(Succ(a)), IntOfNat(1)), IntOfNat(a)) {}
+}
+
+// `rat_len(n0 + 1) = L + 1` with `2^L <= n0 + 1 < 2^(L + 1)`.
+pub theorem rat_len_spec(n0: Nat): BitLen(Succ(n0), Float::bitlen(n0, Nat::div_nz(Succ(n0), 2, Nat::ne_zero(2, Refl)))) {
+  bitlen_spec(n0, n0, nat_lt_pow2(Succ(n0)))
+}
+
+// ---- the quotient with a sticky digit --------------------------------------------
+
+// `S` is `2 n / q` to within one: `|S q - 2 n| <= q`.
+pub def StickyOk(
+  S: Nat,
+  n: Nat,
+  q: Nat
+): Prop := And(
+  NatLe(S * q, 2 * n + q),
+  NatLe(2 * n, S * q + q)
+)
+
+pub theorem sticky_ok(n: Nat, q0: Nat): StickyOk(Float::sticky(n, Succ(q0)), n, Succ(q0)) {
+  Eq::subst(
+    (z: Nat) => StickyOk(Float::sticky(n, Succ(q0)), z, Succ(q0)),
+    Nat::div_mod_eq(n, Succ(q0), Nat::succ_ne_zero(q0)),
+    sticky_ok_at(
+      q0,
+      Nat::div_nz(n, Succ(q0), Nat::succ_ne_zero(q0)),
+      Nat::rem_nz(n, Succ(q0), Nat::succ_ne_zero(q0)),
+      nat_le_of_yn(Succ(Nat::rem_nz(n, Succ(q0), Nat::succ_ne_zero(q0))), Succ(q0), Nat::mod_succ_lt(n, q0))
+    )
+  )
+}
+
+pub theorem sticky_ok_at(
+  q0: Nat,
+  D: Nat,
+  R: Nat,
+  hR: NatLe(Succ(R), Succ(q0))
+): StickyOk(2 * D + Float::rem_bit(R), Succ(q0) * D + R, Succ(q0)) {
+  match R: StickyOk(
+    2 * D + Float::rem_bit(R),
+    Succ(q0) * D + R,
+    Succ(q0)
+  ) {
+    Zero => AndIntro(
+      int_le_by(
+        IntOfNat((2 * D + 0) * Succ(q0)),
+        IntOfNat(2 * (Succ(q0) * D + 0) + Succ(q0)),
+        Succ(q0),
+        sticky_shape_a(q0, D)
+      ),
+      int_le_by(
+        IntOfNat(2 * (Succ(q0) * D + 0)),
+        IntOfNat((2 * D + 0) * Succ(q0) + Succ(q0)),
+        Succ(q0),
+        sticky_shape_b(q0, D)
+      )
+    )
+    Succ(R0) => sticky_ok_rem(
+      q0,
+      D,
+      R0,
+      Int::gap(IntOfNat(Succ(Succ(R0))), IntOfNat(Succ(q0))),
+      Int::le_elim(IntOfNat(Succ(Succ(R0))), IntOfNat(Succ(q0)), hR)
+    )
+  }
+}
+
+pub theorem sticky_shape_a(
+  q0: Nat,
+  D: Nat
+): IntOfNat(2 * (Succ(q0) * D + 0) + Succ(q0)) = Int::add(IntOfNat((2 * D + 0) * Succ(q0)), IntOfNat(Succ(q0))) {
+  by int_norm!(): IntOfNat(2 * (Succ(q0) * D + 0) + Succ(q0)) = Int::add(IntOfNat((2 * D + 0) * Succ(q0)), IntOfNat(Succ(q0))) {}
+}
+
+pub theorem sticky_shape_b(
+  q0: Nat,
+  D: Nat
+): IntOfNat((2 * D + 0) * Succ(q0) + Succ(q0)) = Int::add(IntOfNat(2 * (Succ(q0) * D + 0)), IntOfNat(Succ(q0))) {
+  by int_norm!(): IntOfNat((2 * D + 0) * Succ(q0) + Succ(q0)) = Int::add(IntOfNat(2 * (Succ(q0) * D + 0)), IntOfNat(Succ(q0))) {}
+}
+
+// A remainder `R0 + 1` with `q0 + 1 = R0 + 2 + g`.
+pub theorem sticky_ok_rem(
+  q0: Nat,
+  D: Nat,
+  R0: Nat,
+  g: Nat,
+  e: IntOfNat(Succ(q0)) = Int::add(IntOfNat(Succ(Succ(R0))), IntOfNat(g))
+): StickyOk(2 * D + 1, Succ(q0) * D + Succ(R0), Succ(q0)) {
+  Eq::subst(
+    (z: Nat) => StickyOk(
+      2 * D + 1,
+      Succ(z) * D + Succ(R0),
+      Succ(z)
+    ),
+    Eq::sym(nat_q0_shape(q0, R0, g, Eq::congr(Int::pos, e))),
+    AndIntro(
+      int_le_by(
+        IntOfNat((2 * D + 1) * Succ(Succ(R0) + g)),
+        IntOfNat(
+          2 * (Succ(Succ(R0) + g) * D + Succ(R0)) + Succ(Succ(R0) + g)
+        ),
+        2 * Succ(R0),
+        sticky_rem_a(D, R0, g)
+      ),
+      int_le_by(
+        IntOfNat(2 * (Succ(Succ(R0) + g) * D + Succ(R0))),
+        IntOfNat(
+          (2 * D + 1) * Succ(Succ(R0) + g) + Succ(Succ(R0) + g)
+        ),
+        2 * Succ(g),
+        sticky_rem_b(D, R0, g)
+      )
+    )
+  )
+}
+
+pub theorem nat_q0_shape(
+  q0: Nat,
+  R0: Nat,
+  g: Nat,
+  e: Succ(q0) = Succ(Succ(R0)) + g
+): q0 = Succ(R0) + g {
+  Eq::congr(Nat::pred, Eq::trans(e, nat_add_succ_succ_left(R0, g)))
+}
+
+pub theorem nat_add_succ_succ_left(
+  R0: Nat,
+  g: Nat
+): Succ(Succ(R0)) + g = Succ(Succ(R0) + g) {
+  by nat_norm!(): Succ(Succ(R0)) + g = Succ(Succ(R0) + g) {}
+}
+
+pub theorem sticky_rem_a(
+  D: Nat,
+  R0: Nat,
+  g: Nat
+): IntOfNat( 2 * (Succ(Succ(R0) + g) * D + Succ(R0)) + Succ(Succ(R0) + g) ) = Int::add( IntOfNat((2 * D + 1) * Succ(Succ(R0) + g)), IntOfNat(2 * Succ(R0)) ) {
+  by int_norm!(): IntOfNat( 2 * (Succ(Succ(R0) + g) * D + Succ(R0)) + Succ(Succ(R0) + g) ) = Int::add( IntOfNat((2 * D + 1) * Succ(Succ(R0) + g)), IntOfNat(2 * Succ(R0)) ) {}
+}
+
+pub theorem sticky_rem_b(
+  D: Nat,
+  R0: Nat,
+  g: Nat
+): IntOfNat( (2 * D + 1) * Succ(Succ(R0) + g) + Succ(Succ(R0) + g) ) = Int::add( IntOfNat(2 * (Succ(Succ(R0) + g) * D + Succ(R0))), IntOfNat(2 * Succ(g)) ) {
+  by int_norm!(): IntOfNat( (2 * D + 1) * Succ(Succ(R0) + g) + Succ(Succ(R0) + g) ) = Int::add( IntOfNat(2 * (Succ(Succ(R0) + g) * D + Succ(R0))), IntOfNat(2 * Succ(g)) ) {}
+}
+
+// ---- rounding to the nearest -------------------------------------------------------
+
+// `c P` is within half of `P` of `m`: `|2 c P - 2 m| <= P`.
+pub def RoundOk(
+  c: Nat,
+  m: Nat,
+  P: Nat
+): Prop := And(
+  NatLe(2 * (c * P), 2 * m + P),
+  NatLe(2 * m, 2 * (c * P) + P)
+)
+
+pub theorem nat_div_double(H: Nat): Nat::div_nz(2 * H, 2, Nat::ne_zero(2, Refl)) = H {
+  Nat::div_of(H, 0, 1, Refl)
+}
+
+// The digit `float_round_at` adds to `Q`, for `m = 2 H Q + R` and `R < 2 H`.
+pub fn round_digit(Q: Nat, R: Nat, H: Nat): Nat {
+  Float::round_up(H < R, R == H && Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1)
+}
+
+pub theorem round_at_ok(
+  Q: Nat,
+  R: Nat,
+  H: Nat,
+  hR: NatLe(Succ(R), 2 * H)
+): RoundOk(Q + round_digit(Q, R, H), 2 * H * Q + R, 2 * H) {
+  round_at_ok_by(
+    Q,
+    R,
+    H,
+    H < R,
+    R == H && Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1,
+    Refl,
+    Refl,
+    hR
+  )
+}
+
+pub theorem round_at_ok_by(
+  Q: Nat,
+  R: Nat,
+  H: Nat,
+  a: Bool,
+  b: Bool,
+  ea: H < R = a,
+  eb: R == H && Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1 = b,
+  hR: NatLe(Succ(R), 2 * H)
+): RoundOk(Q + Float::round_up(a, b), 2 * H * Q + R, 2 * H) {
+  match a: RoundOk(
+    Q + Float::round_up(a, b),
+    2 * H * Q + R,
+    2 * H
+  ) {
+    true => round_ok_up(
+      Q,
+      R,
+      H,
+      int_le_of_lt(IntOfNat(H), IntOfNat(R), nat_le_of_yn(Succ(H), R, ea)),
+      int_le_of_lt(IntOfNat(R), IntOfNat(2 * H), hR)
+    )
+    false => match b: RoundOk(
+      Q + Float::round_up(false, b),
+      2 * H * Q + R,
+      2 * H
+    ) {
+      true => match Bool::and_split(
+        R == H,
+        Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1,
+        eb
+      ): RoundOk(Q + 1, 2 * H * Q + R, 2 * H) {
+        AndIntro(er, eo) => Eq::subst(
+          (z: Nat) => RoundOk(Q + 1, 2 * H * Q + z, 2 * H),
+          Eq::sym(Nat::eq_sound(R, H, er)),
+          round_ok_tie(Q, H)
+        )
+      }
+      false => round_ok_down(Q, R, H, nat_ge_of_not_lt(H, R, ea))
+    }
+  }
+}
+
+// `float_round_shift` with `k + 1 < 125` digits dropped writes `c` within
+// half of `2^(k + 1)` of `m`.
+pub theorem round_shift_ok(
+  s: Nat,
+  m: Nat,
+  t: Nat,
+  k: Nat,
+  hk: Succ(k) < 125 = true
+): And(
+  Float::round_shift(s, m, t, Succ(k)) = Float::encode( s, Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) + round_digit(Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::pow2(k)), t ),
+  RoundOk(
+    Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) + round_digit(Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::pow2(k)),
+    m,
+    Nat::pow2(Succ(k))
+  )
+) {
+  AndIntro(
+    round_shift_eq(s, m, t, k, hk),
+    Eq::subst(
+      (z: Nat) => RoundOk(
+        Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) + round_digit(Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::pow2(k)),
+        z,
+        Nat::pow2(Succ(k))
+      ),
+      Nat::div_mod_eq(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+      round_at_ok(
+        Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+        Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+        Nat::pow2(k),
+        nat_mod_pow2_lt(m, k)
+      )
+    )
+  )
+}
+
+pub theorem nat_mod_pow2_lt(
+  m: Nat,
+  k: Nat
+): NatLe(Succ(Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k)))), 2 * Nat::pow2(k)) {
+  Eq::subst(
+    (z: Nat) => (h: ¬(z = 0)) -> NatLe(Succ(Nat::rem_nz(m, z, h)), z),
+    Eq::sym(nat_pow2_succ(Succ(k))),
+    (h: ¬(Succ(Nat::pow2(Succ(k)) - 1) = 0)) => nat_le_of_yn(
+      Succ(Nat::rem_nz(m, Succ(Nat::pow2(Succ(k)) - 1), h)),
+      Succ(Nat::pow2(Succ(k)) - 1),
+      Nat::mod_succ_lt(m, Nat::pow2(Succ(k)) - 1)
+    )
+  )(Nat::pow2_ne_zero(Succ(k)))
+}
+
+pub theorem round_shift_eq(
+  s: Nat,
+  m: Nat,
+  t: Nat,
+  k: Nat,
+  hk: Succ(k) < 125 = true
+): Float::round_shift(s, m, t, Succ(k)) = Float::encode( s, Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) + round_digit(Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::pow2(k)), t ) {
+  Eq::subst(
+    (o: Bool) => float_round_shift_by(o, s, m, t, Succ(k)) = Float::encode( s, Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) + round_digit(Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::pow2(k)), t ),
+    Eq::sym(hk),
+    Eq::congr(
+      (h: Nat) => Float::encode(
+        s,
+        Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) + Float::round_up( h < Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))), Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))) == h && Nat::rem_nz(Nat::div(m, Nat::pow2(Succ(k))), 2, Nat::ne_zero(2, Refl)) == 1 ),
+        t
+      ),
+      nat_div_double(Nat::pow2(k))
+    )
+  )
+}
+
+// `float_round_shift` with its test given: the same term once unfolded.
+pub fn float_round_shift_by(o: Bool, s: Nat, m: Nat, t: Nat, k: Nat): Nat {
+  match o: Nat {
+    false => Float::zero_raw(s)
+    true => Float::round_at(s, Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::pow2(k), t)
+  }
+}
+
+pub theorem round_ok_up(
+  Q: Nat,
+  R: Nat,
+  H: Nat,
+  hl: NatLe(H, R),
+  hr2: NatLe(R, 2 * H)
+): RoundOk(Q + 1, 2 * H * Q + R, 2 * H) {
+  AndIntro(
+    int_le_lin(
+      IntOfNat(H),
+      IntOfNat(R),
+      2,
+      IntOfNat(4 * (H * Q) + 2 * H),
+      IntOfNat(2 * ((Q + 1) * (2 * H))),
+      IntOfNat(2 * (2 * H * Q + R) + 2 * H),
+      hl,
+      round_up_0(Q, R, H),
+      round_up_1(Q, R, H)
+    ),
+    Int::le_trans(
+      IntOfNat(2 * (2 * H * Q + R)),
+      IntOfNat(4 * (H * Q) + 4 * H),
+      IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H),
+      int_le_lin(
+        IntOfNat(R),
+        IntOfNat(2 * H),
+        2,
+        IntOfNat(4 * (H * Q)),
+        IntOfNat(2 * (2 * H * Q + R)),
+        IntOfNat(4 * (H * Q) + 4 * H),
+        hr2,
+        round_up_2(Q, R, H),
+        round_up_3(Q, R, H)
+      ),
+      int_le_by(
+        IntOfNat(4 * (H * Q) + 4 * H),
+        IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H),
+        2 * H,
+        round_up_4(Q, R, H)
+      )
+    )
+  )
+}
+
+pub theorem round_ok_tie(
+  Q: Nat,
+  H: Nat
+): RoundOk(Q + 1, 2 * H * Q + H, 2 * H) {
+  AndIntro(
+    int_le_by(
+      IntOfNat(2 * ((Q + 1) * (2 * H))),
+      IntOfNat(2 * (2 * H * Q + H) + 2 * H),
+      0,
+      round_tie_6(Q, H)
+    ),
+    int_le_by(
+      IntOfNat(2 * (2 * H * Q + H)),
+      IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H),
+      4 * H,
+      round_tie_7(Q, H)
+    )
+  )
+}
+
+pub theorem round_ok_down(
+  Q: Nat,
+  R: Nat,
+  H: Nat,
+  hl: NatLe(R, H)
+): RoundOk(Q + 0, 2 * H * Q + R, 2 * H) {
+  AndIntro(
+    int_le_by(
+      IntOfNat(2 * ((Q + 0) * (2 * H))),
+      IntOfNat(2 * (2 * H * Q + R) + 2 * H),
+      2 * R + 2 * H,
+      round_down_8(Q, R, H)
+    ),
+    Int::le_trans(
+      IntOfNat(2 * (2 * H * Q + R)),
+      IntOfNat(4 * (H * Q) + 2 * H),
+      IntOfNat(2 * ((Q + 0) * (2 * H)) + 2 * H),
+      int_le_lin(
+        IntOfNat(R),
+        IntOfNat(H),
+        2,
+        IntOfNat(4 * (H * Q)),
+        IntOfNat(2 * (2 * H * Q + R)),
+        IntOfNat(4 * (H * Q) + 2 * H),
+        hl,
+        round_down_9(Q, R, H),
+        round_down_10(Q, R, H)
+      ),
+      int_le_by(
+        IntOfNat(4 * (H * Q) + 2 * H),
+        IntOfNat(2 * ((Q + 0) * (2 * H)) + 2 * H),
+        0,
+        round_down_11(Q, R, H)
+      )
+    )
+  )
+}
+
+pub theorem round_up_0(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): Int::add( Int::mul(IntOfNat(H), 2), IntOfNat(4 * (H * Q) + 2 * H) ) = IntOfNat(2 * ((Q + 1) * (2 * H))) {
+  by int_norm!(): Int::add( Int::mul(IntOfNat(H), IntOfNat(2)), IntOfNat(4 * (H * Q) + 2 * H) ) = IntOfNat(2 * ((Q + 1) * (2 * H))) {}
+}
+
+pub theorem round_up_1(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): Int::add( Int::mul(IntOfNat(R), 2), IntOfNat(4 * (H * Q) + 2 * H) ) = IntOfNat(2 * (2 * H * Q + R) + 2 * H) {
+  by int_norm!(): Int::add( Int::mul(IntOfNat(R), IntOfNat(2)), IntOfNat(4 * (H * Q) + 2 * H) ) = IntOfNat(2 * (2 * H * Q + R) + 2 * H) {}
+}
+
+pub theorem round_up_2(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): Int::add(Int::mul(IntOfNat(R), 2), IntOfNat(4 * (H * Q))) = IntOfNat(2 * (2 * H * Q + R)) {
+  by int_norm!(): Int::add(Int::mul(IntOfNat(R), IntOfNat(2)), IntOfNat(4 * (H * Q))) = IntOfNat(2 * (2 * H * Q + R)) {}
+}
+
+pub theorem round_up_3(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): Int::add(Int::mul(IntOfNat(2 * H), 2), IntOfNat(4 * (H * Q))) = IntOfNat(4 * (H * Q) + 4 * H) {
+  by int_norm!(): Int::add( Int::mul(IntOfNat(2 * H), IntOfNat(2)), IntOfNat(4 * (H * Q)) ) = IntOfNat(4 * (H * Q) + 4 * H) {}
+}
+
+pub theorem round_up_4(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H) = Int::add(IntOfNat(4 * (H * Q) + 4 * H), IntOfNat(2 * H)) {
+  by int_norm!(): IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H) = Int::add( IntOfNat(4 * (H * Q) + 4 * H), IntOfNat(2 * H) ) {}
+}
+
+pub theorem round_tie_6(
+  Q: Nat,
+  H: Nat
+): IntOfNat(2 * (2 * H * Q + H) + 2 * H) = Int::add(IntOfNat(2 * ((Q + 1) * (2 * H))), 0) {
+  by int_norm!(): IntOfNat(2 * (2 * H * Q + H) + 2 * H) = Int::add(IntOfNat(2 * ((Q + 1) * (2 * H))), IntOfNat(0)) {}
+}
+
+pub theorem round_tie_7(
+  Q: Nat,
+  H: Nat
+): IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H) = Int::add(IntOfNat(2 * (2 * H * Q + H)), IntOfNat(4 * H)) {
+  by int_norm!(): IntOfNat(2 * ((Q + 1) * (2 * H)) + 2 * H) = Int::add( IntOfNat(2 * (2 * H * Q + H)), IntOfNat(4 * H) ) {}
+}
+
+pub theorem round_down_8(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): IntOfNat(2 * (2 * H * Q + R) + 2 * H) = Int::add( IntOfNat(2 * ((Q + 0) * (2 * H))), IntOfNat(2 * R + 2 * H) ) {
+  by int_norm!(): IntOfNat(2 * (2 * H * Q + R) + 2 * H) = Int::add( IntOfNat(2 * ((Q + 0) * (2 * H))), IntOfNat(2 * R + 2 * H) ) {}
+}
+
+pub theorem round_down_9(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): Int::add(Int::mul(IntOfNat(R), 2), IntOfNat(4 * (H * Q))) = IntOfNat(2 * (2 * H * Q + R)) {
+  by int_norm!(): Int::add(Int::mul(IntOfNat(R), IntOfNat(2)), IntOfNat(4 * (H * Q))) = IntOfNat(2 * (2 * H * Q + R)) {}
+}
+
+pub theorem round_down_10(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): Int::add(Int::mul(IntOfNat(H), 2), IntOfNat(4 * (H * Q))) = IntOfNat(4 * (H * Q) + 2 * H) {
+  by int_norm!(): Int::add(Int::mul(IntOfNat(H), IntOfNat(2)), IntOfNat(4 * (H * Q))) = IntOfNat(4 * (H * Q) + 2 * H) {}
+}
+
+pub theorem round_down_11(
+  Q: Nat,
+  R: Nat,
+  H: Nat
+): IntOfNat(2 * ((Q + 0) * (2 * H)) + 2 * H) = Int::add(IntOfNat(4 * (H * Q) + 2 * H), 0) {
+  by int_norm!(): IntOfNat(2 * ((Q + 0) * (2 * H)) + 2 * H) = Int::add(IntOfNat(4 * (H * Q) + 2 * H), IntOfNat(0)) {}
+}
+// ---- the error, as one inequality ---------------------------------------------------
+
+// `|a - y| <= 2^-52 y + b`, scaled by `2^52`.
+pub def ErrOk(
+  a: Nat,
+  y: Nat,
+  b: Nat
+): Prop := And(
+  NatLe(
+    4503599627370496 * a,
+    4503599627370496 * y + (y + 4503599627370496 * b)
+  ),
+  NatLe(
+    4503599627370496 * y,
+    4503599627370496 * a + (y + 4503599627370496 * b)
+  )
+)
+
+// With `s = S w` the sticky digits within `w` of `y`, and `a = c K w` within
+// `K w / 2` of `s`: a normal result, `2^52 K <= S` and `2^56 <= S`.
+pub theorem err_hi(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat,
+  h1: NatLe(s, y + w),
+  h2: NatLe(y, s + w),
+  h3: NatLe(2 * a, 2 * s + kw),
+  h4: NatLe(2 * s, 2 * a + kw),
+  h5: NatLe(4503599627370496 * kw, s),
+  h6: NatLe(72057594037927936 * w, s)
+): ErrOk(a, y, b) {
+  AndIntro(
+    Int::le_mul_cancel(
+      IntOfNat(4503599627370496 * a),
+      IntOfNat(4503599627370496 * y + (y + 4503599627370496 * b)),
+      1,
+      Int::le_trans(
+        Int::mul(IntOfNat(4503599627370496 * a), 2),
+        Int::add(
+          Int::neg(Int::mul(63050394783186942, IntOfNat(w))),
+          Int::mul(9007199254740994, IntOfNat(y))
+        ),
+        Int::mul(
+          IntOfNat(
+            4503599627370496 * y + (y + 4503599627370496 * b)
+          ),
+          2
+        ),
+        int_le_lin(
+          Int::add(
+            Int::add(
+              Int::add(
+                Int::mul(IntOfNat(2 * a), 4503599627370496),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1)
+              ),
+              Int::mul(IntOfNat(s), 9007199254740994)
+            ),
+            Int::mul(IntOfNat(72057594037927936 * w), 1)
+          ),
+          Int::add(
+            Int::add(
+              Int::add(
+                Int::mul(IntOfNat(2 * s + kw), 4503599627370496),
+                Int::mul(IntOfNat(s), 1)
+              ),
+              Int::mul(IntOfNat(y + w), 9007199254740994)
+            ),
+            Int::mul(IntOfNat(s), 1)
+          ),
+          1,
+          Int::add(
+            Int::neg(Int::mul(4503599627370496, IntOfNat(kw))),
+            Int::add(
+              Int::neg(Int::mul(9007199254740994, IntOfNat(s))),
+              Int::neg(Int::mul(72057594037927936, IntOfNat(w)))
+            )
+          ),
+          Int::mul(IntOfNat(4503599627370496 * a), 2),
+          Int::add(
+            Int::neg(Int::mul(63050394783186942, IntOfNat(w))),
+            Int::mul(9007199254740994, IntOfNat(y))
+          ),
+          int_le_add2(
+            Int::add(
+              Int::add(
+                Int::mul(IntOfNat(2 * a), 4503599627370496),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1)
+              ),
+              Int::mul(IntOfNat(s), 9007199254740994)
+            ),
+            Int::add(
+              Int::add(
+                Int::mul(IntOfNat(2 * s + kw), 4503599627370496),
+                Int::mul(IntOfNat(s), 1)
+              ),
+              Int::mul(IntOfNat(y + w), 9007199254740994)
+            ),
+            Int::mul(IntOfNat(72057594037927936 * w), 1),
+            Int::mul(IntOfNat(s), 1),
+            int_le_add2(
+              Int::add(
+                Int::mul(IntOfNat(2 * a), 4503599627370496),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1)
+              ),
+              Int::add(
+                Int::mul(IntOfNat(2 * s + kw), 4503599627370496),
+                Int::mul(IntOfNat(s), 1)
+              ),
+              Int::mul(IntOfNat(s), 9007199254740994),
+              Int::mul(IntOfNat(y + w), 9007199254740994),
+              int_le_add2(
+                Int::mul(IntOfNat(2 * a), 4503599627370496),
+                Int::mul(IntOfNat(2 * s + kw), 4503599627370496),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1),
+                Int::mul(IntOfNat(s), 1),
+                int_le_mul_nat(
+                  IntOfNat(2 * a),
+                  IntOfNat(2 * s + kw),
+                  4503599627370496,
+                  h3
+                ),
+                int_le_mul_nat(IntOfNat(4503599627370496 * kw), IntOfNat(s), 1, h5)
+              ),
+              int_le_mul_nat(IntOfNat(s), IntOfNat(y + w), 9007199254740994, h1)
+            ),
+            int_le_mul_nat(IntOfNat(72057594037927936 * w), IntOfNat(s), 1, h6)
+          ),
+          err_hi_u_0(a, s, y, w, kw, b),
+          err_hi_u_1(a, s, y, w, kw, b)
+        ),
+        int_le_by(
+          Int::add(
+            Int::neg(Int::mul(63050394783186942, IntOfNat(w))),
+            Int::mul(9007199254740994, IntOfNat(y))
+          ),
+          Int::mul(
+            IntOfNat(
+              4503599627370496 * y + (y + 4503599627370496 * b)
+            ),
+            2
+          ),
+          9007199254740992 * b + 63050394783186942 * w,
+          err_hi_u_2(a, s, y, w, kw, b)
+        )
+      )
+    ),
+    Int::le_mul_cancel(
+      IntOfNat(4503599627370496 * y),
+      IntOfNat(4503599627370496 * a + (y + 4503599627370496 * b)),
+      1,
+      Int::le_trans(
+        Int::mul(IntOfNat(4503599627370496 * y), 2),
+        Int::add(
+          Int::mul(9007199254740992, IntOfNat(a)),
+          Int::add(
+            Int::neg(Int::mul(63050394783186942, IntOfNat(w))),
+            Int::mul(2, IntOfNat(y))
+          )
+        ),
+        Int::mul(
+          IntOfNat(
+            4503599627370496 * a + (y + 4503599627370496 * b)
+          ),
+          2
+        ),
+        int_le_lin(
+          Int::add(
+            Int::add(
+              Int::add(
+                Int::add(
+                  Int::mul(IntOfNat(y), 9007199254740992),
+                  Int::mul(IntOfNat(2 * s), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1)
+              ),
+              Int::mul(IntOfNat(s), 2)
+            ),
+            Int::mul(IntOfNat(72057594037927936 * w), 1)
+          ),
+          Int::add(
+            Int::add(
+              Int::add(
+                Int::add(
+                  Int::mul(IntOfNat(s + w), 9007199254740992),
+                  Int::mul(IntOfNat(2 * a + kw), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(s), 1)
+              ),
+              Int::mul(IntOfNat(y + w), 2)
+            ),
+            Int::mul(IntOfNat(s), 1)
+          ),
+          1,
+          Int::add(
+            Int::neg(Int::mul(4503599627370496, IntOfNat(kw))),
+            Int::add(
+              Int::neg(Int::mul(9007199254740994, IntOfNat(s))),
+              Int::neg(Int::mul(72057594037927936, IntOfNat(w)))
+            )
+          ),
+          Int::mul(IntOfNat(4503599627370496 * y), 2),
+          Int::add(
+            Int::mul(9007199254740992, IntOfNat(a)),
+            Int::add(
+              Int::neg(Int::mul(63050394783186942, IntOfNat(w))),
+              Int::mul(2, IntOfNat(y))
+            )
+          ),
+          int_le_add2(
+            Int::add(
+              Int::add(
+                Int::add(
+                  Int::mul(IntOfNat(y), 9007199254740992),
+                  Int::mul(IntOfNat(2 * s), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1)
+              ),
+              Int::mul(IntOfNat(s), 2)
+            ),
+            Int::add(
+              Int::add(
+                Int::add(
+                  Int::mul(IntOfNat(s + w), 9007199254740992),
+                  Int::mul(IntOfNat(2 * a + kw), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(s), 1)
+              ),
+              Int::mul(IntOfNat(y + w), 2)
+            ),
+            Int::mul(IntOfNat(72057594037927936 * w), 1),
+            Int::mul(IntOfNat(s), 1),
+            int_le_add2(
+              Int::add(
+                Int::add(
+                  Int::mul(IntOfNat(y), 9007199254740992),
+                  Int::mul(IntOfNat(2 * s), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1)
+              ),
+              Int::add(
+                Int::add(
+                  Int::mul(IntOfNat(s + w), 9007199254740992),
+                  Int::mul(IntOfNat(2 * a + kw), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(s), 1)
+              ),
+              Int::mul(IntOfNat(s), 2),
+              Int::mul(IntOfNat(y + w), 2),
+              int_le_add2(
+                Int::add(
+                  Int::mul(IntOfNat(y), 9007199254740992),
+                  Int::mul(IntOfNat(2 * s), 4503599627370496)
+                ),
+                Int::add(
+                  Int::mul(IntOfNat(s + w), 9007199254740992),
+                  Int::mul(IntOfNat(2 * a + kw), 4503599627370496)
+                ),
+                Int::mul(IntOfNat(4503599627370496 * kw), 1),
+                Int::mul(IntOfNat(s), 1),
+                int_le_add2(
+                  Int::mul(IntOfNat(y), 9007199254740992),
+                  Int::mul(IntOfNat(s + w), 9007199254740992),
+                  Int::mul(IntOfNat(2 * s), 4503599627370496),
+                  Int::mul(IntOfNat(2 * a + kw), 4503599627370496),
+                  int_le_mul_nat(IntOfNat(y), IntOfNat(s + w), 9007199254740992, h2),
+                  int_le_mul_nat(
+                    IntOfNat(2 * s),
+                    IntOfNat(2 * a + kw),
+                    4503599627370496,
+                    h4
+                  )
+                ),
+                int_le_mul_nat(IntOfNat(4503599627370496 * kw), IntOfNat(s), 1, h5)
+              ),
+              int_le_mul_nat(IntOfNat(s), IntOfNat(y + w), 2, h1)
+            ),
+            int_le_mul_nat(IntOfNat(72057594037927936 * w), IntOfNat(s), 1, h6)
+          ),
+          err_hi_l_3(a, s, y, w, kw, b),
+          err_hi_l_4(a, s, y, w, kw, b)
+        ),
+        int_le_by(
+          Int::add(
+            Int::mul(9007199254740992, IntOfNat(a)),
+            Int::add(
+              Int::neg(Int::mul(63050394783186942, IntOfNat(w))),
+              Int::mul(2, IntOfNat(y))
+            )
+          ),
+          Int::mul(
+            IntOfNat(
+              4503599627370496 * a + (y + 4503599627370496 * b)
+            ),
+            2
+          ),
+          9007199254740992 * b + 63050394783186942 * w,
+          err_hi_l_5(a, s, y, w, kw, b)
+        )
+      )
+    )
+  )
+}
+
+// A result at the smallest exponent: `K w` is the bound `b` itself, `16 w <= K w`.
+pub theorem err_lo(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  h1: NatLe(s, y + w),
+  h2: NatLe(y, s + w),
+  h3: NatLe(2 * a, 2 * s + kw),
+  h4: NatLe(2 * s, 2 * a + kw),
+  h8: NatLe(16 * w, kw)
+): ErrOk(a, y, kw) {
+  AndIntro(
+    Int::le_rw(
+      Int::mul(IntOfNat(4503599627370496 * a), 1),
+      IntOfNat(4503599627370496 * a),
+      Int::mul(
+        IntOfNat(
+          4503599627370496 * y + (y + 4503599627370496 * kw)
+        ),
+        1
+      ),
+      IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)),
+      err_lo_u_9(a, s, y, w, kw),
+      err_lo_u_10(a, s, y, w, kw),
+      Int::le_trans(
+        Int::mul(IntOfNat(4503599627370496 * a), 1),
+        Int::add(
+          Int::mul(2533274790395904, IntOfNat(kw)),
+          Int::mul(4503599627370496, IntOfNat(y))
+        ),
+        Int::mul(
+          IntOfNat(
+            4503599627370496 * y + (y + 4503599627370496 * kw)
+          ),
+          1
+        ),
+        int_le_lin(
+          Int::add(
+            Int::add(
+              Int::mul(IntOfNat(2 * a), 2251799813685248),
+              Int::mul(IntOfNat(s), 4503599627370496)
+            ),
+            Int::mul(IntOfNat(16 * w), 281474976710656)
+          ),
+          Int::add(
+            Int::add(
+              Int::mul(IntOfNat(2 * s + kw), 2251799813685248),
+              Int::mul(IntOfNat(y + w), 4503599627370496)
+            ),
+            Int::mul(IntOfNat(kw), 281474976710656)
+          ),
+          1,
+          Int::add(
+            Int::neg(Int::mul(4503599627370496, IntOfNat(s))),
+            Int::neg(Int::mul(4503599627370496, IntOfNat(w)))
+          ),
+          Int::mul(IntOfNat(4503599627370496 * a), 1),
+          Int::add(
+            Int::mul(2533274790395904, IntOfNat(kw)),
+            Int::mul(4503599627370496, IntOfNat(y))
+          ),
+          int_le_add2(
+            Int::add(
+              Int::mul(IntOfNat(2 * a), 2251799813685248),
+              Int::mul(IntOfNat(s), 4503599627370496)
+            ),
+            Int::add(
+              Int::mul(IntOfNat(2 * s + kw), 2251799813685248),
+              Int::mul(IntOfNat(y + w), 4503599627370496)
+            ),
+            Int::mul(IntOfNat(16 * w), 281474976710656),
+            Int::mul(IntOfNat(kw), 281474976710656),
+            int_le_add2(
+              Int::mul(IntOfNat(2 * a), 2251799813685248),
+              Int::mul(IntOfNat(2 * s + kw), 2251799813685248),
+              Int::mul(IntOfNat(s), 4503599627370496),
+              Int::mul(IntOfNat(y + w), 4503599627370496),
+              int_le_mul_nat(
+                IntOfNat(2 * a),
+                IntOfNat(2 * s + kw),
+                2251799813685248,
+                h3
+              ),
+              int_le_mul_nat(IntOfNat(s), IntOfNat(y + w), 4503599627370496, h1)
+            ),
+            int_le_mul_nat(IntOfNat(16 * w), IntOfNat(kw), 281474976710656, h8)
+          ),
+          err_lo_u_6(a, s, y, w, kw),
+          err_lo_u_7(a, s, y, w, kw)
+        ),
+        int_le_by(
+          Int::add(
+            Int::mul(2533274790395904, IntOfNat(kw)),
+            Int::mul(4503599627370496, IntOfNat(y))
+          ),
+          Int::mul(
+            IntOfNat(
+              4503599627370496 * y + (y + 4503599627370496 * kw)
+            ),
+            1
+          ),
+          1970324836974592 * kw + y,
+          err_lo_u_8(a, s, y, w, kw)
+        )
+      )
+    ),
+    Int::le_rw(
+      Int::mul(IntOfNat(4503599627370496 * y), 1),
+      IntOfNat(4503599627370496 * y),
+      Int::mul(
+        IntOfNat(
+          4503599627370496 * a + (y + 4503599627370496 * kw)
+        ),
+        1
+      ),
+      IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)),
+      err_lo_l_14(a, s, y, w, kw),
+      err_lo_l_15(a, s, y, w, kw),
+      Int::le_trans(
+        Int::mul(IntOfNat(4503599627370496 * y), 1),
+        Int::add(
+          Int::mul(4503599627370496, IntOfNat(a)),
+          Int::mul(2533274790395904, IntOfNat(kw))
+        ),
+        Int::mul(
+          IntOfNat(
+            4503599627370496 * a + (y + 4503599627370496 * kw)
+          ),
+          1
+        ),
+        int_le_lin(
+          Int::add(
+            Int::add(
+              Int::mul(IntOfNat(y), 4503599627370496),
+              Int::mul(IntOfNat(2 * s), 2251799813685248)
+            ),
+            Int::mul(IntOfNat(16 * w), 281474976710656)
+          ),
+          Int::add(
+            Int::add(
+              Int::mul(IntOfNat(s + w), 4503599627370496),
+              Int::mul(IntOfNat(2 * a + kw), 2251799813685248)
+            ),
+            Int::mul(IntOfNat(kw), 281474976710656)
+          ),
+          1,
+          Int::add(
+            Int::neg(Int::mul(4503599627370496, IntOfNat(s))),
+            Int::neg(Int::mul(4503599627370496, IntOfNat(w)))
+          ),
+          Int::mul(IntOfNat(4503599627370496 * y), 1),
+          Int::add(
+            Int::mul(4503599627370496, IntOfNat(a)),
+            Int::mul(2533274790395904, IntOfNat(kw))
+          ),
+          int_le_add2(
+            Int::add(
+              Int::mul(IntOfNat(y), 4503599627370496),
+              Int::mul(IntOfNat(2 * s), 2251799813685248)
+            ),
+            Int::add(
+              Int::mul(IntOfNat(s + w), 4503599627370496),
+              Int::mul(IntOfNat(2 * a + kw), 2251799813685248)
+            ),
+            Int::mul(IntOfNat(16 * w), 281474976710656),
+            Int::mul(IntOfNat(kw), 281474976710656),
+            int_le_add2(
+              Int::mul(IntOfNat(y), 4503599627370496),
+              Int::mul(IntOfNat(s + w), 4503599627370496),
+              Int::mul(IntOfNat(2 * s), 2251799813685248),
+              Int::mul(IntOfNat(2 * a + kw), 2251799813685248),
+              int_le_mul_nat(IntOfNat(y), IntOfNat(s + w), 4503599627370496, h2),
+              int_le_mul_nat(
+                IntOfNat(2 * s),
+                IntOfNat(2 * a + kw),
+                2251799813685248,
+                h4
+              )
+            ),
+            int_le_mul_nat(IntOfNat(16 * w), IntOfNat(kw), 281474976710656, h8)
+          ),
+          err_lo_l_11(a, s, y, w, kw),
+          err_lo_l_12(a, s, y, w, kw)
+        ),
+        int_le_by(
+          Int::add(
+            Int::mul(4503599627370496, IntOfNat(a)),
+            Int::mul(2533274790395904, IntOfNat(kw))
+          ),
+          Int::mul(
+            IntOfNat(
+              4503599627370496 * a + (y + 4503599627370496 * kw)
+            ),
+            1
+          ),
+          1970324836974592 * kw + y,
+          err_lo_l_13(a, s, y, w, kw)
+        )
+      )
+    )
+  )
+}
+
+pub theorem err_hi_u_0(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::mul(IntOfNat(2 * a), 4503599627370496), Int::mul(IntOfNat(4503599627370496 * kw), 1) ), Int::mul(IntOfNat(s), 9007199254740994) ), Int::mul(IntOfNat(72057594037927936 * w), 1) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(kw))), Int::add( Int::neg(Int::mul(9007199254740994, IntOfNat(s))), Int::neg(Int::mul(72057594037927936, IntOfNat(w))) ) ) ) = Int::mul(IntOfNat(4503599627370496 * a), 2) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::mul(IntOfNat(2 * a), IntOfNat(4503599627370496)), Int::mul(IntOfNat(4503599627370496 * kw), IntOfNat(1)) ), Int::mul(IntOfNat(s), IntOfNat(9007199254740994)) ), Int::mul(IntOfNat(72057594037927936 * w), IntOfNat(1)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(kw))), Int::add( Int::neg(Int::mul(IntOfNat(9007199254740994), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(w))) ) ) ) = Int::mul(IntOfNat(4503599627370496 * a), IntOfNat(2)) {}
+}
+
+pub theorem err_hi_u_1(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::mul(IntOfNat(2 * s + kw), 4503599627370496), Int::mul(IntOfNat(s), 1) ), Int::mul(IntOfNat(y + w), 9007199254740994) ), Int::mul(IntOfNat(s), 1) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(kw))), Int::add( Int::neg(Int::mul(9007199254740994, IntOfNat(s))), Int::neg(Int::mul(72057594037927936, IntOfNat(w))) ) ) ) = Int::add( Int::neg(Int::mul(63050394783186942, IntOfNat(w))), Int::mul(9007199254740994, IntOfNat(y)) ) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::mul(IntOfNat(2 * s + kw), IntOfNat(4503599627370496)), Int::mul(IntOfNat(s), IntOfNat(1)) ), Int::mul(IntOfNat(y + w), IntOfNat(9007199254740994)) ), Int::mul(IntOfNat(s), IntOfNat(1)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(kw))), Int::add( Int::neg(Int::mul(IntOfNat(9007199254740994), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(w))) ) ) ) = Int::add( Int::neg(Int::mul(IntOfNat(63050394783186942), IntOfNat(w))), Int::mul(IntOfNat(9007199254740994), IntOfNat(y)) ) {}
+}
+
+pub theorem err_hi_u_2(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat
+): Int::mul( IntOfNat(4503599627370496 * y + (y + 4503599627370496 * b)), 2 ) = Int::add( Int::add( Int::neg(Int::mul(63050394783186942, IntOfNat(w))), Int::mul(9007199254740994, IntOfNat(y)) ), IntOfNat(9007199254740992 * b + 63050394783186942 * w) ) {
+  by int_norm!(): Int::mul( IntOfNat(4503599627370496 * y + (y + 4503599627370496 * b)), IntOfNat(2) ) = Int::add( Int::add( Int::neg(Int::mul(IntOfNat(63050394783186942), IntOfNat(w))), Int::mul(IntOfNat(9007199254740994), IntOfNat(y)) ), IntOfNat(9007199254740992 * b + 63050394783186942 * w) ) {}
+}
+
+pub theorem err_hi_l_3(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::add( Int::mul(IntOfNat(y), 9007199254740992), Int::mul(IntOfNat(2 * s), 4503599627370496) ), Int::mul(IntOfNat(4503599627370496 * kw), 1) ), Int::mul(IntOfNat(s), 2) ), Int::mul(IntOfNat(72057594037927936 * w), 1) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(kw))), Int::add( Int::neg(Int::mul(9007199254740994, IntOfNat(s))), Int::neg(Int::mul(72057594037927936, IntOfNat(w))) ) ) ) = Int::mul(IntOfNat(4503599627370496 * y), 2) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::add( Int::mul(IntOfNat(y), IntOfNat(9007199254740992)), Int::mul(IntOfNat(2 * s), IntOfNat(4503599627370496)) ), Int::mul(IntOfNat(4503599627370496 * kw), IntOfNat(1)) ), Int::mul(IntOfNat(s), IntOfNat(2)) ), Int::mul(IntOfNat(72057594037927936 * w), IntOfNat(1)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(kw))), Int::add( Int::neg(Int::mul(IntOfNat(9007199254740994), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(w))) ) ) ) = Int::mul(IntOfNat(4503599627370496 * y), IntOfNat(2)) {}
+}
+
+pub theorem err_hi_l_4(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::add( Int::mul(IntOfNat(s + w), 9007199254740992), Int::mul(IntOfNat(2 * a + kw), 4503599627370496) ), Int::mul(IntOfNat(s), 1) ), Int::mul(IntOfNat(y + w), 2) ), Int::mul(IntOfNat(s), 1) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(kw))), Int::add( Int::neg(Int::mul(9007199254740994, IntOfNat(s))), Int::neg(Int::mul(72057594037927936, IntOfNat(w))) ) ) ) = Int::add( Int::mul(9007199254740992, IntOfNat(a)), Int::add( Int::neg(Int::mul(63050394783186942, IntOfNat(w))), Int::mul(2, IntOfNat(y)) ) ) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::add( Int::add( Int::mul(IntOfNat(s + w), IntOfNat(9007199254740992)), Int::mul(IntOfNat(2 * a + kw), IntOfNat(4503599627370496)) ), Int::mul(IntOfNat(s), IntOfNat(1)) ), Int::mul(IntOfNat(y + w), IntOfNat(2)) ), Int::mul(IntOfNat(s), IntOfNat(1)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(kw))), Int::add( Int::neg(Int::mul(IntOfNat(9007199254740994), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(w))) ) ) ) = Int::add( Int::mul(IntOfNat(9007199254740992), IntOfNat(a)), Int::add( Int::neg(Int::mul(IntOfNat(63050394783186942), IntOfNat(w))), Int::mul(IntOfNat(2), IntOfNat(y)) ) ) {}
+}
+
+pub theorem err_hi_l_5(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat,
+  b: Nat
+): Int::mul( IntOfNat(4503599627370496 * a + (y + 4503599627370496 * b)), 2 ) = Int::add( Int::add( Int::mul(9007199254740992, IntOfNat(a)), Int::add( Int::neg(Int::mul(63050394783186942, IntOfNat(w))), Int::mul(2, IntOfNat(y)) ) ), IntOfNat(9007199254740992 * b + 63050394783186942 * w) ) {
+  by int_norm!(): Int::mul( IntOfNat(4503599627370496 * a + (y + 4503599627370496 * b)), IntOfNat(2) ) = Int::add( Int::add( Int::mul(IntOfNat(9007199254740992), IntOfNat(a)), Int::add( Int::neg(Int::mul(IntOfNat(63050394783186942), IntOfNat(w))), Int::mul(IntOfNat(2), IntOfNat(y)) ) ), IntOfNat(9007199254740992 * b + 63050394783186942 * w) ) {}
+}
+
+pub theorem err_lo_u_6(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(2 * a), 2251799813685248), Int::mul(IntOfNat(s), 4503599627370496) ), Int::mul(IntOfNat(16 * w), 281474976710656) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(s))), Int::neg(Int::mul(4503599627370496, IntOfNat(w))) ) ) = Int::mul(IntOfNat(4503599627370496 * a), 1) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(2 * a), IntOfNat(2251799813685248)), Int::mul(IntOfNat(s), IntOfNat(4503599627370496)) ), Int::mul(IntOfNat(16 * w), IntOfNat(281474976710656)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(w))) ) ) = Int::mul(IntOfNat(4503599627370496 * a), IntOfNat(1)) {}
+}
+
+pub theorem err_lo_u_7(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(2 * s + kw), 2251799813685248), Int::mul(IntOfNat(y + w), 4503599627370496) ), Int::mul(IntOfNat(kw), 281474976710656) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(s))), Int::neg(Int::mul(4503599627370496, IntOfNat(w))) ) ) = Int::add( Int::mul(2533274790395904, IntOfNat(kw)), Int::mul(4503599627370496, IntOfNat(y)) ) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(2 * s + kw), IntOfNat(2251799813685248)), Int::mul(IntOfNat(y + w), IntOfNat(4503599627370496)) ), Int::mul(IntOfNat(kw), IntOfNat(281474976710656)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(w))) ) ) = Int::add( Int::mul(IntOfNat(2533274790395904), IntOfNat(kw)), Int::mul(IntOfNat(4503599627370496), IntOfNat(y)) ) {}
+}
+
+pub theorem err_lo_u_8(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::mul( IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)), 1 ) = Int::add( Int::add( Int::mul(2533274790395904, IntOfNat(kw)), Int::mul(4503599627370496, IntOfNat(y)) ), IntOfNat(1970324836974592 * kw + y) ) {
+  by int_norm!(): Int::mul( IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)), IntOfNat(1) ) = Int::add( Int::add( Int::mul(IntOfNat(2533274790395904), IntOfNat(kw)), Int::mul(IntOfNat(4503599627370496), IntOfNat(y)) ), IntOfNat(1970324836974592 * kw + y) ) {}
+}
+
+pub theorem err_lo_u_9(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::mul(IntOfNat(4503599627370496 * a), 1) = IntOfNat(4503599627370496 * a) {
+  by int_norm!(): Int::mul(IntOfNat(4503599627370496 * a), IntOfNat(1)) = IntOfNat(4503599627370496 * a) {}
+}
+
+pub theorem err_lo_u_10(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::mul( IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)), 1 ) = IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)) {
+  by int_norm!(): Int::mul( IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)), IntOfNat(1) ) = IntOfNat(4503599627370496 * y + (y + 4503599627370496 * kw)) {}
+}
+
+pub theorem err_lo_l_11(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(y), 4503599627370496), Int::mul(IntOfNat(2 * s), 2251799813685248) ), Int::mul(IntOfNat(16 * w), 281474976710656) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(s))), Int::neg(Int::mul(4503599627370496, IntOfNat(w))) ) ) = Int::mul(IntOfNat(4503599627370496 * y), 1) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(y), IntOfNat(4503599627370496)), Int::mul(IntOfNat(2 * s), IntOfNat(2251799813685248)) ), Int::mul(IntOfNat(16 * w), IntOfNat(281474976710656)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(w))) ) ) = Int::mul(IntOfNat(4503599627370496 * y), IntOfNat(1)) {}
+}
+
+pub theorem err_lo_l_12(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(s + w), 4503599627370496), Int::mul(IntOfNat(2 * a + kw), 2251799813685248) ), Int::mul(IntOfNat(kw), 281474976710656) ), 1 ), Int::add( Int::neg(Int::mul(4503599627370496, IntOfNat(s))), Int::neg(Int::mul(4503599627370496, IntOfNat(w))) ) ) = Int::add( Int::mul(4503599627370496, IntOfNat(a)), Int::mul(2533274790395904, IntOfNat(kw)) ) {
+  by int_norm!(): Int::add( Int::mul( Int::add( Int::add( Int::mul(IntOfNat(s + w), IntOfNat(4503599627370496)), Int::mul(IntOfNat(2 * a + kw), IntOfNat(2251799813685248)) ), Int::mul(IntOfNat(kw), IntOfNat(281474976710656)) ), IntOfNat(1) ), Int::add( Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(s))), Int::neg(Int::mul(IntOfNat(4503599627370496), IntOfNat(w))) ) ) = Int::add( Int::mul(IntOfNat(4503599627370496), IntOfNat(a)), Int::mul(IntOfNat(2533274790395904), IntOfNat(kw)) ) {}
+}
+
+pub theorem err_lo_l_13(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::mul( IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)), 1 ) = Int::add( Int::add( Int::mul(4503599627370496, IntOfNat(a)), Int::mul(2533274790395904, IntOfNat(kw)) ), IntOfNat(1970324836974592 * kw + y) ) {
+  by int_norm!(): Int::mul( IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)), IntOfNat(1) ) = Int::add( Int::add( Int::mul(IntOfNat(4503599627370496), IntOfNat(a)), Int::mul(IntOfNat(2533274790395904), IntOfNat(kw)) ), IntOfNat(1970324836974592 * kw + y) ) {}
+}
+
+pub theorem err_lo_l_14(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::mul(IntOfNat(4503599627370496 * y), 1) = IntOfNat(4503599627370496 * y) {
+  by int_norm!(): Int::mul(IntOfNat(4503599627370496 * y), IntOfNat(1)) = IntOfNat(4503599627370496 * y) {}
+}
+
+pub theorem err_lo_l_15(
+  a: Nat,
+  s: Nat,
+  y: Nat,
+  w: Nat,
+  kw: Nat
+): Int::mul( IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)), 1 ) = IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)) {
+  by int_norm!(): Int::mul( IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)), IntOfNat(1) ) = IntOfNat(4503599627370496 * a + (y + 4503599627370496 * kw)) {}
+}

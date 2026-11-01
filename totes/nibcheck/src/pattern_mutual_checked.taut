@@ -1,0 +1,484 @@
+import "pattern_mutual.taut"
+import "checked_frame.taut"
+import "operation_checked_sound.taut"
+import "pattern_checked_sound.taut"
+import "pattern_scope_checked.taut"
+import "written_error_sound.taut"
+import "pattern_read_error_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub def PatternIH_pattern_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ p: SurfacePattern. ∀ t: Ty. ∀ env: Scope. ∀ span: TySpan. ∀ at: Nat. ∀ ordered: CkOrdered(
+  c
+). CkScopeChecked(c, ck_pattern_in(k, c, p, t, env, span, at))
+
+pub def PatternIH_ctor_pattern_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ name: Text. ∀ args: List(
+  SurfacePattern
+). ∀ t: Ty. ∀ env: Scope. ∀ span: TySpan. ∀ at: Nat. ∀ ordered: CkOrdered(
+  c
+). CkScopeChecked(c, ck_ctor_pattern_in(k, c, name, args, t, env, span, at))
+
+pub def PatternIH_ctor_args_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ args: List(
+  SurfacePattern
+). ∀ fields: List(
+  DataField
+). ∀ borrowed: Option(
+  Bool
+). ∀ env: Scope. ∀ span: TySpan. ∀ at: Nat. ∀ ordered: CkOrdered(
+  c
+). CkScopeChecked(c, ck_ctor_args_in(k, c, args, fields, borrowed, env, span, at))
+
+pub theorem pattern_fields_next_frame_checked(
+  j: Nat,
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  borrowed: Option(Bool),
+  found: Option(List(DataField)),
+  ih_ctor_args: PatternIH_ctor_args_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_fields_next(j, c, name, args, t, env, span, at, borrowed, found)) {
+  match found: CkScopeChecked(
+    c,
+    pattern_fields_next(j, c, name, args, t, env, span, at, borrowed, found)
+  ) {
+    None => pattern_return_frame_checked(c, env, Star, ordered)
+    Some(fields) => pattern_rewrap_frame_checked(
+      c,
+      ck_ctor_args_in(j, c, args, fields, borrowed, env, span, at),
+      ih_ctor_args(c, args, fields, borrowed, env, span, at, ordered)
+    )
+  }
+}
+
+pub theorem pattern_ctor_step_frame_checked(
+  j: Nat,
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  borrowed: Option(Bool),
+  ih_ctor_args: PatternIH_ctor_args_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_ctor_step(j, c, name, args, t, env, span, at, borrowed)) {
+  pattern_bind_one_frame_checked(
+    Option(List(DataField)),
+    Unit,
+    c,
+    (found: Option(List(DataField)), c1: Checker) => pattern_fields_next(
+      j,
+      c1,
+      name,
+      args,
+      t,
+      env,
+      span,
+      at,
+      borrowed,
+      found
+    ),
+    ck_ctor_fields(c, name, args, t, span),
+    ck_ctor_fields_run_frame_checked(c, name, args, t, span, ordered),
+    found => c1 => o_c1 => pattern_fields_next_frame_checked(
+      j,
+      c1,
+      name,
+      args,
+      t,
+      env,
+      span,
+      at,
+      borrowed,
+      found,
+      ih_ctor_args,
+      o_c1
+    )
+  )
+}
+
+pub theorem pattern_args_fields_frame_checked(
+  j: Nat,
+  c: Checker,
+  p: SurfacePattern,
+  rest: List(SurfacePattern),
+  borrowed: Option(Bool),
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  fields: List(DataField),
+  ih_pattern: PatternIH_pattern_checked(j),
+  ih_ctor_args: PatternIH_ctor_args_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)) {
+  match fields: CkScopeChecked(
+    c,
+    pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)
+  ) {
+    Nil => pattern_return_frame_checked(c, env, Star, ordered)
+    Cons(field, more) => pattern_bind_frame_checked(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker, env1: Scope) => pattern_rewrap(
+        ck_ctor_args_in(j, c1, rest, more, borrowed, env1, span, at)
+      ),
+      ck_pattern_in(j, c, p, field_under(pattern_field_ty(field), borrowed), env, span, at),
+      ih_pattern(c, p, field_under(pattern_field_ty(field), borrowed), env, span, at, ordered),
+      ignored => c1 => env1 => o_c1 => pattern_rewrap_frame_checked(
+        c1,
+        ck_ctor_args_in(j, c1, rest, more, borrowed, env1, span, at),
+        ih_ctor_args(c1, rest, more, borrowed, env1, span, at, o_c1)
+      )
+    )
+  }
+}
+
+pub theorem pattern_args_step_frame_checked(
+  j: Nat,
+  c: Checker,
+  fields: List(DataField),
+  borrowed: Option(Bool),
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  args: List(SurfacePattern),
+  ih_pattern: PatternIH_pattern_checked(j),
+  ih_ctor_args: PatternIH_ctor_args_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) {
+  match args: CkScopeChecked(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) {
+    Nil => pattern_return_frame_checked(c, env, Star, ordered)
+    Cons(p, rest) => pattern_args_fields_frame_checked(
+      j,
+      c,
+      p,
+      rest,
+      borrowed,
+      env,
+      span,
+      at,
+      fields,
+      ih_pattern,
+      ih_ctor_args,
+      ordered
+    )
+  }
+}
+
+pub theorem pattern_bind_name_frame_checked(
+  j: Nat,
+  c: Checker,
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  name: Text,
+  nullary: Bool,
+  ih_ctor_pattern: PatternIH_ctor_pattern_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
+  match nullary: CkScopeChecked(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
+    true => pattern_rewrap_frame_checked(
+      c,
+      ck_ctor_pattern_in(j, c, name, Nil, t, env, span, at),
+      ih_ctor_pattern(c, name, Nil, t, env, span, at, ordered)
+    )
+    false => pattern_rewrap_frame_checked(
+      c,
+      ck_bind_local(c, env, name, t, false, at),
+      ck_bind_local_scope_frame_checked(c, env, name, t, false, at, ordered)
+    )
+  }
+}
+
+pub theorem pattern_record_frame_checked(
+  j: Nat,
+  c: Checker,
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  name: Text,
+  pos: Positional,
+  ih_ctor_pattern: PatternIH_ctor_pattern_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_record(j, c, t, env, span, at, name, pos)) {
+  match pos: CkScopeChecked(c, pattern_record(j, c, t, env, span, at, name, pos)) {
+    PositionalOk(args) => pattern_rewrap_frame_checked(
+      c,
+      ck_ctor_pattern_in(j, c, name, args, t, env, span, at),
+      ih_ctor_pattern(c, name, args, t, env, span, at, ordered)
+    )
+    PositionalErr(e) => pattern_lift_frame_checked(
+      c,
+      env,
+      ck_rewrap1(ck_error(c, e, span)),
+      checked_frame_read(
+        c,
+        ck_rewrap1(ck_error(c, e, span)),
+        frame_rewrap(c, ck_error(c, e, span), ck_error_frame(c, e, span)),
+        error_frame_rewrap(c, ck_error(c, e, span), ck_error_frame_errors(c, e, span)),
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem pattern_step_frame_checked(
+  j: Nat,
+  c: Checker,
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  p: SurfacePattern,
+  ih_ctor_pattern: PatternIH_ctor_pattern_checked(j),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_step(j, c, t, env, span, at, p)) {
+  match p: CkScopeChecked(c, pattern_step(j, c, t, env, span, at, p)) {
+    PtWild => pattern_return_frame_checked(c, env, Star, ordered)
+    PtBind(name) => pattern_bind_name_frame_checked(
+      j,
+      c,
+      t,
+      env,
+      span,
+      at,
+      name,
+      datas_nullary_expected(ck_datas_of(c), name, ck_resolve(c, t)),
+      ih_ctor_pattern,
+      ordered
+    )
+    PtInt(negative, magnitude) => pattern_bind_one_frame_checked(
+      Ty,
+      Unit,
+      c,
+      (i: Ty, c1: Checker) => pattern_bind_one(
+        Unit,
+        Unit,
+        (ignored: Unit, c2: Checker) => pattern_lift(env, ck_pattern_literal(c2, i, t, span)),
+        pattern_literal_record(c1, negative, magnitude, i, span)
+      ),
+      ck_fresh_int(c),
+      checked_frame_read(
+        c,
+        ck_fresh_int(c),
+        ck_fresh_int_read_frame(c),
+        ck_fresh_int_read_frame_errors(c),
+        ordered
+      ),
+      i => c1 => o_c1 => pattern_bind_one_frame_checked(
+        Unit,
+        Unit,
+        c1,
+        (ignored: Unit, c2: Checker) => pattern_lift(env, ck_pattern_literal(c2, i, t, span)),
+        pattern_literal_record(c1, negative, magnitude, i, span),
+        checked_frame_read(
+          c1,
+          pattern_literal_record(c1, negative, magnitude, i, span),
+          pattern_literal_record_frame(c1, negative, magnitude, i, span),
+          pattern_literal_record_frame_errors(c1, negative, magnitude, i, span),
+          o_c1
+        ),
+        ignored => c2 => o_c2 => pattern_lift_frame_checked(
+          c2,
+          env,
+          ck_pattern_literal(c2, i, t, span),
+          ck_pattern_literal_run_frame_checked(c2, i, t, span, o_c2)
+        )
+      )
+    )
+    PtBool(b) => pattern_lift_frame_checked(
+      c,
+      env,
+      ck_pattern_literal(c, TyBool, t, span),
+      ck_pattern_literal_run_frame_checked(c, TyBool, t, span, ordered)
+    )
+    PtText(s) => pattern_lift_frame_checked(
+      c,
+      env,
+      ck_pattern_literal(c, TyText, t, span),
+      ck_pattern_literal_run_frame_checked(c, TyText, t, span, ordered)
+    )
+    PtCtor(name, args) => pattern_rewrap_frame_checked(
+      c,
+      ck_ctor_pattern_in(j, c, name, args, t, env, span, at),
+      ih_ctor_pattern(c, name, args, t, env, span, at, ordered)
+    )
+    PtRecord(name, fields) => pattern_record_frame_checked(
+      j,
+      c,
+      t,
+      env,
+      span,
+      at,
+      name,
+      datas_positional_expected(ck_datas_of(c), name, fields, ck_resolve(c, t)),
+      ih_ctor_pattern,
+      ordered
+    )
+    PtOther(what) => pattern_lift_frame_checked(
+      c,
+      env,
+      ck_rewrap1(ck_error(c, cat2("this pattern is not supported yet: ", what), span)),
+      checked_frame_read(
+        c,
+        ck_rewrap1(ck_error(c, cat2("this pattern is not supported yet: ", what), span)),
+        frame_rewrap(
+          c,
+          ck_error(c, cat2("this pattern is not supported yet: ", what), span),
+          ck_error_frame(c, cat2("this pattern is not supported yet: ", what), span)
+        ),
+        error_frame_rewrap(
+          c,
+          ck_error(c, cat2("this pattern is not supported yet: ", what), span),
+          ck_error_frame_errors(c, cat2("this pattern is not supported yet: ", what), span)
+        ),
+        ordered
+      )
+    )
+  }
+}
+
+pub def PatternAll_checked(
+  k: Nat
+): Prop := And(
+  PatternIH_pattern_checked(k),
+  And(PatternIH_ctor_pattern_checked(k), PatternIH_ctor_args_checked(k))
+)
+pub theorem pattern_all_checked(k: Nat): PatternAll_checked(k) {
+  match k: PatternAll_checked(k) {
+    Zero => AndIntro(
+      c => p => t => env => span => at => ordered => AndIntro(
+        ordered,
+        (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+      ),
+      AndIntro(
+        c => name => args => t => env => span => at => ordered => AndIntro(
+          ordered,
+          (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+        ),
+        c => args => fields => borrowed => env => span => at => ordered => AndIntro(
+          ordered,
+          (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+        )
+      )
+    )
+    Succ(j) => {
+      let ih: PatternAll_checked(j) := pattern_all_checked(j)
+      AndIntro(
+        c => p => t => env => span => at => ordered => Eq::subst(
+          (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+          Eq::sym(pattern_pattern_succ_unf(j, c, p, t, env, span, at)),
+          pattern_step_frame_checked(j, c, t, env, span, at, p, And::left(And::right(ih)), ordered)
+        ),
+        AndIntro(
+          c => name => args => t => env => span => at => ordered => Eq::subst(
+            (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+            Eq::sym(pattern_ctor_pattern_succ_unf(j, c, name, args, t, env, span, at)),
+            pattern_ctor_step_frame_checked(
+              j,
+              c,
+              name,
+              args,
+              t,
+              env,
+              span,
+              at,
+              ty_borrow_mode(ck_resolve(c, t)),
+              And::right(And::right(ih)),
+              ordered
+            )
+          ),
+          c => args => fields => borrowed => env => span => at => ordered => Eq::subst(
+            (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+            Eq::sym(pattern_ctor_args_succ_unf(j, c, args, fields, borrowed, env, span, at)),
+            pattern_args_step_frame_checked(
+              j,
+              c,
+              fields,
+              borrowed,
+              env,
+              span,
+              at,
+              args,
+              And::left(ih),
+              And::right(And::right(ih)),
+              ordered
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+pub theorem ck_pattern_scope_frame_checked(
+  k: Nat,
+  c: Checker,
+  p: SurfacePattern,
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  ordered: CkOrdered(c)
+): CkScopeChecked(
+  c,
+  ck_pattern_in(k, c, p, t, env, span, at)
+) { And::left(pattern_all_checked(k))(c, p, t, env, span, at, ordered) }
+
+pub theorem ck_ctor_pattern_scope_frame_checked(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  ordered: CkOrdered(c)
+): CkScopeChecked(
+  c,
+  ck_ctor_pattern_in(k, c, name, args, t, env, span, at)
+) { And::left(And::right(pattern_all_checked(k)))(c, name, args, t, env, span, at, ordered) }
+
+pub theorem ck_ctor_args_scope_frame_checked(
+  k: Nat,
+  c: Checker,
+  args: List(SurfacePattern),
+  fields: List(DataField),
+  borrowed: Option(Bool),
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, ck_ctor_args_in(k, c, args, fields, borrowed, env, span, at)) {
+  And::right(And::right(pattern_all_checked(k)))(c, args, fields, borrowed, env, span, at, ordered)
+}
+pub theorem ck_pattern_frame_checked(
+  c: Checker,
+  p: SurfacePattern,
+  t: Ty,
+  env: Scope,
+  span: TySpan,
+  at: Nat,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, ck_pattern(c, p, t, env, span, at)) {
+  pattern_rewrap_frame_checked(
+    c,
+    ck_pattern_in(ck_steps_of(c), c, p, t, env, span, at),
+    ck_pattern_scope_frame_checked(ck_steps_of(c), c, p, t, env, span, at, ordered)
+  )
+}

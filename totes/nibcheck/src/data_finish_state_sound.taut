@@ -1,0 +1,150 @@
+import "declaration_program_sound.taut"
+import "written_sound.taut"
+
+pub theorem mark_preserves_view<A: Type>(
+  r#view: (Checker) -> A,
+  replace: ∀ c: Checker. ∀ d: Datas. r#view(summary_replace(c, d)) = r#view(c),
+  entries: List(Pair(Text, Data)),
+  c: Checker
+): r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) {
+  match entries: r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) {
+    Nil => Refl
+    Cons(entry, rest) => Eq::trans(
+      Eq::congr(
+        (m: Mut1(Unit, Checker)) => r#view(ck_st(m)),
+        Eq::trans(
+          summary_mark_step(entry, rest, c),
+          ck_rewrap1_id(
+            ck_mark_recursive(
+              rest,
+              summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(entry)))
+            )
+          )
+        )
+      ),
+      Eq::trans(
+        mark_preserves_view(
+          r#view,
+          replace,
+          rest,
+          summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(entry)))
+        ),
+        replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(entry)))
+      )
+    )
+  }
+}
+pub theorem finish_stmts_input_clean(
+  program: List(SurfaceStmt),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_finish_stmts(program, c)))
+): DiagnosticClean(c) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+    And::right(ck_finish_stmts_accepts(program, c, clean)),
+    clean
+  )
+}
+pub theorem finish_datas_after_input_clean(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(ignored, next) => finish_stmts_input_clean(
+      program,
+      summary_replace(next, datas_summarize(ck_datas_of(next))),
+      Eq::subst(
+        (r: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(r)),
+        ck_rewrap1_id(
+          ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+        ),
+        clean
+      )
+    )
+  }
+}
+pub theorem ck_finish_datas_errors(
+  c: Checker,
+  program: List(SurfaceStmt)
+): CkErrorFrame(c, ck_finish_datas(c, program)) {
+  clean => Eq::trans(
+    Eq::sym(
+      mark_preserves_view(
+        List(TypeError),
+        decl_names_errors,
+        state => datas => Refl,
+        Ordmap::entries(summary_decls(ck_datas_of(c))),
+        c
+      )
+    ),
+    finish_datas_after_input_clean(
+      program,
+      ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        summary_finish_datas_unf(c, program),
+        clean
+      )
+    )
+  )
+}
+pub theorem finish_datas_after_context(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
+): written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) {
+  match m: written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) {
+    mut1(ignored, next) => Eq::congr(
+      (r: Mut1(Unit, Checker)) => written_context(ck_st(r)),
+      Eq::trans(
+        ck_rewrap1_id(
+          ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+        ),
+        And::right(
+          ck_finish_stmts_accepts(
+            program,
+            summary_replace(next, datas_summarize(ck_datas_of(next))),
+            Eq::subst(
+              (r: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(r)),
+              ck_rewrap1_id(
+                ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+              ),
+              clean
+            )
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem ck_finish_datas_context(
+  c: Checker,
+  program: List(SurfaceStmt),
+  clean: DiagnosticClean(ck_st(ck_finish_datas(c, program)))
+): written_context(ck_st(ck_finish_datas(c, program))) = written_context(c) {
+  Eq::trans(
+    Eq::congr(
+      (m: Mut1(Unit, Checker)) => written_context(ck_st(m)),
+      summary_finish_datas_unf(c, program)
+    ),
+    Eq::trans(
+      finish_datas_after_context(
+        program,
+        ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          summary_finish_datas_unf(c, program),
+          clean
+        )
+      ),
+      mark_preserves_view(
+        Pair(Bool, Bool),
+        written_context,
+        state => datas => Refl,
+        Ordmap::entries(summary_decls(ck_datas_of(c))),
+        c
+      )
+    )
+  )
+}

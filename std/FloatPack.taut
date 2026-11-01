@@ -1,0 +1,1613 @@
+// `float_pack` and `float_of_frac` taken apart, branch by branch.
+
+import "FloatBoundsA.taut"
+import "FloatBoundsB.taut"
+import "FloatBoundsC.taut"
+import "FloatError.taut"
+import "FloatEncode.taut"
+
+// ---- powers of two, in order ------------------------------------------------------
+
+// `a + 1 <= b` as `NatLe(succ(a), b)`.
+pub theorem nat_lt_le(
+  a: Nat,
+  b: Nat,
+  h: IntLe(Int::add(IntOfNat(a), 1), IntOfNat(b))
+): NatLe(Succ(a), b) {
+  Int::le_rw(
+    Int::add(IntOfNat(a), 1),
+    IntOfNat(Succ(a)),
+    IntOfNat(b),
+    IntOfNat(b),
+    float_succ_shape(a),
+    Refl,
+    h
+  )
+}
+
+pub theorem lt_le_contra(
+  a: Nat,
+  b: Nat,
+  l: IntLe(Int::add(IntOfNat(a), 1), IntOfNat(b)),
+  h: NatLe(b, a)
+): False {
+  int_le_succ_self(
+    IntOfNat(a),
+    Int::le_trans(Int::add(IntOfNat(a), 1), IntOfNat(b), IntOfNat(a), l, h)
+  )
+}
+
+pub theorem pow2_pos(d: Nat): NatLe(1, Nat::pow2(d)) {
+  pow2_pos_at(d, Nat::pow2(d), nat_lt_pow2(d))
+}
+
+pub theorem pow2_mono(a: Nat, d: Nat): NatLe(Nat::pow2(a), Nat::pow2(a + d)) {
+  Eq::subst(
+    (w: Nat) => NatLe(Nat::pow2(a), w),
+    Eq::sym(nat_pow2_add(a, d)),
+    pow2_mono_at(Nat::pow2(a), Nat::pow2(d), pow2_pos(d))
+  )
+}
+
+pub theorem pow2_le(a: Nat, b: Nat, h: NatLe(a, b)): NatLe(Nat::pow2(a), Nat::pow2(b)) {
+  Eq::subst(
+    (w: Nat) => NatLe(Nat::pow2(a), Nat::pow2(w)),
+    Eq::sym(Nat::le_gap(a, b, yn_of_nat_le(a, b, h))),
+    pow2_mono(a, b - a)
+  )
+}
+
+pub theorem float_yn_or(o: Bool): Or(o = true, o = false) {
+  match o: Or(o = true, o = false) {
+    true => OrInl(Refl)
+    false => OrInr(Refl)
+  }
+}
+
+// ---- the length of the digits ---------------------------------------------------
+
+pub theorem len_lo(
+  S: Nat,
+  L: Nat,
+  hb: BitLen(S, L),
+  hlo: NatLe(72057594037927936, S)
+): NatLe(56, L) {
+  match int_lt_or_ge(IntOfNat(L), IntOfNat(56)): NatLe(56, L) {
+    OrInl(h) => False::elim(
+      len_lo_contra(
+        S,
+        Nat::pow2(Succ(L)),
+        And::right(hb),
+        pow2_le(Succ(L), 56, nat_lt_le(L, 56, h)),
+        hlo
+      )
+    )
+    OrInr(h) => h
+  }
+}
+
+pub theorem len_hi(
+  S: Nat,
+  L: Nat,
+  hb: BitLen(S, L),
+  hhi: NatLe(S, 288230376151711744)
+): NatLe(L, 58) {
+  match int_lt_or_ge(IntOfNat(58), IntOfNat(L)): NatLe(L, 58) {
+    OrInl(h) => False::elim(
+      len_hi_contra(S, Nat::pow2(L), And::left(hb), pow2_le(59, L, nat_lt_le(58, L, h)), hhi)
+    )
+    OrInr(h) => h
+  }
+}
+
+pub theorem len_j(
+  j: Nat,
+  L: Nat,
+  e: L = 56 + j,
+  h: NatLe(56 + j, 58)
+): Or(L = 56, Or(L = 57, L = 58)) {
+  match j: Or(L = 56, Or(L = 57, L = 58)) {
+    Zero => OrInl(e)
+    Succ(j1) => match j1: Or(L = 56, Or(L = 57, L = 58)) {
+      Zero => OrInr(OrInl(e))
+      Succ(j2) => match j2: Or(L = 56, Or(L = 57, L = 58)) {
+        Zero => OrInr(OrInr(e))
+        Succ(j3) => False::elim(len_j_contra(j3, h))
+      }
+    }
+  }
+}
+
+// The length of `S` in `[2^56, 2^58]` is 56, 57 or 58.
+pub theorem len_cases(
+  S: Nat,
+  L: Nat,
+  hb: BitLen(S, L),
+  hlo: NatLe(72057594037927936, S),
+  hhi: NatLe(S, 288230376151711744)
+): Or(L = 56, Or(L = 57, L = 58)) {
+  let eg: L = 56 + (L - 56) := Nat::le_gap(56, L, yn_of_nat_le(56, L, len_lo(S, L, hb, hlo)))
+  len_j(L - 56, L, eg, Eq::subst((w: Nat) => NatLe(w, 58), eg, len_hi(S, L, hb, hhi)))
+}
+
+// ---- `float_pack` once unfolded --------------------------------------------------
+
+pub theorem nat_eq_zero_no(S: Nat, h: NatLe(1, S)): S == 0 = false {
+  match S: S == 0 = false {
+    Zero => False::elim(false_ne_true(h))
+    Succ(S0) => Refl
+  }
+}
+
+pub fn float_pack_by(o: Bool, s: Nat, m: Nat, e: Nat): Nat {
+  match o: Nat {
+    true => Float::zero_raw(s)
+    false => Float::pack_at(s, m, e, Nat::max(e + Float::len(m) - 53, 2926))
+  }
+}
+
+pub theorem float_pack_eq(
+  s: Nat,
+  S: Nat,
+  e: Nat,
+  h: NatLe(1, S)
+): Float::pack(s, S, e) = Float::pack_at(s, S, e, Nat::max(e + Float::len(S) - 53, 2926)) {
+  Eq::subst(
+    (o: Bool) => float_pack_by(o, s, S, e) = Float::pack_at(s, S, e, Nat::max(e + Float::len(S) - 53, 2926)),
+    Eq::sym(nat_eq_zero_no(S, h)),
+    Refl
+  )
+}
+
+pub theorem flen_of(
+  S: Nat,
+  h: NatLe(1, S)
+): Float::len(S) = Succ(Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
+  match S: Float::len(S) = Succ(Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
+    Zero => False::elim(false_ne_true(h))
+    Succ(S0) => Refl
+  }
+}
+
+pub theorem len_spec(
+  S: Nat,
+  h: NatLe(1, S),
+  hhi: NatLe(S, 288230376151711744)
+): BitLen(S, Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
+  match S: BitLen(S, Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
+    Zero => False::elim(false_ne_true(h))
+    Succ(S0) => bitlen_spec(
+      129,
+      S0,
+      len_spec_bound(S0, Nat::pow2(130), hhi, pow2_le(59, 130, Refl))
+    )
+  }
+}
+
+// ---- the three ways `float_encode` reads back -------------------------------------
+
+pub theorem g_eq(
+  g: Nat,
+  h0: Nat,
+  eg: g = 4503599627370496 + h0,
+  hc: NatLe(4503599627370496 + g, 9007199254740992)
+): g = 4503599627370496 {
+  match h0: g = 4503599627370496 {
+    Zero => eg
+    Succ(h1) => False::elim(
+      g_contra(
+        h1,
+        Eq::subst((w: Nat) => NatLe(4503599627370496 + w, 9007199254740992), eg, hc)
+      )
+    )
+  }
+}
+
+pub theorem decode_hi(
+  s: Nat,
+  g: Nat,
+  T: Nat,
+  hs: s < 2 = true,
+  hc: NatLe(4503599627370496 + g, 9007199254740992),
+  hfin: EncodeFinite(4503599627370496 + g, 2926 + T)
+): DecodeOk(s, 4503599627370496 + g, 2926 + T) {
+  match int_lt_or_ge(
+    IntOfNat(g),
+    IntOfNat(4503599627370496)
+  ): DecodeOk(s, 4503599627370496 + g, 2926 + T) {
+    OrInl(l) => float_decode_normal(
+      s,
+      T,
+      g,
+      hs,
+      yn_of_nat_le(Succ(g), 4503599627370496, nat_lt_le(g, 4503599627370496, l)),
+      hfin
+    )
+    OrInr(l) => {
+      let eg: g = 4503599627370496 := g_eq(
+        g,
+        g - 4503599627370496,
+        Nat::le_gap(4503599627370496, g, yn_of_nat_le(4503599627370496, g, l)),
+        hc
+      )
+      Eq::subst(
+        (w: Nat) => DecodeOk(s, 4503599627370496 + w, 2926 + T),
+        Eq::sym(eg),
+        float_decode_carry(
+          s,
+          T,
+          hs,
+          Eq::subst(
+            (w: Nat) => EncodeFinite(4503599627370496 + w, 2926 + T),
+            eg,
+            hfin
+          )
+        )
+      )
+    }
+  }
+}
+
+pub theorem decode_fin(
+  s: Nat,
+  c: Nat,
+  T: Nat,
+  hs: s < 2 = true,
+  hc: NatLe(c, 9007199254740992),
+  hct: Or(NatLe(4503599627370496, c), 2926 + T = 2926),
+  hfin: EncodeFinite(c, 2926 + T)
+): DecodeOk(s, c, 2926 + T) {
+  match int_lt_or_ge(
+    IntOfNat(c),
+    IntOfNat(4503599627370496)
+  ): DecodeOk(s, c, 2926 + T) {
+    OrInl(l) => match hct: DecodeOk(s, c, 2926 + T) {
+      OrInl(h52) => False::elim(lt_le_contra(c, 4503599627370496, l, h52))
+      OrInr(et) => Eq::subst(
+        (w: Nat) => DecodeOk(s, c, w),
+        Eq::sym(et),
+        float_decode_sub(
+          s,
+          c,
+          hs,
+          yn_of_nat_le(Succ(c), 4503599627370496, nat_lt_le(c, 4503599627370496, l))
+        )
+      )
+    }
+    OrInr(l) => {
+      let eg: c = 4503599627370496 + (c - 4503599627370496) := Nat::le_gap(4503599627370496, c, yn_of_nat_le(4503599627370496, c, l))
+      Eq::subst(
+        (w: Nat) => DecodeOk(s, w, 2926 + T),
+        Eq::sym(eg),
+        decode_hi(
+          s,
+          c - 4503599627370496,
+          T,
+          hs,
+          Eq::subst((w: Nat) => NatLe(w, 9007199254740992), eg, hc),
+          Eq::subst((w: Nat) => EncodeFinite(w, 2926 + T), eg, hfin)
+        )
+      )
+    }
+  }
+}
+
+// What `float_encode` writes for `c <= 2^53` (and `c >= 2^52` above the
+// smallest exponent) is read back as `c 2^t`, or it is an infinity.
+pub theorem decode_any_T(
+  s: Nat,
+  c: Nat,
+  T: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  hc: NatLe(c, 9007199254740992),
+  hct: Or(NatLe(4503599627370496, c), 2926 + T = 2926),
+  K: (DecodeOk(s, c, 2926 + T)) -> G(Float::encode(s, c, 2926 + T)),
+  inf: G(Float::inf_raw(s))
+): G(Float::encode(s, c, 2926 + T)) {
+  match float_yn_or(
+    (2926 + T - 2926) * 4503599627370496 + c < 9218868437227405312
+  ): G(Float::encode(s, c, 2926 + T)) {
+    OrInl(hy) => K(decode_fin(s, c, T, hs, hc, hct, hy))
+    OrInr(hn) => Eq::subst(
+      (o: Bool) => G(float_encode_by(o, s, c, 2926 + T)),
+      Eq::sym(hn),
+      inf
+    )
+  }
+}
+
+pub theorem decode_any(
+  s: Nat,
+  c: Nat,
+  t: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  hc: NatLe(c, 9007199254740992),
+  ht: NatLe(2926, t),
+  hct: Or(NatLe(4503599627370496, c), t = 2926),
+  K: (DecodeOk(s, c, t)) -> G(Float::encode(s, c, t)),
+  inf: G(Float::inf_raw(s))
+): G(Float::encode(s, c, t)) {
+  let et: t = 2926 + (t - 2926) := Nat::le_gap(2926, t, yn_of_nat_le(2926, t, ht))
+  Eq::subst(
+    (w: Nat) => G(Float::encode(s, c, w)),
+    Eq::sym(et),
+    decode_any_T(
+      s,
+      c,
+      t - 2926,
+      G,
+      hs,
+      hc,
+      Eq::subst((w: Nat) => Or(NatLe(4503599627370496, c), w = 2926), et, hct),
+      Eq::subst((w: Nat) => (DecodeOk(s, c, w)) -> G(Float::encode(s, c, w)), et, K),
+      inf
+    )
+  )
+}
+
+// ---- what `float_pack` gives, branch by branch -------------------------------------
+
+// The sticky digits `S` of `p / q` at the exponent `e`: `S q 2^e` within
+// `q 2^e` of `2 p 2^3999 = p 2^4000`, all scaled by `2^4000`.
+pub def ScaledOk(
+  S: Nat,
+  P: Nat,
+  Q: Nat,
+  Pe: Nat,
+  Z: Nat
+): Prop := And(
+  NatLe(S * (Q * Pe), P * Z + Q * Pe),
+  NatLe(P * Z, S * (Q * Pe) + Q * Pe)
+)
+
+// What is left to show of a finite result `c 2^t`: it reads back, and is
+// within the error of `P / Q`.
+pub def FinK(s: Nat, P: Nat, Q: Nat, G: (Nat) -> Prop): Prop :=
+∀ c: Nat. ∀ t: Nat. (
+  DecodeOk(s, c, t)
+) -> (
+  ErrOk(c * Nat::pow2(t) * Q, P * Nat::pow2(4000), Q * Nat::pow2(2926))
+) -> G(Float::encode(s, c, t))
+
+pub fn nat_max_by(o: Bool, a: Nat, b: Nat): Nat {
+  match o: Nat {
+    false => a
+    true => b
+  }
+}
+
+pub theorem nat_max_no(a: Nat, b: Nat, h: a < b = false): Nat::max(a, b) = a {
+  Eq::subst((o: Bool) => nat_max_by(o, a, b) = a, Eq::sym(h), Refl)
+}
+
+pub theorem nat_max_yes(a: Nat, b: Nat, h: a < b = true): Nat::max(a, b) = b {
+  Eq::subst((o: Bool) => nat_max_by(o, a, b) = b, Eq::sym(h), Refl)
+}
+
+pub fn float_pack_at_by(o: Bool, s: Nat, m: Nat, e: Nat, t: Nat): Nat {
+  match o: Nat {
+    true => Float::encode(s, m * Nat::pow2(e - t), t)
+    false => Float::round_shift(s, m, t, t - e)
+  }
+}
+
+pub theorem pack_at_no(
+  s: Nat,
+  m: Nat,
+  e: Nat,
+  t: Nat,
+  h: t <= e = false
+): Float::pack_at(s, m, e, t) = Float::round_shift(s, m, t, t - e) {
+  Eq::subst(
+    (o: Bool) => float_pack_at_by(o, s, m, e, t) = Float::round_shift(s, m, t, t - e),
+    Eq::sym(h),
+    Refl
+  )
+}
+
+pub theorem le_add_no(e: Nat, k0: Nat): e + Succ(k0) <= e = false {
+  match float_yn_or(e + Succ(k0) <= e): e + Succ(k0) <= e = false {
+    OrInl(h) => False::elim(le_add_contra(e, k0, nat_le_of_yn(e + Succ(k0), e, h)))
+    OrInr(h) => h
+  }
+}
+
+pub theorem le2926_no(
+  e: Nat,
+  kk: Nat,
+  h2: NatLe(Succ(e + kk), 2926)
+): 2926 <= e = false {
+  match float_yn_or(2926 <= e): 2926 <= e = false {
+    OrInl(h) => False::elim(le2926_contra(e, kk, nat_le_of_yn(2926, e, h), h2))
+    OrInr(h) => h
+  }
+}
+
+pub theorem succ_pred(k: Nat, h: NatLe(1, k)): k = Succ(k - 1) {
+  match k: k = Succ(k - 1) {
+    Zero => False::elim(false_ne_true(h))
+    Succ(k1) => Refl
+  }
+}
+
+pub theorem enc_zero(s: Nat): Float::encode(s, 0, 2926) = Float::zero_raw(s) {
+  Refl
+}
+
+pub theorem pow2_split_eq(
+  a: Nat,
+  b: Nat
+): And(
+  NatLe(Nat::pow2(a + b), Nat::pow2(a) * Nat::pow2(b)),
+  NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(a + b))
+) {
+  AndIntro(
+    int_le_of_eq(
+      IntOfNat(Nat::pow2(a + b)),
+      IntOfNat(Nat::pow2(a) * Nat::pow2(b)),
+      Eq::congr(IntOfNat, nat_pow2_add(a, b))
+    ),
+    int_le_of_eq(
+      IntOfNat(Nat::pow2(a) * Nat::pow2(b)),
+      IntOfNat(Nat::pow2(a + b)),
+      Eq::congr(IntOfNat, Eq::sym(nat_pow2_add(a, b)))
+    )
+  )
+}
+
+// A normal result: `t = e + k`, `k` digits dropped, `2^52 2^k <= S < 2^53 2^k`.
+pub theorem pack_normal(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  kk0: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hlo: NatLe(72057594037927936, S),
+  hK52: NatLe(4503599627370496 * Nat::pow2(Succ(kk0)), S),
+  hKS: NatLe(Succ(S), 9007199254740992 * Nat::pow2(Succ(kk0))),
+  h16: NatLe(16, Nat::pow2(Succ(kk0))),
+  hk: Succ(kk0) < 125 = true,
+  hn: e + Succ(kk0) < 2926 = false
+): G(Float::pack_at(s, S, e, e + Succ(kk0))) {
+  let t: Nat := e + Succ(kk0)
+  let K: Nat := Nat::pow2(Succ(kk0))
+  let c: Nat := Nat::div_nz(S, Nat::pow2(Succ(kk0)), Nat::pow2_ne_zero(Succ(kk0))) + round_digit(Nat::div_nz(S, Nat::pow2(Succ(kk0)), Nat::pow2_ne_zero(Succ(kk0))), Nat::rem_nz(S, Nat::pow2(Succ(kk0)), Nat::pow2_ne_zero(Succ(kk0))), Nat::pow2(kk0))
+  let ro: And(
+    Float::round_shift(s, S, t, Succ(kk0)) = Float::encode(s, c, t),
+    RoundOk(c, S, K)
+  ) := round_shift_ok(s, S, t, kk0, hk)
+  let hr: RoundOk(c, S, K) := And::right(ro)
+  let hT: And(
+    NatLe(Nat::pow2(t), Nat::pow2(e) * K),
+    NatLe(Nat::pow2(e) * K, Nat::pow2(t))
+  ) := pow2_split_eq(e, Succ(kk0))
+  let hc: NatLe(
+    c,
+    9007199254740992
+  ) := match int_lt_or_ge(IntOfNat(9007199254740992), IntOfNat(c)): NatLe(c, 9007199254740992) {
+    OrInl(l) => False::elim(
+      cle53_contra(c, S, K, nat_lt_le(9007199254740992, c, l), And::left(hr), hKS)
+    )
+    OrInr(l) => l
+  }
+  let h52: NatLe(
+    4503599627370496,
+    c
+  ) := match int_lt_or_ge(IntOfNat(c), IntOfNat(4503599627370496)): NatLe(4503599627370496, c) {
+    OrInl(l) => False::elim(
+      cge52_contra(c, S, K, nat_lt_le(c, 4503599627370496, l), And::right(hr), hK52, k_one(K, h16))
+    )
+    OrInr(l) => l
+  }
+  let he: ErrOk(
+    c * Nat::pow2(t) * Q,
+    P * Nat::pow2(4000),
+    Q * Nat::pow2(2926)
+  ) := err_hi(
+    c * Nat::pow2(t) * Q,
+    S * (Q * Nat::pow2(e)),
+    P * Nat::pow2(4000),
+    Q * Nat::pow2(e),
+    K * (Q * Nat::pow2(e)),
+    Q * Nat::pow2(2926),
+    And::left(hsc),
+    And::right(hsc),
+    n_h3(c, Nat::pow2(t), Q, Nat::pow2(e), K, S, And::left(hr), And::left(hT)),
+    n_h4(c, Nat::pow2(t), Q, Nat::pow2(e), K, S, And::right(hr), And::right(hT)),
+    n_h5(Q, Nat::pow2(e), K, S, hK52),
+    n_h6(Q, Nat::pow2(e), S, hlo)
+  )
+  let g: G(
+    Float::encode(s, c, t)
+  ) := decode_any(
+    s,
+    c,
+    t,
+    G,
+    hs,
+    hc,
+    nat_ge_of_not_lt(t, 2926, hn),
+    OrInl(h52),
+    (hd: DecodeOk(s, c, t)) => fin(c, t, hd, he),
+    inf
+  )
+  Eq::subst(
+    (w: Nat) => G(w),
+    Eq::sym(
+      Eq::trans(
+        pack_at_no(s, S, e, t, le_add_no(e, kk0)),
+        Eq::trans(
+          Eq::congr(⟦Float::round_shift(s, S, t, □)⟧, nat_sub_add_left(e, Succ(kk0))),
+          And::left(ro)
+        )
+      )
+    ),
+    g
+  )
+}
+
+// At the smallest exponent, `k = 2926 - e` digits dropped, `k < 125`.
+pub theorem pack_sub_round(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  k0: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hKS: NatLe(Succ(S), 4503599627370496 * Nat::pow2(Succ(k0))),
+  h16: NatLe(16, Nat::pow2(Succ(k0))),
+  hk: Succ(k0) < 125 = true,
+  hT: And(
+    NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(Succ(k0))),
+    NatLe(Nat::pow2(e) * Nat::pow2(Succ(k0)), Nat::pow2(2926))
+  )
+): G(Float::round_shift(s, S, 2926, Succ(k0))) {
+  let K: Nat := Nat::pow2(Succ(k0))
+  let c: Nat := Nat::div_nz(S, Nat::pow2(Succ(k0)), Nat::pow2_ne_zero(Succ(k0))) + round_digit(Nat::div_nz(S, Nat::pow2(Succ(k0)), Nat::pow2_ne_zero(Succ(k0))), Nat::rem_nz(S, Nat::pow2(Succ(k0)), Nat::pow2_ne_zero(Succ(k0))), Nat::pow2(k0))
+  let ro: And(
+    Float::round_shift(s, S, 2926, Succ(k0)) = Float::encode(s, c, 2926),
+    RoundOk(c, S, K)
+  ) := round_shift_ok(s, S, 2926, k0, hk)
+  let hr: RoundOk(c, S, K) := And::right(ro)
+  let hc: NatLe(
+    c,
+    9007199254740992
+  ) := match int_lt_or_ge(IntOfNat(9007199254740992), IntOfNat(c)): NatLe(c, 9007199254740992) {
+    OrInl(l) => False::elim(
+      cle53_contra(c, S, K, nat_lt_le(9007199254740992, c, l), And::left(hr), sub_hks2(S, K, hKS))
+    )
+    OrInr(l) => l
+  }
+  let he: ErrOk(
+    c * Nat::pow2(2926) * Q,
+    P * Nat::pow2(4000),
+    Q * Nat::pow2(2926)
+  ) := err_lo(
+    c * Nat::pow2(2926) * Q,
+    S * (Q * Nat::pow2(e)),
+    P * Nat::pow2(4000),
+    Q * Nat::pow2(e),
+    Q * Nat::pow2(2926),
+    And::left(hsc),
+    And::right(hsc),
+    s_h3(c, Nat::pow2(2926), Q, Nat::pow2(e), K, S, And::left(hr), And::left(hT), And::right(hT)),
+    s_h4(c, Nat::pow2(2926), Q, Nat::pow2(e), K, S, And::right(hr), And::right(hT)),
+    s_h8(Q, Nat::pow2(e), K, Nat::pow2(2926), h16, And::right(hT))
+  )
+  let g: G(
+    Float::encode(s, c, 2926)
+  ) := decode_any(
+    s,
+    c,
+    2926,
+    G,
+    hs,
+    hc,
+    Int::le_refl(IntOfNat(2926)),
+    OrInr(Refl),
+    (hd: DecodeOk(s, c, 2926)) => fin(c, 2926, hd, he),
+    inf
+  )
+  Eq::subst((w: Nat) => G(w), Eq::sym(And::left(ro)), g)
+}
+
+// So far below that every digit is dropped: a zero.
+pub theorem pack_sub_zero(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  k: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hhi: NatLe(S, 288230376151711744),
+  hn: k < 125 = false,
+  hT: NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(2926))
+): G(Float::round_shift(s, S, 2926, k)) {
+  let hK: NatLe(
+    1152921504606846976,
+    Nat::pow2(k)
+  ) := pow2_le(60, k, le60(k, nat_ge_of_not_lt(k, 125, hn)))
+  let he: ErrOk(
+    0 * Nat::pow2(2926) * Q,
+    P * Nat::pow2(4000),
+    Q * Nat::pow2(2926)
+  ) := AndIntro(
+    z_err_a(
+      S,
+      Q,
+      Nat::pow2(e),
+      P,
+      Nat::pow2(4000),
+      Nat::pow2(2926),
+      Nat::pow2(k),
+      And::right(hsc),
+      hhi,
+      hK,
+      hT
+    ),
+    z_err_b(
+      S,
+      Q,
+      Nat::pow2(e),
+      P,
+      Nat::pow2(4000),
+      Nat::pow2(2926),
+      Nat::pow2(k),
+      And::right(hsc),
+      hhi,
+      hK,
+      hT
+    )
+  )
+  let g: G(Float::encode(s, 0, 2926)) := fin(0, 2926, float_decode_sub(s, 0, hs, Refl), he)
+  Eq::subst(
+    (o: Bool) => G(float_round_shift_by(o, s, S, 2926, k)),
+    Eq::sym(hn),
+    Eq::subst((w: Nat) => G(w), enc_zero(s), g)
+  )
+}
+
+// At the smallest exponent: `e + k' < 2926` for the `k'` a normal result would drop.
+pub theorem pack_sub(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  kk0: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hhi: NatLe(S, 288230376151711744),
+  hKS: NatLe(Succ(S), 9007199254740992 * Nat::pow2(Succ(kk0))),
+  h16: NatLe(16, Nat::pow2(Succ(kk0))),
+  hy: e + Succ(kk0) < 2926 = true
+): G(Float::pack_at(s, S, e, 2926)) {
+  let hy2: NatLe(
+    Succ(e + Succ(kk0)),
+    2926
+  ) := nat_le_of_yn(Succ(e + Succ(kk0)), 2926, hy)
+  let k: Nat := 2926 - e
+  let eg: 2926 = e + k := Nat::le_gap(e, 2926, yn_of_nat_le(e, 2926, e_le_2926(e, Succ(kk0), hy2)))
+  let hkk: NatLe(
+    Succ(Succ(kk0)),
+    k
+  ) := kp_ge(
+    e,
+    Succ(kk0),
+    k,
+    hy2,
+    Eq::subst((w: Nat) => NatLe(2926, w), eg, Int::le_refl(IntOfNat(2926)))
+  )
+  let hp: NatLe(2 * Nat::pow2(Succ(kk0)), Nat::pow2(k)) := pow2_le(Succ(Succ(kk0)), k, hkk)
+  let hT0: And(
+    NatLe(Nat::pow2(e + k), Nat::pow2(e) * Nat::pow2(k)),
+    NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(e + k))
+  ) := pow2_split_eq(e, k)
+  let hT: And(
+    NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(k)),
+    NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(2926))
+  ) := Eq::subst(
+    (w: Nat) => And(
+      NatLe(Nat::pow2(w), Nat::pow2(e) * Nat::pow2(k)),
+      NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(w))
+    ),
+    Eq::sym(eg),
+    hT0
+  )
+  let r: G(
+    Float::round_shift(s, S, 2926, k)
+  ) := match float_yn_or(k < 125): G(Float::round_shift(s, S, 2926, k)) {
+    OrInl(hk) => {
+      let ek: k = Succ(k - 1) := succ_pred(
+        k,
+        Int::le_trans(
+          IntOfNat(1),
+          IntOfNat(Succ(Succ(kk0))),
+          IntOfNat(k),
+          nat_le_of_yn(1, Succ(Succ(kk0)), Refl),
+          hkk
+        )
+      )
+      Eq::subst(
+        (w: Nat) => G(Float::round_shift(s, S, 2926, w)),
+        Eq::sym(ek),
+        pack_sub_round(
+          s,
+          P,
+          Q,
+          S,
+          e,
+          k - 1,
+          G,
+          hs,
+          fin,
+          inf,
+          hsc,
+          Eq::subst(
+            (w: Nat) => NatLe(Succ(S), 4503599627370496 * Nat::pow2(w)),
+            ek,
+            sub_hks(S, Nat::pow2(k), Nat::pow2(Succ(kk0)), hKS, hp)
+          ),
+          Eq::subst(
+            (w: Nat) => NatLe(16, Nat::pow2(w)),
+            ek,
+            k16(Nat::pow2(k), Nat::pow2(Succ(kk0)), h16, hp)
+          ),
+          Eq::subst((w: Nat) => w < 125 = true, ek, hk),
+          Eq::subst(
+            (w: Nat) => And(
+              NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(w)),
+              NatLe(Nat::pow2(e) * Nat::pow2(w), Nat::pow2(2926))
+            ),
+            ek,
+            hT
+          )
+        )
+      )
+    }
+    OrInr(hn) => pack_sub_zero(s, P, Q, S, e, k, G, hs, fin, hsc, hhi, hn, And::right(hT))
+  }
+  Eq::subst((w: Nat) => G(w), Eq::sym(pack_at_no(s, S, e, 2926, le2926_no(e, Succ(kk0), hy2))), r)
+}
+
+pub theorem pack_56(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hlo: NatLe(72057594037927936, S),
+  hhi: NatLe(S, 288230376151711744),
+  hb: BitLen(S, 56)
+): G(Float::pack_at(s, S, e, Nat::max(e + Succ(56) - 53, 2926))) {
+  match float_yn_or(
+    e + Succ(3) < 2926
+  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(56) - 53, 2926))) {
+    OrInl(hy) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, w)),
+      Eq::sym(nat_max_yes(e + Succ(3), 2926, hy)),
+      pack_sub(s, P, Q, S, e, 3, G, hs, fin, inf, hsc, hhi, And::right(hb), Refl, hy)
+    )
+    OrInr(hn) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, w)),
+      Eq::sym(nat_max_no(e + Succ(3), 2926, hn)),
+      pack_normal(
+        s,
+        P,
+        Q,
+        S,
+        e,
+        3,
+        G,
+        hs,
+        fin,
+        inf,
+        hsc,
+        hlo,
+        And::left(hb),
+        And::right(hb),
+        Refl,
+        Refl,
+        hn
+      )
+    )
+  }
+}
+
+pub theorem pack_57(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hlo: NatLe(72057594037927936, S),
+  hhi: NatLe(S, 288230376151711744),
+  hb: BitLen(S, 57)
+): G(Float::pack_at(s, S, e, Nat::max(e + Succ(57) - 53, 2926))) {
+  match float_yn_or(
+    e + Succ(4) < 2926
+  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(57) - 53, 2926))) {
+    OrInl(hy) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, w)),
+      Eq::sym(nat_max_yes(e + Succ(4), 2926, hy)),
+      pack_sub(s, P, Q, S, e, 4, G, hs, fin, inf, hsc, hhi, And::right(hb), Refl, hy)
+    )
+    OrInr(hn) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, w)),
+      Eq::sym(nat_max_no(e + Succ(4), 2926, hn)),
+      pack_normal(
+        s,
+        P,
+        Q,
+        S,
+        e,
+        4,
+        G,
+        hs,
+        fin,
+        inf,
+        hsc,
+        hlo,
+        And::left(hb),
+        And::right(hb),
+        Refl,
+        Refl,
+        hn
+      )
+    )
+  }
+}
+
+pub theorem pack_58(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hlo: NatLe(72057594037927936, S),
+  hhi: NatLe(S, 288230376151711744),
+  hb: BitLen(S, 58)
+): G(Float::pack_at(s, S, e, Nat::max(e + Succ(58) - 53, 2926))) {
+  match float_yn_or(
+    e + Succ(5) < 2926
+  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(58) - 53, 2926))) {
+    OrInl(hy) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, w)),
+      Eq::sym(nat_max_yes(e + Succ(5), 2926, hy)),
+      pack_sub(s, P, Q, S, e, 5, G, hs, fin, inf, hsc, hhi, And::right(hb), Refl, hy)
+    )
+    OrInr(hn) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, w)),
+      Eq::sym(nat_max_no(e + Succ(5), 2926, hn)),
+      pack_normal(
+        s,
+        P,
+        Q,
+        S,
+        e,
+        5,
+        G,
+        hs,
+        fin,
+        inf,
+        hsc,
+        hlo,
+        And::left(hb),
+        And::right(hb),
+        Refl,
+        Refl,
+        hn
+      )
+    )
+  }
+}
+
+// The nearest `Float` to `S 2^(e - 4000)` for sticky digits `S` in `[2^56, 2^58]`.
+pub theorem pack_ok(
+  s: Nat,
+  P: Nat,
+  Q: Nat,
+  S: Nat,
+  e: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Q, G),
+  inf: G(Float::inf_raw(s)),
+  hsc: ScaledOk(S, P, Q, Nat::pow2(e), Nat::pow2(4000)),
+  hlo: NatLe(72057594037927936, S),
+  hhi: NatLe(S, 288230376151711744)
+): G(Float::pack(s, S, e)) {
+  let h1: NatLe(1, S) := one_le_of(S, hlo)
+  let L: Nat := Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))
+  let hb: BitLen(S, L) := len_spec(S, h1, hhi)
+  let eq: Float::pack(s, S, e) = Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926)) := Eq::trans(
+    float_pack_eq(s, S, e, h1),
+    Eq::congr(
+      ⟦Float::pack_at(s, S, e, Nat::max(e + □ - 53, 2926))⟧,
+      flen_of(S, h1)
+    )
+  )
+  let gL: G(
+    Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))
+  ) := match len_cases(
+    S,
+    L,
+    hb,
+    hlo,
+    hhi
+  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))) {
+    OrInl(e56) => Eq::subst(
+      (w: Nat) => G(Float::pack_at(s, S, e, Nat::max(e + Succ(w) - 53, 2926))),
+      Eq::sym(e56),
+      pack_56(
+        s,
+        P,
+        Q,
+        S,
+        e,
+        G,
+        hs,
+        fin,
+        inf,
+        hsc,
+        hlo,
+        hhi,
+        Eq::subst((w: Nat) => BitLen(S, w), e56, hb)
+      )
+    )
+    OrInr(o) => match o: G(
+      Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))
+    ) {
+      OrInl(e57) => Eq::subst(
+        (w: Nat) => G(Float::pack_at(s, S, e, Nat::max(e + Succ(w) - 53, 2926))),
+        Eq::sym(e57),
+        pack_57(
+          s,
+          P,
+          Q,
+          S,
+          e,
+          G,
+          hs,
+          fin,
+          inf,
+          hsc,
+          hlo,
+          hhi,
+          Eq::subst((w: Nat) => BitLen(S, w), e57, hb)
+        )
+      )
+      OrInr(e58) => Eq::subst(
+        (w: Nat) => G(Float::pack_at(s, S, e, Nat::max(e + Succ(w) - 53, 2926))),
+        Eq::sym(e58),
+        pack_58(
+          s,
+          P,
+          Q,
+          S,
+          e,
+          G,
+          hs,
+          fin,
+          inf,
+          hsc,
+          hlo,
+          hhi,
+          Eq::subst((w: Nat) => BitLen(S, w), e58, hb)
+        )
+      )
+    }
+  }
+  Eq::subst((w: Nat) => G(w), Eq::sym(eq), gL)
+}
+
+// ---- `float_of_frac`, branch by branch ------------------------------------------------
+
+pub fn float_scaled_by(
+  o: Bool,
+  pack: (Nat, Nat, Nat) -> Nat,
+  inf: Nat,
+  s: Nat,
+  p: Nat,
+  q: Nat,
+  up: Nat,
+  down: Nat
+): Nat {
+  match o: Nat {
+    true => float_scaled_up_by(up - down < 2100, pack, s, p, q, up, down)
+    false => float_scaled_down_by(down - up < 1100, pack, inf, s, p, q, up, down)
+  }
+}
+
+pub fn float_scaled_up_by(
+  o: Bool,
+  pack: (Nat, Nat, Nat) -> Nat,
+  s: Nat,
+  p: Nat,
+  q: Nat,
+  up: Nat,
+  down: Nat
+): Nat {
+  match o: Nat {
+    true => pack(
+      s,
+      Float::sticky(p * Nat::pow2(up - down), q),
+      3999 - (up - down)
+    )
+    false => pack(s, 0, 0)
+  }
+}
+
+pub fn float_scaled_down_by(
+  o: Bool,
+  pack: (Nat, Nat, Nat) -> Nat,
+  inf: Nat,
+  s: Nat,
+  p: Nat,
+  q: Nat,
+  up: Nat,
+  down: Nat
+): Nat {
+  match o: Nat {
+    true => pack(
+      s,
+      Float::sticky(p, q * Nat::pow2(down - up)),
+      3999 + (down - up)
+    )
+    false => inf
+  }
+}
+
+pub theorem pow2_split_at(
+  a: Nat,
+  b: Nat,
+  z: Nat,
+  h: a + b = z
+): And(
+  NatLe(Nat::pow2(z), Nat::pow2(a) * Nat::pow2(b)),
+  NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(z))
+) {
+  Eq::subst(
+    (w: Nat) => And(
+      NatLe(Nat::pow2(w), Nat::pow2(a) * Nat::pow2(b)),
+      NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(w))
+    ),
+    h,
+    pow2_split_eq(a, b)
+  )
+}
+
+pub theorem pow2_4000_le(): And(
+  NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999)),
+  NatLe(2 * Nat::pow2(3999), Nat::pow2(4000))
+) {
+  Eq::subst(
+    (w: Nat) => And(NatLe(w, 2 * Nat::pow2(3999)), NatLe(2 * Nat::pow2(3999), w)),
+    Eq::sym(float_pow2_succ_eq(3999)),
+    AndIntro(
+      Int::le_refl(IntOfNat(2 * Nat::pow2(3999))),
+      Int::le_refl(IntOfNat(2 * Nat::pow2(3999)))
+    )
+  )
+}
+
+// Scaled up by `k < 2100`: the sticky digits of `p 2^k / q`, at `e = 3999 - k`.
+pub theorem frac_up(
+  s: Nat,
+  P: Nat,
+  q0: Nat,
+  LP: Nat,
+  LQ: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Succ(q0), G),
+  inf: G(Float::inf_raw(s)),
+  hbP: BitLen(P, LP),
+  hbQ: BitLen(Succ(q0), LQ),
+  hle: Succ(LP) <= 56 + Succ(LQ) = true,
+  hk: 56 + Succ(LQ) - Succ(LP) < 2100 = true
+): G(
+  Float::pack(
+    s,
+    Float::sticky(P * Nat::pow2(56 + Succ(LQ) - Succ(LP)), Succ(q0)),
+    3999 - (56 + Succ(LQ) - Succ(LP))
+  )
+) {
+  let k: Nat := 56 + Succ(LQ) - Succ(LP)
+  let Q: Nat := Succ(q0)
+  let K2: Nat := Nat::pow2(k)
+  let e: Nat := 3999 - k
+  let S: Nat := Float::sticky(P * K2, Q)
+  let hst: StickyOk(S, P * K2, Q) := sticky_ok(P * K2, q0)
+  let ek: 3999 = k + e := Nat::le_gap(k, 3999, yn_of_nat_le(k, 3999, k_le_3999(k, nat_le_of_yn(Succ(k), 2100, hk))))
+  let hke: And(
+    NatLe(Nat::pow2(3999), K2 * Nat::pow2(e)),
+    NatLe(K2 * Nat::pow2(e), Nat::pow2(3999))
+  ) := Eq::subst(
+    (w: Nat) => And(
+      NatLe(Nat::pow2(w), K2 * Nat::pow2(e)),
+      NatLe(K2 * Nat::pow2(e), Nat::pow2(w))
+    ),
+    Eq::sym(ek),
+    pow2_split_eq(k, e)
+  )
+  let z4: And(
+    NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999)),
+    NatLe(2 * Nat::pow2(3999), Nat::pow2(4000))
+  ) := pow2_4000_le()
+  let za1: NatLe(
+    2 * (K2 * Nat::pow2(e)),
+    Nat::pow2(4000)
+  ) := Int::le_trans(
+    IntOfNat(2 * (K2 * Nat::pow2(e))),
+    IntOfNat(2 * Nat::pow2(3999)),
+    IntOfNat(Nat::pow2(4000)),
+    dbl_le(K2 * Nat::pow2(e), Nat::pow2(3999), And::right(hke)),
+    And::right(z4)
+  )
+  let za2: NatLe(
+    Nat::pow2(4000),
+    2 * (K2 * Nat::pow2(e))
+  ) := Int::le_trans(
+    IntOfNat(Nat::pow2(4000)),
+    IntOfNat(2 * Nat::pow2(3999)),
+    IntOfNat(2 * (K2 * Nat::pow2(e))),
+    And::left(z4),
+    dbl_le(Nat::pow2(3999), K2 * Nat::pow2(e), And::left(hke))
+  )
+  let hsc: ScaledOk(
+    S,
+    P,
+    Q,
+    Nat::pow2(e),
+    Nat::pow2(4000)
+  ) := AndIntro(
+    scaled_a1(S, P, Q, K2, Nat::pow2(e), Nat::pow2(4000), And::left(hst), za1),
+    scaled_a2(S, P, Q, K2, Nat::pow2(e), Nat::pow2(4000), And::right(hst), za2)
+  )
+  let eu: 56 + Succ(LQ) = Succ(LP) + k := Nat::le_gap(Succ(LP), 56 + Succ(LQ), hle)
+  let r1: And(
+    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(Succ(LP)) * K2),
+    NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(56 + Succ(LQ)))
+  ) := Eq::subst(
+    (w: Nat) => And(
+      NatLe(Nat::pow2(w), Nat::pow2(Succ(LP)) * K2),
+      NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(w))
+    ),
+    Eq::sym(eu),
+    pow2_split_eq(Succ(LP), k)
+  )
+  let r2: And(
+    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(56) * Nat::pow2(Succ(LQ))),
+    NatLe(Nat::pow2(56) * Nat::pow2(Succ(LQ)), Nat::pow2(56 + Succ(LQ)))
+  ) := pow2_split_eq(56, Succ(LQ))
+  let rel1: NatLe(
+    Nat::pow2(Succ(LP)) * K2,
+    Nat::pow2(56) * Nat::pow2(Succ(LQ))
+  ) := Int::le_trans(
+    IntOfNat(Nat::pow2(Succ(LP)) * K2),
+    IntOfNat(Nat::pow2(56 + Succ(LQ))),
+    IntOfNat(Nat::pow2(56) * Nat::pow2(Succ(LQ))),
+    And::right(r1),
+    And::left(r2)
+  )
+  let rel2: NatLe(
+    Nat::pow2(56) * Nat::pow2(Succ(LQ)),
+    Nat::pow2(Succ(LP)) * K2
+  ) := Int::le_trans(
+    IntOfNat(Nat::pow2(56) * Nat::pow2(Succ(LQ))),
+    IntOfNat(Nat::pow2(56 + Succ(LQ))),
+    IntOfNat(Nat::pow2(Succ(LP)) * K2),
+    And::right(r2),
+    And::left(r1)
+  )
+  let hlo: NatLe(
+    72057594037927936,
+    S
+  ) := match int_lt_or_ge(
+    IntOfNat(S),
+    IntOfNat(72057594037927936)
+  ): NatLe(72057594037927936, S) {
+    OrInl(l) => False::elim(
+      a_lo_contra(
+        S,
+        P,
+        Q,
+        K2,
+        Nat::pow2(LP),
+        Nat::pow2(LQ),
+        nat_lt_le(S, 72057594037927936, l),
+        And::right(hst),
+        And::left(hbP),
+        rel2,
+        And::right(hbQ)
+      )
+    )
+    OrInr(l) => l
+  }
+  let hhi: NatLe(
+    S,
+    288230376151711744
+  ) := match int_lt_or_ge(
+    IntOfNat(288230376151711744),
+    IntOfNat(S)
+  ): NatLe(S, 288230376151711744) {
+    OrInl(l) => False::elim(
+      a_hi_contra(
+        S,
+        P,
+        Q,
+        K2,
+        Nat::pow2(LP),
+        Nat::pow2(LQ),
+        nat_lt_le(288230376151711744, S, l),
+        And::left(hst),
+        And::right(hbP),
+        rel1,
+        And::left(hbQ),
+        pow2_pos(k)
+      )
+    )
+    OrInr(l) => l
+  }
+  pack_ok(s, P, Q, S, e, G, hs, fin, inf, hsc, hlo, hhi)
+}
+
+// Scaled up by `k >= 2100`: below every subnormal, a zero.
+pub theorem frac_up_zero(
+  s: Nat,
+  P: Nat,
+  q0: Nat,
+  LP: Nat,
+  LQ: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Succ(q0), G),
+  hbP: BitLen(P, LP),
+  hbQ: BitLen(Succ(q0), LQ),
+  hle: Succ(LP) <= 56 + Succ(LQ) = true,
+  hn: 56 + Succ(LQ) - Succ(LP) < 2100 = false
+): G(Float::pack(s, 0, 0)) {
+  let k: Nat := 56 + Succ(LQ) - Succ(LP)
+  let Q: Nat := Succ(q0)
+  let K2: Nat := Nat::pow2(k)
+  let eu: 56 + Succ(LQ) = Succ(LP) + k := Nat::le_gap(Succ(LP), 56 + Succ(LQ), hle)
+  let r1: And(
+    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(Succ(LP)) * K2),
+    NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(56 + Succ(LQ)))
+  ) := Eq::subst(
+    (w: Nat) => And(
+      NatLe(Nat::pow2(w), Nat::pow2(Succ(LP)) * K2),
+      NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(w))
+    ),
+    Eq::sym(eu),
+    pow2_split_eq(Succ(LP), k)
+  )
+  let rel1: NatLe(
+    Nat::pow2(Succ(LP)) * K2,
+    Nat::pow2(56) * Nat::pow2(Succ(LQ))
+  ) := Int::le_trans(
+    IntOfNat(Nat::pow2(Succ(LP)) * K2),
+    IntOfNat(Nat::pow2(56 + Succ(LQ))),
+    IntOfNat(Nat::pow2(56) * Nat::pow2(Succ(LQ))),
+    And::right(r1),
+    And::left(pow2_split_eq(56, Succ(LQ)))
+  )
+  let yb: NatLe(
+    P * Nat::pow2(4000),
+    Q * Nat::pow2(2926)
+  ) := a_zero_yb(
+    P,
+    Nat::pow2(4000),
+    Q,
+    Nat::pow2(2926),
+    Nat::pow2(LP),
+    Nat::pow2(LQ),
+    K2,
+    Nat::pow2(1900),
+    Nat::pow2(2100),
+    Nat::pow2(1026),
+    And::right(hbP),
+    And::left(hbQ),
+    rel1,
+    pow2_le(2100, k, nat_ge_of_not_lt(k, 2100, hn)),
+    And::left(pow2_split_at(2100, 1900, 4000, Refl)),
+    And::right(pow2_split_at(1026, 1900, 2926, Refl)),
+    pow2_le(57, 1026, Refl)
+  )
+  let g: G(
+    Float::encode(s, 0, 2926)
+  ) := fin(
+    0,
+    2926,
+    float_decode_sub(s, 0, hs, Refl),
+    AndIntro(
+      err0_a(Nat::pow2(2926), Q, P * Nat::pow2(4000), yb),
+      err0_b(Nat::pow2(2926), Q, P * Nat::pow2(4000), yb)
+    )
+  )
+  Eq::subst((w: Nat) => G(w), enc_zero(s), g)
+}
+
+// `up < down` from `nat_le(down, up) = no`.
+pub theorem up_le_down(up: Nat, down: Nat, h: down <= up = false): NatLe(up, down) {
+  match int_lt_or_ge(IntOfNat(down), IntOfNat(up)): NatLe(up, down) {
+    OrInl(l) => False::elim(
+      false_ne_true(
+        Eq::trans(
+          Eq::sym(h),
+          yn_of_nat_le(down, up, int_le_of_lt(IntOfNat(down), IntOfNat(up), l))
+        )
+      )
+    )
+    OrInr(l) => l
+  }
+}
+
+// Scaled down by `k < 1100`: the sticky digits of `p / (q 2^k)`, at `e = 3999 + k`.
+pub theorem frac_down(
+  s: Nat,
+  P: Nat,
+  q0: Nat,
+  LP: Nat,
+  LQ: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, P, Succ(q0), G),
+  inf: G(Float::inf_raw(s)),
+  hbP: BitLen(P, LP),
+  hbQ: BitLen(Succ(q0), LQ),
+  hle: Succ(LP) <= 56 + Succ(LQ) = false
+): G(
+  Float::pack(
+    s,
+    Float::sticky(P, Succ(q0) * Nat::pow2(Succ(LP) - (56 + Succ(LQ)))),
+    3999 + (Succ(LP) - (56 + Succ(LQ)))
+  )
+) {
+  let k: Nat := Succ(LP) - (56 + Succ(LQ))
+  let Q: Nat := Succ(q0)
+  let K2: Nat := Nat::pow2(k)
+  let e: Nat := 3999 + k
+  let Q2: Nat := Q * K2
+  let S: Nat := Float::sticky(P, Q2)
+  let eq2: Q2 = Succ(Q2 - 1) := succ_pred(Q2, qk_one(q0, K2, pow2_pos(k)))
+  let hst: StickyOk(
+    S,
+    P,
+    Q2
+  ) := Eq::subst(
+    (w: Nat) => StickyOk(Float::sticky(P, w), P, w),
+    Eq::sym(eq2),
+    sticky_ok(P, Q2 - 1)
+  )
+  let hpe: And(
+    NatLe(Nat::pow2(e), Nat::pow2(3999) * K2),
+    NatLe(Nat::pow2(3999) * K2, Nat::pow2(e))
+  ) := pow2_split_eq(3999, k)
+  let z4: And(
+    NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999)),
+    NatLe(2 * Nat::pow2(3999), Nat::pow2(4000))
+  ) := pow2_4000_le()
+  let hsc: ScaledOk(
+    S,
+    P,
+    Q,
+    Nat::pow2(e),
+    Nat::pow2(4000)
+  ) := AndIntro(
+    scaled_b1(
+      S,
+      P,
+      Q,
+      K2,
+      Nat::pow2(e),
+      Nat::pow2(4000),
+      Nat::pow2(3999),
+      And::left(hst),
+      And::left(hpe),
+      And::right(hpe),
+      And::right(z4)
+    ),
+    scaled_b2(
+      S,
+      P,
+      Q,
+      K2,
+      Nat::pow2(e),
+      Nat::pow2(4000),
+      Nat::pow2(3999),
+      And::right(hst),
+      And::right(hpe),
+      And::left(z4)
+    )
+  )
+  let ed: Succ(LP) = 56 + Succ(LQ) + k := Nat::le_gap(
+    56 + Succ(LQ),
+    Succ(LP),
+    yn_of_nat_le(56 + Succ(LQ), Succ(LP), up_le_down(56 + Succ(LQ), Succ(LP), hle))
+  )
+  let r1: And(
+    NatLe(Nat::pow2(Succ(LP)), Nat::pow2(56 + Succ(LQ)) * K2),
+    NatLe(Nat::pow2(56 + Succ(LQ)) * K2, Nat::pow2(Succ(LP)))
+  ) := Eq::subst(
+    (w: Nat) => And(
+      NatLe(Nat::pow2(w), Nat::pow2(56 + Succ(LQ)) * K2),
+      NatLe(Nat::pow2(56 + Succ(LQ)) * K2, Nat::pow2(w))
+    ),
+    Eq::sym(ed),
+    pow2_split_eq(56 + Succ(LQ), k)
+  )
+  let r2: And(
+    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(56) * Nat::pow2(Succ(LQ))),
+    NatLe(Nat::pow2(56) * Nat::pow2(Succ(LQ)), Nat::pow2(56 + Succ(LQ)))
+  ) := pow2_split_eq(56, Succ(LQ))
+  let rel1: NatLe(
+    2 * Nat::pow2(LP),
+    Nat::pow2(56) * (2 * Nat::pow2(LQ) * K2)
+  ) := relb1(
+    Nat::pow2(Succ(LP)),
+    Nat::pow2(56 + Succ(LQ)),
+    K2,
+    Nat::pow2(56),
+    Nat::pow2(LQ),
+    And::left(r1),
+    And::left(r2)
+  )
+  let rel2: NatLe(
+    Nat::pow2(56) * (2 * Nat::pow2(LQ) * K2),
+    2 * Nat::pow2(LP)
+  ) := relb2(
+    Nat::pow2(Succ(LP)),
+    Nat::pow2(56 + Succ(LQ)),
+    K2,
+    Nat::pow2(56),
+    Nat::pow2(LQ),
+    And::right(r1),
+    And::right(r2)
+  )
+  let hlo: NatLe(
+    72057594037927936,
+    S
+  ) := match int_lt_or_ge(
+    IntOfNat(S),
+    IntOfNat(72057594037927936)
+  ): NatLe(72057594037927936, S) {
+    OrInl(l) => False::elim(
+      b_lo_contra(
+        S,
+        P,
+        Q,
+        K2,
+        Nat::pow2(LP),
+        Nat::pow2(LQ),
+        nat_lt_le(S, 72057594037927936, l),
+        And::right(hst),
+        And::left(hbP),
+        rel2,
+        And::right(hbQ),
+        pow2_pos(k)
+      )
+    )
+    OrInr(l) => l
+  }
+  let hhi: NatLe(
+    S,
+    288230376151711744
+  ) := match int_lt_or_ge(
+    IntOfNat(288230376151711744),
+    IntOfNat(S)
+  ): NatLe(S, 288230376151711744) {
+    OrInl(l) => False::elim(
+      b_hi_contra(
+        S,
+        P,
+        Q,
+        K2,
+        Nat::pow2(LP),
+        Nat::pow2(LQ),
+        nat_lt_le(288230376151711744, S, l),
+        And::left(hst),
+        And::right(hbP),
+        rel1,
+        And::left(hbQ)
+      )
+    )
+    OrInr(l) => l
+  }
+  pack_ok(s, P, Q, S, e, G, hs, fin, inf, hsc, hlo, hhi)
+}
+
+// The bits of `±(p0 + 1) / (q0 + 1)`: a finite result within the error, or an infinity.
+pub theorem frac_ok(
+  s: Nat,
+  p0: Nat,
+  q0: Nat,
+  G: (Nat) -> Prop,
+  hs: s < 2 = true,
+  fin: FinK(s, Succ(p0), Succ(q0), G),
+  inf: G(Float::inf_raw(s))
+): G(Float::of_frac(s, Succ(p0), Succ(q0))) {
+  let LP: Nat := Float::bitlen(p0, Nat::div_nz(Succ(p0), 2, Nat::ne_zero(2, Refl)))
+  let LQ: Nat := Float::bitlen(q0, Nat::div_nz(Succ(q0), 2, Nat::ne_zero(2, Refl)))
+  let hbP: BitLen(Succ(p0), LP) := rat_len_spec(p0)
+  let hbQ: BitLen(Succ(q0), LQ) := rat_len_spec(q0)
+  let up: Nat := 56 + Succ(LQ)
+  let down: Nat := Succ(LP)
+  let r: G(
+    float_scaled_by(down <= up, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)
+  ) := match float_yn_or(
+    down <= up
+  ): G(
+    float_scaled_by(down <= up, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)
+  ) {
+    OrInl(hle) => Eq::subst(
+      (o: Bool) => G(float_scaled_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
+      Eq::sym(hle),
+      match float_yn_or(up - down < 2100): G(float_scaled_up_by(up - down < 2100, Float::pack, s, Succ(p0), Succ(q0), up, down)) {
+        OrInl(hk) => Eq::subst(
+          (o: Bool) => G(float_scaled_up_by(o, Float::pack, s, Succ(p0), Succ(q0), up, down)),
+          Eq::sym(hk),
+          frac_up(s, Succ(p0), q0, LP, LQ, G, hs, fin, inf, hbP, hbQ, hle, hk)
+        )
+        OrInr(hn) => Eq::subst(
+          (o: Bool) => G(float_scaled_up_by(o, Float::pack, s, Succ(p0), Succ(q0), up, down)),
+          Eq::sym(hn),
+          frac_up_zero(s, Succ(p0), q0, LP, LQ, G, hs, fin, hbP, hbQ, hle, hn)
+        )
+      }
+    )
+    OrInr(hle) => Eq::subst(
+      (o: Bool) => G(float_scaled_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
+      Eq::sym(hle),
+      match float_yn_or(down - up < 1100): G(float_scaled_down_by(down - up < 1100, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)) {
+        OrInl(hk) => Eq::subst(
+          (o: Bool) => G(float_scaled_down_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
+          Eq::sym(hk),
+          frac_down(s, Succ(p0), q0, LP, LQ, G, hs, fin, inf, hbP, hbQ, hle)
+        )
+        OrInr(hn) => Eq::subst(
+          (o: Bool) => G(float_scaled_down_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
+          Eq::sym(hn),
+          inf
+        )
+      }
+    )
+  }
+  r
+}

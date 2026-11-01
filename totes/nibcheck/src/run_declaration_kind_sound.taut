@@ -1,0 +1,209 @@
+import "run_data_invariant_sound.taut"
+import "run_after_datas_checked.taut"
+import "declaration_program_sound.taut"
+import "finish_error_sound.taut"
+
+pub def ProgramDataStateKinds(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): Prop := ProgramDataKinds(ck_datas_of(ck_st(m)), program)
+pub theorem registration_finish_after_kind(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
+): ProgramDataStateKinds(program, registration_finish_after(program, m)) {
+  match m: ProgramDataStateKinds(program, registration_finish_after(program, m)) {
+    mut1(v, next) => Eq::subst(
+      (result: Mut1(Unit, Checker)) => ProgramDataStateKinds(program, result),
+      Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
+      ck_finish_datas_kind_sound(
+        next,
+        program,
+        Eq::subst(
+          (result: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(result)),
+          ck_rewrap1_id(ck_finish_datas(next, program)),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem registration_program_after_kind(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
+): ProgramDataStateKinds(program, registration_program_after(program, m)) {
+  match m: ProgramDataStateKinds(program, registration_program_after(program, m)) {
+    mut1(v, next) => registration_finish_after_kind(program, ck_program_data(program, next), clean)
+  }
+}
+pub theorem ck_prepare_datas_kind_sound(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
+): ProgramDataStateKinds(program, ck_prepare_datas(c, prelude, program, own)) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => ProgramDataStateKinds(program, result),
+    Eq::sym(registration_prepare_unf(c, prelude, program, own)),
+    registration_program_after_kind(
+      program,
+      ck_prelude_data(prelude, c, own),
+      Eq::subst(
+        (result: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(result)),
+        registration_prepare_unf(c, prelude, program, own),
+        clean
+      )
+    )
+  )
+}
+pub theorem run_after_data_result_kind(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  prepared: ∀ clean: DiagnosticClean(ck_st(m)). ProgramDataStateKinds(program, m),
+  clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
+): ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) {
+  match m: ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) {
+    mut1(v, next) => {
+      let before: DiagnosticClean(
+        next
+      ) := And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)
+      let same: ck_datas_of(ck_st(run_after_datas(next, prelude, program, own))) = ck_datas_of(next) := And::right(run_after_datas_frame(next, prelude, program, own, ordered))
+      Eq::subst((d: Datas) => ProgramDataKinds(d, program), Eq::sym(same), prepared(before))
+    }
+  }
+}
+pub theorem run_after_builtins_kind(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
+): ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) {
+  match m: ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) {
+    mut1(v, next) => run_after_data_result_kind(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      ck_prepare_datas_subst_ordered(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        ordered
+      ),
+      accepted => ck_prepare_datas_kind_sound(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        accepted
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_run_declaration_kinds(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_run(c, prelude, program)))
+): ProgramDataStateKinds(program, ck_run(c, prelude, program)) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => ProgramDataStateKinds(program, result),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_after_builtins_kind(
+      prelude,
+      program,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+      Eq::subst(
+        (result: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(result)),
+        run_summary_unf(c, prelude, program),
+        clean
+      )
+    )
+  )
+}
+
+pub def ProgramDataReportKinds(
+  program: List(SurfaceStmt),
+  m: Mut1(TypeReport, Checker)
+): Prop := ProgramDataKinds(finish_report_datas(ck_val(m)), program)
+pub theorem run_finish_after_kind(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  checked: ∀ clean: DiagnosticClean(ck_st(m)). ProgramDataStateKinds(program, m),
+  clean: DiagnosticReportClean(run_finish_after(m))
+): ProgramDataReportKinds(program, run_finish_after(m)) {
+  accepted_data_finish((data: Datas) => ProgramDataKinds(data, program), m, ordered, checked, clean)
+}
+
+pub theorem run_after_module_errors_kind(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
+): ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) {
+  match m: ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) {
+    mut1(v, next) => run_finish_after_kind(
+      program,
+      ck_run(next, prelude, program),
+      And::left(ck_run_ready(next, prelude, program, ordered, decls)),
+      accepted => ck_run_declaration_kinds(next, prelude, program, ordered, accepted),
+      clean
+    )
+  }
+}
+pub theorem ck_types_run_declaration_kinds(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c),
+  clean: DiagnosticReportClean(ck_types_run(c, prelude, program, errors))
+): ProgramDataReportKinds(program, ck_types_run(c, prelude, program, errors)) {
+  Eq::subst(
+    (result: Mut1(TypeReport, Checker)) => ProgramDataReportKinds(program, result),
+    Eq::sym(run_types_unf(c, prelude, program, errors)),
+    run_after_module_errors_kind(
+      prelude,
+      program,
+      ck_module_errors(errors, c),
+      frame_subst_ordered(
+        c,
+        ck_module_errors(errors, c),
+        ck_module_errors_frame(errors, c),
+        ordered
+      ),
+      frame_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), decls),
+      Eq::subst(DiagnosticReportClean, run_types_unf(c, prelude, program, errors), clean)
+    )
+  )
+}
+pub theorem types_check_declaration_kinds(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): ProgramDataKinds(finish_report_datas(types_check(prelude, program, errors)), program) {
+  ck_types_run_declaration_kinds(
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    errors,
+    Trivial,
+    Trivial,
+    clean
+  )
+}

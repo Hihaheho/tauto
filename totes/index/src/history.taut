@@ -1,0 +1,714 @@
+// The ledger of one index: its batches applied in order, each atomically.
+
+import std::List
+
+// Decoded identities are natural numbers under an injective byte encoding.
+// Times are nonnegative integer seconds. This layer performs no parsing or hashing.
+
+pub(open) inductive IxKey: Type {
+  Mk(project: Nat, revision: Nat): IxKey
+}
+
+pub fn ix_key_project(
+  value: IxKey
+): Nat { match value: Nat { Mk(project, revision) => project } }
+
+pub fn ix_key_revision(
+  value: IxKey
+): Nat { match value: Nat { Mk(project, revision) => revision } }
+
+pub(open) inductive IxPoint: Type {
+  Mk(revision: Nat, digest: Nat): IxPoint
+}
+
+pub fn ix_point_revision(
+  value: IxPoint
+): Nat { match value: Nat { Mk(revision, digest) => revision } }
+
+pub fn ix_point_digest(
+  value: IxPoint
+): Nat { match value: Nat { Mk(revision, digest) => digest } }
+
+pub(open) inductive IxObservation: Type {
+  Mk(key: IxKey, digest: Nat, first: Nat, born: Nat): IxObservation
+}
+
+pub fn ix_observation_key(
+  value: IxObservation
+): IxKey { match value: IxKey { Mk(key, digest, first, born) => key } }
+
+pub fn ix_observation_digest(
+  value: IxObservation
+): Nat { match value: Nat { Mk(key, digest, first, born) => digest } }
+
+pub fn ix_observation_first(
+  value: IxObservation
+): Nat { match value: Nat { Mk(key, digest, first, born) => first } }
+
+pub fn ix_observation_born(
+  value: IxObservation
+): Nat { match value: Nat { Mk(key, digest, first, born) => born } }
+
+pub(open) inductive IxReceipt: Type {
+  Mk(index: Nat, source: Nat, point: IxPoint, first: Nat): IxReceipt
+}
+
+pub fn ix_receipt_index(
+  value: IxReceipt
+): Nat { match value: Nat { Mk(index, source, point, first) => index } }
+
+pub fn ix_receipt_source(
+  value: IxReceipt
+): Nat { match value: Nat { Mk(index, source, point, first) => source } }
+
+pub fn ix_receipt_point(
+  value: IxReceipt
+): IxPoint { match value: IxPoint { Mk(index, source, point, first) => point } }
+
+pub fn ix_receipt_first(
+  value: IxReceipt
+): Nat { match value: Nat { Mk(index, source, point, first) => first } }
+
+pub(open) inductive IxVote: Type {
+  Mk(key: IxKey, accept: Bool): IxVote
+}
+
+pub fn ix_vote_key(value: IxVote): IxKey { match value: IxKey { Mk(key, accept) => key } }
+
+pub fn ix_vote_accept(value: IxVote): Bool { match value: Bool { Mk(key, accept) => accept } }
+
+pub(open) inductive IxCheckpoint: Type {
+  Mk(point: IxPoint, sequence: Nat): IxCheckpoint
+}
+
+pub fn ix_checkpoint_point(
+  value: IxCheckpoint
+): IxPoint { match value: IxPoint { Mk(point, sequence) => point } }
+
+pub fn ix_checkpoint_sequence(
+  value: IxCheckpoint
+): Nat { match value: Nat { Mk(point, sequence) => sequence } }
+
+pub(open) inductive IxState: Type {
+  Mk(
+    index: Nat,
+    config: Nat,
+    sequence: Nat,
+    issued: Nat,
+    until: Nat,
+    head: IxPoint,
+    checkpoints: List(IxCheckpoint),
+    observations: List(IxObservation),
+    receipts: List(IxReceipt),
+    votes: List(IxVote),
+    withdrawals: List(IxKey),
+    retired: Bool
+  ): IxState
+}
+
+pub fn ix_state_index(value: IxState): Nat {
+  match value: Nat {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => index
+  }
+}
+
+pub fn ix_state_config(value: IxState): Nat {
+  match value: Nat {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => config
+  }
+}
+
+pub fn ix_state_sequence(value: IxState): Nat {
+  match value: Nat {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => sequence
+  }
+}
+
+pub fn ix_state_issued(value: IxState): Nat {
+  match value: Nat {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => issued
+  }
+}
+
+pub fn ix_state_until(value: IxState): Nat {
+  match value: Nat {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => until
+  }
+}
+
+pub fn ix_state_head(value: IxState): IxPoint {
+  match value: IxPoint {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => head
+  }
+}
+
+pub fn ix_state_checkpoints(value: IxState): List(IxCheckpoint) {
+  match value: List(IxCheckpoint) {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => checkpoints
+  }
+}
+
+pub fn ix_state_observations(value: IxState): List(IxObservation) {
+  match value: List(IxObservation) {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => observations
+  }
+}
+
+pub fn ix_state_receipts(value: IxState): List(IxReceipt) {
+  match value: List(IxReceipt) {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => receipts
+  }
+}
+
+pub fn ix_state_votes(value: IxState): List(IxVote) {
+  match value: List(IxVote) {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => votes
+  }
+}
+
+pub fn ix_state_withdrawals(value: IxState): List(IxKey) {
+  match value: List(IxKey) {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => withdrawals
+  }
+}
+
+pub fn ix_state_retired(value: IxState): Bool {
+  match value: Bool {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => retired
+  }
+}
+
+pub(open) inductive IxEvent: Type {
+  IxObserve(key: IxKey, digest: Nat, first: Nat): IxEvent
+  MkIxWitness(receipt: IxReceipt): IxEvent
+  IxDecide(key: IxKey, accept: Bool): IxEvent
+  IxWithdraw(key: IxKey): IxEvent
+  IxRetire: IxEvent
+}
+
+pub(open) inductive IxBatch: Type {
+  Mk(
+    sequence: Nat,
+    issued: Nat,
+    until: Nat,
+    config: Nat,
+    parent: IxPoint,
+    point: IxPoint,
+    events: List(IxEvent)
+  ): IxBatch
+}
+
+pub fn ix_key_eq(left: IxKey, right: IxKey): Bool {
+  Bool::and(
+    Nat::eq(ix_key_project(left), ix_key_project(right)),
+    Nat::eq(ix_key_revision(left), ix_key_revision(right))
+  )
+}
+
+pub fn ix_point_eq(left: IxPoint, right: IxPoint): Bool {
+  Bool::and(
+    Nat::eq(ix_point_revision(left), ix_point_revision(right)),
+    Nat::eq(ix_point_digest(left), ix_point_digest(right))
+  )
+}
+
+pub fn ix_all<A>(predicate: (A) -> Bool, values: List(A)): Bool {
+  match values: Bool {
+    Nil => true
+    Cons(item, rest) => Bool::and(predicate(item), ix_all(predicate, rest))
+  }
+}
+
+pub fn ix_any<A>(predicate: (A) -> Bool, values: List(A)): Bool {
+  match values: Bool {
+    Nil => false
+    Cons(item, rest) => Bool::or(predicate(item), ix_any(predicate, rest))
+  }
+}
+
+pub fn ix_nonempty<A>(values: List(A)): Bool {
+  match values: Bool {
+    Nil => false
+    Cons(item, rest) => true
+  }
+}
+
+pub fn ix_has_key(
+  key: IxKey,
+  keys: List(IxKey)
+): Bool { ix_any((candidate: IxKey) => ix_key_eq(key, candidate), keys) }
+
+pub fn ix_observed(key: IxKey, state: IxState): Bool {
+  ix_any(
+    (observation: IxObservation) => ix_key_eq(key, ix_observation_key(observation)),
+    ix_state_observations(state)
+  )
+}
+
+pub fn ix_active(
+  key: IxKey,
+  state: IxState
+): Bool { Bool::and(ix_observed(key, state), not(ix_has_key(key, ix_state_withdrawals(state)))) }
+
+pub fn ix_choose<A>(flag: Bool, negative: A, positive: A): A {
+  match flag: A {
+    false => negative
+    true => positive
+  }
+}
+
+pub fn ix_vote_for(key: IxKey, votes: List(IxVote)): Bool {
+  match votes: Bool {
+    Nil => false
+    Cons(vote, rest) => ix_choose(
+      ix_key_eq(key, ix_vote_key(vote)),
+      ix_vote_for(key, rest),
+      ix_vote_accept(vote)
+    )
+  }
+}
+
+pub fn ix_receipt_known(receipt: IxReceipt, receipts: List(IxReceipt)): Bool {
+  ix_any(
+    (previous: IxReceipt) => Bool::and(
+      Nat::eq(ix_receipt_index(receipt), ix_receipt_index(previous)),
+      Nat::eq(
+        ix_point_revision(ix_receipt_point(receipt)),
+        ix_point_revision(ix_receipt_point(previous))
+      )
+    ),
+    receipts
+  )
+}
+
+pub fn ix_event_allowed(state: IxState, event: IxEvent): Bool {
+  Bool::and(not(ix_state_retired(state)), match event: Bool {
+    IxObserve(key, digest, first) => Bool::and(not(ix_observed(key, state)), Nat::le(first, ix_state_issued(state)))
+    MkIxWitness(receipt) => Bool::and(not(Nat::eq(ix_receipt_index(receipt), ix_state_index(state))), Bool::and(not(ix_receipt_known(receipt, ix_state_receipts(state))), Nat::le(ix_receipt_first(receipt), ix_state_issued(state))))
+    IxDecide(key, accept) => ix_active(key, state)
+    IxWithdraw(key) => ix_active(key, state)
+    IxRetire => true
+  })
+}
+
+// Total update; callers must use ix_events/ix_step, which check each guard first.
+pub fn ix_apply(state: IxState, event: IxEvent): IxState {
+  match state: IxState {
+    Mk(
+      index,
+      config,
+      sequence,
+      issued,
+      until,
+      head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) => match event: IxState {
+      IxObserve(key, digest, first) => IxState::Mk(
+        index,
+        config,
+        sequence,
+        issued,
+        until,
+        head,
+        checkpoints,
+        Cons(IxObservation::Mk(key, digest, first, sequence), observations),
+        receipts,
+        votes,
+        withdrawals,
+        retired
+      )
+      MkIxWitness(receipt) => IxState::Mk(
+        index,
+        config,
+        sequence,
+        issued,
+        until,
+        head,
+        checkpoints,
+        observations,
+        Cons(receipt, receipts),
+        votes,
+        withdrawals,
+        retired
+      )
+      IxDecide(key, accept) => IxState::Mk(
+        index,
+        config,
+        sequence,
+        issued,
+        until,
+        head,
+        checkpoints,
+        observations,
+        receipts,
+        Cons(IxVote::Mk(key, accept), votes),
+        withdrawals,
+        retired
+      )
+      IxWithdraw(key) => IxState::Mk(
+        index,
+        config,
+        sequence,
+        issued,
+        until,
+        head,
+        checkpoints,
+        observations,
+        receipts,
+        votes,
+        Cons(key, withdrawals),
+        retired
+      )
+      IxRetire => IxState::Mk(
+        index,
+        config,
+        sequence,
+        issued,
+        until,
+        head,
+        checkpoints,
+        observations,
+        receipts,
+        votes,
+        withdrawals,
+        true
+      )
+    }
+  }
+}
+
+pub fn ix_gate<A>(allowed: Bool, result: Option(A)): Option(A) {
+  match allowed: Option(A) {
+    false => None
+    true => result
+  }
+}
+
+pub fn ix_events(events: List(IxEvent), state: IxState): Option(IxState) {
+  match events: Option(IxState) {
+    Nil => Some(state)
+    Cons(event, rest) => ix_gate(
+      ix_event_allowed(state, event),
+      ix_events(rest, ix_apply(state, event))
+    )
+  }
+}
+
+pub fn ix_root_state(config: Nat, point: IxPoint, issued: Nat, until: Nat): IxState {
+  IxState::Mk(
+    ix_point_digest(point),
+    config,
+    0,
+    issued,
+    until,
+    point,
+    Cons(IxCheckpoint::Mk(point, 0), Nil),
+    Nil,
+    Nil,
+    Nil,
+    Nil,
+    false
+  )
+}
+
+pub fn ix_root(
+  config: Nat,
+  point: IxPoint,
+  issued: Nat,
+  until: Nat
+): Option(
+  IxState
+) { ix_gate(Nat::lt(issued, until), Some(ix_root_state(config, point, issued, until))) }
+
+pub fn ix_header_allowed(state: IxState, batch: IxBatch): Bool {
+  match batch: Bool {
+    Mk(sequence, issued, until, config, parent, point, events) =>
+    ix_all(
+      (flag: Bool) => flag,
+      Cons(
+        not(ix_state_retired(state)),
+        Cons(
+          Nat::eq(sequence, Succ(ix_state_sequence(state))),
+          Cons(
+            Nat::eq(config, ix_state_config(state)),
+            Cons(
+              ix_point_eq(parent, ix_state_head(state)),
+              Cons(
+                Nat::le(ix_state_issued(state), issued),
+                Cons(
+                  Nat::lt(issued, until),
+                  Cons(
+                    not(
+                      ix_any(
+                        (checkpoint: IxCheckpoint) => Nat::eq(
+                          ix_point_revision(point),
+                          ix_point_revision(ix_checkpoint_point(checkpoint))
+                        ),
+                        ix_state_checkpoints(state)
+                      )
+                    ),
+                    Nil
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub fn ix_header(state: IxState, batch: IxBatch): IxState {
+  match state: IxState {
+    Mk(
+      index,
+      old_config,
+      old_sequence,
+      old_issued,
+      old_until,
+      old_head,
+      checkpoints,
+      observations,
+      receipts,
+      votes,
+      withdrawals,
+      retired
+    ) =>
+    match batch: IxState {
+      Mk(sequence, issued, until, config, parent, point, events) =>
+      IxState::Mk(
+        index,
+        config,
+        sequence,
+        issued,
+        until,
+        point,
+        Cons(IxCheckpoint::Mk(point, sequence), checkpoints),
+        observations,
+        receipts,
+        votes,
+        withdrawals,
+        retired
+      )
+    }
+  }
+}
+
+pub fn ix_batch_events(batch: IxBatch): List(IxEvent) {
+  match batch: List(
+    IxEvent
+  ) { Mk(sequence, issued, until, config, parent, point, events) => events }
+}
+
+pub fn ix_step(state: IxState, batch: IxBatch): Option(IxState) {
+  ix_gate(
+    ix_header_allowed(state, batch),
+    ix_events(ix_batch_events(batch), ix_header(state, batch))
+  )
+}
+
+pub fn ix_bind<A, B>(value: Option(A), next: (A) -> Option(B)): Option(B) {
+  match value: Option(B) {
+    None => None
+    Some(item) => next(item)
+  }
+}
+
+pub fn ix_history(batches: List(IxBatch), state: IxState): Option(IxState) {
+  match batches: Option(IxState) {
+    Nil => Some(state)
+    Cons(batch, rest) => ix_bind(ix_step(state, batch), (next: IxState) => ix_history(rest, next))
+  }
+}
+
+pub fn ix_rebuild(
+  config: Nat,
+  point: IxPoint,
+  issued: Nat,
+  until: Nat,
+  batches: List(IxBatch)
+): Option(
+  IxState
+) { ix_bind(ix_root(config, point, issued, until), (root: IxState) => ix_history(batches, root)) }
+
+// Publish a complete successful batch only; a failed suffix exposes no partial state.
+pub fn ix_commit(state: IxState, batch: IxBatch): IxState {
+  match ix_step(state, batch): IxState {
+    None => state
+    Some(next) => next
+  }
+}
+
+// An already hash-bound current checkpoint is a replay, not a new batch.
+// Older checkpoints and forks are classified by the future ingestion adapter.
+pub fn ix_ingest(state: IxState, batch: IxBatch): Option(IxState) {
+  match batch: Option(IxState) {
+    Mk(sequence, issued, until, config, parent, point, events) =>
+    match ix_point_eq(point, ix_state_head(state)): Option(IxState) {
+      false => ix_step(state, batch)
+      true => Some(state)
+    }
+  }
+}

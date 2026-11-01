@@ -1,0 +1,884 @@
+// Linear facts the proofs of `FloatPack.taut` combine: powers of two and lengths.
+
+import "IntNorm.taut"
+import "IntOrder.taut"
+
+pub theorem float_succ_shape(
+  c: Nat
+): Eq(Int, Int::add(IntOfNat(c), IntOfNat(1)), IntOfNat(Succ(c))) {
+  by int_norm!(): Eq(Int, Int::add(IntOfNat(c), IntOfNat(1)), IntOfNat(Succ(c))) {}
+}
+
+pub theorem pow2_pos_at(d: Nat, X: Nat, h: NatLe(Succ(d), X)): NatLe(1, X) {
+  Int::le_trans(
+    IntOfNat(1),
+    Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))), Int::mul(IntOfNat(1), IntOfNat(X))),
+    IntOfNat(X),
+    int_le_lin(
+      Int::mul(IntOfNat(Succ(d)), IntOfNat(1)),
+      Int::mul(IntOfNat(X), IntOfNat(1)),
+      1,
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))),
+      IntOfNat(1),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))),
+        Int::mul(IntOfNat(1), IntOfNat(X))
+      ),
+      int_le_mul_nat(IntOfNat(Succ(d)), IntOfNat(X), 1, h),
+      pow2_pos_at_0(d, X),
+      pow2_pos_at_1(d, X)
+    ),
+    int_le_by(
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))),
+        Int::mul(IntOfNat(1), IntOfNat(X))
+      ),
+      IntOfNat(X),
+      d,
+      pow2_pos_at_2(d, X)
+    )
+  )
+}
+
+pub theorem pow2_mono_at(A: Nat, D: Nat, h: NatLe(1, D)): NatLe(A, Nat::mul(A, D)) {
+  Int::le_trans(
+    IntOfNat(A),
+    Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D))),
+    IntOfNat(Nat::mul(A, D)),
+    int_le_lin(
+      Int::mul(IntOfNat(1), IntOfNat(A)),
+      Int::mul(IntOfNat(D), IntOfNat(A)),
+      1,
+      IntOfNat(0),
+      IntOfNat(A),
+      Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D))),
+      int_le_mul_nat(IntOfNat(1), IntOfNat(D), A, h),
+      pow2_mono_at_3(A, D),
+      pow2_mono_at_4(A, D)
+    ),
+    int_le_by(
+      Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D))),
+      IntOfNat(Nat::mul(A, D)),
+      0,
+      pow2_mono_at_5(A, D)
+    )
+  )
+}
+
+pub theorem len_lo_contra(
+  S: Nat,
+  X: Nat,
+  h1: NatLe(Succ(S), X),
+  h2: NatLe(X, 72057594037927936),
+  h3: NatLe(72057594037927936, S)
+): False {
+  false_ne_true(
+    Int::le_trans(
+      IntOfNat(1),
+      IntOfNat(0),
+      IntOfNat(0),
+      int_le_lin(
+        Int::add(
+          Int::add(
+            Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+            Int::mul(IntOfNat(X), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+        ),
+        Int::add(
+          Int::add(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(S), IntOfNat(1))
+        ),
+        1,
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+          Int::add(
+            Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+            Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(1)))
+          )
+        ),
+        IntOfNat(1),
+        IntOfNat(0),
+        int_le_add2(
+          Int::add(
+            Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+            Int::mul(IntOfNat(X), IntOfNat(1))
+          ),
+          Int::add(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(72057594037927936), IntOfNat(1)),
+          Int::mul(IntOfNat(S), IntOfNat(1)),
+          int_le_add2(
+            Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(72057594037927936), IntOfNat(1)),
+            int_le_mul_nat(IntOfNat(Succ(S)), IntOfNat(X), 1, h1),
+            int_le_mul_nat(IntOfNat(X), IntOfNat(72057594037927936), 1, h2)
+          ),
+          int_le_mul_nat(IntOfNat(72057594037927936), IntOfNat(S), 1, h3)
+        ),
+        len_lo_contra_6(S, X),
+        len_lo_contra_7(S, X)
+      ),
+      int_le_by(IntOfNat(0), IntOfNat(0), 0, len_lo_contra_8(S, X))
+    )
+  )
+}
+
+pub theorem len_hi_contra(
+  S: Nat,
+  X: Nat,
+  h1: NatLe(X, S),
+  h2: NatLe(576460752303423488, X),
+  h3: NatLe(S, 288230376151711744)
+): False {
+  false_ne_true(
+    Int::le_trans(
+      IntOfNat(1),
+      Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1))),
+      IntOfNat(0),
+      int_le_lin(
+        Int::add(
+          Int::add(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(S), IntOfNat(1))
+        ),
+        Int::add(
+          Int::add(Int::mul(IntOfNat(S), IntOfNat(1)), Int::mul(IntOfNat(X), IntOfNat(1))),
+          Int::mul(IntOfNat(288230376151711744), IntOfNat(1))
+        ),
+        1,
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+          Int::add(
+            Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+            Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+          )
+        ),
+        IntOfNat(1),
+        Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1))),
+        int_le_add2(
+          Int::add(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+          ),
+          Int::add(Int::mul(IntOfNat(S), IntOfNat(1)), Int::mul(IntOfNat(X), IntOfNat(1))),
+          Int::mul(IntOfNat(S), IntOfNat(1)),
+          Int::mul(IntOfNat(288230376151711744), IntOfNat(1)),
+          int_le_add2(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(S), IntOfNat(1)),
+            Int::mul(IntOfNat(576460752303423488), IntOfNat(1)),
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            int_le_mul_nat(IntOfNat(X), IntOfNat(S), 1, h1),
+            int_le_mul_nat(IntOfNat(576460752303423488), IntOfNat(X), 1, h2)
+          ),
+          int_le_mul_nat(IntOfNat(S), IntOfNat(288230376151711744), 1, h3)
+        ),
+        len_hi_contra_9(S, X),
+        len_hi_contra_10(S, X)
+      ),
+      int_le_by(
+        Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1))),
+        IntOfNat(0),
+        288230376151711743,
+        len_hi_contra_11(S, X)
+      )
+    )
+  )
+}
+
+pub theorem len_j_contra(j3: Nat, h: NatLe(Nat::add(56, Succ(Succ(Succ(j3)))), 58)): False {
+  false_ne_true(
+    Int::le_trans(
+      IntOfNat(1),
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+      IntOfNat(0),
+      int_le_lin(
+        Int::mul(IntOfNat(Nat::add(56, Succ(Succ(Succ(j3))))), IntOfNat(1)),
+        Int::mul(IntOfNat(58), IntOfNat(1)),
+        1,
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+          Int::neg(Int::mul(IntOfNat(58), IntOfNat(1)))
+        ),
+        IntOfNat(1),
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+        int_le_mul_nat(IntOfNat(Nat::add(56, Succ(Succ(Succ(j3))))), IntOfNat(58), 1, h),
+        len_j_contra_12(j3),
+        len_j_contra_13(j3)
+      ),
+      int_le_by(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+        IntOfNat(0),
+        j3,
+        len_j_contra_14(j3)
+      )
+    )
+  )
+}
+
+pub theorem len_spec_bound(
+  S: Nat,
+  X: Nat,
+  h: NatLe(Succ(S), 288230376151711744),
+  h2: NatLe(576460752303423488, X)
+): NatLe(Succ(Succ(S)), X) {
+  Int::le_trans(
+    IntOfNat(Succ(Succ(S))),
+    Int::add(
+      Int::mul(IntOfNat(1), IntOfNat(X)),
+      Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+    ),
+    IntOfNat(X),
+    int_le_lin(
+      Int::add(
+        Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+        Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+      ),
+      Int::add(
+        Int::mul(IntOfNat(288230376151711744), IntOfNat(1)),
+        Int::mul(IntOfNat(X), IntOfNat(1))
+      ),
+      1,
+      Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1))),
+      IntOfNat(Succ(Succ(S))),
+      Int::add(
+        Int::mul(IntOfNat(1), IntOfNat(X)),
+        Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+      ),
+      int_le_add2(
+        Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+        Int::mul(IntOfNat(288230376151711744), IntOfNat(1)),
+        Int::mul(IntOfNat(576460752303423488), IntOfNat(1)),
+        Int::mul(IntOfNat(X), IntOfNat(1)),
+        int_le_mul_nat(IntOfNat(Succ(S)), IntOfNat(288230376151711744), 1, h),
+        int_le_mul_nat(IntOfNat(576460752303423488), IntOfNat(X), 1, h2)
+      ),
+      len_spec_bound_15(S, X),
+      len_spec_bound_16(S, X)
+    ),
+    int_le_by(
+      Int::add(
+        Int::mul(IntOfNat(1), IntOfNat(X)),
+        Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+      ),
+      IntOfNat(X),
+      288230376151711743,
+      len_spec_bound_17(S, X)
+    )
+  )
+}
+
+pub theorem g_contra(
+  h1: Nat,
+  h: NatLe(Nat::add(4503599627370496, Nat::add(4503599627370496, Succ(h1))), 9007199254740992)
+): False {
+  false_ne_true(
+    Int::le_trans(
+      IntOfNat(1),
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+      IntOfNat(0),
+      int_le_lin(
+        Int::mul(
+          IntOfNat(Nat::add(4503599627370496, Nat::add(4503599627370496, Succ(h1)))),
+          IntOfNat(1)
+        ),
+        Int::mul(IntOfNat(9007199254740992), IntOfNat(1)),
+        1,
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+          Int::neg(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)))
+        ),
+        IntOfNat(1),
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+        int_le_mul_nat(
+          IntOfNat(Nat::add(4503599627370496, Nat::add(4503599627370496, Succ(h1)))),
+          IntOfNat(9007199254740992),
+          1,
+          h
+        ),
+        g_contra_18(h1),
+        g_contra_19(h1)
+      ),
+      int_le_by(Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))), IntOfNat(0), h1, g_contra_20(h1))
+    )
+  )
+}
+
+pub theorem pow2_pos_at_0(
+  d: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(Int::mul(IntOfNat(Succ(d)), IntOfNat(1)), IntOfNat(1)),
+    Int::neg(Int::mul(IntOfNat(1), IntOfNat(d)))
+  ),
+  IntOfNat(1)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(Int::mul(IntOfNat(Succ(d)), IntOfNat(1)), IntOfNat(1)),
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(d)))
+    ),
+    IntOfNat(1)
+  ) {}
+}
+
+pub theorem pow2_pos_at_1(
+  d: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(Int::mul(IntOfNat(X), IntOfNat(1)), IntOfNat(1)),
+    Int::neg(Int::mul(IntOfNat(1), IntOfNat(d)))
+  ),
+  Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))), Int::mul(IntOfNat(1), IntOfNat(X)))
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(Int::mul(IntOfNat(X), IntOfNat(1)), IntOfNat(1)),
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(d)))
+    ),
+    Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))), Int::mul(IntOfNat(1), IntOfNat(X)))
+  ) {}
+}
+
+pub theorem pow2_pos_at_2(
+  d: Nat,
+  X: Nat
+): Eq(
+  Int,
+  IntOfNat(X),
+  Int::add(
+    Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))), Int::mul(IntOfNat(1), IntOfNat(X))),
+    IntOfNat(d)
+  )
+) {
+  by int_norm!(): Eq(
+    Int,
+    IntOfNat(X),
+    Int::add(
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(d))),
+        Int::mul(IntOfNat(1), IntOfNat(X))
+      ),
+      IntOfNat(d)
+    )
+  ) {}
+}
+
+pub theorem pow2_mono_at_3(
+  A: Nat,
+  D: Nat
+): Eq(
+  Int,
+  Int::add(Int::mul(Int::mul(IntOfNat(1), IntOfNat(A)), IntOfNat(1)), IntOfNat(0)),
+  IntOfNat(A)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(Int::mul(Int::mul(IntOfNat(1), IntOfNat(A)), IntOfNat(1)), IntOfNat(0)),
+    IntOfNat(A)
+  ) {}
+}
+
+pub theorem pow2_mono_at_4(
+  A: Nat,
+  D: Nat
+): Eq(
+  Int,
+  Int::add(Int::mul(Int::mul(IntOfNat(D), IntOfNat(A)), IntOfNat(1)), IntOfNat(0)),
+  Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D)))
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(Int::mul(Int::mul(IntOfNat(D), IntOfNat(A)), IntOfNat(1)), IntOfNat(0)),
+    Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D)))
+  ) {}
+}
+
+pub theorem pow2_mono_at_5(
+  A: Nat,
+  D: Nat
+): Eq(
+  Int,
+  IntOfNat(Nat::mul(A, D)),
+  Int::add(Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D))), IntOfNat(0))
+) {
+  by int_norm!(): Eq(
+    Int,
+    IntOfNat(Nat::mul(A, D)),
+    Int::add(Int::mul(IntOfNat(1), IntOfNat(Nat::mul(A, D))), IntOfNat(0))
+  ) {}
+}
+
+pub theorem len_lo_contra_6(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::add(
+        Int::add(Int::mul(IntOfNat(Succ(S)), IntOfNat(1)), Int::mul(IntOfNat(X), IntOfNat(1))),
+        Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+      ),
+      IntOfNat(1)
+    ),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+        Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(1)))
+      )
+    )
+  ),
+  IntOfNat(1)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::add(
+          Int::add(
+            Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+            Int::mul(IntOfNat(X), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+        ),
+        IntOfNat(1)
+      ),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+          Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(1)))
+        )
+      )
+    ),
+    IntOfNat(1)
+  ) {}
+}
+
+pub theorem len_lo_contra_7(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::add(
+        Int::add(
+          Int::mul(IntOfNat(X), IntOfNat(1)),
+          Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+        ),
+        Int::mul(IntOfNat(S), IntOfNat(1))
+      ),
+      IntOfNat(1)
+    ),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+        Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(1)))
+      )
+    )
+  ),
+  IntOfNat(0)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::add(
+          Int::add(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(72057594037927936), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(S), IntOfNat(1))
+        ),
+        IntOfNat(1)
+      ),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+          Int::neg(Int::mul(IntOfNat(72057594037927936), IntOfNat(1)))
+        )
+      )
+    ),
+    IntOfNat(0)
+  ) {}
+}
+
+pub theorem len_lo_contra_8(
+  S: Nat,
+  X: Nat
+): Eq(Int, IntOfNat(0), Int::add(IntOfNat(0), IntOfNat(0))) {
+  by int_norm!(): Eq(Int, IntOfNat(0), Int::add(IntOfNat(0), IntOfNat(0))) {}
+}
+
+pub theorem len_hi_contra_9(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::add(
+        Int::add(
+          Int::mul(IntOfNat(X), IntOfNat(1)),
+          Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+        ),
+        Int::mul(IntOfNat(S), IntOfNat(1))
+      ),
+      IntOfNat(1)
+    ),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+        Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+      )
+    )
+  ),
+  IntOfNat(1)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::add(
+          Int::add(
+            Int::mul(IntOfNat(X), IntOfNat(1)),
+            Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+          ),
+          Int::mul(IntOfNat(S), IntOfNat(1))
+        ),
+        IntOfNat(1)
+      ),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+          Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+        )
+      )
+    ),
+    IntOfNat(1)
+  ) {}
+}
+
+pub theorem len_hi_contra_10(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::add(
+        Int::add(Int::mul(IntOfNat(S), IntOfNat(1)), Int::mul(IntOfNat(X), IntOfNat(1))),
+        Int::mul(IntOfNat(288230376151711744), IntOfNat(1))
+      ),
+      IntOfNat(1)
+    ),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+        Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+      )
+    )
+  ),
+  Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::add(
+          Int::add(Int::mul(IntOfNat(S), IntOfNat(1)), Int::mul(IntOfNat(X), IntOfNat(1))),
+          Int::mul(IntOfNat(288230376151711744), IntOfNat(1))
+        ),
+        IntOfNat(1)
+      ),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(S))),
+        Int::add(
+          Int::neg(Int::mul(IntOfNat(1), IntOfNat(X))),
+          Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+        )
+      )
+    ),
+    Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+  ) {}
+}
+
+pub theorem len_hi_contra_11(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  IntOfNat(0),
+  Int::add(
+    Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1))),
+    IntOfNat(288230376151711743)
+  )
+) {
+  by int_norm!(): Eq(
+    Int,
+    IntOfNat(0),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1))),
+      IntOfNat(288230376151711743)
+    )
+  ) {}
+}
+
+pub theorem len_j_contra_12(
+  j3: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(Int::mul(IntOfNat(Nat::add(56, Succ(Succ(Succ(j3))))), IntOfNat(1)), IntOfNat(1)),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+      Int::neg(Int::mul(IntOfNat(58), IntOfNat(1)))
+    )
+  ),
+  IntOfNat(1)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(Int::mul(IntOfNat(Nat::add(56, Succ(Succ(Succ(j3))))), IntOfNat(1)), IntOfNat(1)),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+        Int::neg(Int::mul(IntOfNat(58), IntOfNat(1)))
+      )
+    ),
+    IntOfNat(1)
+  ) {}
+}
+
+pub theorem len_j_contra_13(
+  j3: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(Int::mul(IntOfNat(58), IntOfNat(1)), IntOfNat(1)),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+      Int::neg(Int::mul(IntOfNat(58), IntOfNat(1)))
+    )
+  ),
+  Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3)))
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(Int::mul(IntOfNat(58), IntOfNat(1)), IntOfNat(1)),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))),
+        Int::neg(Int::mul(IntOfNat(58), IntOfNat(1)))
+      )
+    ),
+    Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3)))
+  ) {}
+}
+
+pub theorem len_j_contra_14(
+  j3: Nat
+): Eq(Int, IntOfNat(0), Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))), IntOfNat(j3))) {
+  by int_norm!(): Eq(
+    Int,
+    IntOfNat(0),
+    Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(j3))), IntOfNat(j3))
+  ) {}
+}
+
+pub theorem len_spec_bound_15(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::add(
+        Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+        Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+      ),
+      IntOfNat(1)
+    ),
+    Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+  ),
+  IntOfNat(Succ(Succ(S)))
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::add(
+          Int::mul(IntOfNat(Succ(S)), IntOfNat(1)),
+          Int::mul(IntOfNat(576460752303423488), IntOfNat(1))
+        ),
+        IntOfNat(1)
+      ),
+      Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+    ),
+    IntOfNat(Succ(Succ(S)))
+  ) {}
+}
+
+pub theorem len_spec_bound_16(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::add(
+        Int::mul(IntOfNat(288230376151711744), IntOfNat(1)),
+        Int::mul(IntOfNat(X), IntOfNat(1))
+      ),
+      IntOfNat(1)
+    ),
+    Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+  ),
+  Int::add(
+    Int::mul(IntOfNat(1), IntOfNat(X)),
+    Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+  )
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::add(
+          Int::mul(IntOfNat(288230376151711744), IntOfNat(1)),
+          Int::mul(IntOfNat(X), IntOfNat(1))
+        ),
+        IntOfNat(1)
+      ),
+      Int::neg(Int::mul(IntOfNat(576460752303423487), IntOfNat(1)))
+    ),
+    Int::add(
+      Int::mul(IntOfNat(1), IntOfNat(X)),
+      Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+    )
+  ) {}
+}
+
+pub theorem len_spec_bound_17(
+  S: Nat,
+  X: Nat
+): Eq(
+  Int,
+  IntOfNat(X),
+  Int::add(
+    Int::add(
+      Int::mul(IntOfNat(1), IntOfNat(X)),
+      Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+    ),
+    IntOfNat(288230376151711743)
+  )
+) {
+  by int_norm!(): Eq(
+    Int,
+    IntOfNat(X),
+    Int::add(
+      Int::add(
+        Int::mul(IntOfNat(1), IntOfNat(X)),
+        Int::neg(Int::mul(IntOfNat(288230376151711743), IntOfNat(1)))
+      ),
+      IntOfNat(288230376151711743)
+    )
+  ) {}
+}
+
+pub theorem g_contra_18(
+  h1: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(
+      Int::mul(
+        IntOfNat(Nat::add(4503599627370496, Nat::add(4503599627370496, Succ(h1)))),
+        IntOfNat(1)
+      ),
+      IntOfNat(1)
+    ),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+      Int::neg(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)))
+    )
+  ),
+  IntOfNat(1)
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(
+        Int::mul(
+          IntOfNat(Nat::add(4503599627370496, Nat::add(4503599627370496, Succ(h1)))),
+          IntOfNat(1)
+        ),
+        IntOfNat(1)
+      ),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+        Int::neg(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)))
+      )
+    ),
+    IntOfNat(1)
+  ) {}
+}
+
+pub theorem g_contra_19(
+  h1: Nat
+): Eq(
+  Int,
+  Int::add(
+    Int::mul(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)), IntOfNat(1)),
+    Int::add(
+      Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+      Int::neg(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)))
+    )
+  ),
+  Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1)))
+) {
+  by int_norm!(): Eq(
+    Int,
+    Int::add(
+      Int::mul(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)), IntOfNat(1)),
+      Int::add(
+        Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))),
+        Int::neg(Int::mul(IntOfNat(9007199254740992), IntOfNat(1)))
+      )
+    ),
+    Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1)))
+  ) {}
+}
+
+pub theorem g_contra_20(
+  h1: Nat
+): Eq(Int, IntOfNat(0), Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))), IntOfNat(h1))) {
+  by int_norm!(): Eq(
+    Int,
+    IntOfNat(0),
+    Int::add(Int::neg(Int::mul(IntOfNat(1), IntOfNat(h1))), IntOfNat(h1))
+  ) {}
+}

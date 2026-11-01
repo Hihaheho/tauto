@@ -1,0 +1,217 @@
+import "rules_data_header.taut"
+import "program_data_metadata_sound.taut"
+
+pub theorem header_metadata_ignores(
+  o: Option(Data)
+): data_header_option(data_metadata_option(o)) = data_header_option(o) {
+  match o: data_header_option(data_metadata_option(o)) = data_header_option(o) {
+    None => Refl
+    Some(data) => Refl
+  }
+}
+pub theorem header_lookup_metadata(
+  a: Ordmap(Text, Data),
+  b: Ordmap(Text, Data),
+  n: Text,
+  same: data_metadata_lookup(a, n) = data_metadata_lookup(b, n)
+): data_header_option(Ordmap::get(a, n, Ordmap::compare_text)) = data_header_option(Ordmap::get(b, n, Ordmap::compare_text)) {
+  Eq::trans(
+    Eq::sym(header_metadata_ignores(Ordmap::get(a, n, Ordmap::compare_text))),
+    Eq::trans(
+      Eq::congr(data_header_option, same),
+      header_metadata_ignores(Ordmap::get(b, n, Ordmap::compare_text))
+    )
+  )
+}
+
+pub theorem registration_bind_header<A: Type, B: Type>(
+  d: SurfaceData,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: CkDatasOrdered(ck_st(m)),
+  hk: ∀ v: A. ∀ next: Checker. (
+    CkDatasOrdered(next)
+  ) -> DataHeaderMatches(ck_datas_of(ck_st(k(v, next))), d)
+): DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) {
+  match m: DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) {
+    mut1(v, next) => hk(v, next, hm)
+  }
+}
+
+pub theorem registration_insert_header(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  ordered: CkDatasOrdered(c)
+): DataHeaderMatches(
+  ck_datas_of(ck_st(registration_insert(c, d, is_struct, builtin, constructors))),
+  d
+) {
+  Eq::congr(
+    data_header_option,
+    Ordmap::text_get_insert_same(
+      summary_decls(ck_datas_of(c)),
+      registration_name(d),
+      registration_data(d, is_struct, builtin, constructors),
+      ordered
+    )
+  )
+}
+pub theorem registration_declare_header(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: CkDatasOrdered(c)
+): DataHeaderMatches(ck_datas_of(ck_st(registration_declare(c, d, is_struct, builtin))), d) {
+  registration_bind_header(
+    Unit,
+    Unit,
+    d,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      Bool::and(
+        surface_data_is_view(d),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    frame_ordered(
+      c,
+      frame_error_if(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      frame_error_if_ok(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      ordered
+    ),
+    ignored => c1 => o1 => registration_bind_header(
+      List(DataCtor),
+      Unit,
+      d,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      ),
+      frame_ordered(
+        c1,
+        ck_data_ctors(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        ck_data_ctors_frame(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        o1
+      ),
+      constructors => c2 => o2 => registration_bind_header(
+        Unit,
+        Unit,
+        d,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0),
+        ck_register_ctors_ordered(constructors, c2, registration_name(d), 0, o2),
+        ignored2 => c3 => o3 => registration_insert_header(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors,
+          o3
+        )
+      )
+    )
+  )
+}
+
+pub theorem ck_declare_data_header(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: CkDatasOrdered(c)
+): DataHeaderMatches(ck_datas_of(ck_st(ck_declare_data(c, d, is_struct, builtin))), d) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(z)), d),
+    Eq::sym(registration_declare_unf(c, d, is_struct, builtin)),
+    registration_declare_header(c, d, is_struct, builtin, ordered)
+  )
+}
+
+pub theorem header_registered_entry(
+  env: Datas,
+  source: SurfaceData,
+  present: DataPresent(summary_decls(env), registration_name(source)),
+  header: DataHeaderMatches(env, source)
+): SourceDataEntry(env, source) {
+  match present: SourceDataEntry(env, source) {
+    Mk(data, found) => SourceDataEntry::Mk(
+      data,
+      found,
+      ck_some_inj(
+        data_header(data),
+        source_data_header(source),
+        Eq::trans(Eq::sym(Eq::congr(data_header_option, found)), header)
+      )
+    )
+  }
+}

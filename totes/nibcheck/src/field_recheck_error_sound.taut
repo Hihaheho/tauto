@@ -1,0 +1,116 @@
+import "field_recheck_frame.taut"
+import "written_error_sound.taut"
+
+pub theorem recheck_fields_cons_frame_errors(
+  f: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_recheck_fields(rest, next, generics))
+): CkErrorFrame(c, recheck_fields_cons(f, rest, c, generics)) {
+  error_frame_bind(
+    Ty,
+    Unit,
+    c,
+    (ignored: Ty, next: Checker) => ck_rewrap1(ck_recheck_fields(rest, next, generics)),
+    ck_written(c, registration_field_ty(f), generics),
+    ck_written_frame_errors(c, registration_field_ty(f), generics),
+    ignored => next => error_frame_rewrap(next, ck_recheck_fields(rest, next, generics), ih(next))
+  )
+}
+pub theorem ck_recheck_fields_frame_errors(
+  xs: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_recheck_fields(xs, c, generics)) {
+  match xs: CkErrorFrame(c, ck_recheck_fields(xs, c, generics)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(f, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
+      Eq::sym(recheck_fields_cons_unf(f, rest, c, generics)),
+      recheck_fields_cons_frame_errors(
+        f,
+        rest,
+        c,
+        generics,
+        next => ck_recheck_fields_frame_errors(rest, next, generics)
+      )
+    )
+  }
+}
+
+pub theorem recheck_ctors_cons_frame_errors(
+  k: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_recheck_ctors(rest, next, generics))
+): CkErrorFrame(c, recheck_ctors_cons(k, rest, c, generics)) {
+  error_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_ctors(rest, next, generics)),
+    ck_recheck_fields(registration_ctor_fields(k), c, generics),
+    ck_recheck_fields_frame_errors(registration_ctor_fields(k), c, generics),
+    ignored => next => error_frame_rewrap(next, ck_recheck_ctors(rest, next, generics), ih(next))
+  )
+}
+pub theorem ck_recheck_ctors_frame_errors(
+  xs: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_recheck_ctors(xs, c, generics)) {
+  match xs: CkErrorFrame(c, ck_recheck_ctors(xs, c, generics)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(k, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
+      Eq::sym(recheck_ctors_cons_unf(k, rest, c, generics)),
+      recheck_ctors_cons_frame_errors(
+        k,
+        rest,
+        c,
+        generics,
+        next => ck_recheck_ctors_frame_errors(rest, next, generics)
+      )
+    )
+  }
+}
+
+pub theorem recheck_datas_cons_frame_errors(
+  d: SurfaceData,
+  rest: List(SurfaceData),
+  c: Checker,
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_recheck_datas(rest, next))
+): CkErrorFrame(c, recheck_datas_cons(d, rest, c)) {
+  error_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
+    ck_recheck_ctors(
+      registration_ctors(d),
+      c,
+      ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+    ),
+    ck_recheck_ctors_frame_errors(
+      registration_ctors(d),
+      c,
+      ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+    ),
+    ignored => next => error_frame_rewrap(next, ck_recheck_datas(rest, next), ih(next))
+  )
+}
+pub theorem ck_recheck_datas_frame_errors(
+  xs: List(SurfaceData),
+  c: Checker
+): CkErrorFrame(c, ck_recheck_datas(xs, c)) {
+  match xs: CkErrorFrame(c, ck_recheck_datas(xs, c)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(d, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
+      Eq::sym(recheck_datas_cons_unf(d, rest, c)),
+      recheck_datas_cons_frame_errors(d, rest, c, next => ck_recheck_datas_frame_errors(rest, next))
+    )
+  }
+}

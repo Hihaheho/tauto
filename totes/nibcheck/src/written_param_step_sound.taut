@@ -1,0 +1,161 @@
+import "written_transfer_sound.taut"
+
+pub fn written_param_body(p: SurfaceParam): SurfaceTerm {
+  match p: SurfaceTerm { SurfaceParamMk(name, body) => body }
+}
+pub theorem written_param_step(
+  name: Option(Text),
+  body: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ordinary: frame_under_borrow(c) = false,
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(body, c, generics))
+  ). WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    frame_under_borrow(c),
+    body,
+    ck_val(ck_written_in(body, c, generics))
+  ),
+  clean: DiagnosticClean(ck_st(ck_written_param(SurfaceParamMk(name, body), c, generics)))
+): WrittenTerm(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  false,
+  body,
+  ck_val(ck_written_param(SurfaceParamMk(name, body), c, generics))
+) {
+  written_transfer(
+    Ty,
+    (t: Ty) => WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, body, t),
+    ck_written_param(SurfaceParamMk(name, body), c, generics),
+    ck_written_in(body, c, generics),
+    written_parameter_value(name, body, c, generics),
+    inner_clean => written_term_ordinary(
+      c,
+      generics,
+      body,
+      ck_val(ck_written_in(body, c, generics)),
+      ordinary,
+      ih(inner_clean)
+    ),
+    clean
+  )
+}
+pub theorem written_params_cons_step(
+  p: SurfaceParam,
+  rest: List(SurfaceParam),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  skip: Nat,
+  ordinary: frame_under_borrow(c) = false,
+  ihparam: ∀ state: Checker. ∀ ordinary_state: frame_under_borrow(state) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_param(p, state, generics))
+  ). WrittenTerm(
+    ck_datas_of(state),
+    generics,
+    frame_constructor_position(state),
+    false,
+    written_param_body(p),
+    ck_val(ck_written_param(p, state, generics))
+  ),
+  ihtail: ∀ state: Checker. ∀ count: Nat. ∀ ordinary_state: frame_under_borrow(state) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_params(rest, state, generics, count))
+  ). WrittenParameters(
+    ck_datas_of(state),
+    generics,
+    frame_constructor_position(state),
+    written_drop_parameters(rest, count),
+    ck_val(ck_written_params(rest, state, generics, count))
+  ),
+  clean: DiagnosticClean(ck_st(ck_written_params(Cons(p, rest), c, generics, skip)))
+): WrittenParameters(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  written_drop_parameters(Cons(p, rest), skip),
+  ck_val(ck_written_params(Cons(p, rest), c, generics, skip))
+) {
+  match skip: WrittenParameters(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    written_drop_parameters(Cons(p, rest), skip),
+    ck_val(ck_written_params(Cons(p, rest), c, generics, skip))
+  ) {
+    Succ(count) => written_transfer(
+      List(Ty),
+      (types: List(Ty)) => WrittenParameters(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        written_drop_parameters(rest, count),
+        types
+      ),
+      ck_written_params(Cons(p, rest), c, generics, Succ(count)),
+      ck_written_params(rest, c, generics, count),
+      Eq::trans(
+        frame_written_params_unf(p, rest, c, generics, Succ(count)),
+        ck_rewrap1_id(ck_written_params(rest, c, generics, count))
+      ),
+      ihtail(c, count, ordinary),
+      clean
+    )
+    Zero => match p: WrittenParameters(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      Cons(p, rest),
+      ck_val(ck_written_params(Cons(p, rest), c, generics, 0))
+    ) {
+      SurfaceParamMk(name, body) => written_transfer(
+        List(Ty),
+        (types: List(Ty)) => WrittenParameters(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(SurfaceParamMk(name, body), rest),
+          types
+        ),
+        ck_written_params(Cons(SurfaceParamMk(name, body), rest), c, generics, 0),
+        written_parameters_after(
+          rest,
+          generics,
+          ck_written_param(SurfaceParamMk(name, body), c, generics)
+        ),
+        frame_written_params_unf(SurfaceParamMk(name, body), rest, c, generics, 0),
+        branch_clean => written_parameters_after_sound(
+          c,
+          name,
+          body,
+          rest,
+          generics,
+          ck_written_param(SurfaceParamMk(name, body), c, generics),
+          ck_written_param_frame(SurfaceParamMk(name, body), c, generics),
+          Eq::subst(
+            (m: Mut1(Ty, Checker)) => CkWrittenReset(c, m),
+            Eq::sym(written_parameter_value(name, body, c, generics)),
+            And::left(ck_written_in_frame_context(body, c, generics))
+          ),
+          ihparam(c, ordinary),
+          state => ordinary_state => inner_clean => Eq::subst(
+            (remaining: List(SurfaceParam)) => WrittenParameters(
+              ck_datas_of(state),
+              generics,
+              frame_constructor_position(state),
+              remaining,
+              ck_val(ck_written_params(rest, state, generics, 0))
+            ),
+            written_drop_zero(rest),
+            ihtail(state, 0, ordinary_state, inner_clean)
+          ),
+          branch_clean
+        ),
+        clean
+      )
+    }
+  }
+}

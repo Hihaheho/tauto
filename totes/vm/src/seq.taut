@@ -1,0 +1,105 @@
+import std::Map
+import std::List
+
+// A persistent sequence indexed by an ordered map.
+// Positions absent from the map read as the supplied default value.
+pub(open) inductive MSeq(A: Type): Type {
+  Mseq(size: Nat, items: Ordmap(Nat, A)): MSeq(A)
+}
+
+pub fn ms_empty<A>(): MSeq(A) {
+  Mseq(0, Ordmap::empty())
+}
+
+pub fn ms_len<A>(s: MSeq(A)): Nat {
+  match s {
+    Mseq(n, items) => n
+  }
+}
+
+pub fn ms_read<A>(d: A, items: Ordmap(Nat, A), i: Nat): A {
+  match Ordmap::get(items, i, Ordmap::compare_nat) {
+    None => d
+    Some(v) => v
+  }
+}
+
+pub fn ms_get<A>(d: A, s: MSeq(A), i: Nat): Option(A) {
+  match s {
+    Mseq(n, items) => if Nat::lt(i, n) { Some(ms_read(d, items, i)) } else { None }
+  }
+}
+
+pub fn ms_put<A>(s: MSeq(A), i: Nat, v: A): MSeq(A) {
+  match s {
+    Mseq(n, items) => if Nat::lt(i, n) {
+      Mseq(n, Ordmap::insert(items, i, v, Ordmap::compare_nat))
+    } else { s }
+  }
+}
+
+pub fn ms_push<A>(s: MSeq(A), v: A): MSeq(A) {
+  match s {
+    Mseq(n, items) => Mseq(Succ(n), Ordmap::insert(items, n, v, Ordmap::compare_nat))
+  }
+}
+
+pub fn ms_read_range<A>(d: A, items: Ordmap(Nat, A), start: Nat, count: Nat): List(A) {
+  match count {
+    Zero => Nil
+    Succ(n) => Cons(ms_read(d, items, start), ms_read_range(d, items, Succ(start), n))
+  }
+}
+
+pub fn ms_to_list<A>(d: A, s: MSeq(A)): List(A) {
+  match s {
+    Mseq(n, items) => ms_read_range(d, items, 0, n)
+  }
+}
+
+pub fn ms_push_all<A>(s: MSeq(A), xs: List(A)): MSeq(A) {
+  match xs {
+    Nil => s
+    Cons(x, rest) => ms_push_all(ms_push(s, x), rest)
+  }
+}
+
+pub fn ms_of_list<A>(xs: List(A)): MSeq(A) {
+  ms_push_all(ms_empty(), xs)
+}
+
+pub fn ms_get_or<A>(d: A, s: MSeq(A), i: Nat): A {
+  match ms_get(d, s, i) {
+    None => d
+    Some(v) => v
+  }
+}
+
+// Truncation retains map entries outside the visible prefix. A push overwrites
+// its next position; clearing replaces the map.
+pub fn ms_take<A>(s: MSeq(A), count: Nat): MSeq(A) {
+  match s {
+    Mseq(n, items) => Mseq(Nat::min(n, count), items)
+  }
+}
+
+pub fn ms_init<A>(s: MSeq(A)): MSeq(A) {
+  ms_take(s, Nat::sub(ms_len(s), 1))
+}
+
+pub fn ms_last<A>(d: A, s: MSeq(A)): Option(A) {
+  match ms_len(s) {
+    Zero => None
+    Succ(n) => ms_get(d, s, n)
+  }
+}
+
+pub fn ms_swap<A>(d: A, s: MSeq(A), i: Nat, j: Nat): MSeq(A) {
+  match ms_get(d, s, i) {
+    None => s
+    Some(a) => match ms_get(d, s, j) {
+      None => s
+      Some(b) => ms_put(ms_put(s, i, b), j, a)
+    }
+  }
+}

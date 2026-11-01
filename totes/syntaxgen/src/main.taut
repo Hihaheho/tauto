@@ -1,0 +1,102 @@
+// The program `tauto syntax gen` runs: it reads a grammar from a file and
+// writes its table file with `totes/llkgen`. `README.md` says how it is run.
+
+import std::Text
+
+fn sg_line(t: Text): Text {
+  Text::concat_all(Cons(t, Cons(text_newline(), Nil)))
+}
+
+// Stops with `why` on standard error.
+fn sg_stop(why: Text): Unit {
+  eprint(sg_line(why))
+  perform exit(1)
+}
+
+// Prints the text, or stops with why there is none.
+fn sg_print(r: Result(Text, Text)): Unit {
+  match r {
+    Ok(t) => print(t)
+    Err(why) => sg_stop(why)
+  }
+}
+
+// `--gen FILE`: the table file of a grammar.
+fn sg_gen(path: Text): Unit {
+  match read_file(path) {
+    Err(e) => eprint(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
+    Ok(grammar) => match pargen_is_lalr(grammar) {
+      Err(why) => sg_stop(why)
+      Ok(lalr) => sg_print(if lalr { lalrgen_tables(grammar) } else { llkgen_tables(grammar) })
+    }
+  }
+}
+
+// `--par FILE…` and `--scan FILE…`: for each grammar file, `== FILE` and the
+// lines of its table file that the reading of the grammar (or the scanner)
+// decides.
+fn sg_each(paths: List(Text), scan: Bool): Unit {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      print(sg_line(Text::concat_all(Cons("== ", Cons(path, Nil)))))
+      match read_file(path) {
+        Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
+        Ok(grammar) => sg_print(
+          if scan { llkgen_scan_lines(grammar) } else { llkgen_model_lines(grammar) }
+        )
+      }
+      sg_each(rest, scan)
+    }
+  }
+}
+
+// `--rx FILE`: the tree of the regular expression that each line of the
+// file is.
+fn sg_rx(path: Text): Unit {
+  match read_file(path) {
+    Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
+    Ok(lines) => sg_print(llkgen_rx_trees(lines))
+  }
+}
+
+// `TABLE…`: for each table file, `== TABLE` and the `max_k` and `lookahead`
+// lines made again from its grammar.
+fn sg_tables(paths: List(Text)): Unit {
+  match paths {
+    Nil => #()
+    Cons(path, rest) => {
+      print(sg_line(Text::concat_all(Cons("== ", Cons(path, Nil)))))
+      match read_file(path) {
+        Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
+        Ok(table) => match llkgen_lookahead_lines(table) {
+          Ok(t) => print(t)
+          Err(why) => sg_stop(Text::concat_all(Cons(path, Cons(": ", Cons(why, Nil)))))
+        }
+      }
+      sg_tables(rest)
+    }
+  }
+}
+
+// `--gen FILE` is what `tauto syntax gen` runs (`TAUTO_GRAMMAR_GEN` names
+// another), granting read on `FILE` alone. With no arguments the grammar is
+// read on standard input, which needs `--allow-read`.
+// Every index is below the length it was read with; a slip there says so
+// and stops rather than reading past the end.
+handle {
+  match perform argv() {
+    Nil => sg_gen("/dev/stdin")
+    Cons("--gen", Cons(path, rest)) => sg_gen(path)
+    Cons("--scan", paths) => sg_each(paths, true)
+    Cons("--rx", Cons(path, rest)) => sg_rx(path)
+    Cons("--lr", Cons(path, rest)) => match read_file(path) {
+      Err(e) => print(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))
+      Ok(grammar) => sg_print(lalrgen_lr_lines(grammar))
+    }
+    Cons("--par", paths) => sg_each(paths, false)
+    paths => sg_tables(paths)
+  }
+} with {
+  out_of_bounds() => eprint("an index went past the end of a vector")
+}

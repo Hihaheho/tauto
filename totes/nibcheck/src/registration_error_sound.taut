@@ -1,0 +1,361 @@
+import "datas_registration.taut"
+import "written_error_sound.taut"
+
+pub theorem registration_fields_cons_ok_errors(
+  field: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_data_fields(rest, next, generics))
+): CkErrorFrame(c, registration_fields_cons(field, rest, c, generics)) {
+  error_frame_bind(
+    Unit,
+    List(DataField),
+    c,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Ty,
+      List(DataField),
+      (ty: Ty, c2: Checker) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (tail: List(DataField), c3: Checker) => mut1(
+          Cons(DataFieldMk(registration_field_name(field), ty), tail),
+          c3
+        ),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics)
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    ),
+    frame_error_if_ok_errors(
+      c,
+      "a borrow cannot be a field",
+      span_of(registration_field_ty(field)),
+      term_has_borrow(registration_field_ty(field))
+    ),
+    ignored => c1 => error_frame_bind(
+      Ty,
+      List(DataField),
+      c1,
+      (ty: Ty, c2: Checker) => frame_bind(
+        List(DataField),
+        List(DataField),
+        (tail: List(DataField), c3: Checker) => mut1(
+          Cons(DataFieldMk(registration_field_name(field), ty), tail),
+          c3
+        ),
+        ck_data_fields(rest, c2, generics)
+      ),
+      ck_written(c1, registration_field_ty(field), generics),
+      ck_written_frame_errors(c1, registration_field_ty(field), generics),
+      ty => c2 => error_frame_bind(
+        List(DataField),
+        List(DataField),
+        c2,
+        (tail: List(DataField), c3: Checker) => mut1(
+          Cons(DataFieldMk(registration_field_name(field), ty), tail),
+          c3
+        ),
+        ck_data_fields(rest, c2, generics),
+        ih(c2),
+        tail => c3 => (clean_errors => clean_errors)
+      )
+    )
+  )
+}
+
+pub theorem ck_data_fields_frame_errors(
+  fs: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_data_fields(fs, c, generics)) {
+  match fs: CkErrorFrame(c, ck_data_fields(fs, c, generics)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(field, rest) => Eq::subst(
+      (z: Mut1(List(DataField), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(registration_fields_unf(field, rest, c, generics)),
+      registration_fields_cons_ok_errors(
+        field,
+        rest,
+        c,
+        generics,
+        next => ck_data_fields_frame_errors(rest, next, generics)
+      )
+    )
+  }
+}
+
+pub theorem registration_ctors_cons_ok_errors(
+  ctor: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_data_ctors(rest, next, generics))
+): CkErrorFrame(c, registration_ctors_cons(ctor, rest, c, generics)) {
+  error_frame_bind(
+    List(DataField),
+    List(DataCtor),
+    c,
+    (fields: List(DataField), c1: Checker) => frame_bind(
+      List(DataCtor),
+      List(DataCtor),
+      (tail: List(DataCtor), c2: Checker) => mut1(
+        Cons(DataCtorMk(registration_ctor_name(ctor), fields), tail),
+        c2
+      ),
+      ck_data_ctors(rest, c1, generics)
+    ),
+    ck_data_fields(registration_ctor_fields(ctor), c, generics),
+    ck_data_fields_frame_errors(registration_ctor_fields(ctor), c, generics),
+    fields => c1 => error_frame_bind(
+      List(DataCtor),
+      List(DataCtor),
+      c1,
+      (tail: List(DataCtor), c2: Checker) => mut1(
+        Cons(DataCtorMk(registration_ctor_name(ctor), fields), tail),
+        c2
+      ),
+      ck_data_ctors(rest, c1, generics),
+      ih(c1),
+      tail => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem ck_data_ctors_frame_errors(
+  cs: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_data_ctors(cs, c, generics)) {
+  match cs: CkErrorFrame(c, ck_data_ctors(cs, c, generics)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(ctor, rest) => Eq::subst(
+      (z: Mut1(List(DataCtor), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(registration_ctors_unf(ctor, rest, c, generics)),
+      registration_ctors_cons_ok_errors(
+        ctor,
+        rest,
+        c,
+        generics,
+        next => ck_data_ctors_frame_errors(rest, next, generics)
+      )
+    )
+  }
+}
+
+// Constructor registration changes only the constructor index, not declarations.
+pub theorem ck_effect_param_frame_errors(
+  c: Checker,
+  e: SurfaceEffect,
+  p: Option(SurfaceTerm),
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_effect_param(c, e, p, generics)) {
+  match p: CkErrorFrame(c, ck_effect_param(c, e, p, generics)) {
+    None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+    Some(x) => error_frame_rewrap(
+      c,
+      ck_written(c, x, generics),
+      ck_written_frame_errors(c, x, generics)
+    )
+  }
+}
+
+pub theorem registration_effect_params_cons_ok_errors(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_effect_params(rest, next, e, generics))
+): CkErrorFrame(c, registration_effect_params_cons(p, rest, c, e, generics)) {
+  error_frame_bind(
+    Ty,
+    List(Ty),
+    c,
+    (head: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics)
+    ),
+    ck_effect_param(c, e, p, generics),
+    ck_effect_param_frame_errors(c, e, p, generics),
+    head => c1 => error_frame_bind(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_effect_params(rest, c1, e, generics),
+      ih(c1),
+      tail => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem ck_effect_params_frame_errors(
+  ps: List(Option(SurfaceTerm)),
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) {
+  match ps: CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(registration_effect_params_unf(p, rest, c, e, generics)),
+      registration_effect_params_cons_ok_errors(
+        p,
+        rest,
+        c,
+        e,
+        generics,
+        next => ck_effect_params_frame_errors(rest, next, e, generics)
+      )
+    )
+  }
+}
+
+pub theorem registration_quant_parsed_frame_errors(
+  c: Checker,
+  e: SurfaceEffect,
+  q: Text,
+  o: Option(Quant)
+): CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) {
+  match o: CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) {
+    Some(x) => (clean_errors => clean_errors)
+    None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
+  }
+}
+pub theorem registration_quant_resume_frame_errors(
+  c: Checker,
+  e: SurfaceEffect,
+  r#resume: Option(Text)
+): CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) {
+  match r#resume: CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) {
+    None => (clean_errors => clean_errors)
+    Some(q) => registration_quant_parsed_frame_errors(c, e, q, quant_parse(q))
+  }
+}
+pub theorem ck_effect_quant_frame_errors(
+  c: Checker,
+  e: SurfaceEffect
+): CkErrorFrame(c, ck_effect_quant(c, e)) {
+  Eq::subst(
+    (z: Mut1(Quant, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(registration_quant_unf(c, e)),
+    registration_quant_resume_frame_errors(c, e, registration_effect_resume(e))
+  )
+}
+
+pub theorem registration_effect_result_frame_errors(
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  o: Option(SurfaceTerm)
+): CkErrorFrame(c, registration_effect_result_k(c, generics, o)) {
+  match o: CkErrorFrame(c, registration_effect_result_k(c, generics, o)) {
+    None => (clean_errors => clean_errors)
+    Some(r) => error_frame_rewrap(
+      c,
+      ck_written(c, r, generics),
+      ck_written_frame_errors(c, r, generics)
+    )
+  }
+}
+pub theorem ck_effect_result_frame_errors(
+  c: Checker,
+  e: SurfaceEffect,
+  generics: Ordmap(Text, Ty)
+): CkErrorFrame(c, ck_effect_result(c, e, generics)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(registration_effect_result_unf(c, e, generics)),
+    registration_effect_result_frame_errors(c, generics, registration_effect_result(e))
+  )
+}
+
+pub theorem registration_effect_store_frame_errors(
+  c: Checker,
+  e: SurfaceEffect,
+  params: List(Ty),
+  result: Ty,
+  quant: Quant
+): CkErrorFrame(
+  c,
+  registration_effect_store(c, e, params, result, quant)
+) { (clean_errors => clean_errors) }
+
+pub theorem registration_effect_declare_frame_errors(
+  c: Checker,
+  e: SurfaceEffect
+): CkErrorFrame(c, registration_effect_declare(c, e)) {
+  error_frame_bind(
+    List(Ty),
+    Unit,
+    c,
+    (params: List(Ty), c1: Checker) => frame_bind(
+      Ty,
+      Unit,
+      (result: Ty, c2: Checker) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), Ordmap::empty()))
+    ),
+    ck_effect_params(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), Ordmap::empty())
+    ),
+    ck_effect_params_frame_errors(
+      registration_effect_params(e),
+      c,
+      e,
+      ck_named_generics(registration_effect_generics(e), Ordmap::empty())
+    ),
+    params => c1 => error_frame_bind(
+      Ty,
+      Unit,
+      c1,
+      (result: Ty, c2: Checker) => frame_bind(
+        Quant,
+        Unit,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e)
+      ),
+      ck_effect_result(c1, e, ck_named_generics(registration_effect_generics(e), Ordmap::empty())),
+      ck_effect_result_frame_errors(
+        c1,
+        e,
+        ck_named_generics(registration_effect_generics(e), Ordmap::empty())
+      ),
+      result => c2 => error_frame_bind(
+        Quant,
+        Unit,
+        c2,
+        (quant: Quant, c3: Checker) => registration_effect_store(c3, e, params, result, quant),
+        ck_effect_quant(c2, e),
+        ck_effect_quant_frame_errors(c2, e),
+        quant => c3 => registration_effect_store_frame_errors(c3, e, params, result, quant)
+      )
+    )
+  )
+}
+
+pub theorem ck_declare_effect_frame_errors(
+  c: Checker,
+  e: SurfaceEffect
+): CkErrorFrame(c, ck_declare_effect(c, e)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
+    Eq::sym(registration_effect_declare_unf(c, e)),
+    registration_effect_declare_frame_errors(c, e)
+  )
+}

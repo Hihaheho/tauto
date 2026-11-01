@@ -1,8 +1,8 @@
 # grammar
 
 Tauto's grammar is the `syntax tauto` declaration in `src/grammar.taut`.
-The explicit `=>` clause lists its generated types and `tauto_parse`.
-The parser returns `Result(tauto_Program, SynDiag)`, including typed nodes,
+The explicit `=>` clause lists its generated types and `tauto::parse`.
+The parser returns `Result(tauto::Program, SynDiag)`, including typed nodes,
 not just an acceptance flag. `src/main.taut` calls this parser on each path
 passed as an argument and prints `ok` or `error`.
 
@@ -12,7 +12,7 @@ tauto run --tote totes/grammar -- examples/effects.taut
 
 The table in `.tauto-syntax/` is keyed by the exact grammar literal's SHA-256.
 It is the same table as `crates/tauto-syntax/tests/data/tauto.tables`.
-`crates/tauto-selfhost/tests/grammar.rs` executes the generated parser on
+`tools/selfhost-harness/tests/grammar.rs` executes the generated parser on
 Tauto, its own declaration, comments, Unicode, syntax literals and malformed
 input, and compares acceptance with the bootstrap parser across the repository corpus.
 Nested block comments are rejected by both entry points; ordinary block and
@@ -38,7 +38,7 @@ bash scripts/generate-syntax-tables.sh
 ```
 
 The Rust compiler reads the declaration with committed bootstrap parser
-tables. `tauto_parse` uses the existing `syn_parse` runtime
+tables. `tauto::parse` uses the existing `syn_parse` runtime
 primitive; it is not a replacement for the compiler's CST recovery driver.
 The `syntax` tote separately implements the scanner, LL(k) driver and CST
 in Tauto. A shared declarative grammar is not a claim that those bootstrap

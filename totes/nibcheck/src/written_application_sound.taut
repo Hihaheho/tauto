@@ -1,0 +1,250 @@
+import "written_function_sound.taut"
+
+pub theorem written_info_arguments<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, arg: SurfaceTerm, types: List(
+  Ty
+)>(
+  ast_occurrence: Option(TermOccurrence),
+  meaning: WrittenTerms(env, generics, partial, Cons(arg, Nil), types),
+  c: Checker,
+  under_borrow: Bool,
+  start: Nat,
+  end: Nat
+): WrittenKind(
+  env,
+  generics,
+  partial,
+  under_borrow,
+  SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+  ck_val(frame_app_info(c, types))
+) {
+  match meaning: WrittenKind(
+    env,
+    generics,
+    partial,
+    under_borrow,
+    SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+    ck_val(frame_app_info(c, types))
+  ) {
+    WrittenTermsCons(first, rest, t, ts, head, tail) => WrittenKindInfo(first, t, start, end, head)
+  }
+}
+pub theorem written_generic_arguments<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, arg: SurfaceTerm, types: List(
+  Ty
+)>(
+  ast_occurrence: Option(TermOccurrence),
+  meaning: WrittenTerms(env, generics, partial, Cons(arg, Nil), types),
+  c: Checker,
+  under_borrow: Bool,
+  start: Nat,
+  end: Nat,
+  span: TySpan,
+  name: Text,
+  bound: Ty,
+  not_info: (name = "Info") -> False,
+  parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound)
+): WrittenKind(
+  env,
+  generics,
+  partial,
+  under_borrow,
+  SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
+  ck_val(frame_app_generic(c, name, generics, span, types))
+) {
+  match meaning: WrittenKind(
+    env,
+    generics,
+    partial,
+    under_borrow,
+    SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
+    ck_val(frame_app_generic(c, name, generics, span, types))
+  ) {
+    WrittenTermsCons(gs, Mode, first, rest, t, ts, head, tail) => WrittenKindGeneric(
+      env,
+      ast_occurrence,
+      gs,
+      Mode,
+      under_borrow,
+      name,
+      first,
+      ck_written_name(name, gs),
+      t,
+      bound,
+      start,
+      end,
+      not_info,
+      Parameter,
+      ck_written_name_sound(name, gs),
+      head
+    )
+  }
+}
+
+pub theorem written_named_arguments(
+  ast_occurrence: Option(TermOccurrence),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  name: Text,
+  args: List(SurfaceTerm),
+  types: List(Ty),
+  start: Nat,
+  end: Nat,
+  span: TySpan,
+  not_tuple: (name = "Tuple") -> False,
+  not_info: (name = "Info") -> (list_len(args) = 1) -> False,
+  unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
+  slice_borrowed: (name = "Slice") -> (under_borrow = true),
+  meaning: WrittenTerms(ck_datas_of(c), generics, frame_constructor_position(c), args, types),
+  clean: DiagnosticClean(
+    ck_st(frame_return(TyNamed(name, types), ck_arity(c, name, list_len(types), span)))
+  )
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
+  ck_val(frame_return(TyNamed(name, types), ck_arity(c, name, list_len(types), span)))
+) {
+  Eq::subst(
+    (t: Ty) => WrittenKind(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
+      t
+    ),
+    Eq::sym(written_return_value(TyNamed(name, types), ck_arity(c, name, list_len(types), span))),
+    WrittenKindNamed(
+      name,
+      args,
+      types,
+      start,
+      end,
+      NotTuple,
+      not_info,
+      unbound,
+      SliceBorrowed,
+      meaning,
+      ck_written_arity_mode_sound(
+        c,
+        name,
+        types,
+        span,
+        Eq::subst(
+          DiagnosticClean,
+          written_return_state(TyNamed(name, types), ck_arity(c, name, list_len(types), span)),
+          clean
+        )
+      )
+    )
+  )
+}
+
+pub theorem written_nested_arguments(
+  ast_occurrence: Option(TermOccurrence),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  function: SurfaceTerm,
+  before: List(SurfaceTerm),
+  args: List(SurfaceTerm),
+  types: List(Ty),
+  start: Nat,
+  end: Nat,
+  span: TySpan,
+  inner: Ty,
+  constructor: WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    true,
+    false,
+    SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence),
+    inner
+  ),
+  arguments: WrittenTerms(ck_datas_of(c), generics, frame_constructor_position(c), args, types),
+  clean: DiagnosticClean(ck_st(frame_app_nested(c, span, types, inner)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
+  ck_val(frame_app_nested(c, span, types, inner))
+) {
+  match inner: WrittenKind(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    under_borrow,
+    SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
+    ck_val(frame_app_nested(c, span, types, inner))
+  ) {
+    TyNamed(name, first) => Eq::subst(
+      (t: Ty) => WrittenKind(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        under_borrow,
+        SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
+        t
+      ),
+      Eq::sym(
+        written_return_value(
+          TyNamed(name, List::append(first, types)),
+          ck_arity(c, name, list_len(List::append(first, types)), span)
+        )
+      ),
+      WrittenKindNested(
+        function,
+        before,
+        args,
+        start,
+        end,
+        name,
+        first,
+        types,
+        Constructor,
+        arguments,
+        ck_written_arity_mode_sound(
+          c,
+          name,
+          List::append(first, types),
+          span,
+          Eq::subst(
+            DiagnosticClean,
+            written_return_state(
+              TyNamed(name, List::append(first, types)),
+              ck_arity(c, name, list_len(List::append(first, types)), span)
+            ),
+            clean
+          )
+        )
+      )
+    )
+    TyInt(width) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyBool => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyText => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyUnit => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyNever => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyDecimal => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyFloat => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyFn(params, result, kind) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyUnion(members) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyProduct(members) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyTagged(tags, value) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyParam(name, bound) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyInfo(value) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyBorrow(value, mutable) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyVar(index) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyPoly(gs, value) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+    TyApp(head, arg) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
+  }
+}

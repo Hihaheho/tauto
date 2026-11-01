@@ -1,14 +1,19 @@
 import "Monoid.taut"
 
 // A group is an explicit monoid, inverse operation, and this law witness.
-inductive AlgebraGroup(u: Level, A: Type(u), m: AlgebraMonoid(u, A), inverse: (A) -> A): Prop {
-  algebra_group(
+pub(open) inductive AlgebraGroup(
+  u: Level,
+  A: Type(u),
+  m: AlgebraMonoid(u, A),
+  inverse: (A) -> A
+): Prop {
+  Mk(
     left: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)),
     right: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m))
   ): AlgebraGroup(u, A, m, inverse)
 }
 
-theorem algebra_inverse_left<u: Level, A: Type(
+pub theorem algebra_inverse_left<u: Level, A: Type(
   u
 ), m: AlgebraMonoid(
   u,
@@ -19,7 +24,7 @@ theorem algebra_inverse_left<u: Level, A: Type(
   g: AlgebraGroup(u, A, m, inverse),
   x: A
 ): AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)) {
-  AlgebraGroup_ind(
+  AlgebraGroup::ind(
     u,
     A,
     m,
@@ -30,7 +35,7 @@ theorem algebra_inverse_left<u: Level, A: Type(
   )
 }
 
-theorem algebra_inverse_right<u: Level, A: Type(
+pub theorem algebra_inverse_right<u: Level, A: Type(
   u
 ), m: AlgebraMonoid(
   u,
@@ -41,7 +46,7 @@ theorem algebra_inverse_right<u: Level, A: Type(
   g: AlgebraGroup(u, A, m, inverse),
   x: A
 ): AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m)) {
-  AlgebraGroup_ind(
+  AlgebraGroup::ind(
     u,
     A,
     m,
@@ -52,7 +57,7 @@ theorem algebra_inverse_right<u: Level, A: Type(
   )
 }
 
-theorem algebra_cancel_left<u: Level, A: Type(
+pub theorem algebra_cancel_left<u: Level, A: Type(
   u
 ), m: AlgebraMonoid(
   u,
@@ -71,7 +76,7 @@ theorem algebra_cancel_left<u: Level, A: Type(
     A,
     b,
     algebra_op(u, A, m)(algebra_unit(u, A, m), b)
-  ) = algebra_sym(
+  ) := algebra_sym(
     u,
     A,
     algebra_op(u, A, m)(algebra_unit(u, A, m), b),
@@ -83,7 +88,7 @@ theorem algebra_cancel_left<u: Level, A: Type(
     A,
     algebra_op(u, A, m)(algebra_unit(u, A, m), b),
     algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b)
-  ) = algebra_congr(
+  ) := algebra_congr(
     u,
     u,
     A,
@@ -104,13 +109,13 @@ theorem algebra_cancel_left<u: Level, A: Type(
     A,
     algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
     algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b))
-  ) = algebra_assoc(u, A, m, inverse(a), a, b);
+  ) := algebra_assoc(u, A, m, inverse(a), a, b);
   let step3: AlgebraEq(
     u,
     A,
     algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
     algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c))
-  ) = algebra_congr(
+  ) := algebra_congr(
     u,
     u,
     A,
@@ -125,7 +130,7 @@ theorem algebra_cancel_left<u: Level, A: Type(
     A,
     algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
     algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c)
-  ) = algebra_sym(
+  ) := algebra_sym(
     u,
     A,
     algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
@@ -137,7 +142,7 @@ theorem algebra_cancel_left<u: Level, A: Type(
     A,
     algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
     algebra_op(u, A, m)(algebra_unit(u, A, m), c)
-  ) = algebra_congr(
+  ) := algebra_congr(
     u,
     u,
     A,
@@ -152,7 +157,7 @@ theorem algebra_cancel_left<u: Level, A: Type(
     A,
     algebra_op(u, A, m)(algebra_unit(u, A, m), c),
     c
-  ) = algebra_left_unit(u, A, m, c);
+  ) := algebra_left_unit(u, A, m, c);
   algebra_trans(
     u,
     A,
@@ -204,7 +209,7 @@ theorem algebra_cancel_left<u: Level, A: Type(
   )
 }
 
-theorem algebra_inverse_unique<u: Level, A: Type(
+pub theorem algebra_inverse_unique<u: Level, A: Type(
   u
 ), m: AlgebraMonoid(
   u,

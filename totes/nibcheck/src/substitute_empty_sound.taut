@@ -1,0 +1,105 @@
+import std::Map
+import "rules_ty.taut"
+
+// Substitution may normalize unions, tags, and type applications even with
+// no bindings. Its identity law is type equality, not syntactic equality.
+pub theorem substitute_without_empty(
+  gs: List(Pair(Text, Kind))
+): ty_map_without(gs, Ordmap::empty()) = Ordmap::empty() {
+  match gs: ty_map_without(gs, Ordmap::empty()) = Ordmap::empty() {
+    Nil => Refl
+    Cons(g, rest) => substitute_without_empty(rest)
+  }
+}
+pub theorem substitute_empty_named(
+  name: Text,
+  args: List(Ty),
+  subst: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  items: TyEqList(subst, ok, args, ty_map_list(args, Ordmap::empty()))
+): TyEq(subst, ok, TyNamed(name, args), ty_substitute(TyNamed(name, args), Ordmap::empty())) {
+  match args: TyEq(
+    subst,
+    ok,
+    TyNamed(name, args),
+    ty_substitute(TyNamed(name, args), Ordmap::empty())
+  ) {
+    Nil => TyeqRefl(TyNamed(name, Nil))
+    Cons(head, rest) => TyeqNamed(name, items)
+  }
+}
+mutual {
+  pub theorem ty_substitute_empty_equal(
+    t: Ty,
+    subst: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ): TyEq(subst, ok, t, ty_substitute(t, Ordmap::empty())) {
+    match t: TyEq(subst, ok, t, ty_substitute(t, Ordmap::empty())) {
+      TyVar(v) => TyeqRefl(TyVar(v))
+      TyParam(name, kind) => TyeqRefl(TyParam(name, kind))
+      TyInt(width) => TyeqRefl(TyInt(width))
+      TyBool => TyeqRefl(TyBool)
+      TyText => TyeqRefl(TyText)
+      TyUnit => TyeqRefl(TyUnit)
+      TyNever => TyeqRefl(TyNever)
+      TyDecimal => TyeqRefl(TyDecimal)
+      TyFloat => TyeqRefl(TyFloat)
+      TyNamed(name, args) => substitute_empty_named(
+        name,
+        args,
+        subst,
+        ok,
+        ty_map_empty_equal(args, subst, ok)
+      )
+      TyFn(params, result, kind) => TyeqFn(
+        ty_map_empty_equal(params, subst, ok),
+        ty_substitute_empty_equal(result, subst, ok),
+        KindSameRefl(kind)
+      )
+      TyUnion(types) => TyeqTrans(
+        TyeqUnion(ty_map_empty_equal(types, subst, ok)),
+        TyeqUnionNorm(ty_map_list(types, Ordmap::empty()))
+      )
+      TyProduct(types) => TyeqTrans(
+        TyeqProduct(ty_map_empty_equal(types, subst, ok)),
+        TyeqProductNorm(ty_map_list(types, Ordmap::empty()))
+      )
+      TyTagged(tags, inner) => TyeqTrans(
+        TyeqTagged(tags, ty_substitute_empty_equal(inner, subst, ok)),
+        TyeqTaggedNorm(tags, ty_substitute(inner, Ordmap::empty()))
+      )
+      TyInfo(inner) => TyeqInfo(ty_substitute_empty_equal(inner, subst, ok))
+      TyBorrow(inner, mutable) => TyeqBorrow(mutable, ty_substitute_empty_equal(inner, subst, ok))
+      TyApp(head, arg) => TyeqTrans(
+        TyeqApp(
+          ty_substitute_empty_equal(head, subst, ok),
+          ty_substitute_empty_equal(arg, subst, ok)
+        ),
+        TyeqAppNorm(ty_substitute(head, Ordmap::empty()), ty_substitute(arg, Ordmap::empty()))
+      )
+      TyPoly(gs, inner) => Eq::subst(
+        (map: Ordmap(Text, Ty)) => TyEq(
+          subst,
+          ok,
+          TyPoly(gs, inner),
+          TyPoly(gs, ty_substitute(inner, map))
+        ),
+        Eq::sym(substitute_without_empty(gs)),
+        TyeqPolyBody(gs, ty_substitute_empty_equal(inner, subst, ok))
+      )
+    }
+  }
+  pub theorem ty_map_empty_equal(
+    types: List(Ty),
+    subst: Ordmap(Nat, Ty),
+    ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+  ): TyEqList(subst, ok, types, ty_map_list(types, Ordmap::empty())) {
+    match types: TyEqList(subst, ok, types, ty_map_list(types, Ordmap::empty())) {
+      Nil => TyeqNil
+      Cons(head, rest) => TyeqCons(
+        ty_substitute_empty_equal(head, subst, ok),
+        ty_map_empty_equal(rest, subst, ok)
+      )
+    }
+  }
+}

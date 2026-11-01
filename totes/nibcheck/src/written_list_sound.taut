@@ -1,0 +1,189 @@
+import "written_composite_sound.taut"
+
+pub fn written_context_position(p: Pair(Bool, Bool)): Bool { p.fst }
+pub theorem written_terms_state(
+  c: Checker,
+  next: Checker,
+  generics: Ordmap(Text, Ty),
+  terms: List(SurfaceTerm),
+  types: List(Ty),
+  env: ck_datas_of(next) = ck_datas_of(c),
+  position: frame_constructor_position(next) = frame_constructor_position(c),
+  meaning: WrittenTerms(ck_datas_of(next), generics, frame_constructor_position(next), terms, types)
+): WrittenTerms(ck_datas_of(c), generics, frame_constructor_position(c), terms, types) {
+  Eq::subst(
+    (partial: Bool) => WrittenTerms(ck_datas_of(c), generics, partial, terms, types),
+    position,
+    Eq::subst(
+      (datas: Datas) => WrittenTerms(
+        datas,
+        generics,
+        frame_constructor_position(next),
+        terms,
+        types
+      ),
+      env,
+      meaning
+    )
+  )
+}
+pub fn written_each_after(
+  rest: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(List(Ty), Checker) {
+  frame_bind(
+    Ty,
+    List(Ty),
+    (head: Ty, next: Checker) => written_map(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty)) => Cons(head, tail),
+      ck_written_each(rest, next, generics)
+    ),
+    m
+  )
+}
+pub theorem written_each_after_sound(
+  c: Checker,
+  first: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker),
+  read: CkReadFrame(c, m),
+  context: CkWrittenReset(c, m),
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, first, ck_val(m)),
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_each(rest, next, generics))
+  ). WrittenTerms(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_written_each(rest, next, generics))
+  ),
+  clean: DiagnosticClean(ck_st(written_each_after(rest, generics, m)))
+): WrittenTerms(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(first, rest),
+  ck_val(written_each_after(rest, generics, m))
+) {
+  match m: WrittenTerms(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(first, rest),
+    ck_val(written_each_after(rest, generics, m))
+  ) {
+    mut1(head, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_written_each(rest, next, generics))
+      ) := written_map_clean(
+        List(Ty),
+        List(Ty),
+        (tail: List(Ty)) => Cons(head, tail),
+        ck_written_each(rest, next, generics),
+        clean
+      )
+      Eq::subst(
+        (types: List(Ty)) => WrittenTerms(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(first, rest),
+          types
+        ),
+        Eq::sym(
+          written_map_value(
+            List(Ty),
+            List(Ty),
+            (tail: List(Ty)) => Cons(head, tail),
+            ck_written_each(rest, next, generics)
+          )
+        ),
+        WrittenTermsCons(
+          first,
+          rest,
+          head,
+          ck_val(ck_written_each(rest, next, generics)),
+          ihhead(ck_written_each_frame_errors(rest, next, generics, tail_clean)),
+          written_terms_state(
+            c,
+            next,
+            generics,
+            rest,
+            ck_val(ck_written_each(rest, next, generics)),
+            Eq::congr(frame_read_datas, read),
+            Eq::congr(written_context_position, context),
+            ihtail(next, Eq::congr(written_context_borrow, context), tail_clean)
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem written_each_cons_sound(
+  first: SurfaceTerm,
+  rest: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(first, c, generics))
+  ). WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    false,
+    first,
+    ck_val(ck_written_in(first, c, generics))
+  ),
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_each(rest, next, generics))
+  ). WrittenTerms(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_written_each(rest, next, generics))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_each_cons(first, rest, c, generics)))
+): WrittenTerms(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(first, rest),
+  ck_val(frame_written_each_cons(first, rest, c, generics))
+) {
+  written_each_after_sound(
+    c,
+    first,
+    rest,
+    generics,
+    ck_written_in(first, c, generics),
+    ck_written_in_frame(first, c, generics),
+    And::left(ck_written_in_frame_context(first, c, generics)),
+    ihhead,
+    ihtail,
+    clean
+  )
+}
+
+pub theorem written_terms_length<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, terms: List(
+  SurfaceTerm
+), types: List(
+  Ty
+)>(
+  meaning: WrittenTerms(env, generics, partial, terms, types)
+): list_len(terms) = list_len(types) {
+  match meaning: list_len(terms) = list_len(types) {
+    WrittenTermsNil(empty_generics, empty_partial) => Refl
+    WrittenTermsCons(first, rest, t, ts, head, tail) => Eq::congr(Succ, written_terms_length(tail))
+  }
+}

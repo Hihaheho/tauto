@@ -1,0 +1,212 @@
+import "call_sound.taut"
+
+pub theorem argument_types_refl(c: Checker, args: List(Ty)): ArgumentTypes(c, args, args) {
+  match args: ArgumentTypes(c, args, args) {
+    Nil => TysubNil
+    Cons(a, rest) => TysubCons(sub_of_eq(c, a, a, TyeqRefl(a)), argument_types_refl(c, rest))
+  }
+}
+pub def CallUnified(
+  c: Checker,
+  f: Ty,
+  args: List(Ty),
+  result: Ty,
+  yesno: Bool
+): Prop := (yesno = true) -> TyEqAt(c, f, TyFn(args, result, KindShared))
+pub fn call_after_unify(
+  c: Checker,
+  function: SurfaceTerm,
+  result: Ty,
+  matched: Bool
+): Mut1(Ty, Checker) {
+  call_return_result(
+    result,
+    frame_error_if(c, "cannot infer a function type for this call", span_of(function), not(matched))
+  )
+}
+pub theorem call_after_unify_sound(
+  c: Checker,
+  next: Checker,
+  function: SurfaceTerm,
+  f: Ty,
+  args: List(Ty),
+  result: Ty,
+  matched: Bool,
+  grows: Grows(c, next),
+  equal: CallUnified(next, f, args, result, matched),
+  clean: DiagnosticClean(ck_st(call_after_unify(next, function, result, matched)))
+): CallResult(c, f, args, call_after_unify(next, function, result, matched)) {
+  match matched: CallResult(c, f, args, call_after_unify(next, function, result, matched)) {
+    true => AndIntro(
+      grows,
+      CallConvert(equal(Refl), CallFunction(KindShared, argument_types_refl(next, args)))
+    )
+    false => False::elim(
+      diagnostic_error_impossible(
+        next,
+        "cannot infer a function type for this call",
+        span_of(function),
+        clean
+      )
+    )
+  }
+}
+pub fn call_unifying_result(
+  function: SurfaceTerm,
+  result: Ty,
+  m: Mut1(Bool, Checker)
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Bool,
+    Ty,
+    (matched: Bool, next: Checker) => call_after_unify(next, function, result, matched),
+    m
+  )
+}
+pub theorem call_unifying_sound(
+  c: Checker,
+  function: SurfaceTerm,
+  f: Ty,
+  args: List(Ty),
+  result: Ty,
+  m: Mut1(Bool, Checker),
+  h: UOk(c, m, f, TyFn(args, result, KindShared)),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(call_unifying_result(function, result, m)))
+): CallResult(c, f, args, call_unifying_result(function, result, m)) {
+  match m: CallResult(c, f, args, call_unifying_result(function, result, m)) {
+    mut1(matched, next) => call_after_unify_sound(
+      c,
+      next,
+      function,
+      f,
+      args,
+      result,
+      matched,
+      And::left(h(ordered)),
+      And::right(h(ordered)),
+      clean
+    )
+  }
+}
+pub theorem call_fresh_grows(c: Checker, ordered: CkOrdered(c)): Grows(c, ck_st(ck_fresh(c))) {
+  grows_of_same(c, ck_st(ck_fresh(c)), ordered, ck_same_refl(c))
+}
+pub fn call_fresh_result(
+  function: SurfaceTerm,
+  f: Ty,
+  args: List(Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (result: Ty, next: Checker) => call_unifying_result(
+      function,
+      result,
+      ck_unify(next, f, TyFn(args, result, KindShared))
+    ),
+    m
+  )
+}
+pub theorem call_fresh_sound(
+  c: Checker,
+  function: SurfaceTerm,
+  f: Ty,
+  args: List(Ty),
+  m: Mut1(Ty, Checker),
+  grows: Grows(c, ck_st(m)),
+  clean: DiagnosticClean(ck_st(call_fresh_result(function, f, args, m)))
+): CallResult(c, f, args, call_fresh_result(function, f, args, m)) {
+  match m: CallResult(c, f, args, call_fresh_result(function, f, args, m)) {
+    mut1(result, next) => {
+      let h: CallResult(
+        next,
+        f,
+        args,
+        call_unifying_result(function, result, ck_unify(next, f, TyFn(args, result, KindShared)))
+      ) := call_unifying_sound(
+        next,
+        function,
+        f,
+        args,
+        result,
+        ck_unify(next, f, TyFn(args, result, KindShared)),
+        ck_unify_ok(next, f, TyFn(args, result, KindShared)),
+        And::left(grows),
+        clean
+      )
+      AndIntro(
+        grows_trans(
+          c,
+          next,
+          ck_st(
+            call_unifying_result(
+              function,
+              result,
+              ck_unify(next, f, TyFn(args, result, KindShared))
+            )
+          ),
+          grows,
+          And::left(h)
+        ),
+        And::right(h)
+      )
+    }
+  }
+}
+pub theorem call_variable_unf(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  variable: Nat,
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyVar(variable)
+): ck_app_result(c, term, function, arguments, f, known, args) = call_fresh_result(function, f, args, ck_fresh(c)) {
+  Eq::trans(
+    application_fn_unf(c, term, function, arguments, f, known, args),
+    Eq::congr(
+      (fr: Ty) => application_fn(
+        c,
+        term,
+        function,
+        arguments,
+        f,
+        known,
+        args,
+        ty_unborrowed(ck_resolve(c, f)),
+        fr
+      ),
+      shape
+    )
+  )
+}
+pub theorem ck_app_result_variable_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  variable: Nat,
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyVar(variable),
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
+): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
+  let expanded: DiagnosticClean(
+    ck_st(call_fresh_result(function, f, args, ck_fresh(c)))
+  ) := Eq::subst(
+    (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+    call_variable_unf(c, term, function, arguments, f, known, args, variable, shape),
+    clean
+  )
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => CallResult(c, f, args, m),
+    Eq::sym(call_variable_unf(c, term, function, arguments, f, known, args, variable, shape)),
+    call_fresh_sound(c, function, f, args, ck_fresh(c), call_fresh_grows(c, ordered), expanded)
+  )
+}

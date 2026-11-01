@@ -1,0 +1,64 @@
+import "lock.taut"
+
+// What a trust policy (`Trust.eure`) may say, once the host has read it: the
+// aliases a rule names, and whether its age witnesses are independent of its
+// observers. Reading the file and checking each value's form are the host's.
+
+// An index as a rule names it: its ID, and the repository and branch it is
+// read from.
+pub(open) inductive TbIndex: Type {
+  MkIndex(alias: Text, id: Text, repository: Text, reference: Text): TbIndex
+}
+
+pub fn tb_index_alias(i: TbIndex): Text {
+  match i: Text {
+    MkIndex(alias, id, repository, reference) => alias
+  }
+}
+
+// The first name of `names` that an earlier one already is.
+pub fn tb_twice(names: List(Text)): Option(Text) {
+  match names: Option(Text) {
+    Nil => None
+    Cons(n, rest) => match tb_named(rest, n): Option(Text) {
+      true => Some(n)
+      false => tb_twice(rest)
+    }
+  }
+}
+
+// One index is the other, or is read from the same place.
+pub fn tb_same_index(a: TbIndex, b: TbIndex): Bool {
+  match a: Bool {
+    MkIndex(a1, i1, r1, b1) => match b: Bool {
+      MkIndex(a2, i2, r2, b2) => Bool::or(Text::eq(i1, i2), Bool::and(Text::eq(r1, r2), Text::eq(b1, b2)))
+    }
+  }
+}
+
+pub(open) inductive TbNotIndependent: Type {
+  NotIndependent(witness: Text, observer: Text): TbNotIndependent
+}
+
+pub fn tb_observer_of(w: TbIndex, observers: List(TbIndex)): Option(TbNotIndependent) {
+  match observers: Option(TbNotIndependent) {
+    Nil => None
+    Cons(o, rest) => match tb_same_index(o, w): Option(TbNotIndependent) {
+      true => Some(NotIndependent(tb_index_alias(w), tb_index_alias(o)))
+      false => tb_observer_of(w, rest)
+    }
+  }
+}
+
+// A remote age witness must not be an observer's index, nor be read from an
+// observer's repository and branch: the age of a checkpoint is then told by
+// someone other than whoever accepted it.
+pub fn tb_independent(observers: List(TbIndex), witnesses: List(TbIndex)): Option(TbNotIndependent) {
+  match witnesses: Option(TbNotIndependent) {
+    Nil => None
+    Cons(w, rest) => match tb_observer_of(w, observers): Option(TbNotIndependent) {
+      Some(found) => Some(found)
+      None => tb_independent(observers, rest)
+    }
+  }
+}

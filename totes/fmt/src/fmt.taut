@@ -1,4 +1,5 @@
 import "../../unicode/src/unicode.taut"
+import std::Text
 
 // `tauto fmt` in the proof language (`docs/design/self-host.md`): lays a file out
 // again without changing a single token. It follows
@@ -14,126 +15,235 @@ import "../../unicode/src/unicode.taut"
 // a block whose newlines matter inside brackets, is left as written.
 
 // The widest a line is laid out flat.
-fn fmt_width() -> Nat {
+pub fn fmt_width(): Nat {
   100
 }
 
 // A value, or what went wrong.
-inductive FmtOr(A: Type): Type {
-  fmt_ok(value: A): FmtOr(A)
-  fmt_err(message: Text): FmtOr(A)
+pub(open) inductive FmtOr(A: Type): Type {
+  FmtOk(value: A): FmtOr(A)
+  FmtErr(message: Text): FmtOr(A)
 }
 
-inductive FmtKind(): Type {
-  fmt_word(): FmtKind
-  fmt_open(): FmtKind
-  fmt_close(): FmtKind
-  fmt_comma(): FmtKind
-  fmt_comment(): FmtKind
-  fmt_punct(): FmtKind
+pub(open) inductive FmtKind: Type {
+  FmtWord: FmtKind
+  FmtOpen: FmtKind
+  FmtClose: FmtKind
+  FmtComma: FmtKind
+  FmtComment: FmtKind
+  FmtPunct: FmtKind
 }
 
-fn fmt_kind_number(k: FmtKind) -> Nat {
-  match k -> Nat {
-    fmt_word => 0
-    fmt_open => 1
-    fmt_close => 2
-    fmt_comma => 3
-    fmt_comment => 4
-    fmt_punct => 5
+pub fn fmt_kind_number(k: FmtKind): Nat {
+  match k: Nat {
+    FmtWord => 0
+    FmtOpen => 1
+    FmtClose => 2
+    FmtComma => 3
+    FmtComment => 4
+    FmtPunct => 5
   }
 }
 
 // A token: whitespace came before it (`spaced`), `newlines` newlines came
 // before it, and it is the bytes `start` to `end` of the source.
-inductive FmtToken(): Type {
-  fmt_token(lexeme: Text, kind: FmtKind, spaced: Yn, newlines: Nat, start: Nat, end: Nat): FmtToken
+pub(open) inductive FmtToken: Type {
+  Mk(
+    lexeme: Text,
+    kind: FmtKind,
+    spaced: Bool,
+    newlines: Nat,
+    start: Nat,
+    end: Nat
+  ): FmtToken
 }
 
-fn fmt_is(t: FmtToken, k: FmtKind) -> Yn {
+pub fn fmt_is(t: FmtToken, k: FmtKind): Bool {
   fmt_kind_number(t.kind) == fmt_kind_number(k)
 }
 
 // ---- the tokens ----------------------------------------------------------------
 
-fn fmt_is_word(classes: UnicodeClasses, c: Nat) -> Yn {
+pub fn fmt_is_word(classes: UnicodeClasses, c: Nat): Bool {
   c == 95 || unicode_is_alphanumeric(classes, c)
 }
 
 // The end of the word that starts at byte `at`, within `k` characters.
-fn fmt_word_end_in(k: Nat, source: Text, classes: UnicodeClasses, at: Nat) -> Nat {
-  match k -> Nat {
-    zero => at
-    succ(k2) => match text_decode(source, at) -> Nat {
+pub fn fmt_word_end_in(k: Nat, source: Text, classes: UnicodeClasses, at: Nat): Nat {
+  match k: Nat {
+    Zero => at
+    Succ(k2) => match text_decode(source, at): Nat {
       None => at
-      Some(decoded) => match fmt_is_word(classes, decoded.fst) -> Nat {
-        yes => fmt_word_end_in(k2, source, classes, at + decoded.snd)
-        no => at
+      Some(#(@code code, @len len)) => match fmt_is_word(classes, code): Nat {
+        true => fmt_word_end_in(k2, source, classes, at + len)
+        false => at
       }
     }
   }
 }
 
-fn fmt_word_end(source: Text, classes: UnicodeClasses, at: Nat) -> Nat {
-  fmt_word_end_in(text_len(source) - at, source, classes, at)
+pub fn fmt_word_end(source: Text, classes: UnicodeClasses, at: Nat): Nat {
+  fmt_word_end_in(Text::len(source) - at, source, classes, at)
 }
 
 // The end of the string whose contents start at byte `at`, within `k`
 // characters: just after its closing quote. A backslash takes the
 // character after it.
-fn fmt_string_end_in(k: Nat, source: Text, at: Nat) -> Option(Nat) {
-  match k -> Option(Nat) {
-    zero => None
-    succ(k2) => match text_decode(source, at) -> Option(Nat) {
+pub fn fmt_string_end_in(k: Nat, source: Text, at: Nat): Option(Nat) {
+  match k: Option(Nat) {
+    Zero => None
+    Succ(k2) => match text_decode(source, at): Option(Nat) {
       None => None
-      Some(decoded) => match decoded.fst == 34 -> Option(Nat) {
-        yes => Some(at + 1)
-        no => match decoded.fst == 92 -> Option(Nat) {
-          yes => match text_decode(source, at + 1) -> Option(Nat) {
+      Some(#(@code code, @len len)) => match code == 34: Option(Nat) {
+        true => Some(at + 1)
+        false => match code == 92: Option(Nat) {
+          true => match text_decode(source, at + 1): Option(Nat) {
             None => None
-            Some(next) => fmt_string_end_in(k2, source, at + 1 + next.snd)
+            Some(#(@code _, @len next_len)) => fmt_string_end_in(k2, source, at + 1 + next_len)
           }
-          no => fmt_string_end_in(k2, source, at + decoded.snd)
+          false => fmt_string_end_in(k2, source, at + len)
         }
       }
     }
   }
 }
 
-fn fmt_string_end(source: Text, at: Nat) -> Option(Nat) {
-  fmt_string_end_in(text_len(source) - at, source, at)
+pub fn fmt_string_end(source: Text, at: Nat): Option(Nat) {
+  fmt_string_end_in(Text::len(source) - at, source, at)
 }
 
 // The end of a `plaintext` string whose contents start at byte `at`: just
 // after the backtick, if one comes before the end of the line.
-fn fmt_plaintext_end(source: Text, at: Nat) -> Option(Nat) {
-  match text_find(source, "`", at) -> Option(Nat) {
+pub fn fmt_plaintext_end(source: Text, at: Nat): Option(Nat) {
+  match Text::find(source, "`", at): Option(Nat) {
     None => None
-    Some(tick) => match text_find(source, text_newline(), at) -> Option(Nat) {
+    Some(tick) => match Text::find(source, text_newline(), at): Option(Nat) {
       None => Some(tick + 1)
-      Some(newline) => match tick < newline -> Option(Nat) {
-        yes => Some(tick + 1)
-        no => None
+      Some(newline) => match tick < newline: Option(Nat) {
+        true => Some(tick + 1)
+        false => None
       }
     }
   }
 }
 
-fn fmt_byte_is(source: Text, at: Nat, code: Nat) -> Yn {
-  match text_byte(source, at) -> Yn {
-    None => no
+pub fn fmt_byte_is(source: Text, at: Nat, code: Nat): Bool {
+  match Text::byte(source, at): Bool {
+    None => false
     Some(b) => b == code
   }
 }
 
-fn fmt_kind_of(c: Nat) -> FmtKind {
-  match c == 40 || c == 91 || c == 123 -> FmtKind {
-    yes => fmt_open
-    no => match c == 41 || c == 93 || c == 125 -> FmtKind {
-      yes => fmt_close
-      no => match c == 44 -> FmtKind {
-        yes => fmt_comma
-        no => fmt_punct
+// The end of a run of one ASCII byte, or of header spaces, within `k` bytes.
+pub fn fmt_run_end_in(k: Nat, source: Text, at: Nat, code: Nat, spaces: Bool): Nat {
+  match k: Nat {
+    Zero => at
+    Succ(rest) => match fmt_byte_is(
+      source,
+      at,
+      code
+    ) || (spaces && fmt_byte_is(source, at, 9)): Nat {
+      true => fmt_run_end_in(rest, source, at + 1, code, spaces)
+      false => at
+    }
+  }
+}
+
+pub fn fmt_run_end(source: Text, at: Nat, code: Nat, spaces: Bool): Nat {
+  fmt_run_end_in(Text::len(source) - at, source, at, code, spaces)
+}
+
+// An inline literal closes before either spelling of a line ending.
+pub fn fmt_inline_end_in(k: Nat, source: Text, at: Nat): Option(Nat) {
+  match k: Option(Nat) {
+    Zero => None
+    Succ(rest) => match text_decode(source, at): Option(Nat) {
+      None => None
+      Some(#(@code code, @len len)) => match code == 96: Option(Nat) {
+        true => Some(at + 1)
+        false => match code == 10 || code == 13: Option(Nat) {
+          true => None
+          false => fmt_inline_end_in(rest, source, at + len)
+        }
+      }
+    }
+  }
+}
+
+pub fn fmt_literal_close(source: Text, r#from: Nat, close: Text): Option(Nat) {
+  match Text::find(source, close, r#from): Option(Nat) {
+    None => None
+    Some(at) => Some(at + Text::len(close))
+  }
+}
+
+pub fn fmt_fence_body(source: Text, at: Nat, ticks: Nat): Option(Nat) {
+  match fmt_byte_is(source, at, 10): Option(Nat) {
+    true => fmt_literal_close(source, at + 1, Text::repeat("`", ticks))
+    false => None
+  }
+}
+
+pub fn fmt_fence_end(source: Text, at: Nat, ticks: Nat): Option(Nat) {
+  match fmt_byte_is(source, at, 13): Option(Nat) {
+    true => fmt_fence_body(source, at + 1, ticks)
+    false => fmt_fence_body(source, at, ticks)
+  }
+}
+
+// Syntax literals are single tokens; their contents have their own grammar.
+pub fn fmt_literal_marked(
+  source: Text,
+  classes: UnicodeClasses,
+  at: Nat,
+  ticks: Nat,
+  angles: Nat
+): Option(Nat) {
+  match ticks >= 3 && ticks <= 6: Option(Nat) {
+    true => fmt_fence_end(
+      source,
+      fmt_run_end(source, fmt_word_end(source, classes, at + ticks), 32, true),
+      ticks
+    )
+    false => match angles >= 1 && angles <= 3 && fmt_byte_is(
+      source,
+      at + angles,
+      96
+    ): Option(Nat) {
+      true => fmt_literal_close(source, at + angles + 1, Text::concat("`", Text::repeat(">", angles)))
+      false => match ticks == 1: Option(Nat) {
+        true => fmt_inline_end_in(Text::len(source) - at - 1, source, at + 1)
+        false => None
+      }
+    }
+  }
+}
+
+pub fn fmt_literal_at(source: Text, classes: UnicodeClasses, at: Nat): Option(Nat) {
+  fmt_literal_marked(
+    source,
+    classes,
+    at,
+    fmt_run_end(source, at, 96, false) - at,
+    fmt_run_end(source, at, 60, false) - at
+  )
+}
+
+pub fn fmt_literal_end(source: Text, classes: UnicodeClasses, at: Nat, c: Nat): Option(Nat) {
+  match fmt_is_word(classes, c) && not(c >= 48 && c <= 57): Option(Nat) {
+    true => fmt_literal_at(source, classes, fmt_word_end(source, classes, at))
+    false => fmt_literal_at(source, classes, at)
+  }
+}
+
+pub fn fmt_kind_of(c: Nat): FmtKind {
+  match c == 40 || c == 91 || c == 123: FmtKind {
+    true => FmtOpen
+    false => match c == 41 || c == 93 || c == 125: FmtKind {
+      true => FmtClose
+      false => match c == 44: FmtKind {
+        true => FmtComma
+        false => FmtPunct
       }
     }
   }
@@ -141,62 +251,199 @@ fn fmt_kind_of(c: Nat) -> FmtKind {
 
 // What the lexer does at a character: skip it (where it goes on, and the
 // whitespace and newlines seen), cut a token up to `end`, or stop.
-inductive FmtStep(): Type {
-  fmt_skip(to: Nat, spaced: Yn, newlines: Nat): FmtStep
-  fmt_cut(kind: FmtKind, end: Nat): FmtStep
-  fmt_stop(message: Text): FmtStep
+pub(open) inductive FmtStep: Type {
+  FmtSkip(to: Nat, spaced: Bool, newlines: Nat): FmtStep
+  FmtCut(kind: FmtKind, end: Nat): FmtStep
+  FmtEscape(kind: FmtKind, end: Nat, sign: Text): FmtStep
+  FmtStop(message: Text): FmtStep
 }
 
-fn fmt_cut_at(kind: FmtKind, end: Option(Nat), message: Text) -> FmtStep {
-  match end -> FmtStep {
-    None => fmt_stop(message)
-    Some(e) => fmt_cut(kind, e)
+// The sign an ASCII escape (`\times`) stands for, by the word after the backslash.
+pub fn fmt_escape_sign(name: Text): Option(Text) {
+  match name == "times": Option(Text) {
+    true => Some("\u{D7}")
+    false => match name == "land": Option(Text) {
+      true => Some("\u{2227}")
+      false => match name == "lor": Option(Text) {
+        true => Some("\u{2228}")
+        false => match name == "iff": Option(Text) {
+          true => Some("\u{2194}")
+          false => match name == "neg": Option(Text) {
+            true => Some("\u{AC}")
+            false => match name == "vdash": Option(Text) {
+              true => Some("\u{22A2}")
+              false => match name == "omega": Option(Text) {
+                true => Some("\u{3C9}")
+                false => match name == "forall": Option(Text) {
+                  true => Some("\u{2200}")
+                  false => match name == "exists": Option(Text) {
+                    true => Some("\u{2203}")
+                    false => match name == "cup": Option(Text) {
+                      true => Some("\u{222A}")
+                      false => match name == "llbracket": Option(Text) {
+                        true => Some("\u{27E6}")
+                        false => match name == "rrbracket": Option(Text) {
+                          true => Some("\u{27E7}")
+                          false => match name == "square": Option(Text) {
+                            true => Some("\u{25A1}")
+                            false => None
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A sign is a word only when it is a letter: `\u{3C9}`.
+pub fn fmt_escape_kind(sign: Text): FmtKind {
+  match sign == "\u{3C9}": FmtKind {
+    true => FmtWord
+    false => FmtPunct
+  }
+}
+
+// A character that is no word: an escape `\times` is one token, the sign; any other is a punctuation.
+pub fn fmt_punct_step(
+  source: Text,
+  classes: UnicodeClasses,
+  at: Nat,
+  c: Nat,
+  length: Nat
+): FmtStep {
+  match c == 92: FmtStep {
+    true => match fmt_escape_sign(
+      Text::slice_or_empty(source, at + 1, fmt_word_end(source, classes, at + 1))
+    ): FmtStep {
+      Some(sign) => FmtEscape(fmt_escape_kind(sign), fmt_word_end(source, classes, at + 1), sign)
+      None => FmtCut(fmt_kind_of(c), at + length)
+    }
+    false => FmtCut(fmt_kind_of(c), at + length)
+  }
+}
+
+pub fn fmt_cut_at(kind: FmtKind, end: Option(Nat), message: Text): FmtStep {
+  match end: FmtStep {
+    None => FmtStop(message)
+    Some(e) => FmtCut(kind, e)
+  }
+}
+
+// Whether a raw name `r#name` begins at byte `at`: it is one word, `r#` and the name.
+pub fn fmt_raw_name_start(source: Text, classes: UnicodeClasses, at: Nat): Bool {
+  match fmt_byte_is(source, at, 114) && fmt_byte_is(source, at + 1, 35): Bool {
+    true => match text_decode(source, at + 2): Bool {
+      None => false
+      Some(#(@code code, @len _)) => fmt_is_word(classes, code) && not(code >= 48 && code <= 57)
+    }
+    false => false
+  }
+}
+
+// The words a name cannot be spelled as unless it is written `r#name`.
+pub fn fmt_reserved_words(): List(Text) {
+  [
+    "theorem", "def", "import", "mutual", "axiom", "inductive", "from", "decreasing_by", "opaque", "eqn", "by",
+    "let", "var", "fn", "return", "while", "loop", "break", "continue", "if", "else", "match",
+    "struct", "enum", "effect", "handle", "with", "perform", "budget", "copy", "shared", "view",
+    "affine", "linear", "resume", "direct", "mut", "pub", "module", "where", "class", "instance",
+    "law", "extern", "type", "true", "false", "macro", "quote", "calc"
+  ]
+}
+
+pub fn fmt_text_in(name: Text, words: List(Text)): Bool {
+  match words: Bool {
+    Nil => false
+    Cons(w, rest) => name == w || fmt_text_in(name, rest)
+  }
+}
+
+// A raw name that is not needed is written without its `r#`: one whose word is not reserved. A reserved
+// word is a name only with `r#`, wherever it stands.
+pub fn fmt_unraw_token(t: FmtToken): FmtToken {
+  match Text::starts_with(t.lexeme, "r#", 0) && Text::len(t.lexeme) > 2: FmtToken {
+    false => t
+    true => match fmt_unraw_needed(t): FmtToken {
+      true => t
+      false => FmtToken {
+        lexeme: Text::slice_or_empty(t.lexeme, 2, Text::len(t.lexeme)),
+        kind: t.kind,
+        spaced: t.spaced,
+        newlines: t.newlines,
+        start: t.start,
+        end: t.end
+      }
+    }
+  }
+}
+
+pub fn fmt_unraw_needed(t: FmtToken): Bool {
+  fmt_text_in(Text::slice_or_empty(t.lexeme, 2, Text::len(t.lexeme)), fmt_reserved_words())
+}
+
+pub fn fmt_unraw_in(tokens: List(FmtToken)): List(FmtToken) {
+  match tokens: List(FmtToken) {
+    Nil => Nil
+    Cons(t, rest) => Cons(fmt_unraw_token(t), fmt_unraw_in(rest))
   }
 }
 
 // The step at byte `at`, where the character `c` is `length` bytes long.
-fn fmt_step(
+pub fn fmt_step(
   source: Text,
   classes: UnicodeClasses,
   at: Nat,
   c: Nat,
   length: Nat,
-  spaced: Yn,
+  spaced: Bool,
   newlines: Nat
-) -> FmtStep {
-  match c == 10 -> FmtStep {
-    yes => fmt_skip(at + 1, spaced, newlines + 1)
-    no => match unicode_is_whitespace(classes, c) -> FmtStep {
-      yes => fmt_skip(at + length, yes, newlines)
-      no => match c == 47 && fmt_byte_is(source, at + 1, 47) -> FmtStep {
-        yes => fmt_cut(
-          fmt_comment,
-          match text_find(source, text_newline(), at) -> Nat {
-            None => text_len(source)
+): FmtStep {
+  match c == 10: FmtStep {
+    true => FmtSkip(at + 1, spaced, newlines + 1)
+    false => match unicode_is_whitespace(classes, c): FmtStep {
+      true => FmtSkip(at + length, true, newlines)
+      false => match c == 47 && fmt_byte_is(source, at + 1, 47): FmtStep {
+        true => FmtCut(
+          FmtComment,
+          match Text::find(source, text_newline(), at): Nat {
+            None => Text::len(source)
             Some(newline) => newline
           }
         )
-        no => match c == 47 && fmt_byte_is(source, at + 1, 42) -> FmtStep {
-          yes => match text_find(source, "*/", at + 2) -> FmtStep {
-            None => fmt_stop("an unclosed block comment")
-            Some(close) => fmt_cut(fmt_comment, close + 2)
+        false => match c == 47 && fmt_byte_is(source, at + 1, 42): FmtStep {
+          true => match Text::find(source, "*/", at + 2): FmtStep {
+            None => FmtStop("an unclosed block comment")
+            Some(close) => FmtCut(FmtComment, close + 2)
           }
-          no => match c == 34 -> FmtStep {
-            yes => fmt_cut_at(fmt_word, fmt_string_end(source, at + 1), "an unclosed string")
-            no => match c == 39 -> FmtStep {
-              yes => match text_find(source, "'", at + 1) -> FmtStep {
-                None => fmt_stop("an unclosed string")
-                Some(close) => fmt_cut(fmt_word, close + 1)
+          false => match c == 34: FmtStep {
+            true => fmt_cut_at(FmtWord, fmt_string_end(source, at + 1), "an unclosed string")
+            false => match c == 39: FmtStep {
+              true => match Text::find(source, "'", at + 1): FmtStep {
+                None => FmtStop("an unclosed string")
+                Some(close) => FmtCut(FmtWord, close + 1)
               }
-              no => match text_starts_with(source, "plaintext`", at) -> FmtStep {
-                yes => fmt_cut_at(
-                  fmt_word,
-                  fmt_plaintext_end(source, at + 10),
-                  "an unclosed string"
-                )
-                no => match fmt_is_word(classes, c) -> FmtStep {
-                  yes => fmt_cut(fmt_word, fmt_word_end(source, classes, at))
-                  no => fmt_cut(fmt_kind_of(c), at + length)
+              false => match fmt_literal_end(source, classes, at, c): FmtStep {
+                Some(end) => FmtCut(FmtWord, end)
+                None => match Text::starts_with(source, "plaintext`", at): FmtStep {
+                  true => fmt_cut_at(
+                    FmtWord,
+                    fmt_plaintext_end(source, at + 10),
+                    "an unclosed string"
+                  )
+                  false => match fmt_is_word(classes, c): FmtStep {
+                    true => match fmt_raw_name_start(source, classes, at): FmtStep {
+                      true => FmtCut(FmtWord, fmt_word_end(source, classes, at + 2))
+                      false => FmtCut(FmtWord, fmt_word_end(source, classes, at))
+                    }
+                    false => fmt_punct_step(source, classes, at, c, length)
+                  }
                 }
               }
             }
@@ -209,45 +456,47 @@ fn fmt_step(
 
 // The tokens of `source` from byte `at` in reverse, onto `done`. Each step
 // moves on a byte at least, so `k` is the bytes left.
-fn fmt_lex_in(
+pub fn fmt_lex_in(
   k: Nat,
   source: Text,
   classes: UnicodeClasses,
   at: Nat,
-  spaced: Yn,
+  spaced: Bool,
   newlines: Nat,
   done: List(FmtToken)
-) -> FmtOr(List(FmtToken)) {
-  match k -> FmtOr(List(FmtToken)) {
-    zero => fmt_ok(done)
-    succ(k2) => match text_decode(source, at) -> FmtOr(List(FmtToken)) {
-      None => fmt_ok(done)
-      Some(
-        decoded
-      ) => match fmt_step(
+): FmtOr(List(FmtToken)) {
+  match k: FmtOr(List(FmtToken)) {
+    Zero => FmtOk(done)
+    Succ(k2) => match text_decode(source, at): FmtOr(List(FmtToken)) {
+      None => FmtOk(done)
+      Some(#(@code code, @len len)) => match fmt_step(
         source,
         classes,
         at,
-        decoded.fst,
-        decoded.snd,
+        code,
+        len,
         spaced,
         newlines
-      ) -> FmtOr(List(FmtToken)) {
-        fmt_skip(
+      ): FmtOr(List(FmtToken)) {
+        FmtSkip(to, now_spaced, now_newlines) => fmt_lex_in(
+          k2,
+          source,
+          classes,
           to,
           now_spaced,
-          now_newlines
-        ) => fmt_lex_in(k2, source, classes, to, now_spaced, now_newlines, done)
-        fmt_cut(kind, end) => fmt_lex_in(
+          now_newlines,
+          done
+        )
+        FmtCut(kind, end) => fmt_lex_in(
           k2,
           source,
           classes,
           end,
-          no,
+          false,
           0,
           Cons(
             FmtToken {
-              lexeme: text_slice_or_empty(source, at, end),
+              lexeme: Text::slice_or_empty(source, at, end),
               kind: kind,
               spaced: spaced || newlines > 0,
               newlines: newlines,
@@ -257,16 +506,43 @@ fn fmt_lex_in(
             done
           )
         )
-        fmt_stop(message) => fmt_err(message)
+        FmtEscape(kind, end, sign) => fmt_lex_in(
+          k2,
+          source,
+          classes,
+          end,
+          false,
+          0,
+          Cons(
+            FmtToken {
+              lexeme: sign,
+              kind: kind,
+              spaced: spaced || newlines > 0,
+              newlines: newlines,
+              start: at,
+              end: end
+            },
+            done
+          )
+        )
+        FmtStop(message) => FmtErr(message)
       }
     }
   }
 }
 
-fn fmt_lex(source: Text, classes: UnicodeClasses) -> FmtOr(List(FmtToken)) {
-  match fmt_lex_in(text_len(source) + 1, source, classes, 0, no, 0, Nil) -> FmtOr(List(FmtToken)) {
-    fmt_ok(reversed) => fmt_ok(list_reverse(reversed))
-    fmt_err(message) => fmt_err(message)
+pub fn fmt_lex(source: Text, classes: UnicodeClasses): FmtOr(List(FmtToken)) {
+  match fmt_lex_in(
+    Text::len(source) + 1,
+    source,
+    classes,
+    0,
+    false,
+    0,
+    Nil
+  ): FmtOr(List(FmtToken)) {
+    FmtOk(reversed) => FmtOk(fmt_unraw_in(List::reverse(reversed)))
+    FmtErr(message) => FmtErr(message)
   }
 }
 
@@ -274,107 +550,107 @@ fn fmt_lex(source: Text, classes: UnicodeClasses) -> FmtOr(List(FmtToken)) {
 
 // A line as a tree: tokens and bracketed groups of comma-separated items.
 mutual {
-  inductive FmtNode(): Type {
-    fmt_tok(token: FmtToken): FmtNode
-    fmt_group(open: FmtToken, items: FmtItems, close: FmtToken): FmtNode
+  pub(open) inductive FmtNode: Type {
+    FmtTok(token: FmtToken): FmtNode
+    FmtGroup(open: FmtToken, items: FmtItems, close: FmtToken): FmtNode
   }
-  inductive FmtNodes(): Type {
-    fmt_no_nodes(): FmtNodes
-    fmt_nodes(node: FmtNode, rest: FmtNodes): FmtNodes
+  pub(open) inductive FmtNodes: Type {
+    FmtNoNodes: FmtNodes
+    FmtNodesOf(node: FmtNode, rest: FmtNodes): FmtNodes
   }
-  inductive FmtItems(): Type {
-    fmt_no_items(): FmtItems
-    fmt_items(item: FmtNodes, rest: FmtItems): FmtItems
-  }
-}
-
-fn fmt_nodes_reverse_onto(l: FmtNodes, done: FmtNodes) -> FmtNodes {
-  match l -> FmtNodes {
-    fmt_no_nodes => done
-    fmt_nodes(n, rest) => fmt_nodes_reverse_onto(rest, fmt_nodes(n, done))
+  pub(open) inductive FmtItems: Type {
+    FmtNoItems: FmtItems
+    FmtItemsOf(item: FmtNodes, rest: FmtItems): FmtItems
   }
 }
 
-fn fmt_items_reverse_onto(l: FmtItems, done: FmtItems) -> FmtItems {
-  match l -> FmtItems {
-    fmt_no_items => done
-    fmt_items(i, rest) => fmt_items_reverse_onto(rest, fmt_items(i, done))
+pub fn fmt_nodes_reverse_onto(l: FmtNodes, done: FmtNodes): FmtNodes {
+  match l: FmtNodes {
+    FmtNoNodes => done
+    FmtNodesOf(n, rest) => fmt_nodes_reverse_onto(rest, FmtNodesOf(n, done))
   }
 }
 
-fn fmt_nodes_empty(l: FmtNodes) -> Yn {
-  match l -> Yn {
-    fmt_no_nodes => yes
-    fmt_nodes(n, rest) => no
+pub fn fmt_items_reverse_onto(l: FmtItems, done: FmtItems): FmtItems {
+  match l: FmtItems {
+    FmtNoItems => done
+    FmtItemsOf(i, rest) => fmt_items_reverse_onto(rest, FmtItemsOf(i, done))
   }
 }
 
-fn fmt_items_empty(l: FmtItems) -> Yn {
-  match l -> Yn {
-    fmt_no_items => yes
-    fmt_items(i, rest) => no
+pub fn fmt_nodes_empty(l: FmtNodes): Bool {
+  match l: Bool {
+    FmtNoNodes => true
+    FmtNodesOf(n, rest) => false
+  }
+}
+
+pub fn fmt_items_empty(l: FmtItems): Bool {
+  match l: Bool {
+    FmtNoItems => true
+    FmtItemsOf(i, rest) => false
   }
 }
 
 // An open group: its bracket, the items read (last first), the nodes of the
 // item being read (last first) and the braces open in it.
-inductive FmtFrame(): Type {
-  fmt_frame(open: FmtToken, done: FmtItems, nodes: FmtNodes, braces: Nat): FmtFrame
+pub(open) inductive FmtFrame: Type {
+  Mk(open: FmtToken, done: FmtItems, nodes: FmtNodes, braces: Nat): FmtFrame
 }
 
 // The items of a group, in order, from the frame that closes. One empty
 // item is no item.
-fn fmt_frame_items(f: FmtFrame) -> FmtItems {
+pub fn fmt_frame_items(f: FmtFrame): FmtItems {
   match fmt_items_reverse_onto(
-    fmt_items(fmt_nodes_reverse_onto(f.nodes, fmt_no_nodes), f.done),
-    fmt_no_items
-  ) -> FmtItems {
-    fmt_no_items => fmt_no_items
-    fmt_items(first, more) => match fmt_nodes_empty(first) && fmt_items_empty(more) -> FmtItems {
-      yes => fmt_no_items
-      no => fmt_items(first, more)
+    FmtItemsOf(fmt_nodes_reverse_onto(f.nodes, FmtNoNodes), f.done),
+    FmtNoItems
+  ): FmtItems {
+    FmtNoItems => FmtNoItems
+    FmtItemsOf(first, more) => match fmt_nodes_empty(first) && fmt_items_empty(more): FmtItems {
+      true => FmtNoItems
+      false => FmtItemsOf(first, more)
     }
   }
 }
 
-fn fmt_frame_add(f: FmtFrame, node: FmtNode, braces: Nat) -> FmtFrame {
-  FmtFrame { open: f.open, done: f.done, nodes: fmt_nodes(node, f.nodes), braces: braces }
+pub fn fmt_frame_add(f: FmtFrame, node: FmtNode, braces: Nat): FmtFrame {
+  FmtFrame { open: f.open, done: f.done, nodes: FmtNodesOf(node, f.nodes), braces: braces }
 }
 
 // What a line's tree is, and the tokens after it.
-inductive FmtParsed(): Type {
-  fmt_parsed(nodes: FmtNodes, rest: List(FmtToken)): FmtParsed
+pub(open) inductive FmtParsed: Type {
+  Mk(nodes: FmtNodes, rest: List(FmtToken)): FmtParsed
 }
 
 // A node read: into the innermost open group, or the line.
-fn fmt_frames_add(frames: List(FmtFrame), node: FmtNode) -> List(FmtFrame) {
-  match frames -> List(FmtFrame) {
+pub fn fmt_frames_add(frames: List(FmtFrame), node: FmtNode): List(FmtFrame) {
+  match frames: List(FmtFrame) {
     Nil => Nil
     Cons(f, outer) => Cons(fmt_frame_add(f, node, f.braces), outer)
   }
 }
 
-fn fmt_top_add(frames: List(FmtFrame), top: FmtNodes, node: FmtNode) -> FmtNodes {
-  match frames -> FmtNodes {
-    Nil => fmt_nodes(node, top)
+pub fn fmt_top_add(frames: List(FmtFrame), top: FmtNodes, node: FmtNode): FmtNodes {
+  match frames: FmtNodes {
+    Nil => FmtNodesOf(node, top)
     Cons(f, outer) => top
   }
 }
 
 // The groups still open at the end of the line, closed by their own open
 // bracket, innermost first; `pending` is the group closed last.
-fn fmt_close_all(frames: List(FmtFrame), pending: Option(FmtNode), top: FmtNodes) -> FmtNodes {
-  match frames -> FmtNodes {
-    Nil => match pending -> FmtNodes {
+pub fn fmt_close_all(frames: List(FmtFrame), pending: Option(FmtNode), top: FmtNodes): FmtNodes {
+  match frames: FmtNodes {
+    Nil => match pending: FmtNodes {
       None => top
-      Some(node) => fmt_nodes(node, top)
+      Some(node) => FmtNodesOf(node, top)
     }
     Cons(f, outer) => fmt_close_all(
       outer,
       Some(
-        match pending -> FmtNode {
-          None => fmt_group(f.open, fmt_frame_items(f), f.open)
-          Some(node) => fmt_group(f.open, fmt_frame_items(fmt_frame_add(f, node, f.braces)), f.open)
+        match pending: FmtNode {
+          None => FmtGroup(f.open, fmt_frame_items(f), f.open)
+          Some(node) => FmtGroup(f.open, fmt_frame_items(fmt_frame_add(f, node, f.braces)), f.open)
         }
       ),
       top
@@ -383,68 +659,119 @@ fn fmt_close_all(frames: List(FmtFrame), pending: Option(FmtNode), top: FmtNodes
 }
 
 // The braces after the token `t` in a group with `braces` open.
-fn fmt_braces_after(t: FmtToken, braces: Nat) -> Nat {
-  match t.lexeme == "{" -> Nat {
-    yes => braces + 1
-    no => match t.lexeme == "}" && braces > 0 -> Nat {
-      yes => braces - 1
-      no => braces
+pub fn fmt_braces_after(t: FmtToken, braces: Nat): Nat {
+  match t.lexeme == "{": Nat {
+    true => braces + 1
+    false => match t.lexeme == "}" && braces > 0: Nat {
+      true => braces - 1
+      false => braces
     }
+  }
+}
+
+// Whether a `{` closes on the same line among `tokens` (those after it, with `depth` open), as
+// a record literal does: then it is a group like `( )`, broken at its commas, and not a block.
+pub fn fmt_closes_on_line(tokens: List(FmtToken), depth: Nat): Bool {
+  match tokens: Bool {
+    Nil => false
+    Cons(t, after) => match fmt_is(t, FmtOpen): Bool {
+      true => fmt_closes_on_line(after, depth + 1)
+      false => match fmt_is(t, FmtClose): Bool {
+        true => depth == 1 || fmt_closes_on_line(after, depth - 1)
+        false => fmt_closes_on_line(after, depth)
+      }
+    }
+  }
+}
+
+// Whether the last node read (`nodes` is last first) is a `!`, so that a `{` after it opens an
+// effect row, never a group: a newline inside it does not parse.
+pub fn fmt_after_bang(nodes: FmtNodes): Bool {
+  match nodes: Bool {
+    FmtNoNodes => false
+    FmtNodesOf(node, rest) => match node: Bool {
+      FmtTok(t) => t.lexeme == "!"
+      FmtGroup(open, items, close) => false
+    }
+  }
+}
+
+pub fn fmt_not(b: Bool): Bool {
+  match b: Bool {
+    true => false
+    false => true
+  }
+}
+
+// Whether a `}` closes the innermost open group: a `{ }` one, with no braces open in it.
+pub fn fmt_closes_frame(frames: List(FmtFrame)): Bool {
+  match frames: Bool {
+    Nil => false
+    Cons(f, outer) => f.open.lexeme == "{" && f.braces == 0
   }
 }
 
 // Reads the tree of a line: `top` holds its nodes so far (last first) and
 // `frames` the groups open (innermost first). Commas split a group's items
-// only outside braces; a line's own commas (`<A, B>`, `{ a, b }`) are plain
-// tokens.
-fn fmt_tree_in(tokens: List(FmtToken), top: FmtNodes, frames: List(FmtFrame)) -> FmtParsed {
-  match tokens -> FmtParsed {
-    Nil => fmt_parsed(fmt_nodes_reverse_onto(fmt_close_all(frames, None, top), fmt_no_nodes), Nil)
-    Cons(t, after) => match fmt_is(t, fmt_close) && t.lexeme != "}" -> FmtParsed {
-      yes => match frames -> FmtParsed {
-        Nil => fmt_parsed(fmt_nodes_reverse_onto(top, fmt_no_nodes), tokens)
-        Cons(
-          f,
-          outer
-        ) => fmt_tree_in(
+// only outside braces that stay open past the line; a line's own commas
+// (`<A, B>`) are plain tokens. A `{ }` closed on the line is a group, and so is any `{ }` inside
+// a group, where it closes on the line too; an effect row (`! {Div, stdout}`) never is.
+pub fn fmt_tree_in(tokens: List(FmtToken), top: FmtNodes, frames: List(FmtFrame)): FmtParsed {
+  match tokens: FmtParsed {
+    Nil => FmtParsed::Mk(fmt_nodes_reverse_onto(fmt_close_all(frames, None, top), FmtNoNodes), Nil)
+    Cons(t, after) => match fmt_is(
+      t,
+      FmtClose
+    ) && (t.lexeme != "}" || fmt_closes_frame(frames)): FmtParsed {
+      true => match frames: FmtParsed {
+        Nil => FmtParsed::Mk(fmt_nodes_reverse_onto(top, FmtNoNodes), tokens)
+        Cons(f, outer) => fmt_tree_in(
           after,
-          fmt_top_add(outer, top, fmt_group(f.open, fmt_frame_items(f), t)),
-          fmt_frames_add(outer, fmt_group(f.open, fmt_frame_items(f), t))
+          fmt_top_add(outer, top, FmtGroup(f.open, fmt_frame_items(f), t)),
+          fmt_frames_add(outer, FmtGroup(f.open, fmt_frame_items(f), t))
         )
       }
-      no => match frames -> FmtParsed {
-        Nil => match fmt_is(t, fmt_open) && t.lexeme != "{" -> FmtParsed {
-          yes => fmt_tree_in(
+      false => match frames: FmtParsed {
+        Nil => match fmt_is(
+          t,
+          FmtOpen
+        ) && (
+          t.lexeme != "{" || (fmt_not(fmt_after_bang(top)) && fmt_closes_on_line(after, 1))
+        ): FmtParsed {
+          true => fmt_tree_in(
             after,
             top,
-            Cons(FmtFrame { open: t, done: fmt_no_items, nodes: fmt_no_nodes, braces: 0 }, Nil)
+            Cons(FmtFrame { open: t, done: FmtNoItems, nodes: FmtNoNodes, braces: 0 }, Nil)
           )
-          no => fmt_tree_in(after, fmt_nodes(fmt_tok(t), top), Nil)
+          false => fmt_tree_in(after, FmtNodesOf(FmtTok(t), top), Nil)
         }
-        Cons(f, outer) => match fmt_is(t, fmt_comma) && f.braces == 0 -> FmtParsed {
-          yes => fmt_tree_in(
+        Cons(f, outer) => match fmt_is(t, FmtComma) && f.braces == 0: FmtParsed {
+          true => fmt_tree_in(
             after,
             top,
             Cons(
               FmtFrame {
                 open: f.open,
-                done: fmt_items(fmt_nodes_reverse_onto(f.nodes, fmt_no_nodes), f.done),
-                nodes: fmt_no_nodes,
+                done: FmtItemsOf(fmt_nodes_reverse_onto(f.nodes, FmtNoNodes), f.done),
+                nodes: FmtNoNodes,
                 braces: 0
               },
               outer
             )
           )
-          no => match fmt_is(t, fmt_open) && t.lexeme != "{" -> FmtParsed {
-            yes => fmt_tree_in(
+          false => match fmt_is(
+            t,
+            FmtOpen
+          ) && (t.lexeme != "{" || fmt_not(fmt_after_bang(f.nodes))): FmtParsed {
+            true => fmt_tree_in(
               after,
               top,
-              Cons(FmtFrame { open: t, done: fmt_no_items, nodes: fmt_no_nodes, braces: 0 }, frames)
+              Cons(FmtFrame { open: t, done: FmtNoItems, nodes: FmtNoNodes, braces: 0 }, frames)
             )
-            no => fmt_tree_in(
+            false => fmt_tree_in(
               after,
               top,
-              Cons(fmt_frame_add(f, fmt_tok(t), fmt_braces_after(t, f.braces)), outer)
+              Cons(fmt_frame_add(f, FmtTok(t), fmt_braces_after(t, f.braces)), outer)
             )
           }
         }
@@ -453,25 +780,28 @@ fn fmt_tree_in(tokens: List(FmtToken), top: FmtNodes, frames: List(FmtFrame)) ->
   }
 }
 
-fn fmt_tree(tokens: List(FmtToken)) -> FmtParsed {
-  fmt_tree_in(tokens, fmt_no_nodes, Nil)
+pub fn fmt_tree(tokens: List(FmtToken)): FmtParsed {
+  fmt_tree_in(tokens, FmtNoNodes, Nil)
 }
 
 // ---- one line, flat ------------------------------------------------------------
 
 // The text between two tokens laid out on one line.
-fn fmt_gap(prev: Option(Text), t: FmtToken) -> Text {
-  match prev -> Text {
+pub fn fmt_gap(prev: Option(Text), t: FmtToken): Text {
+  match prev: Text {
     None => ""
-    Some(before) => match before == "(" || before == "[" -> Text {
-      yes => ""
-      no => match before == "," -> Text {
-        yes => " "
-        no => match t.lexeme == ")" || t.lexeme == "]" || t.lexeme == "," -> Text {
-          yes => ""
-          no => match t.spaced -> Text {
-            yes => " "
-            no => ""
+    Some(before) => match before == "(" || before == "[": Text {
+      true => ""
+      false => match before == ",": Text {
+        true => " "
+        false => match t.lexeme == ")" || t.lexeme == "]" || t.lexeme == ",": Text {
+          true => ""
+          false => match before == "!" && t.lexeme == "(": Text {
+            true => ""
+            false => match t.spaced: Text {
+              true => " "
+              false => ""
+            }
           }
         }
       }
@@ -480,66 +810,67 @@ fn fmt_gap(prev: Option(Text), t: FmtToken) -> Text {
 }
 
 // Text written so far (last first), and the last token's text.
-inductive FmtFlat(): Type {
-  fmt_flat(prev: Option(Text), parts: List(Text)): FmtFlat
+pub(open) inductive FmtFlat: Type {
+  Mk(prev: Option(Text), parts: List(Text)): FmtFlat
 }
 
-fn fmt_push(t: FmtToken, f: FmtFlat) -> FmtFlat {
+pub fn fmt_push(t: FmtToken, f: FmtFlat): FmtFlat {
   FmtFlat { prev: Some(t.lexeme), parts: Cons(t.lexeme, Cons(fmt_gap(f.prev, t), f.parts)) }
 }
 
-fn fmt_push_comma(first: Yn, f: FmtFlat) -> FmtFlat {
-  match first -> FmtFlat {
-    yes => f
-    no => FmtFlat { prev: Some(","), parts: Cons(",", f.parts) }
+pub fn fmt_push_comma(first: Bool, f: FmtFlat): FmtFlat {
+  match first: FmtFlat {
+    true => f
+    false => FmtFlat { prev: Some(","), parts: Cons(",", f.parts) }
   }
 }
 
 mutual {
-  fn fmt_flat_node(node: FmtNode, f: FmtFlat) -> FmtFlat {
-    match node -> FmtFlat {
-      fmt_tok(t) => fmt_push(t, f)
-      fmt_group(open, items, close) => fmt_push(
+  pub fn fmt_flat_node(node: FmtNode, f: FmtFlat): FmtFlat {
+    match node: FmtFlat {
+      FmtTok(t) => fmt_push(t, f)
+      FmtGroup(open, items, close) => fmt_push(
         close,
-        fmt_flat_items(items, yes, fmt_push(open, f))
+        fmt_flat_items(items, true, fmt_push(open, f))
       )
     }
   }
-  fn fmt_flat_nodes(nodes: FmtNodes, f: FmtFlat) -> FmtFlat {
-    match nodes -> FmtFlat {
-      fmt_no_nodes => f
-      fmt_nodes(node, rest) => fmt_flat_nodes(rest, fmt_flat_node(node, f))
+  pub fn fmt_flat_nodes(nodes: FmtNodes, f: FmtFlat): FmtFlat {
+    match nodes: FmtFlat {
+      FmtNoNodes => f
+      FmtNodesOf(node, rest) => fmt_flat_nodes(rest, fmt_flat_node(node, f))
     }
   }
-  fn fmt_flat_items(items: FmtItems, first: Yn, f: FmtFlat) -> FmtFlat {
-    match items -> FmtFlat {
-      fmt_no_items => f
-      fmt_items(
-        item,
-        rest
-      ) => fmt_flat_items(rest, no, fmt_flat_nodes(item, fmt_push_comma(first, f)))
+  pub fn fmt_flat_items(items: FmtItems, first: Bool, f: FmtFlat): FmtFlat {
+    match items: FmtFlat {
+      FmtNoItems => f
+      FmtItemsOf(item, rest) => fmt_flat_items(
+        rest,
+        false,
+        fmt_flat_nodes(item, fmt_push_comma(first, f))
+      )
     }
   }
 }
 
-fn fmt_parts_text(parts: List(Text)) -> Text {
-  text_concat_all(list_reverse(parts))
+pub fn fmt_parts_text(parts: List(Text)): Text {
+  Text::concat_all(List::reverse(parts))
 }
 
-fn fmt_flat_text(nodes: FmtNodes) -> Text {
+pub fn fmt_flat_text(nodes: FmtNodes): Text {
   fmt_parts_text(fmt_flat_nodes(nodes, FmtFlat { prev: None, parts: Nil }).parts)
 }
 
-fn fmt_node_text(node: FmtNode) -> Text {
+pub fn fmt_node_text(node: FmtNode): Text {
   fmt_parts_text(fmt_flat_node(node, FmtFlat { prev: None, parts: Nil }).parts)
 }
 
 // ---- one line, broken where it does not fit ------------------------------------
 
-fn fmt_last_line(lines: List(Text)) -> Text {
-  match lines -> Text {
+pub fn fmt_last_line(lines: List(Text)): Text {
+  match lines: Text {
     Nil => ""
-    Cons(line, rest) => match rest -> Text {
+    Cons(line, rest) => match rest: Text {
       Nil => line
       Cons(next, more) => fmt_last_line(rest)
     }
@@ -547,207 +878,241 @@ fn fmt_last_line(lines: List(Text)) -> Text {
 }
 
 // The column after `text` is written at column `col`.
-fn fmt_advance(col: Nat, text: Text) -> Nat {
-  match text_find(text, text_newline(), 0) -> Nat {
+pub fn fmt_advance(col: Nat, text: Text): Nat {
+  match Text::find(text, text_newline(), 0): Nat {
     None => col + text_char_count(text)
     Some(at) => text_char_count(fmt_last_line(text_lines(text)))
   }
 }
 
-fn fmt_spaces(n: Nat) -> Text {
-  text_repeat(" ", n)
+pub fn fmt_spaces(n: Nat): Text {
+  Text::repeat(" ", n)
 }
 
-fn fmt_first_token(node: FmtNode) -> FmtToken {
-  match node -> FmtToken {
-    fmt_tok(t) => t
-    fmt_group(open, items, close) => open
+pub fn fmt_first_token(node: FmtNode): FmtToken {
+  match node: FmtToken {
+    FmtTok(t) => t
+    FmtGroup(open, items, close) => open
   }
 }
 
 // The width of the flat text of the nodes after this one in the line.
-fn fmt_rest_width(rest: FmtNodes) -> Nat {
+pub fn fmt_rest_width(rest: FmtNodes): Nat {
   text_char_count(fmt_flat_text(rest))
+}
+
+// The width of `nodes` with `tail` after them, if the first group among them that can break
+// does: up to its opening bracket.
+pub fn fmt_least_width(nodes: FmtNodes, f: FmtFlat, tail: Nat): Nat {
+  match nodes: Nat {
+    FmtNoNodes => text_char_count(fmt_parts_text(f.parts)) + tail
+    FmtNodesOf(node, rest) => match node: Nat {
+      FmtTok(t) => fmt_least_width(rest, fmt_push(t, f), tail)
+      FmtGroup(open, items, close) => match fmt_items_empty(items): Nat {
+        true => fmt_least_width(rest, fmt_flat_node(node, f), tail)
+        false => text_char_count(fmt_parts_text(fmt_push(open, f).parts))
+      }
+    }
+  }
+}
+
+// Whether `t` is the `>` of a `=>` (two tokens, `=` and `>`).
+pub fn fmt_is_arrow_end(t: FmtToken, prev: Option(Text)): Bool {
+  match prev: Bool {
+    None => false
+    Some(before) => t.lexeme == ">" && before == "=" && match t.spaced: Bool {
+      true => false
+      false => true
+    }
+  }
+}
+
+// The flat width through the first group's opening bracket after a `=>` in `nodes`.
+pub fn fmt_arrow_head(nodes: FmtNodes, arrow: Bool, f: FmtFlat): Option(Nat) {
+  match nodes: Option(Nat) {
+    FmtNoNodes => None
+    FmtNodesOf(node, rest) => match node: Option(Nat) {
+      FmtTok(t) => fmt_arrow_head(rest, arrow || fmt_is_arrow_end(t, f.prev), fmt_push(t, f))
+      FmtGroup(open, items, close) => match arrow && match fmt_items_empty(items): Bool {
+        true => false
+        false => true
+      }: Option(Nat) {
+        true => Some(text_char_count(fmt_parts_text(fmt_push(open, f).parts)))
+        false => fmt_arrow_head(rest, arrow, fmt_flat_node(node, f))
+      }
+    }
+  }
+}
+
+// The width of what follows a group on the line, as far as the group must fit: through the
+// next group's opening bracket after a `=>`, or all of it with `tail` when there is none. So
+// `Cons(y, ys) => f(…)` breaks inside `f(`, not inside the pattern.
+pub fn fmt_unbroken_width(rest: FmtNodes, tail: Nat): Nat {
+  match fmt_arrow_head(rest, false, FmtFlat { prev: None, parts: Nil }): Nat {
+    None => tail + fmt_rest_width(rest)
+    Some(w) => w
+  }
+}
+
+// What follows `node` on its line, for whether it fits. A `{ }` breaks last: only if it does not
+// fit with what follows broken.
+pub fn fmt_after_width(node: FmtNode, rest: FmtNodes, tail: Nat): Nat {
+  match node: Nat {
+    FmtTok(t) => fmt_unbroken_width(rest, tail)
+    FmtGroup(open, items, close) => match open.lexeme == "{": Nat {
+      true => fmt_least_width(rest, FmtFlat { prev: None, parts: Nil }, tail)
+      false => fmt_unbroken_width(rest, tail)
+    }
+  }
 }
 
 // The layout so far: the column, the last token's text and the text (last
 // first).
-inductive FmtOut(): Type {
-  fmt_out(col: Nat, prev: Option(Text), parts: List(Text)): FmtOut
+pub(open) inductive FmtOut: Type {
+  Mk(col: Nat, prev: Option(Text), parts: List(Text)): FmtOut
 }
 
 // Each item but the last ends with a comma; its layout leaves room for it.
-fn fmt_item_tail(rest: FmtItems) -> Nat {
-  match rest -> Nat {
-    fmt_no_items => 0
-    fmt_items(i, more) => 1
+pub fn fmt_item_tail(rest: FmtItems): Nat {
+  match rest: Nat {
+    FmtNoItems => 0
+    FmtItemsOf(i, more) => 1
   }
 }
 
-fn fmt_item_end(rest: FmtItems, out: FmtOut) -> FmtOut {
-  match rest -> FmtOut {
-    fmt_no_items => out
-    fmt_items(i, more) => FmtOut { col: out.col, prev: out.prev, parts: Cons(",", out.parts) }
+pub fn fmt_item_end(rest: FmtItems, out: FmtOut): FmtOut {
+  match rest: FmtOut {
+    FmtNoItems => out
+    FmtItemsOf(i, more) => FmtOut { col: out.col, prev: out.prev, parts: Cons(",", out.parts) }
   }
 }
 
 // Whether a group fits flat from where the layout is, with `after` more
 // columns of the line after it.
-fn fmt_fits(out: FmtOut, node: FmtNode, after: Nat) -> Yn {
+pub fn fmt_fits(out: FmtOut, node: FmtNode, after: Nat): Bool {
   out.col + text_char_count(
     fmt_gap(out.prev, fmt_first_token(node))
   ) + text_char_count(fmt_node_text(node)) + after <= fmt_width()
 }
 
-// Whether a group is the brackets of an attribute, `#[ … ]`.
-fn fmt_is_attribute(open: FmtToken, prev: Option(Text)) -> Yn {
-  match prev -> Yn {
-    None => no
-    Some(before) => open.lexeme == "[" && before == "#"
-  }
-}
-
-// The width of the items after this one, each with the `, ` that comes before it.
-fn fmt_items_after(items: FmtItems) -> Nat {
-  match items -> Nat {
-    fmt_no_items => 0
-    fmt_items(item, rest) => text_char_count(fmt_flat_text(item)) + 2 + fmt_items_after(rest)
-  }
-}
-
-fn fmt_attribute_close(close: FmtToken, out: FmtOut) -> FmtOut {
-  FmtOut { col: fmt_advance(
-    out.col,
-    close.lexeme
-  ), prev: Some(close.lexeme), parts: Cons(close.lexeme, out.parts) }
-}
-
-fn fmt_out_parts(out: FmtOut) -> List(Text) {
+pub fn fmt_out_parts(out: FmtOut): List(Text) {
   out.parts
+}
+
+// Whether a `=>` comes later in `nodes`, at this level. A group before it is a `match` arm's
+// pattern (or a parameter) and stays on one line; the line breaks after the `=>`.
+pub fn fmt_arrow_follows(nodes: FmtNodes, prev: Option(Text)): Bool {
+  match nodes: Bool {
+    FmtNoNodes => false
+    FmtNodesOf(node, rest) => match node: Bool {
+      FmtTok(t) => fmt_is_arrow_end(t, prev) || fmt_arrow_follows(rest, Some(t.lexeme))
+      FmtGroup(open, items, close) => fmt_arrow_follows(rest, Some(close.lexeme))
+    }
+  }
+}
+
+// A group written flat where the layout is.
+pub fn fmt_place_flat(open: FmtToken, node: FmtNode, close: FmtToken, out: FmtOut): FmtOut {
+  FmtOut {
+    col: fmt_advance(out.col, Text::concat_all(Cons(fmt_gap(out.prev, open), Cons(fmt_node_text(node), Nil)))),
+    prev: Some(close.lexeme),
+    parts: Cons(fmt_node_text(node), Cons(fmt_gap(out.prev, open), out.parts))
+  }
 }
 
 // Lays out `nodes` on a line indented `indent`, breaking the groups that do
 // not fit. `tail` is the width of what follows on the same line.
 mutual {
-  fn fmt_layout_nodes(nodes: FmtNodes, indent: Nat, tail: Nat, out: FmtOut) -> FmtOut {
-    match nodes -> FmtOut {
-      fmt_no_nodes => out
-      fmt_nodes(
-        node,
-        rest
-      ) => fmt_layout_nodes(
+  pub fn fmt_layout_nodes(nodes: FmtNodes, indent: Nat, tail: Nat, out: FmtOut): FmtOut {
+    match nodes: FmtOut {
+      FmtNoNodes => out
+      FmtNodesOf(node, rest) => fmt_layout_nodes(
         rest,
         indent,
         tail,
-        fmt_layout_node(node, indent, tail + fmt_rest_width(rest), out)
+        match node: FmtOut {
+          FmtTok(t) => fmt_layout_node(node, indent, fmt_after_width(node, rest, tail), out)
+          FmtGroup(open, items, close) => match fmt_arrow_follows(rest, None): FmtOut {
+            true => fmt_place_flat(open, node, close, out)
+            false => fmt_layout_node(node, indent, fmt_after_width(node, rest, tail), out)
+          }
+        }
       )
     }
   }
   // One node, with `tail` the width of what follows it on the line.
-  fn fmt_layout_node(node: FmtNode, indent: Nat, tail: Nat, out: FmtOut) -> FmtOut {
-    match node -> FmtOut {
-      fmt_tok(t) => FmtOut {
+  pub fn fmt_layout_node(node: FmtNode, indent: Nat, tail: Nat, out: FmtOut): FmtOut {
+    match node: FmtOut {
+      FmtTok(t) => FmtOut {
         col: fmt_advance(fmt_advance(out.col, fmt_gap(out.prev, t)), t.lexeme),
         prev: Some(t.lexeme),
         parts: Cons(t.lexeme, Cons(fmt_gap(out.prev, t), out.parts))
       }
-      fmt_group(
-        open,
-        items,
-        close
-      ) => match fmt_fits(
+      FmtGroup(open, items, close) => match fmt_fits(
         out,
-        fmt_group(open, items, close),
+        FmtGroup(open, items, close),
         tail
-      ) || fmt_items_empty(items) -> FmtOut {
-        yes => FmtOut {
+      ) || fmt_items_empty(items): FmtOut {
+        true => FmtOut {
           col: fmt_advance(
             out.col,
-            text_concat_all(
-              Cons(fmt_gap(out.prev, open), Cons(fmt_node_text(fmt_group(open, items, close)), Nil))
+            Text::concat_all(
+              Cons(fmt_gap(out.prev, open), Cons(fmt_node_text(FmtGroup(open, items, close)), Nil))
             )
           ),
           prev: Some(close.lexeme),
           parts: Cons(
-            fmt_node_text(fmt_group(open, items, close)),
+            fmt_node_text(FmtGroup(open, items, close)),
             Cons(fmt_gap(out.prev, open), out.parts)
           )
         }
-        no => match fmt_is_attribute(open, out.prev) -> FmtOut {
-          yes => fmt_attribute_close(
-            close,
-            fmt_layout_items(
-              items,
-              indent,
-              yes,
-              yes,
-              FmtOut {
-                col: fmt_advance(fmt_advance(out.col, fmt_gap(out.prev, open)), open.lexeme),
-                prev: Some(open.lexeme),
-                parts: Cons(open.lexeme, Cons(fmt_gap(out.prev, open), out.parts))
-              }
-            )
-          )
-          no => FmtOut {
-            col: indent + text_char_count(close.lexeme),
-            prev: Some(close.lexeme),
-            parts: Cons(
-              close.lexeme,
+        false => FmtOut {
+          col: indent + text_char_count(close.lexeme),
+          prev: Some(close.lexeme),
+          parts: Cons(
+            close.lexeme,
+            Cons(
+              fmt_spaces(indent),
               Cons(
-                fmt_spaces(indent),
-                Cons(
-                  text_newline(),
-                  fmt_out_parts(
-                    fmt_layout_items(
-                      items,
-                      indent + 2,
-                      no,
-                      yes,
-                      FmtOut { col: out.col, prev: out.prev, parts: Cons(
-                        open.lexeme,
-                        Cons(fmt_gap(out.prev, open), out.parts)
-                      ) }
-                    )
+                text_newline(),
+                fmt_out_parts(
+                  fmt_layout_items(
+                    items,
+                    indent + 2,
+                    FmtOut {
+                      col: out.col,
+                      prev: out.prev,
+                      parts: Cons(open.lexeme, Cons(fmt_gap(out.prev, open), out.parts))
+                    }
                   )
                 )
               )
             )
-          }
+          )
         }
       }
     }
   }
-  // The items of a broken group, one a line, indented `inner`. Those of an attribute's
-  // brackets (`inline`) stay on its line, joined by `, `: the newline ends the statement, so
-  // only what is inside the macro call's parentheses can break.
-  fn fmt_layout_items(items: FmtItems, inner: Nat, inline: Yn, first: Yn, out: FmtOut) -> FmtOut {
-    match items -> FmtOut {
-      fmt_no_items => out
-      fmt_items(item, rest) => fmt_layout_items(
+  // The items of a broken group, one a line, indented `inner`.
+  pub fn fmt_layout_items(items: FmtItems, inner: Nat, out: FmtOut): FmtOut {
+    match items: FmtOut {
+      FmtNoItems => out
+      FmtItemsOf(item, rest) => fmt_layout_items(
         rest,
         inner,
-        inline,
-        no,
-        match inline -> FmtOut {
-          yes => fmt_layout_nodes(
+        fmt_item_end(
+          rest,
+          fmt_layout_nodes(
             item,
             inner,
-            fmt_items_after(rest) + 1,
-            match first -> FmtOut {
-              yes => FmtOut { col: out.col, prev: None, parts: out.parts }
-              no => FmtOut { col: out.col + 2, prev: None, parts: Cons(", ", out.parts) }
+            fmt_item_tail(rest),
+            FmtOut {
+              col: inner,
+              prev: None,
+              parts: Cons(fmt_spaces(inner), Cons(text_newline(), out.parts))
             }
           )
-          no => fmt_item_end(
-            rest,
-            fmt_layout_nodes(
-              item,
-              inner,
-              fmt_item_tail(rest),
-              FmtOut { col: inner, prev: None, parts: Cons(fmt_spaces(inner), Cons(text_newline(), out.parts)) }
-            )
-          )
-        }
+        )
       )
     }
   }
@@ -758,91 +1123,88 @@ mutual {
 // A line cut from the tokens: its tokens, the tokens after it, the brackets
 // still open after it (the last opened first) and whether it is left as
 // written.
-inductive FmtLine(): Type {
-  fmt_line(line: List(FmtToken), rest: List(FmtToken), stack: List(Text), verbatim: Yn): FmtLine
+pub(open) inductive FmtLine: Type {
+  Mk(line: List(FmtToken), rest: List(FmtToken), stack: List(Text), verbatim: Bool): FmtLine
 }
 
-fn fmt_count_braces(stack: List(Text), n: Nat) -> Nat {
-  match stack -> Nat {
+pub fn fmt_count_braces(stack: List(Text), n: Nat): Nat {
+  match stack: Nat {
     Nil => n
     Cons(open, rest) => fmt_count_braces(
       rest,
-      match open == "{" -> Nat {
-        yes => n + 1
-        no => n
+      match open == "{": Nat {
+        true => n + 1
+        false => n
       }
     )
   }
 }
 
 // Whether a bracket other than `{` is open.
-fn fmt_in_brackets(stack: List(Text)) -> Yn {
-  match stack -> Yn {
-    Nil => no
+pub fn fmt_in_brackets(stack: List(Text)): Bool {
+  match stack: Bool {
+    Nil => false
     Cons(open, rest) => open != "{" || fmt_in_brackets(rest)
   }
 }
 
-fn fmt_last_is_brace(stack: List(Text)) -> Yn {
-  match stack -> Yn {
-    Nil => no
+pub fn fmt_last_is_brace(stack: List(Text)): Bool {
+  match stack: Bool {
+    Nil => false
     Cons(open, rest) => open == "{"
   }
 }
 
 // The stack after the token `t`.
-fn fmt_stacked(t: FmtToken, stack: List(Text)) -> FmtOr(List(Text)) {
-  match fmt_is(t, fmt_open) -> FmtOr(List(Text)) {
-    yes => fmt_ok(Cons(t.lexeme, stack))
-    no => match fmt_is(t, fmt_close) -> FmtOr(List(Text)) {
-      yes => match stack -> FmtOr(List(Text)) {
-        Nil => fmt_err(text_concat_all(Cons("an unmatched `", Cons(t.lexeme, Cons("`", Nil)))))
-        Cons(open, below) => fmt_ok(below)
+pub fn fmt_stacked(t: FmtToken, stack: List(Text)): FmtOr(List(Text)) {
+  match fmt_is(t, FmtOpen): FmtOr(List(Text)) {
+    true => FmtOk(Cons(t.lexeme, stack))
+    false => match fmt_is(t, FmtClose): FmtOr(List(Text)) {
+      true => match stack: FmtOr(List(Text)) {
+        Nil => FmtErr(Text::concat_all(Cons("an unmatched `", Cons(t.lexeme, Cons("`", Nil)))))
+        Cons(open, below) => FmtOk(below)
       }
-      no => fmt_ok(stack)
+      false => FmtOk(stack)
     }
   }
 }
 
 // One of the kinds a list of what a declaration makes (`=> fn a, theorem b`) names.
-fn fmt_is_kind_word(t: FmtToken) -> Yn {
+pub fn fmt_is_kind_word(t: FmtToken): Bool {
   fmt_is(
     t,
-    fmt_word
+    FmtWord
   ) && (
     t.lexeme == "fn" || t.lexeme == "theorem" || t.lexeme == "def" || t.lexeme == "inductive" || t.lexeme == "struct" || t.lexeme == "enum"
   )
 }
 
 // Whether the line, written backwards, ends in `=>` (two tokens, `=` and `>`).
-fn fmt_ends_arrow(rev: List(FmtToken)) -> Yn {
-  match rev -> Yn {
-    Nil => no
-    Cons(gt, more) => match more -> Yn {
-      Nil => no
-      Cons(eq, before) => gt.lexeme == ">" && eq.lexeme == "=" && !gt.spaced
+pub fn fmt_ends_arrow(rev: List(FmtToken)): Bool {
+  match rev: Bool {
+    Nil => false
+    Cons(gt, more) => match more: Bool {
+      Nil => false
+      Cons(eq, before) => gt.lexeme == ">" && eq.lexeme == "=" && not(gt.spaced)
     }
   }
 }
 
 // Whether the line, written backwards, holds `=> kind name`.
-fn fmt_has_list(rev: List(FmtToken)) -> Yn {
-  match rev -> Yn {
-    Nil => no
-    Cons(w, r1) => match r1 -> Yn {
-      Nil => no
-      Cons(k, r2) => match r2 -> Yn {
-        Nil => no
-        Cons(gt, r3) => match r3 -> Yn {
-          Nil => no
-          Cons(
-            eq,
-            more
-          ) => (
+pub fn fmt_has_list(rev: List(FmtToken)): Bool {
+  match rev: Bool {
+    Nil => false
+    Cons(w, r1) => match r1: Bool {
+      Nil => false
+      Cons(k, r2) => match r2: Bool {
+        Nil => false
+        Cons(gt, r3) => match r3: Bool {
+          Nil => false
+          Cons(eq, more) => (
             fmt_is(
               w,
-              fmt_word
-            ) && fmt_is_kind_word(k) && gt.lexeme == ">" && !gt.spaced && eq.lexeme == "="
+              FmtWord
+            ) && fmt_is_kind_word(k) && gt.lexeme == ">" && not(gt.spaced) && eq.lexeme == "="
           ) || fmt_has_list(r1)
         }
       }
@@ -852,58 +1214,56 @@ fn fmt_has_list(rev: List(FmtToken)) -> Yn {
 
 // Whether a list of what a declaration makes goes on at `next`, on a new line: after its `=>` or
 // after one of its commas.
-fn fmt_continues_list(rev: List(FmtToken), next: FmtToken) -> Yn {
-  match rev -> Yn {
-    Nil => no
-    Cons(last, before) => match fmt_ends_arrow(rev) -> Yn {
-      yes => fmt_is_kind_word(next)
-      no => last.lexeme == "," && fmt_is_kind_word(next) && fmt_has_list(rev)
+pub fn fmt_continues_list(rev: List(FmtToken), next: FmtToken): Bool {
+  match rev: Bool {
+    Nil => false
+    Cons(last, before) => match fmt_ends_arrow(rev): Bool {
+      true => fmt_is_kind_word(next)
+      false => last.lexeme == "," && fmt_is_kind_word(next) && fmt_has_list(rev)
     }
   }
 }
 
 // Reads the token `t` into `stack`, and the tokens after it into the line up
 // to a newline where only braces are open.
-fn fmt_scan_line(
+pub fn fmt_scan_line(
   after: List(FmtToken),
   t: FmtToken,
   stack: List(Text),
-  verbatim: Yn,
+  verbatim: Bool,
   line: List(FmtToken)
-) -> FmtOr(FmtLine) {
-  match after -> FmtOr(FmtLine) {
-    Nil => match fmt_stacked(t, stack) -> FmtOr(FmtLine) {
-      fmt_err(message) => fmt_err(message)
-      fmt_ok(now) => fmt_ok(
+): FmtOr(FmtLine) {
+  match after: FmtOr(FmtLine) {
+    Nil => match fmt_stacked(t, stack): FmtOr(FmtLine) {
+      FmtErr(message) => FmtErr(message)
+      FmtOk(now) => FmtOk(
         FmtLine {
-          line: list_reverse(Cons(t, line)),
+          line: List::reverse(Cons(t, line)),
           rest: after,
           stack: now,
-          verbatim: verbatim || (fmt_is(t, fmt_comment) && fmt_in_brackets(now))
+          verbatim: verbatim || (fmt_is(t, FmtComment) && fmt_in_brackets(now))
         }
       )
     }
-    Cons(next, more) => match fmt_stacked(t, stack) -> FmtOr(FmtLine) {
-      fmt_err(message) => fmt_err(message)
-      fmt_ok(
-        now
-      ) => match next.newlines > 0 && !fmt_in_brackets(
-        now
-      ) && !fmt_continues_list(Cons(t, line), next) -> FmtOr(FmtLine) {
-        yes => fmt_ok(
+    Cons(next, more) => match fmt_stacked(t, stack): FmtOr(FmtLine) {
+      FmtErr(message) => FmtErr(message)
+      FmtOk(now) => match next.newlines > 0 && not(
+        fmt_in_brackets(now)
+      ) && not(fmt_continues_list(Cons(t, line), next)): FmtOr(FmtLine) {
+        true => FmtOk(
           FmtLine {
-            line: list_reverse(Cons(t, line)),
+            line: List::reverse(Cons(t, line)),
             rest: after,
             stack: now,
-            verbatim: verbatim || (fmt_is(t, fmt_comment) && fmt_in_brackets(now))
+            verbatim: verbatim || (fmt_is(t, FmtComment) && fmt_in_brackets(now))
           }
         )
-        no => fmt_scan_line(
+        false => fmt_scan_line(
           more,
           next,
           now,
           verbatim || (
-            fmt_is(t, fmt_comment) && fmt_in_brackets(now)
+            fmt_is(t, FmtComment) && fmt_in_brackets(now)
           ) || (
             next.newlines > 0 && fmt_last_is_brace(now)
           ) || (next.newlines > 0 && fmt_continues_list(Cons(t, line), next)),
@@ -914,31 +1274,31 @@ fn fmt_scan_line(
   }
 }
 
-fn fmt_first_text(line: List(FmtToken)) -> Text {
-  match line -> Text {
+pub fn fmt_first_text(line: List(FmtToken)): Text {
+  match line: Text {
     Nil => ""
     Cons(t, rest) => t.lexeme
   }
 }
 
-fn fmt_first_newlines(line: List(FmtToken)) -> Nat {
-  match line -> Nat {
+pub fn fmt_first_newlines(line: List(FmtToken)): Nat {
+  match line: Nat {
     Nil => 0
     Cons(t, rest) => t.newlines
   }
 }
 
-fn fmt_first_start(line: List(FmtToken)) -> Nat {
-  match line -> Nat {
+pub fn fmt_first_start(line: List(FmtToken)): Nat {
+  match line: Nat {
     Nil => 0
     Cons(t, rest) => t.start
   }
 }
 
-fn fmt_last_end(line: List(FmtToken)) -> Nat {
-  match line -> Nat {
+pub fn fmt_last_end(line: List(FmtToken)): Nat {
+  match line: Nat {
     Nil => 0
-    Cons(t, rest) => match rest -> Nat {
+    Cons(t, rest) => match rest: Nat {
       Nil => t.end
       Cons(next, more) => fmt_last_end(rest)
     }
@@ -946,25 +1306,25 @@ fn fmt_last_end(line: List(FmtToken)) -> Nat {
 }
 
 // The end of `t` without the white space at its end, within `k` characters.
-fn fmt_trim_end_in(k: Nat, classes: UnicodeClasses, t: Text, at: Nat, end: Nat) -> Nat {
-  match k -> Nat {
-    zero => end
-    succ(k2) => match text_decode(t, at) -> Nat {
+pub fn fmt_trim_end_in(k: Nat, classes: UnicodeClasses, t: Text, at: Nat, end: Nat): Nat {
+  match k: Nat {
+    Zero => end
+    Succ(k2) => match text_decode(t, at): Nat {
       None => end
-      Some(decoded) => match unicode_is_whitespace(classes, decoded.fst) -> Nat {
-        yes => fmt_trim_end_in(k2, classes, t, at + decoded.snd, end)
-        no => fmt_trim_end_in(k2, classes, t, at + decoded.snd, at + decoded.snd)
+      Some(#(@code code, @len len)) => match unicode_is_whitespace(classes, code): Nat {
+        true => fmt_trim_end_in(k2, classes, t, at + len, end)
+        false => fmt_trim_end_in(k2, classes, t, at + len, at + len)
       }
     }
   }
 }
 
-fn fmt_trim_end(classes: UnicodeClasses, t: Text) -> Text {
-  text_slice_or_empty(t, 0, fmt_trim_end_in(text_len(t), classes, t, 0, 0))
+pub fn fmt_trim_end(classes: UnicodeClasses, t: Text): Text {
+  Text::slice_or_empty(t, 0, fmt_trim_end_in(Text::len(t), classes, t, 0, 0))
 }
 
-fn fmt_trim_lines(classes: UnicodeClasses, lines: List(Text)) -> List(Text) {
-  match lines -> List(Text) {
+pub fn fmt_trim_lines(classes: UnicodeClasses, lines: List(Text)): List(Text) {
+  match lines: List(Text) {
     Nil => Nil
     Cons(line, rest) => Cons(fmt_trim_end(classes, line), fmt_trim_lines(classes, rest))
   }
@@ -972,49 +1332,49 @@ fn fmt_trim_lines(classes: UnicodeClasses, lines: List(Text)) -> List(Text) {
 
 // The line as written, its first line indented anew and its other lines as
 // they were, without white space at their ends.
-fn fmt_verbatim(classes: UnicodeClasses, source: Text, line: List(FmtToken)) -> Text {
+pub fn fmt_verbatim(classes: UnicodeClasses, source: Text, line: List(FmtToken)): Text {
   text_join(
     fmt_trim_lines(
       classes,
-      text_lines(text_slice_or_empty(source, fmt_first_start(line), fmt_last_end(line)))
+      text_lines(Text::slice_or_empty(source, fmt_first_start(line), fmt_last_end(line)))
     ),
     text_newline()
   )
 }
 
-fn fmt_unmatched(rest: List(FmtToken)) -> Text {
-  text_concat_all(Cons("an unmatched `", Cons(fmt_first_text(rest), Cons("`", Nil))))
+pub fn fmt_unmatched(rest: List(FmtToken)): Text {
+  Text::concat_all(Cons("an unmatched `", Cons(fmt_first_text(rest), Cons("`", Nil))))
 }
 
 // The newlines before a line: one, or two where the source had a blank line.
-fn fmt_line_break(first: Yn, line: List(FmtToken), parts: List(Text)) -> List(Text) {
-  match first -> List(Text) {
-    yes => parts
-    no => match fmt_first_newlines(line) > 1 -> List(Text) {
-      yes => Cons(text_newline(), Cons(text_newline(), parts))
-      no => Cons(text_newline(), parts)
+pub fn fmt_line_break(first: Bool, line: List(FmtToken), parts: List(Text)): List(Text) {
+  match first: List(Text) {
+    true => parts
+    false => match fmt_first_newlines(line) > 1: List(Text) {
+      true => Cons(text_newline(), Cons(text_newline(), parts))
+      false => Cons(text_newline(), parts)
     }
   }
 }
 
-fn fmt_indent(line: List(FmtToken), depth: Nat) -> Nat {
-  match fmt_first_text(line) == "}" && depth > 0 -> Nat {
-    yes => 2 * (depth - 1)
-    no => 2 * depth
+pub fn fmt_indent(line: List(FmtToken), depth: Nat): Nat {
+  match fmt_first_text(line) == "}" && depth > 0: Nat {
+    true => 2 * (depth - 1)
+    false => 2 * depth
   }
 }
 
 // One line, laid out or left as written, after `parts` (last first).
-fn fmt_write_line(
+pub fn fmt_write_line(
   classes: UnicodeClasses,
   source: Text,
   scanned: FmtLine,
   depth: Nat,
-  first: Yn,
+  first: Bool,
   parts: List(Text)
-) -> FmtOr(List(Text)) {
-  match scanned.verbatim -> FmtOr(List(Text)) {
-    yes => fmt_ok(
+): FmtOr(List(Text)) {
+  match scanned.verbatim: FmtOr(List(Text)) {
+    true => FmtOk(
       Cons(
         fmt_verbatim(classes, source, scanned.line),
         Cons(
@@ -1023,9 +1383,9 @@ fn fmt_write_line(
         )
       )
     )
-    no => match fmt_tree(scanned.line) -> FmtOr(List(Text)) {
-      fmt_parsed(nodes, rest) => match rest -> FmtOr(List(Text)) {
-        Nil => fmt_ok(
+    false => match fmt_tree(scanned.line): FmtOr(List(Text)) {
+      Mk(nodes, rest) => match rest: FmtOr(List(Text)) {
+        Nil => FmtOk(
           fmt_layout_nodes(
             nodes,
             fmt_indent(scanned.line, depth),
@@ -1037,154 +1397,152 @@ fn fmt_write_line(
             }
           ).parts
         )
-        Cons(t, more) => fmt_err(fmt_unmatched(rest))
+        Cons(t, more) => FmtErr(fmt_unmatched(rest))
       }
     }
   }
 }
 
 // What the lines give: the text (last first) and the brackets still open.
-inductive FmtWritten(): Type {
-  fmt_written(parts: List(Text), stack: List(Text)): FmtWritten
+pub(open) inductive FmtWritten: Type {
+  Mk(parts: List(Text), stack: List(Text)): FmtWritten
 }
 
 // The lines of `tokens` after `parts`. Each line takes a token at least, so
 // `fuel` is the number of tokens.
-fn fmt_lines_in(
+pub fn fmt_lines_in(
   fuel: Nat,
   classes: UnicodeClasses,
   source: Text,
   tokens: List(FmtToken),
   stack: List(Text),
-  first: Yn,
+  first: Bool,
   parts: List(Text)
-) -> FmtOr(FmtWritten) {
-  match fuel -> FmtOr(FmtWritten) {
-    zero => fmt_ok(FmtWritten { parts: parts, stack: stack })
-    succ(f) => match tokens -> FmtOr(FmtWritten) {
-      Nil => fmt_ok(FmtWritten { parts: parts, stack: stack })
-      Cons(t, after) => match fmt_scan_line(after, t, stack, no, Nil) -> FmtOr(FmtWritten) {
-        fmt_err(message) => fmt_err(message)
-        fmt_ok(
-          scanned
-        ) => match fmt_write_line(
+): FmtOr(FmtWritten) {
+  match fuel: FmtOr(FmtWritten) {
+    Zero => FmtOk(FmtWritten { parts: parts, stack: stack })
+    Succ(f) => match tokens: FmtOr(FmtWritten) {
+      Nil => FmtOk(FmtWritten { parts: parts, stack: stack })
+      Cons(t, after) => match fmt_scan_line(after, t, stack, false, Nil): FmtOr(FmtWritten) {
+        FmtErr(message) => FmtErr(message)
+        FmtOk(scanned) => match fmt_write_line(
           classes,
           source,
           scanned,
           fmt_count_braces(stack, 0),
           first,
           parts
-        ) -> FmtOr(FmtWritten) {
-          fmt_err(message) => fmt_err(message)
-          fmt_ok(
+        ): FmtOr(FmtWritten) {
+          FmtErr(message) => FmtErr(message)
+          FmtOk(written) => fmt_lines_in(
+            f,
+            classes,
+            source,
+            scanned.rest,
+            scanned.stack,
+            false,
             written
-          ) => fmt_lines_in(f, classes, source, scanned.rest, scanned.stack, no, written)
+          )
         }
       }
     }
   }
 }
 
-fn fmt_same_texts(a: List(FmtToken), b: List(FmtToken)) -> Yn {
-  match a -> Yn {
-    Nil => match b -> Yn {
-      Nil => yes
-      Cons(y, more) => no
+pub fn fmt_same_texts(a: List(FmtToken), b: List(FmtToken)): Bool {
+  match a: Bool {
+    Nil => match b: Bool {
+      Nil => true
+      Cons(y, more) => false
     }
-    Cons(x, rest) => match b -> Yn {
-      Nil => no
+    Cons(x, rest) => match b: Bool {
+      Nil => false
       Cons(y, more) => x.lexeme == y.lexeme && fmt_same_texts(rest, more)
     }
   }
 }
 
 // `formatted` when its tokens read the same, else an error.
-fn fmt_kept(same: Yn, formatted: Text) -> FmtOr(Text) {
-  match same -> FmtOr(Text) {
-    yes => fmt_ok(formatted)
-    no => fmt_err("the layout would change the tokens")
+pub fn fmt_kept(same: Bool, formatted: Text): FmtOr(Text) {
+  match same: FmtOr(Text) {
+    true => FmtOk(formatted)
+    false => FmtErr("the layout would change the tokens")
   }
 }
 
 // `formatted`, lexed again as `again`, checked against `tokens`.
-fn fmt_checked_from(
+pub fn fmt_checked_from(
   again: FmtOr(List(FmtToken)),
   tokens: List(FmtToken),
   formatted: Text
-) -> FmtOr(Text) {
-  match again -> FmtOr(Text) {
-    fmt_err(message) => fmt_err(message)
-    fmt_ok(lexed) => fmt_kept(fmt_same_texts(tokens, lexed), formatted)
+): FmtOr(Text) {
+  match again: FmtOr(Text) {
+    FmtErr(message) => FmtErr(message)
+    FmtOk(lexed) => fmt_kept(fmt_same_texts(tokens, lexed), formatted)
   }
 }
 
 // The text laid out, checked against the tokens it came from.
-fn fmt_checked(classes: UnicodeClasses, tokens: List(FmtToken), formatted: Text) -> FmtOr(Text) {
+pub fn fmt_checked(classes: UnicodeClasses, tokens: List(FmtToken), formatted: Text): FmtOr(Text) {
   fmt_checked_from(fmt_lex(formatted, classes), tokens, formatted)
 }
 
 // The source laid out again; an error when its brackets do not match or the
 // layout would change its tokens.
-fn fmt_format(classes: UnicodeClasses, source: Text) -> FmtOr(Text) {
-  match fmt_lex(source, classes) -> FmtOr(Text) {
-    fmt_err(message) => fmt_err(message)
-    fmt_ok(
-      tokens
-    ) => match fmt_lines_in(
-      list_length(tokens) + 1,
+pub fn fmt_format(classes: UnicodeClasses, source: Text): FmtOr(Text) {
+  match fmt_lex(source, classes): FmtOr(Text) {
+    FmtErr(message) => FmtErr(message)
+    FmtOk(tokens) => match fmt_lines_in(
+      List::length(tokens) + 1,
       classes,
       source,
       tokens,
       Nil,
-      yes,
+      true,
       Nil
-    ) -> FmtOr(Text) {
-      fmt_err(message) => fmt_err(message)
-      fmt_ok(written) => match written.stack -> FmtOr(Text) {
-        Cons(open, more) => fmt_err("an unclosed bracket")
+    ): FmtOr(Text) {
+      FmtErr(message) => FmtErr(message)
+      FmtOk(written) => match written.stack: FmtOr(Text) {
+        Cons(open, more) => FmtErr("an unclosed bracket")
         Nil => fmt_checked(classes, tokens, fmt_parts_text(Cons(text_newline(), written.parts)))
       }
     }
   }
 }
 
-theorem fmt_err_ne_ok(m: Text, x: Text, e: Eq(FmtOr(Text), fmt_err(m), fmt_ok(x))): False {
-  match e -> False {
+pub theorem fmt_err_ne_ok(m: Text, x: Text, e: FmtErr(m) = FmtOk(x)): False {
+  match e: False {
   }
 }
 
 // A check that passes means the text lexed back to the same token texts.
-theorem fmt_checked_keeps_tokens(
+pub theorem fmt_checked_keeps_tokens(
   lexed: FmtOr(List(FmtToken)),
   tokens: List(FmtToken),
   formatted: Text,
   again: List(FmtToken),
   out: Text,
-  is: Eq(FmtOr(List(FmtToken)), lexed, fmt_ok(again)),
-  ok: Eq(FmtOr(Text), fmt_checked_from(lexed, tokens, formatted), fmt_ok(out))
-): Eq(Yn, fmt_same_texts(tokens, again), yes) {
-  yn_cases(
-    (b: Yn) => Eq(Yn, b, yes),
+  is: lexed = FmtOk(again),
+  ok: fmt_checked_from(lexed, tokens, formatted) = FmtOk(out)
+): fmt_same_texts(tokens, again) = true {
+  Bool::cases(
+    (b: Bool) => b = true,
     fmt_same_texts(tokens, again),
-    (
-      e: Eq(Yn, fmt_same_texts(tokens, again), no)
-    ) => False_elim(
+    (e: fmt_same_texts(tokens, again) = false) => False::elim(
       fmt_err_ne_ok(
         "the layout would change the tokens",
         out,
-        Eq_subst(
-          (s: Yn) => Eq(FmtOr(Text), fmt_kept(s, formatted), fmt_ok(out)),
+        Eq::subst(
+          (s: Bool) => fmt_kept(s, formatted) = FmtOk(out),
           e,
-          Eq_subst(
-            (
-              r: FmtOr(List(FmtToken))
-            ) => Eq(FmtOr(Text), fmt_checked_from(r, tokens, formatted), fmt_ok(out)),
+          Eq::subst(
+            (r: FmtOr(List(FmtToken))) => fmt_checked_from(r, tokens, formatted) = FmtOk(out),
             is,
             ok
           )
         )
       )
     ),
-    (e: Eq(Yn, fmt_same_texts(tokens, again), yes)) => refl()
+    (e: fmt_same_texts(tokens, again) = true) => Refl
   )
 }

@@ -1,0 +1,62 @@
+import "../src/resolve.taut"
+
+// The examples of reference resolution against `http://a/b/c/d;p?q`.
+
+fn base(): Url {
+  MkUrl(
+    Text::bytes("http"),
+    Some(Auth(Nil, Nil, Text::bytes("a"), None)),
+    Segments([Text::bytes("b"), Text::bytes("c"), Text::bytes("d;p")]),
+    Some(Text::bytes("q")),
+    None
+  )
+}
+
+fn res(t: Text): Option(Text) {
+  match url_resolve(base(), t): Option(Text) {
+    None => None
+    Some(u) => Some(url_text(u))
+  }
+}
+
+theorem base_text(): url_parse("http://a/b/c/d;p?q") = Some(base()) { Refl }
+theorem r_scheme(): res("g:h") = Some("g:h") { Refl }
+theorem r_g(): res("g") = Some("http://a/b/c/g") { Refl }
+theorem r_dot_g(): res("./g") = Some("http://a/b/c/g") { Refl }
+theorem r_g_slash(): res("g/") = Some("http://a/b/c/g/") { Refl }
+theorem r_abs(): res("/g") = Some("http://a/g") { Refl }
+theorem r_net(): res("//g") = Some("http://g/") { Refl }
+theorem r_query(): res("?y") = Some("http://a/b/c/d;p?y") { Refl }
+theorem r_g_query(): res("g?y") = Some("http://a/b/c/g?y") { Refl }
+theorem r_frag(): res("#s") = Some("http://a/b/c/d;p?q#s") { Refl }
+theorem r_g_frag(): res("g#s") = Some("http://a/b/c/g#s") { Refl }
+theorem r_semi(): res(";x") = Some("http://a/b/c/;x") { Refl }
+theorem r_empty(): res("") = Some("http://a/b/c/d;p?q") { Refl }
+theorem r_dot(): res(".") = Some("http://a/b/c/") { Refl }
+theorem r_dot_slash(): res("./") = Some("http://a/b/c/") { Refl }
+theorem r_up(): res("..") = Some("http://a/b/") { Refl }
+theorem r_up_g(): res("../g") = Some("http://a/b/g") { Refl }
+theorem r_up_up(): res("../..") = Some("http://a/") { Refl }
+theorem r_up_up_g(): res("../../g") = Some("http://a/g") { Refl }
+theorem r_up3_g(): res("../../../g") = Some("http://a/g") { Refl }
+theorem r_abs_dot(): res("/./g") = Some("http://a/g") { Refl }
+theorem r_g_dot(): res("g.") = Some("http://a/b/c/g.") { Refl }
+theorem r_dot_g2(): res(".g") = Some("http://a/b/c/.g") { Refl }
+theorem r_g_dots(): res("g..") = Some("http://a/b/c/g..") { Refl }
+theorem r_dots_g(): res("..g") = Some("http://a/b/c/..g") { Refl }
+theorem r_dot_up_g(): res("./../g") = Some("http://a/b/g") { Refl }
+theorem r_g_dot_end(): res("./g/.") = Some("http://a/b/c/g/") { Refl }
+theorem r_g_dot_h(): res("g/./h") = Some("http://a/b/c/g/h") { Refl }
+theorem r_g_up_h(): res("g/../h") = Some("http://a/b/c/h") { Refl }
+theorem r_params(): res("g;x=1/./y") = Some("http://a/b/c/g;x=1/y") { Refl }
+theorem r_params_up(): res("g;x=1/../y") = Some("http://a/b/c/y") { Refl }
+theorem r_query_dots(): res("g?y/./x") = Some("http://a/b/c/g?y/./x") { Refl }
+theorem r_frag_dots(): res("g#s/../x") = Some("http://a/b/c/g#s/../x") { Refl }
+theorem r_same_scheme(): res("http:g") = Some("http://a/b/c/g") { Refl }
+theorem r_backslash(): res("\\\\x\\y") = Some("http://x/y") { Refl }
+theorem r_opaque(): url_resolve(
+  MkUrl(Text::bytes("mailto"), None, Opaque(Text::bytes("x")), None, None),
+  "y"
+) = None {
+  Refl
+}

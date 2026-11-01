@@ -1,0 +1,349 @@
+import "data.taut"
+import "../../surface/src/surface.taut"
+
+// Pure callable values may only reach acyclic declared bodies. All declarations
+// are also checked by the emitter; this scan supplies no type assumptions.
+pub fn rustgen_closure_names(bindings: List(RustgenBinding)): List(Text) {
+  match bindings: List(Text) {
+    Nil => Nil
+    Cons(binding, rest) => Cons(binding.name, rustgen_closure_names(rest))
+  }
+}
+// Type-parameter entries belong to one lexical function body, not to a
+// transitive callee. Value parameters are tracked separately by each scan.
+pub fn rustgen_pure_globals(functions: List(RustgenFunction)): List(RustgenFunction) {
+  match functions: List(RustgenFunction) {
+    Nil => Nil
+    Cons(f, rest) => if f.kind == 3 { rustgen_pure_globals(rest) } else {
+      Cons(f, rustgen_pure_globals(rest))
+    }
+  }
+}
+// A single decreasing fuel parameter bounds the worklist. Each job retains
+// its lexical value scope and its current declared-function call path.
+pub(open) inductive RustgenPureJob: Type {
+  RustgenPureFunctionJob(f: RustgenFunction, active: List(Text)): RustgenPureJob
+  RustgenPureTermJob(term: SurfaceTerm, locals: List(Text), active: List(Text)): RustgenPureJob
+  RustgenPureTermsJob(
+    terms: List(SurfaceTerm),
+    locals: List(Text),
+    active: List(Text)
+  ): RustgenPureJob
+  RustgenPureFieldsJob(
+    fields: List(SurfaceField),
+    locals: List(Text),
+    active: List(Text)
+  ): RustgenPureJob
+  RustgenPureArmsJob(arms: List(SurfaceArm), locals: List(Text), active: List(Text)): RustgenPureJob
+  RustgenPureBlockJob(
+    stmts: List(SurfaceStmt),
+    locals: List(Text),
+    active: List(Text)
+  ): RustgenPureJob
+}
+pub fn rustgen_pure_pattern_args(patterns: List(SurfacePattern)): List(Text) {
+  match patterns: List(Text) {
+    Nil => Nil
+    Cons(pattern, rest) => match pattern: List(Text) {
+      PtBind(name) => Cons(name, rustgen_pure_pattern_args(rest))
+      PtCtor(name, args) => rustgen_pure_pattern_args(rest)
+      PtWild => rustgen_pure_pattern_args(rest)
+      PtInt(negative, magnitude) => rustgen_pure_pattern_args(rest)
+      PtBool(value) => rustgen_pure_pattern_args(rest)
+      PtText(value) => rustgen_pure_pattern_args(rest)
+      PtRecord(name, fields) => rustgen_pure_pattern_args(rest)
+      PtOther(why) => rustgen_pure_pattern_args(rest)
+    }
+  }
+}
+pub fn rustgen_pure_pattern(pattern: SurfacePattern): List(Text) {
+  match pattern: List(Text) {
+    PtBind(name) => Cons(name, Nil)
+    PtCtor(name, args) => rustgen_pure_pattern_args(args)
+    PtWild => Nil
+    PtInt(negative, magnitude) => Nil
+    PtBool(value) => Nil
+    PtText(value) => Nil
+    PtRecord(name, fields) => Nil
+    PtOther(why) => Nil
+  }
+}
+pub fn rustgen_pure_jobs(
+  k: Nat,
+  jobs: List(RustgenPureJob),
+  functions: List(RustgenFunction)
+): Bool {
+  match k: Bool {
+    Zero => false
+    Succ(j) => match jobs: Bool {
+      Nil => true
+      Cons(job, rest) => match job: Bool {
+        RustgenPureFunctionJob(f, active) => if rustgen_member(f.name, active) { false } else {
+          rustgen_pure_jobs(
+            j,
+            Cons(
+              RustgenPureTermJob(f.body, rustgen_closure_names(f.params), Cons(f.name, active)),
+              rest
+            ),
+            functions
+          )
+        }
+        RustgenPureTermJob(term, locals, active) => match term.kind: Bool {
+          SkVar(name) => if rustgen_member(
+            name,
+            locals
+          ) { rustgen_pure_jobs(j, rest, functions) } else {
+            match rustgen_find_function(name, functions): Bool {
+              None => rustgen_pure_jobs(j, rest, functions)
+              Some(f) => if f.kind == 0 {
+                rustgen_pure_jobs(j, Cons(RustgenPureFunctionJob(f, active), rest), functions)
+              } else { rustgen_pure_jobs(j, rest, functions) }
+            }
+          }
+          SkNat(digits) => rustgen_pure_jobs(j, rest, functions)
+          SkFloat(digits) => rustgen_pure_jobs(j, rest, functions)
+          SkRow(effects) => rustgen_pure_jobs(j, rest, functions)
+          SkText(value) => rustgen_pure_jobs(j, rest, functions)
+          SkBool(value) => rustgen_pure_jobs(j, rest, functions)
+          SkApp(head, args) => rustgen_pure_jobs(
+            j,
+            Cons(
+              RustgenPureTermJob(head, locals, active),
+              Cons(RustgenPureTermsJob(args, locals, active), rest)
+            ),
+            functions
+          )
+          SkLam(params, body) => rustgen_pure_jobs(
+            j,
+            Cons(RustgenPureTermJob(body, List::append(params, locals), active), rest),
+            functions
+          )
+          SkIf(condition, then, otherwise) => match otherwise: Bool {
+            None => false
+            Some(other) => rustgen_pure_jobs(
+              j,
+              Cons(
+                RustgenPureTermJob(condition, locals, active),
+                Cons(
+                  RustgenPureTermJob(then, locals, active),
+                  Cons(RustgenPureTermJob(other, locals, active), rest)
+                )
+              ),
+              functions
+            )
+          }
+          SkField(value, name) => rustgen_pure_jobs(
+            j,
+            Cons(RustgenPureTermJob(value, locals, active), rest),
+            functions
+          )
+          SkBlock(Stmts) => rustgen_pure_jobs(
+            j,
+            Cons(RustgenPureBlockJob(Stmts, locals, active), rest),
+            functions
+          )
+          SkMatch(value, motive, arms, binder) => rustgen_pure_jobs(
+            j,
+            Cons(
+              RustgenPureTermJob(value, locals, active),
+              Cons(RustgenPureArmsJob(arms, locals, active), rest)
+            ),
+            functions
+          )
+          SkRecord(name, fields) => rustgen_pure_jobs(
+            j,
+            Cons(RustgenPureFieldsJob(fields, locals, active), rest),
+            functions
+          )
+          SkPi(unused0, unused1, unused2) => false
+          SkExists(unused0, unused1, unused2) => false
+          SkUnion(unused0) => false
+          SkProduct(unused0) => false
+          SkProject(unused0, unused1) => false
+          SkTagged(unused0, unused1) => false
+          SkPerform(unused0, unused1) => false
+          SkHandle(unused0, unused1) => false
+          SkBudget(unused0, unused1, unused2) => false
+          SkHole(unused0) => false
+          SkBorrow(unused0, unused1) => false
+          SkFnKind(unused0, unused1) => false
+          SkBorrowLam(unused0, unused1) => false
+          SkOther(unused0) => false
+          SkMacroCall(unused0, unused1) => false
+          SkQuote(unused0, unused1) => false
+          SkSplice(unused0) => false
+          SkSyntaxLit(unused0, unused1) => false
+          SkStep(unused0, unused1, unused2, unused3, unused4, unused5) => false
+        }
+        RustgenPureTermsJob(Terms, locals, active) => match Terms: Bool {
+          Nil => rustgen_pure_jobs(j, rest, functions)
+          Cons(term, more) => rustgen_pure_jobs(
+            j,
+            Cons(
+              RustgenPureTermJob(term, locals, active),
+              Cons(RustgenPureTermsJob(more, locals, active), rest)
+            ),
+            functions
+          )
+        }
+        RustgenPureFieldsJob(fields, locals, active) => match fields: Bool {
+          Nil => rustgen_pure_jobs(j, rest, functions)
+          Cons(field, more) => rustgen_pure_jobs(
+            j,
+            Cons(
+              RustgenPureTermJob(field.value, locals, active),
+              Cons(RustgenPureFieldsJob(more, locals, active), rest)
+            ),
+            functions
+          )
+        }
+        RustgenPureArmsJob(arms, locals, active) => match arms: Bool {
+          Nil => rustgen_pure_jobs(j, rest, functions)
+          Cons(arm, more) => rustgen_pure_jobs(
+            j,
+            Cons(
+              RustgenPureTermJob(
+                arm.body,
+                List::append(rustgen_pure_pattern(arm.pattern), locals),
+                active
+              ),
+              Cons(RustgenPureArmsJob(more, locals, active), rest)
+            ),
+            functions
+          )
+        }
+        RustgenPureBlockJob(Stmts, locals, active) => match Stmts: Bool {
+          Nil => rustgen_pure_jobs(j, rest, functions)
+          Cons(stmt, more) => match stmt: Bool {
+            StExpr(value) => rustgen_pure_jobs(
+              j,
+              Cons(
+                RustgenPureTermJob(value, locals, active),
+                Cons(RustgenPureBlockJob(more, locals, active), rest)
+              ),
+              functions
+            )
+            StLet(name, annotation, value, borrow, mutable) => not(
+              borrow
+            ) && not(
+              mutable
+            ) && rustgen_pure_jobs(
+              j,
+              Cons(
+                RustgenPureTermJob(value, locals, active),
+                Cons(RustgenPureBlockJob(more, Cons(name, locals), active), rest)
+              ),
+              functions
+            )
+            StVar(unused0, unused1, unused2, unused3) => false
+            StModule(unused0, unused1, unused2, unused3) => false
+            StAssign(unused0, unused1, unused2) => false
+            StCalled(unused0, unused1) => false
+            StFn(unused0) => false
+            StTheorem(unused0) => false
+            StDef(unused0) => false
+            StMutual(unused0, unused1, unused2) => false
+            StImport(unused0, unused1, unused2) => false
+            StInductive(unused0) => false
+            StEffect(unused0) => false
+            StStruct(unused0) => false
+            StEnum(unused0) => false
+            StExtern(unused0, unused1, unused2, unused3) => false
+            StClass(unused0) => false
+            StInstance(unused0) => false
+            StWhile(unused0, unused1) => false
+            StReturn(unused0) => false
+            StOther(unused0, unused1, unused2) => false
+            StMacro(unused0, unused1, unused2, unused3) => false
+            StAttributed(unused0, unused1, unused2, unused3) => false
+            StSyntax(unused0, unused1, unused2, unused3) => false
+          }
+        }
+      }
+    }
+  }
+}
+pub fn rustgen_pure_function(
+  k: Nat,
+  f: RustgenFunction,
+  functions: List(RustgenFunction),
+  active: List(Text)
+): Bool {
+  rustgen_pure_jobs(
+    k,
+    Cons(RustgenPureFunctionJob(f, active), Nil),
+    rustgen_pure_globals(functions)
+  )
+}
+pub fn rustgen_pure_term(
+  k: Nat,
+  term: SurfaceTerm,
+  functions: List(RustgenFunction),
+  locals: List(Text),
+  active: List(Text)
+): Bool {
+  rustgen_pure_jobs(
+    k,
+    Cons(RustgenPureTermJob(term, locals, active), Nil),
+    rustgen_pure_globals(functions)
+  )
+}
+
+pub fn rustgen_direct_value(
+  f: RustgenFunction,
+  functions: List(RustgenFunction)
+): RustgenResult(RustgenValue) {
+  if f.kind != 0 || List::length(f.generics) != 0 {
+    RustgenErr("polymorphic or non-function values are unsupported")
+  } else if not(
+    rustgen_pure_function(10000, f, functions, Nil)
+  ) { RustgenErr("callable body may diverge or perform effects") } else {
+    let ty := RustgenCallable(rustgen_binding_types(f.params), f.result)
+    RustgenOk(
+      RustgenValue::Mk(
+        ty,
+        rustgen_context_code(rustgen_wrapped("std::rc::Rc::new(", rustgen_ident(f.name), ")"), ty)
+      )
+    )
+  }
+}
+
+// Applying a generic result can resolve variables in both its arguments and
+// result. Numeric arguments erased by the result retain an explicit Rust type.
+pub fn rustgen_apply_resolved(
+  callable: RustgenValue,
+  params: List(RustgenType),
+  result: RustgenType,
+  values: List(RustgenValue),
+  subst: List(RustgenBinding)
+): RustgenResult(RustgenValue) {
+  match rustgen_resolve(10000, result, subst): RustgenResult(RustgenValue) {
+    RustgenErr(Message) => RustgenErr(Message)
+    RustgenOk(output) => match rustgen_resolve_many(
+      10000,
+      params,
+      subst
+    ): RustgenResult(RustgenValue) {
+      RustgenErr(Message) => RustgenErr(Message)
+      RustgenOk(inputs) => if not(rustgen_pending_list(10000, inputs, output)) {
+        RustgenErr("cannot infer a result-erased callable parameter")
+      } else { match rustgen_call_generics(inputs, output): RustgenResult(RustgenValue) {
+          RustgenErr(Message) => RustgenErr(Message)
+          RustgenOk(types) => RustgenOk(
+            RustgenValue::Mk(
+              output,
+              Text::concat_all(
+                Cons(
+                  "(",
+                  Cons(
+                    rustgen_context_code(callable.code, RustgenCallable(types, output)),
+                    Cons(")(", Cons(text_join(rustgen_value_codes(values), ","), Cons(")", Nil)))
+                  )
+                )
+              )
+            )
+          )
+        } }
+    }
+  }
+}

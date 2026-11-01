@@ -1,0 +1,576 @@
+import "checker_frame.taut"
+
+pub fn pattern_fresh_cons(g: Text, rest: List(Text), c: Checker): Mut1(List(Ty), Checker) {
+  frame_bind(
+    Ty,
+    List(Ty),
+    (h: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
+      ck_fresh_each(rest, c1)
+    ),
+    ck_fresh(c)
+  )
+}
+
+pub theorem pattern_fresh_cons_frame(
+  g: Text,
+  rest: List(Text),
+  c: Checker,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_fresh_each(rest, next))
+): CkReadFrame(c, pattern_fresh_cons(g, rest, c)) {
+  frame_bind_ok(
+    Ty,
+    List(Ty),
+    c,
+    (h: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
+      ck_fresh_each(rest, c1)
+    ),
+    ck_fresh(c),
+    ck_fresh_frame(c),
+    h => c1 => frame_bind_ok(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
+      ck_fresh_each(rest, c1),
+      ih(c1),
+      tl => c2 => Refl
+    )
+  )
+}
+
+pub theorem pattern_fresh_unf(
+  g: Text,
+  rest: List(Text),
+  c: Checker
+): ck_fresh_each(Cons(g, rest), c) = pattern_fresh_cons(g, rest, c) { Refl }
+
+pub theorem ck_fresh_each_frame(gs: List(Text), c: Checker): CkReadFrame(c, ck_fresh_each(gs, c)) {
+  match gs: CkReadFrame(c, ck_fresh_each(gs, c)) {
+    Nil => Refl
+    Cons(g, rest) => Eq::subst(
+      (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
+      Eq::sym(pattern_fresh_unf(g, rest, c)),
+      pattern_fresh_cons_frame(g, rest, c, next => ck_fresh_each_frame(rest, next))
+    )
+  }
+}
+
+pub fn pattern_literal_after(
+  c: Checker,
+  l: Ty,
+  target: Ty,
+  span: TySpan,
+  same: Bool
+): Mut1(Unit, Checker) {
+  frame_error_if(
+    c,
+    cat4(
+      "a pattern of ",
+      ty_show(ck_resolve(c, l)),
+      " cannot match ",
+      ty_show(ck_resolve(c, target))
+    ),
+    span,
+    not(same)
+  )
+}
+
+pub theorem pattern_literal_after_frame(
+  c: Checker,
+  l: Ty,
+  target: Ty,
+  span: TySpan,
+  same: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, pattern_literal_after(c, l, target, span, same)) {
+  run_frame_read(
+    c,
+    frame_error_if(
+      c,
+      cat4(
+        "a pattern of ",
+        ty_show(ck_resolve(c, l)),
+        " cannot match ",
+        ty_show(ck_resolve(c, target))
+      ),
+      span,
+      not(same)
+    ),
+    frame_error_if_ok(
+      c,
+      cat4(
+        "a pattern of ",
+        ty_show(ck_resolve(c, l)),
+        " cannot match ",
+        ty_show(ck_resolve(c, target))
+      ),
+      span,
+      not(same)
+    ),
+    ordered
+  )
+}
+
+pub fn pattern_literal(c: Checker, l: Ty, target: Ty, span: TySpan): Mut1(Unit, Checker) {
+  frame_bind(
+    Bool,
+    Unit,
+    (same: Bool, c1: Checker) => pattern_literal_after(c1, l, target, span, same),
+    ck_unify(c, l, target)
+  )
+}
+
+pub theorem pattern_literal_frame(
+  c: Checker,
+  l: Ty,
+  target: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, pattern_literal(c, l, target, span)) {
+  run_frame_bind(
+    Bool,
+    Unit,
+    c,
+    (same: Bool, c1: Checker) => pattern_literal_after(c1, l, target, span, same),
+    ck_unify(c, l, target),
+    ck_unify_run_frame(c, l, target, ordered),
+    same => c1 => o_c1 => pattern_literal_after_frame(c1, l, target, span, same, o_c1)
+  )
+}
+
+pub theorem pattern_literal_unf(
+  c: Checker,
+  l: Ty,
+  t: Ty,
+  span: TySpan
+): ck_pattern_literal(c, l, t, span) = pattern_literal(c, l, ty_unborrowed(ck_resolve(c, t)), span) { Refl }
+
+pub theorem ck_pattern_literal_run_frame(
+  c: Checker,
+  l: Ty,
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_pattern_literal(c, l, t, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(pattern_literal_unf(c, l, t, span)),
+    pattern_literal_frame(c, l, ty_unborrowed(ck_resolve(c, t)), span, ordered)
+  )
+}
+
+pub fn pattern_ctor_name(dc: Pair(Text, Nat)): Text { (dc: Text) }
+pub fn pattern_ctor_index(dc: Pair(Text, Nat)): Nat { (dc: Nat) }
+
+pub fn pattern_ctor_arity(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  fields: List(DataField),
+  span: TySpan,
+  same: Bool
+): Mut1(Option(List(DataField)), Checker) {
+  match same: Mut1(Option(List(DataField)), Checker) {
+    false => mut1(Some(fields), c)
+    true => frame_bind(
+      Unit,
+      Option(List(DataField)),
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(
+        c,
+        cat5(
+          name,
+          " has ",
+          Text::of_nat(list_len(fields)),
+          " fields, the pattern ",
+          Text::of_nat(list_len(args))
+        ),
+        span
+      )
+    )
+  }
+}
+
+pub theorem pattern_ctor_arity_frame(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  fields: List(DataField),
+  span: TySpan,
+  same: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
+  match same: CkRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
+    false => run_frame_return(c, Some(fields), ordered)
+    true => run_frame_bind(
+      Unit,
+      Option(List(DataField)),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(
+        c,
+        cat5(
+          name,
+          " has ",
+          Text::of_nat(list_len(fields)),
+          " fields, the pattern ",
+          Text::of_nat(list_len(args))
+        ),
+        span
+      ),
+      run_frame_read(
+        c,
+        ck_error(
+          c,
+          cat5(
+            name,
+            " has ",
+            Text::of_nat(list_len(fields)),
+            " fields, the pattern ",
+            Text::of_nat(list_len(args))
+          ),
+          span
+        ),
+        ck_error_frame(
+          c,
+          cat5(
+            name,
+            " has ",
+            Text::of_nat(list_len(fields)),
+            " fields, the pattern ",
+            Text::of_nat(list_len(args))
+          ),
+          span
+        ),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_return(c1, None, o_c1)
+    )
+  }
+}
+
+pub fn pattern_ctor_same(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  dc: Pair(Text, Nat),
+  targs: List(Ty),
+  target: Ty,
+  same: Bool
+): Mut1(Option(List(DataField)), Checker) {
+  match same: Mut1(Option(List(DataField)), Checker) {
+    false => pattern_ctor_arity(
+      c,
+      name,
+      args,
+      datas_fields(ck_datas_of(c), pattern_ctor_name(dc), pattern_ctor_index(dc), targs),
+      span,
+      not(
+        Nat::eq(
+          list_len(
+            datas_fields(ck_datas_of(c), pattern_ctor_name(dc), pattern_ctor_index(dc), targs)
+          ),
+          list_len(args)
+        )
+      )
+    )
+    true => frame_bind(
+      Unit,
+      Option(List(DataField)),
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(
+        c,
+        cat4(
+          "a pattern of ",
+          pattern_ctor_name(dc),
+          " cannot match ",
+          ty_show(ck_shown(c, target))
+        ),
+        span
+      )
+    )
+  }
+}
+
+pub theorem pattern_ctor_same_frame(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  dc: Pair(Text, Nat),
+  targs: List(Ty),
+  target: Ty,
+  same: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) {
+  match same: CkRunFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) {
+    false => pattern_ctor_arity_frame(
+      c,
+      name,
+      args,
+      datas_fields(ck_datas_of(c), pattern_ctor_name(dc), pattern_ctor_index(dc), targs),
+      span,
+      not(
+        Nat::eq(
+          list_len(
+            datas_fields(ck_datas_of(c), pattern_ctor_name(dc), pattern_ctor_index(dc), targs)
+          ),
+          list_len(args)
+        )
+      ),
+      ordered
+    )
+    true => run_frame_bind(
+      Unit,
+      Option(List(DataField)),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(
+        c,
+        cat4(
+          "a pattern of ",
+          pattern_ctor_name(dc),
+          " cannot match ",
+          ty_show(ck_shown(c, target))
+        ),
+        span
+      ),
+      run_frame_read(
+        c,
+        ck_error(
+          c,
+          cat4(
+            "a pattern of ",
+            pattern_ctor_name(dc),
+            " cannot match ",
+            ty_show(ck_shown(c, target))
+          ),
+          span
+        ),
+        ck_error_frame(
+          c,
+          cat4(
+            "a pattern of ",
+            pattern_ctor_name(dc),
+            " cannot match ",
+            ty_show(ck_shown(c, target))
+          ),
+          span
+        ),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_return(c1, None, o_c1)
+    )
+  }
+}
+
+pub fn pattern_ctor_unify(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  dc: Pair(Text, Nat),
+  targs: List(Ty),
+  target: Ty
+): Mut1(Option(List(DataField)), Checker) {
+  frame_bind(
+    Bool,
+    Option(List(DataField)),
+    (same: Bool, c1: Checker) => pattern_ctor_same(
+      c1,
+      name,
+      args,
+      t,
+      span,
+      dc,
+      targs,
+      target,
+      not(same)
+    ),
+    ck_unify(c, target, TyNamed(pattern_ctor_name(dc), targs))
+  )
+}
+
+pub theorem pattern_ctor_unify_frame(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  dc: Pair(Text, Nat),
+  targs: List(Ty),
+  target: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, pattern_ctor_unify(c, name, args, t, span, dc, targs, target)) {
+  run_frame_bind(
+    Bool,
+    Option(List(DataField)),
+    c,
+    (same: Bool, c1: Checker) => pattern_ctor_same(
+      c1,
+      name,
+      args,
+      t,
+      span,
+      dc,
+      targs,
+      target,
+      not(same)
+    ),
+    ck_unify(c, target, TyNamed(pattern_ctor_name(dc), targs)),
+    ck_unify_run_frame(c, target, TyNamed(pattern_ctor_name(dc), targs), ordered),
+    same => c1 => o_c1 => pattern_ctor_same_frame(
+      c1,
+      name,
+      args,
+      t,
+      span,
+      dc,
+      targs,
+      target,
+      not(same),
+      o_c1
+    )
+  )
+}
+
+pub fn pattern_ctor_lookup(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  found: Option(Pair(Text, Nat))
+): Mut1(Option(List(DataField)), Checker) {
+  match found: Mut1(Option(List(DataField)), Checker) {
+    None => frame_bind(
+      Unit,
+      Option(List(DataField)),
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, datas_ctor_error(ck_datas_of(c), name), span)
+    )
+    Some(dc) => frame_bind(
+      List(Ty),
+      Option(List(DataField)),
+      (targs: List(Ty), c1: Checker) => pattern_ctor_unify(
+        c1,
+        name,
+        args,
+        t,
+        span,
+        dc,
+        targs,
+        ty_unborrowed(ck_resolve(c1, t))
+      ),
+      ck_fresh_each(data_generics_of(ck_datas_of(c), pattern_ctor_name(dc)), c)
+    )
+  }
+}
+
+pub theorem pattern_ctor_lookup_frame(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  found: Option(Pair(Text, Nat)),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
+  match found: CkRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
+    None => run_frame_bind(
+      Unit,
+      Option(List(DataField)),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, datas_ctor_error(ck_datas_of(c), name), span),
+      run_frame_read(
+        c,
+        ck_error(c, datas_ctor_error(ck_datas_of(c), name), span),
+        ck_error_frame(c, datas_ctor_error(ck_datas_of(c), name), span),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_return(c1, None, o_c1)
+    )
+    Some(dc) => run_frame_bind(
+      List(Ty),
+      Option(List(DataField)),
+      c,
+      (targs: List(Ty), c1: Checker) => pattern_ctor_unify(
+        c1,
+        name,
+        args,
+        t,
+        span,
+        dc,
+        targs,
+        ty_unborrowed(ck_resolve(c1, t))
+      ),
+      ck_fresh_each(data_generics_of(ck_datas_of(c), pattern_ctor_name(dc)), c),
+      run_frame_read(
+        c,
+        ck_fresh_each(data_generics_of(ck_datas_of(c), pattern_ctor_name(dc)), c),
+        ck_fresh_each_frame(data_generics_of(ck_datas_of(c), pattern_ctor_name(dc)), c),
+        ordered
+      ),
+      targs => c1 => o_c1 => pattern_ctor_unify_frame(
+        c1,
+        name,
+        args,
+        t,
+        span,
+        dc,
+        targs,
+        ty_unborrowed(ck_resolve(c1, t)),
+        o_c1
+      )
+    )
+  }
+}
+
+pub theorem pattern_ctor_fields_unf(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan
+): ck_ctor_fields(c, name, args, t, span) = pattern_ctor_lookup(
+    c,
+    name,
+    args,
+    t,
+    span,
+    datas_ctor_expected(ck_datas_of(c), name, ck_resolve(c, t))
+  ) { Refl }
+
+pub theorem ck_ctor_fields_run_frame(
+  c: Checker,
+  name: Text,
+  args: List(SurfacePattern),
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_ctor_fields(c, name, args, t, span)) {
+  Eq::subst(
+    (z: Mut1(Option(List(DataField)), Checker)) => CkRunFrame(c, z),
+    Eq::sym(pattern_ctor_fields_unf(c, name, args, t, span)),
+    pattern_ctor_lookup_frame(
+      c,
+      name,
+      args,
+      t,
+      span,
+      datas_ctor_expected(ck_datas_of(c), name, ck_resolve(c, t)),
+      ordered
+    )
+  )
+}

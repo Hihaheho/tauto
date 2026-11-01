@@ -1,0 +1,196 @@
+import "rules_literal.taut"
+import "literal_record_sound.taut"
+import "final_rigid_sound.taut"
+
+pub theorem diagnostic_items_member<A: Type, p: (
+  Checker,
+  A
+) -> Prop, c: Checker, item: A, items: List(
+  A
+)>(member: Mem(A, item, items), checked: DiagnosticItems(A, p, c, items)): p(c, item) {
+  match member: p(c, item) {
+    MemHere(rest) => diagnostic_items_head(checked)
+    MemThere(head, rest, tail) => diagnostic_items_member(tail, diagnostic_items_tail(checked))
+  }
+}
+pub theorem natural_literal_checked(
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  magnitude: Nat,
+  width: Width,
+  parsed: text_parse_u64(value) = Some(magnitude),
+  checked: DiagnosticLiteral(
+    c,
+    natural_literal_record(TySpan { start: start, end: end }, magnitude, ty)
+  ),
+  resolved: ck_resolve(c, ty) = TyInt(width)
+): NaturalTyping(
+  ck_subst_of(c),
+  KeptOk(ck_kept_of(c)),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  let fits: width_fits(width, false, magnitude) = true := Eq::subst(
+    (t: Ty) => DiagnosticLiteralType(
+      natural_literal_record(TySpan { start: start, end: end }, magnitude, ty),
+      t
+    ),
+    resolved,
+    checked
+  )
+  NaturalTyped(
+    value,
+    magnitude,
+    width,
+    start,
+    end,
+    ty,
+    parsed,
+    fits,
+    Eq::subst(
+      (t: Ty) => TyEqAt(c, ty, t),
+      resolved,
+      ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), ty)
+    )
+  )
+}
+// The caller must establish that the recorded literal survives to this state
+// and resolves to an integer width. Those are inference-state obligations.
+pub theorem natural_record_typing(
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  literals: List(TyLiteral),
+  recorded: NaturalRecorded(value, TySpan { start: start, end: end }, ty, literals),
+  checked: DiagnosticItems(TyLiteral, DiagnosticLiteral, c, literals),
+  width: Width,
+  resolved: ck_resolve(c, ty) = TyInt(width)
+): NaturalTyping(
+  ck_subst_of(c),
+  KeptOk(ck_kept_of(c)),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  match recorded: NaturalTyping(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    surface_term_mk(SkNat(value), start, end),
+    ty
+  ) {
+    Mk(magnitude, parsed, stored) => natural_literal_checked(
+      c,
+      value,
+      start,
+      end,
+      ty,
+      magnitude,
+      width,
+      parsed,
+      diagnostic_items_member(stored, checked),
+      resolved
+    )
+  }
+}
+
+pub theorem natural_literal_accepted_at(
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  magnitude: Nat,
+  parsed: text_parse_u64(value) = Some(magnitude),
+  resolved: Ty,
+  equal: ck_resolve(c, ty) = resolved,
+  checked: DiagnosticLiteralType(
+    natural_literal_record(TySpan { start: start, end: end }, magnitude, ty),
+    resolved
+  )
+): NaturalTyping(
+  ck_subst_of(c),
+  KeptOk(ck_kept_of(c)),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  match resolved: NaturalTyping(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    surface_term_mk(SkNat(value), start, end),
+    ty
+  ) {
+    TyInt(w) => NaturalTyped(
+      value,
+      magnitude,
+      w,
+      start,
+      end,
+      ty,
+      parsed,
+      checked,
+      Eq::subst(
+        (t: Ty) => TyEqAt(c, ty, t),
+        equal,
+        ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), ty)
+      )
+    )
+    TyBool => False::elim(checked)
+    TyText => False::elim(checked)
+    TyUnit => False::elim(checked)
+    TyNever => False::elim(checked)
+    TyDecimal => False::elim(checked)
+    TyFloat => False::elim(checked)
+    TyFn(ps, result, kind) => False::elim(checked)
+    TyUnion(ys) => False::elim(checked)
+    TyProduct(ys) => False::elim(checked)
+    TyTagged(tags, item) => False::elim(checked)
+    TyNamed(name, params) => False::elim(checked)
+    TyParam(name, bound) => False::elim(checked)
+    TyInfo(item) => False::elim(checked)
+    TyBorrow(item, mutable) => False::elim(checked)
+    TyVar(v) => False::elim(checked)
+    TyPoly(gs, item) => False::elim(checked)
+    TyApp(head, arg) => False::elim(checked)
+  }
+}
+// Once the literal record has reached the final diagnostic pass, acceptance
+// gives both an integer width and its range check. No resolution premise is needed.
+pub theorem natural_record_checked_sound(
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  literals: List(TyLiteral),
+  recorded: NaturalRecorded(value, TySpan { start: start, end: end }, ty, literals),
+  checked: DiagnosticItems(TyLiteral, DiagnosticLiteral, c, literals)
+): NaturalTyping(
+  ck_subst_of(c),
+  KeptOk(ck_kept_of(c)),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  match recorded: NaturalTyping(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    surface_term_mk(SkNat(value), start, end),
+    ty
+  ) {
+    Mk(magnitude, parsed, stored) => natural_literal_accepted_at(
+      c,
+      value,
+      start,
+      end,
+      ty,
+      magnitude,
+      parsed,
+      ck_resolve(c, ty),
+      Refl,
+      diagnostic_items_member(stored, checked)
+    )
+  }
+}

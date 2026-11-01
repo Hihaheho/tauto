@@ -1,0 +1,199 @@
+import "allocation_rigid_map.taut"
+import "instantiation_domain_sound.taut"
+
+pub theorem generic_names_insert_cons(
+  generic: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  map: Ordmap(Text, Ty),
+  value: Ty,
+  ordered: Ordmap::ordered(map, Ordmap::compare_text),
+  names: GenericNamesPresent(rest, map)
+): GenericNamesPresent(
+  Cons(generic, rest),
+  Ordmap::insert(map, instantiation_name(generic), value, Ordmap::compare_text)
+) {
+  item => member => match member: InstanceNamePresent(
+    Ordmap::insert(map, instantiation_name(generic), value, Ordmap::compare_text),
+    instantiation_name(item)
+  ) {
+    MemHere(tail) => InstanceNamePresent::Mk(
+      value,
+      Ordmap::get_insert_same(
+        Ordmap::compare_text,
+        Ordmap::compare_text_law(),
+        map,
+        instantiation_name(generic),
+        value,
+        ordered
+      )
+    )
+    MemThere(head, tail, inside) => instance_presence_insert(
+      map,
+      instantiation_name(generic),
+      value,
+      ordered
+    )(instantiation_name(item), names(item, inside))
+  }
+}
+pub theorem rigid_names_cons(
+  generic: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  value: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  ordered: Ordmap::ordered(ck_val(m), Ordmap::compare_text),
+  names: GenericNamesPresent(rest, ck_val(m))
+): GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) {
+  match m: GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) {
+    mut1(map, next) => generic_names_insert_cons(generic, rest, map, value, ordered, names)
+  }
+}
+pub theorem ck_rigid_names_present(
+  gs: List(Pair(Text, Kind)),
+  c: Checker
+): GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) {
+  match gs: GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) {
+    Nil => instance_names_nil(Ordmap::empty())
+    Cons(generic, rest) => rigid_names_cons(
+      generic,
+      rest,
+      TyParam(
+        cat3(tk_first(generic), "#", Text::of_nat(Nat::add(ck_rigids_of(c), 1))),
+        tk_second(generic)
+      ),
+      ck_rigid(rest, ck_st(ck_bump_rigids(c))),
+      And::left(ck_rigid_map_allocated(rest, ck_st(ck_bump_rigids(c)), Zero)),
+      ck_rigid_names_present(rest, ck_st(ck_bump_rigids(c)))
+    )
+  }
+}
+pub theorem allocated_substitute_present(
+  limit: Nat,
+  map: Ordmap(Text, Ty),
+  name: Text,
+  fallback: Ty,
+  values: GenericMapAllocated(limit, map),
+  present: InstanceNamePresent(map, name)
+): TypeAllocated(limit, ty_substitute_name(name, map, fallback)) {
+  match present: TypeAllocated(limit, ty_substitute_name(name, map, fallback)) {
+    Mk(value, found) => Eq::subst(
+      (choice: Option(Ty)) => TypeAllocated(limit, allocation_substitute_choice(fallback, choice)),
+      Eq::sym(found),
+      values(name, value, found)
+    )
+  }
+}
+pub theorem generic_names_tail(
+  generic: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  map: Ordmap(Text, Ty),
+  names: GenericNamesPresent(Cons(generic, rest), map)
+): GenericNamesPresent(rest, map) {
+  item => member => names(item, MemThere(generic, rest, member))
+}
+pub theorem allocated_poly_map(
+  gb: List(Pair(Text, Kind)),
+  ga: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  limit: Nat,
+  values: GenericMapAllocated(limit, rigid),
+  names: GenericNamesPresent(ga, rigid)
+): RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) {
+  match gb: RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) {
+    Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
+    Cons(b, brest) => match ga: RigidMapAllocation(limit, ty_poly_map(Cons(b, brest), ga, rigid)) {
+      Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
+      Cons(a, arest) => {
+        let tail: RigidMapAllocation(
+          limit,
+          ty_poly_map(brest, arest, rigid)
+        ) := allocated_poly_map(
+          brest,
+          arest,
+          rigid,
+          limit,
+          values,
+          generic_names_tail(a, arest, rigid, names)
+        )
+        let value: TypeAllocated(
+          limit,
+          ty_substitute_name(tk_first(a), rigid, TyVar(0))
+        ) := allocated_substitute_present(
+          limit,
+          rigid,
+          tk_first(a),
+          TyVar(0),
+          values,
+          names(a, MemHere(arest))
+        )
+        AndIntro(
+          Ordmap::insert_ordered(
+            Ordmap::compare_text,
+            Ordmap::compare_text_law(),
+            ty_poly_map(brest, arest, rigid),
+            tk_first(b),
+            ty_substitute_name(tk_first(a), rigid, TyVar(0)),
+            And::left(tail)
+          ),
+          generic_map_insert_allocated(
+            limit,
+            ty_poly_map(brest, arest, rigid),
+            tk_first(b),
+            ty_substitute_name(tk_first(a), rigid, TyVar(0)),
+            And::left(tail),
+            value,
+            And::right(tail)
+          )
+        )
+      }
+    }
+  }
+}
+
+// Both sides of polymorphic unification use this same rigid environment.
+pub theorem ck_poly_substitutions_allocated(
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  gb: List(Pair(Text, Kind)),
+  a: Ty,
+  b: Ty,
+  limit: Nat,
+  left: TypeAllocated(limit, a),
+  right: TypeAllocated(limit, b)
+): And(
+  TypeAllocated(limit, ty_substitute(a, ck_val(ck_rigid(ga, c)))),
+  TypeAllocated(limit, ty_substitute(b, ty_poly_map(gb, ga, ck_val(ck_rigid(ga, c)))))
+) {
+  let rigid: RigidMapAllocation(
+    limit,
+    ck_val(ck_rigid(ga, c))
+  ) := ck_rigid_map_allocated(ga, c, limit)
+  let mapped: RigidMapAllocation(
+    limit,
+    ty_poly_map(gb, ga, ck_val(ck_rigid(ga, c)))
+  ) := allocated_poly_map(
+    gb,
+    ga,
+    ck_val(ck_rigid(ga, c)),
+    limit,
+    And::right(rigid),
+    ck_rigid_names_present(ga, c)
+  )
+  AndIntro(
+    allocated_substitute(
+      a,
+      limit,
+      ck_val(ck_rigid(ga, c)),
+      And::left(rigid),
+      And::right(rigid),
+      left
+    ),
+    allocated_substitute(
+      b,
+      limit,
+      ty_poly_map(gb, ga, ck_val(ck_rigid(ga, c))),
+      And::left(mapped),
+      And::right(mapped),
+      right
+    )
+  )
+}

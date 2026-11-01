@@ -1,0 +1,173 @@
+import "rules_local.taut"
+import "expr_leaf_frame.taut"
+
+pub fn local_find_choice(head: Local, rest: List(Local), name: Text, same: Bool): Option(Local) {
+  match same: Option(Local) {
+    true => Some(head)
+    false => env_find(rest, name)
+  }
+}
+pub theorem local_find_unf(
+  head: Local,
+  rest: List(Local),
+  name: Text
+): env_find(Cons(head, rest), name) = local_find_choice(head, rest, name, Text::eq(expr_local_name(head), name)) { Refl }
+
+pub theorem local_text_different(
+  a: Text,
+  b: Text,
+  unequal: Text::eq(a, b) = false,
+  equal: a = b
+): False {
+  false_ne_true(
+    Eq::trans(
+      Eq::sym(unequal),
+      Eq::trans(Eq::congr((value: Text) => Text::eq(a, value), Eq::sym(equal)), text_eq_refl(a))
+    )
+  )
+}
+pub theorem local_find_choice_sound(
+  head: Local,
+  rest: List(Local),
+  name: Text,
+  local: Local,
+  same: Bool,
+  comparison: Text::eq(expr_local_name(head), name) = same,
+  found: local_find_choice(head, rest, name, same) = Some(local),
+  ih: ∀ result: Local. ∀ lookup: env_find(rest, name) = Some(result). LocalBinding(rest, name, result)
+): LocalBinding(Cons(head, rest), name, local) {
+  match same: LocalBinding(Cons(head, rest), name, local) {
+    true => Eq::subst(
+      (value: Local) => LocalBinding(Cons(head, rest), name, value),
+      ck_some_inj(head, local, found),
+      Eq::subst(
+        (key: Text) => LocalBinding(Cons(head, rest), key, head),
+        text_eq_sound(expr_local_name(head), name, comparison),
+        LocalBindingHere(head, rest)
+      )
+    )
+    false => LocalBindingLater(
+      head,
+      equal => local_text_different(expr_local_name(head), name, comparison, equal),
+      ih(local, found)
+    )
+  }
+}
+pub theorem env_find_sound(
+  env: List(Local),
+  name: Text,
+  local: Local,
+  found: env_find(env, name) = Some(local)
+): LocalBinding(env, name, local) {
+  match env: LocalBinding(env, name, local) {
+    Nil => False::elim(ck_none_ne_some(local, found))
+    Cons(head, rest) => local_find_choice_sound(
+      head,
+      rest,
+      name,
+      local,
+      Text::eq(expr_local_name(head), name),
+      Refl,
+      Eq::trans(Eq::sym(local_find_unf(head, rest, name)), found),
+      result => lookup => env_find_sound(rest, name, result, lookup)
+    )
+  }
+}
+pub theorem ck_lookup_local_value(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  local: Local,
+  found: env_find(env, name) = Some(local)
+): ck_lookup(c, name, env, span) = mut1(expr_local_ty(local), c) {
+  Eq::trans(
+    leaf_lookup_unf(c, name, env, span),
+    Eq::congr((value: Option(Local)) => leaf_lookup(c, name, env, span, value), found)
+  )
+}
+pub theorem ck_lookup_local_sound(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  start: Nat,
+  end: Nat,
+  local: Local,
+  found: env_find(env, name) = Some(local)
+): AtomicTyping(
+  env,
+  surface_term_mk(SkVar(name), start, end),
+  ck_val(ck_lookup(c, name, env, TySpan {start: start, end: end}))
+) {
+  Eq::subst(
+    (ty: Ty) => AtomicTyping(env, surface_term_mk(SkVar(name), start, end), ty),
+    Eq::sym(
+      Eq::congr(
+        Mut1(Ty, Checker),
+        Ty,
+        ck_lookup(c, name, env, TySpan {start: start, end: end}),
+        mut1(expr_local_ty(local), c),
+        (m: Mut1(Ty, Checker)) => ck_val(Ty, m),
+        ck_lookup_local_value(c, name, env, TySpan {start: start, end: end}, local, found)
+      )
+    ),
+    AtomicLocal(name, local, start, end, env_find_sound(env, name, local, found))
+  )
+}
+
+pub theorem local_text_unequal_at(
+  a: Text,
+  b: Text,
+  same: Bool,
+  comparison: Text::eq(a, b) = same,
+  different: (a = b) -> False
+): same = false {
+  match same: same = false {
+    true => False::elim(different(text_eq_sound(a, b, comparison)))
+    false => Refl
+  }
+}
+pub theorem local_find_complete_later<rest: List(
+  Local
+), name: Text, local: Local>(
+  head: Local,
+  different: (expr_local_name(head) = name) -> False,
+  found: env_find(rest, name) = Some(local)
+): env_find(Cons(head, rest), name) = Some(local) {
+  Eq::trans(
+    local_find_unf(head, rest, name),
+    Eq::trans(
+      Eq::congr(
+        (same: Bool) => local_find_choice(head, rest, name, same),
+        local_text_unequal_at(
+          expr_local_name(head),
+          name,
+          Text::eq(expr_local_name(head), name),
+          Refl,
+          different
+        )
+      ),
+      found
+    )
+  )
+}
+pub theorem env_find_complete<env: List(
+  Local
+), name: Text, local: Local>(
+  binding: LocalBinding(env, name, local)
+): env_find(env, name) = Some(local) {
+  match binding: env_find(env, name) = Some(local) {
+    LocalBindingHere(head, rest) => Eq::trans(
+      local_find_unf(head, rest, expr_local_name(head)),
+      Eq::congr(
+        (same: Bool) => local_find_choice(head, rest, expr_local_name(head), same),
+        text_eq_refl(expr_local_name(head))
+      )
+    )
+    LocalBindingLater(head, different, tail) => local_find_complete_later(
+      head,
+      different,
+      env_find_complete(tail)
+    )
+  }
+}

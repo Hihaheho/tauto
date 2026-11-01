@@ -1,0 +1,837 @@
+import "inference_functions.taut"
+import "inference_statements_checked.taut"
+import "arm_error_sound.taut"
+
+pub theorem inference_function_assumptions_frame_checked(
+  j: Nat,
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme,
+  inner: Scope,
+  result: Ty,
+  outer: List(Pair(Text, Text)),
+  outer_types: List(TypeName),
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(
+  c,
+  inference_function_assumptions(j, c, f, scheme, inner, result, outer, outer_types)
+) {
+  checked_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (assumed: Unit, c1: Checker) => frame_bind(
+      Ty,
+      Unit,
+      (body: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (restored: Unit, c3: Checker) => frame_bind(
+          Unit,
+          Unit,
+          (popped: Unit, c4: Checker) => ck_rewrap1(
+            ck_expect(
+              c4,
+              body,
+              result,
+              span_of(inference_fn_body(f)),
+              cat3("the result of `", inference_fn_name(f), "`")
+            )
+          ),
+          inference_set_returns(c3, List::tail(inference_returns(c3)))
+        ),
+        ck_leave_fn(c2, outer, outer_types)
+      ),
+      ck_infer_in(j, c1, inference_fn_body(f), inference_scope_items(inner))
+    ),
+    ck_enter_fn(c, scheme),
+    checked_frame_read(
+      c,
+      ck_enter_fn(c, scheme),
+      ck_enter_fn_frame(c, scheme),
+      ck_enter_fn_frame_errors(c, scheme),
+      ordered
+    ),
+    assumed => c1 => o_c1 => checked_frame_bind(
+      Ty,
+      Unit,
+      c1,
+      (body: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (restored: Unit, c3: Checker) => frame_bind(
+          Unit,
+          Unit,
+          (popped: Unit, c4: Checker) => ck_rewrap1(
+            ck_expect(
+              c4,
+              body,
+              result,
+              span_of(inference_fn_body(f)),
+              cat3("the result of `", inference_fn_name(f), "`")
+            )
+          ),
+          inference_set_returns(c3, List::tail(inference_returns(c3)))
+        ),
+        ck_leave_fn(c2, outer, outer_types)
+      ),
+      ck_infer_in(j, c1, inference_fn_body(f), inference_scope_items(inner)),
+      inference_use_ck_infer_in_checked(
+        j,
+        c1,
+        inference_fn_body(f),
+        inference_scope_items(inner),
+        o_c1,
+        ih
+      ),
+      body => c2 => o_c2 => checked_frame_bind(
+        Unit,
+        Unit,
+        c2,
+        (restored: Unit, c3: Checker) => frame_bind(
+          Unit,
+          Unit,
+          (popped: Unit, c4: Checker) => ck_rewrap1(
+            ck_expect(
+              c4,
+              body,
+              result,
+              span_of(inference_fn_body(f)),
+              cat3("the result of `", inference_fn_name(f), "`")
+            )
+          ),
+          inference_set_returns(c3, List::tail(inference_returns(c3)))
+        ),
+        ck_leave_fn(c2, outer, outer_types),
+        checked_frame_read(
+          c2,
+          ck_leave_fn(c2, outer, outer_types),
+          ck_leave_fn_frame(c2, outer, outer_types),
+          ck_leave_fn_frame_errors(c2, outer, outer_types),
+          o_c2
+        ),
+        restored => c3 => o_c3 => checked_frame_bind(
+          Unit,
+          Unit,
+          c3,
+          (popped: Unit, c4: Checker) => ck_rewrap1(
+            ck_expect(
+              c4,
+              body,
+              result,
+              span_of(inference_fn_body(f)),
+              cat3("the result of `", inference_fn_name(f), "`")
+            )
+          ),
+          inference_set_returns(c3, List::tail(inference_returns(c3))),
+          checked_frame_read(
+            c3,
+            inference_set_returns(c3, List::tail(inference_returns(c3))),
+            inference_set_returns_frame(c3, List::tail(inference_returns(c3))),
+            inference_set_returns_frame_errors(c3, List::tail(inference_returns(c3))),
+            o_c3
+          ),
+          popped => c4 => o_c4 => checked_frame_rewrap(
+            c4,
+            ck_expect(
+              c4,
+              body,
+              result,
+              span_of(inference_fn_body(f)),
+              cat3("the result of `", inference_fn_name(f), "`")
+            ),
+            ck_expect_run_frame_checked(
+              c4,
+              body,
+              result,
+              span_of(inference_fn_body(f)),
+              cat3("the result of `", inference_fn_name(f), "`"),
+              o_c4
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub theorem inference_function_type_frame_checked(
+  j: Nat,
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme,
+  env: List(Local),
+  ty: Ty,
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
+  match ty: CkCheckedFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
+    TyInt(pat_w) => checked_frame_return(c, Star, ordered)
+    TyBool => checked_frame_return(c, Star, ordered)
+    TyText => checked_frame_return(c, Star, ordered)
+    TyUnit => checked_frame_return(c, Star, ordered)
+    TyNever => checked_frame_return(c, Star, ordered)
+    TyDecimal => checked_frame_return(c, Star, ordered)
+    TyFloat => checked_frame_return(c, Star, ordered)
+    TyFn(params, result, fk) => inference_bind_scope_frame_checked(
+      Unit,
+      Unit,
+      c,
+      (bound: Unit, c1: Checker, inner: Scope) => frame_bind(
+        Unit,
+        Unit,
+        (pushed: Unit, c2: Checker) => inference_function_assumptions(
+          j,
+          c2,
+          f,
+          scheme,
+          inner,
+          result,
+          inference_assume(c2),
+          ck_type_params_of(c2)
+        ),
+        inference_set_returns(c1, Cons(result, inference_returns(c1)))
+      ),
+      ck_bind_params(
+        inference_fn_params(f),
+        c,
+        ScopeMk(env),
+        params,
+        handle_body_start(inference_fn_body(f))
+      ),
+      ck_bind_params_scope_frame_checked(
+        inference_fn_params(f),
+        c,
+        ScopeMk(env),
+        params,
+        handle_body_start(inference_fn_body(f)),
+        ordered
+      ),
+      bound => c1 => inner => o_c1 => checked_frame_bind(
+        Unit,
+        Unit,
+        c1,
+        (pushed: Unit, c2: Checker) => inference_function_assumptions(
+          j,
+          c2,
+          f,
+          scheme,
+          inner,
+          result,
+          inference_assume(c2),
+          ck_type_params_of(c2)
+        ),
+        inference_set_returns(c1, Cons(result, inference_returns(c1))),
+        checked_frame_read(
+          c1,
+          inference_set_returns(c1, Cons(result, inference_returns(c1))),
+          inference_set_returns_frame(c1, Cons(result, inference_returns(c1))),
+          inference_set_returns_frame_errors(c1, Cons(result, inference_returns(c1))),
+          o_c1
+        ),
+        pushed => c2 => o_c2 => inference_function_assumptions_frame_checked(
+          j,
+          c2,
+          f,
+          scheme,
+          inner,
+          result,
+          inference_assume(c2),
+          ck_type_params_of(c2),
+          ih,
+          o_c2
+        )
+      )
+    )
+    TyUnion(pat_members) => checked_frame_return(c, Star, ordered)
+    TyProduct(pat_members) => checked_frame_return(c, Star, ordered)
+    TyTagged(pat_tags, pat_inner) => checked_frame_return(c, Star, ordered)
+    TyNamed(pat_name, pat_args) => checked_frame_return(c, Star, ordered)
+    TyParam(pat_name, pat_bound) => checked_frame_return(c, Star, ordered)
+    TyInfo(pat_inner) => checked_frame_return(c, Star, ordered)
+    TyBorrow(pat_inner, pat_mutable) => checked_frame_return(c, Star, ordered)
+    TyVar(pat_v) => checked_frame_return(c, Star, ordered)
+    TyPoly(pat_generics, pat_inner) => checked_frame_return(c, Star, ordered)
+    TyApp(pat_head, pat_arg) => checked_frame_return(c, Star, ordered)
+  }
+}
+
+pub theorem inference_step_ck_check_fn_in_frame_checked(
+  j: Nat,
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme,
+  env: List(Local),
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, inference_step_ck_check_fn_in(j, c, f, scheme, env)) {
+  inference_function_type_frame_checked(
+    j,
+    c,
+    f,
+    scheme,
+    env,
+    inference_scheme_type(scheme),
+    ih,
+    ordered
+  )
+}
+
+pub theorem inference_lambda_body_frame_checked(
+  j: Nat,
+  c: Checker,
+  params: List(Text),
+  body: SurfaceTerm,
+  env: List(Local),
+  ps: List(Ty),
+  kind: Kind,
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, inference_lambda_body(j, c, params, body, env, ps, kind)) {
+  inference_bind_scope_frame_checked(
+    Unit,
+    Ty,
+    c,
+    (bound: Unit, c1: Checker, inner: Scope) => frame_bind(
+      Ty,
+      Ty,
+      (r: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (pushed: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (b: Ty, c4: Checker) => frame_bind(
+            Unit,
+            Ty,
+            (popped: Unit, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (checked: Unit, c6: Checker) => frame_bind(
+                Unit,
+                Ty,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body)
+              ),
+              ck_expect(c5, b, r, span_of(body), "the result of a function")
+            ),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
+          ),
+          ck_infer_in(j, c3, body, inference_scope_items(inner))
+        ),
+        inference_set_returns(c2, Cons(r, inference_returns(c2)))
+      ),
+      ck_fresh(c1)
+    ),
+    ck_bind_params(params, c, ScopeMk(env), ps, handle_body_start(body)),
+    ck_bind_params_scope_frame_checked(
+      params,
+      c,
+      ScopeMk(env),
+      ps,
+      handle_body_start(body),
+      ordered
+    ),
+    bound => c1 => inner => o_c1 => checked_frame_bind(
+      Ty,
+      Ty,
+      c1,
+      (r: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (pushed: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (b: Ty, c4: Checker) => frame_bind(
+            Unit,
+            Ty,
+            (popped: Unit, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (checked: Unit, c6: Checker) => frame_bind(
+                Unit,
+                Ty,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body)
+              ),
+              ck_expect(c5, b, r, span_of(body), "the result of a function")
+            ),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
+          ),
+          ck_infer_in(j, c3, body, inference_scope_items(inner))
+        ),
+        inference_set_returns(c2, Cons(r, inference_returns(c2)))
+      ),
+      ck_fresh(c1),
+      checked_frame_read(c1, ck_fresh(c1), ck_fresh_frame(c1), ck_fresh_frame_errors(c1), o_c1),
+      r => c2 => o_c2 => checked_frame_bind(
+        Unit,
+        Ty,
+        c2,
+        (pushed: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (b: Ty, c4: Checker) => frame_bind(
+            Unit,
+            Ty,
+            (popped: Unit, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (checked: Unit, c6: Checker) => frame_bind(
+                Unit,
+                Ty,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body)
+              ),
+              ck_expect(c5, b, r, span_of(body), "the result of a function")
+            ),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
+          ),
+          ck_infer_in(j, c3, body, inference_scope_items(inner))
+        ),
+        inference_set_returns(c2, Cons(r, inference_returns(c2))),
+        checked_frame_read(
+          c2,
+          inference_set_returns(c2, Cons(r, inference_returns(c2))),
+          inference_set_returns_frame(c2, Cons(r, inference_returns(c2))),
+          inference_set_returns_frame_errors(c2, Cons(r, inference_returns(c2))),
+          o_c2
+        ),
+        pushed => c3 => o_c3 => checked_frame_bind(
+          Ty,
+          Ty,
+          c3,
+          (b: Ty, c4: Checker) => frame_bind(
+            Unit,
+            Ty,
+            (popped: Unit, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (checked: Unit, c6: Checker) => frame_bind(
+                Unit,
+                Ty,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body)
+              ),
+              ck_expect(c5, b, r, span_of(body), "the result of a function")
+            ),
+            inference_set_returns(c4, List::tail(inference_returns(c4)))
+          ),
+          ck_infer_in(j, c3, body, inference_scope_items(inner)),
+          inference_use_ck_infer_in_checked(j, c3, body, inference_scope_items(inner), o_c3, ih),
+          b => c4 => o_c4 => checked_frame_bind(
+            Unit,
+            Ty,
+            c4,
+            (popped: Unit, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (checked: Unit, c6: Checker) => frame_bind(
+                Unit,
+                Ty,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body)
+              ),
+              ck_expect(c5, b, r, span_of(body), "the result of a function")
+            ),
+            inference_set_returns(c4, List::tail(inference_returns(c4))),
+            checked_frame_read(
+              c4,
+              inference_set_returns(c4, List::tail(inference_returns(c4))),
+              inference_set_returns_frame(c4, List::tail(inference_returns(c4))),
+              inference_set_returns_frame_errors(c4, List::tail(inference_returns(c4))),
+              o_c4
+            ),
+            popped => c5 => o_c5 => checked_frame_bind(
+              Unit,
+              Ty,
+              c5,
+              (checked: Unit, c6: Checker) => frame_bind(
+                Unit,
+                Ty,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body)
+              ),
+              ck_expect(c5, b, r, span_of(body), "the result of a function"),
+              ck_expect_run_frame_checked(
+                c5,
+                b,
+                r,
+                span_of(body),
+                "the result of a function",
+                o_c5
+              ),
+              checked => c6 => o_c6 => checked_frame_bind(
+                Unit,
+                Ty,
+                c6,
+                (recorded: Unit, c7: Checker) => mut1(TyFn(ps, r, kind), c7),
+                inference_record_closure(c6, r, body),
+                checked_frame_read(
+                  c6,
+                  inference_record_closure(c6, r, body),
+                  inference_record_closure_frame(c6, r, body),
+                  inference_record_closure_frame_errors(c6, r, body),
+                  o_c6
+                ),
+                recorded => c7 => o_c7 => checked_frame_return(c7, TyFn(ps, r, kind), o_c7)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub theorem inference_lambda_kind_frame_checked(
+  j: Nat,
+  c: Checker,
+  lam: SurfaceTerm,
+  borrows: List(Option(Bool)),
+  env: List(Local),
+  hint: Option(Ty),
+  sk: SurfaceKind,
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
+  match sk: CkCheckedFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
+    SkVar(pat_name) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkNat(pat_digits) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkText(pat_value) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkBool(pat_value) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkApp(pat_head, pat_args) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkPi(pat_params, pat_result, pat_effects) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkExists(pat_binder, pat_domain, pat_body) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkLam(params, body) => checked_frame_bind(
+      List(Ty),
+      Ty,
+      c,
+      (ps: List(Ty), c1: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (hinted: Unit, c2: Checker) => inference_lambda_body(
+          j,
+          c2,
+          params,
+          body,
+          env,
+          ps,
+          ck_lambda_kind(free_vars(lam), c2, env, KindCopy)
+        ),
+        ck_lambda_hint_of(c1, hint, ps)
+      ),
+      ck_lambda_params(params, c, borrows),
+      checked_frame_read(
+        c,
+        ck_lambda_params(params, c, borrows),
+        ck_lambda_params_frame(params, c, borrows),
+        ck_lambda_params_frame_errors(params, c, borrows),
+        ordered
+      ),
+      ps => c1 => o_c1 => checked_frame_bind(
+        Unit,
+        Ty,
+        c1,
+        (hinted: Unit, c2: Checker) => inference_lambda_body(
+          j,
+          c2,
+          params,
+          body,
+          env,
+          ps,
+          ck_lambda_kind(free_vars(lam), c2, env, KindCopy)
+        ),
+        ck_lambda_hint_of(c1, hint, ps),
+        ck_lambda_hint_of_run_frame_checked(c1, hint, ps, o_c1),
+        hinted => c2 => o_c2 => inference_lambda_body_frame_checked(
+          j,
+          c2,
+          params,
+          body,
+          env,
+          ps,
+          ck_lambda_kind(free_vars(lam), c2, env, KindCopy),
+          ih,
+          o_c2
+        )
+      )
+    )
+    SkUnion(pat_parts) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkTagged(pat_tag, pat_value) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkIf(pat_cond, pat_then, pat_otherwise) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkField(pat_value, pat_name) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkBlock(pat_stmts) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkPerform(pat_op, pat_args) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkHandle(pat_body, pat_handlers) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkBudget(pat_amount_memory, pat_amount, pat_body) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkMatch(pat_scrutinee, pat_motive, pat_arms, pat_binder) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkHole(pat_name) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkRecord(pat_name, pat_fields) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkBorrow(pat_mutable, pat_value) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkFnKind(pat_kind, pat_ty) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkBorrowLam(pat_borrows, pat_lam) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkOther(pat_what) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkRow(pat_what_effects) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkFloat(pat_what) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkProduct(pat_what) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkProject(pat_what, pat_what_ty) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkMacroCall(pat_name, pat_arg) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkQuote(pat_stmts_form, pat_stmts) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkSplice(pat_value) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkSyntaxLit(pat_name, pat_body) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+    SkStep(
+      pat_tactic,
+      pat_arg,
+      pat_call_start,
+      pat_call_end,
+      pat_before,
+      pat_arms
+    ) => checked_frame_read(
+      c,
+      ck_rewrap1(ck_fresh(c)),
+      frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
+      error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
+      ordered
+    )
+  }
+}
+
+pub theorem inference_lambda_hint_frame_checked(
+  j: Nat,
+  c: Checker,
+  lam: SurfaceTerm,
+  borrows: List(Option(Bool)),
+  env: List(Local),
+  hint: Option(Ty),
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, inference_lambda_hint(j, c, lam, borrows, env, hint)) {
+  checked_frame_bind(
+    Unit,
+    Ty,
+    c,
+    (cleared: Unit, c1: Checker) => inference_lambda_kind(
+      j,
+      c1,
+      lam,
+      borrows,
+      env,
+      hint,
+      inference_term_kind(lam)
+    ),
+    inference_set_hint(c, None),
+    checked_frame_read(
+      c,
+      inference_set_hint(c, None),
+      inference_set_hint_frame(c, None),
+      inference_set_hint_frame_errors(c, None),
+      ordered
+    ),
+    cleared => c1 => o_c1 => inference_lambda_kind_frame_checked(
+      j,
+      c1,
+      lam,
+      borrows,
+      env,
+      hint,
+      inference_term_kind(lam),
+      ih,
+      o_c1
+    )
+  )
+}
+
+pub theorem inference_step_ck_lambda_in_frame_checked(
+  j: Nat,
+  c: Checker,
+  lam: SurfaceTerm,
+  borrows: List(Option(Bool)),
+  env: List(Local),
+  ih: InferenceFrames_checked(j),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(
+  c,
+  inference_step_ck_lambda_in(j, c, lam, borrows, env)
+) { inference_lambda_hint_frame_checked(j, c, lam, borrows, env, inference_hint(c), ih, ordered) }

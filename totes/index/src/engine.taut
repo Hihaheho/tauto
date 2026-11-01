@@ -1,0 +1,117 @@
+// Freezing, re-ingestion, pin advances and the entry points that use them.
+
+import "admission.taut"
+
+// This entry point is for complete, hash-bound input from the fixed origin.
+// An untrusted mirror or incomplete fetch MUST NOT call it and freeze a ledger.
+pub(open) inductive IxLedger: Type {
+  IxOpen(state: IxState): IxLedger
+  IxFrozen(prefix: IxState): IxLedger
+}
+
+pub fn ix_ledger_prefix(ledger: IxLedger): IxState {
+  match ledger: IxState {
+    IxOpen(state) => state
+    IxFrozen(prefix) => prefix
+  }
+}
+
+pub fn ix_batch_point(batch: IxBatch): IxPoint {
+  match batch: IxPoint {
+    Mk(sequence, issued, until, config, parent, point, events) => point
+  }
+}
+
+pub fn ix_ingest_new_grounded(state: IxState, batch: IxBatch): IxLedger {
+  match ix_ingest(state, batch): IxLedger {
+    None => IxFrozen(state)
+    Some(next) => IxOpen(next)
+  }
+}
+
+pub fn ix_ingest_grounded(ledger: IxLedger, batch: IxBatch): IxLedger {
+  match ledger: IxLedger {
+    IxOpen(state) => ix_choose(
+      ix_checkpoint_known(ix_batch_point(batch), state),
+      ix_ingest_new_grounded(state, batch),
+      IxOpen(state)
+    )
+    IxFrozen(prefix) => IxFrozen(prefix)
+  }
+}
+
+pub fn ix_open_states(ledgers: List(IxLedger)): List(IxState) {
+  match ledgers: List(IxState) {
+    Nil => Nil
+    Cons(ledger, rest) => match ledger: List(IxState) {
+      IxOpen(state) => Cons(state, ix_open_states(rest))
+      IxFrozen(prefix) => ix_open_states(rest)
+    }
+  }
+}
+
+pub fn ix_all_prefixes(
+  ledgers: List(IxLedger)
+): List(IxState) { List::map(ix_ledger_prefix, ledgers) }
+
+pub fn ix_evaluate_ledgers(
+  previous_now: Nat,
+  observers: List(IxTrust),
+  witnesses: List(IxWitness),
+  limits: IxLimits,
+  ledgers: List(IxLedger),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  key: IxKey,
+  digest: Nat
+): Bool {
+  // Check uniqueness BEFORE omitting frozen views. The required policy stays intact.
+  Bool::and(
+    ix_states_unique(ix_all_prefixes(ledgers)),
+    ix_evaluate(
+      previous_now,
+      observers,
+      witnesses,
+      limits,
+      ix_open_states(ledgers),
+      origins,
+      local_receipts,
+      now,
+      key,
+      digest
+    )
+  )
+}
+
+// IxTrust.pin in an evaluation is the current protected pin, not merely the bootstrap pin.
+// Retired/expired/rejecting extensions must also advance it; eligibility is irrelevant.
+pub fn ix_pin_allowed(trust: IxTrust, state: IxState, origins: List(IxOrigin)): Bool {
+  Bool::and(
+    ix_origins_unique(origins),
+    Bool::and(
+      Nat::eq(ix_trust_index(trust), ix_state_index(state)),
+      Bool::and(
+        ix_checkpoint_known(ix_trust_pin(trust), state),
+        ix_any(
+          (origin: IxOrigin) => Bool::and(
+            Nat::eq(ix_trust_index(trust), ix_origin_index(origin)),
+            Bool::and(
+              Nat::eq(ix_trust_source(trust), ix_origin_source(origin)),
+              ix_point_eq(ix_state_head(state), ix_origin_head(origin))
+            )
+          ),
+          origins
+        )
+      )
+    )
+  )
+}
+
+// Call only with a checked extension; persist this result with its prefix/status atomically.
+pub fn ix_advance_pin(trust: IxTrust, state: IxState, origins: List(IxOrigin)): Option(IxTrust) {
+  ix_gate(
+    ix_pin_allowed(trust, state, origins),
+    Some(IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state)))
+  )
+}

@@ -1,0 +1,221 @@
+import "../src/mval.taut"
+import std::List
+
+// The part of a value at a step.
+pub fn m_at_reference(ctors: List(MCtor), v: MVal, s: MPath): MVal {
+  match v {
+    MvInject(u, j, x) => m_at_reference(ctors, x, s)
+    _ => match m_step_index(ctors, v, s) {
+      None => MvUnit
+      Some(i) => match v {
+        MvData(c, fs) => m_nth_or_unit(fs, i)
+        MvProduct(ms) => m_nth_or_unit(ms, i)
+        MvVec(xs) => ms_get_or(MvUnit, xs, i)
+        MvArray(xs) => ms_get_or(MvUnit, xs, i)
+        MvMap(es) => match List::nth(es, i) {
+          None => MvUnit
+          Some(e) => match e {
+            Pair { fst: k, snd: x } => x
+          }
+        }
+        _ => MvUnit
+      }
+    }
+  }
+}
+
+pub theorem m_at_correct(
+  ctors: List(MCtor),
+  v: MVal,
+  s: MPath
+): Eq(MVal, m_at(ctors, v, s), m_at_reference(ctors, v, s)) {
+  match v {
+    MvInject(u, j, x) => match s {
+      MpathIndex(i) => m_at_correct(ctors, x, MpathIndex(i))
+      MpathItem(i) => m_at_correct(ctors, x, MpathItem(i))
+      MpathEntry(i) => m_at_correct(ctors, x, MpathEntry(i))
+      MpathName(n) => m_at_correct(ctors, x, MpathName(n))
+    }
+    _ => match s {
+      MpathIndex(i) => Refl
+      MpathItem(i) => Refl
+      MpathEntry(i) => Refl
+      MpathName(n) => Refl
+    }
+  }
+}
+
+pub fn m_at_path_reference(ctors: List(MCtor), v: MVal, path: List(MPath)): MVal {
+  match path {
+    Nil => v
+    Cons(s, rest) => m_at_path_reference(ctors, m_at_reference(ctors, v, s), rest)
+  }
+}
+
+pub theorem m_at_path_correct(
+  ctors: List(MCtor),
+  v: MVal,
+  path: List(MPath)
+): Eq(MVal, m_at_path(ctors, v, path), m_at_path_reference(ctors, v, path)) {
+  match path {
+    Nil => Refl
+    Cons(s, rest) => Eq::trans(
+      m_at_path_correct(ctors, m_at(ctors, v, s), rest),
+      Eq::congr((part: MVal) => m_at_path_reference(ctors, part, rest), m_at_correct(ctors, v, s))
+    )
+  }
+}
+
+pub theorem mr_root_correct(): Eq(List(MPath), mr_steps(MrPath(Nil)), Nil) { Refl }
+
+pub theorem mr_from_steps_correct(
+  path: List(MPath)
+): Eq(List(MPath), mr_steps(MrPath(List::reverse(path))), path) {
+  List::reverse_reverse(path)
+}
+
+pub theorem mr_child_correct(
+  path: MRefPath,
+  s: MPath
+): Eq(List(MPath), mr_steps(mr_child(path, s)), List::append(mr_steps(path), Cons(s, Nil))) {
+  match path { MrPath(reversed) => List::reverse_cons(s, reversed) }
+}
+
+pub theorem mr_extend_correct(
+  path: MRefPath,
+  suffix: List(MPath)
+): Eq(List(MPath), mr_steps(mr_extend(path, suffix)), List::append(mr_steps(path), suffix)) {
+  match path {
+    MrPath(reversed) => Eq::trans(
+      Eq::congr(
+        (steps: List(MPath)) => List::reverse(steps),
+        List::reverse_onto_append(suffix, reversed)
+      ),
+      Eq::trans(
+        List::reverse_append(List::reverse(suffix), reversed),
+        Eq::congr(
+          (steps: List(MPath)) => List::append(List::reverse(reversed), steps),
+          List::reverse_reverse(suffix)
+        )
+      )
+    )
+  }
+}
+
+pub theorem m_at_path_append(
+  ctors: List(MCtor),
+  v: MVal,
+  prefix: List(MPath),
+  suffix: List(MPath)
+): Eq(
+  MVal,
+  m_at_path(ctors, v, List::append(prefix, suffix)),
+  m_at_path(ctors, m_at_path(ctors, v, prefix), suffix)
+) {
+  match prefix {
+    Nil => Refl
+    Cons(s, rest) => m_at_path_append(ctors, m_at(ctors, v, s), rest, suffix)
+  }
+}
+
+pub theorem m_at_reversed_cons(
+  ctors: List(MCtor),
+  v: MVal,
+  s: MPath,
+  rest: List(MPath)
+): Eq(MVal, m_at_reversed(ctors, v, Cons(s, rest)), m_at(ctors, m_at_reversed(ctors, v, rest), s)) {
+  match s {
+    MpathIndex(i) => Refl
+    MpathItem(i) => Refl
+    MpathEntry(i) => Refl
+    MpathName(n) => Refl
+  }
+}
+
+pub theorem m_at_reversed_correct(
+  ctors: List(MCtor),
+  v: MVal,
+  reversed: List(MPath)
+): Eq(MVal, m_at_reversed(ctors, v, reversed), m_at_path(ctors, v, List::reverse(reversed))) {
+  match reversed {
+    Nil => Refl
+    Cons(s, rest) => Eq::trans(
+      m_at_reversed_cons(ctors, v, s, rest),
+      Eq::trans(
+        Eq::congr((part: MVal) => m_at(ctors, part, s), m_at_reversed_correct(ctors, v, rest)),
+        Eq::trans(
+          Eq::sym(m_at_path_append(ctors, v, List::reverse(rest), Cons(s, Nil))),
+          Eq::congr(
+            (steps: List(MPath)) => m_at_path(ctors, v, steps),
+            Eq::sym(List::reverse_cons(s, rest))
+          )
+        )
+      )
+    )
+  }
+}
+
+pub theorem m_at_ref_correct(
+  ctors: List(MCtor),
+  v: MVal,
+  path: MRefPath
+): Eq(MVal, m_at_ref(ctors, v, path), m_at_path_reference(ctors, v, mr_steps(path))) {
+  match path {
+    MrPath(reversed) => Eq::trans(
+      m_at_reversed_correct(ctors, v, reversed),
+      m_at_path_correct(ctors, v, List::reverse(reversed))
+    )
+  }
+}
+
+pub theorem m_put_correct(
+  ctors: List(MCtor),
+  cx: MCx,
+  cell: Nat,
+  path: MRefPath,
+  x: MVal
+): Eq(
+  MCx,
+  m_put(ctors, cx, cell, path, x),
+  cx_put(cx, cell, MoCell(m_with_path(ctors, cx_cell(cx, cell), mr_steps(path), x)))
+) {
+  Refl
+}
+
+// Reference dereferencing decodes the path before each heap lookup. Its fuel
+// bounds chains of references, including cycles, independently of path length.
+pub fn m_get_fuel_reference(fuel: Nat, ctors: List(MCtor), cx: MCx, v: MVal): MVal {
+  match fuel {
+    Zero => v
+    Succ(f) => match v {
+      MvRef(cell, path) => m_get_fuel_reference(
+        f,
+        ctors,
+        cx,
+        m_at_path_reference(ctors, cx_cell(cx, cell), mr_steps(path))
+      )
+      _ => v
+    }
+  }
+}
+
+pub theorem m_get_fuel_correct(
+  fuel: Nat,
+  ctors: List(MCtor),
+  cx: MCx,
+  v: MVal
+): Eq(MVal, m_get_fuel(fuel, ctors, cx, v), m_get_fuel_reference(fuel, ctors, cx, v)) {
+  match fuel {
+    Zero => Refl
+    Succ(f) => match v {
+      MvRef(cell, path) => Eq::trans(
+        m_get_fuel_correct(f, ctors, cx, m_at_ref(ctors, cx_cell(cx, cell), path)),
+        Eq::congr(
+          (part: MVal) => m_get_fuel_reference(f, ctors, cx, part),
+          m_at_ref_correct(ctors, cx_cell(cx, cell), path)
+        )
+      )
+      _ => Refl
+    }
+  }
+}

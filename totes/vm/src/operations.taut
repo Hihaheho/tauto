@@ -1,0 +1,230 @@
+import "builtins.taut"
+import "syn.taut"
+
+// ---- operations -----------------------------------------------------------------------------------
+
+pub fn m_op_arity(op: MOp): Nat {
+  match op {
+    MoArith(a, w) => if Nat::eq(a, 3) { 1 } else { 2 }
+    MoFloat(a) => if Nat::eq(a, 3) { 1 } else { 2 }
+    MoFloat32(a) => if Nat::eq(a, 3) { 1 } else { 2 }
+    MoDivide(m, w) => 2
+    MoCmp(c) => 2
+    MoEq(n) => 2
+    MoConcat => 2
+    MoTextCompare => 2
+    MoConstruct(c, n, order) => n
+    MoProduct(n, picks) => n
+    _ => 1
+  }
+}
+
+pub fn m_checked(w: Nat, i: Int, cx: MCx): MOut {
+  if m_fits(w, i) { MoutVal(MvInt(i), cx) } else { MoutErr(m_too_large()) }
+}
+
+// Division and remainder that round toward zero, as Rust's do.
+pub fn m_divide(modulo: Bool, w: Nat, a: Int, b: Int, cx: MCx): MOut {
+  match Nat::eq(m_int_abs(b), 0) eqn hz: MOut {
+    true => MoutErr(m_division_by_zero())
+    false => match modulo: MOut {
+      false => m_checked(
+        w,
+        m_int_signed(
+          not(Bool::eq(m_int_neg(a), m_int_neg(b))),
+          Nat::div_nz(m_int_abs(a), m_int_abs(b), Nat::ne_zero(m_int_abs(b), hz))
+        ),
+        cx
+      )
+      true => m_checked(
+        w,
+        m_int_signed(
+          m_int_neg(a),
+          Nat::rem_nz(m_int_abs(a), m_int_abs(b), Nat::ne_zero(m_int_abs(b), hz))
+        ),
+        cx
+      )
+    }
+  }
+}
+
+// 0, 1 or 2 as `a` is below, equal to or above `b`; 3 when they have no order (NaN).
+pub fn m_order(a: MVal, b: MVal): Nat {
+  match a {
+    MvInt(x) => match b {
+      MvInt(y) => if Int::lt(x, y) { 0 } else { if Int::eq(x, y) { 1 } else { 2 } }
+      _ => 3
+    }
+    MvFloat(x) => match b {
+      MvFloat(y) => if Float::lt(
+        x,
+        y
+      ) { 0 } else { if Float::eq(x, y) { 1 } else { if Float::lt(y, x) { 2 } else { 3 } } }
+      _ => 3
+    }
+    MvFloat32(x) => match b {
+      MvFloat32(y) => if Float32::lt(x, y) { 0 } else {
+        if Float32::eq(x, y) { 1 } else { if Float32::lt(y, x) { 2 } else { 3 } }
+      }
+      _ => 3
+    }
+    _ => m_bytes_cmp(Text::bytes(m_as_text(a)), Text::bytes(m_as_text(b)))
+  }
+}
+
+// Picks a member of an argument for a product.
+pub fn m_member_pick(
+  ctors: List(MCtor),
+  cx: MCx,
+  args: List(MVal),
+  pick: Pair(Nat, Option(Nat))
+): MVal {
+  match pick {
+    Pair { fst: i, snd: m } => match m {
+      None => m_nth_or_unit(args, i)
+      Some(j) => m_at(ctors, m_get(ctors, cx, m_nth_or_unit(args, i)), MpathIndex(j))
+    }
+  }
+}
+
+pub fn m_op(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): MOut {
+  let a0 := m_nth_or_unit(args, 0)
+  let x := m_get(ctors, cx, a0)
+  let y := m_get(ctors, cx, m_nth_or_unit(args, 1))
+  match op {
+    MoArith(a, w) => {
+      let i := m_as_int(x)
+      let j := m_as_int(y)
+      m_checked(
+        w,
+        if Nat::eq(
+          a,
+          0
+        ) { Int::add(i, j) } else {
+          if Nat::eq(
+            a,
+            1
+          ) { Int::sub(i, j) } else { if Nat::eq(a, 2) { Int::mul(i, j) } else { Int::neg(i) } }
+        },
+        cx
+      )
+    }
+    MoFloat(a) => {
+      let i := m_as_float(x)
+      let j := m_as_float(y)
+      if Nat::eq(a, 4) {
+        match Float::checked_div(i, j) {
+          None => MoutErr(m_division_by_zero())
+          Some(q) => MoutVal(MvFloat(q), cx)
+        }
+      } else {
+        MoutVal(
+          MvFloat(
+            if Nat::eq(
+              a,
+              0
+            ) { Float::add(i, j) } else {
+              if Nat::eq(
+                a,
+                1
+              ) { Float::sub(i, j) } else {
+                if Nat::eq(a, 2) { Float::mul(i, j) } else { Float::neg(i) }
+              }
+            }
+          ),
+          cx
+        )
+      }
+    }
+    MoFloat32(a) => {
+      let i := m_as_float32(x)
+      let j := m_as_float32(y)
+      if Nat::eq(a, 4) {
+        match Float32::checked_div(i, j) {
+          None => MoutErr(m_division_by_zero())
+          Some(q) => MoutVal(MvFloat32(q), cx)
+        }
+      } else {
+        MoutVal(
+          MvFloat32(
+            if Nat::eq(a, 0) { Float32::add(i, j) } else {
+              if Nat::eq(a, 1) { Float32::sub(i, j) } else {
+                if Nat::eq(a, 2) { Float32::mul(i, j) } else { Float32::neg(i) }
+              }
+            }
+          ),
+          cx
+        )
+      }
+    }
+    MoDivide(modulo, w) => m_divide(modulo, w, m_as_int(x), m_as_int(y), cx)
+    MoCmp(c) => {
+      let o := m_order(x, y)
+      MoutVal(MvBool(if Nat::eq(o, 3) {
+        false
+      } else {
+        if Nat::eq(c, 0) { Nat::eq(o, 0) } else { if Nat::eq(c, 1) { Nat::lt(o, 2) } else { if Nat::eq(c, 2) { Nat::eq(o, 2) } else { Nat::lt(0, o) } } }
+      }), cx)
+    }
+    MoEq(negate) => MoutVal(MvBool(not(Bool::eq(m_eq(ctors, cx, x, y), negate))), cx)
+    MoNot => match x {
+      MvBool(b) => MoutVal(MvBool(not(b)), cx)
+      _ => MoutErr(m_internal())
+    }
+    MoConcat => MoutVal(MvText(Text::concat(m_as_text(x), m_as_text(y))), cx)
+    MoTextOfInt => MoutVal(MvText(m_text_of_int(m_as_int(x))), cx)
+    MoTextLen => MoutVal(m_int(List::length(Text::bytes(m_as_text(x)))), cx)
+    MoTextCompare => {
+      let o := m_bytes_cmp(Text::bytes(m_as_text(x)), Text::bytes(m_as_text(y)))
+      MoutVal(
+        MvInt(if Nat::eq(o, 0) { Int::neg(IntOfNat(1)) } else { IntOfNat(Nat::sub(o, 1)) }),
+        cx
+      )
+    }
+    MoConstruct(c, n, order) => MoutVal(
+      MvData(c, List::map((i: Nat) => m_nth_or_unit(args, i), order)),
+      cx_add_cells(cx, Succ(List::length(order)))
+    )
+    MoProduct(n, picks) => MoutVal(
+      MvProduct(
+        List::map((pk: Pair(Nat, Option(Nat))) => m_member_pick(ctors, cx, args, pk), picks)
+      ),
+      cx
+    )
+    MoMember(i) => MoutVal(m_get(ctors, cx, m_at(ctors, x, MpathIndex(i))), cx)
+    MoField(s) => MoutVal(m_get(ctors, cx, m_at(ctors, x, s)), cx)
+    MoShown => MoutVal(MvShown(match x {
+      MvShown(t) => t
+      _ => m_show(ctors, cx, x)
+    }), cx)
+    MoInject(u, i) => MoutVal(MvInject(u, i, a0), cx)
+    MoRemap(to, table) => match x {
+      MvInject(u, i, inner) => match to {
+        None => MoutVal(inner, cx)
+        Some(t) => match List::nth(table, i) {
+          Some(e) => match e {
+            Some(j) => MoutVal(MvInject(t, j, inner), cx)
+            None => MoutErr("internal: a union member with no place")
+          }
+          None => MoutErr("internal: a union member with no place")
+        }
+      }
+      _ => MoutVal(x, cx)
+    }
+    MoTempRef => match cx_temp(cx, a0) {
+      Pair { fst: r, snd: cx2 } => MoutVal(r, cx2)
+    }
+    MoDeref => MoutVal(x, cx)
+    MoUnbox => match a0 {
+      MvRef(cell, path) => MoutVal(m_at_ref(ctors, cx_cell(cx, cell), path), cx)
+      _ => MoutVal(a0, cx)
+    }
+    MoSynParse(parser) => MoutVal(syn_run(parser, m_as_text(x)), cx)
+    MoPath(path) => match a0 {
+      MvRef(cell, p0) => MoutVal(MvRef(cell, mr_extend(p0, path)), cx)
+      _ => match cx_alloc(cx, MoCell(a0)) {
+        Pair { fst: cell, snd: cx2 } => MoutVal(MvRef(cell, MrPath(List::reverse(path))), cx2)
+      }
+    }
+  }
+}

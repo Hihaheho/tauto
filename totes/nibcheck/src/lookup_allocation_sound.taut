@@ -1,0 +1,193 @@
+import "constructor_allocation_sound.taut"
+
+pub fn OptionSchemeAllocated(limit: Nat, found: Option(Scheme)): Prop {
+  match found: Prop { None => True
+    Some(s) => TypeAllocated(limit, instantiation_scheme_ty(s)) }
+}
+pub def FunctionsAllocated(limit: Nat, functions: Ordmap(Text, Scheme)): Prop :=
+∀ name: Text. OptionSchemeAllocated(limit, Ordmap::get(functions, name, Ordmap::compare_text))
+pub fn OptionLocalAllocated(limit: Nat, found: Option(Local)): Prop {
+  match found: Prop { None => True
+    Some(local) => TypeAllocated(limit, leaf_local_ty(local)) }
+}
+pub theorem env_find_option_allocated_k(
+  env: List(Local),
+  name: Text,
+  limit: Nat,
+  bounded: LocalsAllocated(limit, env),
+  found: Option(Local),
+  same: env_find(env, name) = found
+): OptionLocalAllocated(limit, found) {
+  match found: OptionLocalAllocated(limit, found) {
+    None => Trivial
+    Some(local) => env_find_allocated(env, name, local, limit, bounded, same)
+  }
+}
+pub theorem lookup_ctor_allocation(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  found: Option(Pair(Text, Nat))
+): AllocationResult(c, leaf_lookup_ctor(c, name, env, span, found)) {
+  match found: AllocationResult(c, leaf_lookup_ctor(c, name, env, span, found)) {
+    None => allocation_result_bind(
+      Unit,
+      c,
+      (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
+      ck_error(c, cat2(name, " is not defined"), span),
+      AndIntro(Nat::le_refl(ck_next_of(c)), state),
+      ignored => next => advanced => current => allocation_result_rewrap(
+        next,
+        ck_fresh(next),
+        ck_fresh_allocation_result(next, current)
+      )
+    )
+    Some(dc) => allocation_result_rewrap(
+      c,
+      ck_constructor(c, pattern_ctor_name(dc), pattern_ctor_index(dc), span, name),
+      ck_constructor_allocation(
+        c,
+        pattern_ctor_name(dc),
+        pattern_ctor_index(dc),
+        span,
+        name,
+        state,
+        declarations
+      )
+    )
+  }
+}
+pub theorem lookup_builtin_allocation(
+  c: Checker,
+  m: Mut1(Ty, Checker),
+  allocated: AllocationResult(c, m)
+): AllocationResult(
+  c,
+  frame_bind(
+    Ty,
+    Ty,
+    (i: Ty, next: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), next),
+    m
+  )
+) {
+  match m: AllocationResult(
+    c,
+    frame_bind(
+      Ty,
+      Ty,
+      (i: Ty, next: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), next),
+      m
+    )
+  ) {
+    mut1(i, next) => AndIntro(
+      And::left(allocated),
+      AndIntro(
+        AndIntro(And::right(allocated), AndIntro(And::right(allocated), Trivial)),
+        And::right(allocated)
+      )
+    )
+  }
+}
+pub theorem lookup_special_allocation(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  special: Bool
+): AllocationResult(c, leaf_lookup_special(c, name, env, span, special)) {
+  match special: AllocationResult(c, leaf_lookup_special(c, name, env, span, special)) {
+    true => lookup_builtin_allocation(c, ck_fresh_int(c), ck_fresh_int_allocation_result(c, state))
+    false => lookup_ctor_allocation(
+      c,
+      name,
+      env,
+      span,
+      state,
+      declarations,
+      datas_ctor(ck_datas_of(c), name)
+    )
+  }
+}
+pub theorem lookup_function_allocation(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  found: Option(Scheme),
+  bounded: OptionSchemeAllocated(ck_next_of(c), found)
+): AllocationResult(c, leaf_lookup_function(c, name, env, span, found)) {
+  match found: AllocationResult(c, leaf_lookup_function(c, name, env, span, found)) {
+    Some(s) => allocation_result_rewrap(
+      c,
+      ck_instantiate_scheme(c, name, s, span),
+      ck_instantiate_scheme_allocation(c, name, s, span, state, bounded)
+    )
+    None => lookup_special_allocation(
+      c,
+      name,
+      env,
+      span,
+      state,
+      declarations,
+      Bool::or(Text::eq(name, "div"), Text::eq(name, "mod"))
+    )
+  }
+}
+pub theorem lookup_allocation_k(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  functions: FunctionsAllocated(ck_next_of(c), leaf_functions(c)),
+  found: Option(Local),
+  bounded: OptionLocalAllocated(ck_next_of(c), found)
+): AllocationResult(c, leaf_lookup(c, name, env, span, found)) {
+  match found: AllocationResult(c, leaf_lookup(c, name, env, span, found)) {
+    Some(local) => allocation_result_return(c, leaf_local_ty(local), state, bounded)
+    None => lookup_function_allocation(
+      c,
+      name,
+      env,
+      span,
+      state,
+      declarations,
+      Ordmap::get(leaf_functions(c), name, Ordmap::compare_text),
+      functions(name)
+    )
+  }
+}
+pub theorem ck_lookup_allocation(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  state: CheckerAllocation(c),
+  declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
+  functions: FunctionsAllocated(ck_next_of(c), leaf_functions(c)),
+  locals: LocalsAllocated(ck_next_of(c), env)
+): AllocationResult(c, ck_lookup(c, name, env, span)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(leaf_lookup_unf(c, name, env, span)),
+    lookup_allocation_k(
+      c,
+      name,
+      env,
+      span,
+      state,
+      declarations,
+      functions,
+      env_find(env, name),
+      env_find_option_allocated_k(env, name, ck_next_of(c), locals, env_find(env, name), Refl)
+    )
+  )
+}

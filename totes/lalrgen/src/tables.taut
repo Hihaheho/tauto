@@ -1,0 +1,92 @@
+// The table file of an LALR(1) grammar: the lines `totes/llkgen` writes,
+// with the line `lr` (`lr.taut`) where an LL(k) grammar has `max_k` and
+// `lookahead`. `lalrgen_tables` is what the tote gives.
+import std::Text
+
+
+pub fn la_tables(source: Text): Text {
+  let m := md_build(par_read(source))
+  if not(m.lalr) {
+    par_die("the grammar is LL(k); totes/llkgen makes its tables")
+  }
+  let schema := sg_build(m)
+  let words := em_prod_words(m.prods)
+  let n_prods := em_len_prods(m.prods)
+  let n_nts := md_len_text(m.nts)
+  let clipped := em_clipped(m.prods, 0)
+  let head := Cons(
+    "tauto-syntax-tables 1",
+    Cons(
+      Text::concat_all(Cons("grammar_sha256 ", Cons(sha256_hex(source), Nil))),
+      Cons(
+        "generator lalrgen 0.1.0",
+        Cons(
+          em_title(m),
+          Cons(
+            em_line("terminals", md_len_text(m.terminal_names), m.terminal_names),
+            Cons(
+              em_line("non_terminals", n_nts, m.nts),
+              Cons(
+                em_line("nt_kinds", n_nts, em_nums(m.nt_kinds)),
+                Cons(
+                  Text::concat_all(Cons("start ", Cons(Text::of_u64(m.start), Nil))),
+                  Cons(
+                    em_line("productions", n_prods, words),
+                    Cons(
+                      em_line("symbol_attrs", u64_div3(md_len_text(clipped)), clipped),
+                      Cons(
+                        sg_prod_types_line(&schema),
+                        Cons(
+                          lr_line(lr_table(lr_grammar(m))),
+                          Cons(
+                            em_line("skip", md_len_scanners(m.skips), em_skip_words(m.skips)),
+                            Nil
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  let lines := em_cat(head, em_cat(sc_lines(m), Cons(sg_schema_line(&schema), Nil)))
+  Text::concat_all(Cons(text_join(lines, text_newline()), Cons(text_newline(), Nil)))
+}
+
+// The table file of an LALR(1) grammar, or why there is none.
+pub fn lalrgen_tables(grammar: Text): Result(Text, Text) {
+  handle { Ok(la_tables(grammar)) } with {
+    fail<Text>(why) => Err(why)
+    out_of_bounds() => Err("lalrgen: an index is out of bounds")
+  }
+}
+
+// The lines `terminals`, `non_terminals`, `start`, `productions` and `lr`,
+// for development.
+pub fn lalrgen_lr_lines(grammar: Text): Result(Text, Text) {
+  handle {
+    let m := md_build(par_read(grammar))
+    let lines := Cons(
+      em_line("terminals", md_len_text(m.terminal_names), m.terminal_names),
+      Cons(
+        em_line("non_terminals", md_len_text(m.nts), m.nts),
+        Cons(
+          Text::concat_all(Cons("start ", Cons(Text::of_u64(m.start), Nil))),
+          Cons(
+            em_line("productions", em_len_prods(m.prods), em_prod_words(m.prods)),
+            Cons(lr_line(lr_table(lr_grammar(m))), Nil)
+          )
+        )
+      )
+    )
+    Ok(Text::concat_all(Cons(text_join(lines, text_newline()), Cons(text_newline(), Nil))))
+  } with {
+    fail<Text>(why) => Err(why)
+    out_of_bounds() => Err("lalrgen: an index is out of bounds")
+  }
+}

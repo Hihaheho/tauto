@@ -2,42 +2,66 @@
 // `List`, `Pair`, `Ordering` and `Result`, and the `fail` effect with
 // `raise` and `catch` between it and a `Result`.
 
-enum Option<A> {
+pub(open) inductive enum Option(A: Type) {
   None
   Some(A)
 }
 
-enum List<A> {
+pub(open) enum List(A: Type) {
   Nil
   Cons(A, List(A))
 }
 
-struct Pair<A, B> { fst: A, snd: B }
+pub(open) struct Pair(A: Type, B: Type) { fst: A, snd: B }
 
-enum Ordering {
+pub(open) enum Ordering {
   Less
   Equal
   Greater
 }
 
-enum Result<T, E> {
+pub(open) inductive enum Result(T: Type, E: Type) {
   Ok(T)
   Err(E)
 }
 
-effect fail<E>: (e: E) -> Never resume 0
+// The negation of a `Bool`: an ordinary function, which a program may declare again.
+pub fn not(b: Bool): Bool {
+  if b { false } else { true }
+}
+
+// `fail(E)` is an effect for each `E`: a row says which (`! {fail(Text)}`).
+pub(open) effect fail<E>(e: E): Never resume 0
 
 // A Result as an effect: an `Err` performs `fail(E)` and does not return.
-fn raise<T, E>(r: Result(T, E)) -> T ! {fail} {
+pub fn raise<T, E>(r: Result(T, E)): T ! {fail(E)} {
   match r {
     Ok(v) => v
     Err(e) => perform fail(e)
   }
 }
 
+// A named test. `tauto test` runs each body on its own and reports it by name;
+// a body that performs `fail` or stops with an error fails, and the run goes on.
+pub(open) effect test<!e>(name: Text, body: () -> Unit ! {fail(Text)} ∪ e): Unit resume 1
+
+// How a backend runs `perform test(name, body)`: the body, with its `fail` caught,
+// and a line on standard output that `tauto test` reads.
+pub fn run_test<!e>(name: Text, &body: () -> Unit ! {fail(Text)} ∪ e): Unit ! e {
+  match catch(body) {
+    Ok(u) => Os::print(concat(concat("test ", name), " ... ok\n"))
+    Err(why) => Os::print(concat(concat(concat(concat("test ", name), " ... FAILED: "), why), "\n"))
+  }
+}
+
+// Fails the test (or the program) with `why` unless `ok`.
+pub fn expect(ok: Bool, why: Text): Unit ! {fail(Text)} {
+  if ok { #() } else { perform fail(why) }
+}
+
 // The effect as a Result again: catches the `fail(E)` of `body`.
-fn catch<T, E, e>(&body: () -> T ! {fail | e}) -> Result(T, E) ! {|e} {
+pub fn catch<T, E, !e>(&body: () -> T ! {fail(E)} ∪ e): Result(T, E) ! e {
   handle { Ok(body()) } with {
-    fail(x) => Err(x)
+    fail<E>(x) => Err(x)
   }
 }

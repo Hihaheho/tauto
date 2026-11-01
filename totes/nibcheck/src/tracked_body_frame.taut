@@ -1,0 +1,281 @@
+import "tracked_inference_frame.taut"
+import "run_data_names_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem ck_stmt_in_frame_tracked(
+  k: Nat,
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope,
+  ordered: CkOrdered(c)
+): TrackedScopeFrame(
+  c,
+  ck_stmt_in(k, c, s, env)
+) { inference_use_ck_stmt_in_tracked(k, c, s, env, ordered, inference_frames_tracked(k)) }
+
+pub theorem ck_stmt_frame_tracked(
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope,
+  ordered: CkOrdered(c)
+): TrackedScopeFrame(c, ck_stmt(c, s, env)) {
+  pattern_rewrap_frame_tracked(
+    c,
+    ck_stmt_in(ck_steps_of(c), c, s, env),
+    ck_stmt_in_frame_tracked(ck_steps_of(c), c, s, env, ordered)
+  )
+}
+
+pub def BodyFunctionsIH_tracked(
+  rest: List(Pair(SurfaceFn, Scheme))
+): Prop := ∀ c: Checker. ∀ ordered: CkOrdered(c). TrackedRunFrame(c, ck_check_fns(rest, c))
+pub def BodyTopIH_tracked(
+  rest: List(SurfaceStmt)
+): Prop := ∀ c: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+  c
+). TrackedScopeFrame(c, ck_top_level(rest, c, env))
+
+pub theorem body_functions_cons_frame_tracked(
+  p: Pair(SurfaceFn, Scheme),
+  rest: List(Pair(SurfaceFn, Scheme)),
+  c: Checker,
+  ih: BodyFunctionsIH_tracked(rest),
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, body_functions_cons(p, rest, c)) {
+  tracked_run_bind(
+    Unit,
+    Unit,
+    c,
+    (checked: Unit, c1: Checker) => ck_rewrap1(ck_check_fns(rest, c1)),
+    ck_check_fn(c, body_function(p), body_scheme(p), Nil),
+    ck_check_fn_frame_tracked(c, body_function(p), body_scheme(p), Nil, ordered),
+    checked => c1 => o_c1 => tracked_run_rewrap(c1, ck_check_fns(rest, c1), ih(c1, o_c1))
+  )
+}
+
+pub theorem ck_check_fns_frame_tracked(
+  fs: List(Pair(SurfaceFn, Scheme)),
+  c: Checker,
+  ordered: CkOrdered(c)
+): TrackedRunFrame(
+  c,
+  ck_check_fns(fs, c)
+) { match fs: TrackedRunFrame(c, ck_check_fns(fs, c)) { Nil => AndIntro(
+  ordered,
+  AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+)
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
+      Eq::sym(body_functions_unf(p, rest, c)),
+      body_functions_cons_frame_tracked(
+        p,
+        rest,
+        c,
+        next => o => ck_check_fns_frame_tracked(rest, next, o),
+        ordered
+      )
+    ) } }
+
+pub theorem ck_top_let_frame_tracked(
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope
+): TrackedFrame(c, ck_top_let(c, s, env)) { match s: TrackedFrame(c, ck_top_let(c, s, env)) {
+    StLet(name, ty, value, borrow, bm) => match env: TrackedFrame(
+      c,
+      ck_top_let(c, StLet(name, ty, value, borrow, bm), env)
+    ) { ScopeMk(items) => match items: TrackedFrame(
+      c,
+      ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))
+    ) { Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+        Cons(l, older) => AndIntro(
+          item => member => member,
+          AndIntro(Refl, obligation_state_refl(c))
+        ) } }
+    StVar(name, ty, value, vb) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StAssign(name, name_place, value) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StCalled(name_generates, value) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StFn(f) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StEffect(e) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StWhile(condition, body) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StReturn(e) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StExpr(e) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StTheorem(pat_t) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StDef(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StMutual(pat_stmts, pat_start, pat_end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StImport(pat_path, pat_start, pat_end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StInductive(pat_i) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StStruct(pat_d) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StEnum(pat_d) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StClass(pat_c) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StInstance(pat_i) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StMacro(pat_name, pat_function, pat_start, pat_end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+    StOther(what, start, end) => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
+  } }
+
+pub theorem body_top_one_frame_tracked(
+  s: SurfaceStmt,
+  c: Checker,
+  env: Scope,
+  check: Bool,
+  ordered: CkOrdered(c)
+): TrackedScopeFrame(c, body_top_one(s, c, env, check)) {
+  match check: TrackedScopeFrame(c, body_top_one(s, c, env, check)) {
+    true => tracked_pattern_bind(
+      Ty,
+      Unit,
+      c,
+      (t: Ty, c1: Checker, env1: Scope) => pattern_lift(env1, ck_top_let(c1, s, env1)),
+      ck_stmt(c, s, env),
+      ck_stmt_frame_tracked(c, s, env, ordered),
+      t => c1 => env1 => o_c1 => pattern_lift_frame_tracked(
+        c1,
+        env1,
+        ck_top_let(c1, s, env1),
+        tracked_run_read(
+          c1,
+          ck_top_let(c1, s, env1),
+          ck_top_let_frame(c1, s, env1),
+          ck_top_let_frame_tracked(c1, s, env1),
+          o_c1
+        )
+      )
+    )
+    false => pattern_return_frame_tracked(c, env, Star, ordered)
+  }
+}
+
+pub theorem body_top_cons_frame_tracked(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  env: Scope,
+  ih: BodyTopIH_tracked(rest),
+  ordered: CkOrdered(c)
+): TrackedScopeFrame(c, body_top_cons(s, rest, c, env)) {
+  tracked_pattern_bind(
+    Unit,
+    Unit,
+    c,
+    (checked: Unit, c1: Checker, env1: Scope) => pattern_rewrap(ck_top_level(rest, c1, env1)),
+    body_top_one(s, c, env, not(stmt_is_declaration(s))),
+    body_top_one_frame_tracked(s, c, env, not(stmt_is_declaration(s)), ordered),
+    checked => c1 => env1 => o_c1 => pattern_rewrap_frame_tracked(
+      c1,
+      ck_top_level(rest, c1, env1),
+      ih(c1, env1, o_c1)
+    )
+  )
+}
+
+pub theorem ck_top_level_frame_tracked(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  env: Scope,
+  ordered: CkOrdered(c)
+): TrackedScopeFrame(
+  c,
+  ck_top_level(ss, c, env)
+) { match ss: TrackedScopeFrame(c, ck_top_level(ss, c, env)) { Nil => AndIntro(
+  ordered,
+  AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+)
+    Cons(s, rest) => Eq::subst(
+      (z: Mut2(Unit, Checker, Scope)) => TrackedScopeFrame(c, z),
+      Eq::sym(body_top_unf(s, rest, c, env)),
+      body_top_cons_frame_tracked(
+        s,
+        rest,
+        c,
+        env,
+        next => local => o => ck_top_level_frame_tracked(rest, next, local, o),
+        ordered
+      )
+    ) } }
+pub theorem names_function_body_tracked(
+  c: Checker,
+  program: List(SurfaceStmt),
+  fns: List(Pair(SurfaceFn, Scheme)),
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, names_function_body(c, program, fns)) {
+  tracked_run_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => inference_bind_scope(
+      Unit,
+      Unit,
+      (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
+      ck_top_level(program, next, ScopeMk(Nil))
+    ),
+    ck_check_fns(fns, c),
+    ck_check_fns_frame_tracked(fns, c, ordered),
+    ignored => next => ord => inference_bind_scope_frame_tracked(
+      Unit,
+      Unit,
+      next,
+      (finished: Unit, final: Checker, env: Scope) => mut1(finished, final),
+      ck_top_level(program, next, ScopeMk(Nil)),
+      ck_top_level_frame_tracked(program, next, ScopeMk(Nil), ord),
+      finished => final => env => ofinal => tracked_run_return(final, finished, ofinal)
+    )
+  )
+}

@@ -1,0 +1,143 @@
+import "rigid_sound.taut"
+import "finish_acceptance.taut"
+
+pub theorem diagnostic_items_head<A: Type, p: (
+  Checker,
+  A
+) -> Prop, c: Checker, x: A, xs: List(A)>(h: DiagnosticItems(A, p, c, Cons(x, xs))): p(c, x) {
+  match h: p(c, x) { DiagnosticItemsCons(first, rest, head, tail) => head }
+}
+pub theorem diagnostic_items_tail<A: Type, p: (
+  Checker,
+  A
+) -> Prop, c: Checker, x: A, xs: List(
+  A
+)>(h: DiagnosticItems(A, p, c, Cons(x, xs))): DiagnosticItems(A, p, c, xs) {
+  match h: DiagnosticItems(A, p, c, xs) { DiagnosticItemsCons(first, rest, head, tail) => tail }
+}
+pub theorem diagnostic_items_reverse_onto<A: Type>(
+  p: (Checker, A) -> Prop,
+  c: Checker,
+  xs: List(A),
+  h: DiagnosticItems(A, p, c, xs),
+  acc: List(A),
+  tail: DiagnosticItems(A, p, c, acc)
+): DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) {
+  match h: DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) {
+    DiagnosticItemsNil => tail
+    DiagnosticItemsCons(x, rest, head, inside) => diagnostic_items_reverse_onto(
+      p,
+      c,
+      rest,
+      inside,
+      Cons(x, acc),
+      DiagnosticItemsCons(head, tail)
+    )
+  }
+}
+pub theorem diagnostic_items_unreverse<A: Type>(
+  p: (Checker, A) -> Prop,
+  c: Checker,
+  xs: List(A),
+  h: DiagnosticItems(A, p, c, List::reverse(xs))
+): DiagnosticItems(A, p, c, xs) {
+  Eq::subst(
+    (ys: List(A)) => DiagnosticItems(A, p, c, ys),
+    List::reverse_reverse(xs),
+    diagnostic_items_reverse_onto(p, c, List::reverse(xs), h, Nil, DiagnosticItemsNil)
+  )
+}
+pub theorem diagnostic_kept_member(
+  c: Checker,
+  ks: List(TyKept),
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  entry: KeptIn(ks, gs, rigid, a, b),
+  checked: DiagnosticItems(TyKept, DiagnosticKept, c, ks)
+): RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+  match entry: RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+    KeptHere(generics, map, left, right, rest) => ck_rigid_kept_sound(
+      c,
+      generics,
+      map,
+      left,
+      right,
+      diagnostic_not_no(
+        ck_rigid_kept(c, generics, map, left, right),
+        diagnostic_items_head(checked)
+      )
+    )
+    KeptThere(rest, generics, map, left, right, item, inside) => diagnostic_kept_member(
+      c,
+      rest,
+      generics,
+      map,
+      left,
+      right,
+      inside,
+      diagnostic_items_tail(checked)
+    )
+  }
+}
+pub theorem final_kept_sound(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  final: FinalDiagnostics0(c),
+  kept: KeptIn(ck_kept_of(c), gs, rigid, a, b)
+): RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+  diagnostic_kept_member(
+    c,
+    ck_kept_of(c),
+    gs,
+    rigid,
+    a,
+    b,
+    kept,
+    diagnostic_items_unreverse(
+      DiagnosticKept,
+      c,
+      ck_kept_of(c),
+      And::left(And::right(And::right(final)))
+    )
+  )
+}
+pub theorem final_type_equality(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  final: FinalDiagnostics0(c),
+  equal: TyEqAt(c, a, b)
+): TyEqIn(ck_subst_of(c), a, b) {
+  tyeq_move(
+    ck_subst_of(c),
+    KeptOk(ck_kept_of(c)),
+    ck_subst_of(c),
+    (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+      ck_subst_of(c),
+      gs,
+      rigid,
+      left,
+      right
+    ),
+    i => t => h => h,
+    gs => rigid => left => right => h => final_kept_sound(c, gs, rigid, left, right, final, h),
+    a,
+    b,
+    equal
+  )
+}
+
+pub theorem ck_finish_type_equality(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  clean: DiagnosticReportClean(ck_finish(c)),
+  equal: TyEqAt(ck_st(ck_finish(c)), a, b)
+): TyEqIn(ck_subst_of(ck_st(ck_finish(c))), a, b) {
+  final_type_equality(ck_st(ck_finish(c)), a, b, ck_finish_obligations(c, clean), equal)
+}

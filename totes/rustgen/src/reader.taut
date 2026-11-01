@@ -1,0 +1,1184 @@
+import "inputs.taut"
+import "../../surface/src/surface.taut"
+
+// A source reader, not a macro evaluator. Only an original written call whose
+// parsed argument is Text can read a supplied resource. No source text is edited.
+pub(open) inductive RustgenReaderDiagnostic: Type {
+  Mk(
+    stage: Text,
+    code: Text,
+    origin: Text,
+    start: Nat,
+    end: Nat,
+    message: Text
+  ): RustgenReaderDiagnostic
+}
+pub(open) inductive RustgenReaderState: Type {
+  Mk(
+    origin: Text,
+    base: Nat,
+    supplied: List(RustgenSource),
+    resources: List(RustgenResource),
+    error: Option(RustgenReaderDiagnostic)
+  ): RustgenReaderState
+}
+
+pub fn rustgen_reader_set_to<A>(&mut slot: A, value: A): Unit {
+  slot := value
+}
+
+pub fn rustgen_reader_error(
+  &mut state: RustgenReaderState,
+  stage: Text,
+  code: Text,
+  start: Nat,
+  end: Nat,
+  message: Text
+): Unit {
+  match state.error: Unit {
+    Some(previous) => #()
+    None => rustgen_reader_set_to(
+      &mut state.error,
+      Some(
+        RustgenReaderDiagnostic::Mk(
+          stage,
+          code,
+          state.origin,
+          start - state.base,
+          end - state.base,
+          message
+        )
+      )
+    )
+  }
+}
+pub fn rustgen_reader_exhausted(&mut state: RustgenReaderState): Unit {
+  rustgen_reader_error(
+    &mut state,
+    "reader-unsupported",
+    "reader.limit",
+    state.base,
+    state.base,
+    "reader traversal exhausted"
+  )
+}
+pub fn rustgen_reader_ready(state: RustgenReaderState): Bool {
+  match state.error: Bool {
+    None => true
+    Some(problem) => false
+  }
+}
+pub fn rustgen_reader_diagnostic_text(d: RustgenReaderDiagnostic): Text {
+  Text::concat_all(
+    Cons(
+      d.origin,
+      Cons(
+        ":",
+        Cons(
+          Text::of_nat(d.start),
+          Cons(
+            ":",
+            Cons(Text::of_nat(d.end), Cons(": ", Cons(d.code, Cons(": ", Cons(d.message, Nil)))))
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn rustgen_reader_include(
+  &mut state: RustgenReaderState,
+  term: SurfaceTerm,
+  arg: SurfaceTerm
+): SurfaceTerm {
+  match arg.kind: SurfaceTerm {
+    SkText(path) => if not(rustgen_input_path_bound(path)) {
+      rustgen_reader_error(
+        &mut state,
+        "reader-unsupported",
+        "reader.path",
+        term.start,
+        term.end,
+        "resource path exceeds the input limit"
+      )
+      term
+    } else if Text::len(path) == 0 {
+      rustgen_reader_error(
+        &mut state,
+        "reader-rejected",
+        "include.path",
+        term.start,
+        term.end,
+        "the path is empty"
+      )
+      term
+    } else if Text::starts_with(path, "/", 0) {
+      rustgen_reader_error(
+        &mut state,
+        "reader-rejected",
+        "include.absolute",
+        term.start,
+        term.end,
+        "the path must be relative to its source file"
+      )
+      term
+    } else if not(rustgen_path_valid(path)) {
+      rustgen_reader_error(
+        &mut state,
+        "reader-unsupported",
+        "reader.path",
+        term.start,
+        term.end,
+        "resource path is outside the portable input contract"
+      )
+      term
+    } else {
+      match rustgen_input_resource_path(state.origin, path, state.supplied): SurfaceTerm {
+        RustgenErr(message) => {
+          rustgen_reader_error(
+            &mut state,
+            "reader-rejected",
+            "include.outside",
+            term.start,
+            term.end,
+            "resource leaves its tote or source directory"
+          )
+          term
+        }
+        RustgenOk(Id) => if not(rustgen_input_path_bound(Id)) {
+          rustgen_reader_error(
+            &mut state,
+            "reader-unsupported",
+            "reader.path",
+            term.start,
+            term.end,
+            "resolved resource path exceeds the input limit"
+          )
+          term
+        } else {
+          match rustgen_source_find(Id, state.supplied): SurfaceTerm {
+            None => {
+              rustgen_reader_error(
+                &mut state,
+                "reader-rejected",
+                "include.read",
+                term.start,
+                term.end,
+                "resource is not supplied"
+              )
+              term
+            }
+            Some(contents) => {
+              let found := RustgenResource::Mk(
+                Id,
+                state.origin,
+                term.start - state.base,
+                term.end - state.base,
+                Text::len(contents)
+              )
+              rustgen_reader_set_to(&mut state.resources, Cons(found, state.resources))
+              surface_term_mk(SkText(contents), term.start, term.end)
+            }
+          }
+        }
+      }
+    }
+    _ => {
+      rustgen_reader_error(
+        &mut state,
+        "reader-rejected",
+        "include.argument",
+        term.start,
+        term.end,
+        "include_text! takes one text literal"
+      )
+      term
+    }
+  }
+}
+
+mutual {
+  pub fn rustgen_reader_terms(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceTerm)
+  ): List(SurfaceTerm) {
+    match k: List(SurfaceTerm) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceTerm) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_term(j, &mut state, item)
+            let more := rustgen_reader_terms(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_stmts(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceStmt)
+  ): List(SurfaceStmt) {
+    match k: List(SurfaceStmt) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceStmt) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_stmt(j, &mut state, item)
+            let more := rustgen_reader_stmts(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_params(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceParam)
+  ): List(SurfaceParam) {
+    match k: List(SurfaceParam) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceParam) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_param(j, &mut state, item)
+            let more := rustgen_reader_params(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_named(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceNamed)
+  ): List(SurfaceNamed) {
+    match k: List(SurfaceNamed) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceNamed) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_name(j, &mut state, item)
+            let more := rustgen_reader_named(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_fields(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceField)
+  ): List(SurfaceField) {
+    match k: List(SurfaceField) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceField) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_field(j, &mut state, item)
+            let more := rustgen_reader_fields(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_arms(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceArm)
+  ): List(SurfaceArm) {
+    match k: List(SurfaceArm) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceArm) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_arm(j, &mut state, item)
+            let more := rustgen_reader_arms(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_handlers(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceHandler)
+  ): List(SurfaceHandler) {
+    match k: List(SurfaceHandler) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceHandler) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_handler(j, &mut state, item)
+            let more := rustgen_reader_handlers(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_step_arms(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceStepArm)
+  ): List(SurfaceStepArm) {
+    match k: List(SurfaceStepArm) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceStepArm) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_step_arm(j, &mut state, item)
+            let more := rustgen_reader_step_arms(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_ctors(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceCtor)
+  ): List(SurfaceCtor) {
+    match k: List(SurfaceCtor) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceCtor) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_ctor(j, &mut state, item)
+            let more := rustgen_reader_ctors(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_data_ctors(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceDataCtor)
+  ): List(SurfaceDataCtor) {
+    match k: List(SurfaceDataCtor) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceDataCtor) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_data_ctor(j, &mut state, item)
+            let more := rustgen_reader_data_ctors(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_data_fields(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceDataField)
+  ): List(SurfaceDataField) {
+    match k: List(SurfaceDataField) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceDataField) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_data_field(j, &mut state, item)
+            let more := rustgen_reader_data_fields(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_functions(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceFn)
+  ): List(SurfaceFn) {
+    match k: List(SurfaceFn) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceFn) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_function(j, &mut state, item)
+            let more := rustgen_reader_functions(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_constraints(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceConstraint)
+  ): List(SurfaceConstraint) {
+    match k: List(SurfaceConstraint) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceConstraint) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_constraint(j, &mut state, item)
+            let more := rustgen_reader_constraints(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_opt_terms(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(Option(SurfaceTerm))
+  ): List(Option(SurfaceTerm)) {
+    match k: List(Option(SurfaceTerm)) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(Option(SurfaceTerm)) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_opt_term(j, &mut state, item)
+            let more := rustgen_reader_opt_terms(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_opt_term(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    item: Option(SurfaceTerm)
+  ): Option(SurfaceTerm) {
+    match k: Option(SurfaceTerm) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        item }
+      Succ(j) => {
+        match item: Option(SurfaceTerm) {
+          None => None
+          Some(value) => Some(rustgen_reader_term(j, &mut state, value))
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_term(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    term: SurfaceTerm
+  ): SurfaceTerm {
+    match k: SurfaceTerm {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        term }
+      Succ(j) => {
+        if not(rustgen_reader_ready(state)) { term } else {
+          match term.kind: SurfaceTerm {
+            SkMacroCall(name, arg) => if name == "include_text" {
+              rustgen_reader_include(&mut state, term, arg)
+            } else {
+              let next := match arg.kind: SurfaceTerm {
+                SkSyntaxLit(language, body) => arg
+                _ => rustgen_reader_term(j, &mut state, arg)
+              }
+              surface_term_mk(SkMacroCall(name, next), term.start, term.end)
+            }
+            SkOther(what) => {
+              rustgen_reader_error(
+                &mut state,
+                "reader-unsupported",
+                "reader.surface",
+                term.start,
+                term.end,
+                "surface term is not represented"
+              )
+              term
+            }
+            _ => surface_term_mk(
+              rustgen_reader_kind(j, &mut state, term.kind),
+              term.start,
+              term.end
+            )
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_kind(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    kind: SurfaceKind
+  ): SurfaceKind {
+    match k: SurfaceKind {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        kind }
+      Succ(j) => {
+        match kind: SurfaceKind {
+          SkApp(head, args) => SkApp(
+            rustgen_reader_term(j, &mut state, head),
+            rustgen_reader_terms(j, &mut state, args)
+          )
+          SkPi(params, result, effects) => SkPi(
+            rustgen_reader_params(j, &mut state, params),
+            rustgen_reader_term(j, &mut state, result),
+            effects
+          )
+          SkExists(binder, domain, body) => SkExists(
+            binder,
+            rustgen_reader_term(j, &mut state, domain),
+            rustgen_reader_term(j, &mut state, body)
+          )
+          SkLam(params, body) => SkLam(params, rustgen_reader_term(j, &mut state, body))
+          SkUnion(items) => SkUnion(rustgen_reader_terms(j, &mut state, items))
+          SkProduct(items) => SkProduct(rustgen_reader_terms(j, &mut state, items))
+          SkTagged(tag, value) => SkTagged(tag, rustgen_reader_term(j, &mut state, value))
+          SkIf(condition, then, otherwise) => SkIf(
+            rustgen_reader_term(j, &mut state, condition),
+            rustgen_reader_term(j, &mut state, then),
+            rustgen_reader_opt_term(j, &mut state, otherwise)
+          )
+          SkField(value, name) => SkField(rustgen_reader_term(j, &mut state, value), name)
+          SkProject(value, ty) => {
+            let value2 := rustgen_reader_term(j, &mut state, value)
+            SkProject(value2, rustgen_reader_term(j, &mut state, ty))
+          }
+          SkBlock(Stmts) => SkBlock(rustgen_reader_stmts(j, &mut state, Stmts))
+          SkPerform(op, args) => SkPerform(op, rustgen_reader_terms(j, &mut state, args))
+          SkHandle(body, handlers) => SkHandle(
+            rustgen_reader_term(j, &mut state, body),
+            rustgen_reader_handlers(j, &mut state, handlers)
+          )
+          SkBudget(memory, amount, body) => SkBudget(
+            memory,
+            rustgen_reader_term(j, &mut state, amount),
+            rustgen_reader_term(j, &mut state, body)
+          )
+          SkMatch(scrutinee, motive, arms, binder) => SkMatch(
+            rustgen_reader_term(j, &mut state, scrutinee),
+            rustgen_reader_opt_term(j, &mut state, motive),
+            rustgen_reader_arms(j, &mut state, arms),
+            binder
+          )
+          SkRecord(name, fields) => SkRecord(name, rustgen_reader_fields(j, &mut state, fields))
+          SkBorrow(mutable, value) => SkBorrow(mutable, rustgen_reader_term(j, &mut state, value))
+          SkFnKind(callable_kind, ty) => SkFnKind(
+            callable_kind,
+            rustgen_reader_term(j, &mut state, ty)
+          )
+          SkBorrowLam(borrows, lam) => SkBorrowLam(borrows, rustgen_reader_term(j, &mut state, lam))
+          SkQuote(stmts_form, Stmts) => SkQuote(
+            stmts_form,
+            rustgen_reader_stmts(j, &mut state, Stmts)
+          )
+          SkSplice(value) => SkSplice(rustgen_reader_term(j, &mut state, value))
+          SkStep(tactic, arg, CallStart, CallEnd, Before, arms) => SkStep(
+            tactic,
+            rustgen_reader_term(j, &mut state, arg),
+            CallStart,
+            CallEnd,
+            rustgen_reader_opt_term(j, &mut state, Before),
+            rustgen_reader_step_arms(j, &mut state, arms)
+          )
+          // Literal leaves and opaque syntax text have no reader children.
+          SkVar(name) => kind
+          SkNat(digits) => kind
+          SkFloat(digits) => kind
+          SkRow(effects) => kind
+          SkText(value) => kind
+          SkBool(value) => kind
+          SkHole(name) => kind
+          SkSyntaxLit(language, body) => kind
+          // The term dispatcher handles these before descending into kind.
+          SkMacroCall(name, arg) => kind
+          SkOther(what) => kind
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_param(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceParam
+  ): SurfaceParam {
+    match k: SurfaceParam {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_ty := rustgen_reader_term(j, &mut state, x.ty)
+        SurfaceParam { name: x.name, ty: made_ty }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_name(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceNamed
+  ): SurfaceNamed {
+    match k: SurfaceNamed {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_ty := rustgen_reader_term(j, &mut state, x.ty)
+        SurfaceNamed { name: x.name, ty: made_ty }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_field(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceField
+  ): SurfaceField {
+    match k: SurfaceField {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_value := rustgen_reader_term(j, &mut state, x.value)
+        SurfaceField { name: x.name, value: made_value }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_arm(k: Nat, &mut state: RustgenReaderState, x: SurfaceArm): SurfaceArm {
+    match k: SurfaceArm {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_guard := rustgen_reader_opt_term(j, &mut state, x.guard)
+        let made_goal := rustgen_reader_opt_term(j, &mut state, x.goal)
+        let made_body := rustgen_reader_term(j, &mut state, x.body)
+        SurfaceArm { pattern: x.pattern, guard: made_guard, goal: made_goal, body: made_body }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_step_arm(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceStepArm
+  ): SurfaceStepArm {
+    match k: SurfaceStepArm {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_binders := rustgen_reader_fields(j, &mut state, x.binders)
+        let made_goal := rustgen_reader_term(j, &mut state, x.goal)
+        let made_body := rustgen_reader_term(j, &mut state, x.body)
+        SurfaceStepArm {
+          binders: made_binders,
+          goal: made_goal,
+          body: made_body,
+          start: x.start,
+          end: x.end
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_ctor(k: Nat, &mut state: RustgenReaderState, x: SurfaceCtor): SurfaceCtor {
+    match k: SurfaceCtor {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_params := rustgen_reader_named(j, &mut state, x.params)
+        let made_result := rustgen_reader_term(j, &mut state, x.result)
+        SurfaceCtor { name: x.name, implicit: x.implicit, params: made_params, result: made_result }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_data_field(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceDataField
+  ): SurfaceDataField {
+    match k: SurfaceDataField {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_ty := rustgen_reader_term(j, &mut state, x.ty)
+        SurfaceDataField { name: x.name, ty: made_ty }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_data_ctor(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceDataCtor
+  ): SurfaceDataCtor {
+    match k: SurfaceDataCtor {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_fields := rustgen_reader_data_fields(j, &mut state, x.fields)
+        SurfaceDataCtor { name: x.name, fields: made_fields }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_data(k: Nat, &mut state: RustgenReaderState, x: SurfaceData): SurfaceData {
+    match k: SurfaceData {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_constructors := rustgen_reader_data_ctors(j, &mut state, x.constructors)
+        SurfaceData {
+          kind: x.kind,
+          name: x.name,
+          generics: x.generics,
+          constructors: made_constructors,
+          start: x.start,
+          end: x.end
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_constraint(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceConstraint
+  ): SurfaceConstraint {
+    match k: SurfaceConstraint {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_ty := rustgen_reader_term(j, &mut state, x.ty)
+        SurfaceConstraint { r#class: x.r#class, ty: made_ty, start: x.start, end: x.end }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_theorem(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceTheorem
+  ): SurfaceTheorem {
+    match k: SurfaceTheorem {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_params := rustgen_reader_named(j, &mut state, x.params)
+        let made_ty := rustgen_reader_term(j, &mut state, x.ty)
+        let made_body := rustgen_reader_opt_term(j, &mut state, x.body)
+        SurfaceTheorem {
+          name: x.name,
+          implicit: x.implicit,
+          params: made_params,
+          ty: made_ty,
+          body: made_body,
+          start: x.start,
+          end: x.end
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_inductive(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceInductive
+  ): SurfaceInductive {
+    match k: SurfaceInductive {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_params := rustgen_reader_named(j, &mut state, x.params)
+        let made_sort := rustgen_reader_term(j, &mut state, x.sort)
+        let made_constructors := rustgen_reader_ctors(j, &mut state, x.constructors)
+        SurfaceInductive {
+          name: x.name,
+          params: made_params,
+          sort: made_sort,
+          constructors: made_constructors,
+          start: x.start,
+          end: x.end
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_effect(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceEffect
+  ): SurfaceEffect {
+    match k: SurfaceEffect {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_params := rustgen_reader_opt_terms(j, &mut state, x.params)
+        let made_result := rustgen_reader_opt_term(j, &mut state, x.result)
+        SurfaceEffect {
+          name: x.name,
+          generics: x.generics,
+          params: made_params,
+          result: made_result,
+          r#resume: x.r#resume,
+          start: x.start,
+          end: x.end,
+          set: x.set
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_function(k: Nat, &mut state: RustgenReaderState, x: SurfaceFn): SurfaceFn {
+    match k: SurfaceFn {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_param_types := rustgen_reader_opt_terms(j, &mut state, x.param_types)
+        let made_result := rustgen_reader_opt_term(j, &mut state, x.result)
+        let made_body := rustgen_reader_term(j, &mut state, x.body)
+        SurfaceFn {
+          name: x.name,
+          generics: x.generics,
+          bounds: x.bounds,
+          params: x.params,
+          borrows: x.borrows,
+          param_types: made_param_types,
+          result: made_result,
+          effects: x.effects,
+          wheres: x.wheres,
+          start: x.start,
+          end: x.end,
+          body: made_body
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_class(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceClass
+  ): SurfaceClass {
+    match k: SurfaceClass {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_methods := rustgen_reader_signatures(j, &mut state, x.methods)
+        SurfaceClass {
+          name: x.name,
+          param: x.param,
+          arity: x.arity,
+          bound: x.bound,
+          methods: made_methods,
+          laws: x.laws,
+          start: x.start,
+          end: x.end
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_instance(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceInstance
+  ): SurfaceInstance {
+    match k: SurfaceInstance {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let made_head := rustgen_reader_term(j, &mut state, x.head)
+        let made_wheres := rustgen_reader_constraints(j, &mut state, x.wheres)
+        let made_methods := rustgen_reader_functions(j, &mut state, x.methods)
+        SurfaceInstance {
+          generics: x.generics,
+          bounds: x.bounds,
+          r#class: x.r#class,
+          head: made_head,
+          wheres: made_wheres,
+          methods: made_methods,
+          laws: x.laws,
+          start: x.start,
+          end: x.end
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_signature(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    x: SurfaceFn
+  ): SurfaceFn {
+    match k: SurfaceFn {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        x }
+      Succ(j) => {
+        let params := rustgen_reader_opt_terms(j, &mut state, x.param_types)
+        let result := rustgen_reader_opt_term(j, &mut state, x.result)
+        SurfaceFn {
+          name: x.name,
+          generics: x.generics,
+          bounds: x.bounds,
+          params: x.params,
+          borrows: x.borrows,
+          param_types: params,
+          result: result,
+          effects: x.effects,
+          wheres: x.wheres,
+          start: x.start,
+          end: x.end,
+          body: x.body
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_signatures(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    items: List(SurfaceFn)
+  ): List(SurfaceFn) {
+    match k: List(SurfaceFn) {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        items }
+      Succ(j) => {
+        match items: List(SurfaceFn) {
+          Nil => Nil
+          Cons(item, rest) => {
+            let first := rustgen_reader_signature(j, &mut state, item)
+            let more := rustgen_reader_signatures(j, &mut state, rest)
+            Cons(first, more)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_handler(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    handler: SurfaceHandler
+  ): SurfaceHandler {
+    match k: SurfaceHandler {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        handler }
+      Succ(j) => {
+        match handler: SurfaceHandler {
+          HdReturn(pattern, body) => HdReturn(pattern, rustgen_reader_term(j, &mut state, body))
+          HdOperation(op, hfa, hty, patterns, r#resume, guard, body) => {
+            let checked_guard := rustgen_reader_opt_term(j, &mut state, guard)
+            let checked_body := rustgen_reader_term(j, &mut state, body)
+            HdOperation(op, hfa, hty, patterns, r#resume, checked_guard, checked_body)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn rustgen_reader_stmt(
+    k: Nat,
+    &mut state: RustgenReaderState,
+    stmt: SurfaceStmt
+  ): SurfaceStmt {
+    match k: SurfaceStmt {
+      Zero => { rustgen_reader_exhausted(&mut state)
+        stmt }
+      Succ(j) => {
+        if not(rustgen_reader_ready(state)) { stmt } else {
+          match stmt: SurfaceStmt {
+            StLet(name, ty, value, borrow, mutable) => StLet(
+              name,
+              rustgen_reader_opt_term(j, &mut state, ty),
+              rustgen_reader_term(j, &mut state, value),
+              borrow,
+              mutable
+            )
+            StVar(name, ty, value, borrow) => StVar(
+              name,
+              rustgen_reader_opt_term(j, &mut state, ty),
+              rustgen_reader_term(j, &mut state, value),
+              borrow
+            )
+            StModule(name, Stmts, start, end) => StModule(
+              name,
+              rustgen_reader_stmts(j, &mut state, Stmts),
+              start,
+              end
+            )
+            StMutual(Stmts, start, end) => StMutual(
+              rustgen_reader_stmts(j, &mut state, Stmts),
+              start,
+              end
+            )
+            StAssign(name, place, value) => StAssign(
+              name,
+              match place: Option(SurfaceTerm) {
+                Some(p) => Some(rustgen_reader_term(j, &mut state, p))
+                None => None
+              },
+              rustgen_reader_term(j, &mut state, value)
+            )
+            StCalled(generates, call) => StCalled(
+              generates,
+              rustgen_reader_term(j, &mut state, call)
+            )
+            StFn(value) => StFn(rustgen_reader_function(j, &mut state, value))
+            StTheorem(value) => StTheorem(rustgen_reader_theorem(j, &mut state, value))
+            StDef(value) => StDef(rustgen_reader_theorem(j, &mut state, value))
+            StInductive(value) => StInductive(rustgen_reader_inductive(j, &mut state, value))
+            StEffect(value) => StEffect(rustgen_reader_effect(j, &mut state, value))
+            StStruct(value) => StStruct(rustgen_reader_data(j, &mut state, value))
+            StEnum(value) => StEnum(rustgen_reader_data(j, &mut state, value))
+            StExtern(abi, fns, start, end) => StExtern(
+              abi,
+              rustgen_reader_signatures(j, &mut state, fns),
+              start,
+              end
+            )
+            StClass(value) => StClass(rustgen_reader_class(j, &mut state, value))
+            StInstance(value) => StInstance(rustgen_reader_instance(j, &mut state, value))
+            StWhile(condition, body) => StWhile(
+              rustgen_reader_term(j, &mut state, condition),
+              rustgen_reader_term(j, &mut state, body)
+            )
+            StReturn(value) => StReturn(rustgen_reader_opt_term(j, &mut state, value))
+            StExpr(value) => StExpr(rustgen_reader_term(j, &mut state, value))
+            StOther(what, start, end) => {
+              rustgen_reader_error(
+                &mut state,
+                "reader-unsupported",
+                "reader.surface",
+                start,
+                end,
+                "surface statement is not represented"
+              )
+              stmt
+            }
+            // Imports are consumed only by the loader. Macro/syntax declarations
+            // hold names or opaque grammar text, not reader expression children.
+            StImport(path, start, end) => stmt
+            StMacro(name, function, start, end) => stmt
+            StAttributed(name, arg, generates, inner) => stmt
+            StSyntax(name, grammar, start, end) => stmt
+          }
+        }
+      }
+    }
+  }
+
+}
+
+pub fn rustgen_reader_files(
+  files: List(RustgenInputFile),
+  &mut state: RustgenReaderState,
+  steps: Nat
+): List(RustgenInputFile) {
+  match files: List(RustgenInputFile) {
+    Nil => Nil
+    Cons(file, rest) => {
+      rustgen_reader_set_to(&mut state.origin, file.id)
+      rustgen_reader_set_to(&mut state.base, file.base)
+      if file.unsupported != "" {
+        rustgen_reader_error(
+          &mut state,
+          "reader-unsupported",
+          "reader.concrete",
+          file.base,
+          file.base,
+          file.unsupported
+        )
+      }
+      let stmts := rustgen_reader_stmts(steps, &mut state, file.stmts)
+      let next := RustgenInputFile::Mk(file.id, file.base, stmts, file.unsupported)
+      Cons(next, rustgen_reader_files(rest, &mut state, steps))
+    }
+  }
+}
+pub fn rustgen_reader_flatten(files: List(RustgenInputFile)): List(SurfaceStmt) {
+  match files: List(SurfaceStmt) {
+    Nil => Nil
+    Cons(file, rest) => List::append(rustgen_nonimports(file.stmts), rustgen_reader_flatten(rest))
+  }
+}
+pub fn rustgen_read_inputs(contents: Text): RustgenLoadResult(RustgenInputGraph) {
+  match rustgen_load_input_mode(contents, false): RustgenLoadResult(RustgenInputGraph) {
+    RustgenLoadError(stage, message) => RustgenLoadError(stage, message)
+    RustgenLoaded(input) => {
+      var state := RustgenReaderState {
+        origin: "",
+        base: 0,
+        supplied: input.supplied,
+        resources: Nil,
+        error: None
+      }
+      let parsed := rustgen_reader_files(
+        input.parsed,
+        &mut state,
+        16 * (Nat::of_u64(Text::len(input.graph.source)) + 1)
+      )
+      match state.error: RustgenLoadResult(RustgenInputGraph) {
+        Some(problem) => RustgenLoadError(problem.stage, rustgen_reader_diagnostic_text(problem))
+        None => RustgenLoaded(RustgenInputGraph {
+          graph: RustgenGraph { source: input.graph.source, stmts: rustgen_reader_flatten(parsed), files: input.graph.files, generated_files: input.graph.generated_files },
+          resources: state.resources, roots: input.roots, supplied: input.supplied, parsed: parsed
+        })
+      }
+    }
+  }
+}
+
+// This dump is reader evidence only, not source printing or macro expansion.
+pub fn rustgen_reader_report(input: RustgenInputGraph): Text {
+  Text::concat_all(
+    Cons(
+      rustgen_input_report(input),
+      Cons("TAUTO-READER-SURFACE/1\n", Cons(surface_dump(input.graph.stmts), Nil))
+    )
+  )
+}

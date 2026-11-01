@@ -1,0 +1,1734 @@
+import "Rat.taut"
+import "IntOrder.taut"
+import "NatDiv.taut"
+
+module Rat {
+  // The laws of `Rat`'s arithmetic (`std/Rat::taut`). A number has many
+  // representations, so the laws hold up to `equiv`, the same number:
+  // `a / b` and `c / d` are the same when `a d = c b`. `Rat::add` and `Rat::mul`
+  // reduce their results, and `Rat::reduce_equiv` says a reduced fraction is
+  // the same number; the rest is `int_norm!`.
+
+  pub def equiv(
+    x: Rat,
+    y: Rat
+  ): Prop := Int::mul(num(x), IntOfNat(den(y))) = Int::mul(num(y), IntOfNat(den(x)))
+
+  // ---- the same number ------------------------------------------------------------
+
+  pub theorem equiv_refl(x: Rat): equiv(x, x) {
+    Refl
+  }
+
+  pub theorem equiv_symm(x: Rat, y: Rat, h: equiv(x, y)): equiv(y, x) {
+    Eq::sym(h)
+  }
+
+  pub theorem equiv_trans(
+    x: Rat,
+    y: Rat,
+    z: Rat,
+    h1: equiv(x, y),
+    h2: equiv(y, z)
+  ): equiv(x, z) {
+    match y: equiv(x, z) {
+      Mk(b, q) => equiv_trans_at(
+        num(x),
+        IntOfNat(den(x)),
+        b,
+        q,
+        num(z),
+        IntOfNat(den(z)),
+        h1,
+        h2
+      )
+    }
+  }
+
+  // `X / P = b / (q + 1) = Z / R` gives `X R = Z P`.
+  pub theorem equiv_trans_at(
+    X: Int,
+    P: Int,
+    b: Int,
+    q: Nat,
+    Z: Int,
+    R: Int,
+    h1: Int::mul(X, IntOfNat(Succ(q))) = Int::mul(b, P),
+    h2: Int::mul(b, R) = Int::mul(Z, IntOfNat(Succ(q)))
+  ): Int::mul(X, R) = Int::mul(Z, P) {
+    let Q: Int := IntOfNat(Succ(q))
+    let s1: Int::mul(
+      Int::mul(X, R),
+      Q
+    ) = Int::mul(
+      Int::mul(X, Q),
+      R
+    ) := by int_norm!(): Int::mul(
+      Int::mul(X, R),
+      IntOfNat(Succ(q))
+    ) = Int::mul(Int::mul(X, IntOfNat(Succ(q))), R) {}
+    let s2: Int::mul(
+      Int::mul(X, Q),
+      R
+    ) = Int::mul(Int::mul(b, P), R) := Eq::congr(⟦Int::mul(□, R)⟧, h1)
+    let s3: Int::mul(
+      Int::mul(b, P),
+      R
+    ) = Int::mul(
+      Int::mul(b, R),
+      P
+    ) := by int_norm!(): Int::mul(Int::mul(b, P), R) = Int::mul(Int::mul(b, R), P) {}
+    let s4: Int::mul(
+      Int::mul(b, R),
+      P
+    ) = Int::mul(Int::mul(Z, Q), P) := Eq::congr(⟦Int::mul(□, P)⟧, h2)
+    let s5: Int::mul(
+      Int::mul(Z, Q),
+      P
+    ) = Int::mul(
+      Int::mul(Z, P),
+      Q
+    ) := by int_norm!(): Int::mul(
+      Int::mul(Z, IntOfNat(Succ(q))),
+      P
+    ) = Int::mul(Int::mul(Z, P), IntOfNat(Succ(q))) {}
+    Int::mul_cancel(
+      Int::mul(X, R),
+      Int::mul(Z, P),
+      q,
+      calc Int::mul(Int::mul(X, R), Q) {
+        = Int::mul(Int::mul(X, Q), R) from s1
+        = Int::mul(Int::mul(b, P), R) from s2
+        = Int::mul(Int::mul(b, R), P) from s3
+        = Int::mul(Int::mul(Z, Q), P) from s4
+        = Int::mul(Int::mul(Z, P), Q) from s5
+      }
+    )
+  }
+}
+
+module Int {
+  // ---- reduced fractions --------------------------------------------------------------
+
+  pub theorem eq_sound(x: Int, y: Int, h: eq(x, y) = true): x = y {
+    match x: x = y {
+      IntOfNat(a) => match y: IntOfNat(a) = y {
+        IntOfNat(b) => Eq::congr(IntOfNat, Nat::eq_sound(a, b, h))
+        IntNegSucc(b) => False::elim(false_ne_true(h))
+      }
+      IntNegSucc(a) => match y: IntNegSucc(a) = y {
+        IntOfNat(b) => False::elim(false_ne_true(h))
+        IntNegSucc(b) => Eq::congr(IntNegSucc, Nat::eq_sound(a, b, h))
+      }
+    }
+  }
+}
+
+module Rat {
+  pub theorem eq_sound(x: Rat, y: Rat, h: eq(x, y) = true): equiv(x, y) {
+    Int::eq_sound(
+      Int::mul(num(x), IntOfNat(den(y))),
+      Int::mul(num(y), IntOfNat(den(x))),
+      h
+    )
+  }
+
+  // `k / j = a / s` when `a = g k` and `s = g j`.
+  pub theorem div_cross(
+    a: Nat,
+    s: Nat,
+    g: Nat,
+    k: Nat,
+    j: Nat,
+    ha: a = Nat::mul(g, k),
+    hs: s = Nat::mul(g, j)
+  ): Int::mul(IntOfNat(k), IntOfNat(s)) = Int::mul(IntOfNat(a), IntOfNat(j)) {
+    let e: Int::mul(
+      IntOfNat(k),
+      IntOfNat(Nat::mul(g, j))
+    ) = Int::mul(
+      IntOfNat(Nat::mul(g, k)),
+      IntOfNat(j)
+    ) := by int_norm!(): Int::mul(
+      IntOfNat(k),
+      IntOfNat(Nat::mul(g, j))
+    ) = Int::mul(IntOfNat(Nat::mul(g, k)), IntOfNat(j)) {}
+    Eq::subst(
+      (z: Nat) => Int::mul(IntOfNat(k), IntOfNat(s)) = Int::mul(IntOfNat(z), IntOfNat(j)),
+      Eq::sym(ha),
+      Eq::subst(
+        (z: Nat) => Int::mul(IntOfNat(k), IntOfNat(z)) = Int::mul(IntOfNat(Nat::mul(g, k)), IntOfNat(j)),
+        Eq::sym(hs),
+        e
+      )
+    )
+  }
+
+  pub theorem div_cross_neg(
+    a: Nat,
+    s: Nat,
+    g: Nat,
+    k: Nat,
+    j: Nat,
+    ha: a = Nat::mul(g, k),
+    hs: s = Nat::mul(g, j)
+  ): Int::mul(Int::neg(IntOfNat(k)), IntOfNat(s)) = Int::mul(Int::neg(IntOfNat(a)), IntOfNat(j)) {
+    let e: Int::mul(
+      IntOfNat(k),
+      IntOfNat(s)
+    ) = Int::mul(IntOfNat(a), IntOfNat(j)) := div_cross(a, s, g, k, j, ha, hs)
+    let l: Int::mul(
+      Int::neg(IntOfNat(k)),
+      IntOfNat(s)
+    ) = Int::neg(
+      Int::mul(IntOfNat(k), IntOfNat(s))
+    ) := by int_norm!(): Int::mul(
+      Int::neg(IntOfNat(k)),
+      IntOfNat(s)
+    ) = Int::neg(Int::mul(IntOfNat(k), IntOfNat(s))) {}
+    let r: Int::neg(
+      Int::mul(IntOfNat(a), IntOfNat(j))
+    ) = Int::mul(
+      Int::neg(IntOfNat(a)),
+      IntOfNat(j)
+    ) := by int_norm!(): Int::neg(
+      Int::mul(IntOfNat(a), IntOfNat(j))
+    ) = Int::mul(Int::neg(IntOfNat(a)), IntOfNat(j)) {}
+    calc Int::mul(Int::neg(IntOfNat(k)), IntOfNat(s)) {
+      = Int::neg(Int::mul(IntOfNat(k), IntOfNat(s))) from l
+      = Int::neg(Int::mul(IntOfNat(a), IntOfNat(j))) from Eq::congr(Int::neg, e)
+      = Int::mul(Int::neg(IntOfNat(a)), IntOfNat(j)) from r
+    }
+  }
+}
+
+module Nat {
+  // `n` divided by `g` as `Nat::div_nz` divides: `d = g q` when `g` leaves no remainder.
+  pub theorem div_exact(
+    d: Nat,
+    g: Nat,
+    hg: ¬(g = 0),
+    h: Nat::eq(Nat::rem_nz(d, g, hg), 0) = true
+  ): d = mul(g, Nat::div_nz(d, g, hg)) {
+    Eq::sym(
+      Eq::subst(
+        (r: Nat) => add(mul(g, Nat::div_nz(d, g, hg)), r) = d,
+        Nat::eq_sound(Nat::rem_nz(d, g, hg), 0, h),
+        div_mod_eq(d, g, hg)
+      )
+    )
+  }
+
+  // A factor of `m + 1` is `j' + 1`.
+  pub theorem factor_succ(
+    m: Nat,
+    g: Nat,
+    j: Nat,
+    h: Succ(m) = mul(g, j)
+  ): j = Succ(j - 1) {
+    match j: j = Succ(j - 1) {
+      Zero => False::elim(zero_ne_succ(m, Eq::sym(h)))
+      Succ(k) => Refl
+    }
+  }
+}
+
+module Rat {
+  // A fraction divided through by a common factor is the same number.
+  pub theorem divided_equiv(
+    n: Int,
+    m: Nat,
+    g: Nat,
+    hg: ¬(g = 0),
+    e: divides(n, Succ(m), g, hg) = true
+  ): equiv(Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1), Rat::Mk(n, m)) {
+    let both: Nat::eq(Nat::rem_nz(Succ(m), g, hg), 0) = true ∧ Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0) = true := Bool::and_split(Nat::eq(Nat::rem_nz(Succ(m), g, hg), 0), Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0), e)
+    match both: equiv(Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1), Rat::Mk(n, m)) {
+      AndIntro(hd, hn) => divided_equiv_at(
+        n,
+        m,
+        g,
+        hg,
+        Nat::div_exact(Succ(m), g, hg, hd),
+        Nat::div_exact(Int::abs_nat(n), g, hg, hn)
+      )
+    }
+  }
+
+  pub theorem divided_equiv_at(
+    n: Int,
+    m: Nat,
+    g: Nat,
+    hg: ¬(g = 0),
+    hs: Succ(m) = Nat::mul(g, Nat::div_nz(Succ(m), g, hg)),
+    ha: Int::abs_nat(n) = Nat::mul(g, Nat::div_nz(Int::abs_nat(n), g, hg))
+  ): equiv(Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1), Rat::Mk(n, m)) {
+    Eq::subst(
+      (z: Nat) => Int::mul(Int::div_nat(n, g, hg), IntOfNat(Succ(m))) = Int::mul(n, IntOfNat(z)),
+      Nat::factor_succ(m, g, Nat::div_nz(Succ(m), g, hg), hs),
+      match n: Int::mul(Int::div_nat(n, g, hg), IntOfNat(Succ(m))) = Int::mul(n, IntOfNat(Nat::div_nz(Succ(m), g, hg))) {
+        IntOfNat(a) => div_cross(a, Succ(m), g, Nat::div_nz(a, g, hg), Nat::div_nz(Succ(m), g, hg), ha, hs)
+        IntNegSucc(b) => div_cross_neg(Succ(b), Succ(m), g, Nat::div_nz(Succ(b), g, hg), Nat::div_nz(Succ(m), g, hg), ha, hs)
+      }
+    )
+  }
+
+  pub theorem reduce_by_equiv(
+    n: Int,
+    m: Nat,
+    g: Nat,
+    hg: ¬(g = 0)
+  ): equiv(reduce_by(n, Succ(m), g, hg), Rat::Mk(n, m)) {
+    reduce_by_equiv_at(n, m, g, hg, divides(n, Succ(m), g, hg), Refl)
+  }
+
+  pub theorem reduce_by_equiv_at(
+    n: Int,
+    m: Nat,
+    g: Nat,
+    hg: ¬(g = 0),
+    o: Bool,
+    e: divides(n, Succ(m), g, hg) = o
+  ): equiv(
+    pick_by(o, Rat::Mk(n, m), Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1)),
+    Rat::Mk(n, m)
+  ) {
+    match o: equiv(
+      pick_by(o, Rat::Mk(n, m), Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1)),
+      Rat::Mk(n, m)
+    ) {
+      false => equiv_refl(Rat::Mk(n, m))
+      true => divided_equiv(n, m, g, hg, e)
+    }
+  }
+
+  // `Rat::reduce(n, m + 1)` is `n / (m + 1)`.
+  pub theorem reduce_equiv(n: Int, m: Nat): equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
+    match Nat::eq(gcd(400, Succ(m), Int::abs_nat(n)), 0) eqn hg: equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
+      true => ⊢ equiv(Rat::Mk(n, Succ(m) - 1), Rat::Mk(n, m)) from equiv_refl(Rat::Mk(n, m))
+      false => ⊢ equiv(
+        reduce_by(n, Succ(m), gcd(400, Succ(m), Int::abs_nat(n)), Nat::ne_zero(gcd(400, Succ(m), Int::abs_nat(n)), hg)),
+        Rat::Mk(n, m)
+      ) from reduce_by_equiv(n, m, gcd(400, Succ(m), Int::abs_nat(n)), Nat::ne_zero(gcd(400, Succ(m), Int::abs_nat(n)), hg))
+    }
+  }
+
+  // ---- the operations without reducing ------------------------------------------
+
+  pub fn zero(): Rat {
+    Rat::Mk(0, 0)
+  }
+
+  pub fn one(): Rat {
+    Rat::Mk(1, 0)
+  }
+
+  // `a / P + b / Q = (a Q + b P) / (P Q)`, with `P Q = (P Q - 1) + 1` written so
+  // that it is `Succ` of something.
+  pub fn add_raw(x: Rat, y: Rat): Rat {
+    match x: Rat {
+      Mk(a, p) => match y: Rat {
+        Mk(b, q) => Rat::Mk(
+          Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+          Nat::add(Nat::mul(Succ(p), q), p)
+        )
+      }
+    }
+  }
+
+  pub fn mul_raw(x: Rat, y: Rat): Rat {
+    match x: Rat {
+      Mk(a, p) => match y: Rat {
+        Mk(b, q) => Rat::Mk(Int::mul(a, b), Nat::add(Nat::mul(Succ(p), q), p))
+      }
+    }
+  }
+
+  pub theorem add_val(x: Rat, y: Rat): equiv(add(x, y), add_raw(x, y)) {
+    match x: equiv(add(x, y), add_raw(x, y)) {
+      Mk(a, p) => match y: equiv(add(Rat::Mk(a, p), y), add_raw(Rat::Mk(a, p), y)) {
+        Mk(b, q) => reduce_equiv(
+          Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+          Nat::add(Nat::mul(Succ(p), q), p)
+        )
+      }
+    }
+  }
+
+  pub theorem mul_val(x: Rat, y: Rat): equiv(mul(x, y), mul_raw(x, y)) {
+    match x: equiv(mul(x, y), mul_raw(x, y)) {
+      Mk(a, p) => match y: equiv(mul(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a, p), y)) {
+        Mk(b, q) => reduce_equiv(Int::mul(a, b), Nat::add(Nat::mul(Succ(p), q), p))
+      }
+    }
+  }
+
+  pub theorem add_raw_comm(x: Rat, y: Rat): equiv(add_raw(x, y), add_raw(y, x)) {
+    match x: equiv(add_raw(x, y), add_raw(y, x)) {
+      Mk(a, p) => {
+        match y: equiv(add_raw(Rat::Mk(a, p), y), add_raw(y, Rat::Mk(a, p))) {
+          Mk(b, q) => {
+            let e: Int::mul(
+              Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+            ) = Int::mul(
+              Int::add(Int::mul(b, IntOfNat(Succ(p))), Int::mul(a, IntOfNat(Succ(q)))),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) := by int_norm!(): Int::mul(
+              Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+            ) = Int::mul(
+              Int::add(Int::mul(b, IntOfNat(Succ(p))), Int::mul(a, IntOfNat(Succ(q)))),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) {}
+            e
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem add_raw_assoc(
+    x: Rat,
+    y: Rat,
+    z: Rat
+  ): equiv(add_raw(add_raw(x, y), z), add_raw(x, add_raw(y, z))) {
+    match x: equiv(add_raw(add_raw(x, y), z), add_raw(x, add_raw(y, z))) {
+      Mk(a, p) => {
+        match y: equiv(
+          add_raw(add_raw(Rat::Mk(a, p), y), z),
+          add_raw(Rat::Mk(a, p), add_raw(y, z))
+        ) {
+          Mk(b, q) => {
+            match z: equiv(
+              add_raw(add_raw(Rat::Mk(a, p), Rat::Mk(b, q)), z),
+              add_raw(Rat::Mk(a, p), add_raw(Rat::Mk(b, q), z))
+            ) {
+              Mk(c, r) => {
+                let e: Int::mul(
+                  Int::add(
+                    Int::mul(
+                      Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+                      IntOfNat(Succ(r))
+                    ),
+                    Int::mul(c, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+                  ),
+                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+                ) = Int::mul(
+                  Int::add(
+                    Int::mul(a, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))),
+                    Int::mul(
+                      Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                      IntOfNat(Succ(p))
+                    )
+                  ),
+                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+                ) := by int_norm!(): Int::mul(
+                  Int::add(
+                    Int::mul(
+                      Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+                      IntOfNat(Succ(r))
+                    ),
+                    Int::mul(c, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+                  ),
+                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+                ) = Int::mul(
+                  Int::add(
+                    Int::mul(a, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))),
+                    Int::mul(
+                      Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                      IntOfNat(Succ(p))
+                    )
+                  ),
+                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+                ) {}
+                e
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem mul_raw_comm(x: Rat, y: Rat): equiv(mul_raw(x, y), mul_raw(y, x)) {
+    match x: equiv(mul_raw(x, y), mul_raw(y, x)) {
+      Mk(a, p) => {
+        match y: equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(y, Rat::Mk(a, p))) {
+          Mk(b, q) => {
+            let e: Int::mul(
+              Int::mul(a, b),
+              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+            ) = Int::mul(
+              Int::mul(b, a),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a, b),
+              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+            ) = Int::mul(Int::mul(b, a), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
+            e
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem mul_raw_assoc(
+    x: Rat,
+    y: Rat,
+    z: Rat
+  ): equiv(mul_raw(mul_raw(x, y), z), mul_raw(x, mul_raw(y, z))) {
+    match x: equiv(mul_raw(mul_raw(x, y), z), mul_raw(x, mul_raw(y, z))) {
+      Mk(a, p) => {
+        match y: equiv(
+          mul_raw(mul_raw(Rat::Mk(a, p), y), z),
+          mul_raw(Rat::Mk(a, p), mul_raw(y, z))
+        ) {
+          Mk(b, q) => {
+            match z: equiv(
+              mul_raw(mul_raw(Rat::Mk(a, p), Rat::Mk(b, q)), z),
+              mul_raw(Rat::Mk(a, p), mul_raw(Rat::Mk(b, q), z))
+            ) {
+              Mk(c, r) => {
+                let e: Int::mul(
+                  Int::mul(Int::mul(a, b), c),
+                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+                ) = Int::mul(
+                  Int::mul(a, Int::mul(b, c)),
+                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(Int::mul(a, b), c),
+                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+                ) = Int::mul(
+                  Int::mul(a, Int::mul(b, c)),
+                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+                ) {}
+                e
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem mul_raw_add(
+    x: Rat,
+    y: Rat,
+    z: Rat
+  ): equiv(mul_raw(x, add_raw(y, z)), add_raw(mul_raw(x, y), mul_raw(x, z))) {
+    match x: equiv(
+      mul_raw(x, add_raw(y, z)),
+      add_raw(mul_raw(x, y), mul_raw(x, z))
+    ) {
+      Mk(a, p) => {
+        match y: equiv(
+          mul_raw(Rat::Mk(a, p), add_raw(y, z)),
+          add_raw(mul_raw(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a, p), z))
+        ) {
+          Mk(b, q) => {
+            match z: equiv(
+              mul_raw(Rat::Mk(a, p), add_raw(Rat::Mk(b, q), z)),
+              add_raw(mul_raw(Rat::Mk(a, p), Rat::Mk(b, q)), mul_raw(Rat::Mk(a, p), z))
+            ) {
+              Mk(c, r) => {
+                let e: Int::mul(
+                  Int::mul(a, Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))),
+                  Int::mul(
+                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
+                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+                  )
+                ) = Int::mul(
+                  Int::add(
+                    Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))),
+                    Int::mul(Int::mul(a, c), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+                  ),
+                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a, Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))),
+                  Int::mul(
+                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
+                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+                  )
+                ) = Int::mul(
+                  Int::add(
+                    Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))),
+                    Int::mul(Int::mul(a, c), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+                  ),
+                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+                ) {}
+                e
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem add_raw_zero(x: Rat): equiv(add_raw(x, zero()), x) {
+    match x: equiv(add_raw(x, zero()), x) {
+      Mk(a, p) => {
+        let e: Int::mul(
+          Int::add(Int::mul(a, 1), Int::mul(0, IntOfNat(Succ(p)))),
+          IntOfNat(Succ(p))
+        ) = Int::mul(
+          a,
+          Int::mul(IntOfNat(Succ(p)), 1)
+        ) := by int_norm!(): Int::mul(
+          Int::add(Int::mul(a, 1), Int::mul(0, IntOfNat(Succ(p)))),
+          IntOfNat(Succ(p))
+        ) = Int::mul(a, Int::mul(IntOfNat(Succ(p)), 1)) {}
+        e
+      }
+    }
+  }
+
+  pub theorem add_raw_neg(x: Rat): equiv(add_raw(x, neg(x)), zero()) {
+    match x: equiv(add_raw(x, neg(x)), zero()) {
+      Mk(a, p) => {
+        let e: Int::mul(
+          Int::add(Int::mul(a, IntOfNat(Succ(p))), Int::mul(Int::neg(a), IntOfNat(Succ(p)))),
+          1
+        ) = Int::mul(
+          0,
+          Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(p)))
+        ) := by int_norm!(): Int::mul(
+          Int::add(Int::mul(a, IntOfNat(Succ(p))), Int::mul(Int::neg(a), IntOfNat(Succ(p)))),
+          1
+        ) = Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(p)))) {}
+        e
+      }
+    }
+  }
+
+  pub theorem mul_raw_one(x: Rat): equiv(mul_raw(x, one()), x) {
+    match x: equiv(mul_raw(x, one()), x) {
+      Mk(a, p) => {
+        let e: Int::mul(
+          Int::mul(a, 1),
+          IntOfNat(Succ(p))
+        ) = Int::mul(
+          a,
+          Int::mul(IntOfNat(Succ(p)), 1)
+        ) := by int_norm!(): Int::mul(
+          Int::mul(a, 1),
+          IntOfNat(Succ(p))
+        ) = Int::mul(a, Int::mul(IntOfNat(Succ(p)), 1)) {}
+        e
+      }
+    }
+  }
+
+  pub theorem add_raw_congl(
+    x: Rat,
+    x2: Rat,
+    y: Rat,
+    h: equiv(x, x2)
+  ): equiv(add_raw(x, y), add_raw(x2, y)) {
+    match x: equiv(add_raw(x, y), add_raw(x2, y)) {
+      Mk(a, p) => {
+        match x2: equiv(add_raw(Rat::Mk(a, p), y), add_raw(x2, y)) {
+          Mk(a2, p2) => {
+            match y: equiv(add_raw(Rat::Mk(a, p), y), add_raw(Rat::Mk(a2, p2), y)) {
+              Mk(b, q) => {
+                let s1: Int::mul(
+                  Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+                ) = Int::add(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(p2))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    IntOfNat(Succ(q))
+                  )
+                ) := by int_norm!(): Int::mul(
+                  Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+                ) = Int::add(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(p2))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    IntOfNat(Succ(q))
+                  )
+                ) {}
+                let s2: Int::add(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(p2))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    IntOfNat(Succ(q))
+                  )
+                ) = Int::add(
+                  Int::mul(
+                    Int::mul(a2, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    IntOfNat(Succ(q))
+                  )
+                ) := Eq::congr(
+                  ⟦Int::add(
+                    Int::mul(□, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))),
+                    Int::mul(
+                      Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                      IntOfNat(Succ(q))
+                    )
+                  )⟧,
+                  h
+                )
+                let s3: Int::add(
+                  Int::mul(
+                    Int::mul(a2, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    IntOfNat(Succ(q))
+                  )
+                ) = Int::mul(
+                  Int::add(Int::mul(a2, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p2)))),
+                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+                ) := by int_norm!(): Int::add(
+                  Int::mul(
+                    Int::mul(a2, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    IntOfNat(Succ(q))
+                  )
+                ) = Int::mul(
+                  Int::add(Int::mul(a2, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p2)))),
+                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+                ) {}
+                Eq::trans(s1, Eq::trans(s2, s3))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem mul_raw_congl(
+    x: Rat,
+    x2: Rat,
+    y: Rat,
+    h: equiv(x, x2)
+  ): equiv(mul_raw(x, y), mul_raw(x2, y)) {
+    match x: equiv(mul_raw(x, y), mul_raw(x2, y)) {
+      Mk(a, p) => {
+        match x2: equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(x2, y)) {
+          Mk(a2, p2) => {
+            match y: equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a2, p2), y)) {
+              Mk(b, q) => {
+                let s1: Int::mul(
+                  Int::mul(a, b),
+                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+                ) = Int::mul(
+                  Int::mul(a, IntOfNat(Succ(p2))),
+                  Int::mul(b, IntOfNat(Succ(q)))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a, b),
+                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+                ) = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), Int::mul(b, IntOfNat(Succ(q)))) {}
+                let s2: Int::mul(
+                  Int::mul(a, IntOfNat(Succ(p2))),
+                  Int::mul(b, IntOfNat(Succ(q)))
+                ) = Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(p))),
+                  Int::mul(b, IntOfNat(Succ(q)))
+                ) := Eq::congr(⟦Int::mul(□, Int::mul(b, IntOfNat(Succ(q))))⟧, h)
+                let s3: Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(p))),
+                  Int::mul(b, IntOfNat(Succ(q)))
+                ) = Int::mul(
+                  Int::mul(a2, b),
+                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(p))),
+                  Int::mul(b, IntOfNat(Succ(q)))
+                ) = Int::mul(Int::mul(a2, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
+                calc Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))) {
+                  = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), Int::mul(b, IntOfNat(Succ(q)))) from s1
+                  = Int::mul(Int::mul(a2, IntOfNat(Succ(p))), Int::mul(b, IntOfNat(Succ(q)))) from s2
+                  = Int::mul(Int::mul(a2, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) from s3
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem neg_congr(
+    x: Rat,
+    x2: Rat,
+    h: equiv(x, x2)
+  ): equiv(neg(x), neg(x2)) {
+    match x: equiv(neg(x), neg(x2)) {
+      Mk(a, p) => {
+        match x2: equiv(neg(Rat::Mk(a, p)), neg(x2)) {
+          Mk(a2, p2) => {
+            let s1: Int::mul(
+              Int::neg(a),
+              IntOfNat(Succ(p2))
+            ) = Int::neg(
+              Int::mul(a, IntOfNat(Succ(p2)))
+            ) := by int_norm!(): Int::mul(
+              Int::neg(a),
+              IntOfNat(Succ(p2))
+            ) = Int::neg(Int::mul(a, IntOfNat(Succ(p2)))) {}
+            let s2: Int::neg(
+              Int::mul(a, IntOfNat(Succ(p2)))
+            ) = Int::neg(Int::mul(a2, IntOfNat(Succ(p)))) := Eq::congr(⟦Int::neg(□)⟧, h)
+            let s3: Int::neg(
+              Int::mul(a2, IntOfNat(Succ(p)))
+            ) = Int::mul(
+              Int::neg(a2),
+              IntOfNat(Succ(p))
+            ) := by int_norm!(): Int::neg(
+              Int::mul(a2, IntOfNat(Succ(p)))
+            ) = Int::mul(Int::neg(a2), IntOfNat(Succ(p))) {}
+            calc Int::mul(Int::neg(a), IntOfNat(Succ(p2))) {
+              = Int::neg(Int::mul(a, IntOfNat(Succ(p2)))) from s1
+              = Int::neg(Int::mul(a2, IntOfNat(Succ(p)))) from s2
+              = Int::mul(Int::neg(a2), IntOfNat(Succ(p))) from s3
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ---- the laws ------------------------------------------------------------------
+
+  pub theorem add_raw_congr(
+    x: Rat,
+    y: Rat,
+    y2: Rat,
+    h: equiv(y, y2)
+  ): equiv(add_raw(x, y), add_raw(x, y2)) {
+    equiv_trans(
+      add_raw(x, y),
+      add_raw(y, x),
+      add_raw(x, y2),
+      add_raw_comm(x, y),
+      equiv_trans(
+        add_raw(y, x),
+        add_raw(y2, x),
+        add_raw(x, y2),
+        add_raw_congl(y, y2, x, h),
+        add_raw_comm(y2, x)
+      )
+    )
+  }
+
+  pub theorem add_congl(
+    x: Rat,
+    x2: Rat,
+    y: Rat,
+    h: equiv(x, x2)
+  ): equiv(add(x, y), add(x2, y)) {
+    equiv_trans(
+      add(x, y),
+      add_raw(x, y),
+      add(x2, y),
+      add_val(x, y),
+      equiv_trans(
+        add_raw(x, y),
+        add_raw(x2, y),
+        add(x2, y),
+        add_raw_congl(x, x2, y, h),
+        equiv_symm(add(x2, y), add_raw(x2, y), add_val(x2, y))
+      )
+    )
+  }
+
+  pub theorem add_congr(
+    x: Rat,
+    y: Rat,
+    y2: Rat,
+    h: equiv(y, y2)
+  ): equiv(add(x, y), add(x, y2)) {
+    equiv_trans(
+      add(x, y),
+      add_raw(x, y),
+      add(x, y2),
+      add_val(x, y),
+      equiv_trans(
+        add_raw(x, y),
+        add_raw(x, y2),
+        add(x, y2),
+        add_raw_congr(x, y, y2, h),
+        equiv_symm(add(x, y2), add_raw(x, y2), add_val(x, y2))
+      )
+    )
+  }
+
+  pub theorem add_comm(x: Rat, y: Rat): equiv(add(x, y), add(y, x)) {
+    equiv_trans(
+      add(x, y),
+      add_raw(x, y),
+      add(y, x),
+      add_val(x, y),
+      equiv_trans(
+        add_raw(x, y),
+        add_raw(y, x),
+        add(y, x),
+        add_raw_comm(x, y),
+        equiv_symm(add(y, x), add_raw(y, x), add_val(y, x))
+      )
+    )
+  }
+
+  pub theorem add_assoc(
+    x: Rat,
+    y: Rat,
+    z: Rat
+  ): equiv(add(add(x, y), z), add(x, add(y, z))) {
+    equiv_trans(
+      add(add(x, y), z),
+      add_raw(add(x, y), z),
+      add(x, add(y, z)),
+      add_val(add(x, y), z),
+      equiv_trans(
+        add_raw(add(x, y), z),
+        add_raw(add_raw(x, y), z),
+        add(x, add(y, z)),
+        add_raw_congl(add(x, y), add_raw(x, y), z, add_val(x, y)),
+        equiv_trans(
+          add_raw(add_raw(x, y), z),
+          add_raw(x, add_raw(y, z)),
+          add(x, add(y, z)),
+          add_raw_assoc(x, y, z),
+          equiv_trans(
+            add_raw(x, add_raw(y, z)),
+            add_raw(x, add(y, z)),
+            add(x, add(y, z)),
+            add_raw_congr(
+              x,
+              add_raw(y, z),
+              add(y, z),
+              equiv_symm(add(y, z), add_raw(y, z), add_val(y, z))
+            ),
+            equiv_symm(
+              add(x, add(y, z)),
+              add_raw(x, add(y, z)),
+              add_val(x, add(y, z))
+            )
+          )
+        )
+      )
+    )
+  }
+
+  pub theorem mul_raw_congr(
+    x: Rat,
+    y: Rat,
+    y2: Rat,
+    h: equiv(y, y2)
+  ): equiv(mul_raw(x, y), mul_raw(x, y2)) {
+    equiv_trans(
+      mul_raw(x, y),
+      mul_raw(y, x),
+      mul_raw(x, y2),
+      mul_raw_comm(x, y),
+      equiv_trans(
+        mul_raw(y, x),
+        mul_raw(y2, x),
+        mul_raw(x, y2),
+        mul_raw_congl(y, y2, x, h),
+        mul_raw_comm(y2, x)
+      )
+    )
+  }
+
+  pub theorem mul_congl(
+    x: Rat,
+    x2: Rat,
+    y: Rat,
+    h: equiv(x, x2)
+  ): equiv(mul(x, y), mul(x2, y)) {
+    equiv_trans(
+      mul(x, y),
+      mul_raw(x, y),
+      mul(x2, y),
+      mul_val(x, y),
+      equiv_trans(
+        mul_raw(x, y),
+        mul_raw(x2, y),
+        mul(x2, y),
+        mul_raw_congl(x, x2, y, h),
+        equiv_symm(mul(x2, y), mul_raw(x2, y), mul_val(x2, y))
+      )
+    )
+  }
+
+  pub theorem mul_congr(
+    x: Rat,
+    y: Rat,
+    y2: Rat,
+    h: equiv(y, y2)
+  ): equiv(mul(x, y), mul(x, y2)) {
+    equiv_trans(
+      mul(x, y),
+      mul_raw(x, y),
+      mul(x, y2),
+      mul_val(x, y),
+      equiv_trans(
+        mul_raw(x, y),
+        mul_raw(x, y2),
+        mul(x, y2),
+        mul_raw_congr(x, y, y2, h),
+        equiv_symm(mul(x, y2), mul_raw(x, y2), mul_val(x, y2))
+      )
+    )
+  }
+
+  pub theorem mul_comm(x: Rat, y: Rat): equiv(mul(x, y), mul(y, x)) {
+    equiv_trans(
+      mul(x, y),
+      mul_raw(x, y),
+      mul(y, x),
+      mul_val(x, y),
+      equiv_trans(
+        mul_raw(x, y),
+        mul_raw(y, x),
+        mul(y, x),
+        mul_raw_comm(x, y),
+        equiv_symm(mul(y, x), mul_raw(y, x), mul_val(y, x))
+      )
+    )
+  }
+
+  pub theorem mul_assoc(
+    x: Rat,
+    y: Rat,
+    z: Rat
+  ): equiv(mul(mul(x, y), z), mul(x, mul(y, z))) {
+    equiv_trans(
+      mul(mul(x, y), z),
+      mul_raw(mul(x, y), z),
+      mul(x, mul(y, z)),
+      mul_val(mul(x, y), z),
+      equiv_trans(
+        mul_raw(mul(x, y), z),
+        mul_raw(mul_raw(x, y), z),
+        mul(x, mul(y, z)),
+        mul_raw_congl(mul(x, y), mul_raw(x, y), z, mul_val(x, y)),
+        equiv_trans(
+          mul_raw(mul_raw(x, y), z),
+          mul_raw(x, mul_raw(y, z)),
+          mul(x, mul(y, z)),
+          mul_raw_assoc(x, y, z),
+          equiv_trans(
+            mul_raw(x, mul_raw(y, z)),
+            mul_raw(x, mul(y, z)),
+            mul(x, mul(y, z)),
+            mul_raw_congr(
+              x,
+              mul_raw(y, z),
+              mul(y, z),
+              equiv_symm(mul(y, z), mul_raw(y, z), mul_val(y, z))
+            ),
+            equiv_symm(
+              mul(x, mul(y, z)),
+              mul_raw(x, mul(y, z)),
+              mul_val(x, mul(y, z))
+            )
+          )
+        )
+      )
+    )
+  }
+
+  pub theorem add_zero(x: Rat): equiv(add(x, zero()), x) {
+    equiv_trans(
+      add(x, zero()),
+      add_raw(x, zero()),
+      x,
+      add_val(x, zero()),
+      add_raw_zero(x)
+    )
+  }
+
+  pub theorem add_neg(x: Rat): equiv(add(x, neg(x)), zero()) {
+    equiv_trans(
+      add(x, neg(x)),
+      add_raw(x, neg(x)),
+      zero(),
+      add_val(x, neg(x)),
+      add_raw_neg(x)
+    )
+  }
+
+  pub theorem mul_one(x: Rat): equiv(mul(x, one()), x) {
+    equiv_trans(
+      mul(x, one()),
+      mul_raw(x, one()),
+      x,
+      mul_val(x, one()),
+      mul_raw_one(x)
+    )
+  }
+
+  pub theorem mul_add(
+    x: Rat,
+    y: Rat,
+    z: Rat
+  ): equiv(mul(x, add(y, z)), add(mul(x, y), mul(x, z))) {
+    equiv_trans(
+      mul(x, add(y, z)),
+      mul_raw(x, add(y, z)),
+      add(mul(x, y), mul(x, z)),
+      mul_val(x, add(y, z)),
+      equiv_trans(
+        mul_raw(x, add(y, z)),
+        mul_raw(x, add_raw(y, z)),
+        add(mul(x, y), mul(x, z)),
+        mul_raw_congr(x, add(y, z), add_raw(y, z), add_val(y, z)),
+        equiv_trans(
+          mul_raw(x, add_raw(y, z)),
+          add_raw(mul_raw(x, y), mul_raw(x, z)),
+          add(mul(x, y), mul(x, z)),
+          mul_raw_add(x, y, z),
+          equiv_trans(
+            add_raw(mul_raw(x, y), mul_raw(x, z)),
+            add_raw(mul(x, y), mul_raw(x, z)),
+            add(mul(x, y), mul(x, z)),
+            add_raw_congl(
+              mul_raw(x, y),
+              mul(x, y),
+              mul_raw(x, z),
+              equiv_symm(mul(x, y), mul_raw(x, y), mul_val(x, y))
+            ),
+            equiv_trans(
+              add_raw(mul(x, y), mul_raw(x, z)),
+              add_raw(mul(x, y), mul(x, z)),
+              add(mul(x, y), mul(x, z)),
+              add_raw_congr(
+                mul(x, y),
+                mul_raw(x, z),
+                mul(x, z),
+                equiv_symm(mul(x, z), mul_raw(x, z), mul_val(x, z))
+              ),
+              equiv_symm(
+                add(mul(x, y), mul(x, z)),
+                add_raw(mul(x, y), mul(x, z)),
+                add_val(mul(x, y), mul(x, z))
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+// ---- the order ------------------------------------------------------------------
+
+// `x <= y`, as `Rat::le` decides it.
+pub def RatLe(
+  x: Rat,
+  y: Rat
+): Prop := IntLe(
+  Int::mul(Rat::num(x), IntOfNat(Rat::den(y))),
+  Int::mul(Rat::num(y), IntOfNat(Rat::den(x)))
+)
+
+module Rat {
+  pub theorem le_refl(x: Rat): RatLe(x, x) {
+    Int::le_refl(Int::mul(num(x), IntOfNat(den(x))))
+  }
+
+  pub theorem le_antisymm(x: Rat, y: Rat, l1: RatLe(x, y), l2: RatLe(y, x)): equiv(x, y) {
+    Int::le_antisymm(
+      Int::mul(num(x), IntOfNat(den(y))),
+      Int::mul(num(y), IntOfNat(den(x))),
+      l1,
+      l2
+    )
+  }
+
+  pub theorem le_total(x: Rat, y: Rat): RatLe(x, y) ∨ RatLe(y, x) {
+    Int::le_total(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))))
+  }
+
+  pub theorem add_le(
+    x: Rat,
+    y: Rat,
+    z: Rat,
+    l: RatLe(x, y)
+  ): RatLe(add(x, z), add(y, z)) {
+    le_congr(
+      add(x, z),
+      add_raw(y, z),
+      add(y, z),
+      equiv_symm(add(y, z), add_raw(y, z), add_val(y, z)),
+      le_congl(
+        add_raw(x, z),
+        add(x, z),
+        add_raw(y, z),
+        equiv_symm(add(x, z), add_raw(x, z), add_val(x, z)),
+        le_add_raw(x, y, z, l)
+      )
+    )
+  }
+
+  pub theorem mul_nonneg(
+    x: Rat,
+    y: Rat,
+    l1: RatLe(zero(), x),
+    l2: RatLe(zero(), y)
+  ): RatLe(zero(), mul(x, y)) {
+    le_congr(
+      zero(),
+      mul_raw(x, y),
+      mul(x, y),
+      equiv_symm(mul(x, y), mul_raw(x, y), mul_val(x, y)),
+      mul_raw_nonneg(x, y, l1, l2)
+    )
+  }
+}
+
+module Bool {
+  // Two decisions that hold together are the same.
+  pub theorem eq_of_iff(
+    a: Bool,
+    b: Bool,
+    f: (a = true) -> (b = true),
+    g: (b = true) -> (a = true)
+  ): a = b {
+    match a: a = b {
+      true => Eq::sym(f(Refl))
+      false => match b: false = b {
+        false => Refl
+        true => False::elim(false_ne_true(g(Refl)))
+      }
+    }
+  }
+}
+
+module Rat {
+  // `Rat::le` gives the same answer for the same numbers.
+  pub theorem le_resp_l(
+    x: Rat,
+    x2: Rat,
+    y: Rat,
+    h: equiv(x, x2)
+  ): le(x, y) = le(x2, y) {
+    Bool::eq_of_iff(
+      le(x, y),
+      le(x2, y),
+      (l: le(x, y) = true) => le_congl(x, x2, y, h, l),
+      (l: le(x2, y) = true) => le_congl(x2, x, y, equiv_symm(x, x2, h), l)
+    )
+  }
+
+  pub theorem le_resp_r(
+    x: Rat,
+    y: Rat,
+    y2: Rat,
+    h: equiv(y, y2)
+  ): le(x, y) = le(x, y2) {
+    Bool::eq_of_iff(
+      le(x, y),
+      le(x, y2),
+      (l: le(x, y) = true) => le_congr(x, y, y2, h, l),
+      (l: le(x, y2) = true) => le_congr(x, y2, y, equiv_symm(y, y2, h), l)
+    )
+  }
+
+  // `x <= y` holds of any `x2` that is the same number as `x`.
+  pub theorem le_congl(
+    x: Rat,
+    x2: Rat,
+    y: Rat,
+    h: equiv(x, x2),
+    l: RatLe(x, y)
+  ): RatLe(x2, y) {
+    match x: RatLe(x2, y) {
+      Mk(a, p) => {
+        match x2: RatLe(x2, y) {
+          Mk(a2, p2) => {
+            match y: RatLe(Rat::Mk(a2, p2), y) {
+              Mk(b, q) => {
+                let l1: IntLe(
+                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(p2))),
+                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2)))
+                ) := Int::le_mul_pos(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  p2,
+                  l
+                )
+                let s1: Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p2))
+                ) = Int::mul(
+                  Int::mul(a, IntOfNat(Succ(p2))),
+                  IntOfNat(Succ(q))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p2))
+                ) = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), IntOfNat(Succ(q))) {}
+                let s2: Int::mul(
+                  Int::mul(a, IntOfNat(Succ(p2))),
+                  IntOfNat(Succ(q))
+                ) = Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q))
+                ) := Eq::congr(⟦Int::mul(□, IntOfNat(Succ(q)))⟧, h)
+                let s3: Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q))
+                ) = Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a2, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q))
+                ) = Int::mul(Int::mul(a2, IntOfNat(Succ(q))), IntOfNat(Succ(p))) {}
+                let s4: Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(p2))
+                ) = Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p2))),
+                  IntOfNat(Succ(p))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(p2))
+                ) = Int::mul(Int::mul(b, IntOfNat(Succ(p2))), IntOfNat(Succ(p))) {}
+                Int::le_mul_cancel(
+                  Int::mul(a2, IntOfNat(Succ(q))),
+                  Int::mul(b, IntOfNat(Succ(p2))),
+                  p,
+                  Int::le_rw(
+                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(p2))),
+                    Int::mul(Int::mul(a2, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p2))), IntOfNat(Succ(p))),
+                    Eq::trans(s1, Eq::trans(s2, s3)),
+                    s4,
+                    l1
+                  )
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem le_congr(
+    x: Rat,
+    y: Rat,
+    y2: Rat,
+    h: equiv(y, y2),
+    l: RatLe(x, y)
+  ): RatLe(x, y2) {
+    match x: RatLe(x, y2) {
+      Mk(a, p) => {
+        match y: RatLe(Rat::Mk(a, p), y2) {
+          Mk(b, q) => {
+            match y2: RatLe(Rat::Mk(a, p), y2) {
+              Mk(b2, q2) => {
+                let l1: IntLe(
+                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(q2))),
+                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(q2)))
+                ) := Int::le_mul_pos(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  q2,
+                  l
+                )
+                let s1: Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(q2))
+                ) = Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q2))),
+                  IntOfNat(Succ(q))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(q2))
+                ) = Int::mul(Int::mul(a, IntOfNat(Succ(q2))), IntOfNat(Succ(q))) {}
+                let t1: Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q2))
+                ) = Int::mul(
+                  Int::mul(b, IntOfNat(Succ(q2))),
+                  IntOfNat(Succ(p))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q2))
+                ) = Int::mul(Int::mul(b, IntOfNat(Succ(q2))), IntOfNat(Succ(p))) {}
+                let t2: Int::mul(
+                  Int::mul(b, IntOfNat(Succ(q2))),
+                  IntOfNat(Succ(p))
+                ) = Int::mul(
+                  Int::mul(b2, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p))
+                ) := Eq::congr(⟦Int::mul(□, IntOfNat(Succ(p)))⟧, h)
+                let t3: Int::mul(
+                  Int::mul(b2, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p))
+                ) = Int::mul(
+                  Int::mul(b2, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(b2, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p))
+                ) = Int::mul(Int::mul(b2, IntOfNat(Succ(p))), IntOfNat(Succ(q))) {}
+                Int::le_mul_cancel(
+                  Int::mul(a, IntOfNat(Succ(q2))),
+                  Int::mul(b2, IntOfNat(Succ(p))),
+                  q,
+                  Int::le_rw(
+                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(q2))),
+                    Int::mul(Int::mul(a, IntOfNat(Succ(q2))), IntOfNat(Succ(q))),
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(q2))),
+                    Int::mul(Int::mul(b2, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    s1,
+                    Eq::trans(t1, Eq::trans(t2, t3)),
+                    l1
+                  )
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem le_trans(x: Rat, y: Rat, z: Rat, l1: RatLe(x, y), l2: RatLe(y, z)): RatLe(x, z) {
+    match x: RatLe(x, z) {
+      Mk(a, p) => {
+        match y: RatLe(Rat::Mk(a, p), z) {
+          Mk(b, q) => {
+            match z: RatLe(Rat::Mk(a, p), z) {
+              Mk(c, r) => {
+                let l1: IntLe(
+                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(r)))
+                ) := Int::le_mul_pos(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  r,
+                  l1
+                )
+                let l2: IntLe(
+                  Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
+                  Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p)))
+                ) := Int::le_mul_pos(
+                  Int::mul(b, IntOfNat(Succ(r))),
+                  Int::mul(c, IntOfNat(Succ(q))),
+                  p,
+                  l2
+                )
+                let s: Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(r))
+                ) = Int::mul(
+                  Int::mul(b, IntOfNat(Succ(r))),
+                  IntOfNat(Succ(p))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(r))
+                ) = Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))) {}
+                let l3: IntLe(
+                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                  Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p)))
+                ) := Int::le_trans(
+                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                  Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
+                  Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
+                  Int::le_rw(
+                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(r))),
+                    Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
+                    Refl,
+                    s,
+                    l1
+                  ),
+                  l2
+                )
+                let e1: Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(r))
+                ) = Int::mul(
+                  Int::mul(a, IntOfNat(Succ(r))),
+                  IntOfNat(Succ(q))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(r))
+                ) = Int::mul(Int::mul(a, IntOfNat(Succ(r))), IntOfNat(Succ(q))) {}
+                let e2: Int::mul(
+                  Int::mul(c, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p))
+                ) = Int::mul(
+                  Int::mul(c, IntOfNat(Succ(p))),
+                  IntOfNat(Succ(q))
+                ) := by int_norm!(): Int::mul(
+                  Int::mul(c, IntOfNat(Succ(q))),
+                  IntOfNat(Succ(p))
+                ) = Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))) {}
+                Int::le_mul_cancel(
+                  Int::mul(a, IntOfNat(Succ(r))),
+                  Int::mul(c, IntOfNat(Succ(p))),
+                  q,
+                  Int::le_rw(
+                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                    Int::mul(Int::mul(a, IntOfNat(Succ(r))), IntOfNat(Succ(q))),
+                    Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
+                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    e1,
+                    e2,
+                    l3
+                  )
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem le_add_raw(
+    x: Rat,
+    y: Rat,
+    z: Rat,
+    l: RatLe(x, y)
+  ): RatLe(add_raw(x, z), add_raw(y, z)) {
+    match x: RatLe(add_raw(x, z), add_raw(y, z)) {
+      Mk(a, p) => {
+        match y: RatLe(add_raw(Rat::Mk(a, p), z), add_raw(y, z)) {
+          Mk(b, q) => {
+            match z: RatLe(add_raw(Rat::Mk(a, p), z), add_raw(Rat::Mk(b, q), z)) {
+              Mk(c, r) => {
+                let l1: IntLe(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(q))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(b, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  )
+                ) := Int::le_mul_pos(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  Nat::add(Nat::mul(Succ(r), r), r),
+                  l
+                )
+                let l2: IntLe(
+                  Int::add(
+                    Int::mul(
+                      Int::mul(a, IntOfNat(Succ(q))),
+                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                    ),
+                    Int::mul(
+                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                      IntOfNat(Succ(r))
+                    )
+                  ),
+                  Int::add(
+                    Int::mul(
+                      Int::mul(b, IntOfNat(Succ(p))),
+                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                    ),
+                    Int::mul(
+                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                      IntOfNat(Succ(r))
+                    )
+                  )
+                ) := Int::le_add(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(q))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(b, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    IntOfNat(Succ(r))
+                  ),
+                  l1
+                )
+                let e1: Int::add(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(q))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    IntOfNat(Succ(r))
+                  )
+                ) = Int::mul(
+                  Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
+                  Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
+                ) := by int_norm!(): Int::add(
+                  Int::mul(
+                    Int::mul(a, IntOfNat(Succ(q))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    IntOfNat(Succ(r))
+                  )
+                ) = Int::mul(
+                  Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
+                  Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
+                ) {}
+                let e2: Int::add(
+                  Int::mul(
+                    Int::mul(b, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    IntOfNat(Succ(r))
+                  )
+                ) = Int::mul(
+                  Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+                ) := by int_norm!(): Int::add(
+                  Int::mul(
+                    Int::mul(b, IntOfNat(Succ(p))),
+                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                  ),
+                  Int::mul(
+                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                    IntOfNat(Succ(r))
+                  )
+                ) = Int::mul(
+                  Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+                ) {}
+                Int::le_rw(
+                  Int::add(
+                    Int::mul(
+                      Int::mul(a, IntOfNat(Succ(q))),
+                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                    ),
+                    Int::mul(
+                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                      IntOfNat(Succ(r))
+                    )
+                  ),
+                  Int::mul(
+                    Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
+                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
+                  ),
+                  Int::add(
+                    Int::mul(
+                      Int::mul(b, IntOfNat(Succ(p))),
+                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                    ),
+                    Int::mul(
+                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                      IntOfNat(Succ(r))
+                    )
+                  ),
+                  Int::mul(
+                    Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+                  ),
+                  e1,
+                  e2,
+                  l2
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem mul_raw_nonneg(
+    x: Rat,
+    y: Rat,
+    l1: RatLe(zero(), x),
+    l2: RatLe(zero(), y)
+  ): RatLe(zero(), mul_raw(x, y)) {
+    match x: RatLe(zero(), mul_raw(x, y)) {
+      Mk(a, p) => {
+        match y: RatLe(zero(), mul_raw(Rat::Mk(a, p), y)) {
+          Mk(b, q) => {
+            let z1: Int::mul(
+              0,
+              IntOfNat(Succ(p))
+            ) = 0 := by int_norm!(): Int::mul(0, IntOfNat(Succ(p))) = 0 {}
+            let o1: Int::mul(a, 1) = a := by int_norm!(): Int::mul(a, 1) = a {}
+            let z2: Int::mul(
+              0,
+              IntOfNat(Succ(q))
+            ) = 0 := by int_norm!(): Int::mul(0, IntOfNat(Succ(q))) = 0 {}
+            let o2: Int::mul(b, 1) = b := by int_norm!(): Int::mul(b, 1) = b {}
+            let ha: IntLe(
+              0,
+              a
+            ) := Int::le_rw(
+              Int::mul(0, IntOfNat(Succ(p))),
+              0,
+              Int::mul(a, 1),
+              a,
+              z1,
+              o1,
+              l1
+            )
+            let hb: IntLe(
+              0,
+              b
+            ) := Int::le_rw(
+              Int::mul(0, IntOfNat(Succ(q))),
+              0,
+              Int::mul(b, 1),
+              b,
+              z2,
+              o2,
+              l2
+            )
+            let z3: 0 = Int::mul(
+              0,
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) := by int_norm!(): 0 = Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
+            let o3: Int::mul(
+              a,
+              b
+            ) = Int::mul(
+              Int::mul(a, b),
+              1
+            ) := by int_norm!(): Int::mul(a, b) = Int::mul(Int::mul(a, b), 1) {}
+            Int::le_rw(
+              0,
+              Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))),
+              Int::mul(a, b),
+              Int::mul(Int::mul(a, b), 1),
+              z3,
+              o3,
+              Int::mul_nonneg(a, b, ha, hb)
+            )
+          }
+        }
+      }
+    }
+  }
+}

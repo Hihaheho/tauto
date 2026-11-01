@@ -1,0 +1,100 @@
+import "types_decl.taut"
+
+// The two interpretations of an annotation: constructor kinds take precedence;
+// annotations that parse as neither are row binders, not value-type binders.
+pub(open) inductive SignatureGenericBound: (
+  Option(Option(Text)),
+  Option(Pair(Kind, Kind)),
+  Option(Kind)
+) -> Prop {
+  SignatureBoundMissing: SignatureGenericBound(None, None, Some(KindAffine))
+  SignatureBoundDefault: SignatureGenericBound(Some(None), None, Some(KindAffine))
+  SignatureBoundWritten(
+    spelling: Text
+  ): SignatureGenericBound(Some(Some(spelling)), kind_parse_ctor(spelling), kind_parse(spelling))
+}
+pub fn signature_acc_generics(acc: SigGenerics): List(Pair(Text, Kind)) { acc.generics }
+pub fn signature_acc_map(acc: SigGenerics): Ordmap(Text, Ty) { acc.map }
+pub fn signature_acc_ctors(acc: SigGenerics): List(Pair(Text, Kind)) { acc.ctors }
+pub fn signature_bind_value(name: Text, kind: Kind, acc: SigGenerics): SigGenerics {
+  SigGenericsMk(
+    Cons(Pair { fst: name, snd: kind }, acc.generics),
+    Ordmap::insert(acc.map, name, TyParam(name, kind), Ordmap::compare_text),
+    acc.ctors
+  )
+}
+pub fn signature_bind_constructor(
+  name: Text,
+  argument: Kind,
+  result: Kind,
+  acc: SigGenerics
+): SigGenerics {
+  SigGenericsMk(
+    Cons(Pair { fst: name, snd: result }, acc.generics),
+    Ordmap::insert(acc.map, name, TyParam(name, result), Ordmap::compare_text),
+    Cons(Pair { fst: name, snd: argument }, acc.ctors)
+  )
+}
+pub(open) inductive SignatureGenerics: (
+  List(Text),
+  List(Option(Text)),
+  Nat,
+  SigGenerics,
+  SigGenerics
+) -> Prop {
+  SignatureGenericsNil(
+    bounds: List(Option(Text)),
+    index: Nat,
+    acc: SigGenerics
+  ): SignatureGenerics(Nil, bounds, index, acc, acc)
+  SignatureGenericsValue(
+    name: Text,
+    rest: List(Text),
+    bounds: List(Option(Text)),
+    index: Nat,
+    initial: SigGenerics,
+    final: SigGenerics,
+    kind: Kind,
+    bound: SignatureGenericBound(nth_item(bounds, index), None, Some(kind)),
+    tail: SignatureGenerics(
+      rest,
+      bounds,
+      Nat::add(index, 1),
+      signature_bind_value(name, kind, initial),
+      final
+    )
+  ): SignatureGenerics(Cons(name, rest), bounds, index, initial, final)
+  SignatureGenericsConstructor(
+    name: Text,
+    rest: List(Text),
+    bounds: List(Option(Text)),
+    index: Nat,
+    initial: SigGenerics,
+    final: SigGenerics,
+    argument: Kind,
+    result: Kind,
+    ordinary: Option(Kind),
+    bound: SignatureGenericBound(
+      nth_item(bounds, index),
+      Some(Pair { fst: argument, snd: result }),
+      ordinary
+    ),
+    tail: SignatureGenerics(
+      rest,
+      bounds,
+      Nat::add(index, 1),
+      signature_bind_constructor(name, argument, result, initial),
+      final
+    )
+  ): SignatureGenerics(Cons(name, rest), bounds, index, initial, final)
+  SignatureGenericsRow(
+    name: Text,
+    rest: List(Text),
+    bounds: List(Option(Text)),
+    index: Nat,
+    initial: SigGenerics,
+    final: SigGenerics,
+    bound: SignatureGenericBound(nth_item(bounds, index), None, None),
+    tail: SignatureGenerics(rest, bounds, Nat::add(index, 1), initial, final)
+  ): SignatureGenerics(Cons(name, rest), bounds, index, initial, final)
+}

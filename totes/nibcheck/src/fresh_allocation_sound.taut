@@ -1,0 +1,86 @@
+import "local_parameters_allocation.taut"
+
+pub def TypeListAllocation(
+  c: Checker,
+  m: Mut1(List(Ty), Checker)
+): Prop := And(AllocationAdvance(c, m), TypeListAllocated(ck_next_of(ck_st(m)), ck_val(m)))
+pub theorem ck_fresh_allocation_result(
+  c: Checker,
+  state: CheckerAllocation(c)
+): AllocationResult(c, ck_fresh(c)) {
+  AndIntro(
+    AndIntro(Nat::le_succ(ck_next_of(c)), ck_fresh_allocation(c, state)),
+    ck_fresh_type_allocated(c)
+  )
+}
+pub theorem ck_fresh_int_allocation_result(
+  c: Checker,
+  state: CheckerAllocation(c)
+): AllocationResult(c, ck_fresh_int(c)) {
+  AndIntro(
+    AndIntro(Nat::le_succ(ck_next_of(c)), ck_fresh_allocation(c, state)),
+    ck_fresh_int_type_allocated(c)
+  )
+}
+pub theorem allocation_list_start(
+  c: Checker,
+  next: Checker,
+  m: Mut1(List(Ty), Checker),
+  advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true,
+  tail: TypeListAllocation(next, m)
+): TypeListAllocation(
+  c,
+  m
+) { AndIntro(allocation_advance_start(c, next, m, advanced, And::left(tail)), And::right(tail)) }
+pub fn allocation_list_cons(head: Ty, m: Mut1(List(Ty), Checker)): Mut1(List(Ty), Checker) {
+  match m: Mut1(List(Ty), Checker) { mut1(tail, next) => mut1(Cons(head, tail), next) }
+}
+pub theorem fresh_alloc_list_cons(
+  c: Checker,
+  head: Ty,
+  m: Mut1(List(Ty), Checker),
+  bounded: TypeAllocated(ck_next_of(c), head),
+  tail: TypeListAllocation(c, m)
+): TypeListAllocation(c, allocation_list_cons(head, m)) {
+  match m: TypeListAllocation(c, allocation_list_cons(head, m)) {
+    mut1(types, next) => AndIntro(
+      And::left(tail),
+      AndIntro(
+        type_allocated_weaken(
+          head,
+          ck_next_of(c),
+          ck_next_of(next),
+          And::left(And::left(tail)),
+          bounded
+        ),
+        And::right(tail)
+      )
+    )
+  }
+}
+pub theorem ck_fresh_each_allocation(
+  gs: List(Text),
+  c: Checker,
+  state: CheckerAllocation(c)
+): TypeListAllocation(c, ck_fresh_each(gs, c)) {
+  match gs: TypeListAllocation(c, ck_fresh_each(gs, c)) {
+    Nil => AndIntro(allocation_advance_return(c, Nil, state), Trivial)
+    Cons(name, rest) => Eq::subst(
+      (result: Mut1(List(Ty), Checker)) => TypeListAllocation(c, result),
+      Eq::sym(pattern_fresh_unf(name, rest, c)),
+      allocation_list_start(
+        c,
+        ck_st(ck_fresh(c)),
+        allocation_list_cons(TyVar(ck_next_of(c)), ck_fresh_each(rest, ck_st(ck_fresh(c)))),
+        Nat::le_succ(ck_next_of(c)),
+        fresh_alloc_list_cons(
+          ck_st(ck_fresh(c)),
+          TyVar(ck_next_of(c)),
+          ck_fresh_each(rest, ck_st(ck_fresh(c))),
+          ck_fresh_type_allocated(c),
+          ck_fresh_each_allocation(rest, ck_st(ck_fresh(c)), ck_fresh_allocation(c, state))
+        )
+      )
+    )
+  }
+}

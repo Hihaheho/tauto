@@ -1,9 +1,10 @@
 import "../../surface/src/surface.taut"
 import "types.taut"
 import "bindings.taut"
+import std::Text
 
-inductive RustgenFunction(): Type {
-  rustgen_function(
+pub(open) inductive RustgenFunction: Type {
+  Mk(
     name: Text,
     params: List(RustgenBinding),
     result: RustgenType,
@@ -13,64 +14,64 @@ inductive RustgenFunction(): Type {
   ): RustgenFunction
 }
 
-fn rustgen_find_function(name: Text, functions: List(RustgenFunction)) -> Option(RustgenFunction) {
-  match functions -> Option(RustgenFunction) {
+pub fn rustgen_find_function(
+  name: Text,
+  functions: List(RustgenFunction)
+): Option(RustgenFunction) {
+  match functions: Option(RustgenFunction) {
     Nil => None
-    Cons(
-      function,
-      rest
-    ) => if name == function.name { Some(function) } else { rustgen_find_function(name, rest) }
+    Cons(function, rest) => if name == function.name { Some(function) } else {
+      rustgen_find_function(name, rest)
+    }
   }
 }
 
 // Every UTF-8 byte has its own decimal component, including underscores.
-fn rustgen_ident_in(k: Nat, name: Text, at: Nat) -> Text {
-  match k -> Text {
-    zero => ""
-    succ(
-      j
-    ) => text_concat_all(
+pub fn rustgen_ident_in(k: Nat, name: Text, at: Nat): Text {
+  match k: Text {
+    Zero => ""
+    Succ(j) => Text::concat_all(
       Cons(
         "_",
-        Cons(text_of_nat(text_byte_value(name, at)), Cons(rustgen_ident_in(j, name, at + 1), Nil))
+        Cons(Text::of_nat(Text::byte_value(name, at)), Cons(rustgen_ident_in(j, name, at + 1), Nil))
       )
     )
   }
 }
 
-fn rustgen_ident(name: Text) -> Text {
-  text_concat("rg", rustgen_ident_in(text_len(name), name, 0))
+pub fn rustgen_ident(name: Text): Text {
+  Text::concat("rg", rustgen_ident_in(Text::len(name), name, 0))
 }
 
-fn rustgen_wrapped(left: Text, body: Text, right: Text) -> Text {
-  text_concat_all(Cons(left, Cons(body, Cons(right, Nil))))
+pub fn rustgen_wrapped(left: Text, body: Text, right: Text): Text {
+  Text::concat_all(Cons(left, Cons(body, Cons(right, Nil))))
 }
 
-fn rustgen_location_in(
+pub fn rustgen_location_in(
   k: Nat,
   source: Text,
   at: Nat,
   end: Nat,
   line: Nat,
   col: Nat
-) -> Pair(Nat, Nat) {
-  match k -> Pair(Nat, Nat) {
-    zero => Pair { fst: line, snd: col }
-    succ(j) => if at >= end { Pair { fst: line, snd: col } } else {
-      match text_decode(source, at) -> Pair(Nat, Nat) {
-        None => Pair { fst: line, snd: col }
+): @line Nat × @col Nat {
+  match k: @line Nat × @col Nat {
+    Zero => #(@line line, @col col)
+    Succ(j) => if at >= end { #(@line line, @col col) } else {
+      match text_decode(source, at): @line Nat × @col Nat {
+        None => #(@line line, @col col)
 
-        Some(point) => if point.fst == 10 {
-          rustgen_location_in(j, source, at + point.snd, end, line + 1, 1)
-        } else { rustgen_location_in(j, source, at + point.snd, end, line, col + 1) }
+        Some(#(@code code, @len len)) => if code == 10 {
+          rustgen_location_in(j, source, at + len, end, line + 1, 1)
+        } else { rustgen_location_in(j, source, at + len, end, line, col + 1) }
       }
     }
   }
 }
 
-fn rustgen_location(source: Text, at: Nat) -> Text {
-  let point = rustgen_location_in(text_len(source) + 1, source, 0, at, 1, 1)
-  text_concat_all(
+pub fn rustgen_location(source: Text, at: Nat): Text {
+  let point := rustgen_location_in(Text::len(source) + 1, source, 0, at, 1, 1)
+  Text::concat_all(
     Cons(
       "tauto_rt::Loc { file: ",
       Cons(
@@ -82,8 +83,8 @@ fn rustgen_location(source: Text, at: Nat) -> Text {
             Cons(
               ", line: ",
               Cons(
-                text_of_nat(point.fst),
-                Cons(", col: ", Cons(text_of_nat(point.snd), Cons(" }", Nil)))
+                Text::of_nat((point: @line Nat)),
+                Cons(", col: ", Cons(Text::of_nat((point: @col Nat)), Cons(" }", Nil)))
               )
             )
           )
@@ -93,10 +94,12 @@ fn rustgen_location(source: Text, at: Nat) -> Text {
   )
 }
 
-fn rustgen_call_name(term: SurfaceTerm) -> Option(Text) {
-  match term.kind -> Option(Text) {
+pub fn rustgen_call_name(term: SurfaceTerm): Option(Text) {
+  match term.kind: Option(Text) {
     SkVar(name) => Some(name)
     SkNat(unused0) => None
+    SkFloat(unused0) => None
+    SkRow(unused0) => None
     SkText(unused0) => None
     SkBool(unused0) => None
     SkApp(unused0, unused1) => None
@@ -104,13 +107,15 @@ fn rustgen_call_name(term: SurfaceTerm) -> Option(Text) {
     SkExists(unused0, unused1, unused2) => None
     SkLam(unused0, unused1) => None
     SkUnion(unused0) => None
+    SkProduct(unused0) => None
+    SkProject(unused0, unused1) => None
     SkTagged(unused0, unused1) => None
     SkIf(unused0, unused1, unused2) => None
     SkField(unused0, unused1) => None
     SkBlock(unused0) => None
     SkPerform(unused0, unused1) => None
     SkHandle(unused0, unused1) => None
-    SkBudget(unused0, unused1) => None
+    SkBudget(unused0, unused1, unused2) => None
     SkMatch(unused0, unused1, unused2, unused3) => None
     SkHole(unused0) => None
     SkRecord(unused0, unused1) => None
@@ -127,11 +132,20 @@ fn rustgen_call_name(term: SurfaceTerm) -> Option(Text) {
 }
 
 mutual {
-  fn rustgen_type_name_in(k: Nat, ty: RustgenType) -> Text {
-    match k -> Text {
-      zero => "compile_error!(\"type depth exceeded\")"
-      succ(j) => match ty -> Text {
-        RustgenNumber(id, value) => "_"
+  pub fn rustgen_type_name_in(k: Nat, ty: RustgenType): Text {
+    match k: Text {
+      Zero => "compile_error!(\"type depth exceeded\")"
+      Succ(j) => match ty: Text {
+        RustgenCallable(params, result) => Text::concat_all(
+          Cons(
+            "std::rc::Rc<dyn Fn(",
+            Cons(
+              text_join(rustgen_type_names_in(j, params), ","),
+              Cons(") -> ", Cons(rustgen_type_name_in(j, result), Cons(">", Nil)))
+            )
+          )
+        )
+        RustgenNumber(Id, value) => "_"
         RustgenInt => rustgen_scalar_name(ty)
         RustgenBool => rustgen_scalar_name(ty)
         RustgenText => rustgen_scalar_name(ty)
@@ -139,12 +153,9 @@ mutual {
         RustgenVar(name) => rustgen_ident(name)
         RustgenMeta(name) => "_"
         RustgenNamed(name) => rustgen_wrapped("std::rc::Rc<", rustgen_ident(name), ">")
-        RustgenApply(
-          name,
-          args
-        ) => rustgen_wrapped(
+        RustgenApply(name, args) => rustgen_wrapped(
           "std::rc::Rc<",
-          text_concat(
+          Text::concat(
             rustgen_ident(name),
             rustgen_wrapped("<", text_join(rustgen_type_names_in(j, args), ","), ">")
           ),
@@ -153,84 +164,120 @@ mutual {
       }
     }
   }
-  fn rustgen_type_names_in(k: Nat, types: List(RustgenType)) -> List(Text) {
-    match k -> List(Text) {
-      zero => Nil
-      succ(j) => match types -> List(Text) {
+  pub fn rustgen_type_names_in(k: Nat, types: List(RustgenType)): List(Text) {
+    match k: List(Text) {
+      Zero => Nil
+      Succ(j) => match types: List(Text) {
         Nil => Nil
         Cons(ty, rest) => Cons(rustgen_type_name_in(j, ty), rustgen_type_names_in(j, rest))
       }
     }
   }
 }
-fn rustgen_type_name(ty: RustgenType) -> Text { rustgen_type_name_in(10000, ty) }
+pub fn rustgen_type_name(ty: RustgenType): Text { rustgen_type_name_in(10000, ty) }
+
+// A written function type with an omitted row denotes the empty row.
+// An absent function type is not a callable contract.
+pub fn rustgen_callable_effects(effects: Option(List(Text))): Bool {
+  match effects: Bool {
+    None => true
+    Some(names) => List::length(names) == 0
+  }
+}
 
 mutual {
-  fn rustgen_written_in(k: Nat, term: SurfaceTerm) -> RustgenResult(RustgenType) {
-    match k -> RustgenResult(RustgenType) {
-      zero => RustgenErr("type depth exceeded")
-      succ(j) => match term.kind -> RustgenResult(RustgenType) {
-        SkApp(head, args) => match rustgen_call_name(head) -> RustgenResult(RustgenType) {
+  pub fn rustgen_written_in(k: Nat, term: SurfaceTerm): RustgenResult(RustgenType) {
+    match k: RustgenResult(RustgenType) {
+      Zero => RustgenErr("type depth exceeded")
+      Succ(j) => match term.kind: RustgenResult(RustgenType) {
+        SkApp(head, args) => match rustgen_call_name(head): RustgenResult(RustgenType) {
           None => RustgenErr("type application requires a named family")
-          Some(name) => match rustgen_written_args(j, args) -> RustgenResult(RustgenType) {
-            RustgenErr(message) => RustgenErr(message)
+          Some(name) => match rustgen_written_args(j, args): RustgenResult(RustgenType) {
+            RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(types) => RustgenOk(RustgenApply(name, types))
           }
         }
-        SkVar(
-          name
-        ) => if name == "i64" { RustgenOk(
-          RustgenInt
-        ) } else if name == "Nat" { RustgenOk(
-          RustgenNat
-        ) } else if name == "Bool" || name == "Yn" { RustgenOk(
-          RustgenBool
-        ) } else if name == "Text" { RustgenOk(RustgenText) } else { RustgenOk(RustgenNamed(name)) }
-        SkNat(unused0) => RustgenErr("unsupported type form")
-        SkText(unused0) => RustgenErr("unsupported type form")
-        SkBool(unused0) => RustgenErr("unsupported type form")
-        SkPi(unused0, unused1, unused2) => RustgenErr("unsupported type form")
-        SkExists(unused0, unused1, unused2) => RustgenErr("unsupported type form")
-        SkLam(unused0, unused1) => RustgenErr("unsupported type form")
-        SkUnion(unused0) => RustgenErr("unsupported type form")
-        SkTagged(unused0, unused1) => RustgenErr("unsupported type form")
-        SkIf(unused0, unused1, unused2) => RustgenErr("unsupported type form")
-        SkField(unused0, unused1) => RustgenErr("unsupported type form")
-        SkBlock(unused0) => RustgenErr("unsupported type form")
-        SkPerform(unused0, unused1) => RustgenErr("unsupported type form")
-        SkHandle(unused0, unused1) => RustgenErr("unsupported type form")
-        SkBudget(unused0, unused1) => RustgenErr("unsupported type form")
-        SkMatch(unused0, unused1, unused2, unused3) => RustgenErr("unsupported type form")
-        SkHole(unused0) => RustgenErr("unsupported type form")
-        SkRecord(unused0, unused1) => RustgenErr("unsupported type form")
-        SkBorrow(unused0, unused1) => RustgenErr("unsupported type form")
-        SkFnKind(unused0, unused1) => RustgenErr("unsupported type form")
-        SkBorrowLam(unused0, unused1) => RustgenErr("unsupported type form")
-        SkMacroCall(unused0, unused1) => RustgenErr("unsupported type form")
-        SkQuote(unused0, unused1) => RustgenErr("unsupported type form")
-        SkSplice(unused0) => RustgenErr("unsupported type form")
-        SkSyntaxLit(unused0, unused1) => RustgenErr("unsupported type form")
-        SkStep(
-          unused0,
-          unused1,
-          unused2,
-          unused3,
-          unused4,
-          unused5
-        ) => RustgenErr("unsupported type form")
-        SkOther(why) => RustgenErr("unsupported type form")
+        SkVar(name) => if name == "i64" { RustgenOk(RustgenInt) } else if name == "Nat" {
+          RustgenOk(RustgenNat)
+        } else if name == "Bool" { RustgenOk(RustgenBool) } else if name == "Text" {
+          RustgenOk(RustgenText)
+        } else { RustgenOk(RustgenNamed(name)) }
+        SkNat(unused0) => RustgenErr("unsupported type form: Nat")
+        SkFloat(unused0) => RustgenErr("unsupported type form: Float")
+        SkRow(unused0) => RustgenErr("unsupported type form: Row")
+        SkText(unused0) => RustgenErr("unsupported type form: Text")
+        SkBool(unused0) => RustgenErr("unsupported type form: Bool")
+        SkPi(params, result, effects) => if not(rustgen_callable_effects(effects)) {
+          RustgenErr("effectful callable types are unsupported")
+        } else { match rustgen_written_params(j, params): RustgenResult(RustgenType) {
+            RustgenErr(Message) => RustgenErr(Message)
+            RustgenOk(types) => match rustgen_written_in(j, result): RustgenResult(RustgenType) {
+              RustgenErr(Message) => RustgenErr(Message)
+              RustgenOk(output) => RustgenOk(RustgenCallable(types, output))
+            }
+          } }
+        SkExists(unused0, unused1, unused2) => RustgenErr("unsupported type form: Exists")
+        SkLam(unused0, unused1) => RustgenErr("unsupported type form: Lam")
+        SkUnion(unused0) => RustgenErr("unsupported type form: Union")
+        SkProduct(unused0) => RustgenErr("unsupported type form: Product")
+        SkProject(unused0, unused1) => RustgenErr("unsupported type form: Project")
+        SkTagged(unused0, unused1) => RustgenErr("unsupported type form: Tagged")
+        SkIf(unused0, unused1, unused2) => RustgenErr("unsupported type form: If")
+        SkField(unused0, unused1) => RustgenErr("unsupported type form: Field")
+        SkBlock(unused0) => RustgenErr("unsupported type form: Block")
+        SkPerform(unused0, unused1) => RustgenErr("unsupported type form: Perform")
+        SkHandle(unused0, unused1) => RustgenErr("unsupported type form: Handle")
+        SkBudget(unused0, unused1, unused2) => RustgenErr("unsupported type form: Budget")
+        SkMatch(unused0, unused1, unused2, unused3) => RustgenErr("unsupported type form: Match")
+        SkHole(unused0) => RustgenErr("unsupported type form: Hole")
+        SkRecord(unused0, unused1) => RustgenErr("unsupported type form: Record")
+        SkBorrow(unused0, unused1) => RustgenErr("unsupported type form: Borrow")
+        SkFnKind(unused0, unused1) => RustgenErr("unsupported type form: FnKind")
+        SkBorrowLam(unused0, unused1) => RustgenErr("unsupported type form: BorrowLam")
+        SkMacroCall(unused0, unused1) => RustgenErr("unsupported type form: MacroCall")
+        SkQuote(unused0, unused1) => RustgenErr("unsupported type form: Quote")
+        SkSplice(unused0) => RustgenErr("unsupported type form: Splice")
+        SkSyntaxLit(unused0, unused1) => RustgenErr("unsupported type form: SyntaxLit")
+        SkStep(unused0, unused1, unused2, unused3, unused4, unused5) => RustgenErr(
+          "unsupported type form: Step"
+        )
+        SkOther(why) => RustgenErr(Text::concat("unsupported type form: ", why))
       }
     }
   }
-  fn rustgen_written_args(k: Nat, args: List(SurfaceTerm)) -> RustgenResult(List(RustgenType)) {
-    match k -> RustgenResult(List(RustgenType)) {
-      zero => RustgenErr("type depth exceeded")
-      succ(j) => match args -> RustgenResult(List(RustgenType)) {
+  pub fn rustgen_written_params(
+    k: Nat,
+    params: List(SurfaceParam)
+  ): RustgenResult(List(RustgenType)) {
+    match k: RustgenResult(List(RustgenType)) {
+      Zero => RustgenErr("type depth exceeded")
+      Succ(j) => match params: RustgenResult(List(RustgenType)) {
         Nil => RustgenOk(Nil)
-        Cons(arg, rest) => match rustgen_written_in(j, arg) -> RustgenResult(List(RustgenType)) {
-          RustgenErr(message) => RustgenErr(message)
-          RustgenOk(ty) => match rustgen_written_args(j, rest) -> RustgenResult(List(RustgenType)) {
-            RustgenErr(message) => RustgenErr(message)
+        Cons(param, rest) => match param.name: RustgenResult(List(RustgenType)) {
+          Some(name) => RustgenErr("dependent or polymorphic callable types are unsupported")
+          None => match rustgen_written_in(j, param.ty): RustgenResult(List(RustgenType)) {
+            RustgenErr(Message) => RustgenErr(Message)
+            RustgenOk(ty) => match rustgen_written_params(
+              j,
+              rest
+            ): RustgenResult(List(RustgenType)) {
+              RustgenErr(Message) => RustgenErr(Message)
+              RustgenOk(types) => RustgenOk(Cons(ty, types))
+            }
+          }
+        }
+      }
+    }
+  }
+  pub fn rustgen_written_args(k: Nat, args: List(SurfaceTerm)): RustgenResult(List(RustgenType)) {
+    match k: RustgenResult(List(RustgenType)) {
+      Zero => RustgenErr("type depth exceeded")
+      Succ(j) => match args: RustgenResult(List(RustgenType)) {
+        Nil => RustgenOk(Nil)
+        Cons(arg, rest) => match rustgen_written_in(j, arg): RustgenResult(List(RustgenType)) {
+          RustgenErr(Message) => RustgenErr(Message)
+          RustgenOk(ty) => match rustgen_written_args(j, rest): RustgenResult(List(RustgenType)) {
+            RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(types) => RustgenOk(Cons(ty, types))
           }
         }
@@ -238,41 +285,39 @@ mutual {
     }
   }
 }
-fn rustgen_written(
+pub fn rustgen_written(
   term: SurfaceTerm
-) -> RustgenResult(RustgenType) { rustgen_written_in(10000, term) }
+): RustgenResult(RustgenType) { rustgen_written_in(10000, term) }
 
-fn rustgen_clone(code: Text) -> Text { rustgen_wrapped("(", code, ").clone()") }
+pub fn rustgen_clone(code: Text): Text { rustgen_wrapped("(", code, ").clone()") }
 
-fn rustgen_text_bytes(k: Nat, value: Text, at: Nat) -> Text {
-  match k -> Text {
-    zero => ""
-    succ(
-      j
-    ) => text_concat_all(
+pub fn rustgen_text_bytes(k: Nat, value: Text, at: Nat): Text {
+  match k: Text {
+    Zero => ""
+    Succ(j) => Text::concat_all(
       Cons(
-        text_of_nat(text_byte_value(value, at)),
+        Text::of_nat(Text::byte_value(value, at)),
         Cons("u8,", Cons(rustgen_text_bytes(j, value, at + 1), Nil))
       )
     )
   }
 }
 
-fn rustgen_text(value: Text) -> Text {
+pub fn rustgen_text(value: Text): Text {
   rustgen_wrapped(
     "String::from_utf8(vec![",
-    rustgen_text_bytes(text_len(value), value, 0),
+    rustgen_text_bytes(Text::len(value), value, 0),
     "]).unwrap()"
   )
 }
 
-fn rustgen_number_in(k: Nat, digits: Text, at: Nat, value: Nat) -> Option(Nat) {
-  match k -> Option(Nat) {
-    zero => None
-    succ(j) => if at == text_len(digits) { Some(value) } else {
-      let digit = text_byte_value(digits, at)
+pub fn rustgen_number_in(k: Nat, digits: Text, at: Nat, value: Nat): Option(Nat) {
+  match k: Option(Nat) {
+    Zero => None
+    Succ(j) => if at == Text::len(digits) { Some(value) } else {
+      let digit := Text::byte_value(digits, at)
       if digit < 48 || 57 < digit { None } else {
-        let number = digit - 48
+        let number := digit - 48
         if value > 922337203685477580 || (value == 922337203685477580 && number > 7) {
           None
         } else { rustgen_number_in(j, digits, at + 1, value * 10 + number) }
@@ -281,48 +326,51 @@ fn rustgen_number_in(k: Nat, digits: Text, at: Nat, value: Nat) -> Option(Nat) {
   }
 }
 
-fn rustgen_number(digits: Text) -> Option(Nat) {
-  if text_len(digits) == 0 { None } else { rustgen_number_in(text_len(digits) + 1, digits, 0, 0) }
+pub fn rustgen_number(digits: Text): Option(Nat) {
+  if Text::len(digits) == 0 { None } else { rustgen_number_in(Text::len(digits) + 1, digits, 0, 0) }
 }
 
 mutual {
-  fn rustgen_known_in(k: Nat, ty: RustgenType, functions: List(RustgenFunction)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match ty -> Yn {
-        RustgenNumber(id, value) => no
-        RustgenInt => yes
-        RustgenBool => yes
-        RustgenText => yes
-        RustgenNat => yes
-        RustgenVar(name) => yes
-        RustgenMeta(name) => no
-        RustgenNamed(name) => match rustgen_find_function(name, functions) -> Yn {
-          None => no
-          Some(f) => f.kind == 2 && list_length(f.generics) == 0
+  pub fn rustgen_known_in(k: Nat, ty: RustgenType, functions: List(RustgenFunction)): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match ty: Bool {
+        RustgenCallable(params, result) => rustgen_known_list(j, Cons(result, params), functions)
+        RustgenNumber(Id, value) => false
+        RustgenInt => true
+        RustgenBool => true
+        RustgenText => true
+        RustgenNat => true
+        RustgenVar(name) => true
+        RustgenMeta(name) => false
+        RustgenNamed(name) => match rustgen_find_function(name, functions): Bool {
+          None => false
+          Some(f) => f.kind == 2 && List::length(f.generics) == 0
         }
-        RustgenApply(name, args) => match rustgen_find_function(name, functions) -> Yn {
-          None => no
-          Some(
-            f
-          ) => f.kind == 2 && list_length(
+        RustgenApply(name, args) => match rustgen_find_function(name, functions): Bool {
+          None => false
+          Some(f) => f.kind == 2 && List::length(
             f.generics
-          ) == list_length(args) && rustgen_known_list(j, args, functions)
+          ) == List::length(args) && rustgen_known_list(j, args, functions)
         }
       }
     }
   }
-  fn rustgen_known_list(k: Nat, args: List(RustgenType), functions: List(RustgenFunction)) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match args -> Yn {
-        Nil => yes
+  pub fn rustgen_known_list(
+    k: Nat,
+    args: List(RustgenType),
+    functions: List(RustgenFunction)
+  ): Bool {
+    match k: Bool {
+      Zero => false
+      Succ(j) => match args: Bool {
+        Nil => true
         Cons(t, rest) => rustgen_known_in(j, t, functions) && rustgen_known_list(j, rest, functions)
       }
     }
   }
 }
-fn rustgen_known_type(
+pub fn rustgen_known_type(
   ty: RustgenType,
   functions: List(RustgenFunction)
-) -> Yn { rustgen_known_in(10000, ty, functions) }
+): Bool { rustgen_known_in(10000, ty, functions) }

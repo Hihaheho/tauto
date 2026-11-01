@@ -1,0 +1,47 @@
+# `tauto trust` のメッセージ：証明のソースバンドル。
+
+trust-usage = 使い方: tauto trust bundle ROOT ENTRY | tauto trust verify BUNDLE [--axiom-free]
+trust-error = trust: { $error }
+trust-file-error = { $path }: { $error }
+trust-not-regular-file = 入力が通常のファイルではない
+trust-input-too-large = 入力がバイト数の上限を超えている
+trust-input-not-utf8 = 入力が UTF-8 ではない
+trust-rooted-read = ルート下のソース { $name } を読めない: { $error }
+trust-export-unsupported = このプラットフォームでは、ディレクトリ相対でリンクをたどらないファイルアクセスができないため、ソースバンドルを書き出せない。検証はどのプラットフォームでもできる
+trust-invalid-path = 不正なバンドルのパス: { $name }
+trust-import-not-relative = import はバンドル内の相対パスでなければならない。URL や絶対パスは使えない
+trust-import-empty-component = import のパスに空の要素がある
+trust-import-escapes = import がバンドルのルートの外を指している
+trust-reader-errors = ソースに読み取りのエラーがある
+trust-unsupported-statement = source-bundle v1 が扱えるのは import・theorem・axiom・def・inductive・fn・extern・effect の宣言だけである。module、マクロ、syntax、リソース、実行されるトップレベルの文は扱えない
+trust-unsupported-term = source-bundle v1 ではマクロ、構文リテラル、quote、入れ子の宣言、include_text は扱えない
+trust-root-not-dir = ROOT はディレクトリでなければならない
+trust-bundle-too-large = 直列化したバンドルがバイト数の上限を超えている
+trust-cyclic-import = import が循環している
+trust-graph-limit = ソースのグラフが上限を超えている
+trust-no-std-file = 標準ライブラリにファイル { $file } はない
+trust-source-bytes-limit = ソースのバイト数が上限を超えている
+trust-invalid-source-count = ソースの数が不正である
+trust-hash-mismatch = ソースのハッシュが一致しない: { $path }
+trust-unreachable-sources = バンドルにどこからも import されないソースファイルがある
+trust-extern-instances = source-bundle v1 では extern の instance は扱えない
+trust-declaration-failed = { $file }: { $name }: { $error }
+trust-incomplete-proof = { $file }: { $name }: 証明が完了していない
+trust-import-depth = import の深さが上限を超えている
+trust-missing-source = バンドルにないソース: { $name }
+trust-invalid-bundle = 不正なバンドル: { $error }
+trust-unknown-format = 未知のバンドル形式
+trust-report-differs = 計算し直したレポートが一致しない。主張、検査器の実行ファイル、または証拠が変わっている
+trust-axioms-rejected = 受け取り側のポリシーが明示された公理または使われた公理を拒否した
+trust-checker-differs = 検査器の実行ファイルが同一ではない
+
+# 実行に与えるものの承認：`trust` セクションと `--permissions FILE`。
+trust-gate-question = 承認して実行するか? [y/N]
+trust-gate-no-terminal = 承認されていない: 尋ねる端末がない。上の内容を確認し、承認するなら --approve-trust を付けること
+trust-gate-not-approved = 承認されていない。何も実行していない
+trust-gate-new = { $title } はまだ承認されていない:
+trust-gate-changed = { $title } は承認後に変わった:
+trust-gate-nothing-trusted = （もう何も信頼されていない）
+trust-gate-file-error = { $path }: { $error }
+trust-gate-trust-section = { $path } の trust セクション
+trust-gate-permissions-file = 権限ファイル { $path }

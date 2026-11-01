@@ -1,0 +1,118 @@
+import "program_data_function_table.taut"
+import "prepare_data_body_sound.taut"
+
+pub theorem fnt_finish_datas_after(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
+): fnt_table(ck_st(summary_finish_datas_k(program, m))) = fnt_table(ck_st(m)) {
+  match m: fnt_table(ck_st(summary_finish_datas_k(program, m))) = fnt_table(ck_st(m)) {
+    mut1(ignored, next) => Eq::congr(
+      (r: Mut1(Unit, Checker)) => fnt_table(ck_st(r)),
+      Eq::trans(
+        ck_rewrap1_id(
+          ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+        ),
+        And::right(
+          ck_finish_stmts_accepts(
+            program,
+            summary_replace(next, datas_summarize(ck_datas_of(next))),
+            Eq::subst(
+              (r: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(r)),
+              ck_rewrap1_id(
+                ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+              ),
+              clean
+            )
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem ck_finish_datas_fns(
+  c: Checker,
+  program: List(SurfaceStmt),
+  clean: DiagnosticClean(ck_st(ck_finish_datas(c, program)))
+): fnt_table(ck_st(ck_finish_datas(c, program))) = fnt_table(c) {
+  Eq::trans(
+    Eq::congr((m: Mut1(Unit, Checker)) => fnt_table(ck_st(m)), summary_finish_datas_unf(c, program)),
+    Eq::trans(
+      fnt_finish_datas_after(
+        program,
+        ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          summary_finish_datas_unf(c, program),
+          clean
+        )
+      ),
+      mark_preserves_view(
+        Ordmap(Text, Scheme),
+        fnt_table,
+        state => datas => Refl,
+        Ordmap::entries(summary_decls(ck_datas_of(c))),
+        c
+      )
+    )
+  )
+}
+
+pub theorem fnt_finish_after(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
+): fnt_table(ck_st(registration_finish_after(program, m))) = fnt_table(ck_st(m)) {
+  match m: fnt_table(ck_st(registration_finish_after(program, m))) = fnt_table(ck_st(m)) {
+    mut1(ignored, next) => Eq::trans(
+      Eq::congr(
+        (r: Mut1(Unit, Checker)) => fnt_table(ck_st(r)),
+        ck_rewrap1_id(ck_finish_datas(next, program))
+      ),
+      ck_finish_datas_fns(
+        next,
+        program,
+        recheck_clean_unwrap(ck_finish_datas(next, program), clean)
+      )
+    )
+  }
+}
+
+pub theorem fnt_program_after(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
+): fnt_table(ck_st(registration_program_after(program, m))) = fnt_table(ck_st(m)) {
+  match m: fnt_table(ck_st(registration_program_after(program, m))) = fnt_table(ck_st(m)) {
+    mut1(ignored, next) => Eq::trans(
+      fnt_finish_after(program, ck_program_data(program, next), clean),
+      fnt_ck_program_data_context(program, next)
+    )
+  }
+}
+pub theorem ck_prepare_datas_fns(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
+): CkFnsFrame(c, ck_prepare_datas(c, prelude, program, own)) {
+  Eq::trans(
+    Eq::congr(
+      (m: Mut1(Unit, Checker)) => fnt_table(ck_st(m)),
+      registration_prepare_unf(c, prelude, program, own)
+    ),
+    Eq::trans(
+      fnt_program_after(
+        program,
+        ck_prelude_data(prelude, c, own),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          registration_prepare_unf(c, prelude, program, own),
+          clean
+        )
+      ),
+      fnt_ck_prelude_data_context(prelude, c, own)
+    )
+  )
+}

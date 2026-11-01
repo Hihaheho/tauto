@@ -1,0 +1,133 @@
+import "body_frame.taut"
+import "inference_frame_checked.taut"
+import "body_error_sound.taut"
+
+pub def BodyFunctionsIH_checked(
+  rest: List(Pair(SurfaceFn, Scheme))
+): Prop := ∀ c: Checker. ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_check_fns(rest, c))
+pub def BodyTopIH_checked(
+  rest: List(SurfaceStmt)
+): Prop := ∀ c: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+  c
+). CkScopeChecked(c, ck_top_level(rest, c, env))
+
+pub theorem body_functions_cons_frame_checked(
+  p: Pair(SurfaceFn, Scheme),
+  rest: List(Pair(SurfaceFn, Scheme)),
+  c: Checker,
+  ih: BodyFunctionsIH_checked(rest),
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, body_functions_cons(p, rest, c)) {
+  checked_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (checked: Unit, c1: Checker) => ck_rewrap1(ck_check_fns(rest, c1)),
+    ck_check_fn(c, body_function(p), body_scheme(p), Nil),
+    ck_check_fn_frame_checked(c, body_function(p), body_scheme(p), Nil, ordered),
+    checked => c1 => o_c1 => checked_frame_rewrap(c1, ck_check_fns(rest, c1), ih(c1, o_c1))
+  )
+}
+
+pub theorem ck_check_fns_frame_checked(
+  fs: List(Pair(SurfaceFn, Scheme)),
+  c: Checker,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(
+  c,
+  ck_check_fns(fs, c)
+) { match fs: CkCheckedFrame(c, ck_check_fns(fs, c)) { Nil => AndIntro(
+  ordered,
+  (clean_errors => clean_errors)
+)
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
+      Eq::sym(body_functions_unf(p, rest, c)),
+      body_functions_cons_frame_checked(
+        p,
+        rest,
+        c,
+        next => o => ck_check_fns_frame_checked(rest, next, o),
+        ordered
+      )
+    ) } }
+
+pub theorem body_top_one_frame_checked(
+  s: SurfaceStmt,
+  c: Checker,
+  env: Scope,
+  check: Bool,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, body_top_one(s, c, env, check)) {
+  match check: CkScopeChecked(c, body_top_one(s, c, env, check)) {
+    true => pattern_bind_frame_checked(
+      Ty,
+      Unit,
+      c,
+      (t: Ty, c1: Checker, env1: Scope) => pattern_lift(env1, ck_top_let(c1, s, env1)),
+      ck_stmt(c, s, env),
+      ck_stmt_frame_checked(c, s, env, ordered),
+      t => c1 => env1 => o_c1 => pattern_lift_frame_checked(
+        c1,
+        env1,
+        ck_top_let(c1, s, env1),
+        checked_frame_read(
+          c1,
+          ck_top_let(c1, s, env1),
+          ck_top_let_frame(c1, s, env1),
+          ck_top_let_frame_errors(c1, s, env1),
+          o_c1
+        )
+      )
+    )
+    false => pattern_return_frame_checked(c, env, Star, ordered)
+  }
+}
+
+pub theorem body_top_cons_frame_checked(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  env: Scope,
+  ih: BodyTopIH_checked(rest),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, body_top_cons(s, rest, c, env)) {
+  pattern_bind_frame_checked(
+    Unit,
+    Unit,
+    c,
+    (checked: Unit, c1: Checker, env1: Scope) => pattern_rewrap(ck_top_level(rest, c1, env1)),
+    body_top_one(s, c, env, not(stmt_is_declaration(s))),
+    body_top_one_frame_checked(s, c, env, not(stmt_is_declaration(s)), ordered),
+    checked => c1 => env1 => o_c1 => pattern_rewrap_frame_checked(
+      c1,
+      ck_top_level(rest, c1, env1),
+      ih(c1, env1, o_c1)
+    )
+  )
+}
+
+pub theorem ck_top_level_frame_checked(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  env: Scope,
+  ordered: CkOrdered(c)
+): CkScopeChecked(
+  c,
+  ck_top_level(ss, c, env)
+) { match ss: CkScopeChecked(c, ck_top_level(ss, c, env)) { Nil => AndIntro(
+  ordered,
+  (clean_errors => clean_errors)
+)
+    Cons(s, rest) => Eq::subst(
+      (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+      Eq::sym(body_top_unf(s, rest, c, env)),
+      body_top_cons_frame_checked(
+        s,
+        rest,
+        c,
+        env,
+        next => local => o => ck_top_level_frame_checked(rest, next, local, o),
+        ordered
+      )
+    ) } }

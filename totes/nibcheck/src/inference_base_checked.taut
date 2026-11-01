@@ -1,0 +1,1130 @@
+import "inference_base.taut"
+import "inference_base_error_sound.taut"
+import "record_checked_sound.taut"
+import "handle_checked_sound.taut"
+
+pub def Inference_ck_infer_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ term: SurfaceTerm. ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_infer_in(k, c, term, env))
+
+pub def Inference_ck_infer_term_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ term: SurfaceTerm. ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_infer_term_in(k, c, term, env))
+
+pub def Inference_ck_else_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ t: Ty. ∀ el: Option(
+  SurfaceTerm
+). ∀ env: List(Local). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_else_in(k, c, t, el, env))
+
+pub def Inference_ck_infer_each_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ ts: List(
+  SurfaceTerm
+). ∀ env: List(Local). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_infer_each_in(k, c, ts, env))
+
+pub def Inference_ck_guard_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ guard: Option(
+  SurfaceTerm
+). ∀ env: List(Local). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_guard_in(k, c, guard, env))
+
+pub def Inference_ck_stmt_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ s: SurfaceStmt. ∀ env: Scope. ∀ ordered: CkOrdered(
+  c
+). CkScopeChecked(c, ck_stmt_in(k, c, s, env))
+
+pub def Inference_ck_returned_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ e: Option(
+  SurfaceTerm
+). ∀ env: List(Local). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_returned_in(k, c, e, env))
+
+pub def Inference_ck_check_fn_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ f: SurfaceFn. ∀ scheme: Scheme. ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_check_fn_in(k, c, f, scheme, env))
+
+pub def Inference_ck_block_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ stmts: List(
+  SurfaceStmt
+). ∀ env: Scope. ∀ stopped: Bool. ∀ last: Ty. ∀ ordered: CkOrdered(
+  c
+). CkScopeChecked(c, ck_block_in(k, c, stmts, env, stopped, last))
+
+pub def Inference_ck_app_args_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ arguments: List(
+  SurfaceTerm
+). ∀ known: Option(
+  List(Ty)
+). ∀ env: List(
+  Local
+). ∀ i: Nat. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_app_args_in(k, c, arguments, known, env, i))
+
+pub def Inference_ck_app_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ term: SurfaceTerm. ∀ function: SurfaceTerm. ∀ arguments: List(
+  SurfaceTerm
+). ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_app_in(k, c, term, function, arguments, env))
+
+pub def Inference_ck_app_call_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ term: SurfaceTerm. ∀ function: SurfaceTerm. ∀ arguments: List(
+  SurfaceTerm
+). ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_app_call_in(k, c, term, function, arguments, env))
+
+pub def Inference_ck_operands_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ arguments: List(
+  SurfaceTerm
+). ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_operands_in(k, c, arguments, env))
+
+pub def Inference_ck_clone_of_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ arguments: List(
+  SurfaceTerm
+). ∀ env: List(
+  Local
+). ∀ span: TySpan. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_clone_of_in(k, c, arguments, env, span))
+
+pub def Inference_ck_lambda_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ lam: SurfaceTerm. ∀ borrows: List(
+  Option(Bool)
+). ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_lambda_in(k, c, lam, borrows, env))
+
+pub def Inference_ck_record_fields_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ name: Text. ∀ fields: List(
+  SurfaceField
+). ∀ declared: List(
+  DataField
+). ∀ env: List(
+  Local
+). ∀ seen: List(
+  Text
+). ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_record_fields_in(k, c, name, fields, declared, env, seen))
+
+pub def Inference_ck_record_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ name: Text. ∀ fields: List(
+  SurfaceField
+). ∀ env: List(
+  Local
+). ∀ span: TySpan. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_record_in(k, c, name, fields, env, span))
+
+pub def Inference_ck_match_arms_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ arms: List(
+  SurfaceArm
+). ∀ s: Ty. ∀ env: List(
+  Local
+). ∀ result: Option(
+  Ty
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_match_arms_in(k, c, arms, s, env, result))
+
+pub def Inference_ck_match_expr_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ scrutinee: SurfaceTerm. ∀ arms: List(
+  SurfaceArm
+). ∀ env: List(
+  Local
+). ∀ span: TySpan. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_match_expr_in(k, c, scrutinee, arms, env, span))
+
+pub def Inference_ck_handle_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ body: SurfaceTerm. ∀ handlers: List(
+  SurfaceHandler
+). ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_handle_in(k, c, body, handlers, env))
+
+pub def Inference_ck_handle_first_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ handlers: List(
+  SurfaceHandler
+). ∀ b: Ty. ∀ env: List(
+  Local
+). ∀ ordered: CkOrdered(c). CkCheckedFrame(c, ck_handle_first_in(k, c, handlers, b, env))
+
+pub def Inference_ck_handle_result_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ handlers: List(
+  SurfaceHandler
+). ∀ env: List(
+  Local
+). ∀ result: Ty. ∀ first: Ty. ∀ budget_ty: Ty. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_handle_result_in(k, c, handlers, env, result, first, budget_ty))
+
+pub def Inference_ck_handle_arms_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ hs: List(
+  SurfaceHandler
+). ∀ env: List(
+  Local
+). ∀ result: Ty. ∀ rv: Option(
+  Nat
+). ∀ budget_ty: Ty. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty))
+
+pub def Inference_ck_handle_one_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ h: SurfaceHandler. ∀ env: List(
+  Local
+). ∀ result: Ty. ∀ rv: Option(
+  Nat
+). ∀ budget_ty: Ty. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(c, ck_handle_one_in(k, c, h, env, result, rv, budget_ty))
+
+pub def Inference_ck_handle_arm_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ env: List(
+  Local
+). ∀ result: Ty. ∀ rv: Option(
+  Nat
+). ∀ budget_ty: Ty. ∀ eff: Text. ∀ binds: List(
+  Text
+). ∀ types: List(
+  SurfaceTerm
+). ∀ patterns: List(
+  SurfacePattern
+). ∀ cont: Option(
+  Text
+). ∀ guard: Option(
+  SurfaceTerm
+). ∀ body: SurfaceTerm. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(
+  c,
+  ck_handle_arm_in(k, c, env, result, rv, budget_ty, eff, binds, types, patterns, cont, guard, body)
+)
+
+pub def Inference_ck_handle_body_in_checked(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ env: List(
+  Local
+). ∀ result: Ty. ∀ rv: Option(
+  Nat
+). ∀ eff: Text. ∀ params: List(
+  Ty
+). ∀ answer: Ty. ∀ rigid: List(
+  Text
+). ∀ names: List(
+  TypeName
+). ∀ patterns: List(
+  SurfacePattern
+). ∀ cont: Option(
+  Text
+). ∀ guard: Option(
+  SurfaceTerm
+). ∀ body: SurfaceTerm. ∀ ordered: CkOrdered(
+  c
+). CkCheckedFrame(
+  c,
+  ck_handle_body_in(
+    k,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body
+  )
+)
+
+pub def InferenceFrames_checked(
+  k: Nat
+): Prop := And(
+  Inference_ck_infer_in_checked(k),
+  And(
+    Inference_ck_infer_term_in_checked(k),
+    And(
+      Inference_ck_else_in_checked(k),
+      And(
+        Inference_ck_infer_each_in_checked(k),
+        And(
+          Inference_ck_guard_in_checked(k),
+          And(
+            Inference_ck_stmt_in_checked(k),
+            And(
+              Inference_ck_returned_in_checked(k),
+              And(
+                Inference_ck_check_fn_in_checked(k),
+                And(
+                  Inference_ck_block_in_checked(k),
+                  And(
+                    Inference_ck_app_args_in_checked(k),
+                    And(
+                      Inference_ck_app_in_checked(k),
+                      And(
+                        Inference_ck_app_call_in_checked(k),
+                        And(
+                          Inference_ck_operands_in_checked(k),
+                          And(
+                            Inference_ck_clone_of_in_checked(k),
+                            And(
+                              Inference_ck_lambda_in_checked(k),
+                              And(
+                                Inference_ck_record_fields_in_checked(k),
+                                And(
+                                  Inference_ck_record_in_checked(k),
+                                  And(
+                                    Inference_ck_match_arms_in_checked(k),
+                                    And(
+                                      Inference_ck_match_expr_in_checked(k),
+                                      And(
+                                        Inference_ck_handle_in_checked(k),
+                                        And(
+                                          Inference_ck_handle_first_in_checked(k),
+                                          And(
+                                            Inference_ck_handle_result_in_checked(k),
+                                            And(
+                                              Inference_ck_handle_arms_in_checked(k),
+                                              And(
+                                                Inference_ck_handle_one_in_checked(k),
+                                                And(
+                                                  Inference_ck_handle_arm_in_checked(k),
+                                                  And(Inference_ck_handle_body_in_checked(k), True)
+                                                )
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)
+
+pub theorem inference_use_ck_infer_in_checked(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_infer_in(k, c, term, env)) { And::left(ih)(c, term, env, ordered) }
+
+pub theorem inference_use_ck_infer_term_in_checked(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(
+  c,
+  ck_infer_term_in(k, c, term, env)
+) { And::left(And::right(ih))(c, term, env, ordered) }
+
+pub theorem inference_use_ck_else_in_checked(
+  k: Nat,
+  c: Checker,
+  t: Ty,
+  el: Option(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(
+  c,
+  ck_else_in(k, c, t, el, env)
+) { And::left(And::right(And::right(ih)))(c, t, el, env, ordered) }
+
+pub theorem inference_use_ck_infer_each_in_checked(
+  k: Nat,
+  c: Checker,
+  ts: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(
+  c,
+  ck_infer_each_in(k, c, ts, env)
+) { And::left(And::right(And::right(And::right(ih))))(c, ts, env, ordered) }
+
+pub theorem inference_use_ck_guard_in_checked(
+  k: Nat,
+  c: Checker,
+  guard: Option(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(
+  c,
+  ck_guard_in(k, c, guard, env)
+) { And::left(And::right(And::right(And::right(And::right(ih)))))(c, guard, env, ordered) }
+
+pub theorem inference_use_ck_stmt_in_checked(
+  k: Nat,
+  c: Checker,
+  s: SurfaceStmt,
+  env: Scope,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkScopeChecked(
+  c,
+  ck_stmt_in(k, c, s, env)
+) { And::left(And::right(And::right(And::right(And::right(And::right(ih))))))(c, s, env, ordered) }
+
+pub theorem inference_use_ck_returned_in_checked(
+  k: Nat,
+  c: Checker,
+  e: Option(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_returned_in(k, c, e, env)) {
+  And::left(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))(c, e, env, ordered)
+}
+
+pub theorem inference_use_ck_check_fn_in_checked(
+  k: Nat,
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme,
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_check_fn_in(k, c, f, scheme, env)) {
+  And::left(
+    And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+  )(c, f, scheme, env, ordered)
+}
+
+pub theorem inference_use_ck_block_in_checked(
+  k: Nat,
+  c: Checker,
+  stmts: List(SurfaceStmt),
+  env: Scope,
+  stopped: Bool,
+  last: Ty,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkScopeChecked(c, ck_block_in(k, c, stmts, env, stopped, last)) {
+  And::left(
+    And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+  )(c, stmts, env, stopped, last, ordered)
+}
+
+pub theorem inference_use_ck_app_args_in_checked(
+  k: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  known: Option(List(Ty)),
+  env: List(Local),
+  i: Nat,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_app_args_in(k, c, arguments, known, env, i)) {
+  And::left(
+    And::right(
+      And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+    )
+  )(c, arguments, known, env, i, ordered)
+}
+
+pub theorem inference_use_ck_app_in_checked(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_app_in(k, c, term, function, arguments, env)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )
+    )
+  )(c, term, function, arguments, env, ordered)
+}
+
+pub theorem inference_use_ck_app_call_in_checked(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_app_call_in(k, c, term, function, arguments, env)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )
+    )
+  )(c, term, function, arguments, env, ordered)
+}
+
+pub theorem inference_use_ck_operands_in_checked(
+  k: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_operands_in(k, c, arguments, env)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+            )
+          )
+        )
+      )
+    )
+  )(c, arguments, env, ordered)
+}
+
+pub theorem inference_use_ck_clone_of_in_checked(
+  k: Nat,
+  c: Checker,
+  arguments: List(SurfaceTerm),
+  env: List(Local),
+  span: TySpan,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_clone_of_in(k, c, arguments, env, span)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, arguments, env, span, ordered)
+}
+
+pub theorem inference_use_ck_lambda_in_checked(
+  k: Nat,
+  c: Checker,
+  lam: SurfaceTerm,
+  borrows: List(Option(Bool)),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_lambda_in(k, c, lam, borrows, env)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, lam, borrows, env, ordered)
+}
+
+pub theorem inference_use_ck_record_fields_in_checked(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  fields: List(SurfaceField),
+  declared: List(DataField),
+  env: List(Local),
+  seen: List(Text),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_record_fields_in(k, c, name, fields, declared, env, seen)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, name, fields, declared, env, seen, ordered)
+}
+
+pub theorem inference_use_ck_record_in_checked(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  fields: List(SurfaceField),
+  env: List(Local),
+  span: TySpan,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_record_in(k, c, name, fields, env, span)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, name, fields, env, span, ordered)
+}
+
+pub theorem inference_use_ck_match_arms_in_checked(
+  k: Nat,
+  c: Checker,
+  arms: List(SurfaceArm),
+  s: Ty,
+  env: List(Local),
+  result: Option(Ty),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_match_arms_in(k, c, arms, s, env, result)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, arms, s, env, result, ordered)
+}
+
+pub theorem inference_use_ck_match_expr_in_checked(
+  k: Nat,
+  c: Checker,
+  scrutinee: SurfaceTerm,
+  arms: List(SurfaceArm),
+  env: List(Local),
+  span: TySpan,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_match_expr_in(k, c, scrutinee, arms, env, span)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, scrutinee, arms, env, span, ordered)
+}
+
+pub theorem inference_use_ck_handle_in_checked(
+  k: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_handle_in(k, c, body, handlers, env)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, body, handlers, env, ordered)
+}
+
+pub theorem inference_use_ck_handle_first_in_checked(
+  k: Nat,
+  c: Checker,
+  handlers: List(SurfaceHandler),
+  b: Ty,
+  env: List(Local),
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_handle_first_in(k, c, handlers, b, env)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(
+                                And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, handlers, b, env, ordered)
+}
+
+pub theorem inference_use_ck_handle_result_in_checked(
+  k: Nat,
+  c: Checker,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  result: Ty,
+  first: Ty,
+  budget_ty: Ty,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_handle_result_in(k, c, handlers, env, result, first, budget_ty)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(
+                                And::right(
+                                  And::right(
+                                    And::right(And::right(And::right(And::right(And::right(ih)))))
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, handlers, env, result, first, budget_ty, ordered)
+}
+
+pub theorem inference_use_ck_handle_arms_in_checked(
+  k: Nat,
+  c: Checker,
+  hs: List(SurfaceHandler),
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(
+                                And::right(
+                                  And::right(
+                                    And::right(
+                                      And::right(And::right(And::right(And::right(And::right(ih)))))
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, hs, env, result, rv, budget_ty, ordered)
+}
+
+pub theorem inference_use_ck_handle_one_in_checked(
+  k: Nat,
+  c: Checker,
+  h: SurfaceHandler,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(c, ck_handle_one_in(k, c, h, env, result, rv, budget_ty)) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(
+                                And::right(
+                                  And::right(
+                                    And::right(
+                                      And::right(
+                                        And::right(And::right(And::right(And::right(And::right(ih)))))
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, h, env, result, rv, budget_ty, ordered)
+}
+
+pub theorem inference_use_ck_handle_arm_in_checked(
+  k: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(
+  c,
+  ck_handle_arm_in(k, c, env, result, rv, budget_ty, eff, binds, types, patterns, cont, guard, body)
+) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(
+                                And::right(
+                                  And::right(
+                                    And::right(
+                                      And::right(
+                                        And::right(
+                                          And::right(And::right(And::right(And::right(And::right(ih)))))
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, env, result, rv, budget_ty, eff, binds, types, patterns, cont, guard, body, ordered)
+}
+
+pub theorem inference_use_ck_handle_body_in_checked(
+  k: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ordered: CkOrdered(c),
+  ih: InferenceFrames_checked(k)
+): CkCheckedFrame(
+  c,
+  ck_handle_body_in(
+    k,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body
+  )
+) {
+  And::left(
+    And::right(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(
+                          And::right(
+                            And::right(
+                              And::right(
+                                And::right(
+                                  And::right(
+                                    And::right(
+                                      And::right(
+                                        And::right(
+                                          And::right(
+                                            And::right(
+                                              And::right(And::right(And::right(And::right(ih))))
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )(c, env, result, rv, eff, params, answer, rigid, names, patterns, cont, guard, body, ordered)
+}
+
+pub theorem inference_bind_scope_frame_checked<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker, Scope) -> Mut1(B, Checker),
+  m: Mut2(A, Checker, Scope),
+  hm: CkScopeChecked(c, m),
+  hk: ∀ v: A. ∀ next: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+    next
+  ). CkCheckedFrame(next, k(v, next, env))
+): CkCheckedFrame(c, inference_bind_scope(k, m)) {
+  match m: CkCheckedFrame(c, inference_bind_scope(k, m)) {
+    mut2(v, next, env) => {
+      let h: CkCheckedFrame(next, k(v, next, env)) := hk(v, next, env, And::left(hm))
+      AndIntro(And::left(h), clean_errors => And::right(hm)(And::right(h)(clean_errors)))
+    }
+  }
+}

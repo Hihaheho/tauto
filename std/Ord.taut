@@ -1,38 +1,33 @@
 import "MapLaws.taut"
 
-// `Ord` (`std/prelude/Ord.taut`) for `Nat`, which only the proofs have:
+// `Ord` (`std/prelude/Ord::taut`) for `Nat`, which only the proofs have:
 // extraction maps it onto Nib's `Ord(u64)`.
 
 instance Ord(Nat) {
-  fn compare(&a: Nat, &b: Nat) -> Ordering { ordmap_compare_nat(a, b) }
-  law equal_iff<a: Nat, b: Nat>(): Iff(Eq(Ordering, Ord.compare(a, b), Equal), Eq(Nat, a, b)) {
-    iff_intro(
-      (e: Eq(Ordering, Ord.compare(a, b), Equal)) => ordmap_compare_nat_eq(a, b, e),
-      (
-        e: Eq(Nat, a, b)
-      ) => Eq_subst(
+  fn compare(&a: Nat, &b: Nat): Ordering { Ordmap::compare_nat(a, b) }
+  law equal_iff<a: Nat, b: Nat>(): Ord::compare(a, b) = Equal ↔ a = b {
+    IffIntro(
+      (e: Ord::compare(a, b) = Equal) => Ordmap::compare_nat_eq(a, b, e),
+      (e: a = b) => Eq::subst(
         Nat,
         a,
         b,
-        (z: Nat) => Eq(Ordering, ordmap_compare_nat(a, z), Equal),
+        (z: Nat) => Ordmap::compare_nat(a, z) = Equal,
         e,
-        ordmap_compare_nat_same(a)
+        Ordmap::compare_nat_same(a)
       )
     )
   }
-  law swap<a: Nat, b: Nat>(): Iff(
-    Eq(Ordering, Ord.compare(a, b), Less),
-    Eq(Ordering, Ord.compare(b, a), Greater)
-  ) {
-    iff_intro(
-      (e: Eq(Ordering, Ord.compare(a, b), Less)) => ordmap_compare_nat_flip_less(a, b, e),
-      (e: Eq(Ordering, Ord.compare(b, a), Greater)) => ordmap_compare_nat_flip_greater(b, a, e)
+  law swap<a: Nat, b: Nat>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
+    IffIntro(
+      (e: Ord::compare(a, b) = Less) => Ordmap::compare_nat_flip_less(a, b, e),
+      (e: Ord::compare(b, a) = Greater) => Ordmap::compare_nat_flip_greater(b, a, e)
     )
   }
   law trans<a: Nat, b: Nat, c: Nat>(
-    h1: Eq(Ordering, Ord.compare(a, b), Less),
-    h2: Eq(Ordering, Ord.compare(b, c), Less)
-  ): Eq(Ordering, Ord.compare(a, c), Less) {
-    ordmap_compare_nat_less_trans(a, b, c, h1, h2)
+    h1: Ord::compare(a, b) = Less,
+    h2: Ord::compare(b, c) = Less
+  ): Ord::compare(a, c) = Less {
+    Ordmap::compare_nat_less_trans(a, b, c, h1, h2)
   }
 }

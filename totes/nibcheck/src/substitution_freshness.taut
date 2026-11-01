@@ -1,0 +1,164 @@
+import "widen_substitution_sound.taut"
+import std::Nat
+
+// No future allocation identifier has a substitution binding.
+pub def SubstFutureEmpty(
+  limit: Nat,
+  subst: Ordmap(Nat, Ty)
+): Prop := ∀ index: Nat. ∀ future: (Nat::le(limit, index) = true). Ordmap::get(subst, index, Ordmap::compare_nat) = None
+pub def CheckerFresh(c: Checker): Prop := SubstFutureEmpty(ck_next_of(c), ck_subst_of(c))
+
+pub theorem subst_future_empty_weaken(
+  before: Nat,
+  after: Nat,
+  subst: Ordmap(Nat, Ty),
+  advanced: Nat::le(before, after) = true,
+  empty: SubstFutureEmpty(before, subst)
+): SubstFutureEmpty(after, subst) {
+  index => future => empty(index, Nat::le_trans(before, after, index, advanced, future))
+}
+pub theorem subst_future_empty_at(
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  empty: SubstFutureEmpty(limit, subst)
+): Ordmap::get(subst, limit, Ordmap::compare_nat) = None {
+  empty(limit, Nat::le_refl(limit))
+}
+pub theorem fresh_strict_not_self(index: Nat): Nat::le(Succ(index), index) = false {
+  match index: Nat::le(Succ(index), index) = false {
+    Zero => Refl
+    Succ(previous) => fresh_strict_not_self(previous)
+  }
+}
+pub theorem fresh_below_different(
+  limit: Nat,
+  allocated: Nat,
+  future: Nat,
+  below: Nat::le(Succ(allocated), limit) = true,
+  later: Nat::le(limit, future) = true,
+  same: future = allocated
+): False {
+  false_ne_true(
+    Eq::trans(
+      Eq::sym(fresh_strict_not_self(allocated)),
+      Eq::subst(
+        (index: Nat) => Nat::le(Succ(allocated), index) = true,
+        same,
+        Nat::le_trans(Succ(allocated), limit, future, below, later)
+      )
+    )
+  )
+}
+pub theorem subst_future_empty_insert(
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  allocated: Nat,
+  value: Ty,
+  ordered: Ordmap::ordered(subst, Ordmap::compare_nat),
+  below: Nat::le(Succ(allocated), limit) = true,
+  empty: SubstFutureEmpty(limit, subst)
+): SubstFutureEmpty(limit, Ordmap::insert(subst, allocated, value, Ordmap::compare_nat)) {
+  index => future => Ordering::cases(
+    (order: Ordering) => Ordmap::get(
+        Ordmap::insert(subst, allocated, value, Ordmap::compare_nat),
+        index,
+        Ordmap::compare_nat
+      ) = None,
+    Ordmap::compare_nat(index, allocated),
+    less => Eq::trans(
+      Ordmap::get_insert_other(
+        Ordmap::compare_nat,
+        Ordmap::compare_nat_law(),
+        subst,
+        allocated,
+        value,
+        index,
+        Less,
+        less_ne_equal,
+        less,
+        ordered
+      ),
+      empty(index, future)
+    ),
+    equal => False::elim(
+      fresh_below_different(
+        limit,
+        allocated,
+        index,
+        below,
+        future,
+        Ordmap::compare_nat_eq(index, allocated, equal)
+      )
+    ),
+    greater => Eq::trans(
+      Ordmap::get_insert_other(
+        Ordmap::compare_nat,
+        Ordmap::compare_nat_law(),
+        subst,
+        allocated,
+        value,
+        index,
+        Greater,
+        greater_ne_equal,
+        greater,
+        ordered
+      ),
+      empty(index, future)
+    )
+  )
+}
+pub theorem checker_new_fresh(
+  steps: Nat
+): CheckerFresh(checker_new(steps)) { index => future => Refl }
+pub theorem ck_fresh_preserves_freshness(
+  c: Checker,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_fresh(c))) {
+  subst_future_empty_weaken(
+    ck_next_of(c),
+    Succ(ck_next_of(c)),
+    ck_subst_of(c),
+    Nat::le_succ(ck_next_of(c)),
+    fresh
+  )
+}
+pub theorem ck_fresh_allocates_absent(
+  c: Checker,
+  fresh: CheckerFresh(c)
+): Ordmap::get(ck_subst_of(c), ck_next_of(c), Ordmap::compare_nat) = None {
+  subst_future_empty_at(ck_next_of(c), ck_subst_of(c), fresh)
+}
+pub theorem ck_set_subst_preserves_freshness(
+  c: Checker,
+  allocated: Nat,
+  value: Ty,
+  ordered: CkOrdered(c),
+  below: Nat::le(Succ(allocated), ck_next_of(c)) = true,
+  fresh: CheckerFresh(c)
+): CheckerFresh(ck_st(ck_set_subst(c, allocated, value))) {
+  subst_future_empty_insert(ck_next_of(c), ck_subst_of(c), allocated, value, ordered, below, fresh)
+}
+// Connect an actual allocation counter to the earlier substitution snapshot.
+pub theorem ck_handle_widen_fresh_snapshot(
+  snapshot: Checker,
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  ordered: CkOrdered(c),
+  fresh: CheckerFresh(snapshot),
+  prior: SubstExt(ck_subst_of(snapshot), ck_subst_of(c))
+): SubstExt(
+  ck_subst_of(snapshot),
+  ck_subst_of(ck_st(ck_handle_widen(c, a, result, ck_next_of(snapshot))))
+) {
+  ck_handle_widen_snapshot(
+    ck_subst_of(snapshot),
+    c,
+    a,
+    result,
+    ck_next_of(snapshot),
+    ordered,
+    ck_fresh_allocates_absent(snapshot, fresh),
+    prior
+  )
+}

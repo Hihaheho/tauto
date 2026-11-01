@@ -1,0 +1,54 @@
+import "../src/mval.taut"
+
+pub fn m_order_equal(o: Ordering): Bool {
+  match o {
+    Less => false
+    Equal => true
+    Greater => false
+  }
+}
+
+pub theorem m_byte_compare_equal(x: Nat, y: Nat, rest: Ordering): Bool::and(Nat::eq(x, y), m_order_equal(rest)) = m_order_equal(match Nat::lt(x, y): Ordering {
+    true => Less
+    false => match Nat::lt(y, x): Ordering {
+      true => Greater
+      false => rest
+    }
+  }) {
+  match x {
+    Zero => match y {
+      Zero => Refl
+      Succ(j) => Refl
+    }
+    Succ(i) => match y {
+      Zero => Refl
+      Succ(j) => m_byte_compare_equal(i, j, rest)
+    }
+  }
+}
+
+pub theorem m_bytes_compare_equal(
+  a: List(Nat),
+  b: List(Nat)
+): m_bytes_eq(a, b) = m_order_equal(Bytes::compare(a, b)) {
+  match a {
+    Nil => match b {
+      Nil => Refl
+      Cons(y, ys) => Refl
+    }
+    Cons(x, xs) => match b {
+      Nil => Refl
+      Cons(y, ys) => Eq::trans(
+        Eq::congr((same: Bool) => Bool::and(Nat::eq(x, y), same), m_bytes_compare_equal(xs, ys)),
+        m_byte_compare_equal(x, y, Bytes::compare(xs, ys))
+      )
+    }
+  }
+}
+
+pub theorem m_text_eq_correct(
+  a: Text,
+  b: Text
+): m_text_eq(a, b) = m_bytes_eq(Text::bytes(a), Text::bytes(b)) {
+  Eq::sym(m_bytes_compare_equal(Text::bytes(a), Text::bytes(b)))
+}

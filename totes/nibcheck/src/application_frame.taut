@@ -1,0 +1,1016 @@
+import "argument_frame.taut"
+
+pub fn application_effect_arity(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  ps: List(Ty),
+  bad: Bool
+): Mut1(Unit, Checker) {
+  match bad: Mut1(Unit, Checker) {
+    true => ck_rewrap1(
+      ck_error(
+        c,
+        cat5(
+          "`",
+          eff,
+          "` takes ",
+          Text::of_nat(list_len(ps)),
+          cat2(" values, given ", Text::of_nat(list_len(types)))
+        ),
+        span
+      )
+    )
+    false => ck_rewrap1(ck_expect_args(types, c, ps, args))
+  }
+}
+
+pub theorem application_effect_arity_frame(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  ps: List(Ty),
+  bad: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
+  match bad: CkRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
+    true => run_frame_read(
+      c,
+      ck_rewrap1(
+        ck_error(
+          c,
+          cat5(
+            "`",
+            eff,
+            "` takes ",
+            Text::of_nat(list_len(ps)),
+            cat2(" values, given ", Text::of_nat(list_len(types)))
+          ),
+          span
+        )
+      ),
+      frame_rewrap(
+        c,
+        ck_error(
+          c,
+          cat5(
+            "`",
+            eff,
+            "` takes ",
+            Text::of_nat(list_len(ps)),
+            cat2(" values, given ", Text::of_nat(list_len(types)))
+          ),
+          span
+        ),
+        ck_error_frame(
+          c,
+          cat5(
+            "`",
+            eff,
+            "` takes ",
+            Text::of_nat(list_len(ps)),
+            cat2(" values, given ", Text::of_nat(list_len(types)))
+          ),
+          span
+        )
+      ),
+      ordered
+    )
+    false => run_frame_rewrap(
+      c,
+      ck_expect_args(types, c, ps, args),
+      ck_expect_args_run_frame(types, c, ps, args, ordered)
+    )
+  }
+}
+
+pub fn application_effect_inst(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  original: Ty,
+  inst: Ty
+): Mut1(Ty, Checker) {
+  match inst: Mut1(Ty, Checker) {
+    TyInt(pat_w) => mut1(original, c)
+    TyBool => mut1(original, c)
+    TyText => mut1(original, c)
+    TyUnit => mut1(original, c)
+    TyNever => mut1(original, c)
+    TyDecimal => mut1(original, c)
+    TyFloat => mut1(original, c)
+    TyFn(ps, r, fk) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => mut1(r, c1),
+      application_effect_arity(
+        c,
+        eff,
+        types,
+        args,
+        span,
+        ps,
+        not(Nat::eq(list_len(ps), list_len(types)))
+      )
+    )
+    TyUnion(pat_members) => mut1(original, c)
+    TyProduct(pat_members) => mut1(original, c)
+    TyTagged(pat_tags, pat_inner) => mut1(original, c)
+    TyNamed(pat_name, pat_args) => mut1(original, c)
+    TyParam(pat_name, pat_bound) => mut1(original, c)
+    TyInfo(pat_inner) => mut1(original, c)
+    TyBorrow(pat_inner, pat_mutable) => mut1(original, c)
+    TyVar(pat_v) => mut1(original, c)
+    TyPoly(pat_generics, pat_inner) => mut1(original, c)
+    TyApp(pat_head, pat_arg) => mut1(original, c)
+  }
+}
+
+pub theorem application_effect_inst_frame(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  original: Ty,
+  inst: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
+  match inst: CkRunFrame(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
+    TyInt(pat_w) => run_frame_return(c, original, ordered)
+    TyBool => run_frame_return(c, original, ordered)
+    TyText => run_frame_return(c, original, ordered)
+    TyUnit => run_frame_return(c, original, ordered)
+    TyNever => run_frame_return(c, original, ordered)
+    TyDecimal => run_frame_return(c, original, ordered)
+    TyFloat => run_frame_return(c, original, ordered)
+    TyFn(ps, r, fk) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(r, c1),
+      application_effect_arity(
+        c,
+        eff,
+        types,
+        args,
+        span,
+        ps,
+        not(Nat::eq(list_len(ps), list_len(types)))
+      ),
+      application_effect_arity_frame(
+        c,
+        eff,
+        types,
+        args,
+        span,
+        ps,
+        not(Nat::eq(list_len(ps), list_len(types))),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_return(c1, r, o_c1)
+    )
+    TyUnion(pat_members) => run_frame_return(c, original, ordered)
+    TyProduct(pat_members) => run_frame_return(c, original, ordered)
+    TyTagged(pat_tags, pat_inner) => run_frame_return(c, original, ordered)
+    TyNamed(pat_name, pat_args) => run_frame_return(c, original, ordered)
+    TyParam(pat_name, pat_bound) => run_frame_return(c, original, ordered)
+    TyInfo(pat_inner) => run_frame_return(c, original, ordered)
+    TyBorrow(pat_inner, pat_mutable) => run_frame_return(c, original, ordered)
+    TyVar(pat_v) => run_frame_return(c, original, ordered)
+    TyPoly(pat_generics, pat_inner) => run_frame_return(c, original, ordered)
+    TyApp(pat_head, pat_arg) => run_frame_return(c, original, ordered)
+  }
+}
+
+pub fn application_effect_found(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  found: Option(EffectSig)
+): Mut1(Ty, Checker) {
+  match found: Mut1(Ty, Checker) {
+    None => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat3("no effect `", eff, "` is declared"), span)
+    )
+    Some(sig) => frame_bind(
+      Ty,
+      Ty,
+      (inst: Ty, c1: Checker) => application_effect_inst(c1, eff, types, args, span, inst, inst),
+      ck_instantiate_named(c, handle_effect_generics(sig), handle_effect_type(sig))
+    )
+  }
+}
+
+pub theorem application_effect_found_frame(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  found: Option(EffectSig),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, application_effect_found(c, eff, types, args, span, found)) {
+  match found: CkRunFrame(c, application_effect_found(c, eff, types, args, span, found)) {
+    None => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat3("no effect `", eff, "` is declared"), span),
+      run_frame_read(
+        c,
+        ck_error(c, cat3("no effect `", eff, "` is declared"), span),
+        ck_error_frame(c, cat3("no effect `", eff, "` is declared"), span),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    Some(sig) => run_frame_bind(
+      Ty,
+      Ty,
+      c,
+      (inst: Ty, c1: Checker) => application_effect_inst(c1, eff, types, args, span, inst, inst),
+      ck_instantiate_named(c, handle_effect_generics(sig), handle_effect_type(sig)),
+      run_frame_read(
+        c,
+        ck_instantiate_named(c, handle_effect_generics(sig), handle_effect_type(sig)),
+        ck_instantiate_named_frame(c, handle_effect_generics(sig), handle_effect_type(sig)),
+        ordered
+      ),
+      inst => c1 => o_c1 => application_effect_inst_frame(
+        c1,
+        eff,
+        types,
+        args,
+        span,
+        inst,
+        inst,
+        o_c1
+      )
+    )
+  }
+}
+
+pub theorem application_effect_unf(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan
+): ck_perform_of(c, eff, types, args, span) = application_effect_found(
+    c,
+    eff,
+    types,
+    args,
+    span,
+    Ordmap::get(handle_effects(c), eff, Ordmap::compare_text)
+  ) { Refl }
+
+pub theorem ck_perform_of_run_frame(
+  c: Checker,
+  eff: Text,
+  types: List(Ty),
+  args: List(SurfaceTerm),
+  span: TySpan,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_perform_of(c, eff, types, args, span)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(application_effect_unf(c, eff, types, args, span)),
+    application_effect_found_frame(
+      c,
+      eff,
+      types,
+      args,
+      span,
+      Ordmap::get(handle_effects(c), eff, Ordmap::compare_text),
+      ordered
+    )
+  )
+}
+
+pub fn application_fn_arity(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  bad: Bool
+): Mut1(Unit, Checker) {
+  match bad: Mut1(Unit, Checker) {
+    true => ck_rewrap1(
+      ck_error(
+        c,
+        cat4(
+          "a function of ",
+          Text::of_nat(list_len(ps)),
+          " values is given ",
+          Text::of_nat(list_len(args))
+        ),
+        span_of(term)
+      )
+    )
+    false => ck_rewrap1(ck_expect_args(args, c, ps, arguments))
+  }
+}
+
+pub theorem application_fn_arity_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  bad: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+  match bad: CkRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+    true => run_frame_read(
+      c,
+      ck_rewrap1(
+        ck_error(
+          c,
+          cat4(
+            "a function of ",
+            Text::of_nat(list_len(ps)),
+            " values is given ",
+            Text::of_nat(list_len(args))
+          ),
+          span_of(term)
+        )
+      ),
+      frame_rewrap(
+        c,
+        ck_error(
+          c,
+          cat4(
+            "a function of ",
+            Text::of_nat(list_len(ps)),
+            " values is given ",
+            Text::of_nat(list_len(args))
+          ),
+          span_of(term)
+        ),
+        ck_error_frame(
+          c,
+          cat4(
+            "a function of ",
+            Text::of_nat(list_len(ps)),
+            " values is given ",
+            Text::of_nat(list_len(args))
+          ),
+          span_of(term)
+        )
+      ),
+      ordered
+    )
+    false => run_frame_rewrap(
+      c,
+      ck_expect_args(args, c, ps, arguments),
+      ck_expect_args_run_frame(args, c, ps, arguments, ordered)
+    )
+  }
+}
+
+pub fn application_fn_known(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  r: Ty,
+  known: Option(List(Ty))
+): Mut1(Ty, Checker) {
+  match known: Mut1(Ty, Checker) {
+    Some(kp) => mut1(r, c)
+    None => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => mut1(r, c1),
+      application_fn_arity(c, term, arguments, args, ps, not(Nat::eq(list_len(ps), list_len(args))))
+    )
+  }
+}
+
+pub theorem application_fn_known_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  r: Ty,
+  known: Option(List(Ty)),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+  match known: CkRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+    Some(kp) => run_frame_return(c, r, ordered)
+    None => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => mut1(r, c1),
+      application_fn_arity(c, term, arguments, args, ps, not(Nat::eq(list_len(ps), list_len(args)))),
+      application_fn_arity_frame(
+        c,
+        term,
+        arguments,
+        args,
+        ps,
+        not(Nat::eq(list_len(ps), list_len(args))),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_return(c1, r, o_c1)
+    )
+  }
+}
+
+pub fn application_fn(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  original: Ty,
+  fr: Ty
+): Mut1(Ty, Checker) {
+  match fr: Mut1(Ty, Checker) {
+    TyInt(pat_w) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyBool => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyText => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyUnit => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyNever => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyDecimal => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyFloat => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyFn(ps, r, fk) => application_fn_known(c, term, arguments, args, ps, r, known)
+    TyUnion(pat_members) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyProduct(pat_members) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyTagged(pat_tags, pat_inner) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyNamed(pat_name, pat_args) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyParam(pat_name, pat_bound) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyInfo(pat_inner) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyBorrow(pat_inner, pat_mutable) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyVar(v) => frame_bind(
+      Ty,
+      Ty,
+      (r: Ty, c1: Checker) => frame_bind(
+        Bool,
+        Ty,
+        (unified: Bool, c2: Checker) => frame_bind(
+          Unit,
+          Ty,
+          (ignored: Unit, c3: Checker) => mut1(r, c3),
+          frame_error_if(
+            c2,
+            "cannot infer a function type for this call",
+            span_of(function),
+            not(unified)
+          )
+        ),
+        ck_unify(c1, f, TyFn(args, r, KindShared))
+      ),
+      ck_fresh(c)
+    )
+    TyPoly(pat_generics, pat_inner) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+    TyApp(pat_head, pat_arg) => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+    )
+  }
+}
+
+pub theorem application_fn_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  original: Ty,
+  fr: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, application_fn(c, term, function, arguments, f, known, args, original, fr)) {
+  match fr: CkRunFrame(
+    c,
+    application_fn(c, term, function, arguments, f, known, args, original, fr)
+  ) {
+    TyInt(pat_w) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyBool => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyText => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyUnit => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyNever => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyDecimal => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyFloat => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyFn(ps, r, fk) => application_fn_known_frame(c, term, arguments, args, ps, r, known, ordered)
+    TyUnion(pat_members) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyProduct(pat_members) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyTagged(pat_tags, pat_inner) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyNamed(pat_name, pat_args) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyParam(pat_name, pat_bound) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyInfo(pat_inner) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyBorrow(pat_inner, pat_mutable) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyVar(v) => run_frame_bind(
+      Ty,
+      Ty,
+      c,
+      (r: Ty, c1: Checker) => frame_bind(
+        Bool,
+        Ty,
+        (unified: Bool, c2: Checker) => frame_bind(
+          Unit,
+          Ty,
+          (ignored: Unit, c3: Checker) => mut1(r, c3),
+          frame_error_if(
+            c2,
+            "cannot infer a function type for this call",
+            span_of(function),
+            not(unified)
+          )
+        ),
+        ck_unify(c1, f, TyFn(args, r, KindShared))
+      ),
+      ck_fresh(c),
+      run_frame_read(c, ck_fresh(c), ck_fresh_frame(c), ordered),
+      r => c1 => o_c1 => run_frame_bind(
+        Bool,
+        Ty,
+        c1,
+        (unified: Bool, c2: Checker) => frame_bind(
+          Unit,
+          Ty,
+          (ignored: Unit, c3: Checker) => mut1(r, c3),
+          frame_error_if(
+            c2,
+            "cannot infer a function type for this call",
+            span_of(function),
+            not(unified)
+          )
+        ),
+        ck_unify(c1, f, TyFn(args, r, KindShared)),
+        ck_unify_run_frame(c1, f, TyFn(args, r, KindShared), o_c1),
+        unified => c2 => o_c2 => run_frame_bind(
+          Unit,
+          Ty,
+          c2,
+          (ignored: Unit, c3: Checker) => mut1(r, c3),
+          frame_error_if(
+            c2,
+            "cannot infer a function type for this call",
+            span_of(function),
+            not(unified)
+          ),
+          run_frame_read(
+            c2,
+            frame_error_if(
+              c2,
+              "cannot infer a function type for this call",
+              span_of(function),
+              not(unified)
+            ),
+            frame_error_if_ok(
+              c2,
+              "cannot infer a function type for this call",
+              span_of(function),
+              not(unified)
+            ),
+            o_c2
+          ),
+          ignored => c3 => o_c3 => run_frame_return(c3, r, o_c3)
+        )
+      )
+    )
+    TyPoly(pat_generics, pat_inner) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+    TyApp(pat_head, pat_arg) => run_frame_bind(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+      run_frame_read(
+        c,
+        ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ck_error_frame(c, cat2(ty_show(original), " is not a function"), span_of(function)),
+        ordered
+      ),
+      ignored => c1 => o_c1 => run_frame_read(
+        c1,
+        ck_rewrap1(ck_fresh(c1)),
+        frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1)),
+        o_c1
+      )
+    )
+  }
+}
+
+pub theorem application_fn_unf(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty)
+): ck_app_result(c, term, function, arguments, f, known, args) = application_fn(
+    c,
+    term,
+    function,
+    arguments,
+    f,
+    known,
+    args,
+    ty_unborrowed(ck_resolve(c, f)),
+    ty_unborrowed(ck_resolve(c, f))
+  ) { Refl }
+
+pub theorem ck_app_result_run_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_app_result(c, term, function, arguments, f, known, args)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(application_fn_unf(c, term, function, arguments, f, known, args)),
+    application_fn_frame(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      known,
+      args,
+      ty_unborrowed(ck_resolve(c, f)),
+      ty_unborrowed(ck_resolve(c, f)),
+      ordered
+    )
+  )
+}

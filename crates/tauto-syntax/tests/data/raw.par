@@ -1,0 +1,18 @@
+%start Items
+%title "raw"
+%state n: count(0..=16)
+%on RawOpen %enter RAW
+%scanner RAW {
+  %auto_ws_off
+  %auto_newline_off
+  %on RawClose %enter INITIAL
+}
+%%
+Items: { Item };
+Item: Raw | Ident;
+Raw: RawOpen { RawText | RawQuote } RawClose;
+RawOpen: 'r' + %capture('#', n) + '"';
+RawText: <RAW>/[^"]+/;
+RawClose: <RAW>'"' + %validate('#', n);
+RawQuote: <RAW>'"' + %validate('#', n, 0..n);
+Ident: /[a-z]+/;

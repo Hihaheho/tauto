@@ -1,0 +1,50 @@
+import "../src/builtins.taut"
+
+// The list need not have unique keys or contain only text keys. The answer is
+// the first matching position under the general, heap-dependent equality.
+pub theorem m_find_text_key_correct(
+  ctors: List(MCtor),
+  cx: MCx,
+  es: List(Pair(MVal, MVal)),
+  text: Text,
+  at: Nat
+): Eq(
+  Option(Nat),
+  m_find_text_key(ctors, cx, es, text, at),
+  m_find_key_general(ctors, cx, es, MvText(text), at)
+) {
+  match es {
+    Nil => Refl
+    Cons(e, rest) => match e {
+      Pair { fst: key, snd: value } => match key {
+        MvText(stored) => Eq::congr(
+          (answer: Option(Nat)) => match m_text_eq(stored, text): Option(Nat) {
+            true => Some(at)
+            false => answer
+          },
+          m_find_text_key_correct(ctors, cx, rest, text, Succ(at))
+        )
+        other => Eq::congr(
+          (answer: Option(Nat)) => match m_eq(ctors, cx, other, MvText(text)): Option(Nat) {
+            true => Some(at)
+            false => answer
+          },
+          m_find_text_key_correct(ctors, cx, rest, text, Succ(at))
+        )
+      }
+    }
+  }
+}
+
+pub theorem m_find_key_correct(
+  ctors: List(MCtor),
+  cx: MCx,
+  es: List(Pair(MVal, MVal)),
+  key: MVal,
+  at: Nat
+): Eq(Option(Nat), m_find_key(ctors, cx, es, key, at), m_find_key_general(ctors, cx, es, key, at)) {
+  match key {
+    MvText(text) => m_find_text_key_correct(ctors, cx, es, text, at)
+    _ => Refl
+  }
+}

@@ -1,0 +1,38 @@
+import std::Base
+import std::Text
+import "resolve.taut"
+import "bundle.taut"
+
+// The functions the tauto command calls (crates/tauto-messages): a bundle of one locale made from
+// FTL text, and a message of it formatted with arguments, without isolation marks around
+// placeables since the output goes to a terminal.
+
+pub fn fl_bundle(locale: Text, ftl: Text): Bundle {
+  with_resource(bundle_isolating(bundle_new(locale), false), ftl)
+}
+
+pub fn fl_has(b: Bundle, id: Text): Bool {
+  has_message(b, id)
+}
+
+pub fn fl_arg_str(name: Text, v: Text): Arg {
+  arg_str(name, v)
+}
+
+pub fn fl_arg_num(name: Text, n: Nat): Arg {
+  arg_num(name, n)
+}
+
+pub fn fl_format(b: Bundle, id: Text, args: List(Arg)): Text {
+  format_text(b, id, args)
+}
+
+// Whether the FTL text reads without an error: no junk and no name used twice.
+pub fn fl_clean(ftl: Text): Bool {
+  match add_resource(bundle_new("en"), ftl): Bool {
+    Added::Mk(b, errors) => match errors: Bool {
+      Nil => true
+      Cons(e, rest) => false
+    }
+  }
+}

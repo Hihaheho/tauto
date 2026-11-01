@@ -1,0 +1,52 @@
+import "rules_written.taut"
+
+// Missing signature annotations introduce an inference variable. Subsequent
+// body checking and substitution must discharge it; this is elaboration only.
+pub(open) inductive SignatureType(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool,
+  borrowing: Bool
+): (Option(SurfaceTerm), Ty) -> Prop {
+  SignatureTypeInferred(
+    index: Nat
+  ): SignatureType(env, generics, partial, borrowing, None, TyVar(index))
+  SignatureTypeWritten(
+    source: SurfaceTerm,
+    t: Ty,
+    meaning: WrittenTerm(env, generics, partial, borrowing, source, t)
+  ): SignatureType(env, generics, partial, borrowing, Some(source), t)
+}
+pub(open) inductive SignatureBorrow: (Option(Bool), Ty, Ty) -> Prop {
+  SignatureBorrowNone(t: Ty): SignatureBorrow(None, t, t)
+  SignatureBorrowExisting(
+    requested: Bool,
+    inner: Ty,
+    mutable: Bool
+  ): SignatureBorrow(Some(requested), TyBorrow(inner, mutable), TyBorrow(inner, mutable))
+  SignatureBorrowWrap(
+    requested: Bool,
+    t: Ty,
+    owned: ty_is_borrow(t) = false
+  ): SignatureBorrow(Some(requested), t, TyBorrow(t, requested))
+}
+pub fn signature_borrow_mode(b: Option(Bool)): Bool {
+  match b: Bool {
+    None => false
+    Some(mutable) => true
+  }
+}
+pub(open) inductive SignatureParameter(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool,
+  source: Option(SurfaceTerm),
+  borrow: Option(Bool)
+): (Ty) -> Prop {
+  Mk(
+    inner: Ty,
+    result: Ty,
+    meaning: SignatureType(env, generics, partial, signature_borrow_mode(borrow), source, inner),
+    wrapped: SignatureBorrow(borrow, inner, result)
+  ): SignatureParameter(env, generics, partial, source, borrow, result)
+}

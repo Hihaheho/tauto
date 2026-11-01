@@ -1,0 +1,614 @@
+import "operator_frame.taut"
+
+pub fn access_info_unbounded(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  unbounded: Bool
+): Mut1(Ty, Checker) {
+  match unbounded: Mut1(Ty, Checker) {
+    true => mut1(TyFn(Nil, h, KindShared), c)
+    false => ck_rewrap1(ck_field_missing(c, term, TyInfo(h), name))
+  }
+}
+
+pub theorem access_info_unbounded_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  unbounded: Bool
+): CkReadFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
+  match unbounded: CkReadFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
+    true => Refl
+    false => frame_rewrap(
+      c,
+      ck_field_missing(c, term, TyInfo(h), name),
+      ck_field_missing_frame(c, term, TyInfo(h), name)
+    )
+  }
+}
+
+pub fn access_info(c: Checker, term: SurfaceTerm, name: Text, h: Ty, more: Bool): Mut1(Ty, Checker) {
+  match more: Mut1(Ty, Checker) {
+    true => mut1(TyFn(Cons(TyInt(Width64), Nil), h, KindShared), c)
+    false => access_info_unbounded(c, term, name, h, Text::eq(name, "unbounded"))
+  }
+}
+
+pub theorem access_info_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  h: Ty,
+  more: Bool
+): CkReadFrame(c, access_info(c, term, name, h, more)) {
+  match more: CkReadFrame(c, access_info(c, term, name, h, more)) {
+    true => Refl
+    false => access_info_unbounded_frame(c, term, name, h, Text::eq(name, "unbounded"))
+  }
+}
+
+pub fn access_borrow(c: Checker, t: Ty, borrow: Bool): Mut1(Ty, Checker) {
+  match borrow: Mut1(Ty, Checker) {
+    true => mut1(TyBorrow(t, false), c)
+    false => mut1(t, c)
+  }
+}
+
+pub theorem access_borrow_frame(
+  c: Checker,
+  t: Ty,
+  borrow: Bool
+): CkReadFrame(c, access_borrow(c, t, borrow)) {
+  match borrow: CkReadFrame(c, access_borrow(c, t, borrow)) {
+    true => Refl
+    false => Refl
+  }
+}
+
+pub fn access_found(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  borrowed: Bool,
+  found: Option(Ty)
+): Mut1(Ty, Checker) {
+  match found: Mut1(Ty, Checker) {
+    None => frame_bind(
+      Unit,
+      Ty,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat4(d, " has no field `", name, "`"), span_of(term))
+    )
+    Some(t) => access_borrow(c, t, Bool::and(borrowed, not(kind_dup(ck_kind(c, t)))))
+  }
+}
+
+pub theorem access_found_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  borrowed: Bool,
+  found: Option(Ty)
+): CkReadFrame(c, access_found(c, term, name, d, borrowed, found)) {
+  match found: CkReadFrame(c, access_found(c, term, name, d, borrowed, found)) {
+    None => frame_bind_ok(
+      Unit,
+      Ty,
+      c,
+      (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
+      ck_error(c, cat4(d, " has no field `", name, "`"), span_of(term)),
+      ck_error_frame(c, cat4(d, " has no field `", name, "`"), span_of(term)),
+      ignored => c1 => frame_rewrap(c1, ck_fresh(c1), ck_fresh_frame(c1))
+    )
+    Some(t) => access_borrow_frame(c, t, Bool::and(borrowed, not(kind_dup(ck_kind(c, t)))))
+  }
+}
+
+pub fn access_struct(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  args: List(Ty),
+  borrowed: Bool,
+  structural: Bool
+): Mut1(Ty, Checker) {
+  match structural: Mut1(Ty, Checker) {
+    true => access_found(
+      c,
+      term,
+      name,
+      d,
+      borrowed,
+      ck_field_find(datas_fields(ck_datas_of(c), d, 0, args), name)
+    )
+    false => ck_rewrap1(ck_field_missing(c, term, TyNamed(d, args), name))
+  }
+}
+
+pub theorem access_struct_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  d: Text,
+  args: List(Ty),
+  borrowed: Bool,
+  structural: Bool
+): CkReadFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+  match structural: CkReadFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+    true => access_found_frame(
+      c,
+      term,
+      name,
+      d,
+      borrowed,
+      ck_field_find(datas_fields(ck_datas_of(c), d, 0, args), name)
+    )
+    false => frame_rewrap(
+      c,
+      ck_field_missing(c, term, TyNamed(d, args), name),
+      ck_field_missing_frame(c, term, TyNamed(d, args), name)
+    )
+  }
+}
+
+pub fn access_field(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  original: Ty,
+  borrowed: Bool,
+  t: Ty
+): Mut1(Ty, Checker) {
+  match t: Mut1(Ty, Checker) {
+    TyInt(pat_w) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyBool => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyText => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyUnit => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyNever => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyDecimal => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyFloat => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyFn(pat_params, pat_result, pat_kind) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyUnion(pat_members) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyProduct(pat_members) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyTagged(pat_tags, pat_inner) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyNamed(d, args) => access_struct(
+      c,
+      term,
+      name,
+      d,
+      args,
+      borrowed,
+      data_is_struct(ck_datas_of(c), d)
+    )
+    TyParam(pat_name, pat_bound) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyInfo(h) => access_info(c, term, name, h, Text::eq(name, "more"))
+    TyBorrow(pat_inner, pat_mutable) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyVar(pat_v) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyPoly(pat_generics, pat_inner) => ck_rewrap1(ck_field_missing(c, term, original, name))
+    TyApp(pat_head, pat_arg) => ck_rewrap1(ck_field_missing(c, term, original, name))
+  }
+}
+
+pub theorem access_field_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  name: Text,
+  original: Ty,
+  borrowed: Bool,
+  t: Ty
+): CkReadFrame(c, access_field(c, term, name, original, borrowed, t)) {
+  match t: CkReadFrame(c, access_field(c, term, name, original, borrowed, t)) {
+    TyInt(pat_w) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyBool => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyText => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyUnit => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyNever => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyDecimal => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyFloat => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyFn(pat_params, pat_result, pat_kind) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyUnion(pat_members) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyProduct(pat_members) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyTagged(pat_tags, pat_inner) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyNamed(d, args) => access_struct_frame(
+      c,
+      term,
+      name,
+      d,
+      args,
+      borrowed,
+      data_is_struct(ck_datas_of(c), d)
+    )
+    TyParam(pat_name, pat_bound) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyInfo(h) => access_info_frame(c, term, name, h, Text::eq(name, "more"))
+    TyBorrow(pat_inner, pat_mutable) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyVar(pat_v) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyPoly(pat_generics, pat_inner) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+    TyApp(pat_head, pat_arg) => frame_rewrap(
+      c,
+      ck_field_missing(c, term, original, name),
+      ck_field_missing_frame(c, term, original, name)
+    )
+  }
+}
+
+pub theorem access_field_unf(
+  c: Checker,
+  term: SurfaceTerm,
+  b: Ty,
+  name: Text
+): ck_field_of(c, term, b, name) = access_field(
+    c,
+    term,
+    name,
+    ty_unborrowed(ck_resolve(c, b)),
+    ty_is_borrow(ck_resolve(c, b)),
+    ty_unborrowed(ck_resolve(c, b))
+  ) { Refl }
+
+pub theorem ck_field_of_frame(
+  c: Checker,
+  term: SurfaceTerm,
+  b: Ty,
+  name: Text
+): CkReadFrame(c, ck_field_of(c, term, b, name)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+    Eq::sym(access_field_unf(c, term, b, name)),
+    access_field_frame(
+      c,
+      term,
+      name,
+      ty_unborrowed(ck_resolve(c, b)),
+      ty_is_borrow(ck_resolve(c, b)),
+      ty_unborrowed(ck_resolve(c, b))
+    )
+  )
+}
+
+pub fn access_hint_arity(c: Checker, ps: List(Ty), hs: List(Ty), same: Bool): Mut1(Unit, Checker) {
+  match same: Mut1(Unit, Checker) {
+    true => ck_rewrap1(ck_lambda_hint(ps, c, hs))
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem access_hint_arity_frame(
+  c: Checker,
+  ps: List(Ty),
+  hs: List(Ty),
+  same: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, access_hint_arity(c, ps, hs, same)) {
+  match same: CkRunFrame(c, access_hint_arity(c, ps, hs, same)) {
+    true => run_frame_rewrap(
+      c,
+      ck_lambda_hint(ps, c, hs),
+      ck_lambda_hint_run_frame(ps, c, hs, ordered)
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn access_hint_type(c: Checker, ps: List(Ty), t: Ty): Mut1(Unit, Checker) {
+  match t: Mut1(Unit, Checker) {
+    TyInt(pat_w) => mut1(Star, c)
+    TyBool => mut1(Star, c)
+    TyText => mut1(Star, c)
+    TyUnit => mut1(Star, c)
+    TyNever => mut1(Star, c)
+    TyDecimal => mut1(Star, c)
+    TyFloat => mut1(Star, c)
+    TyFn(hs, r, fk) => access_hint_arity(c, ps, hs, Nat::eq(list_len(hs), list_len(ps)))
+    TyUnion(pat_members) => mut1(Star, c)
+    TyProduct(pat_members) => mut1(Star, c)
+    TyTagged(pat_tags, pat_inner) => mut1(Star, c)
+    TyNamed(pat_name, pat_args) => mut1(Star, c)
+    TyParam(pat_name, pat_bound) => mut1(Star, c)
+    TyInfo(pat_inner) => mut1(Star, c)
+    TyBorrow(pat_inner, pat_mutable) => mut1(Star, c)
+    TyVar(pat_v) => mut1(Star, c)
+    TyPoly(pat_generics, pat_inner) => mut1(Star, c)
+    TyApp(pat_head, pat_arg) => mut1(Star, c)
+  }
+}
+
+pub theorem access_hint_type_frame(
+  c: Checker,
+  ps: List(Ty),
+  t: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, access_hint_type(c, ps, t)) {
+  match t: CkRunFrame(c, access_hint_type(c, ps, t)) {
+    TyInt(pat_w) => run_frame_return(c, Star, ordered)
+    TyBool => run_frame_return(c, Star, ordered)
+    TyText => run_frame_return(c, Star, ordered)
+    TyUnit => run_frame_return(c, Star, ordered)
+    TyNever => run_frame_return(c, Star, ordered)
+    TyDecimal => run_frame_return(c, Star, ordered)
+    TyFloat => run_frame_return(c, Star, ordered)
+    TyFn(hs, r, fk) => access_hint_arity_frame(
+      c,
+      ps,
+      hs,
+      Nat::eq(list_len(hs), list_len(ps)),
+      ordered
+    )
+    TyUnion(pat_members) => run_frame_return(c, Star, ordered)
+    TyProduct(pat_members) => run_frame_return(c, Star, ordered)
+    TyTagged(pat_tags, pat_inner) => run_frame_return(c, Star, ordered)
+    TyNamed(pat_name, pat_args) => run_frame_return(c, Star, ordered)
+    TyParam(pat_name, pat_bound) => run_frame_return(c, Star, ordered)
+    TyInfo(pat_inner) => run_frame_return(c, Star, ordered)
+    TyBorrow(pat_inner, pat_mutable) => run_frame_return(c, Star, ordered)
+    TyVar(pat_v) => run_frame_return(c, Star, ordered)
+    TyPoly(pat_generics, pat_inner) => run_frame_return(c, Star, ordered)
+    TyApp(pat_head, pat_arg) => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn access_hint(c: Checker, ps: List(Ty), hint: Option(Ty)): Mut1(Unit, Checker) {
+  match hint: Mut1(Unit, Checker) {
+    None => mut1(Star, c)
+    Some(h) => access_hint_type(c, ps, ty_unborrowed(ck_resolve(c, h)))
+  }
+}
+
+pub theorem access_hint_frame(
+  c: Checker,
+  ps: List(Ty),
+  hint: Option(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, access_hint(c, ps, hint)) {
+  match hint: CkRunFrame(c, access_hint(c, ps, hint)) {
+    None => run_frame_return(c, Star, ordered)
+    Some(h) => access_hint_type_frame(c, ps, ty_unborrowed(ck_resolve(c, h)), ordered)
+  }
+}
+
+pub theorem access_hint_unf(
+  c: Checker,
+  hint: Option(Ty),
+  ps: List(Ty)
+): ck_lambda_hint_of(c, hint, ps) = access_hint(c, ps, hint) { match hint: ck_lambda_hint_of(c, hint, ps) = access_hint(c, ps, hint) { None => Refl
+    Some(h) => Refl } }
+
+pub theorem ck_lambda_hint_of_run_frame(
+  c: Checker,
+  hint: Option(Ty),
+  ps: List(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_lambda_hint_of(c, hint, ps)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(access_hint_unf(c, hint, ps)),
+    access_hint_frame(c, ps, hint, ordered)
+  )
+}
+
+pub fn access_join(c: Checker, b: Ty, result: Option(Ty)): Mut1(Ty, Checker) {
+  match result: Mut1(Ty, Checker) {
+    None => mut1(b, c)
+    Some(r) => ck_rewrap1(ck_join(c, r, b))
+  }
+}
+
+pub theorem access_join_frame(
+  c: Checker,
+  b: Ty,
+  result: Option(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, access_join(c, b, result)) {
+  match result: CkRunFrame(c, access_join(c, b, result)) {
+    None => run_frame_return(c, b, ordered)
+    Some(r) => run_frame_rewrap(c, ck_join(c, r, b), ck_join_run_frame(c, r, b, ordered))
+  }
+}
+
+pub theorem access_join_unf(
+  c: Checker,
+  result: Option(Ty),
+  b: Ty
+): ck_join_opt(c, result, b) = access_join(c, b, result) { match result: ck_join_opt(c, result, b) = access_join(c, b, result) { None => Refl
+    Some(r) => Refl } }
+
+pub theorem ck_join_opt_run_frame(
+  c: Checker,
+  result: Option(Ty),
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_join_opt(c, result, b)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(access_join_unf(c, result, b)),
+    access_join_frame(c, b, result, ordered)
+  )
+}
+
+pub theorem ck_instance_of_run_frame(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_instance_of(gs, c)) {
+  run_frame_grows(c, ck_instance_of(gs, c), And::left(inst_ok(gs, c))(ordered))
+}
+pub fn access_record_term(&mut c: Checker, function: SurfaceTerm, inst: Ty): Unit {
+  set_to(&mut c.terms, Cons(Pair { fst: term_at_of(function), snd: inst }, c.terms))
+}
+pub theorem access_record_term_frame(
+  c: Checker,
+  function: SurfaceTerm,
+  inst: Ty
+): CkReadFrame(c, access_record_term(c, function, inst)) { Refl }
+
+pub fn access_poly(c: Checker, function: SurfaceTerm, original: Ty, f: Ty): Mut1(Ty, Checker) {
+  match f: Mut1(Ty, Checker) {
+    TyInt(pat_w) => mut1(original, c)
+    TyBool => mut1(original, c)
+    TyText => mut1(original, c)
+    TyUnit => mut1(original, c)
+    TyNever => mut1(original, c)
+    TyDecimal => mut1(original, c)
+    TyFloat => mut1(original, c)
+    TyFn(pat_params, pat_result, pat_kind) => mut1(original, c)
+    TyUnion(pat_members) => mut1(original, c)
+    TyProduct(pat_members) => mut1(original, c)
+    TyTagged(pat_tags, pat_inner) => mut1(original, c)
+    TyNamed(pat_name, pat_args) => mut1(original, c)
+    TyParam(pat_name, pat_bound) => mut1(original, c)
+    TyInfo(pat_inner) => mut1(original, c)
+    TyBorrow(pat_inner, pat_mutable) => mut1(original, c)
+    TyVar(pat_v) => mut1(original, c)
+    TyPoly(gs, t) => frame_bind(
+      Ordmap(Text, Ty),
+      Ty,
+      (fresh: Ordmap(Text, Ty), c1: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (ignored: Unit, c2: Checker) => mut1(ty_substitute(t, fresh), c2),
+        access_record_term(c1, function, ty_substitute(t, fresh))
+      ),
+      ck_instance_of(gs, c)
+    )
+    TyApp(pat_head, pat_arg) => mut1(original, c)
+  }
+}
+
+pub theorem access_poly_frame(
+  c: Checker,
+  function: SurfaceTerm,
+  original: Ty,
+  f: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, access_poly(c, function, original, f)) {
+  match f: CkRunFrame(c, access_poly(c, function, original, f)) {
+    TyInt(pat_w) => run_frame_return(c, original, ordered)
+    TyBool => run_frame_return(c, original, ordered)
+    TyText => run_frame_return(c, original, ordered)
+    TyUnit => run_frame_return(c, original, ordered)
+    TyNever => run_frame_return(c, original, ordered)
+    TyDecimal => run_frame_return(c, original, ordered)
+    TyFloat => run_frame_return(c, original, ordered)
+    TyFn(pat_params, pat_result, pat_kind) => run_frame_return(c, original, ordered)
+    TyUnion(pat_members) => run_frame_return(c, original, ordered)
+    TyProduct(pat_members) => run_frame_return(c, original, ordered)
+    TyTagged(pat_tags, pat_inner) => run_frame_return(c, original, ordered)
+    TyNamed(pat_name, pat_args) => run_frame_return(c, original, ordered)
+    TyParam(pat_name, pat_bound) => run_frame_return(c, original, ordered)
+    TyInfo(pat_inner) => run_frame_return(c, original, ordered)
+    TyBorrow(pat_inner, pat_mutable) => run_frame_return(c, original, ordered)
+    TyVar(pat_v) => run_frame_return(c, original, ordered)
+    TyPoly(gs, t) => run_frame_bind(
+      Ordmap(Text, Ty),
+      Ty,
+      c,
+      (fresh: Ordmap(Text, Ty), c1: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (ignored: Unit, c2: Checker) => mut1(ty_substitute(t, fresh), c2),
+        access_record_term(c1, function, ty_substitute(t, fresh))
+      ),
+      ck_instance_of(gs, c),
+      ck_instance_of_run_frame(gs, c, ordered),
+      fresh => c1 => o_c1 => run_frame_bind(
+        Unit,
+        Ty,
+        c1,
+        (ignored: Unit, c2: Checker) => mut1(ty_substitute(t, fresh), c2),
+        access_record_term(c1, function, ty_substitute(t, fresh)),
+        run_frame_read(
+          c1,
+          access_record_term(c1, function, ty_substitute(t, fresh)),
+          access_record_term_frame(c1, function, ty_substitute(t, fresh)),
+          o_c1
+        ),
+        ignored => c2 => o_c2 => run_frame_return(c2, ty_substitute(t, fresh), o_c2)
+      )
+    )
+    TyApp(pat_head, pat_arg) => run_frame_return(c, original, ordered)
+  }
+}
+
+pub theorem access_poly_unf(
+  c: Checker,
+  function: SurfaceTerm,
+  f: Ty
+): ck_poly_instance(c, function, f) = access_poly(c, function, f, ck_resolve(c, f)) { Refl }
+
+pub theorem ck_poly_instance_run_frame(
+  c: Checker,
+  function: SurfaceTerm,
+  f: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_poly_instance(c, function, f)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkRunFrame(c, z),
+    Eq::sym(access_poly_unf(c, function, f)),
+    access_poly_frame(c, function, f, ck_resolve(c, f), ordered)
+  )
+}

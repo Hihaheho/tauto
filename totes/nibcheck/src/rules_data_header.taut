@@ -1,0 +1,48 @@
+import "../../surface/src/surface.taut"
+import "datas.taut"
+
+// The source-controlled name, kind annotation, parameters, and view marker.
+// Constructor fields and struct/enum form are separate obligations.
+pub(open) inductive DataHeader: Type {
+  Mk(name: Text, declared: Option(Kind), generics: List(Text), r#view: Bool): DataHeader
+}
+pub fn data_header(
+  data: Data
+): DataHeader { DataHeader::Mk(data.name, data.declared, data.generics, data.r#view) }
+pub fn data_header_option(o: Option(Data)): Option(DataHeader) {
+  match o: Option(DataHeader) {
+    None => None
+    Some(data) => Some(data_header(data))
+  }
+}
+pub fn header_source_view(s: SurfaceData): Bool {
+  match s.kind: Bool {
+    None => false
+    Some(k) => Text::eq(k, "view")
+  }
+}
+pub fn header_source_kind(s: SurfaceData): Option(Kind) {
+  match header_source_view(s): Option(Kind) {
+    true => Some(KindAffine)
+    false => match s.kind: Option(Kind) {
+      None => None
+      Some(k) => kind_parse(k)
+    }
+  }
+}
+pub fn source_data_header(
+  s: SurfaceData
+): DataHeader { DataHeader::Mk(s.name, header_source_kind(s), s.generics, header_source_view(s)) }
+pub fn header_source_name(s: SurfaceData): Text { s.name }
+pub def DataHeaderMatches(
+  env: Datas,
+  s: SurfaceData
+): Prop := data_header_option(datas_decl(env, header_source_name(s))) = Some(source_data_header(s))
+
+pub(open) inductive SourceDataEntry(env: Datas, source: SurfaceData): Prop {
+  Mk(
+    data: Data,
+    found: datas_decl(env, header_source_name(source)) = Some(data),
+    header: data_header(data) = source_data_header(source)
+  ): SourceDataEntry(env, source)
+}

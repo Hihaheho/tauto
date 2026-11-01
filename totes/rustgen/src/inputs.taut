@@ -1,0 +1,630 @@
+import "loader.taut"
+import "../../syntax/src/syntax.taut"
+
+// Ordered build roots and original file bytes. The host selects the available
+// files; this loader alone follows Tauto imports and literal resource requests.
+pub(open) inductive RustgenInputPlan: Type {
+  Mk(roots: List(Text), files: List(RustgenSource)): RustgenInputPlan
+}
+pub(open) inductive RustgenResource: Type {
+  Mk(id: Text, origin: Text, start: Nat, end: Nat, bytes: Nat): RustgenResource
+}
+pub(open) inductive RustgenInputFile: Type {
+  Mk(
+    id: Text,
+    base: Nat,
+    stmts: List(SurfaceStmt),
+    unsupported: Text
+  ): RustgenInputFile
+}
+pub(open) inductive RustgenInputGraph: Type {
+  Mk(
+    graph: RustgenGraph,
+    resources: List(RustgenResource),
+    roots: List(Text),
+    supplied: List(RustgenSource),
+    parsed: List(RustgenInputFile)
+  ): RustgenInputGraph
+}
+pub(open) inductive RustgenLoadResult(A: Type): Type {
+  RustgenLoaded(value: A): RustgenLoadResult(A)
+  RustgenLoadError(stage: Text, message: Text): RustgenLoadResult(A)
+}
+
+// Bound recursive normalization before it starts. File size/count limits are
+// independent; exhausting this input-resource bound is never language rejection.
+pub fn rustgen_input_path_bound(path: Text): Bool {
+  if Text::len(path) > 4096 { false } else { List::length(text_split(path, "/")) <= 256 }
+}
+
+pub fn rustgen_input_digits(k: Nat, value: Text, at: Nat): Bool {
+  match k: Bool {
+    Zero => true
+    Succ(j) => {
+      let b := Text::byte_value(value, at)
+      b >= 48 && b <= 57 && rustgen_input_digits(j, value, at + 1)
+    }
+  }
+}
+pub fn rustgen_input_number(w: RustgenWire): RustgenResult(Pair(Nat, RustgenWire)) {
+  match rustgen_wire_line(w): RustgenResult(Pair(Nat, RustgenWire)) {
+    RustgenErr(Message) => RustgenErr(Message)
+    RustgenOk(line) => if Text::len(
+      line.fst
+    ) == 0 || Text::len(line.fst) > 8 || not(rustgen_input_digits(Text::len(line.fst), line.fst, 0)) {
+      RustgenErr("invalid source bundle decimal length")
+    } else { match text_parse_u64(line.fst): RustgenResult(Pair(Nat, RustgenWire)) {
+        None => RustgenErr("invalid source bundle length")
+        Some(n) => if n > 16777216 { RustgenErr("source bundle length exceeds limit") } else {
+          RustgenOk(Pair { fst: n, snd: line.snd })
+        }
+      } }
+  }
+}
+
+pub fn rustgen_input_files(
+  n: Nat,
+  w: RustgenWire,
+  done: List(RustgenSource)
+): RustgenResult(List(RustgenSource)) {
+  match n: RustgenResult(List(RustgenSource)) {
+    Zero => if w.at == Text::len(
+      w.contents
+    ) { RustgenOk(List::reverse(done)) } else { RustgenErr("trailing source bundle bytes") }
+    Succ(left) => match rustgen_input_number(w): RustgenResult(List(RustgenSource)) {
+      RustgenErr(Message) => RustgenErr(Message)
+      RustgenOk(id_size) => match rustgen_input_number(
+        id_size.snd
+      ): RustgenResult(List(RustgenSource)) {
+        RustgenErr(Message) => RustgenErr(Message)
+        RustgenOk(size) => {
+          let total := Text::len(w.contents)
+          let start := size.snd.at
+          if start > total || id_size.fst > total - start {
+            RustgenErr("truncated source bundle path")
+          } else {
+            let middle := start + id_size.fst
+            if size.fst > total - middle { RustgenErr("truncated source bundle contents") } else {
+              let end := middle + size.fst
+              if end >= total || Text::slice_or_empty(w.contents, end, end + 1) != "\n" {
+                RustgenErr("truncated source bundle record")
+              } else { match Text::slice(
+                w.contents,
+                start,
+                middle
+              ): RustgenResult(List(RustgenSource)) {
+                  None => RustgenErr("invalid source bundle path boundary")
+                  Some(Id) => if not(
+                    rustgen_input_path_bound(Id)
+                  ) { RustgenErr("source bundle path exceeds limit") } else { match rustgen_path(
+                    Id
+                  ): RustgenResult(List(RustgenSource)) {
+                      RustgenErr(Message) => RustgenErr(Message)
+                      RustgenOk(normal) => if normal != Id {
+                        RustgenErr("noncanonical bundle path")
+                      } else {
+                        match rustgen_source_find(Id, done): RustgenResult(List(RustgenSource)) {
+                          Some(old) => RustgenErr("duplicate bundle path")
+                          None => match Text::slice(
+                            w.contents,
+                            middle,
+                            end
+                          ): RustgenResult(List(RustgenSource)) {
+                            None => RustgenErr("invalid source bundle contents boundary")
+                            Some(source) => rustgen_input_files(
+                              left,
+                              RustgenWire::Mk(w.contents, end + 1),
+                              Cons(RustgenSource::Mk(Id, source), done)
+                            )
+                          }
+                        }
+                      }
+                    } }
+                } }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn rustgen_wire_roots(
+  n: Nat,
+  w: RustgenWire,
+  done: List(Text)
+): RustgenResult(Pair(List(Text), RustgenWire)) {
+  match n: RustgenResult(Pair(List(Text), RustgenWire)) {
+    Zero => RustgenOk(Pair { fst: List::reverse(done), snd: w })
+    Succ(left) => match rustgen_input_number(w): RustgenResult(Pair(List(Text), RustgenWire)) {
+      RustgenErr(Message) => RustgenErr(Message)
+      RustgenOk(size) => {
+        let start := size.snd.at
+        let total := Text::len(w.contents)
+        if start > total || size.fst > total - start {
+          RustgenErr("truncated source bundle root")
+        } else {
+          let end := start + size.fst
+          match Text::slice(w.contents, start, end): RustgenResult(Pair(List(Text), RustgenWire)) {
+            None => RustgenErr("invalid source bundle root boundary")
+            Some(Id) => if not(
+              rustgen_input_path_bound(Id)
+            ) { RustgenErr("source bundle root exceeds path limit") } else { match rustgen_path(
+              Id
+            ): RustgenResult(Pair(List(Text), RustgenWire)) {
+                RustgenErr(Message) => RustgenErr(Message)
+                RustgenOk(normal) => if normal != Id {
+                  RustgenErr("noncanonical bundle root")
+                } else if end >= total || Text::slice_or_empty(w.contents, end, end + 1) != "\n" {
+                  RustgenErr("truncated source bundle root")
+                } else {
+                  rustgen_wire_roots(left, RustgenWire::Mk(w.contents, end + 1), Cons(Id, done))
+                }
+              } }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn rustgen_input_roots_exist(roots: List(Text), files: List(RustgenSource)): Bool {
+  match roots: Bool {
+    Nil => true
+    Cons(Id, rest) => match rustgen_source_find(Id, files): Bool {
+      None => false
+      Some(contents) => rustgen_input_roots_exist(rest, files)
+    }
+  }
+}
+
+pub fn rustgen_input_plan_read(contents: Text): RustgenResult(RustgenInputPlan) {
+  if Text::len(contents) > 16777216 { RustgenErr("source bundle exceeds limit") } else {
+    match rustgen_wire_line(RustgenWire::Mk(contents, 0)): RustgenResult(RustgenInputPlan) {
+      RustgenErr(Message) => RustgenErr(Message)
+      RustgenOk(header) => if header.fst != "TAUTO-SOURCES-2" {
+        RustgenErr("unknown complete-input bundle format")
+      } else { match rustgen_input_number(header.snd): RustgenResult(RustgenInputPlan) {
+          RustgenErr(Message) => RustgenErr(Message)
+          RustgenOk(count) => if count.fst == 0 || count.fst > 4096 {
+            RustgenErr("invalid source bundle root count")
+          } else { match rustgen_wire_roots(
+            count.fst,
+            count.snd,
+            Nil
+          ): RustgenResult(RustgenInputPlan) {
+              RustgenErr(Message) => RustgenErr(Message)
+              RustgenOk(roots) => match rustgen_input_number(
+                roots.snd
+              ): RustgenResult(RustgenInputPlan) {
+                RustgenErr(Message) => RustgenErr(Message)
+                RustgenOk(size) => if size.fst > 4096 {
+                  RustgenErr("too many source bundle files")
+                } else { match rustgen_input_files(
+                  size.fst,
+                  size.snd,
+                  Nil
+                ): RustgenResult(RustgenInputPlan) {
+                    RustgenErr(Message) => RustgenErr(Message)
+                    RustgenOk(files) => if rustgen_input_roots_exist(roots.fst, files) {
+                      RustgenOk(RustgenInputPlan::Mk(roots.fst, files))
+                    } else { RustgenErr("bundle root has no supplied file") }
+                  } }
+              }
+            } }
+        } }
+    }
+  }
+}
+
+// Locate the same include boundary as a disk loader: nearest supplied tote
+// manifest, or the original source directory when there is no manifest.
+pub fn rustgen_input_include_root(
+  k: Nat,
+  dir: Text,
+  fallback: Text,
+  files: List(RustgenSource)
+): Text {
+  match k: Text {
+    Zero => fallback
+    Succ(j) => {
+      let manifest: Text := if dir == "" { "Tauto.eure" } else { Text::concat(dir, "/Tauto.eure") }
+      match rustgen_source_find(manifest, files): Text {
+        Some(contents) => dir
+        None => if dir == "" { fallback } else {
+          rustgen_input_include_root(
+            j,
+            text_join(rustgen_parent_parts(text_split(dir, "/")), "/"),
+            fallback,
+            files
+          )
+        }
+      }
+    }
+  }
+}
+pub fn rustgen_input_resource_parts(
+  parts: List(Text),
+  reverse: List(Text),
+  depth: Nat
+): RustgenResult(Text) {
+  match parts: RustgenResult(Text) {
+    Nil => RustgenOk(text_join(List::reverse(reverse), "/"))
+    Cons(part, rest) => if part == "" || part == "." {
+      rustgen_input_resource_parts(rest, reverse, depth)
+    } else if part == ".." {
+      if List::length(reverse) <= depth {
+        RustgenErr("include.outside: resource leaves its tote or source directory")
+      } else {
+        match reverse: RustgenResult(Text) {
+          Nil => RustgenErr("include.outside: resource leaves its source directory")
+          Cons(last, Before) => rustgen_input_resource_parts(rest, Before, depth)
+        }
+      }
+    } else { rustgen_input_resource_parts(rest, Cons(part, reverse), depth) }
+  }
+}
+pub fn rustgen_input_resource_path(
+  own: Text,
+  path: Text,
+  files: List(RustgenSource)
+): RustgenResult(Text) {
+  if rustgen_path_valid(path) {
+    let parent := rustgen_parent_parts(text_split(own, "/"))
+    let dir := text_join(parent, "/")
+    let root := rustgen_input_include_root(List::length(parent) + 1, dir, dir, files)
+    let depth: Nat := if root == "" { 0 } else { List::length(text_split(root, "/")) }
+    rustgen_input_resource_parts(text_split(path, "/"), List::reverse(parent), depth)
+  } else { RustgenErr("invalid resource path") }
+}
+
+// This is a static dependency audit, not macro expansion. The original tree
+// and all declarations remain unchanged for the subsequent compiler stage.
+pub fn rustgen_input_resource(
+  c: SurfaceCtx,
+  own: Text,
+  files: List(RustgenSource),
+  n: CstNode,
+  done: List(RustgenResource)
+): RustgenLoadResult(List(RustgenResource)) {
+  let term := surface_term(c.fuel, c, n)
+  match term.kind: RustgenLoadResult(List(RustgenResource)) {
+    SkMacroCall(name, arg) => if name != "include_text" { RustgenLoaded(done) } else {
+      match arg.kind: RustgenLoadResult(List(RustgenResource)) {
+        SkText(path) => if not(rustgen_input_path_bound(path)) {
+          RustgenLoadError("input-unsupported", "resource path exceeds input limit")
+        } else { match rustgen_input_resource_path(
+          own,
+          path,
+          files
+        ): RustgenLoadResult(List(RustgenResource)) {
+            RustgenErr(Message) => RustgenLoadError(
+              "resource-rejected",
+              Text::concat_all(Cons(own, Cons(": ", Cons(Message, Nil))))
+            )
+            RustgenOk(Id) => if not(rustgen_input_path_bound(Id)) {
+              RustgenLoadError("input-unsupported", "resolved resource path exceeds input limit")
+            } else { match rustgen_source_find(
+              Id,
+              files
+            ): RustgenLoadResult(List(RustgenResource)) {
+                None => RustgenLoadError(
+                  "resource-rejected",
+                  Text::concat_all(Cons(own, Cons(": missing bundle resource: ", Cons(Id, Nil))))
+                )
+                Some(contents) => RustgenLoaded(
+                  Cons(RustgenResource::Mk(Id, own, n.start, n.end, Text::len(contents)), done)
+                )
+              } }
+          } }
+        _ => RustgenLoadError(
+          "input-unsupported",
+          Text::concat_all(
+            Cons(own, Cons(": include_text requires a literal resource path for input audit", Nil))
+          )
+        )
+      }
+    }
+    _ => RustgenLoadError(
+      "input-unsupported",
+      Text::concat_all(Cons(own, Cons(": unclassified macro resource input", Nil)))
+    )
+  }
+}
+
+pub fn rustgen_input_resources(
+  k: Nat,
+  c: SurfaceCtx,
+  own: Text,
+  files: List(RustgenSource),
+  nodes: List(CstNode),
+  done: List(RustgenResource)
+): RustgenLoadResult(List(RustgenResource)) {
+  match k: RustgenLoadResult(List(RustgenResource)) {
+    Zero => RustgenLoadError("input-unsupported", "resource traversal exhausted")
+    Succ(j) => match nodes: RustgenLoadResult(List(RustgenResource)) {
+      Nil => RustgenLoaded(done)
+      Cons(n, rest) => {
+        let next: RustgenLoadResult(
+          List(RustgenResource)
+        ) := if n.name == "MacroCall" { rustgen_input_resource(c, own, files, n, done) } else {
+          RustgenLoaded(done)
+        }
+        match next: RustgenLoadResult(List(RustgenResource)) {
+          RustgenLoadError(Stage, Message) => RustgenLoadError(Stage, Message)
+          RustgenLoaded(found) => rustgen_input_resources(
+            j,
+            c,
+            own,
+            files,
+            List::append(n.flat, rest),
+            found
+          )
+        }
+      }
+    }
+  }
+}
+
+// These concrete forms hold terms or metadata that Surface does not retain.
+// Inventory is still allowed to report their original files unchanged.
+pub fn rustgen_input_unrepresented(k: Nat, nodes: List(CstNode)): Text {
+  match k: Text {
+    Zero => "concrete reader traversal exhausted"
+    Succ(j) => match nodes: Text {
+      Nil => ""
+      Cons(n, rest) => if n.name == "Attribute" || n.name == "Generates" ||
+      n.name == "Generated" || n.name == "LawDecl" || n.name == "KwDecreasingBy" {
+        Text::concat("reader cannot preserve concrete form: ", n.name)
+      } else { rustgen_input_unrepresented(j, List::append(n.flat, rest)) }
+    }
+  }
+}
+
+mutual {
+  pub fn rustgen_input_visit(
+    k: u64,
+    tables: SyntaxTables,
+    files: List(RustgenSource),
+    id: Text,
+    stack: List(Text),
+    audit: Bool,
+    input: RustgenInputGraph
+  ): RustgenLoadResult(RustgenInputGraph) {
+    if k == 0 { RustgenLoadError("input-unsupported", "module import depth exceeds limit") } else {
+      let fuel := k - 1
+      if rustgen_range_has(
+        id,
+        input.graph.files
+      ) { RustgenLoaded(input) } else if rustgen_has_text(id, stack) {
+        RustgenLoadError("load-rejected", Text::concat("import cycle: ", id))
+      } else { match rustgen_source_find(id, files): RustgenLoadResult(RustgenInputGraph) {
+          None => RustgenLoadError("load-rejected", Text::concat("missing bundle module: ", id))
+          Some(source) => match syntax_parse(
+            tables,
+            source
+          ): RustgenLoadResult(RustgenInputGraph) {
+            None => RustgenLoadError("source-rejected", Text::concat("cannot parse module: ", id))
+            Some(Root) => {
+              let c := SurfaceCtx {
+                source: source,
+                base: 0,
+                classes: unicode_classes(),
+                fuel: surface_size(Root) + 1
+              }
+              let stmts := surface_program_of(c, Root)
+              match rustgen_input_imports(
+                fuel,
+                tables,
+                files,
+                id,
+                Cons(id, stack),
+                stmts,
+                audit,
+                input
+              ): RustgenLoadResult(RustgenInputGraph) {
+                RustgenLoadError(Stage, Message) => RustgenLoadError(Stage, Message)
+                RustgenLoaded(next) => match if audit {
+                  rustgen_input_resources(c.fuel, c, id, files, Cons(Root, Nil), next.resources)
+                } else { RustgenLoaded(next.resources) }: RustgenLoadResult(RustgenInputGraph) {
+                  RustgenLoadError(Stage, Message) => RustgenLoadError(Stage, Message)
+                  RustgenLoaded(resources) => {
+                    let base := Nat::of_u64(Text::len(next.graph.source))
+                    let parsed := surface_program_of(
+                      SurfaceCtx { source: source, base: base, classes: c.classes, fuel: c.fuel },
+                      Root
+                    )
+                    RustgenLoaded(RustgenInputGraph { graph: RustgenGraph {
+                      source: Text::concat_all(Cons(next.graph.source, Cons(source, Cons("\n", Nil)))),
+                      stmts: List::append(next.graph.stmts, rustgen_nonimports(parsed)),
+                      files: List::append(next.graph.files, Cons(RustgenSourceRange { id: id, start: base, end: base + Nat::of_u64(Text::len(source)) }, Nil)),
+                      generated_files: if rustgen_generated(c.fuel, Cons(Root, Nil)) { List::append(next.graph.generated_files, Cons(id, Nil)) } else { next.graph.generated_files }
+                    }, resources: resources, roots: next.roots, supplied: next.supplied,
+                      parsed: List::append(next.parsed, Cons(RustgenInputFile {
+                        id: id, base: base, stmts: parsed,
+                        unsupported: rustgen_input_unrepresented(c.fuel, Cons(Root, Nil))
+                      }, Nil)) })
+                  }
+                }
+              }
+            }
+          }
+        } }
+    }
+  }
+
+  pub fn rustgen_input_imports(
+    k: u64,
+    tables: SyntaxTables,
+    files: List(RustgenSource),
+    own: Text,
+    stack: List(Text),
+    stmts: List(SurfaceStmt),
+    audit: Bool,
+    input: RustgenInputGraph
+  ): RustgenLoadResult(RustgenInputGraph) {
+    if k == 0 {
+      RustgenLoadError("input-unsupported", "module import traversal exceeds limit")
+    } else {
+      let fuel := k - 1
+      match stmts: RustgenLoadResult(RustgenInputGraph) {
+        Nil => RustgenLoaded(input)
+        Cons(stmt, rest) => match stmt: RustgenLoadResult(RustgenInputGraph) {
+          StImport(path, start, end) => if not(rustgen_input_path_bound(path)) {
+            RustgenLoadError("input-unsupported", "import path exceeds input limit")
+          } else { match rustgen_relative(own, path): RustgenLoadResult(RustgenInputGraph) {
+              RustgenErr(Message) => RustgenLoadError(
+                "load-rejected",
+                Text::concat_all(Cons(own, Cons(": ", Cons(Message, Nil))))
+              )
+              RustgenOk(id) => if not(rustgen_input_path_bound(id)) {
+                RustgenLoadError("input-unsupported", "resolved import path exceeds input limit")
+              } else { match rustgen_input_visit(
+                fuel,
+                tables,
+                files,
+                id,
+                stack,
+                audit,
+                input
+              ): RustgenLoadResult(RustgenInputGraph) {
+                  RustgenLoadError(Stage, Message) => RustgenLoadError(Stage, Message)
+                  RustgenLoaded(next) => rustgen_input_imports(
+                    fuel,
+                    tables,
+                    files,
+                    own,
+                    stack,
+                    rest,
+                    audit,
+                    next
+                  )
+                } }
+            } }
+          _ => rustgen_input_imports(fuel, tables, files, own, stack, rest, audit, input)
+        }
+      }
+    }
+  }
+}
+
+pub fn rustgen_input_roots(
+  fuel: u64,
+  roots: List(Text),
+  tables: SyntaxTables,
+  files: List(RustgenSource),
+  audit: Bool,
+  input: RustgenInputGraph
+): RustgenLoadResult(RustgenInputGraph) {
+  match roots: RustgenLoadResult(RustgenInputGraph) {
+    Nil => RustgenLoaded(input)
+    Cons(Id, rest) => match rustgen_input_visit(
+      fuel,
+      tables,
+      files,
+      Id,
+      Nil,
+      audit,
+      input
+    ): RustgenLoadResult(RustgenInputGraph) {
+      RustgenLoadError(Stage, Message) => RustgenLoadError(Stage, Message)
+      RustgenLoaded(next) => rustgen_input_roots(fuel, rest, tables, files, audit, next)
+    }
+  }
+}
+
+pub fn rustgen_load_input_mode(contents: Text, audit: Bool): RustgenLoadResult(RustgenInputGraph) {
+  match rustgen_input_plan_read(contents): RustgenLoadResult(RustgenInputGraph) {
+    RustgenErr(Message) => RustgenLoadError("input-error", Message)
+    RustgenOk(plan) => match syntax_tables(): RustgenLoadResult(RustgenInputGraph) {
+      None => RustgenLoadError("tables-error", "damaged syntax tables")
+      Some(
+        tables
+      ) => rustgen_input_roots(
+        // Each step of the traversal enters a module or passes a statement,
+        // and both take bytes of the plan: its length bounds the walk.
+        Text::len(contents) + 1,
+        plan.roots,
+        tables,
+        plan.files,
+        audit,
+        RustgenInputGraph {
+          graph: RustgenGraph { source: "", stmts: Nil, files: Nil, generated_files: Nil },
+          resources: Nil, roots: plan.roots, supplied: plan.files, parsed: Nil
+        }
+      )
+    }
+  }
+}
+
+// The inventory command does not substitute includes.
+pub fn rustgen_load_inputs(contents: Text): RustgenLoadResult(RustgenInputGraph) {
+  rustgen_load_input_mode(contents, true)
+}
+
+pub fn rustgen_input_source_lines(files: List(RustgenSourceRange)): List(Text) {
+  match files: List(Text) {
+    Nil => Nil
+    Cons(file, rest) => Cons(
+      Text::concat_all(
+        Cons(
+          "S\t",
+          Cons(
+            file.id,
+            Cons(
+              "\t",
+              Cons(
+                Text::of_nat(file.start),
+                Cons("\t", Cons(Text::of_nat(file.end), Cons("\n", Nil)))
+              )
+            )
+          )
+        )
+      ),
+      rustgen_input_source_lines(rest)
+    )
+  }
+}
+pub fn rustgen_input_resource_lines(files: List(RustgenResource)): List(Text) {
+  match files: List(Text) {
+    Nil => Nil
+    Cons(file, rest) => Cons(
+      Text::concat_all(
+        Cons(
+          "R\t",
+          Cons(
+            file.id,
+            Cons(
+              "\t",
+              Cons(
+                file.origin,
+                Cons(
+                  "\t",
+                  Cons(
+                    Text::of_nat(file.start),
+                    Cons(
+                      "\t",
+                      Cons(
+                        Text::of_nat(file.end),
+                        Cons("\t", Cons(Text::of_nat(file.bytes), Cons("\n", Nil)))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      ),
+      rustgen_input_resource_lines(rest)
+    )
+  }
+}
+pub fn rustgen_input_report(input: RustgenInputGraph): Text {
+  Text::concat_all(
+    List::append(
+      rustgen_input_source_lines(input.graph.files),
+      rustgen_input_resource_lines(List::reverse(input.resources))
+    )
+  )
+}

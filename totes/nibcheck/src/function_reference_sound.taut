@@ -1,0 +1,154 @@
+import "rules_function_reference.taut"
+import "local_lookup_sound.taut"
+import "substitute_empty_sound.taut"
+
+pub theorem local_find_choice_absent(
+  head: Local,
+  rest: List(Local),
+  name: Text,
+  same: Bool,
+  comparison: Text::eq(expr_local_name(head), name) = same,
+  missing: local_find_choice(head, rest, name, same) = None,
+  ih: ∀ absent: env_find(rest, name) = None. LocalAbsent(name, rest)
+): LocalAbsent(name, Cons(head, rest)) {
+  match same: LocalAbsent(name, Cons(head, rest)) {
+    true => False::elim(ck_none_ne_some(head, Eq::sym(missing)))
+    false => LocalAbsentCons(
+      head,
+      equal => local_text_different(expr_local_name(head), name, comparison, equal),
+      ih(missing)
+    )
+  }
+}
+pub theorem env_find_absent(
+  env: List(Local),
+  name: Text,
+  missing: env_find(env, name) = None
+): LocalAbsent(name, env) {
+  match env: LocalAbsent(name, env) {
+    Nil => LocalAbsentNil
+    Cons(head, rest) => local_find_choice_absent(
+      head,
+      rest,
+      name,
+      Text::eq(expr_local_name(head), name),
+      Refl,
+      Eq::trans(Eq::sym(local_find_unf(head, rest, name)), missing),
+      absent => env_find_absent(rest, name, absent)
+    )
+  }
+}
+pub theorem ck_lookup_function_value(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  scheme: Scheme,
+  missing: env_find(env, name) = None,
+  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(scheme)
+): ck_lookup(c, name, env, span) = ck_instantiate_scheme(c, name, scheme, span) {
+  Eq::trans(
+    leaf_lookup_unf(c, name, env, span),
+    Eq::trans(
+      Eq::congr((local: Option(Local)) => leaf_lookup(c, name, env, span, local), missing),
+      Eq::trans(
+        Eq::congr(
+          (stored: Option(Scheme)) => leaf_lookup_function(c, name, env, span, stored),
+          found
+        ),
+        ck_rewrap1_id(ck_instantiate_scheme(c, name, scheme, span))
+      )
+    )
+  )
+}
+pub theorem ck_instantiate_monomorphic(
+  c: Checker,
+  name: Text,
+  declared: Ty,
+  ctors: List(Pair(Text, Kind)),
+  span: TySpan
+): ck_instantiate_scheme(c, name, SchemeMk(Nil, declared, Nil, ctors), span) = mut1(ty_substitute(declared, Ordmap::empty()), c) { Refl }
+pub theorem ck_lookup_monomorphic_value(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  declared: Ty,
+  ctors: List(Pair(Text, Kind)),
+  missing: env_find(env, name) = None,
+  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors))
+): ck_lookup(c, name, env, span) = mut1(ty_substitute(declared, Ordmap::empty()), c) {
+  Eq::trans(
+    ck_lookup_function_value(
+      c,
+      name,
+      env,
+      span,
+      SchemeMk(Nil, declared, Nil, ctors),
+      missing,
+      found
+    ),
+    ck_instantiate_monomorphic(c, name, declared, ctors, span)
+  )
+}
+pub theorem ck_lookup_monomorphic_sound(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  start: Nat,
+  end: Nat,
+  declared: Ty,
+  ctors: List(Pair(Text, Kind)),
+  missing: env_find(env, name) = None,
+  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors))
+): MonomorphicFunctionTyping(
+  ck_subst_of(c),
+  env,
+  leaf_functions(c),
+  surface_term_mk(SkVar(name), start, end),
+  ck_val(ck_lookup(c, name, env, TySpan {start: start, end: end}))
+) {
+  Eq::subst(
+    Mut1(Ty, Checker),
+    mut1(ty_substitute(declared, Ordmap::empty()), c),
+    ck_lookup(c, name, env, TySpan {start: start, end: end}),
+    (m: Mut1(Ty, Checker)) => MonomorphicFunctionTyping(
+      ck_subst_of(c),
+      env,
+      leaf_functions(c),
+      surface_term_mk(SkVar(name), start, end),
+      ck_val(m)
+    ),
+    Eq::sym(
+      ck_lookup_monomorphic_value(
+        c,
+        name,
+        env,
+        TySpan {start: start, end: end},
+        declared,
+        ctors,
+        missing,
+        found
+      )
+    ),
+    MonomorphicFunction(
+      name,
+      declared,
+      ctors,
+      start,
+      end,
+      FunctionReference::Mk(env_find_absent(env, name, missing), found),
+      ty_substitute_empty_equal(
+        declared,
+        ck_subst_of(c),
+        (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), a: Ty, b: Ty) => RigidFor(
+          ck_subst_of(c),
+          gs,
+          rigid,
+          a,
+          b
+        )
+      )
+    )
+  )
+}

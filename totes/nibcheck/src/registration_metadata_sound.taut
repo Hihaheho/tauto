@@ -1,0 +1,302 @@
+import "existing_data_sound.taut"
+import "finish_data_metadata_sound.taut"
+
+pub def ProtectedData(
+  n: Text,
+  value: Option(Data),
+  c: Checker
+): Prop := And(
+  CkDatasOrdered(c),
+  data_metadata_lookup(summary_decls(ck_datas_of(c)), n) = value
+)
+
+pub theorem protected_data_read<A: Type>(
+  n: Text,
+  value: Option(Data),
+  c: Checker,
+  m: Mut1(A, Checker),
+  frame: CkReadFrame(c, m),
+  h: ProtectedData(n, value, c)
+): ProtectedData(n, value, ck_st(m)) {
+  AndIntro(
+    frame_ordered(c, m, frame, And::left(h)),
+    Eq::trans(
+      Eq::congr(
+        (d: Datas) => data_metadata_lookup(summary_decls(d), n),
+        Eq::congr(frame_read_datas, frame)
+      ),
+      And::right(h)
+    )
+  )
+}
+pub theorem protected_data_ctors(
+  n: Text,
+  value: Option(Data),
+  cs: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  i: Nat,
+  h: ProtectedData(n, value, c)
+): ProtectedData(n, value, ck_st(ck_register_ctors(cs, c, dname, i))) {
+  AndIntro(
+    ck_register_ctors_ordered(cs, c, dname, i, And::left(h)),
+    Eq::trans(
+      Eq::congr(
+        (m: Ordmap(Text, Data)) => data_metadata_lookup(m, n),
+        ck_register_ctors_decls(cs, c, dname, i)
+      ),
+      And::right(h)
+    )
+  )
+}
+
+pub theorem data_metadata_insert_other_k(
+  m: Ordmap(Text, Data),
+  key: Text,
+  data: Data,
+  n: Text,
+  o: Ordering,
+  eo: Ordmap::compare_text(n, key) = o,
+  ordered: Ordmap::ordered(m, Ordmap::compare_text),
+  different: (n = key) -> False
+): data_metadata_lookup(Ordmap::insert(m, key, data, Ordmap::compare_text), n) = data_metadata_lookup(m, n) {
+  match o: data_metadata_lookup(Ordmap::insert(m, key, data, Ordmap::compare_text), n) = data_metadata_lookup(m, n) {
+    Equal => False::elim(different(Ordmap::compare_text_eq(n, key, eo)))
+    Less => Eq::congr(
+      data_metadata_option,
+      Ordmap::get_insert_other(
+        Ordmap::compare_text,
+        Ordmap::compare_text_law(),
+        m,
+        key,
+        data,
+        n,
+        Less,
+        q => less_ne_equal(q),
+        eo,
+        ordered
+      )
+    )
+    Greater => Eq::congr(
+      data_metadata_option,
+      Ordmap::get_insert_other(
+        Ordmap::compare_text,
+        Ordmap::compare_text_law(),
+        m,
+        key,
+        data,
+        n,
+        Greater,
+        q => greater_ne_equal(q),
+        eo,
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem protected_data_insert(
+  n: Text,
+  value: Option(Data),
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor),
+  h: ProtectedData(n, value, c),
+  different: (n = registration_name(d)) -> False
+): ProtectedData(n, value, ck_st(registration_insert(c, d, is_struct, builtin, constructors))) {
+  AndIntro(
+    registration_insert_ordered(c, d, is_struct, builtin, constructors, And::left(h)),
+    Eq::trans(
+      data_metadata_insert_other_k(
+        summary_decls(ck_datas_of(c)),
+        registration_name(d),
+        registration_data(d, is_struct, builtin, constructors),
+        n,
+        Ordmap::compare_text(n, registration_name(d)),
+        Refl,
+        And::left(h),
+        different
+      ),
+      And::right(h)
+    )
+  )
+}
+pub theorem registration_bind_protected<A: Type, B: Type>(
+  n: Text,
+  value: Option(Data),
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: ProtectedData(n, value, ck_st(m)),
+  hk: ∀ v: A. ∀ next: Checker. (
+    ProtectedData(n, value, next)
+  ) -> ProtectedData(n, value, ck_st(k(v, next)))
+): ProtectedData(n, value, ck_st(frame_bind(k, m))) {
+  match m: ProtectedData(n, value, ck_st(frame_bind(k, m))) {
+    mut1(v, next) => hk(v, next, hm)
+  }
+}
+
+pub theorem registration_declare_protected(
+  n: Text,
+  value: Option(Data),
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: ProtectedData(n, value, c),
+  different: (n = registration_name(d)) -> False
+): ProtectedData(n, value, ck_st(registration_declare(c, d, is_struct, builtin))) {
+  registration_bind_protected(
+    Unit,
+    Unit,
+    n,
+    value,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      Bool::and(
+        surface_data_is_view(d),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    protected_data_read(
+      n,
+      value,
+      c,
+      frame_error_if(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      frame_error_if_ok(
+        c,
+        "a view struct has no fields: it is an opaque type",
+        registration_span(d),
+        Bool::and(
+          surface_data_is_view(d),
+          Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+        )
+      ),
+      ordered
+    ),
+    ignored => c1 => o1 => registration_bind_protected(
+      List(DataCtor),
+      Unit,
+      n,
+      value,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      ),
+      protected_data_read(
+        n,
+        value,
+        c1,
+        ck_data_ctors(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        ck_data_ctors_frame(
+          registration_ctors(d),
+          c1,
+          ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+        ),
+        o1
+      ),
+      constructors => c2 => o2 => registration_bind_protected(
+        Unit,
+        Unit,
+        n,
+        value,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0),
+        protected_data_ctors(n, value, constructors, c2, registration_name(d), 0, o2),
+        ignored2 => c3 => o3 => protected_data_insert(
+          n,
+          value,
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors,
+          o3,
+          different
+        )
+      )
+    )
+  )
+}
+
+pub theorem ck_declare_data_protected(
+  n: Text,
+  value: Option(Data),
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  ordered: ProtectedData(n, value, c),
+  different: (n = registration_name(d)) -> False
+): ProtectedData(n, value, ck_st(ck_declare_data(c, d, is_struct, builtin))) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => ProtectedData(n, value, ck_st(z)),
+    Eq::sym(registration_declare_unf(c, d, is_struct, builtin)),
+    registration_declare_protected(n, value, c, d, is_struct, builtin, ordered, different)
+  )
+}
+
+pub theorem registration_rewrap_protected<A: Type>(
+  n: Text,
+  value: Option(Data),
+  m: Mut1(A, Checker),
+  h: ProtectedData(n, value, ck_st(m))
+): ProtectedData(n, value, ck_st(ck_rewrap1(m))) {
+  Eq::subst((z: Mut1(A, Checker)) => ProtectedData(n, value, ck_st(z)), Eq::sym(ck_rewrap1_id(m)), h)
+}

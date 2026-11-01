@@ -1,0 +1,692 @@
+import "handle_frame.taut"
+
+pub fn widen_store(c: Checker, rv: Nat, value: Ty, occurs: Bool): Mut1(Unit, Checker) {
+  match occurs: Mut1(Unit, Checker) {
+    false => mut1(Star, c)
+    true => ck_rewrap1(ck_set_subst(c, rv, value))
+  }
+}
+
+pub theorem widen_store_frame(
+  c: Checker,
+  rv: Nat,
+  value: Ty,
+  occurs: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_store(c, rv, value, occurs)) {
+  match occurs: CkRunFrame(c, widen_store(c, rv, value, occurs)) {
+    false => run_frame_return(c, Star, ordered)
+    true => run_frame_rewrap(
+      c,
+      ck_set_subst(c, rv, value),
+      ck_set_subst_run_frame(c, rv, value, ordered)
+    )
+  }
+}
+
+pub fn widen_store_true(c: Checker, rv: Nat, value: Ty): Mut1(Bool, Checker) {
+  frame_bind(
+    Unit,
+    Bool,
+    (ignored: Unit, c1: Checker) => mut1(true, c1),
+    widen_store(c, rv, value, not(ck_occurs(c, rv, value)))
+  )
+}
+
+pub theorem widen_store_true_frame(
+  c: Checker,
+  rv: Nat,
+  value: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_store_true(c, rv, value)) {
+  run_frame_bind(
+    Unit,
+    Bool,
+    c,
+    (ignored: Unit, c1: Checker) => mut1(true, c1),
+    widen_store(c, rv, value, not(ck_occurs(c, rv, value))),
+    widen_store_frame(c, rv, value, not(ck_occurs(c, rv, value)), ordered),
+    ignored => c1 => o_c1 => run_frame_return(c1, true, o_c1)
+  )
+}
+
+pub fn widen_attempt(c: Checker, rv: Nat, wide: Ty, success: Bool): Mut1(Bool, Checker) {
+  match success: Mut1(Bool, Checker) {
+    true => widen_store_true(c, rv, ck_resolve(c, wide))
+    false => mut1(false, c)
+  }
+}
+
+pub theorem widen_attempt_frame(
+  c: Checker,
+  rv: Nat,
+  wide: Ty,
+  success: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_attempt(c, rv, wide, success)) {
+  match success: CkRunFrame(c, widen_attempt(c, rv, wide, success)) {
+    true => widen_store_true_frame(c, rv, ck_resolve(c, wide), ordered)
+    false => run_frame_return(c, false, ordered)
+  }
+}
+
+pub fn widen_fn_allowed(
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  rv: Nat,
+  allowed: Bool
+): Mut1(Bool, Checker) {
+  match allowed: Mut1(Bool, Checker) {
+    true => frame_bind(
+      Bool,
+      Bool,
+      (success: Bool, c1: Checker) => widen_attempt(c1, rv, TyFn(pb, rb, kind_join(ka, kb)), success),
+      ck_attempt_unify(c, TyFn(pa, ra, kind_join(ka, kb)), TyFn(pb, rb, kind_join(ka, kb)))
+    )
+    false => mut1(false, c)
+  }
+}
+
+pub theorem widen_fn_allowed_frame(
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  pb: List(Ty),
+  rb: Ty,
+  kb: Kind,
+  rv: Nat,
+  allowed: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+  match allowed: CkRunFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+    true => run_frame_bind(
+      Bool,
+      Bool,
+      c,
+      (success: Bool, c1: Checker) => widen_attempt(c1, rv, TyFn(pb, rb, kind_join(ka, kb)), success),
+      ck_attempt_unify(c, TyFn(pa, ra, kind_join(ka, kb)), TyFn(pb, rb, kind_join(ka, kb))),
+      ck_attempt_unify_run_frame(
+        c,
+        TyFn(pa, ra, kind_join(ka, kb)),
+        TyFn(pb, rb, kind_join(ka, kb)),
+        ordered
+      ),
+      success => c1 => o_c1 => widen_attempt_frame(
+        c1,
+        rv,
+        TyFn(pb, rb, kind_join(ka, kb)),
+        success,
+        o_c1
+      )
+    )
+    false => run_frame_return(c, false, ordered)
+  }
+}
+
+pub fn widen_fn_current(
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  rv: Nat,
+  current: Ty
+): Mut1(Bool, Checker) {
+  match current: Mut1(Bool, Checker) {
+    TyInt(w) => mut1(false, c)
+    TyBool => mut1(false, c)
+    TyText => mut1(false, c)
+    TyUnit => mut1(false, c)
+    TyNever => mut1(false, c)
+    TyDecimal => mut1(false, c)
+    TyFloat => mut1(false, c)
+    TyFn(pb, rb, kb) => widen_fn_allowed(
+      c,
+      pa,
+      ra,
+      ka,
+      pb,
+      rb,
+      kb,
+      rv,
+      Bool::and(Nat::eq(list_len(pa), list_len(pb)), not(kind_eq(ka, kb)))
+    )
+    TyUnion(members) => mut1(false, c)
+    TyProduct(members) => mut1(false, c)
+    TyTagged(tags, inner) => mut1(false, c)
+    TyNamed(name, args) => mut1(false, c)
+    TyParam(name, bound) => mut1(false, c)
+    TyInfo(inner) => mut1(false, c)
+    TyBorrow(inner, mutable) => mut1(false, c)
+    TyVar(v) => mut1(false, c)
+    TyPoly(generics, inner) => mut1(false, c)
+    TyApp(head, arg) => mut1(false, c)
+  }
+}
+
+pub theorem widen_fn_current_frame(
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  rv: Nat,
+  current: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+  match current: CkRunFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+    TyInt(w) => run_frame_return(c, false, ordered)
+    TyBool => run_frame_return(c, false, ordered)
+    TyText => run_frame_return(c, false, ordered)
+    TyUnit => run_frame_return(c, false, ordered)
+    TyNever => run_frame_return(c, false, ordered)
+    TyDecimal => run_frame_return(c, false, ordered)
+    TyFloat => run_frame_return(c, false, ordered)
+    TyFn(pb, rb, kb) => widen_fn_allowed_frame(
+      c,
+      pa,
+      ra,
+      ka,
+      pb,
+      rb,
+      kb,
+      rv,
+      Bool::and(Nat::eq(list_len(pa), list_len(pb)), not(kind_eq(ka, kb))),
+      ordered
+    )
+    TyUnion(members) => run_frame_return(c, false, ordered)
+    TyProduct(members) => run_frame_return(c, false, ordered)
+    TyTagged(tags, inner) => run_frame_return(c, false, ordered)
+    TyNamed(name, args) => run_frame_return(c, false, ordered)
+    TyParam(name, bound) => run_frame_return(c, false, ordered)
+    TyInfo(inner) => run_frame_return(c, false, ordered)
+    TyBorrow(inner, mutable) => run_frame_return(c, false, ordered)
+    TyVar(v) => run_frame_return(c, false, ordered)
+    TyPoly(generics, inner) => run_frame_return(c, false, ordered)
+    TyApp(head, arg) => run_frame_return(c, false, ordered)
+  }
+}
+
+pub fn widen_fn_arm(c: Checker, current: Ty, rv: Nat, arm: Ty): Mut1(Bool, Checker) {
+  match arm: Mut1(Bool, Checker) {
+    TyInt(w) => mut1(false, c)
+    TyBool => mut1(false, c)
+    TyText => mut1(false, c)
+    TyUnit => mut1(false, c)
+    TyNever => mut1(false, c)
+    TyDecimal => mut1(false, c)
+    TyFloat => mut1(false, c)
+    TyFn(pa, ra, ka) => widen_fn_current(c, pa, ra, ka, rv, current)
+    TyUnion(members) => mut1(false, c)
+    TyProduct(members) => mut1(false, c)
+    TyTagged(tags, inner) => mut1(false, c)
+    TyNamed(name, args) => mut1(false, c)
+    TyParam(name, bound) => mut1(false, c)
+    TyInfo(inner) => mut1(false, c)
+    TyBorrow(inner, mutable) => mut1(false, c)
+    TyVar(v) => mut1(false, c)
+    TyPoly(generics, inner) => mut1(false, c)
+    TyApp(head, arg) => mut1(false, c)
+  }
+}
+
+pub theorem widen_fn_arm_frame(
+  c: Checker,
+  current: Ty,
+  rv: Nat,
+  arm: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_fn_arm(c, current, rv, arm)) {
+  match arm: CkRunFrame(c, widen_fn_arm(c, current, rv, arm)) {
+    TyInt(w) => run_frame_return(c, false, ordered)
+    TyBool => run_frame_return(c, false, ordered)
+    TyText => run_frame_return(c, false, ordered)
+    TyUnit => run_frame_return(c, false, ordered)
+    TyNever => run_frame_return(c, false, ordered)
+    TyDecimal => run_frame_return(c, false, ordered)
+    TyFloat => run_frame_return(c, false, ordered)
+    TyFn(pa, ra, ka) => widen_fn_current_frame(c, pa, ra, ka, rv, current, ordered)
+    TyUnion(members) => run_frame_return(c, false, ordered)
+    TyProduct(members) => run_frame_return(c, false, ordered)
+    TyTagged(tags, inner) => run_frame_return(c, false, ordered)
+    TyNamed(name, args) => run_frame_return(c, false, ordered)
+    TyParam(name, bound) => run_frame_return(c, false, ordered)
+    TyInfo(inner) => run_frame_return(c, false, ordered)
+    TyBorrow(inner, mutable) => run_frame_return(c, false, ordered)
+    TyVar(v) => run_frame_return(c, false, ordered)
+    TyPoly(generics, inner) => run_frame_return(c, false, ordered)
+    TyApp(head, arg) => run_frame_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_fn_unf(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat
+): ck_widen_fn(c, a, current, rv) = widen_fn_arm(c, current, rv, ck_resolve(c, a)) { Refl }
+
+pub theorem ck_widen_fn_run_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_widen_fn(c, a, current, rv)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => CkRunFrame(c, z),
+    Eq::sym(widen_fn_unf(c, a, current, rv)),
+    widen_fn_arm_frame(c, current, rv, ck_resolve(c, a), ordered)
+  )
+}
+
+pub fn widen_fits_if(c: Checker, a: Ty, b: Ty, allowed: Bool): Mut1(Bool, Checker) {
+  match allowed: Mut1(Bool, Checker) {
+    true => ck_rewrap1(ck_attempt_fits(c, a, b))
+    false => mut1(false, c)
+  }
+}
+
+pub theorem widen_fits_if_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  allowed: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_fits_if(c, a, b, allowed)) {
+  match allowed: CkRunFrame(c, widen_fits_if(c, a, b, allowed)) {
+    true => run_frame_rewrap(
+      c,
+      ck_attempt_fits(c, a, b),
+      ck_attempt_fits_run_frame(c, a, b, ordered)
+    )
+    false => run_frame_return(c, false, ordered)
+  }
+}
+
+pub fn widen_borrow_current(c: Checker, a: Ty, rv: Nat, current: Ty): Mut1(Bool, Checker) {
+  match current: Mut1(Bool, Checker) {
+    TyInt(w) => mut1(false, c)
+    TyBool => mut1(false, c)
+    TyText => mut1(false, c)
+    TyUnit => mut1(false, c)
+    TyNever => mut1(false, c)
+    TyDecimal => mut1(false, c)
+    TyFloat => mut1(false, c)
+    TyFn(params, result, kind) => mut1(false, c)
+    TyUnion(members) => mut1(false, c)
+    TyProduct(members) => mut1(false, c)
+    TyTagged(tags, inner) => mut1(false, c)
+    TyNamed(name, args) => mut1(false, c)
+    TyParam(name, bound) => mut1(false, c)
+    TyInfo(inner) => mut1(false, c)
+    TyBorrow(x, m) => frame_bind(
+      Bool,
+      Bool,
+      (success: Bool, c1: Checker) => widen_attempt(c1, rv, x, success),
+      widen_fits_if(
+        c,
+        a,
+        x,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, x)))
+      )
+    )
+    TyVar(v) => mut1(false, c)
+    TyPoly(generics, inner) => mut1(false, c)
+    TyApp(head, arg) => mut1(false, c)
+  }
+}
+
+pub theorem widen_borrow_current_frame(
+  c: Checker,
+  a: Ty,
+  rv: Nat,
+  current: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_borrow_current(c, a, rv, current)) {
+  match current: CkRunFrame(c, widen_borrow_current(c, a, rv, current)) {
+    TyInt(w) => run_frame_return(c, false, ordered)
+    TyBool => run_frame_return(c, false, ordered)
+    TyText => run_frame_return(c, false, ordered)
+    TyUnit => run_frame_return(c, false, ordered)
+    TyNever => run_frame_return(c, false, ordered)
+    TyDecimal => run_frame_return(c, false, ordered)
+    TyFloat => run_frame_return(c, false, ordered)
+    TyFn(params, result, kind) => run_frame_return(c, false, ordered)
+    TyUnion(members) => run_frame_return(c, false, ordered)
+    TyProduct(members) => run_frame_return(c, false, ordered)
+    TyTagged(tags, inner) => run_frame_return(c, false, ordered)
+    TyNamed(name, args) => run_frame_return(c, false, ordered)
+    TyParam(name, bound) => run_frame_return(c, false, ordered)
+    TyInfo(inner) => run_frame_return(c, false, ordered)
+    TyBorrow(x, m) => run_frame_bind(
+      Bool,
+      Bool,
+      c,
+      (success: Bool, c1: Checker) => widen_attempt(c1, rv, x, success),
+      widen_fits_if(
+        c,
+        a,
+        x,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, x)))
+      ),
+      widen_fits_if_frame(
+        c,
+        a,
+        x,
+        Bool::and(not(ty_is_borrow(ck_resolve(c, a))), kind_dup(ck_kind(c, x))),
+        ordered
+      ),
+      success => c1 => o_c1 => widen_attempt_frame(c1, rv, x, success, o_c1)
+    )
+    TyVar(v) => run_frame_return(c, false, ordered)
+    TyPoly(generics, inner) => run_frame_return(c, false, ordered)
+    TyApp(head, arg) => run_frame_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_borrow_current_unf(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat
+): ck_widen_borrowed_current(c, a, current, rv) = widen_borrow_current(c, a, rv, current) { match current: ck_widen_borrowed_current(c, a, current, rv) = widen_borrow_current(c, a, rv, current) {
+    TyInt(pat_w) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(pat_params, pat_result, pat_kind) => Refl
+    TyUnion(pat_members) => Refl
+    TyProduct(pat_members) => Refl
+    TyTagged(pat_tags, pat_inner) => Refl
+    TyNamed(pat_name, pat_args) => Refl
+    TyParam(pat_name, pat_bound) => Refl
+    TyInfo(pat_inner) => Refl
+    TyBorrow(pat_inner, pat_mutable) => Refl
+    TyVar(pat_v) => Refl
+    TyPoly(pat_generics, pat_inner) => Refl
+    TyApp(pat_head, pat_arg) => Refl
+  } }
+
+pub theorem ck_widen_borrowed_current_run_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_widen_borrowed_current(c, a, current, rv)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => CkRunFrame(c, z),
+    Eq::sym(widen_borrow_current_unf(c, a, current, rv)),
+    widen_borrow_current_frame(c, a, rv, current, ordered)
+  )
+}
+
+pub fn widen_borrow_arm(c: Checker, current: Ty, arm: Ty): Mut1(Bool, Checker) {
+  match arm: Mut1(Bool, Checker) {
+    TyInt(w) => mut1(false, c)
+    TyBool => mut1(false, c)
+    TyText => mut1(false, c)
+    TyUnit => mut1(false, c)
+    TyNever => mut1(false, c)
+    TyDecimal => mut1(false, c)
+    TyFloat => mut1(false, c)
+    TyFn(params, result, kind) => mut1(false, c)
+    TyUnion(members) => mut1(false, c)
+    TyProduct(members) => mut1(false, c)
+    TyTagged(tags, inner) => mut1(false, c)
+    TyNamed(name, args) => mut1(false, c)
+    TyParam(name, bound) => mut1(false, c)
+    TyInfo(inner) => mut1(false, c)
+    TyBorrow(x, m) => widen_fits_if(
+      c,
+      x,
+      current,
+      Bool::and(not(ty_is_borrow(current)), kind_dup(ck_kind(c, x)))
+    )
+    TyVar(v) => mut1(false, c)
+    TyPoly(generics, inner) => mut1(false, c)
+    TyApp(head, arg) => mut1(false, c)
+  }
+}
+
+pub theorem widen_borrow_arm_frame(
+  c: Checker,
+  current: Ty,
+  arm: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_borrow_arm(c, current, arm)) {
+  match arm: CkRunFrame(c, widen_borrow_arm(c, current, arm)) {
+    TyInt(w) => run_frame_return(c, false, ordered)
+    TyBool => run_frame_return(c, false, ordered)
+    TyText => run_frame_return(c, false, ordered)
+    TyUnit => run_frame_return(c, false, ordered)
+    TyNever => run_frame_return(c, false, ordered)
+    TyDecimal => run_frame_return(c, false, ordered)
+    TyFloat => run_frame_return(c, false, ordered)
+    TyFn(params, result, kind) => run_frame_return(c, false, ordered)
+    TyUnion(members) => run_frame_return(c, false, ordered)
+    TyProduct(members) => run_frame_return(c, false, ordered)
+    TyTagged(tags, inner) => run_frame_return(c, false, ordered)
+    TyNamed(name, args) => run_frame_return(c, false, ordered)
+    TyParam(name, bound) => run_frame_return(c, false, ordered)
+    TyInfo(inner) => run_frame_return(c, false, ordered)
+    TyBorrow(x, m) => widen_fits_if_frame(
+      c,
+      x,
+      current,
+      Bool::and(not(ty_is_borrow(current)), kind_dup(ck_kind(c, x))),
+      ordered
+    )
+    TyVar(v) => run_frame_return(c, false, ordered)
+    TyPoly(generics, inner) => run_frame_return(c, false, ordered)
+    TyApp(head, arg) => run_frame_return(c, false, ordered)
+  }
+}
+
+pub theorem widen_borrow_arm_unf(
+  c: Checker,
+  a: Ty,
+  current: Ty
+): ck_widen_borrowed_arm(c, a, current) = widen_borrow_arm(c, current, ck_resolve(c, a)) { Refl }
+
+pub theorem ck_widen_borrowed_arm_run_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_widen_borrowed_arm(c, a, current)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => CkRunFrame(c, z),
+    Eq::sym(widen_borrow_arm_unf(c, a, current)),
+    widen_borrow_arm_frame(c, current, ck_resolve(c, a), ordered)
+  )
+}
+
+pub fn widen_final_fits(c: Checker, a: Ty, current: Ty, rv: Nat, failed: Bool): Mut1(Unit, Checker) {
+  match failed: Mut1(Unit, Checker) {
+    true => ck_rewrap1(ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))))
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem widen_final_fits_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+  match failed: CkRunFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+    true => run_frame_rewrap(
+      c,
+      ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
+      ck_set_subst_run_frame(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil))), ordered)
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn widen_after_arm(c: Checker, a: Ty, current: Ty, rv: Nat, failed: Bool): Mut1(Unit, Checker) {
+  match failed: Mut1(Unit, Checker) {
+    true => frame_bind(
+      Bool,
+      Unit,
+      (success: Bool, c1: Checker) => widen_final_fits(c1, a, current, rv, not(success)),
+      ck_attempt_fits(c, a, current)
+    )
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem widen_after_arm_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+  match failed: CkRunFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+    true => run_frame_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, c1: Checker) => widen_final_fits(c1, a, current, rv, not(success)),
+      ck_attempt_fits(c, a, current),
+      ck_attempt_fits_run_frame(c, a, current, ordered),
+      success => c1 => o_c1 => widen_final_fits_frame(c1, a, current, rv, not(success), o_c1)
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn widen_after_current(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool
+): Mut1(Unit, Checker) {
+  match failed: Mut1(Unit, Checker) {
+    true => frame_bind(
+      Bool,
+      Unit,
+      (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
+      ck_widen_borrowed_arm(c, a, current)
+    )
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem widen_after_current_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_after_current(c, a, current, rv, failed)) {
+  match failed: CkRunFrame(c, widen_after_current(c, a, current, rv, failed)) {
+    true => run_frame_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
+      ck_widen_borrowed_arm(c, a, current),
+      ck_widen_borrowed_arm_run_frame(c, a, current, ordered),
+      success => c1 => o_c1 => widen_after_arm_frame(c1, a, current, rv, not(success), o_c1)
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn widen_after_fn(c: Checker, a: Ty, current: Ty, rv: Nat, failed: Bool): Mut1(Unit, Checker) {
+  match failed: Mut1(Unit, Checker) {
+    true => frame_bind(
+      Bool,
+      Unit,
+      (success: Bool, c1: Checker) => widen_after_current(c1, a, current, rv, not(success)),
+      ck_widen_borrowed_current(c, a, current, rv)
+    )
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem widen_after_fn_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  failed: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+  match failed: CkRunFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+    true => run_frame_bind(
+      Bool,
+      Unit,
+      c,
+      (success: Bool, c1: Checker) => widen_after_current(c1, a, current, rv, not(success)),
+      ck_widen_borrowed_current(c, a, current, rv),
+      ck_widen_borrowed_current_run_frame(c, a, current, rv, ordered),
+      success => c1 => o_c1 => widen_after_current_frame(c1, a, current, rv, not(success), o_c1)
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn widen_handle(c: Checker, a: Ty, current: Ty, rv: Nat): Mut1(Unit, Checker) {
+  frame_bind(
+    Bool,
+    Unit,
+    (success: Bool, c1: Checker) => widen_after_fn(c1, a, current, rv, not(success)),
+    ck_widen_fn(c, a, current, rv)
+  )
+}
+
+pub theorem widen_handle_frame(
+  c: Checker,
+  a: Ty,
+  current: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, widen_handle(c, a, current, rv)) {
+  run_frame_bind(
+    Bool,
+    Unit,
+    c,
+    (success: Bool, c1: Checker) => widen_after_fn(c1, a, current, rv, not(success)),
+    ck_widen_fn(c, a, current, rv),
+    ck_widen_fn_run_frame(c, a, current, rv, ordered),
+    success => c1 => o_c1 => widen_after_fn_frame(c1, a, current, rv, not(success), o_c1)
+  )
+}
+
+pub theorem widen_handle_unf(
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  rv: Nat
+): ck_handle_widen(c, a, result, rv) = widen_handle(c, a, ck_resolve(c, result), rv) { Refl }
+
+pub theorem ck_handle_widen_run_frame(
+  c: Checker,
+  a: Ty,
+  result: Ty,
+  rv: Nat,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_handle_widen(c, a, result, rv)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(widen_handle_unf(c, a, result, rv)),
+    widen_handle_frame(c, a, ck_resolve(c, result), rv, ordered)
+  )
+}

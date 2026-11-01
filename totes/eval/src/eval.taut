@@ -1,0 +1,168 @@
+import "value.taut"
+
+// Exhaustion and unsupported control constructs are not successful evaluations.
+pub(open) inductive EResult(A: Type): Type {
+  ErValue(value: A, cx: MCx): EResult(A)
+  ErError(message: Text): EResult(A)
+  ErFuel: EResult(A)
+  ErUnsupported(construct: Text): EResult(A)
+}
+
+pub fn e_primitive_out(out: MOut): EResult(MVal) {
+  match out {
+    MoutVal(v, cx2) => ErValue(v, cx2)
+    MoutErr(message) => ErError(message)
+    MoutExit(code) => ErError("internal: a primitive requested exit")
+    MoutAsk(name, values, cx2) => ErError("internal: a primitive requested the host")
+    MoutPerform(performed) => ErError("internal: a primitive performed an effect")
+    MoutSpawn(fnval, pid, cx2) => ErError("internal: a primitive spawned a task")
+    MoutYield(pid, cx2) => ErError("internal: a primitive yielded")
+  }
+}
+
+pub fn e_operation(ctors: List(MCtor), cx: MCx, op: MOp, args: List(MVal)): EResult(MVal) {
+  if Nat::eq(m_op_arity(op), List::length(args)) {
+    e_primitive_out(m_op(ctors, cx, op, args))
+  } else {
+    ErError("internal: a primitive has the wrong arity")
+  }
+}
+
+pub fn e_read(
+  ctors: List(MCtor),
+  cx: MCx,
+  env: List(Pair(Nat, EBinding)),
+  id: Nat,
+  deref: Bool
+): EResult(MVal) {
+  match e_lookup(env, id) {
+    None => ErError("internal: an unbound local")
+    Some(b) => ErValue(e_deref(ctors, cx, deref, e_binding(cx, b)), cx)
+  }
+}
+
+// Evaluation continues only after a value; every other outcome propagates unchanged.
+pub fn e_bind<A, B>(r: EResult(A), next: (A, MCx) -> EResult(B)): EResult(B) {
+  match r {
+    ErValue(v, cx) => next(v, cx)
+    ErError(message) => ErError(message)
+    ErFuel => ErFuel
+    ErUnsupported(construct) => ErUnsupported(construct)
+  }
+}
+
+pub fn e_choose(go: Bool, then: Cps, otherwise: Cps): Cps {
+  match go { true => then, false => otherwise }
+}
+
+mutual {
+  // Fuel bounds evaluation depth; it is separate from a source program's budget.
+  pub fn e_eval(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    e: Cps,
+    cx: MCx
+  ): EResult(MVal) {
+    match fuel {
+      Zero => ErFuel
+      Succ(f) => match e: EResult(MVal) {
+        CPure(v) => ErValue(e_value(v), cx)
+        CRead(id, deref) => e_read(ctors, cx, env, id, deref)
+        MkCPrim(op, args) => e_bind(
+          e_args(f, ctors, env, args, cx),
+          (values: List(MVal), cx2: MCx) => e_operation(
+            ctors,
+            cx2,
+            e_primitive(op, List::length(args)),
+            values
+          )
+        )
+        CMap(value, op) => e_bind(
+          e_eval(f, ctors, env, value, cx),
+          (v: MVal, cx2: MCx) => e_operation(ctors, cx2, e_unary(op), Cons(v, Nil))
+        )
+        CBranch(cond, then, otherwise) => e_bind(
+          e_eval(f, ctors, env, cond, cx),
+          (v: MVal, cx2: MCx) => e_branch(f, ctors, env, v, then, otherwise, cx2)
+        )
+        CSeq(items) => e_sequence(f, ctors, env, items, cx)
+        CCall(callee, args, ticked) => ErUnsupported("call")
+        CTail(inst, args) => ErUnsupported("tail call")
+        CBuiltin(name, args) => ErUnsupported("builtin")
+        CDefine(id, r#shared, init) => ErUnsupported("definition")
+        CAssign(id, path, through, value) => ErUnsupported("assignment")
+        CWhile(cond, body, ticked) => ErUnsupported("while")
+        CReturn(value) => ErUnsupported("return")
+        CMatch(scrut, pats, guards, bodies) => ErUnsupported("match")
+        CClosure(body, params, captures, borrowed, refs) => ErUnsupported("closure")
+        CPerform(op, quant, args) => ErUnsupported("perform")
+        CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => ErUnsupported("handle")
+        CBorrow(id, path, through) => ErUnsupported("borrow")
+        CBudget(memory, steps, body) => ErUnsupported("budget")
+      }
+    }
+  }
+
+  pub fn e_branch(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    value: MVal,
+    then: Cps,
+    otherwise: Cps,
+    cx: MCx
+  ): EResult(MVal) {
+    match fuel {
+      Zero => ErFuel
+      Succ(f) => match m_get(ctors, cx, value): EResult(MVal) {
+        MvBool(go) => e_eval(f, ctors, env, e_choose(go, then, otherwise), cx)
+        _ => ErError("internal: a branch condition is not a boolean")
+      }
+    }
+  }
+
+  pub fn e_args(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    es: List(Cps),
+    cx: MCx
+  ): EResult(List(MVal)) {
+    match fuel {
+      Zero => ErFuel
+      Succ(f) => match es: EResult(List(MVal)) {
+        Nil => ErValue(Nil, cx)
+        Cons(e, rest) => e_bind(
+          e_eval(f, ctors, env, e, cx),
+          (v: MVal, cx2: MCx) => e_bind(
+            e_args(f, ctors, env, rest, cx2),
+            (values: List(MVal), cx3: MCx) => ErValue(Cons(v, values), cx3)
+          )
+        )
+      }
+    }
+  }
+
+  pub fn e_sequence(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    es: List(Cps),
+    cx: MCx
+  ): EResult(MVal) {
+    match fuel {
+      Zero => ErFuel
+      Succ(f) => match es: EResult(MVal) {
+        Nil => ErValue(MvUnit, cx)
+        Cons(e, rest) => match rest: EResult(MVal) {
+          Nil => e_eval(f, ctors, env, e, cx)
+          Cons(next, more) => e_bind(
+            e_eval(f, ctors, env, e, cx),
+            (v: MVal, cx2: MCx) => e_sequence(f, ctors, env, Cons(next, more), cx2)
+          )
+        }
+      }
+    }
+  }
+}

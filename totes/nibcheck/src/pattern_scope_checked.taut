@@ -1,0 +1,140 @@
+import "pattern_scope.taut"
+import "pattern_checked_sound.taut"
+
+pub def CkScopeChecked<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope)
+): Prop := CkCheckedFrame(c, pattern_checker(m))
+
+pub theorem pattern_bind_frame_checked<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker, Scope) -> Mut2(B, Checker, Scope),
+  m: Mut2(A, Checker, Scope),
+  hm: CkScopeChecked(c, m),
+  hk: ∀ v: A. ∀ next: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+    next
+  ). CkScopeChecked(next, k(v, next, env))
+): CkScopeChecked(c, pattern_bind(k, m)) {
+  match m: CkScopeChecked(c, pattern_bind(k, m)) {
+    mut2(v, next, env) => {
+      let h: CkScopeChecked(next, k(v, next, env)) := hk(v, next, env, And::left(hm))
+      AndIntro(And::left(h), clean_errors => And::right(hm)(And::right(h)(clean_errors)))
+    }
+  }
+}
+pub theorem pattern_rewrap_frame_checked<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope),
+  h: CkScopeChecked(c, m)
+): CkScopeChecked(c, pattern_rewrap(m)) {
+  Eq::subst((z: Mut2(A, Checker, Scope)) => CkScopeChecked(c, z), Eq::sym(pattern_rewrap_id(m)), h)
+}
+pub theorem ck_bind_local_scope_frame_checked(
+  c: Checker,
+  env: Scope,
+  name: Text,
+  ty: Ty,
+  mutable: Bool,
+  site: Nat,
+  ordered: CkOrdered(c)
+): CkScopeChecked(
+  c,
+  ck_bind_local(c, env, name, ty, mutable, site)
+) { AndIntro(ordered, (clean_errors => clean_errors)) }
+
+pub def PatternParamsCheckedIH(
+  rest: List(Text)
+): Prop := ∀ c: Checker. ∀ env: Scope. ∀ tys: List(
+  Ty
+). ∀ site: Nat. ∀ ordered: CkOrdered(c). CkScopeChecked(c, ck_bind_params(rest, c, env, tys, site))
+pub theorem pattern_params_cons_frame_checked(
+  n: Text,
+  rest: List(Text),
+  c: Checker,
+  env: Scope,
+  site: Nat,
+  tys: List(Ty),
+  ih: PatternParamsCheckedIH(rest),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, pattern_params_cons(n, rest, c, env, site, tys)) {
+  match tys: CkScopeChecked(c, pattern_params_cons(n, rest, c, env, site, tys)) {
+    Nil => AndIntro(ordered, (clean_errors => clean_errors))
+    Cons(t, more) => pattern_bind_frame_checked(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, next: Checker, nextenv: Scope) => pattern_rewrap(
+        ck_bind_params(rest, next, nextenv, more, site)
+      ),
+      ck_bind_local(c, env, n, t, false, site),
+      ck_bind_local_scope_frame_checked(c, env, n, t, false, site, ordered),
+      ignored => next => nextenv => onext => pattern_rewrap_frame_checked(
+        next,
+        ck_bind_params(rest, next, nextenv, more, site),
+        ih(next, nextenv, more, site, onext)
+      )
+    )
+  }
+}
+pub theorem ck_bind_params_scope_frame_checked(
+  names: List(Text),
+  c: Checker,
+  env: Scope,
+  tys: List(Ty),
+  site: Nat,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, ck_bind_params(names, c, env, tys, site)) {
+  match names: CkScopeChecked(c, ck_bind_params(names, c, env, tys, site)) {
+    Nil => AndIntro(ordered, (clean_errors => clean_errors))
+    Cons(n, rest) => Eq::subst(
+      (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+      Eq::sym(pattern_params_cons_unf(n, rest, c, env, site, tys)),
+      pattern_params_cons_frame_checked(
+        n,
+        rest,
+        c,
+        env,
+        site,
+        tys,
+        next => nextenv => more => at => onext => ck_bind_params_scope_frame_checked(
+          rest,
+          next,
+          nextenv,
+          more,
+          at,
+          onext
+        ),
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem pattern_lift_frame_checked<A: Type>(
+  c: Checker,
+  env: Scope,
+  m: Mut1(A, Checker),
+  h: CkCheckedFrame(c, m)
+): CkScopeChecked(c, pattern_lift(env, m)) {
+  match m: CkScopeChecked(c, pattern_lift(env, m)) { mut1(v, next) => h }
+}
+pub theorem pattern_return_frame_checked<A: Type>(
+  c: Checker,
+  env: Scope,
+  v: A,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, mut2(v, c, env)) { AndIntro(ordered, (clean_errors => clean_errors)) }
+pub theorem pattern_bind_one_frame_checked<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut2(B, Checker, Scope),
+  m: Mut1(A, Checker),
+  hm: CkCheckedFrame(c, m),
+  hk: ∀ v: A. ∀ next: Checker. ∀ ordered: CkOrdered(next). CkScopeChecked(next, k(v, next))
+): CkScopeChecked(c, pattern_bind_one(k, m)) {
+  match m: CkScopeChecked(c, pattern_bind_one(k, m)) {
+    mut1(v, next) => {
+      let h: CkScopeChecked(next, k(v, next)) := hk(v, next, And::left(hm))
+      AndIntro(And::left(h), clean_errors => And::right(hm)(And::right(h)(clean_errors)))
+    }
+  }
+}

@@ -1,0 +1,86 @@
+import std::Array
+import "../../scan/src/scan.taut"
+
+// The parser of a `syntax` that `syn_run` reads a text with (`syn.taut`), as
+// `crates/tauto-vm/src/syntax.rs` writes it: the scanner's tables (`totes/scan`), the
+// parse tables of an LL(k) or LALR(1) grammar, and for each production what its node
+// becomes, with the machine's constructors already chosen.
+
+// A symbol of a production's right side.
+pub(open) inductive SynSym: Type {
+  SynN(non_terminal: Nat): SynSym
+  SynT(terminal: Nat): SynSym
+}
+
+// One item of a repetition or option: its one value, or a node of the constructor
+// `ctor` (whose first field is the span when `spanned`) of the values whose `keep` is true.
+pub(open) inductive SynElem: Type {
+  SeItem: SynElem
+  SeNode(ctor: Nat, spanned: Bool, keep: List(Bool)): SynElem
+}
+
+// What a production's node becomes when it closes (`tauto_syntax::Shape`).
+pub(open) inductive SynShape: Type {
+  ShNode(ctor: Nat, spanned: Bool, keep: List(Bool)): SynShape
+  // The first value, as it is.
+  ShPass: SynShape
+  ShSome(e: SynElem): SynShape
+  ShNone: SynShape
+  // A repetition: no items, or one more item.
+  ShEmpty: SynShape
+  ShMore(e: SynElem): SynShape
+  // The tables do not fit the schema.
+  ShBad(message: Text): SynShape
+}
+
+pub(open) inductive SynProd: Type {
+  Mk(lhs: Nat, rhs: List(SynSym), shape: SynShape): SynProd
+}
+
+// A transition of a lookahead automaton: from the state `state` on the terminal, to the
+// state `to`, choosing the production plus one (0 for none).
+pub(open) inductive SynTrans: Type {
+  Mk(state: Nat, terminal: Nat, to: Nat, production: Nat): SynTrans
+}
+
+// The lookahead automaton of a non-terminal: the production plus one chosen before any
+// token is read (0 for none), how many tokens it reads at most, its transitions sorted by
+// state and terminal.
+pub(open) inductive SynLook: Type {
+  Mk(prod0: Nat, k: Nat, transitions: List(SynTrans)): SynLook
+}
+
+// An action of an LALR(1) state on a terminal: kind 0 shifts to the state `arg`, 1 reduces
+// by the production `arg`, 2 accepts by it.
+pub(open) inductive SynAction: Type {
+  Mk(terminal: Nat, kind: Nat, arg: Nat): SynAction
+}
+
+pub(open) inductive SynGoto: Type {
+  Mk(non_terminal: Nat, state: Nat): SynGoto
+}
+
+pub(open) inductive SynState: Type {
+  Mk(actions: List(SynAction), gotos: List(SynGoto)): SynState
+}
+
+pub(open) inductive SynParser: Type {
+  Mk(
+    name: Text,
+    scan: ScanTables,
+    // The terminals' names, and whether the parser skips each.
+    terminals: Array(Text),
+    skipped: Array(Bool),
+    start: Nat,
+    lr: Bool,
+    // LL(k): per non-terminal. LALR(1): the states.
+    lookahead: Array(Option(SynLook)),
+    states: Array(SynState),
+    productions: Array(SynProd),
+    // The machine's constructors of `SynSpan`, `SynCtx`, `SynToken` and `SynDiag`.
+    span: Nat,
+    ctx: Nat,
+    token: Nat,
+    diag: Nat
+  ): SynParser
+}

@@ -1,0 +1,67 @@
+import "rules_registered_source_functions.taut"
+import "prepare_function_registered.taut"
+
+pub theorem fnt_registered_prefix(
+  prefix: List(Pair(SurfaceFn, Scheme)),
+  suffix: List(Pair(SurfaceFn, Scheme)),
+  table: Ordmap(Text, Scheme),
+  registered: RegisteredSignatures(table, List::append(prefix, suffix))
+): RegisteredSignatures(table, prefix) {
+  match prefix: RegisteredSignatures(table, prefix) {
+    Nil => RegisteredSignaturesNil
+    Cons(entry, rest) => match entry: RegisteredSignatures(table, Cons(entry, rest)) {
+      Pair {fst: source, snd: scheme} => match registered: RegisteredSignatures(
+        table,
+        Cons(Pair {fst: source, snd: scheme}, rest)
+      ) {
+        RegisteredSignaturesCons(
+          stored_source,
+          stored_scheme,
+          stored_rest,
+          found,
+          tail
+        ) => RegisteredSignaturesCons(
+          source,
+          scheme,
+          rest,
+          found,
+          fnt_registered_prefix(rest, suffix, table, tail)
+        )
+      }
+    }
+  }
+}
+pub theorem prepared_source_registered<env: Datas, program: List(
+  SurfaceStmt
+), schemes: List(
+  Pair(SurfaceFn, Scheme)
+)>(
+  prepared: PreparedSourceSignatures(env, program, schemes),
+  table: Ordmap(Text, Scheme),
+  registered: RegisteredSignatures(table, schemes)
+): SourceFunctionsRegistered(env, program) {
+  match prepared: SourceFunctionsRegistered(env, program) {
+    Mk(
+      own,
+      generated,
+      combined,
+      sources,
+      derived
+    ) => SourceFunctionsRegistered::Mk(
+      table,
+      own,
+      sources,
+      derived,
+      fnt_registered_prefix(
+        own,
+        generated,
+        table,
+        Eq::subst(
+          (values: List(Pair(SurfaceFn, Scheme))) => RegisteredSignatures(table, values),
+          combined,
+          registered
+        )
+      )
+    )
+  }
+}

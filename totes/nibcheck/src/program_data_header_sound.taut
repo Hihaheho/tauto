@@ -1,0 +1,344 @@
+import "registration_header_sound.taut"
+import "data_names_membership_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem header_after_prefix(
+  rest: List(SurfaceStmt),
+  d: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  present: DataHeaderMatches(ck_datas_of(ck_st(m)), d),
+  no_name: NoDeclarationName(registration_name(d), rest)
+): DataHeaderMatches(
+  ck_datas_of(
+    ck_st(
+      frame_bind(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        m
+      )
+    )
+  ),
+  d
+) {
+  match m: DataHeaderMatches(
+    ck_datas_of(
+      ck_st(
+        frame_bind(
+          Unit,
+          Unit,
+          (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+          m
+        )
+      )
+    ),
+    d
+  ) {
+    mut1(v, next) => {
+      let expected: Option(
+        Data
+      ) := data_metadata_lookup(summary_decls(ck_datas_of(next)), registration_name(d))
+      let stable: ProtectedData(
+        registration_name(d),
+        expected,
+        ck_st(ck_rewrap1(ck_program_data(rest, next)))
+      ) := registration_rewrap_protected(
+        registration_name(d),
+        expected,
+        ck_program_data(rest, next),
+        ck_program_data_protected(
+          registration_name(d),
+          expected,
+          rest,
+          next,
+          AndIntro(ordered, Refl),
+          no_name
+        )
+      )
+      Eq::trans(
+        header_lookup_metadata(
+          summary_decls(ck_datas_of(ck_st(ck_rewrap1(ck_program_data(rest, next))))),
+          summary_decls(ck_datas_of(next)),
+          registration_name(d),
+          And::right(stable)
+        ),
+        present
+      )
+    }
+  }
+}
+
+pub theorem header_struct(
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c)
+): DataHeaderMatches(ck_datas_of(ck_st(ck_program_data_one(c, StStruct(d)))), d) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(m)), d),
+    Eq::sym(
+      Eq::trans(
+        registration_program_StStruct_unf(d, c),
+        ck_rewrap1_id(ck_declare_data(c, d, true, false))
+      )
+    ),
+    ck_declare_data_header(c, d, true, false, ordered)
+  )
+}
+pub theorem header_enum(
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c)
+): DataHeaderMatches(ck_datas_of(ck_st(ck_program_data_one(c, StEnum(d)))), d) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(m)), d),
+    Eq::sym(
+      Eq::trans(registration_program_StEnum_unf(d, c), ck_rewrap1_id(ck_declare_data(c, d, false, false)))
+    ),
+    ck_declare_data_header(c, d, false, false, ordered)
+  )
+}
+
+pub def RegisterHeaders(
+  rest: List(SurfaceStmt)
+): Prop := ∀ next: Checker. ∀ d: SurfaceData. ∀ ordered: CkDatasOrdered(
+  next
+). ∀ declared: DeclaresData(
+  rest,
+  d
+). ∀ fresh: UniqueDataNames(
+  types_data_decls(rest)
+). DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(rest, next))), d)
+
+pub theorem header_tail(
+  stmt: SurfaceStmt,
+  tail: List(SurfaceStmt),
+  c: Checker,
+  decl: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  member: DeclaresData(tail, decl),
+  fresh: UniqueDataNames(types_data_decls(Cons(stmt, tail))),
+  ih: RegisterHeaders(tail)
+): DataHeaderMatches(
+  ck_datas_of(
+    ck_st(
+      frame_bind(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
+        ck_program_data_one(c, stmt)
+      )
+    )
+  ),
+  decl
+) {
+  registration_bind_header(
+    Unit,
+    Unit,
+    decl,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(tail, next)),
+    ck_program_data_one(c, stmt),
+    ck_program_data_one_ordered(c, stmt, ordered),
+    ignored => next => ord => Eq::subst(
+      (m: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(m)), decl),
+      Eq::sym(ck_rewrap1_id(ck_program_data(tail, next))),
+      ih(
+        next,
+        decl,
+        ord,
+        member,
+        fresh_data_append_tail(types_stmt_data(stmt), types_data_decls(tail), Nil, fresh)
+      )
+    )
+  )
+}
+
+pub theorem header_cons(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  h: DeclaresData(Cons(s, rest), d),
+  fresh: UniqueDataNames(types_data_decls(Cons(s, rest))),
+  ih: RegisterHeaders(rest)
+): DataHeaderMatches(
+  ck_datas_of(
+    ck_st(
+      frame_bind(
+        Unit,
+        Unit,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+        ck_program_data_one(c, s)
+      )
+    )
+  ),
+  d
+) {
+  match h: DataHeaderMatches(
+    ck_datas_of(
+      ck_st(
+        frame_bind(
+          Unit,
+          Unit,
+          (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+          ck_program_data_one(c, s)
+        )
+      )
+    ),
+    d
+  ) {
+    DeclaresDataStruct(decl, tail) => header_after_prefix(
+      tail,
+      decl,
+      ck_program_data_one(c, StStruct(decl)),
+      ck_program_data_one_ordered(c, StStruct(decl), ordered),
+      header_struct(c, decl, ordered),
+      fresh_program_excludes(
+        tail,
+        Cons(registration_name(decl), Nil),
+        fresh_data_tail(decl, types_data_decls(tail), Nil, fresh),
+        registration_name(decl),
+        MemHere(Nil)
+      )
+    )
+    DeclaresDataEnum(decl, tail) => header_after_prefix(
+      tail,
+      decl,
+      ck_program_data_one(c, StEnum(decl)),
+      ck_program_data_one_ordered(c, StEnum(decl), ordered),
+      header_enum(c, decl, ordered),
+      fresh_program_excludes(
+        tail,
+        Cons(registration_name(decl), Nil),
+        fresh_data_tail(decl, types_data_decls(tail), Nil, fresh),
+        registration_name(decl),
+        MemHere(Nil)
+      )
+    )
+    DeclaresDataLater(stmt, tail, decl, member) => header_tail(
+      stmt,
+      tail,
+      c,
+      decl,
+      ordered,
+      member,
+      fresh,
+      ih
+    )
+  }
+}
+
+pub theorem ck_program_data_headers(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  declared: DeclaresData(ss, d),
+  fresh: UniqueDataNames(types_data_decls(ss))
+): DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) {
+  match ss: DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) {
+    Nil => match declared: DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(Nil, c))), d) {
+    }
+    Cons(s, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(m)), d),
+      Eq::sym(registration_program_unf(s, rest, c)),
+      header_cons(
+        s,
+        rest,
+        c,
+        d,
+        ordered,
+        declared,
+        fresh,
+        next => decl => ord => member => unique => ck_program_data_headers(
+          rest,
+          next,
+          decl,
+          ord,
+          member,
+          unique
+        )
+      )
+    )
+  }
+}
+
+pub theorem header_finish_datas(
+  c: Checker,
+  program: List(SurfaceStmt),
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  present: DataHeaderMatches(ck_datas_of(c), d)
+): DataHeaderMatches(ck_datas_of(ck_st(ck_finish_datas(c, program))), d) {
+  Eq::trans(
+    Eq::sym(
+      header_lookup_metadata(
+        summary_decls(ck_datas_of(c)),
+        summary_decls(ck_datas_of(ck_st(ck_finish_datas(c, program)))),
+        registration_name(d),
+        ck_finish_datas_preserves_metadata(c, program, ordered)(registration_name(d))
+      )
+    ),
+    present
+  )
+}
+
+pub theorem registration_finish_after_header(
+  program: List(SurfaceStmt),
+  d: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  present: DataHeaderMatches(ck_datas_of(ck_st(m)), d)
+): DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) {
+  match m: DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) {
+    mut1(ignored, next) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(z)), d),
+      Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
+      header_finish_datas(next, program, d, ordered, present)
+    )
+  }
+}
+
+pub theorem registration_program_after_header(
+  program: List(SurfaceStmt),
+  d: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  declared: DeclaresData(program, d),
+  fresh: UniqueDataNames(types_data_decls(program))
+): DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) {
+  match m: DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) {
+    mut1(ignored, next) => registration_finish_after_header(
+      program,
+      d,
+      ck_program_data(program, next),
+      ck_program_data_ordered(program, next, ordered),
+      ck_program_data_headers(program, next, d, ordered, declared, fresh)
+    )
+  }
+}
+
+pub theorem ck_prepare_datas_headers(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  d: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  declared: DeclaresData(program, d),
+  fresh: UniqueDataNames(types_data_decls(program))
+): DataHeaderMatches(ck_datas_of(ck_st(ck_prepare_datas(c, prelude, program, own))), d) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(z)), d),
+    Eq::sym(registration_prepare_unf(c, prelude, program, own)),
+    registration_program_after_header(
+      program,
+      d,
+      ck_prelude_data(prelude, c, own),
+      ck_prelude_data_ordered(prelude, c, own, ordered),
+      declared,
+      fresh
+    )
+  )
+}

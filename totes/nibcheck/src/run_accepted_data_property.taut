@@ -1,0 +1,14 @@
+import "run_data_invariant_sound.taut"
+import "run_data_names_sound.taut"
+
+// A declaration-environment property proved under successful checking can be
+// carried to the report without assuming that checking succeeds.
+pub theorem accepted_data_report(
+  p: (Datas) -> Prop,
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  checked: ∀ accepted: DiagnosticClean(ck_st(m)). p(ck_datas_of(ck_st(m))),
+  clean: DiagnosticReportClean(run_finish_after(m))
+): DataReportInvariant(p, run_finish_after(m)) {
+  accepted_data_finish(p, m, ordered, checked, clean)
+}

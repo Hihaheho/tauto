@@ -1,0 +1,120 @@
+import "error_frame.taut"
+import "product_frame.taut"
+import "finish_acceptance.taut"
+
+pub theorem finish_default_errors(
+  c: Checker,
+  t: Ty
+): decl_names_errors(ck_st(finish_default(c, t))) = decl_names_errors(c) {
+  match t: decl_names_errors(ck_st(finish_default(c, t))) = decl_names_errors(c) {
+    TyInt(w) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(params, result, kind) => Refl
+    TyUnion(members) => Refl
+    TyProduct(members) => Refl
+    TyTagged(tags, inner) => Refl
+    TyNamed(name, args) => Refl
+    TyParam(name, bound) => Refl
+    TyInfo(inner) => Refl
+    TyBorrow(inner, mutable) => Refl
+    TyVar(w) => Refl
+    TyPoly(generics, inner) => Refl
+    TyApp(head, arg) => Refl
+  }
+}
+pub theorem ck_default_int_error_frame(c: Checker, v: Nat): CkErrorFrame(c, ck_default_int(c, v)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
+    Eq::sym(finish_default_unf(c, v)),
+    error_frame_same(
+      c,
+      finish_default(c, ck_resolve(c, TyVar(v))),
+      finish_default_errors(c, ck_resolve(c, TyVar(v)))
+    )
+  )
+}
+pub theorem ck_default_ints_error_frame(
+  vs: List(Pair(Nat, Bool)),
+  c: Checker
+): CkErrorFrame(c, ck_default_ints(vs, c)) {
+  match vs: CkErrorFrame(c, ck_default_ints(vs, c)) {
+    Nil => error_frame_return(c, Star)
+    Cons(p, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
+      Eq::sym(finish_defaults_unf(p, rest, c)),
+      error_frame_bind(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
+        ck_default_int(c, finish_int_key(p)),
+        ck_default_int_error_frame(c, finish_int_key(p)),
+        ignored => next => error_frame_rewrap(
+          next,
+          ck_default_ints(rest, next),
+          ck_default_ints_error_frame(rest, next)
+        )
+      )
+    )
+  }
+}
+pub theorem finish_after_defaults_clean(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  clean: DiagnosticReportClean(finish_after_defaults(c, widths))
+): DiagnosticClean(c) {
+  diagnostic_report_state_clean(
+    c,
+    Widths,
+    Eq::subst(
+      DiagnosticReportClean,
+      And::right(finish_after_defaults_accepts(c, Widths, clean)),
+      clean
+    )
+  )
+}
+pub theorem finish_default_result_clean(
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(v, next) => finish_after_defaults_clean(
+      next,
+      ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty()),
+      clean
+    )
+  }
+}
+pub theorem finish_products_result_clean(
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(v, next) => And::left(
+      And::right(ck_check_products_step(List::reverse(finish_product_checks(next)), next))
+    )(
+      finish_default_result_clean(
+        ck_check_products(List::reverse(finish_product_checks(next)), next),
+        clean
+      )
+    )
+  }
+}
+pub theorem ck_finish_input_clean(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): DiagnosticClean(c) {
+  ck_default_ints_error_frame(
+    Ordmap::entries(finish_ints(c)),
+    c,
+    finish_products_result_clean(
+      ck_default_ints(Ordmap::entries(finish_ints(c)), c),
+      Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
+    )
+  )
+}

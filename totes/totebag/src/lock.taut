@@ -1,0 +1,226 @@
+import "tree.taut"
+
+// `Tauto.lock`: one entry per tote fetched from Git, in name order, and what
+// locking changes in it. Reading the file and fetching are the host's; which
+// entries the lock holds, how it is written, and what a run of `lock` or
+// `update` reports are decided here.
+
+pub(open) inductive TbLocked: Type {
+  MkLocked(
+    name: Text,
+    git: Text,
+    reference: Text,
+    // `""` for the repository's root.
+    dir: Text,
+    project: Option(Text),
+    rev: Text,
+    source: Text
+  ): TbLocked
+}
+
+pub fn tb_locked_name(l: TbLocked): Text {
+  match l: Text {
+    MkLocked(name, git, reference, dir, project, rev, source) => name
+  }
+}
+
+pub fn tb_text_option_eq(a: Option(Text), b: Option(Text)): Bool {
+  match a: Bool {
+    None => match b: Bool {
+      None => true
+      Some(y) => false
+    }
+    Some(x) => match b: Bool {
+      None => false
+      Some(y) => Text::eq(x, y)
+    }
+  }
+}
+
+// The same repository, ref, directory and project: where a tote is asked for.
+pub fn tb_same_source(a: TbLocked, b: TbLocked): Bool {
+  match a: Bool {
+    MkLocked(n1, u1, r1, d1, p1, v1, s1) => match b: Bool {
+      MkLocked(n2, u2, r2, d2, p2, v2, s2) => Bool::and(Text::eq(u1, u2), Bool::and(Text::eq(r1, r2),
+        Bool::and(Text::eq(d1, d2), tb_text_option_eq(p1, p2))))
+    }
+  }
+}
+
+pub fn tb_locked_eq(a: TbLocked, b: TbLocked): Bool {
+  match a: Bool {
+    MkLocked(n1, u1, r1, d1, p1, v1, s1) => match b: Bool {
+      MkLocked(n2, u2, r2, d2, p2, v2, s2) => Bool::and(Text::eq(n1, n2), Bool::and(tb_same_source(a, b),
+        Bool::and(Text::eq(v1, v2), Text::eq(s1, s2))))
+    }
+  }
+}
+
+// ---- the entries -----------------------------------------------------------------
+
+pub fn tb_get(lock: List(TbLocked), name: Text): Option(TbLocked) {
+  match lock: Option(TbLocked) {
+    Nil => None
+    Cons(l, rest) => match Text::eq(tb_locked_name(l), name): Option(TbLocked) {
+      true => Some(l)
+      false => tb_get(rest, name)
+    }
+  }
+}
+
+pub fn tb_has(lock: List(TbLocked), name: Text): Bool {
+  match tb_get(lock, name): Bool {
+    None => false
+    Some(l) => true
+  }
+}
+
+// `l` in its place by name, in place of the entry of that name.
+pub fn tb_put(lock: List(TbLocked), l: TbLocked): List(TbLocked) {
+  match lock: List(TbLocked) {
+    Nil => Cons(l, Nil)
+    Cons(m, rest) => match Text::ordering(tb_locked_name(l), tb_locked_name(m)): List(TbLocked) {
+      Less => Cons(l, lock)
+      Equal => Cons(l, rest)
+      Greater => Cons(m, tb_put(rest, l))
+    }
+  }
+}
+
+// ---- the file --------------------------------------------------------------------
+
+pub fn tb_line(key: Text, value: Text): Text {
+  Text::concat_all(Cons("  ", Cons(key, Cons(" = \"", Cons(value, Cons("\"\n", Nil))))))
+}
+
+pub fn tb_dir_line(dir: Text): Text {
+  match Text::eq(dir, ""): Text {
+    true => ""
+    false => tb_line("dir", dir)
+  }
+}
+
+pub fn tb_project_line(project: Option(Text)): Text {
+  match project: Text {
+    None => ""
+    Some(p) => tb_line("project", p)
+  }
+}
+
+pub fn tb_render_one(l: TbLocked): Text {
+  match l: Text {
+    MkLocked(name, git, reference, dir, project, rev, source) => Text::concat_all(Cons(
+      "\n@ totes[] {\n",
+      Cons(tb_line("name", name),
+      Cons(tb_line("git", git),
+      Cons(tb_line("ref", reference),
+      Cons(tb_dir_line(dir),
+      Cons(tb_project_line(project),
+      Cons(tb_line("rev", rev),
+      Cons(tb_line("source", source),
+      Cons("}\n", Nil)))))))))
+    )
+  }
+}
+
+pub fn tb_render_all(lock: List(TbLocked)): Text {
+  match lock: Text {
+    Nil => ""
+    Cons(l, rest) => Text::concat(tb_render_one(l), tb_render_all(rest))
+  }
+}
+
+pub fn tb_render(lock: List(TbLocked)): Text {
+  Text::concat(
+    "// Written by `tauto lock` and `tauto update`: the exact commit and content\n// of each tote fetched from Git. Commit it with the project.\nformat = 1\n",
+    tb_render_all(lock)
+  )
+}
+
+// ---- what locking changed --------------------------------------------------------
+
+pub(open) inductive TbChange: Type {
+  Added(new: TbLocked): TbChange
+  Moved(old: TbLocked, new: TbLocked): TbChange
+  Removed(old: TbLocked): TbChange
+}
+
+pub fn tb_added_or_moved(before: List(TbLocked), after: List(TbLocked)): List(TbChange) {
+  match after: List(TbChange) {
+    Nil => Nil
+    Cons(l, rest) => match tb_get(before, tb_locked_name(l)): List(TbChange) {
+      None => Cons(Added(l), tb_added_or_moved(before, rest))
+      Some(o) => match tb_locked_eq(o, l): List(TbChange) {
+        true => tb_added_or_moved(before, rest)
+        false => Cons(Moved(o, l), tb_added_or_moved(before, rest))
+      }
+    }
+  }
+}
+
+pub fn tb_named(names: List(Text), name: Text): Bool {
+  match names: Bool {
+    Nil => false
+    Cons(n, rest) => Bool::or(Text::eq(n, name), tb_named(rest, name))
+  }
+}
+
+// What was locked and is no more; a name found but not locked without the
+// network is not removed.
+pub fn tb_removed(before: List(TbLocked), after: List(TbLocked), unlocked: List(Text)): List(TbChange) {
+  match before: List(TbChange) {
+    Nil => Nil
+    Cons(o, rest) => match Bool::or(tb_has(after, tb_locked_name(o)), tb_named(unlocked, tb_locked_name(o))): List(TbChange) {
+      true => tb_removed(rest, after, unlocked)
+      false => Cons(Removed(o), tb_removed(rest, after, unlocked))
+    }
+  }
+}
+
+pub fn tb_changes(before: List(TbLocked), after: List(TbLocked), unlocked: List(Text)): List(TbChange) {
+  List::append(tb_added_or_moved(before, after), tb_removed(before, after, unlocked))
+}
+
+// ---- where a Git dependency's commit comes from -----------------------------------
+
+pub(open) inductive TbPlan: Type {
+  // The commit locked before; its tree is in the cache.
+  KeepLocked: TbPlan
+  // The commit locked before, fetched again.
+  FetchLocked: TbPlan
+  // Locked, but not in the cache and not to be fetched: kept in the lock,
+  // and what it depends on is not read.
+  KeepUnread: TbPlan
+  // Not locked, and not to be fetched: reported, not locked.
+  ReportUnlocked: TbPlan
+  // The newest commit of the ref.
+  FetchHead: TbPlan
+  LockedNotFetched: TbPlan
+  NeedsNetwork: TbPlan
+}
+
+// `moves`: the update asks for the newest commit of this one. `report_only`:
+// `lock --check`, which locks nothing and fetches nothing. `offline`: the
+// network may not be used. `locked`: the lock has it for the same source.
+// `cached`: its locked tree is in the cache.
+pub fn tb_plan(moves: Bool, report_only: Bool, offline: Bool, locked: Bool, cached: Bool): TbPlan {
+  match Bool::and(locked, not(moves)): TbPlan {
+    true => match cached: TbPlan {
+      true => KeepLocked
+      false => match Bool::or(report_only, offline): TbPlan {
+        false => FetchLocked
+        true => match report_only: TbPlan {
+          true => KeepUnread
+          false => LockedNotFetched
+        }
+      }
+    }
+    false => match Bool::or(report_only, offline): TbPlan {
+      false => FetchHead
+      true => match report_only: TbPlan {
+        true => ReportUnlocked
+        false => NeedsNetwork
+      }
+    }
+  }
+}

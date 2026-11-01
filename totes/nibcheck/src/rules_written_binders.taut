@@ -1,0 +1,68 @@
+import "../../surface/src/surface.taut"
+import "ty.taut"
+
+// The leading named kind parameters of a written function type.
+pub(open) inductive WrittenKindBinder: (SurfaceParam, Pair(Text, Kind)) -> Prop {
+  Mk<ast_occurrence: Option(
+    TermOccurrence
+  )>(
+    name: Text,
+    spelling: Text,
+    kind: Kind,
+    start: Nat,
+    end: Nat,
+    parsed: kind_parse(spelling) = Some(kind)
+  ): WrittenKindBinder(
+    SurfaceParamMk(Some(name), SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence)),
+    Pair { fst: name, snd: kind }
+  )
+}
+pub(open) inductive WrittenBindersPrefix: (
+  List(SurfaceParam),
+  List(Pair(Text, Kind)),
+  List(SurfaceParam)
+) -> Prop {
+  WrittenBindersNil: WrittenBindersPrefix(Nil, Nil, Nil)
+  WrittenBindersStop(
+    first: SurfaceParam,
+    rest: List(SurfaceParam),
+    ordinary: ∀ b: Pair(Text, Kind). (WrittenKindBinder(first, b)) -> False
+  ): WrittenBindersPrefix(Cons(first, rest), Nil, Cons(first, rest))
+  WrittenBindersCons(
+    first: SurfaceParam,
+    rest: List(SurfaceParam),
+    b: Pair(Text, Kind),
+    bs: List(Pair(Text, Kind)),
+    suffix: List(SurfaceParam),
+    head: WrittenKindBinder(first, b),
+    tail: WrittenBindersPrefix(rest, bs, suffix)
+  ): WrittenBindersPrefix(Cons(first, rest), Cons(b, bs), suffix)
+}
+pub(open) inductive WrittenBinderMap: (
+  List(Pair(Text, Kind)),
+  Ordmap(Text, Ty),
+  Ordmap(Text, Ty)
+) -> Prop {
+  WrittenBinderMapNil(map: Ordmap(Text, Ty)): WrittenBinderMap(Nil, map, map)
+  WrittenBinderMapCons(
+    name: Text,
+    kind: Kind,
+    rest: List(Pair(Text, Kind)),
+    initial: Ordmap(Text, Ty),
+    final: Ordmap(Text, Ty),
+    tail: WrittenBinderMap(
+      rest,
+      Ordmap::insert(initial, name, TyParam(name, kind), Ordmap::compare_text),
+      final
+    )
+  ): WrittenBinderMap(Cons(Pair { fst: name, snd: kind }, rest), initial, final)
+}
+
+pub(open) inductive WrittenPolymorphicType: (List(Pair(Text, Kind)), Ty, Ty) -> Prop {
+  WrittenMonomorphic(body: Ty): WrittenPolymorphicType(Nil, body, body)
+  WrittenPolymorphic(
+    first: Pair(Text, Kind),
+    rest: List(Pair(Text, Kind)),
+    body: Ty
+  ): WrittenPolymorphicType(Cons(first, rest), body, TyPoly(Cons(first, rest), body))
+}

@@ -1,0 +1,316 @@
+import "where_predicates_declared.taut"
+import "instantiation_context_sound.taut"
+
+// A class predicate's substituted type is present in the map and in the
+// deferred checks, with the assumptions of the use site.
+pub(open) inductive InstancePredicateRecorded(
+  assume: List(Pair(Text, Text)),
+  p: Pair(Text, Text),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  pending: List(TyPending)
+): Prop {
+  Mk(
+    ty: Ty,
+    found: Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text) = Some(ty),
+    recorded: Mem(
+      TyPending,
+      instantiated_pending(instantiation_constraint(p), ty, what, span, assume),
+      pending
+    )
+  ): InstancePredicateRecorded(assume, p, map, what, span, pending)
+}
+pub def InstancePredicatesRecorded(
+  assume: List(Pair(Text, Text)),
+  ps: List(Pair(Text, Text)),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  pending: List(TyPending)
+): Prop := ∀ p: Pair(
+  Text,
+  Text
+). ∀ member: Mem(
+  Pair(Text, Text),
+  p,
+  ps
+). InstancePredicateRecorded(assume, p, map, what, span, pending)
+pub theorem instance_predicate_from_name(
+  c: Checker,
+  ps: List(Pair(Text, Text)),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  p: Pair(Text, Text),
+  member: Mem(Pair(Text, Text), p, ps),
+  named: InstanceNamePresent(map, instantiation_parameter(p))
+): InstancePredicateRecorded(
+  inference_assume(c),
+  p,
+  map,
+  what,
+  span,
+  finish_pending_items(ck_st(ck_pend_preds(ps, c, map, what, span)))
+) {
+  match named: InstancePredicateRecorded(
+    inference_assume(c),
+    p,
+    map,
+    what,
+    span,
+    finish_pending_items(ck_st(ck_pend_preds(ps, c, map, what, span)))
+  ) {
+    Mk(ty, found) => InstancePredicateRecorded::Mk(
+      ty,
+      found,
+      ck_pend_preds_records(ps, c, map, what, span, p, ty, member, found)
+    )
+  }
+}
+pub theorem ck_pend_declared_predicates(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  ps: List(Pair(Text, Text)),
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  declared: WherePredicatesDeclared(gs, ps),
+  covered: GenericNamesPresent(gs, map)
+): InstancePredicatesRecorded(
+  inference_assume(c),
+  ps,
+  map,
+  what,
+  span,
+  finish_pending_items(ck_st(ck_pend_preds(ps, c, map, what, span)))
+) {
+  p => member => instance_predicate_from_name(
+    c,
+    ps,
+    map,
+    what,
+    span,
+    p,
+    member,
+    where_generic_in_instance(declared(p, member), map, covered)
+  )
+}
+pub(open) inductive SchemeInstanceRecorded(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ty, Checker)
+): Prop {
+  Mk(
+    map: Ordmap(Text, Ty),
+    covered: GenericNamesPresent(instantiation_scheme_generics(scheme), map),
+    substituted: ck_val(m) = ty_substitute(instantiation_scheme_ty(scheme), map),
+    predicates: InstancePredicatesRecorded(
+      inference_assume(c),
+      instantiation_scheme_preds(scheme),
+      map,
+      name,
+      span,
+      finish_pending_items(ck_st(m))
+    )
+  ): SchemeInstanceRecorded(c, name, scheme, span, m)
+}
+pub fn instance_scheme_after_preds(
+  scheme: Scheme,
+  map: Ordmap(Text, Ty),
+  m: Mut1(Unit, Checker)
+): Mut1(Ty, Checker) {
+  match m: Mut1(
+    Ty,
+    Checker
+  ) { mut1(ignored, next) => mut1(ty_substitute(instantiation_scheme_ty(scheme), map), next) }
+}
+pub theorem instance_scheme_preds_recorded(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  map: Ordmap(Text, Ty),
+  m: Mut1(Unit, Checker),
+  covered: GenericNamesPresent(instantiation_scheme_generics(scheme), map),
+  predicates: InstancePredicatesRecorded(
+    inference_assume(c),
+    instantiation_scheme_preds(scheme),
+    map,
+    name,
+    span,
+    finish_pending_items(ck_st(m))
+  )
+): SchemeInstanceRecorded(c, name, scheme, span, instance_scheme_after_preds(scheme, map, m)) {
+  match m: SchemeInstanceRecorded(
+    c,
+    name,
+    scheme,
+    span,
+    instance_scheme_after_preds(scheme, map, m)
+  ) {
+    mut1(ignored, next) => SchemeInstanceRecorded::Mk(map, covered, Refl, predicates)
+  }
+}
+pub fn instance_scheme_after_map(
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ordmap(Text, Ty), Checker)
+): Mut1(Ty, Checker) {
+  match m: Mut1(Ty, Checker) {
+    mut1(map, next) => instance_scheme_after_preds(
+      scheme,
+      map,
+      ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span)
+    )
+  }
+}
+pub theorem instance_scheme_map_recorded(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  covered: GenericNamesPresent(instantiation_scheme_generics(scheme), ck_val(m)),
+  context: InstantiationContextFrame(c, m),
+  declared: WherePredicatesDeclared(
+    instantiation_scheme_generics(scheme),
+    instantiation_scheme_preds(scheme)
+  )
+): SchemeInstanceRecorded(c, name, scheme, span, instance_scheme_after_map(name, scheme, span, m)) {
+  match m: SchemeInstanceRecorded(
+    c,
+    name,
+    scheme,
+    span,
+    instance_scheme_after_map(name, scheme, span, m)
+  ) {
+    mut1(map, next) => instance_scheme_preds_recorded(
+      c,
+      name,
+      scheme,
+      span,
+      map,
+      ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span),
+      covered,
+      Eq::subst(
+        (assume: List(Pair(Text, Text))) => InstancePredicatesRecorded(
+          assume,
+          instantiation_scheme_preds(scheme),
+          map,
+          name,
+          span,
+          finish_pending_items(
+            ck_st(ck_pend_preds(instantiation_scheme_preds(scheme), next, map, name, span))
+          )
+        ),
+        context,
+        ck_pend_declared_predicates(
+          next,
+          instantiation_scheme_generics(scheme),
+          instantiation_scheme_preds(scheme),
+          map,
+          name,
+          span,
+          declared,
+          covered
+        )
+      )
+    )
+  }
+}
+pub theorem instance_scheme_records_unf(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan
+): ck_instantiate_scheme(c, name, scheme, span) = instance_scheme_after_map(
+    name,
+    scheme,
+    span,
+    ck_instantiate_map_ctors(
+      instantiation_scheme_generics(scheme),
+      c,
+      instantiation_scheme_ctors(scheme),
+      name,
+      span,
+      Ordmap::empty()
+    )
+  ) { Refl }
+pub theorem ck_instantiate_scheme_records(
+  c: Checker,
+  name: Text,
+  scheme: Scheme,
+  span: TySpan,
+  declared: WherePredicatesDeclared(
+    instantiation_scheme_generics(scheme),
+    instantiation_scheme_preds(scheme)
+  )
+): SchemeInstanceRecorded(c, name, scheme, span, ck_instantiate_scheme(c, name, scheme, span)) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => SchemeInstanceRecorded(c, name, scheme, span, m),
+    Eq::sym(instance_scheme_records_unf(c, name, scheme, span)),
+    instance_scheme_map_recorded(
+      c,
+      name,
+      scheme,
+      span,
+      ck_instantiate_map_ctors(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty()
+      ),
+      And::right(
+        And::right(
+          ck_instantiate_map_ctors_domain(
+            instantiation_scheme_generics(scheme),
+            c,
+            instantiation_scheme_ctors(scheme),
+            name,
+            span,
+            Ordmap::empty(),
+            Trivial
+          )
+        )
+      ),
+      ck_instantiate_map_ctors_frame_context(
+        instantiation_scheme_generics(scheme),
+        c,
+        instantiation_scheme_ctors(scheme),
+        name,
+        span,
+        Ordmap::empty()
+      ),
+      declared
+    )
+  )
+}
+
+pub theorem ck_signature_instantiation_records(
+  declaration: Checker,
+  source: SurfaceFn,
+  use_site: Checker,
+  name: Text,
+  span: TySpan,
+  clean: DiagnosticClean(ck_st(ck_signature(declaration, source)))
+): SchemeInstanceRecorded(
+  use_site,
+  name,
+  ck_val(ck_signature(declaration, source)),
+  span,
+  ck_instantiate_scheme(use_site, name, ck_val(ck_signature(declaration, source)), span)
+) {
+  ck_instantiate_scheme_records(
+    use_site,
+    name,
+    ck_val(ck_signature(declaration, source)),
+    span,
+    where_clauses_declare(ck_signature_where_declared(declaration, source, clean))
+  )
+}

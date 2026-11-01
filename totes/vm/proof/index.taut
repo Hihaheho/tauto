@@ -1,0 +1,43 @@
+import "../src/builtins.taut"
+
+import "seq.taut"
+
+pub theorem m_items_len_correct(v: MVal): m_items_len(v) = List::length(m_as_items(v)) {
+  ms_len_correct(MvUnit, m_as_seq(v))
+}
+
+// The reference bounds test includes the whole sequence's length.
+pub fn m_vec_get_reference(ctors: List(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MOut {
+  let xs := m_as_items(m_get(ctors, cx, r))
+  if Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), List::length(xs))) {
+    match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
+      Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
+    }
+  } else {
+    if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
+  }
+}
+
+pub theorem m_vec_get_correct(
+  ctors: List(MCtor),
+  cx: MCx,
+  r: MVal,
+  i: MVal,
+  index: Bool
+): m_vec_get(ctors, cx, r, i, index) = m_vec_get_reference(ctors, cx, r, i, index) {
+  Eq::congr(
+    (n: Nat) => match Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), n)): MOut {
+      true => match m_item_ref(cx, r, MpathItem(m_as_nat(i))): MOut {
+        Pair { fst: x, snd: cx2 } => MoutVal(match index: MVal {
+          true => x
+          false => m_some(x)
+        }, cx2)
+      }
+      false => match index: MOut {
+        true => MoutPerform("out_of_bounds")
+        false => MoutVal(m_none(), cx)
+      }
+    },
+    m_items_len_correct(m_get(ctors, cx, r))
+  )
+}

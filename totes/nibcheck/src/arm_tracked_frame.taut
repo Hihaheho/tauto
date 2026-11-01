@@ -1,0 +1,308 @@
+import "arm_frame.taut"
+import "tracked_read_frame.taut"
+
+pub theorem ck_arm_enter_frame_tracked(c: Checker, xs: List(TypeName)): TrackedFrame(
+  c,
+  ck_arm_enter(c, xs)
+) { tracked_state_refl(c) }
+
+pub theorem ck_enter_fn_frame_tracked(c: Checker, scheme: Scheme): TrackedFrame(c, ck_enter_fn(c, scheme)) {
+  tracked_state_refl(c)
+}
+
+pub theorem ck_leave_fn_frame_tracked(
+  c: Checker,
+  assume: List(Pair(Text, Text)),
+  types: List(TypeName)
+): TrackedFrame(c, ck_leave_fn(c, assume, types)) { tracked_state_refl(c) }
+
+pub theorem ck_arm_report_frame_tracked(
+  c: Checker,
+  why: Text,
+  rv: Option(Nat),
+  body: SurfaceTerm
+): TrackedFrame(c, ck_arm_report(c, why, rv, body)) {
+  match rv: TrackedFrame(c, ck_arm_report(c, why, rv, body)) {
+    Some(v) => ck_error_frame_tracked(c, why, span_of(body))
+    None => tracked_state_refl(c)
+  }
+}
+
+pub theorem arm_fresh_step_frame_tracked(
+  c: Checker,
+  g: Text,
+  rest: List(Text),
+  map: Ordmap(Text, Ty),
+  has: Bool,
+  ih: ∀ next: Checker. ∀ m: Ordmap(Text, Ty). TrackedFrame(next, ck_arm_fresh(next, rest, m))
+): TrackedFrame(c, arm_fresh_step(c, g, rest, map, has)) {
+  match has: TrackedFrame(c, arm_fresh_step(c, g, rest, map, has)) {
+    true => tracked_rewrap(c, ck_arm_fresh(c, rest, map), ih(c, map))
+    false => tracked_bind(
+      Ty,
+      Ordmap(Text, Ty),
+      c,
+      (v: Ty, c1: Checker) => ck_rewrap1(
+        ck_arm_fresh(c1, rest, Ordmap::insert(map, g, v, Ordmap::compare_text))
+      ),
+      ck_fresh(c),
+      ck_fresh_frame_tracked(c),
+      v => next => tracked_rewrap(
+        next,
+        ck_arm_fresh(next, rest, Ordmap::insert(map, g, v, Ordmap::compare_text)),
+        ih(next, Ordmap::insert(map, g, v, Ordmap::compare_text))
+      )
+    )
+  }
+}
+
+pub theorem ck_arm_fresh_frame_tracked(
+  c: Checker,
+  gs: List(Text),
+  map: Ordmap(Text, Ty)
+): TrackedFrame(c, ck_arm_fresh(c, gs, map)) {
+  match gs: TrackedFrame(c, ck_arm_fresh(c, gs, map)) {
+    Nil => tracked_state_refl(c)
+    Cons(g, rest) => Eq::subst(
+      (z: Mut1(Ordmap(Text, Ty), Checker)) => TrackedFrame(c, z),
+      Eq::sym(arm_fresh_unf(c, g, rest, map)),
+      arm_fresh_step_frame_tracked(
+        c,
+        g,
+        rest,
+        map,
+        Ordmap::contains(map, g, Ordmap::compare_text),
+        next => m => ck_arm_fresh_frame_tracked(next, rest, m)
+      )
+    )
+  }
+}
+
+pub theorem ck_arm_given_frame_tracked(
+  c: Checker,
+  typed: List(Text),
+  types: List(SurfaceTerm),
+  map: Ordmap(Text, Ty)
+): TrackedFrame(c, ck_arm_given(c, typed, types, map)) {
+  match typed: TrackedFrame(c, ck_arm_given(c, typed, types, map)) {
+    Nil => tracked_state_refl(c)
+    Cons(g, gs) => match types: TrackedFrame(c, ck_arm_given(c, Cons(g, gs), types, map)) {
+      Nil => tracked_state_refl(c)
+      Cons(t, ts) => tracked_bind(
+        Ty,
+        Ordmap(Text, Ty),
+        c,
+        (w: Ty, c1: Checker) => ck_rewrap1(
+          ck_arm_given(c1, gs, ts, Ordmap::insert(map, g, w, Ordmap::compare_text))
+        ),
+        ck_written(c, t, type_scope(ck_type_params_of(c))),
+        ck_written_frame_tracked(c, t, type_scope(ck_type_params_of(c))),
+        w => next => tracked_rewrap(
+          next,
+          ck_arm_given(next, gs, ts, Ordmap::insert(map, g, w, Ordmap::compare_text)),
+          ck_arm_given_frame_tracked(next, gs, ts, Ordmap::insert(map, g, w, Ordmap::compare_text))
+        )
+      )
+    }
+  }
+}
+
+pub theorem ck_rigid_k_frame_tracked(
+  c: Checker,
+  g: Pair(Text, Kind),
+  t: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  h: TrackedFrame(c, m)
+): TrackedFrame(c, ck_rigid_k(g, t, m)) {
+  match m: TrackedFrame(c, ck_rigid_k(g, t, m)) {
+    mut1(x, c2) => h
+  }
+}
+
+// Making rigid types only counts them.
+pub theorem ck_rigid_frame_tracked(gs: List(Pair(Text, Kind)), c: Checker): TrackedFrame(c, ck_rigid(gs, c)) {
+  match gs: TrackedFrame(c, ck_rigid(gs, c)) {
+    Nil => tracked_state_refl(c)
+    Cons(g, rest) => ck_rigid_k_frame_tracked(
+      c,
+      g,
+      TyParam(cat3(tk_first(g), "#", Text::of_nat(Nat::add(ck_rigids_of(c), 1))), tk_second(g)),
+      ck_rigid(rest, ck_st(ck_bump_rigids(c))),
+      ck_rigid_frame_tracked(rest, ck_st(ck_bump_rigids(c)))
+    )
+  }
+}
+
+pub theorem ck_arm_sig_at_frame_tracked(
+  c: Checker,
+  s: EffectSig,
+  typed: List(Text),
+  r#instance: ArmInstance,
+  binds: List(Text),
+  rv: Option(Nat),
+  body: SurfaceTerm
+): TrackedFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
+  match r#instance: TrackedFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
+    ArmBad(why) => tracked_bind(
+      Unit,
+      Option(ArmSig),
+      c,
+      (ignored: Unit, c1: Checker) => frame_bind(
+        Ordmap(Text, Ty),
+        Option(ArmSig),
+        (fresh: Ordmap(Text, Ty), c2: Checker) => mut1(
+          arm_sig_of(ty_substitute(handle_effect_type(s), fresh), Nil, Nil),
+          c2
+        ),
+        ck_arm_fresh(c1, handle_effect_generics(s), Ordmap::empty())
+      ),
+      ck_arm_report(c, why, rv, body),
+      ck_arm_report_frame_tracked(c, why, rv, body),
+      ignored => c1 => tracked_bind(
+        Ordmap(Text, Ty),
+        Option(ArmSig),
+        c1,
+        (fresh: Ordmap(Text, Ty), c2: Checker) => mut1(
+          arm_sig_of(ty_substitute(handle_effect_type(s), fresh), Nil, Nil),
+          c2
+        ),
+        ck_arm_fresh(c1, handle_effect_generics(s), Ordmap::empty()),
+        ck_arm_fresh_frame_tracked(c1, handle_effect_generics(s), Ordmap::empty()),
+        fresh => c2 => tracked_state_refl(c2)
+      )
+    )
+    ArmOne(written) => tracked_bind(
+      Ordmap(Text, Ty),
+      Option(ArmSig),
+      c,
+      (given: Ordmap(Text, Ty), c1: Checker) => frame_bind(
+        Ordmap(Text, Ty),
+        Option(ArmSig),
+        (fixed: Ordmap(Text, Ty), c2: Checker) => mut1(
+          arm_sig_of(ty_substitute(handle_effect_type(s), fixed), Nil, Nil),
+          c2
+        ),
+        ck_arm_fresh(c1, handle_effect_generics(s), given)
+      ),
+      ck_arm_given(c, typed, written, Ordmap::empty()),
+      ck_arm_given_frame_tracked(c, typed, written, Ordmap::empty()),
+      given => c1 => tracked_bind(
+        Ordmap(Text, Ty),
+        Option(ArmSig),
+        c1,
+        (fixed: Ordmap(Text, Ty), c2: Checker) => mut1(
+          arm_sig_of(ty_substitute(handle_effect_type(s), fixed), Nil, Nil),
+          c2
+        ),
+        ck_arm_fresh(c1, handle_effect_generics(s), given),
+        ck_arm_fresh_frame_tracked(c1, handle_effect_generics(s), given),
+        fixed => c2 => tracked_state_refl(c2)
+      )
+    )
+    ArmEvery => tracked_bind(
+      Ordmap(Text, Ty),
+      Option(ArmSig),
+      c,
+      (rigid: Ordmap(Text, Ty), c1: Checker) => mut1(
+        arm_sig_of(
+          ty_substitute(handle_effect_type(s), rigid),
+          rigid_param_names(handle_effect_generics(s), rigid),
+          arm_bound(binds, typed, rigid)
+        ),
+        c1
+      ),
+      ck_rigid(affine_generics(handle_effect_generics(s)), c),
+      ck_rigid_frame_tracked(affine_generics(handle_effect_generics(s)), c),
+      rigid => c1 => tracked_state_refl(c1)
+    )
+  }
+}
+
+pub theorem arm_sig_found_frame_tracked(
+  c: Checker,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  rv: Option(Nat),
+  body: SurfaceTerm,
+  found: Option(EffectSig)
+): TrackedFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
+  match found: TrackedFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
+    Some(s) => tracked_rewrap(
+      c,
+      ck_arm_sig_at(
+        c,
+        s,
+        effect_typed_generics(handle_effect_generics(s), s),
+        arm_instance(eff, binds, types, effect_typed_generics(handle_effect_generics(s), s)),
+        binds,
+        rv,
+        body
+      ),
+      ck_arm_sig_at_frame_tracked(
+        c,
+        s,
+        effect_typed_generics(handle_effect_generics(s), s),
+        arm_instance(eff, binds, types, effect_typed_generics(handle_effect_generics(s), s)),
+        binds,
+        rv,
+        body
+      )
+    )
+    None => tracked_bind(
+      Unit,
+      Option(ArmSig),
+      c,
+      (ignored: Unit, c1: Checker) => mut1(None, c1),
+      ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ck_error_frame_tracked(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
+      ignored => c1 => tracked_state_refl(c1)
+    )
+  }
+}
+
+pub theorem arm_sig_step_frame_tracked(
+  c: Checker,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  body: SurfaceTerm,
+  exceeded: Bool
+): TrackedFrame(c, arm_sig_step(c, eff, binds, types, result, rv, budget_ty, body, exceeded)) {
+  match exceeded: TrackedFrame(
+    c,
+    arm_sig_step(c, eff, binds, types, result, rv, budget_ty, body, exceeded)
+  ) {
+    true => tracked_state_refl(c)
+    false => arm_sig_found_frame_tracked(
+      c,
+      eff,
+      binds,
+      types,
+      rv,
+      body,
+      Ordmap::get(handle_effects(c), eff, Ordmap::compare_text)
+    )
+  }
+}
+
+pub theorem ck_handle_arm_sig_frame_tracked(
+  c: Checker,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  body: SurfaceTerm
+): TrackedFrame(c, ck_handle_arm_sig(c, eff, binds, types, result, rv, budget_ty, body)) {
+  Eq::subst(
+    (z: Mut1(Option(ArmSig), Checker)) => TrackedFrame(c, z),
+    Eq::sym(arm_sig_unf(c, eff, binds, types, result, rv, budget_ty, body)),
+    arm_sig_step_frame_tracked(c, eff, binds, types, result, rv, budget_ty, body, Text::eq(eff, "exceeded"))
+  )
+}
+

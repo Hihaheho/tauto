@@ -1,0 +1,78 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Hihaheho/tauto"
+
+[workspace.dependencies]
+# Pinned exactly; Cargo.lock holds the checksum.
+query-flow = "=0.18.0"
+# The Rust backend writes its output as token streams (quote), then formats it.
+proc-macro2 = "=1.0.107"
+quote = "=1.0.47"
+eure-document = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
+eure-reader = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
+eure-schema = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
+eure-fmt = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
+
+# The differential tests of selfhost-harness run the totes on the Rust backend;
+# only tests/evaluator.rs runs a few under the evaluator, which optimized takes
+# seconds instead of minutes.
+[profile.test.package.tauto]
+opt-level = 3
+
+# The differential tests of tauto-syntax scan every program of the repository.
+[profile.test.package.tauto-syntax]
+opt-level = 3
+
+# `cargo run -p tauto-cli -- build` (the selfhost tests build the totes with it
+# once per change to its inputs) parses, checks and generates in the dev profile,
+# where unoptimized code is several times slower. Dependencies and the crates
+# that do that work are optimized; the rest of the workspace is not.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.tauto]
+opt-level = 3
+
+[profile.dev.package.tauto-parol]
+opt-level = 3
+
+[profile.dev.package.tauto-nir]
+opt-level = 3
+
+[profile.dev.package.tauto-rustgen]
+opt-level = 3
+
+[profile.dev.package.tauto-nibcheck]
+opt-level = 3
+
+[profile.test.package.tauto-nibcheck]
+opt-level = 3
+
+[profile.dev.package.tauto-eval]
+opt-level = 3
+
+[profile.dev.package.tauto-vm]
+opt-level = 3
+
+[profile.test.package.tauto-vm]
+opt-level = 3
+
+[profile.test.package.tauto-eval]
+opt-level = 3
+
+[profile.dev.package.tauto-macro]
+opt-level = 3
+
+[profile.test.package.tauto-macro]
+opt-level = 3
+
+[profile.dev.package.tauto-kernel]
+opt-level = 3
+
+[profile.test.package.tauto-kernel]
+opt-level = 3

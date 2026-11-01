@@ -1,0 +1,38 @@
+import "function_table_registration.taut"
+import "data_names_membership_sound.taut"
+
+pub def FunctionNameAbsent(name: Text, fs: List(SurfaceFn)): Prop :=
+∀ source: SurfaceFn. ∀ member: Mem(SurfaceFn, source, fs). FnNameApart(name, signature_name(source))
+
+pub theorem fnt_absent_head(
+  name: Text,
+  source: SurfaceFn,
+  rest: List(SurfaceFn),
+  absent: FunctionNameAbsent(name, Cons(source, rest))
+): FnNameApart(name, signature_name(source)) {
+  absent(source, MemHere(rest))
+}
+pub theorem fnt_absent_tail(
+  name: Text,
+  source: SurfaceFn,
+  rest: List(SurfaceFn),
+  absent: FunctionNameAbsent(name, Cons(source, rest))
+): FunctionNameAbsent(name, rest) {
+  query => member => absent(query, MemThere(source, rest, member))
+}
+pub theorem fnt_absent_prefix(
+  name: Text,
+  prefix: List(SurfaceFn),
+  suffix: List(SurfaceFn),
+  absent: FunctionNameAbsent(name, List::append(prefix, suffix))
+): FunctionNameAbsent(name, prefix) {
+  source => member => absent(source, Mem::append_left(suffix, member))
+}
+pub theorem fnt_absent_suffix(
+  name: Text,
+  prefix: List(SurfaceFn),
+  suffix: List(SurfaceFn),
+  absent: FunctionNameAbsent(name, List::append(prefix, suffix))
+): FunctionNameAbsent(name, suffix) {
+  source => member => absent(source, Mem::append_right(prefix, suffix, member))
+}

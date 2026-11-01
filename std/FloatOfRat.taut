@@ -1,0 +1,254 @@
+// The rounding error of `float_of_rat`, and `float_near` for its finite results.
+
+import "FloatBoundsA.taut"
+import "FloatBoundsB.taut"
+import "FloatBoundsC.taut"
+import "FloatRound.taut"
+import "FloatPack.taut"
+
+// ---- the rounding error of `float_of_rat` ------------------------------------------
+
+// `y` is within `2^-52 |r| + 2^-A` of `r`, or it is not a number.
+pub fn float_err_ok(y: Float, r: Rat, A: Nat): Bool {
+  float_err_ok_by(Float::val(y), r, A)
+}
+
+pub fn float_err_ok_by(o: Option(Rat), r: Rat, A: Nat): Bool {
+  match o: Bool {
+    None => true
+    Some(v) => Rat::le(Rat::dist(v, r), float_round_err(r, A))
+  }
+}
+
+pub def ErrBits(r: Rat, bits: Nat): Prop := float_err_ok(Float::of_raw(bits), r, 1074) = true
+
+// A result that reads back as `v`, with `|v - r|` within the error.
+pub theorem err_bits_of(
+  r: Rat,
+  bits: Nat,
+  v: Rat,
+  hv: Eq(Option(Rat), Float::val(Float::of_raw(bits)), Some(v)),
+  h: RatLe(Rat::dist(v, r), float_round_err(r, 1074))
+): ErrBits(r, bits) {
+  Eq::subst((o: Option(Rat)) => float_err_ok_by(o, r, 1074) = true, Eq::sym(hv), h)
+}
+
+pub theorem fin_pos(
+  p: Nat,
+  q0: Nat
+): FinK(0, p, Succ(q0), (bits: Nat) => ErrBits(Rat::Mk(IntOfNat(p), q0), bits)) {
+  (c: Nat) => (t: Nat) => (hd: DecodeOk(0, c, t)) => (
+    he: ErrOk(
+      c * Nat::pow2(t) * Succ(q0),
+      p * Nat::pow2(4000),
+      Succ(q0) * Nat::pow2(2926)
+    )
+  ) => err_bits_of(
+    Rat::Mk(IntOfNat(p), q0),
+    Float::encode(0, c, t),
+    Float::val_of(Float::encode(0, c, t)),
+    And::left(hd),
+    float_dist_pos(
+      c,
+      t,
+      p,
+      q0,
+      Float::val_of(Float::encode(0, c, t)),
+      4000,
+      1074,
+      2926,
+      Refl,
+      And::right(hd),
+      he
+    )
+  )
+}
+
+pub theorem fin_neg(
+  p0: Nat,
+  q0: Nat
+): FinK(1, Succ(p0), Succ(q0), (bits: Nat) => ErrBits(Rat::Mk(IntNegSucc(p0), q0), bits)) {
+  (c: Nat) => (t: Nat) => (hd: DecodeOk(1, c, t)) => (
+    he: ErrOk(
+      c * Nat::pow2(t) * Succ(q0),
+      Succ(p0) * Nat::pow2(4000),
+      Succ(q0) * Nat::pow2(2926)
+    )
+  ) => err_bits_of(
+    Rat::Mk(IntNegSucc(p0), q0),
+    Float::encode(1, c, t),
+    Float::val_of(Float::encode(1, c, t)),
+    And::left(hd),
+    float_dist_neg(
+      c,
+      t,
+      p0,
+      q0,
+      Float::val_of(Float::encode(1, c, t)),
+      4000,
+      1074,
+      2926,
+      Refl,
+      And::right(hd),
+      he
+    )
+  )
+}
+
+// An infinity is not a number: nothing to show.
+pub theorem inf_ok(r: Rat, s: Nat, hs: s < 2 = true): ErrBits(r, Float::inf_raw(s)) {
+  match s: ErrBits(r, Float::inf_raw(s)) {
+    Zero => Refl
+    Succ(s1) => match s1: ErrBits(r, Float::inf_raw(Succ(s1))) {
+      Zero => Refl
+      Succ(s2) => False::elim(false_ne_true(hs))
+    }
+  }
+}
+
+// `0 / q` is `+0` exactly.
+pub theorem zero_ok(q0: Nat): ErrBits(Rat::Mk(IntOfNat(0), q0), Float::of_frac(0, 0, Succ(q0))) {
+  let fk: FinK(0, 0, Succ(q0), (bits: Nat) => ErrBits(Rat::Mk(IntOfNat(0), q0), bits)) := fin_pos(
+    0,
+    q0
+  )
+  Eq::subst(
+    (w: Nat) => ErrBits(Rat::Mk(IntOfNat(0), q0), w),
+    enc_zero(0),
+    fk(
+      0,
+      2926,
+      float_decode_sub(0, 0, Refl, Refl),
+      AndIntro(
+        err0_a(Nat::pow2(2926), Succ(q0), 0 * Nat::pow2(4000), zero_le_qb(q0)),
+        err0_b(Nat::pow2(2926), Succ(q0), 0 * Nat::pow2(4000), zero_le_qb(q0))
+      )
+    )
+  )
+}
+
+pub theorem zero_le_qb(
+  q0: Nat
+): NatLe(0 * Nat::pow2(4000), Succ(q0) * Nat::pow2(2926)) {
+  zero_le_qb_at(Nat::pow2(4000), Succ(q0), Nat::pow2(2926))
+}
+
+// The rounding error of `float_of_rat`: when `float_of_rat(r)` is a number
+// `v`, `|v - r| <= 2^-52 |r| + 2^-1074`.
+pub theorem float_of_rat_err(r: Rat): float_err_ok(Float::of_rat(r), r, 1074) = true {
+  match r: float_err_ok(Float::of_rat(r), r, 1074) = true {
+    Rat::Mk(n, q0) => match n: float_err_ok(Float::of_rat(Rat::Mk(n, q0)), Rat::Mk(n, q0), 1074) = true {
+      IntOfNat(p) => match p: float_err_ok(Float::of_rat(Rat::Mk(IntOfNat(p), q0)), Rat::Mk(IntOfNat(p), q0), 1074) = true {
+        Zero => zero_ok(q0)
+        Succ(p0) => frac_ok(
+          0,
+          p0,
+          q0,
+          (bits: Nat) => ErrBits(Rat::Mk(IntOfNat(Succ(p0)), q0), bits),
+          Refl,
+          fin_pos(Succ(p0), q0),
+          inf_ok(Rat::Mk(IntOfNat(Succ(p0)), q0), 0, Refl)
+        )
+      }
+      IntNegSucc(p0) => frac_ok(
+        1,
+        p0,
+        q0,
+        (bits: Nat) => ErrBits(Rat::Mk(IntNegSucc(p0), q0), bits),
+        Refl,
+        fin_neg(p0, q0),
+        inf_ok(Rat::Mk(IntNegSucc(p0), q0), 1, Refl)
+      )
+    }
+  }
+}
+
+// So a finite `float_of_rat(r)` is `float_near` `r`, within `2^-52 |r| + 2^-1074`.
+pub theorem float_of_rat_near(
+  r: Rat,
+  v: Rat,
+  h: Eq(Option(Rat), Float::val(Float::of_rat(r)), Some(v))
+): Float::near(Float::of_rat(r), r, float_round_err(r, 1074)) = true {
+  Eq::subst(
+    (o: Option(Rat)) => float_near_by(o, r, float_round_err(r, 1074)) = true,
+    Eq::sym(h),
+    Eq::subst((o: Option(Rat)) => float_err_ok_by(o, r, 1074) = true, h, float_of_rat_err(r))
+  )
+}
+
+pub fn float_near_by(o: Option(Rat), r: Rat, eps: Rat): Bool {
+  match o: Bool {
+    None => false
+    Some(v) => Rat::le(Rat::dist(v, r), eps)
+  }
+}
+
+// ---- `Refines` by rounding ----------------------------------------------------------
+
+// `o` is a number.
+pub fn float_some_by(o: Option(Rat)): Bool {
+  match o: Bool {
+    None => false
+    Some(v) => true
+  }
+}
+
+// A number within the error of `r`, for an error at most `eps`, is within `eps` of `r`.
+pub theorem float_near_of_err(
+  o: Option(Rat),
+  r: Rat,
+  eps: Rat,
+  a: Nat,
+  hs: float_some_by(o) = true,
+  he: float_err_ok_by(o, r, a) = true,
+  hb: RatLe(float_round_err(r, a), eps)
+): float_near_by(o, r, eps) = true {
+  match o: (
+    float_some_by(o) = true
+  ) -> (float_err_ok_by(o, r, a) = true) -> float_near_by(o, r, eps) = true {
+    None => (s: false = true) => (e: true = true) => False::elim(false_ne_true(s))
+    Some(v) => (s: true = true) => (
+      e: RatLe(Rat::dist(v, r), float_round_err(r, a))
+    ) => Rat::le_trans(Rat::dist(v, r), float_round_err(r, a), eps, e, hb)
+  }(hs, he)
+}
+
+// The same for a float `y`.
+pub theorem float_near_of_err_at(
+  y: Float,
+  r: Rat,
+  eps: Rat,
+  a: Nat,
+  hs: float_some_by(Float::val(y)) = true,
+  he: float_err_ok(y, r, a) = true,
+  hb: RatLe(float_round_err(r, a), eps)
+): Float::near(y, r, eps) = true {
+  float_near_of_err(Float::val(y), r, eps, a, hs, he, hb)
+}
+
+// `g` that rounds the exact `f` once is `Refines(g, f, eps)`, when the
+// rounded results are numbers and the error bound of each is at most `eps`.
+pub theorem refines_of_round(
+  g: (Float) -> Float,
+  f: (Rat) -> Rat,
+  eps: Rat,
+  hg: ∀ x: Float. ∀ r: Rat. (
+    Eq(Option(Rat), Float::val(x), Some(r))
+  ) -> g(x) = Float::of_rat(f(r)),
+  hfin: ∀ s: Rat. float_some_by(Float::val(Float::of_rat(f(s)))) = true,
+  hb: ∀ s: Rat. RatLe(float_round_err(f(s), 1074), eps)
+): Refines(g, f, eps) {
+  (x: Float) => (r: Rat) => (h: Eq(Option(Rat), Float::val(x), Some(r))) => Eq::subst(
+    (y: Float) => Float::near(y, f(r), eps) = true,
+    Eq::sym(hg(x, r, h)),
+    float_near_of_err_at(
+      Float::of_rat(f(r)),
+      f(r),
+      eps,
+      1074,
+      hfin(r),
+      float_of_rat_err(f(r)),
+      hb(r)
+    )
+  )
+}

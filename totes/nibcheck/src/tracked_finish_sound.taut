@@ -1,0 +1,231 @@
+import "finish_obligation_frame.taut"
+import "tracked_body_frame.taut"
+import "tracked_records_sound.taut"
+import "finish_literal_sound.taut"
+import "rules_registered_signatures.taut"
+
+pub def FinishStableFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := ck_stable_view(ck_st(m)) = ck_stable_view(c)
+pub theorem literal_records_bind_stable<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: FinishStableFrame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. FinishStableFrame(next, k(value, next))
+): FinishStableFrame(c, frame_bind(A, B, k, m)) {
+  match m: FinishStableFrame(
+    c,
+    frame_bind(A, B, k, m)
+  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+}
+pub theorem literal_records_rewrap_stable<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: FinishStableFrame(c, m)
+): FinishStableFrame(c, ck_rewrap1(m)) {
+  Eq::subst((result: Mut1(A, Checker)) => FinishStableFrame(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub theorem literal_default_records_stable(
+  c: Checker,
+  t: Ty
+): FinishStableFrame(c, finish_default(c, t)) {
+  match t: FinishStableFrame(c, finish_default(c, t)) {
+    TyInt(w) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(ps, result, kind) => Refl
+    TyUnion(ys) => Refl
+    TyProduct(ys) => Refl
+    TyTagged(tags, item) => Refl
+    TyNamed(name, params) => Refl
+    TyParam(name, bound) => Refl
+    TyInfo(item) => Refl
+    TyBorrow(item, mutable) => Refl
+    TyVar(v) => Refl
+    TyPoly(gs, item) => Refl
+    TyApp(head, arg) => Refl
+  }
+}
+pub theorem ck_default_int_records_stable(
+  c: Checker,
+  v: Nat
+): FinishStableFrame(c, ck_default_int(c, v)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => FinishStableFrame(c, m),
+    Eq::sym(finish_default_unf(c, v)),
+    literal_default_records_stable(c, ck_resolve(c, TyVar(v)))
+  )
+}
+pub theorem ck_default_ints_records_stable(
+  vs: List(Pair(Nat, Bool)),
+  c: Checker
+): FinishStableFrame(c, ck_default_ints(vs, c)) {
+  match vs: FinishStableFrame(c, ck_default_ints(vs, c)) {
+    Nil => Refl
+    Cons(v, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => FinishStableFrame(c, m),
+      Eq::sym(finish_defaults_unf(v, rest, c)),
+      literal_records_bind_stable(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
+        ck_default_int(c, finish_int_key(v)),
+        ck_default_int_records_stable(c, finish_int_key(v)),
+        ignored => next => literal_records_rewrap_stable(
+          next,
+          ck_default_ints(rest, next),
+          ck_default_ints_records_stable(rest, next)
+        )
+      )
+    )
+  }
+}
+pub theorem literal_after_defaults_records_stable(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  clean: DiagnosticReportClean(finish_after_defaults(c, widths))
+): FinishStableFrame(c, finish_after_defaults(c, Widths)) {
+  Eq::congr(
+    Mut1(TypeReport, Checker),
+    Pair(List(TyLiteral), Ordmap(Text, Scheme)),
+    finish_after_defaults(c, Widths),
+    mut1(finish_report(c, Widths), c),
+    (m: Mut1(TypeReport, Checker)) => ck_stable_view(ck_st(m)),
+    And::right(finish_after_defaults_accepts(c, Widths, clean))
+  )
+}
+pub theorem literal_finish_default_records_stable(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: FinishStableFrame(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
+): FinishStableFrame(c, diagnostic_finish_default_result(m)) {
+  match m: FinishStableFrame(c, diagnostic_finish_default_result(m)) {
+    mut1(value, next) => Eq::trans(
+      literal_after_defaults_records_stable(
+        next,
+        ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty()),
+        clean
+      ),
+      first
+    )
+  }
+}
+pub theorem literal_finish_products_records_stable(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: FinishStableFrame(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
+): FinishStableFrame(c, diagnostic_finish_products_result(m)) {
+  match m: FinishStableFrame(c, diagnostic_finish_products_result(m)) {
+    mut1(value, next) => literal_finish_default_records_stable(
+      c,
+      ck_check_products(List::reverse(finish_product_checks(next)), next),
+      Eq::trans(
+        Eq::congr(
+          keep_stable,
+          ck_check_products_keep(List::reverse(finish_product_checks(next)), next)
+        ),
+        first
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_finish_literal_records_stable(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): FinishStableFrame(c, ck_finish(c)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => FinishStableFrame(c, m),
+    Eq::sym(diagnostic_finish_default_unf(c)),
+    literal_finish_products_records_stable(
+      c,
+      ck_default_ints(Ordmap::entries(finish_ints(c)), c),
+      ck_default_ints_records_stable(Ordmap::entries(finish_ints(c)), c),
+      Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
+    )
+  )
+}
+
+pub theorem ck_finish_tracked(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): TrackedFrame(c, ck_finish(c)) {
+  tracked_frame_stable(
+    c,
+    ck_finish(c),
+    ck_finish_literal_records_stable(c, clean),
+    ck_finish_obligation_frame(c, clean)
+  )
+}
+pub theorem tracked_registered_signatures(
+  c: Checker,
+  next: Checker,
+  schemes: List(Pair(SurfaceFn, Scheme)),
+  registered: RegisteredSignatures(stable_functions(c), schemes),
+  retained: TrackedState(c, next)
+): RegisteredSignatures(stable_functions(next), schemes) {
+  Eq::subst(
+    (table: Ordmap(Text, Scheme)) => RegisteredSignatures(table, schemes),
+    Eq::sym(And::left(And::right(retained))),
+    registered
+  )
+}
+pub theorem body_finish_registered_signatures(
+  c: Checker,
+  program: List(SurfaceStmt),
+  schemes: List(Pair(SurfaceFn, Scheme)),
+  ordered: CkOrdered(c),
+  registered: RegisteredSignatures(stable_functions(c), schemes),
+  clean: DiagnosticReportClean(ck_finish(ck_st(names_function_body(c, program, schemes))))
+): RegisteredSignatures(
+  stable_functions(ck_st(ck_finish(ck_st(names_function_body(c, program, schemes))))),
+  schemes
+) {
+  tracked_registered_signatures(
+    c,
+    ck_st(ck_finish(ck_st(names_function_body(c, program, schemes)))),
+    schemes,
+    registered,
+    tracked_state_trans(
+      c,
+      ck_st(names_function_body(c, program, schemes)),
+      ck_st(ck_finish(ck_st(names_function_body(c, program, schemes)))),
+      And::right(names_function_body_tracked(c, program, schemes, ordered)),
+      ck_finish_tracked(ck_st(names_function_body(c, program, schemes)), clean)
+    )
+  )
+}
+pub theorem tracked_finish_natural_sound(
+  c: Checker,
+  next: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  recorded: NaturalRecorded(value, TySpan {start: start, end: end}, ty, stable_literals(c)),
+  retained: TrackedState(c, next),
+  clean: DiagnosticReportClean(ck_finish(next))
+): NaturalTypingIn(
+  ck_subst_of(ck_st(ck_finish(next))),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  ck_finish_natural_sound(
+    next,
+    value,
+    start,
+    end,
+    ty,
+    tracked_natural_record(c, next, value, TySpan {start: start, end: end}, ty, recorded, retained),
+    clean
+  )
+}

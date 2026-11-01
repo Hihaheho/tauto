@@ -1,0 +1,211 @@
+import "program_data_body_sound.taut"
+import "data_finish_state_sound.taut"
+
+pub theorem body_finish_datas(
+  c: Checker,
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  present: DataBodyRegistered(ck_datas_of(c), source)
+): DataBodyRegistered(ck_datas_of(ck_st(ck_finish_datas(c, program))), source) {
+  body_registered_metadata(
+    present,
+    ck_datas_of(ck_st(ck_finish_datas(c, program))),
+    name => Eq::sym(ck_finish_datas_preserves_metadata(c, program, ordered)(name))
+  )
+}
+pub theorem body_finish_after(
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  present: DataBodyRegistered(ck_datas_of(ck_st(m)), source)
+): DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) {
+  match m: DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) {
+    mut1(ignored, next) => Eq::subst(
+      (r: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(r)), source),
+      Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
+      body_finish_datas(next, program, source, ordered, present)
+    )
+  }
+}
+pub theorem body_finish_after_clean(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(ignored, next) => ck_finish_datas_errors(
+      next,
+      program,
+      recheck_clean_unwrap(ck_finish_datas(next, program), clean)
+    )
+  }
+}
+pub theorem body_program_after_registered(
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkDatasOrdered(ck_st(m)),
+  ordinary: frame_under_borrow(ck_st(m)) = false,
+  position: frame_constructor_position(ck_st(m)) = false,
+  declared: DeclaresData(program, source),
+  fresh: UniqueDataNames(types_data_decls(program)),
+  clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
+): DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) {
+  match m: DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) {
+    mut1(ignored, next) => body_finish_after(
+      program,
+      source,
+      ck_program_data(program, next),
+      ck_program_data_ordered(program, next, ordered),
+      ck_program_data_bodies(
+        program,
+        next,
+        source,
+        ordered,
+        ordinary,
+        position,
+        declared,
+        fresh,
+        body_finish_after_clean(program, ck_program_data(program, next), clean)
+      )
+    )
+  }
+}
+pub theorem ck_prepare_datas_bodies(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  source: SurfaceData,
+  ordered: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  declared: DeclaresData(program, source),
+  fresh: UniqueDataNames(types_data_decls(program)),
+  clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
+): DataBodyRegistered(ck_datas_of(ck_st(ck_prepare_datas(c, prelude, program, own))), source) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(m)), source),
+    Eq::sym(registration_prepare_unf(c, prelude, program, own)),
+    body_program_after_registered(
+      program,
+      source,
+      ck_prelude_data(prelude, c, own),
+      ck_prelude_data_ordered(prelude, c, own, ordered),
+      Eq::trans(
+        Eq::congr(written_context_borrow, ck_prelude_data_context(prelude, c, own, ordinary)),
+        ordinary
+      ),
+      Eq::trans(
+        Eq::congr(written_context_position, ck_prelude_data_context(prelude, c, own, ordinary)),
+        position
+      ),
+      declared,
+      fresh,
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        registration_prepare_unf(c, prelude, program, own),
+        clean
+      )
+    )
+  )
+}
+pub theorem body_finish_after_context(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
+): written_context(ck_st(registration_finish_after(program, m))) = written_context(ck_st(m)) {
+  match m: written_context(ck_st(registration_finish_after(program, m))) = written_context(ck_st(m)) {
+    mut1(ignored, next) => Eq::trans(
+      Eq::congr(
+        (r: Mut1(Unit, Checker)) => written_context(ck_st(r)),
+        ck_rewrap1_id(ck_finish_datas(next, program))
+      ),
+      ck_finish_datas_context(
+        next,
+        program,
+        recheck_clean_unwrap(ck_finish_datas(next, program), clean)
+      )
+    )
+  }
+}
+pub theorem body_program_after_context(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordinary: frame_under_borrow(ck_st(m)) = false,
+  clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
+): written_context(ck_st(registration_program_after(program, m))) = written_context(ck_st(m)) {
+  match m: written_context(ck_st(registration_program_after(program, m))) = written_context(ck_st(m)) {
+    mut1(ignored, next) => Eq::trans(
+      body_finish_after_context(program, ck_program_data(program, next), clean),
+      ck_program_data_context(program, next, ordinary)
+    )
+  }
+}
+pub theorem ck_prepare_datas_context(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
+): written_context(ck_st(ck_prepare_datas(c, prelude, program, own))) = written_context(c) {
+  Eq::trans(
+    Eq::congr(
+      (m: Mut1(Unit, Checker)) => written_context(ck_st(m)),
+      registration_prepare_unf(c, prelude, program, own)
+    ),
+    Eq::trans(
+      body_program_after_context(
+        program,
+        ck_prelude_data(prelude, c, own),
+        Eq::trans(
+          Eq::congr(written_context_borrow, ck_prelude_data_context(prelude, c, own, ordinary)),
+          ordinary
+        ),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          registration_prepare_unf(c, prelude, program, own),
+          clean
+        )
+      ),
+      ck_prelude_data_context(prelude, c, own, ordinary)
+    )
+  )
+}
+pub theorem body_program_after_clean(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(ignored, next) => ck_program_data_errors(
+      program,
+      next,
+      body_finish_after_clean(program, ck_program_data(program, next), clean)
+    )
+  }
+}
+pub theorem ck_prepare_datas_errors(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool)
+): CkErrorFrame(c, ck_prepare_datas(c, prelude, program, own)) {
+  clean => ck_prelude_data_errors(
+    prelude,
+    c,
+    own,
+    body_program_after_clean(
+      program,
+      ck_prelude_data(prelude, c, own),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        registration_prepare_unf(c, prelude, program, own),
+        clean
+      )
+    )
+  )
+}

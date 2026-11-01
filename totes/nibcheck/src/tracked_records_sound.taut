@@ -1,0 +1,36 @@
+import "tracked_state_frame.taut"
+import "literal_record_sound.taut"
+
+pub theorem tracked_natural_record(
+  c: Checker,
+  next: Checker,
+  value: Text,
+  span: TySpan,
+  ty: Ty,
+  recorded: NaturalRecorded(value, span, ty, stable_literals(c)),
+  retained: TrackedState(c, next)
+): NaturalRecorded(value, span, ty, stable_literals(next)) {
+  match recorded: NaturalRecorded(value, span, ty, stable_literals(next)) {
+    Mk(magnitude, parsed, stored) => NaturalRecorded::Mk(
+      magnitude,
+      parsed,
+      And::left(retained)(natural_literal_record(span, magnitude, ty), stored)
+    )
+  }
+}
+pub theorem tracked_function_lookup(
+  c: Checker,
+  next: Checker,
+  name: Text,
+  scheme: Scheme,
+  found: Ordmap::get(stable_functions(c), name, Ordmap::compare_text) = Some(scheme),
+  retained: TrackedState(c, next)
+): Ordmap::get(stable_functions(next), name, Ordmap::compare_text) = Some(scheme) {
+  Eq::trans(
+    Eq::congr(
+      (table: Ordmap(Text, Scheme)) => Ordmap::get(table, name, Ordmap::compare_text),
+      And::left(And::right(retained))
+    ),
+    found
+  )
+}

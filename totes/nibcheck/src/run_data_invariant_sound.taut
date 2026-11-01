@@ -1,0 +1,243 @@
+import "finish_error_sound.taut"
+import "run_summary.taut"
+
+// Any predicate of the completed declaration environment survives the run.
+pub def PreparedDataInvariant(
+  p: (Datas) -> Prop,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt)
+): Prop := ∀ c: Checker. ∀ own: Ordmap(
+  Text,
+  Bool
+). ∀ ordered: CkDatasOrdered(c). p(ck_datas_of(ck_st(ck_prepare_datas(c, prelude, program, own))))
+pub def DataInvariantReady(
+  p: (Datas) -> Prop,
+  c: Checker
+): Prop := And(CkOrdered(c), p(ck_datas_of(c)))
+
+pub theorem run_data_invariant_after(
+  p: (Datas) -> Prop,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ready: DataInvariantReady(p, ck_st(m))
+): DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) {
+  match m: DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) {
+    mut1(v, next) => {
+      let frame: CkRunFrame(
+        next,
+        run_after_datas(next, prelude, program, own)
+      ) := run_after_datas_frame(next, prelude, program, own, And::left(ready))
+      AndIntro(And::left(frame), Eq::subst(p, Eq::sym(And::right(frame)), And::right(ready)))
+    }
+  }
+}
+
+pub theorem run_data_invariant_builtins(
+  p: (Datas) -> Prop,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  prepared: PreparedDataInvariant(p, prelude, program)
+): DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) {
+  match m: DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) {
+    mut1(v, next) => run_data_invariant_after(
+      p,
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      AndIntro(
+        ck_prepare_datas_subst_ordered(
+          next,
+          prelude,
+          program,
+          types_own(program, Ordmap::empty()),
+          ordered
+        ),
+        prepared(next, types_own(program, Ordmap::empty()), decls)
+      )
+    )
+  }
+}
+
+pub theorem ck_run_data_invariant(
+  p: (Datas) -> Prop,
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c),
+  prepared: PreparedDataInvariant(p, prelude, program)
+): DataInvariantReady(p, ck_st(ck_run(c, prelude, program))) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => DataInvariantReady(p, ck_st(m)),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_data_invariant_builtins(
+      p,
+      prelude,
+      program,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+      frame_ordered(c, run_builtins(c), run_builtins_frame(c), decls),
+      prepared
+    )
+  )
+}
+
+pub def DataReportInvariant(
+  p: (Datas) -> Prop,
+  m: Mut1(TypeReport, Checker)
+): Prop := p(finish_report_datas(ck_val(m)))
+
+pub theorem run_data_invariant_finish_known(
+  p: (Datas) -> Prop,
+  m: Mut1(Unit, Checker),
+  ready: DataInvariantReady(p, ck_st(m))
+): DataReportInvariant(p, run_finish_known(m)) {
+  match m: DataReportInvariant(p, run_finish_known(m)) {
+    mut1(v, next) => Eq::subst(
+      (z: Mut1(TypeReport, Checker)) => DataReportInvariant(p, z),
+      Eq::sym(ck_rewrap1_id(ck_finish(next))),
+      Eq::subst(
+        p,
+        Eq::sym(ck_finish_report_agrees(next)),
+        Eq::subst(p, Eq::sym(And::right(ck_finish_run_frame(next, And::left(ready)))), And::right(ready))
+      )
+    )
+  }
+}
+
+pub theorem run_finish_known_input_clean(
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticReportClean(run_finish_known(m))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) {
+    mut1(value, next) => ck_finish_input_clean(
+      next,
+      Eq::subst(DiagnosticReportClean, ck_rewrap1_id(ck_finish(next)), clean)
+    )
+  }
+}
+
+pub theorem run_finish_after_input_clean(
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  clean: DiagnosticReportClean(run_finish_after(m))
+): DiagnosticClean(ck_st(m)) {
+  And::right(
+    run_constructor_after_frame(m, ordered)
+  )(
+    run_finish_known_input_clean(
+      run_constructor_after(m),
+      Eq::subst(DiagnosticReportClean, run_finish_after_split(m), clean)
+    )
+  )
+}
+
+pub theorem run_data_invariant_finish(
+  p: (Datas) -> Prop,
+  m: Mut1(Unit, Checker),
+  ready: DataInvariantReady(p, ck_st(m))
+): DataReportInvariant(p, run_finish_after(m)) {
+  let frame: ConstructorFrame(
+    ck_st(m),
+    run_constructor_after(m)
+  ) := run_constructor_after_frame(m, And::left(ready))
+  Eq::subst(
+    (result: Mut1(TypeReport, Checker)) => DataReportInvariant(p, result),
+    Eq::sym(run_finish_after_split(m)),
+    run_data_invariant_finish_known(
+      p,
+      run_constructor_after(m),
+      AndIntro(
+        And::left(And::left(frame)),
+        Eq::subst(p, Eq::sym(And::right(And::left(frame))), And::right(ready))
+      )
+    )
+  )
+}
+
+pub theorem accepted_data_finish(
+  p: (Datas) -> Prop,
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  checked: ∀ clean: DiagnosticClean(ck_st(m)). p(ck_datas_of(ck_st(m))),
+  clean: DiagnosticReportClean(run_finish_after(m))
+): DataReportInvariant(p, run_finish_after(m)) {
+  run_data_invariant_finish(
+    p,
+    m,
+    AndIntro(ordered, checked(run_finish_after_input_clean(m, ordered, clean)))
+  )
+}
+
+pub theorem run_data_invariant_modules(
+  p: (Datas) -> Prop,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  prepared: PreparedDataInvariant(p, prelude, program)
+): DataReportInvariant(p, run_after_module_errors(prelude, program, m)) {
+  match m: DataReportInvariant(p, run_after_module_errors(prelude, program, m)) {
+    mut1(v, next) => run_data_invariant_finish(
+      p,
+      ck_run(next, prelude, program),
+      ck_run_data_invariant(p, next, prelude, program, ordered, decls, prepared)
+    )
+  }
+}
+
+pub theorem ck_types_run_data_invariant(
+  p: (Datas) -> Prop,
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c),
+  prepared: PreparedDataInvariant(p, prelude, program)
+): DataReportInvariant(p, ck_types_run(c, prelude, program, errors)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => DataReportInvariant(p, m),
+    Eq::sym(run_types_unf(c, prelude, program, errors)),
+    run_data_invariant_modules(
+      p,
+      prelude,
+      program,
+      ck_module_errors(errors, c),
+      frame_subst_ordered(
+        c,
+        ck_module_errors(errors, c),
+        ck_module_errors_frame(errors, c),
+        ordered
+      ),
+      frame_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), decls),
+      prepared
+    )
+  )
+}
+
+pub theorem types_check_data_invariant(
+  p: (Datas) -> Prop,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  prepared: PreparedDataInvariant(p, prelude, program)
+): p(finish_report_datas(types_check(prelude, program, errors))) {
+  ck_types_run_data_invariant(
+    p,
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    errors,
+    Trivial,
+    Trivial,
+    prepared
+  )
+}

@@ -1,0 +1,458 @@
+import "call_variable_sound.taut"
+
+pub def CallHintFits(
+  c: Checker,
+  f: Ty,
+  args: List(Ty)
+): Prop := ∀ ps: List(
+  Ty
+). ∀ result: Ty. ∀ kind: Kind. ∀ shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind). ArgumentTypes(c, args, ps)
+// A known parameter hint means every argument has been checked against it.
+// The theorems below take this as a hypothesis; no theorem in totes/ proves it.
+pub fn KnownCallArguments(c: Checker, known: Option(List(Ty)), f: Ty, args: List(Ty)): Prop {
+  match known: Prop {
+    None => True
+    Some(ps) => CallHintFits(c, f, args)
+  }
+}
+pub theorem call_function_shape_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  known: Option(List(Ty)),
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind),
+  hint: KnownCallArguments(c, known, f, args),
+  count: Nat::eq(list_len(args), list_len(arguments)) = true,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
+): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
+  match known: CallResult(
+    c,
+    f,
+    args,
+    ck_app_result(c, term, function, arguments, f, known, args)
+  ) {
+    None => ck_app_result_function_sound(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      args,
+      ps,
+      result,
+      kind,
+      shape,
+      count,
+      ordered,
+      clean
+    )
+    Some(kp) => ck_app_result_known_sound(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      args,
+      ps,
+      result,
+      kind,
+      kp,
+      shape,
+      ordered,
+      hint(ps, result, kind, shape)
+    )
+  }
+}
+pub fn call_invalid(c: Checker, original: Ty, function: SurfaceTerm): Mut1(Ty, Checker) {
+  frame_bind(
+    Unit,
+    Ty,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_fresh(next)),
+    ck_error(c, cat2(ty_show(original), " is not a function"), span_of(function))
+  )
+}
+pub theorem call_invalid_impossible(
+  c: Checker,
+  original: Ty,
+  function: SurfaceTerm,
+  clean: DiagnosticClean(ck_st(call_invalid(c, original, function)))
+): False {
+  diagnostic_error_impossible(
+    c,
+    cat2(ty_show(original), " is not a function"),
+    span_of(function),
+    clean
+  )
+}
+pub theorem call_application_clean(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  fr: Ty,
+  shape: ty_unborrowed(ck_resolve(c, f)) = fr,
+  clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
+): DiagnosticClean(
+  ck_st(
+    application_fn(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      known,
+      args,
+      ty_unborrowed(ck_resolve(c, f)),
+      fr
+    )
+  )
+) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+    Eq::trans(
+      application_fn_unf(c, term, function, arguments, f, known, args),
+      Eq::congr(
+        (resolved: Ty) => application_fn(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          ty_unborrowed(ck_resolve(c, f)),
+          resolved
+        ),
+        shape
+      )
+    ),
+    clean
+  )
+}
+pub theorem call_result_shape_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  fr: Ty,
+  shape: ty_unborrowed(ck_resolve(c, f)) = fr,
+  hint: KnownCallArguments(c, known, f, args),
+  count: Nat::eq(list_len(args), list_len(arguments)) = true,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
+): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
+  match fr: CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
+    TyInt(w) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyInt(w), shape, clean)
+      )
+    )
+    TyBool => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyBool, shape, clean)
+      )
+    )
+    TyText => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyText, shape, clean)
+      )
+    )
+    TyUnit => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyUnit, shape, clean)
+      )
+    )
+    TyNever => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyNever, shape, clean)
+      )
+    )
+    TyDecimal => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyDecimal,
+          shape,
+          clean
+        )
+      )
+    )
+    TyFloat => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(c, term, function, arguments, f, known, args, TyFloat, shape, clean)
+      )
+    )
+    TyFn(ps, result, kind) => call_function_shape_sound(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      args,
+      ps,
+      result,
+      kind,
+      known,
+      shape,
+      hint,
+      count,
+      ordered,
+      clean
+    )
+    TyUnion(ys) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyUnion(ys),
+          shape,
+          clean
+        )
+      )
+    )
+    TyProduct(ys) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyProduct(ys),
+          shape,
+          clean
+        )
+      )
+    )
+    TyTagged(tags, item) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyTagged(tags, item),
+          shape,
+          clean
+        )
+      )
+    )
+    TyNamed(name, params) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyNamed(name, params),
+          shape,
+          clean
+        )
+      )
+    )
+    TyParam(name, bound) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyParam(name, bound),
+          shape,
+          clean
+        )
+      )
+    )
+    TyInfo(item) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyInfo(item),
+          shape,
+          clean
+        )
+      )
+    )
+    TyBorrow(item, mutable) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyBorrow(item, mutable),
+          shape,
+          clean
+        )
+      )
+    )
+    TyVar(v) => ck_app_result_variable_sound(
+      c,
+      term,
+      function,
+      arguments,
+      f,
+      known,
+      args,
+      v,
+      shape,
+      ordered,
+      clean
+    )
+    TyPoly(gs, item) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyPoly(gs, item),
+          shape,
+          clean
+        )
+      )
+    )
+    TyApp(head, arg) => False::elim(
+      call_invalid_impossible(
+        c,
+        ty_unborrowed(ck_resolve(c, f)),
+        function,
+        call_application_clean(
+          c,
+          term,
+          function,
+          arguments,
+          f,
+          known,
+          args,
+          TyApp(head, arg),
+          shape,
+          clean
+        )
+      )
+    )
+  }
+}
+// The result of a call. The typing of the callee and argument expressions and
+// `KnownCallArguments` are hypotheses of this theorem.
+pub theorem ck_app_result_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  known: Option(List(Ty)),
+  args: List(Ty),
+  hint: KnownCallArguments(c, known, f, args),
+  count: Nat::eq(list_len(args), list_len(arguments)) = true,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
+): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
+  call_result_shape_sound(
+    c,
+    term,
+    function,
+    arguments,
+    f,
+    known,
+    args,
+    ty_unborrowed(ck_resolve(c, f)),
+    Refl,
+    hint,
+    count,
+    ordered,
+    clean
+  )
+}

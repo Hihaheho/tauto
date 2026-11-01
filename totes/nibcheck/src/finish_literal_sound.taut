@@ -1,0 +1,256 @@
+import "literal_typing_sound.taut"
+
+pub def LiteralRecordsFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := finish_literals(ck_st(m)) = finish_literals(c)
+pub theorem literal_records_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: LiteralRecordsFrame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame(next, k(value, next))
+): LiteralRecordsFrame(c, frame_bind(A, B, k, m)) {
+  match m: LiteralRecordsFrame(
+    c,
+    frame_bind(A, B, k, m)
+  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+}
+pub theorem literal_records_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: LiteralRecordsFrame(c, m)
+): LiteralRecordsFrame(c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => LiteralRecordsFrame(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
+}
+pub theorem literal_default_records(
+  c: Checker,
+  t: Ty
+): LiteralRecordsFrame(c, finish_default(c, t)) {
+  match t: LiteralRecordsFrame(c, finish_default(c, t)) {
+    TyInt(w) => Refl
+    TyBool => Refl
+    TyText => Refl
+    TyUnit => Refl
+    TyNever => Refl
+    TyDecimal => Refl
+    TyFloat => Refl
+    TyFn(ps, result, kind) => Refl
+    TyUnion(ys) => Refl
+    TyProduct(ys) => Refl
+    TyTagged(tags, item) => Refl
+    TyNamed(name, params) => Refl
+    TyParam(name, bound) => Refl
+    TyInfo(item) => Refl
+    TyBorrow(item, mutable) => Refl
+    TyVar(v) => Refl
+    TyPoly(gs, item) => Refl
+    TyApp(head, arg) => Refl
+  }
+}
+pub theorem ck_default_int_records(
+  c: Checker,
+  v: Nat
+): LiteralRecordsFrame(c, ck_default_int(c, v)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => LiteralRecordsFrame(c, m),
+    Eq::sym(finish_default_unf(c, v)),
+    literal_default_records(c, ck_resolve(c, TyVar(v)))
+  )
+}
+pub theorem ck_default_ints_records(
+  vs: List(Pair(Nat, Bool)),
+  c: Checker
+): LiteralRecordsFrame(c, ck_default_ints(vs, c)) {
+  match vs: LiteralRecordsFrame(c, ck_default_ints(vs, c)) {
+    Nil => Refl
+    Cons(v, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => LiteralRecordsFrame(c, m),
+      Eq::sym(finish_defaults_unf(v, rest, c)),
+      literal_records_bind(
+        Unit,
+        Unit,
+        c,
+        (ignored: Unit, next: Checker) => ck_rewrap1(ck_default_ints(rest, next)),
+        ck_default_int(c, finish_int_key(v)),
+        ck_default_int_records(c, finish_int_key(v)),
+        ignored => next => literal_records_rewrap(
+          next,
+          ck_default_ints(rest, next),
+          ck_default_ints_records(rest, next)
+        )
+      )
+    )
+  }
+}
+pub theorem literal_after_defaults_records(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  clean: DiagnosticReportClean(finish_after_defaults(c, widths))
+): LiteralRecordsFrame(c, finish_after_defaults(c, Widths)) {
+  Eq::congr(
+    Mut1(TypeReport, Checker),
+    List(TyLiteral),
+    finish_after_defaults(c, Widths),
+    mut1(finish_report(c, Widths), c),
+    (m: Mut1(TypeReport, Checker)) => finish_literals(ck_st(m)),
+    And::right(finish_after_defaults_accepts(c, Widths, clean))
+  )
+}
+pub theorem literal_finish_default_records(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: LiteralRecordsFrame(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
+): LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) {
+  match m: LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) {
+    mut1(value, next) => Eq::trans(
+      literal_after_defaults_records(
+        next,
+        ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty()),
+        clean
+      ),
+      first
+    )
+  }
+}
+pub theorem literal_finish_products_records(
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  first: LiteralRecordsFrame(c, m),
+  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
+): LiteralRecordsFrame(c, diagnostic_finish_products_result(m)) {
+  match m: LiteralRecordsFrame(c, diagnostic_finish_products_result(m)) {
+    mut1(value, next) => literal_finish_default_records(
+      c,
+      ck_check_products(List::reverse(finish_product_checks(next)), next),
+      Eq::trans(
+        Eq::congr(
+          keep_literals,
+          ck_check_products_keep(List::reverse(finish_product_checks(next)), next)
+        ),
+        first
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_finish_literal_records(
+  c: Checker,
+  clean: DiagnosticReportClean(ck_finish(c))
+): LiteralRecordsFrame(c, ck_finish(c)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => LiteralRecordsFrame(c, m),
+    Eq::sym(diagnostic_finish_default_unf(c)),
+    literal_finish_products_records(
+      c,
+      ck_default_ints(Ordmap::entries(finish_ints(c)), c),
+      ck_default_ints_records(Ordmap::entries(finish_ints(c)), c),
+      Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
+    )
+  )
+}
+pub theorem ck_finish_natural_typing(
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  recorded: NaturalRecorded(value, TySpan { start: start, end: end }, ty, finish_literals(c)),
+  clean: DiagnosticReportClean(ck_finish(c))
+): NaturalTyping(
+  ck_subst_of(ck_st(ck_finish(c))),
+  KeptOk(ck_kept_of(ck_st(ck_finish(c)))),
+  surface_term_mk(SkNat(value), start, end),
+  ty
+) {
+  let retained: NaturalRecorded(
+    value,
+    TySpan { start: start, end: end },
+    ty,
+    finish_literals(ck_st(ck_finish(c)))
+  ) := Eq::subst(
+    (items: List(TyLiteral)) => NaturalRecorded(
+      value,
+      TySpan { start: start, end: end },
+      ty,
+      items
+    ),
+    Eq::sym(ck_finish_literal_records(c, clean)),
+    recorded
+  )
+  natural_record_checked_sound(
+    ck_st(ck_finish(c)),
+    value,
+    start,
+    end,
+    ty,
+    finish_literals(ck_st(ck_finish(c))),
+    retained,
+    diagnostic_items_unreverse(
+      DiagnosticLiteral,
+      ck_st(ck_finish(c)),
+      finish_literals(ck_st(ck_finish(c))),
+      And::left(ck_finish_obligations(c, clean))
+    )
+  )
+}
+
+pub def NaturalTypingIn(
+  s: Ordmap(Nat, Ty),
+  term: SurfaceTerm,
+  ty: Ty
+): Prop := NaturalTyping(
+  s,
+  (gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty), left: Ty, right: Ty) => RigidFor(
+    s,
+    gs,
+    rigid,
+    left,
+    right
+  ),
+  term,
+  ty
+)
+pub theorem natural_discharge(
+  c: Checker,
+  term: SurfaceTerm,
+  ty: Ty,
+  typed: NaturalTyping(ck_subst_of(c), KeptOk(ck_kept_of(c)), term, ty),
+  final: FinalDiagnostics0(c)
+): NaturalTypingIn(ck_subst_of(c), term, ty) {
+  match typed: NaturalTypingIn(ck_subst_of(c), term, ty) {
+    NaturalTyped(value, magnitude, width, start, end, given, parsed, within, equal) => NaturalTyped(
+      value,
+      magnitude,
+      width,
+      start,
+      end,
+      given,
+      parsed,
+      within,
+      final_type_equality(c, given, TyInt(width), final, equal)
+    )
+  }
+}
+pub theorem ck_finish_natural_sound(
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  ty: Ty,
+  recorded: NaturalRecorded(value, TySpan { start: start, end: end }, ty, finish_literals(c)),
+  clean: DiagnosticReportClean(ck_finish(c))
+): NaturalTypingIn(ck_subst_of(ck_st(ck_finish(c))), surface_term_mk(SkNat(value), start, end), ty) {
+  natural_discharge(
+    ck_st(ck_finish(c)),
+    surface_term_mk(SkNat(value), start, end),
+    ty,
+    ck_finish_natural_typing(c, value, start, end, ty, recorded, clean),
+    ck_finish_obligations(c, clean)
+  )
+}

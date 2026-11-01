@@ -1,0 +1,183 @@
+import "resolve.taut"
+
+// The URLs the parser returns, as a test: each part is in its normal form,
+// and holds none of the bytes that end it. `proof/round.taut` shows that
+// parsing the serialization of such a URL gives it back, and
+// `proof/normal.taut` that the parser returns only such URLs.
+
+// No byte of `x` is in `set`.
+pub fn clean(set: (Nat) -> Bool, x: List(Nat)): Bool {
+  all_bytes((b: Nat) => not(set(b)), x)
+}
+
+pub fn opt_list_is(o: Option(List(Nat)), x: List(Nat)): Bool {
+  match o: Bool {
+    None => false
+    Some(y) => bytes_eq(y, x)
+  }
+}
+
+pub fn implies(a: Bool, b: Bool): Bool {
+  Bool::or(not(a), b)
+}
+
+// A segment: no `/` (nor `\` in a special URL), encoded, and not `.` or `..`.
+pub fn seg_ok(special: Bool, s: List(Nat)): Bool {
+  Bool::and(
+    clean(path_set, s),
+    Bool::and(
+      all_bytes((b: Nat) => not(Nat::eq(b, 47)), s),
+      Bool::and(Nat::eq(dots(s), 0), implies(special, all_bytes((b: Nat) => not(Nat::eq(b, 92)), s)))
+    )
+  )
+}
+
+pub fn segs_ok(special: Bool, ss: List(List(Nat))): Bool {
+  match ss: Bool {
+    Nil => true
+    Cons(s, rest) => Bool::and(seg_ok(special, s), segs_ok(special, rest))
+  }
+}
+
+// A host: printable ASCII without forbidden host code points, and in the
+// normal form of its kind.
+pub fn host_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), forbidden_host(b))
+}
+
+pub fn host_ok(special: Bool, h: List(Nat)): Bool {
+  Bool::and(clean(host_set, h), opt_list_is(host_of(special, h), h))
+}
+
+pub fn not_default(default: Option(Nat), n: Nat): Bool {
+  match default: Bool {
+    None => true
+    Some(d) => not(Nat::eq(n, d))
+  }
+}
+
+pub fn port_ok(default: Option(Nat), o: Option(Nat)): Bool {
+  match o: Bool {
+    None => true
+    Some(n) => Bool::and(Nat::lt(n, 65536), not_default(default, n))
+  }
+}
+
+pub fn cred_ok(user: List(Nat), pass: List(Nat)): Bool {
+  Bool::and(clean(userinfo_set, user), clean(userinfo_set, pass))
+}
+
+pub fn cred_empty(user: List(Nat), pass: List(Nat)): Bool {
+  Bool::and(is_empty(user), is_empty(pass))
+}
+
+pub fn is_none(o: Option(Nat)): Bool {
+  match o: Bool {
+    None => true
+    Some(n) => false
+  }
+}
+
+// Credentials and a port need a host.
+pub fn cred_has_host(user: List(Nat), pass: List(Nat), host: List(Nat), port: Option(Nat)): Bool {
+  implies(Bool::or(not(cred_empty(user, pass)), not(is_none(port))), not(is_empty(host)))
+}
+
+pub fn auth_fields_ok(
+  special: Bool,
+  default: Option(Nat),
+  user: List(Nat),
+  pass: List(Nat),
+  host: List(Nat),
+  port: Option(Nat)
+): Bool {
+  Bool::and(
+    cred_ok(user, pass),
+    Bool::and(host_ok(special, host), Bool::and(port_ok(default, port), cred_has_host(user, pass, host, port)))
+  )
+}
+
+pub fn auth_ok(special: Bool, default: Option(Nat), a: Authority): Bool {
+  match a: Bool {
+    Auth(user, pass, host, port) => auth_fields_ok(special, default, user, pass, host, port)
+  }
+}
+
+// An opaque path: no `?` or `#`, not starting with `/`, not ending with a
+// space.
+pub fn opaque_ok(o: List(Nat)): Bool {
+  Bool::and(
+    clean(c0_control_set, o),
+    Bool::and(
+      all_bytes((b: Nat) => Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))), o),
+      Bool::and(not(starts_with(47, o)), not(ends_with_space(o)))
+    )
+  )
+}
+
+pub fn path_ok(special: Bool, has_auth: Bool, p: UrlPath): Bool {
+  match p: Bool {
+    Opaque(o) => Bool::and(not(has_auth), opaque_ok(o))
+    Segments(ss) => Bool::and(
+      segs_ok(special, ss),
+      implies(Bool::or(special, not(has_auth)), not(is_empty_list(ss)))
+    )
+  }
+}
+
+pub fn query_ok(special: Bool, q: Option(List(Nat))): Bool {
+  match q: Bool {
+    None => true
+    Some(x) => match special: Bool {
+      true => clean(special_query_set, x)
+      false => clean(query_set, x)
+    }
+  }
+}
+
+pub fn fragment_ok(f: Option(List(Nat))): Bool {
+  match f: Bool {
+    None => true
+    Some(x) => clean(fragment_set, x)
+  }
+}
+
+pub fn auth_opt_ok(special: Bool, default: Option(Nat), a: Option(Authority)): Bool {
+  match a: Bool {
+    None => not(special)
+    Some(x) => auth_ok(special, default, x)
+  }
+}
+
+pub fn is_file(s: List(Nat)): Bool {
+  match scheme_kind(s): Bool {
+    Special(d) => false
+    File => true
+    NotSpecial => false
+  }
+}
+
+pub fn is_some_auth(a: Option(Authority)): Bool {
+  match a: Bool {
+    None => false
+    Some(x) => true
+  }
+}
+
+pub fn url_valid(u: Url): Bool {
+  match u: Bool {
+    MkUrl(s, a, p, q, f) => Bool::and(
+      scheme_ok(s),
+      Bool::and(
+        not(is_file(s)),
+        Bool::and(
+          auth_opt_ok(is_special(s), default_port(s), a),
+          Bool::and(
+            path_ok(is_special(s), is_some_auth(a), p),
+            Bool::and(query_ok(is_special(s), q), fragment_ok(f))
+          )
+        )
+      )
+    )
+  }
+}

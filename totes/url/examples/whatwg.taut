@@ -1,0 +1,53 @@
+import "../src/parse.taut"
+import "../src/valid.taut"
+
+fn href(t: Text): Option(Text) {
+  match url_parse(t): Option(Text) {
+    None => None
+    Some(u) => Some(url_text(u))
+  }
+}
+
+theorem lower_host_default_port(): href(
+  "HTTP://Example.COM:80/a/./b/../c?x y#f g"
+) = Some("http://example.com/a/c?x%20y#f%20g") {
+  Refl
+}
+
+theorem special_empty_path(): href("https://a.b") = Some("https://a.b/") { Refl }
+theorem slashes(): href("http:\\\\a\\b\\..\\c") = Some("http://a/c") { Refl }
+theorem creds(): href("ftp://u:p@a@h:21/x") = Some("ftp://u:p%40a@h/x") { Refl }
+theorem mailto(): href("mailto:Me@Example.com") = Some("mailto:Me@Example.com") { Refl }
+theorem plain_dot(): href("foo:/.//x") = Some("foo:/.//x") { Refl }
+theorem plain_empty(): href("foo:") = Some("foo:") { Refl }
+theorem plain_host(): href("foo://H%41st:8080") = Some("foo://H%41st:8080") { Refl }
+theorem trim(): href("  http://a/ b\t\n ") = Some("http://a/%20b") { Refl }
+theorem bad_port(): href("http://a:65536/") = None { Refl }
+theorem bad_host(): href("http://a b/") = None { Refl }
+theorem ipv4(): href("http://127.0.0.1:8080/") = Some("http://127.0.0.1:8080/") { Refl }
+theorem ipv4_other(): href("http://127.1/") = None { Refl }
+theorem dot_last(): href("http://a/b/..") = Some("http://a/") { Refl }
+theorem pct_dot(): href("http://a/b/%2E/c/%2e%2E") = Some("http://a/b/") { Refl }
+theorem unicode_path(): href("http://a/\u{e9}") = Some("http://a/%C3%A9") { Refl }
+theorem no_scheme(): href("//a/b") = None { Refl }
+theorem file(): href("file:///etc") = None { Refl }
+theorem empty_host_at(): href("http://u@/") = None { Refl }
+theorem query_quote(): href("http://a/?'#'") = Some("http://a/?%27#'") { Refl }
+theorem query_quote_plain(): href("foo://a/?'") = Some("foo://a/?'") { Refl }
+
+theorem decode_mixed(): Text::Mk(pct_decode(Text::bytes("a%41%4g%%2F%"))) = "aA%4g%/%" { Refl }
+
+fn valid_of(t: Text): Option(Bool) {
+  match url_parse(t): Option(Bool) {
+    None => None
+    Some(u) => Some(url_valid(u))
+  }
+}
+
+theorem valid_1(): valid_of("HTTP://u:p@Example.COM:81/a/./b/../c?x y#f g") = Some(true) { Refl }
+theorem valid_2(): valid_of("foo:/.//x?#") = Some(true) { Refl }
+theorem valid_3(): valid_of("mailto:Me@Example.com") = Some(true) { Refl }
+theorem valid_4(): valid_of("foo://h:1") = Some(true) { Refl }
+theorem port_no_host(): href("foo://:1") = None { Refl }
+theorem cred_no_host(): href("foo://u@:1") = None { Refl }
+theorem valid_5(): valid_of("foo://") = Some(true) { Refl }

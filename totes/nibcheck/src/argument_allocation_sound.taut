@@ -1,0 +1,181 @@
+import "field_allocation_sound.taut"
+import "allocation_bind.taut"
+
+pub theorem ck_expect_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_expect(c, a, b, span, what)) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(run_expect_unf(c, a, b, span, what)),
+    allocation_advance_bind(
+      Bool,
+      Unit,
+      c,
+      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+      ck_fits(c, a, b),
+      ck_fits_allocation(c, a, b, ordered, state, left, right),
+      And::left(ck_fits_run_frame(c, a, b, ordered)),
+      fits => next => advanced => current => order => allocation_error_if(
+        next,
+        ck_expect_message(ck_shown(next, a), ck_shown(next, b), what),
+        span,
+        current,
+        not(fits)
+      )
+    )
+  )
+}
+pub def ArgumentsAllocationIH(
+  rest: List(Ty)
+): Prop := ∀ c: Checker. ∀ ps: List(
+  Ty
+). ∀ args: List(
+  SurfaceTerm
+). ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ actual: TypeListAllocated(
+  ck_next_of(c),
+  rest
+). ∀ expected: TypeListAllocated(
+  ck_next_of(c),
+  ps
+). AllocationAdvance(c, ck_expect_args(rest, c, ps, args))
+pub theorem argument_terms_allocation(
+  a: Ty,
+  rest: List(Ty),
+  c: Checker,
+  p: Ty,
+  more: List(Ty),
+  ih: ArgumentsAllocationIH(rest),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  actual: TypeListAllocated(ck_next_of(c), Cons(a, rest)),
+  expected: TypeListAllocated(ck_next_of(c), Cons(p, more)),
+  args: List(SurfaceTerm)
+): AllocationAdvance(c, argument_terms(a, rest, c, p, more, args)) {
+  match args: AllocationAdvance(c, argument_terms(a, rest, c, p, more, args)) {
+    Nil => allocation_advance_return(c, Star, state)
+    Cons(at, tail) => allocation_advance_bind(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, next: Checker) => ck_rewrap1(ck_expect_args(rest, next, more, tail)),
+      ck_expect(c, a, p, span_of(at), "an argument"),
+      ck_expect_allocation(
+        c,
+        a,
+        p,
+        span_of(at),
+        "an argument",
+        ordered,
+        state,
+        And::left(actual),
+        And::left(expected)
+      ),
+      And::left(ck_expect_run_frame(c, a, p, span_of(at), "an argument", ordered)),
+      ignored => next => advanced => current => order => allocation_advance_rewrap(
+        next,
+        ck_expect_args(rest, next, more, tail),
+        ih(
+          next,
+          more,
+          tail,
+          order,
+          current,
+          type_list_allocated_weaken(
+            rest,
+            ck_next_of(c),
+            ck_next_of(next),
+            advanced,
+            And::right(actual)
+          ),
+          type_list_allocated_weaken(
+            more,
+            ck_next_of(c),
+            ck_next_of(next),
+            advanced,
+            And::right(expected)
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem argument_params_allocation(
+  a: Ty,
+  rest: List(Ty),
+  c: Checker,
+  args: List(SurfaceTerm),
+  ih: ArgumentsAllocationIH(rest),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  actual: TypeListAllocated(ck_next_of(c), Cons(a, rest)),
+  ps: List(Ty),
+  expected: TypeListAllocated(ck_next_of(c), ps)
+): AllocationAdvance(c, argument_params(a, rest, c, args, ps)) {
+  match ps: AllocationAdvance(c, argument_params(a, rest, c, args, ps)) {
+    Nil => allocation_advance_return(c, Star, state)
+    Cons(p, more) => argument_terms_allocation(
+      a,
+      rest,
+      c,
+      p,
+      more,
+      ih,
+      ordered,
+      state,
+      actual,
+      expected,
+      args
+    )
+  }
+}
+pub theorem ck_expect_args_allocation(
+  tys: List(Ty),
+  c: Checker,
+  ps: List(Ty),
+  args: List(SurfaceTerm),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  actual: TypeListAllocated(ck_next_of(c), tys),
+  expected: TypeListAllocated(ck_next_of(c), ps)
+): AllocationAdvance(c, ck_expect_args(tys, c, ps, args)) {
+  match tys: AllocationAdvance(c, ck_expect_args(tys, c, ps, args)) {
+    Nil => allocation_advance_return(c, Star, state)
+    Cons(a, rest) => Eq::subst(
+      (result: Mut1(Unit, Checker)) => AllocationAdvance(c, result),
+      Eq::sym(argument_cons_unf(a, rest, c, ps, args)),
+      argument_params_allocation(
+        a,
+        rest,
+        c,
+        args,
+        next => more => terms => order => current => left => right => ck_expect_args_allocation(
+          rest,
+          next,
+          more,
+          terms,
+          order,
+          current,
+          left,
+          right
+        ),
+        ordered,
+        state,
+        actual,
+        ps,
+        expected
+      )
+    )
+  }
+}

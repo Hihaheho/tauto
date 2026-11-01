@@ -8,7 +8,7 @@ The argument has the form `rules(budget, equation, ...)`. Each equation is an
 explicit, fully instantiated proof of `Eq(A, left, right)` in the current
 context. There is no environment search, implicit theorem instantiation,
 backtracking, metavariable state, or IO. Reverse rewriting requires an explicit
-`Eq_sym` proof. All equations are checked, including unused equations.
+`Eq::sym` proof. All equations are checked, including unused equations.
 
 Rules are tried in source order. The first changing rule rewrites all matching
 occurrences in the goal's application tree, then search restarts at the first

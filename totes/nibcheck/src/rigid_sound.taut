@@ -1,0 +1,88 @@
+import "ck_mentions_sound.taut"
+
+pub fn rigid_checked_names(c: Checker, a: Ty, b: Ty, names: Option(List(Text))): Bool {
+  match names: Bool { None => false
+    Some(ns) => Bool::and(
+      Bool::and(text_list_distinct(ns), not(ck_mentions_in(ck_steps_of(c), c, ns, a))),
+      not(ck_mentions_in(ck_steps_of(c), c, ns, b))
+    ) }
+}
+pub theorem rigid_checked_unf(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty
+): ck_rigid_kept(c, gs, rigid, a, b) = rigid_checked_names(c, a, b, ty_rigid_names(gs, rigid)) { Refl }
+pub theorem rigid_not_true(x: Bool, h: not(x) = true): x = false {
+  match x: x = false { false => Refl
+    true => False::elim(false_ne_true(h)) }
+}
+pub theorem rigid_checked_sound(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  names: Option(List(Text)),
+  eq: ty_rigid_names(gs, rigid) = names,
+  checked: rigid_checked_names(c, a, b, names) = true
+): RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+  match names: RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+    None => False::elim(false_ne_true(checked))
+    Some(ns) => {
+      let first: Bool::and(text_list_distinct(ns), not(ck_mentions_in(ck_steps_of(c), c, ns, a))) = true := ck_bool_and_left(
+        Bool::and(text_list_distinct(ns), not(ck_mentions_in(ck_steps_of(c), c, ns, a))),
+        not(ck_mentions_in(ck_steps_of(c), c, ns, b)),
+        checked
+      )
+      let distinct: text_list_distinct(ns) = true := ck_bool_and_left(
+        text_list_distinct(ns),
+        not(ck_mentions_in(ck_steps_of(c), c, ns, a)),
+        first
+      )
+      let absent_a: ck_mentions_in(ck_steps_of(c), c, ns, a) = false := rigid_not_true(
+        ck_mentions_in(ck_steps_of(c), c, ns, a),
+        ck_bool_and_right(
+          text_list_distinct(ns),
+          not(ck_mentions_in(ck_steps_of(c), c, ns, a)),
+          first
+        )
+      )
+      let absent_b: ck_mentions_in(ck_steps_of(c), c, ns, b) = false := rigid_not_true(
+        ck_mentions_in(ck_steps_of(c), c, ns, b),
+        ck_bool_and_right(
+          Bool::and(text_list_distinct(ns), not(ck_mentions_in(ck_steps_of(c), c, ns, a))),
+          not(ck_mentions_in(ck_steps_of(c), c, ns, b)),
+          checked
+        )
+      )
+      RigidFor::Mk(
+        ns,
+        eq,
+        distinct,
+        ck_mentions_absent(ck_steps_of(c), c, ns, a, absent_a),
+        ck_mentions_absent(ck_steps_of(c), c, ns, b, absent_b)
+      )
+    }
+  }
+}
+pub theorem ck_rigid_kept_sound(
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  checked: ck_rigid_kept(c, gs, rigid, a, b) = true
+): RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+  rigid_checked_sound(
+    c,
+    gs,
+    rigid,
+    a,
+    b,
+    ty_rigid_names(gs, rigid),
+    Refl,
+    Eq::trans(Eq::sym(rigid_checked_unf(c, gs, rigid, a, b)), checked)
+  )
+}

@@ -1,0 +1,216 @@
+import "prepare_signature_sources.taut"
+import "report_data_body_sound.taut"
+import "run_accepted_data_property.taut"
+
+pub theorem prepared_source_elaborates<env: Datas, program: List(
+  SurfaceStmt
+), schemes: List(
+  Pair(SurfaceFn, Scheme)
+)>(
+  prepared: PreparedSourceSignatures(env, program, schemes)
+): SourceFunctionsElaborated(env, program) {
+  match prepared: SourceFunctionsElaborated(env, program) {
+    Mk(
+      own,
+      generated,
+      combined,
+      sources,
+      derived
+    ) => SourceFunctionsElaborated::Mk(own, sources, derived)
+  }
+}
+pub def SourceSignatureState(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker)
+): Prop := SourceFunctionsElaborated(ck_datas_of(ck_st(m)), program)
+pub theorem run_after_datas_signatures(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  ordered: CkOrdered(c),
+  normal: CkNormal(c),
+  clean: DiagnosticClean(ck_st(run_after_datas(c, prelude, program, own)))
+): SourceSignatureState(program, run_after_datas(c, prelude, program, own)) {
+  let accepted: DiagnosticClean(
+    ck_st(ck_prepare_fns(c, prelude, program, own))
+  ) := accepted_checked_bind_fact(
+    List(Pair(SurfaceFn, Scheme)),
+    Unit,
+    DiagnosticClean(ck_st(ck_prepare_fns(c, prelude, program, own))),
+    ck_prepare_fns(c, prelude, program, own),
+    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+    frame_subst_ordered(
+      c,
+      ck_prepare_fns(c, prelude, program, own),
+      ck_prepare_fns_frame(c, prelude, program, own),
+      ordered
+    ),
+    h => h,
+    fns => next => ord => names_function_body_checked(next, program, fns, ord),
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+      names_after_datas_unf(c, prelude, program, own),
+      clean
+    )
+  )
+  Eq::subst(
+    (env: Datas) => SourceFunctionsElaborated(env, program),
+    Eq::sym(And::right(run_after_datas_frame(c, prelude, program, own, ordered))),
+    prepared_source_elaborates(
+      ck_prepare_fns_source_signatures(c, prelude, program, own, normal, accepted)
+    )
+  )
+}
+pub theorem run_after_data_result_signatures(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  normal: ∀ accepted: DiagnosticClean(ck_st(m)). CkNormal(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
+): SourceSignatureState(program, run_after_data_result(prelude, program, own, m)) {
+  match m: SourceSignatureState(program, run_after_data_result(prelude, program, own, m)) {
+    mut1(ignored, next) => run_after_datas_signatures(
+      next,
+      prelude,
+      program,
+      own,
+      ordered,
+      normal(And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)),
+      clean
+    )
+  }
+}
+pub theorem run_after_builtins_signatures(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  normal: CkNormal(ck_st(m)),
+  clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
+): SourceSignatureState(program, run_after_builtins(prelude, program, m)) {
+  match m: SourceSignatureState(program, run_after_builtins(prelude, program, m)) {
+    mut1(ignored, next) => run_after_data_result_signatures(
+      prelude,
+      program,
+      types_own(program, Ordmap::empty()),
+      ck_prepare_datas(next, prelude, program, types_own(program, Ordmap::empty())),
+      ck_prepare_datas_subst_ordered(
+        next,
+        prelude,
+        program,
+        types_own(program, Ordmap::empty()),
+        ordered
+      ),
+      accepted => Eq::trans(
+        ck_prepare_datas_context(
+          next,
+          prelude,
+          program,
+          types_own(program, Ordmap::empty()),
+          Eq::congr(written_context_borrow, normal),
+          accepted
+        ),
+        normal
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_run_function_signatures(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  ordered: CkOrdered(c),
+  normal: CkNormal(c),
+  clean: DiagnosticClean(ck_st(ck_run(c, prelude, program)))
+): SourceSignatureState(program, ck_run(c, prelude, program)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => SourceSignatureState(program, m),
+    Eq::sym(run_summary_unf(c, prelude, program)),
+    run_after_builtins_signatures(
+      prelude,
+      program,
+      run_builtins(c),
+      frame_subst_ordered(c, run_builtins(c), run_builtins_frame(c), ordered),
+      Eq::trans(body_builtins_context(c), normal),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        run_summary_unf(c, prelude, program),
+        clean
+      )
+    )
+  )
+}
+
+pub def SourceSignatureReport(
+  program: List(SurfaceStmt),
+  m: Mut1(TypeReport, Checker)
+): Prop := SourceFunctionsElaborated(finish_report_datas(ck_val(m)), program)
+pub theorem run_module_function_signatures(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  normal: CkNormal(ck_st(m)),
+  clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
+): SourceSignatureReport(program, run_after_module_errors(prelude, program, m)) {
+  match m: SourceSignatureReport(program, run_after_module_errors(prelude, program, m)) {
+    mut1(ignored, next) => accepted_data_report(
+      (env: Datas) => SourceFunctionsElaborated(env, program),
+      ck_run(next, prelude, program),
+      And::left(ck_run_ready(next, prelude, program, ordered, decls)),
+      accepted => ck_run_function_signatures(next, prelude, program, ordered, normal, accepted),
+      clean
+    )
+  }
+}
+pub theorem ck_types_run_function_signatures(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c),
+  normal: CkNormal(c),
+  clean: DiagnosticReportClean(ck_types_run(c, prelude, program, errors))
+): SourceSignatureReport(program, ck_types_run(c, prelude, program, errors)) {
+  Eq::subst(
+    (m: Mut1(TypeReport, Checker)) => SourceSignatureReport(program, m),
+    Eq::sym(run_types_unf(c, prelude, program, errors)),
+    run_module_function_signatures(
+      prelude,
+      program,
+      ck_module_errors(errors, c),
+      frame_subst_ordered(
+        c,
+        ck_module_errors(errors, c),
+        ck_module_errors_frame(errors, c),
+        ordered
+      ),
+      frame_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), decls),
+      Eq::trans(body_module_context(errors, c, Eq::congr(written_context_borrow, normal)), normal),
+      Eq::subst(DiagnosticReportClean, run_types_unf(c, prelude, program, errors), clean)
+    )
+  )
+}
+pub theorem types_check_function_signatures(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): SourceFunctionsElaborated(finish_report_datas(types_check(prelude, program, errors)), program) {
+  ck_types_run_function_signatures(
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    errors,
+    Trivial,
+    Trivial,
+    Refl,
+    clean
+  )
+}

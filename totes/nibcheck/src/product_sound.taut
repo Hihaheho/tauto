@@ -1,0 +1,226 @@
+import "union_sound.taut"
+
+// `ty_product` keeps exactly the leaves of what it multiplies, as `ty_union`
+// does for a union (`union_sound.taut`): read as a set, the members of
+// `ty_product(ts)` are the leaves of `ts`, and each member is a leaf (not a
+// product, not `()`).
+
+// A product leaf is any type but a product or `()`.
+pub fn ty_pplain(t: Ty): Bool {
+  match t: Bool {
+    TyProduct(ts) => false
+    TyUnit => false
+    _ => true
+  }
+}
+
+pub def PPlain(t: Ty): Prop := Eq(Bool, ty_pplain(t), true)
+
+// `t` is a leaf of the list: one of its members, or a leaf of a product in it.
+pub(open) inductive PLeaves(t: Ty): (List(Ty)) -> Prop {
+  PlvHere(rest: List(Ty), p: PPlain(t)): PLeaves(t, Cons(t, rest))
+  PlvIn(ys: List(Ty), rest: List(Ty), l: PLeaves(t, ys)): PLeaves(t, Cons(TyProduct(ys), rest))
+  PlvThere(y: Ty, rest: List(Ty), l: PLeaves(t, rest)): PLeaves(t, Cons(y, rest))
+}
+
+// The members of a type read as a product: a product's own list, none for
+// `()`, the type itself otherwise.
+pub fn ty_pmembers(u: Ty): List(Ty) {
+  match u: List(Ty) {
+    TyProduct(ys) => ys
+    TyUnit => Nil
+    _ => Cons(u, Nil)
+  }
+}
+
+pub def AllPPlain(ms: List(Ty)): Prop := ∀ z: Ty. (Mem(Ty, z, ms)) -> PPlain(z)
+
+pub theorem pleaf_of_eq(
+  e: Ty,
+  w: Ty,
+  rest: List(Ty),
+  q: Eq(Ty, e, w),
+  p: PPlain(w)
+): PLeaves(e, Cons(w, rest)) {
+  Eq::subst((z: Ty) => PLeaves(z, Cons(w, rest)), Eq::sym(q), PlvHere(w, rest, p))
+}
+
+mutual {
+  // A member after adding `ts` is a leaf of `ts` or was there before.
+  pub theorem padd_mem(
+    e: Ty,
+    ts: List(Ty),
+    ms: List(Ty),
+    m: Mem(Ty, e, product_members_add(ts, ms))
+  ): Or(PLeaves(e, ts), Mem(Ty, e, ms)) {
+    match ts: Or(PLeaves(e, ts), Mem(Ty, e, ms)) {
+      Nil => OrInr(m)
+      Cons(x, rest) => Or::elim(
+        padd_mem(e, rest, product_members_add_one(x, x, ms), m),
+        l => OrInl(PlvThere(e, x, rest, l)),
+        k => pone_mem(e, x, x, Refl, rest, ms, k)
+      )
+    }
+  }
+
+  pub theorem pone_mem(
+    e: Ty,
+    x: Ty,
+    w: Ty,
+    ew: Eq(Ty, x, w),
+    rest: List(Ty),
+    ms: List(Ty),
+    k: Mem(Ty, e, product_members_add_one(x, w, ms))
+  ): Or(PLeaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
+    match x: Or(PLeaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
+      TyProduct(inner) => Or::elim(
+        padd_mem(e, inner, ms, k),
+        l => OrInl(PlvIn(e, inner, rest, l)),
+        m2 => OrInr(m2)
+      )
+      TyUnit => OrInr(k)
+      _ => Or::elim(
+        insert_mem(e, ms, w, k),
+        q => OrInl(
+          Eq::subst(
+            (z: Ty) => PLeaves(e, Cons(z, rest)),
+            Eq::sym(ew),
+            pleaf_of_eq(e, w, rest, q, Eq::subst((z: Ty) => PPlain(z), ew, Refl))
+          )
+        ),
+        m2 => OrInr(m2)
+      )
+    }
+  }
+}
+
+mutual {
+  // Adding keeps what was there.
+  pub theorem padd_keep(
+    e: Ty,
+    ts: List(Ty),
+    ms: List(Ty),
+    m: Mem(Ty, e, ms)
+  ): Mem(Ty, e, product_members_add(ts, ms)) {
+    match ts: Mem(Ty, e, product_members_add(ts, ms)) {
+      Nil => m
+      Cons(x, rest) => padd_keep(
+        e,
+        rest,
+        product_members_add_one(x, x, ms),
+        pone_keep(e, x, x, ms, m)
+      )
+    }
+  }
+
+  pub theorem pone_keep(
+    e: Ty,
+    x: Ty,
+    w: Ty,
+    ms: List(Ty),
+    m: Mem(Ty, e, ms)
+  ): Mem(Ty, e, product_members_add_one(x, w, ms)) {
+    match x: Mem(Ty, e, product_members_add_one(x, w, ms)) {
+      TyProduct(inner) => padd_keep(e, inner, ms, m)
+      TyUnit => m
+      _ => insert_keep(e, ms, w, m)
+    }
+  }
+}
+
+// A leaf added on its own is a member.
+pub theorem pone_has(
+  x: Ty,
+  w: Ty,
+  ms: List(Ty),
+  p: PPlain(x)
+): Mem(Ty, w, product_members_add_one(x, w, ms)) {
+  match x: Mem(Ty, w, product_members_add_one(x, w, ms)) {
+    TyProduct(inner) => False::elim(false_ne_true(p))
+    TyUnit => False::elim(false_ne_true(p))
+    _ => insert_has(w, ms)
+  }
+}
+
+// Every leaf of `ts` is a member after adding `ts`.
+pub theorem padd_has<e: Ty, ts: List(
+  Ty
+)>(l: PLeaves(e, ts), ms: List(Ty)): Mem(Ty, e, product_members_add(ts, ms)) {
+  match l: Mem(Ty, e, product_members_add(ts, ms)) {
+    PlvHere(rest, p) => padd_keep(e, rest, product_members_add_one(e, e, ms), pone_has(e, e, ms, p))
+    PlvIn(ys, rest, l2) => padd_keep(e, rest, product_members_add(ys, ms), padd_has(l2, ms))
+    PlvThere(y, rest, l2) => padd_has(l2, product_members_add_one(y, y, ms))
+  }
+}
+
+pub theorem pleaves_plain(e: Ty, ts: List(Ty), l: PLeaves(e, ts)): PPlain(e) {
+  match l: PPlain(e) {
+    PlvHere(rest, p) => p
+    PlvIn(ys, rest, l2) => pleaves_plain(e, ys, l2)
+    PlvThere(y, rest, l2) => pleaves_plain(e, rest, l2)
+  }
+}
+
+// ----- ty_product -----
+
+pub theorem padded_plain(ts: List(Ty)): AllPPlain(product_members_add(ts, Nil(Ty))) {
+  z => m => Or::elim(
+    padd_mem(z, ts, Nil(Ty), m),
+    l => pleaves_plain(z, ts, l),
+    k => Mem::nil(PPlain(z), k)
+  )
+}
+
+pub theorem pplain_members(x: Ty, p: PPlain(x)): Eq(List(Ty), ty_pmembers(x), Cons(x, Nil(Ty))) {
+  match x: Eq(List(Ty), ty_pmembers(x), Cons(x, Nil(Ty))) {
+    TyProduct(ys) => False::elim(false_ne_true(p))
+    TyUnit => False::elim(false_ne_true(p))
+    _ => Refl
+  }
+}
+
+// Wrapping leaves as one type and reading them back gives the same list.
+pub theorem pmembers_of(
+  ms: List(Ty),
+  ap: AllPPlain(ms)
+): Eq(List(Ty), ty_pmembers(ty_product_of(ms)), ms) {
+  match ms: Eq(List(Ty), ty_pmembers(ty_product_of(ms)), ms) {
+    Nil => Refl
+    Cons(only, rest) => match rest: Eq(
+      List(Ty),
+      ty_pmembers(ty_product_of(Cons(only, rest))),
+      Cons(only, rest)
+    ) {
+      Nil => pplain_members(only, ap(only, MemHere(Ty, only, Nil(Ty))))
+      Cons(second, more) => Refl
+    }
+  }
+}
+
+pub theorem product_members(
+  ts: List(Ty)
+): Eq(List(Ty), ty_pmembers(ty_product(ts)), product_members_add(ts, Nil(Ty))) {
+  pmembers_of(product_members_add(ts, Nil(Ty)), padded_plain(ts))
+}
+
+// The members of `ty_product(ts)` are leaves of `ts`, and leaves themselves.
+pub theorem product_mem(
+  e: Ty,
+  ts: List(Ty),
+  m: Mem(Ty, e, ty_pmembers(ty_product(ts)))
+): And(PLeaves(e, ts), PPlain(e)) {
+  Or::elim(
+    padd_mem(e, ts, Nil(Ty), Eq::subst((z: List(Ty)) => Mem(Ty, e, z), product_members(ts), m)),
+    l => AndIntro(l, pleaves_plain(e, ts, l)),
+    k => Mem::nil(And(PLeaves(e, ts), PPlain(e)), k)
+  )
+}
+
+// Every leaf of `ts` is a member of `ty_product(ts)`.
+pub theorem product_has(
+  e: Ty,
+  ts: List(Ty),
+  l: PLeaves(e, ts)
+): Mem(Ty, e, ty_pmembers(ty_product(ts))) {
+  Eq::subst((z: List(Ty)) => Mem(Ty, e, z), Eq::sym(product_members(ts)), padd_has(l, Nil(Ty)))
+}

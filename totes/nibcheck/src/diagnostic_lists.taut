@@ -1,0 +1,82 @@
+import "diagnostic_sound.taut"
+
+pub(open) inductive DiagnosticItems(
+  A: Type,
+  p: (Checker, A) -> Prop,
+  c: Checker
+): (List(A)) -> Prop {
+  DiagnosticItemsNil: DiagnosticItems(A, p, c, Nil)
+  DiagnosticItemsCons<x: A, xs: List(
+    A
+  )>(head: p(c, x), tail: DiagnosticItems(A, p, c, xs)): DiagnosticItems(A, p, c, Cons(x, xs))
+}
+pub def DiagnosticItemsResult<A: Type>(
+  p: (Checker, A) -> Prop,
+  xs: List(A),
+  c: Checker,
+  m: Mut1(Unit, Checker)
+): Prop := And(DiagnosticItems(A, p, c, xs), m = mut1(Star, c))
+pub def DiagnosticTail<A: Type>(
+  p: (Checker, A) -> Prop,
+  xs: List(A),
+  k: (Checker) -> Mut1(Unit, Checker)
+): Prop := ∀ c: Checker. ∀ clean: DiagnosticClean(
+  ck_st(k(c))
+). DiagnosticItemsResult(p, xs, c, k(c))
+pub fn diagnostic_after(
+  k: (Checker) -> Mut1(Unit, Checker),
+  m: Mut1(Unit, Checker)
+): Mut1(Unit, Checker) {
+  match m: Mut1(Unit, Checker) { mut1(v, next) => ck_rewrap1(k(next)) }
+}
+pub theorem diagnostic_items_cons_accepts<A: Type>(
+  p: (Checker, A) -> Prop,
+  x: A,
+  xs: List(A),
+  c: Checker,
+  m: Mut1(Unit, Checker),
+  k: (Checker) -> Mut1(Unit, Checker),
+  first: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). And(p(c, x), m = mut1(Star, c)),
+  ih: DiagnosticTail(p, xs, k),
+  clean: DiagnosticClean(ck_st(diagnostic_after(k, m)))
+): DiagnosticItemsResult(p, Cons(x, xs), c, diagnostic_after(k, m)) {
+  match m: DiagnosticItemsResult(p, Cons(x, xs), c, diagnostic_after(k, m)) {
+    mut1(v, next) => {
+      let remaining: DiagnosticItemsResult(
+        p,
+        xs,
+        next,
+        k(next)
+      ) := ih(
+        next,
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          ck_rewrap1_id(k(next)),
+          clean
+        )
+      )
+      let tail_equal: ck_rewrap1(k(next)) = mut1(Star, next) := Eq::trans(ck_rewrap1_id(k(next)), And::right(remaining))
+      let clean_next: DiagnosticClean(
+        next
+      ) := Eq::subst(
+        DiagnosticClean,
+        Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), tail_equal),
+        clean
+      )
+      let head: And(
+        p(c, x),
+        mut1(v, next) = mut1(Star, c)
+      ) := first(clean_next)
+      let same: next = c := Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), And::right(head))
+      AndIntro(
+        DiagnosticItemsCons(
+          And::left(head),
+          Eq::subst((state: Checker) => DiagnosticItems(A, p, state, xs), same, And::left(remaining))
+        ),
+        Eq::trans(tail_equal, Eq::congr((state: Checker) => mut1(Star, state), same))
+      )
+    }
+  }
+}

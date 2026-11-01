@@ -1,0 +1,390 @@
+import "rules_call.taut"
+import "argument_sound.taut"
+import "application_frame.taut"
+
+pub def CallAt(
+  c: Checker,
+  function: Ty,
+  args: List(Ty),
+  result: Ty
+): Prop := CallType(
+  ck_subst_of(c),
+  KeptOk(ck_kept_of(c)),
+  InstAt(c),
+  DupAt(c),
+  function,
+  args,
+  result
+)
+pub theorem call_unborrowed(
+  c: Checker,
+  function: Ty,
+  args: List(Ty),
+  result: Ty,
+  inner: CallAt(c, ty_unborrowed(function), args, result)
+): CallAt(c, function, args, result) {
+  match function: CallAt(c, function, args, result) {
+    TyInt(w) => inner
+    TyBool => inner
+    TyText => inner
+    TyUnit => inner
+    TyNever => inner
+    TyDecimal => inner
+    TyFloat => inner
+    TyFn(ps, ret, kind) => inner
+    TyUnion(ys) => inner
+    TyProduct(ys) => inner
+    TyTagged(tags, item) => inner
+    TyNamed(name, params) => inner
+    TyParam(name, bound) => inner
+    TyInfo(item) => inner
+    TyBorrow(item, mutable) => CallBorrow(mutable, call_unborrowed(c, item, args, result, inner))
+    TyVar(v) => inner
+    TyPoly(gs, item) => inner
+    TyApp(head, arg) => inner
+  }
+}
+pub theorem call_resolved_shape(
+  c: Checker,
+  next: Checker,
+  function: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  grows: Grows(c, next),
+  shape: ty_unborrowed(ck_resolve(c, function)) = TyFn(ps, result, kind),
+  fits: ArgumentTypes(next, args, ps)
+): CallAt(next, function, args, result) {
+  let r#direct: CallAt(next, TyFn(ps, result, kind), args, result) := CallFunction(kind, fits)
+  let borrowed: CallAt(
+    next,
+    ck_resolve(c, function),
+    args,
+    result
+  ) := call_unborrowed(
+    next,
+    ck_resolve(c, function),
+    args,
+    result,
+    Eq::subst((callee: Ty) => CallAt(next, callee, args, result), Eq::sym(shape), r#direct)
+  )
+  CallConvert(
+    tyeq_at_move(
+      c,
+      next,
+      grows,
+      function,
+      ck_resolve(c, function),
+      ty_resolve_eq(ck_steps_of(c), ck_subst_of(c), KeptOk(ck_kept_of(c)), function)
+    ),
+    borrowed
+  )
+}
+
+pub theorem call_arity_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  args: List(Ty),
+  ps: List(Ty),
+  same: Bool,
+  comparison: Nat::eq(list_len(ps), list_len(args)) = same,
+  count: Nat::eq(list_len(args), list_len(arguments)) = true,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(application_fn_arity(c, term, arguments, args, ps, not(same))))
+): ArgumentsResult(c, args, ps, application_fn_arity(c, term, arguments, args, ps, not(same))) {
+  match same: ArgumentsResult(
+    c,
+    args,
+    ps,
+    application_fn_arity(c, term, arguments, args, ps, not(same))
+  ) {
+    true => {
+      let length: Nat::eq(list_len(args), list_len(ps)) = true := Eq::subst(
+        (n: Nat) => Nat::eq(list_len(args), n) = true,
+        Eq::sym(Nat::eq_sound(list_len(ps), list_len(args), comparison)),
+        Nat::eq_refl(list_len(args))
+      )
+      let unwrapped: DiagnosticClean(
+        ck_st(ck_expect_args(args, c, ps, arguments))
+      ) := Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        ck_rewrap1_id(ck_expect_args(args, c, ps, arguments)),
+        clean
+      )
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => ArgumentsResult(c, args, ps, m),
+        Eq::sym(ck_rewrap1_id(ck_expect_args(args, c, ps, arguments))),
+        ck_expect_args_sound(args, c, ps, arguments, length, count, ordered, unwrapped)
+      )
+    }
+    false => {
+      let unwrapped: DiagnosticClean(
+        ck_st(
+          ck_error(
+            c,
+            cat4(
+              "a function of ",
+              Text::of_nat(list_len(ps)),
+              " values is given ",
+              Text::of_nat(list_len(args))
+            ),
+            span_of(term)
+          )
+        )
+      ) := Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        ck_rewrap1_id(
+          ck_error(
+            c,
+            cat4(
+              "a function of ",
+              Text::of_nat(list_len(ps)),
+              " values is given ",
+              Text::of_nat(list_len(args))
+            ),
+            span_of(term)
+          )
+        ),
+        clean
+      )
+      False::elim(
+        diagnostic_error_impossible(
+          c,
+          cat4(
+            "a function of ",
+            Text::of_nat(list_len(ps)),
+            " values is given ",
+            Text::of_nat(list_len(args))
+          ),
+          span_of(term),
+          unwrapped
+        )
+      )
+    }
+  }
+}
+
+pub def CallResult(
+  c: Checker,
+  function: Ty,
+  args: List(Ty),
+  m: Mut1(Ty, Checker)
+): Prop := And(Grows(c, ck_st(m)), CallAt(ck_st(m), function, args, ck_val(m)))
+pub fn call_return_result(result: Ty, m: Mut1(Unit, Checker)): Mut1(Ty, Checker) {
+  frame_bind(Unit, Ty, (ignored: Unit, next: Checker) => mut1(result, next), m)
+}
+pub theorem call_return_clean(
+  result: Ty,
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(call_return_result(result, m)))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) { mut1(value, state) => clean }
+}
+pub theorem call_return_sound(
+  c: Checker,
+  function: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  shape: ty_unborrowed(ck_resolve(c, function)) = TyFn(ps, result, kind),
+  m: Mut1(Unit, Checker),
+  h: ArgumentsResult(c, args, ps, m)
+): CallResult(c, function, args, call_return_result(result, m)) {
+  match m: CallResult(c, function, args, call_return_result(result, m)) {
+    mut1(value, state) => AndIntro(
+      And::left(h),
+      call_resolved_shape(
+        c,
+        state,
+        function,
+        args,
+        ps,
+        result,
+        kind,
+        And::left(h),
+        shape,
+        And::right(h)
+      )
+    )
+  }
+}
+pub theorem call_known_none_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  function: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  shape: ty_unborrowed(ck_resolve(c, function)) = TyFn(ps, result, kind),
+  count: Nat::eq(list_len(args), list_len(arguments)) = true,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(application_fn_known(c, term, arguments, args, ps, result, None)))
+): CallResult(c, function, args, application_fn_known(c, term, arguments, args, ps, result, None)) {
+  call_return_sound(
+    c,
+    function,
+    args,
+    ps,
+    result,
+    kind,
+    shape,
+    application_fn_arity(c, term, arguments, args, ps, not(Nat::eq(list_len(ps), list_len(args)))),
+    call_arity_sound(
+      c,
+      term,
+      arguments,
+      args,
+      ps,
+      Nat::eq(list_len(ps), list_len(args)),
+      Refl,
+      count,
+      ordered,
+      call_return_clean(
+        result,
+        application_fn_arity(
+          c,
+          term,
+          arguments,
+          args,
+          ps,
+          not(Nat::eq(list_len(ps), list_len(args)))
+        ),
+        clean
+      )
+    )
+  )
+}
+pub theorem call_function_unf(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind)
+): ck_app_result(c, term, function, arguments, f, None, args) = application_fn_known(c, term, arguments, args, ps, result, None) {
+  Eq::trans(
+    application_fn_unf(c, term, function, arguments, f, None, args),
+    Eq::congr(
+      (fr: Ty) => application_fn(
+        c,
+        term,
+        function,
+        arguments,
+        f,
+        None,
+        args,
+        ty_unborrowed(ck_resolve(c, f)),
+        fr
+      ),
+      shape
+    )
+  )
+}
+pub theorem ck_app_result_function_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind),
+  count: Nat::eq(list_len(args), list_len(arguments)) = true,
+  ordered: CkOrdered(c),
+  clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, None, args)))
+): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, None, args)) {
+  let expanded: DiagnosticClean(
+    ck_st(application_fn_known(c, term, arguments, args, ps, result, None))
+  ) := Eq::subst(
+    (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+    call_function_unf(c, term, function, arguments, f, args, ps, result, kind, shape),
+    clean
+  )
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => CallResult(c, f, args, m),
+    Eq::sym(call_function_unf(c, term, function, arguments, f, args, ps, result, kind, shape)),
+    call_known_none_sound(
+      c,
+      term,
+      arguments,
+      f,
+      args,
+      ps,
+      result,
+      kind,
+      shape,
+      count,
+      ordered,
+      expanded
+    )
+  )
+}
+
+pub theorem call_known_function_unf(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  known: List(Ty),
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind)
+): ck_app_result(c, term, function, arguments, f, Some(known), args) = mut1(result, c) {
+  Eq::trans(
+    application_fn_unf(c, term, function, arguments, f, Some(known), args),
+    Eq::congr(
+      (fr: Ty) => application_fn(
+        c,
+        term,
+        function,
+        arguments,
+        f,
+        Some(known),
+        args,
+        ty_unborrowed(ck_resolve(c, f)),
+        fr
+      ),
+      shape
+    )
+  )
+}
+pub theorem ck_app_result_known_sound(
+  c: Checker,
+  term: SurfaceTerm,
+  function: SurfaceTerm,
+  arguments: List(SurfaceTerm),
+  f: Ty,
+  args: List(Ty),
+  ps: List(Ty),
+  result: Ty,
+  kind: Kind,
+  known: List(Ty),
+  shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind),
+  ordered: CkOrdered(c),
+  checked: ArgumentTypes(c, args, ps)
+): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, Some(known), args)) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => CallResult(c, f, args, m),
+    Eq::sym(
+      call_known_function_unf(c, term, function, arguments, f, args, ps, result, kind, known, shape)
+    ),
+    AndIntro(
+      grows_refl(c, ordered),
+      call_resolved_shape(c, c, f, args, ps, result, kind, grows_refl(c, ordered), shape, checked)
+    )
+  )
+}

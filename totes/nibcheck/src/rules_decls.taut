@@ -1,0 +1,33 @@
+import "../../surface/src/surface.taut"
+import std::Row
+
+// Names of function declarations are distinct within a scope. Extern
+// signatures and function bodies occupy the same namespace.
+pub fn decl_fn_name(f: SurfaceFn): Text { f.name }
+
+pub(open) inductive FreshFunctionNames: (List(SurfaceFn), List(Text)) -> Prop {
+  FreshFunctionsNil(seen: List(Text)): FreshFunctionNames(Nil, seen)
+  FreshFunctionsCons(
+    f: SurfaceFn,
+    rest: List(SurfaceFn),
+    seen: List(Text),
+    absent: (Mem(Text, decl_fn_name(f), seen)) -> False,
+    tail: FreshFunctionNames(rest, Cons(decl_fn_name(f), seen))
+  ): FreshFunctionNames(Cons(f, rest), seen)
+}
+pub def UniqueFunctionNames(fs: List(SurfaceFn)): Prop := FreshFunctionNames(fs, Nil)
+
+// Structs and enums share one type namespace.
+pub fn decl_data_name(f: SurfaceData): Text { f.name }
+
+pub(open) inductive FreshDataNames: (List(SurfaceData), List(Text)) -> Prop {
+  FreshDatasNil(seen: List(Text)): FreshDataNames(Nil, seen)
+  FreshDatasCons(
+    f: SurfaceData,
+    rest: List(SurfaceData),
+    seen: List(Text),
+    absent: (Mem(Text, decl_data_name(f), seen)) -> False,
+    tail: FreshDataNames(rest, Cons(decl_data_name(f), seen))
+  ): FreshDataNames(Cons(f, rest), seen)
+}
+pub def UniqueDataNames(fs: List(SurfaceData)): Prop := FreshDataNames(fs, Nil)

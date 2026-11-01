@@ -1,0 +1,565 @@
+import "signature_context_sound.taut"
+import "registration_context_sound.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem ck_report_frame_context(
+  c: Checker,
+  message: Option(Text),
+  span: TySpan
+): CkContextFrame(c, ck_report(c, message, span)) {
+  match message: CkContextFrame(c, ck_report(c, message, span)) {
+    None => ordinary => Refl
+    Some(m) => ordinary => Refl
+  }
+}
+pub theorem signature_result_k_frame_context(
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  p: Option(SurfaceTerm)
+): CkContextFrame(c, signature_result_k(c, map, p)) {
+  match p: CkContextFrame(c, signature_result_k(c, map, p)) {
+    None => ordinary => Refl
+    Some(r) => context_rewrap(c, ck_written(c, r, map), ck_written_frame_context(c, r, map))
+  }
+}
+pub theorem ck_sig_result_frame_context(
+  c: Checker,
+  f: SurfaceFn,
+  map: Ordmap(Text, Ty)
+): CkContextFrame(c, ck_sig_result(c, f, map)) {
+  Eq::subst(
+    (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
+    Eq::sym(signature_result_unf(c, f, map)),
+    signature_result_k_frame_context(c, map, signature_result(f))
+  )
+}
+
+pub theorem signature_pred_duplicate_frame_context(
+  c: Checker,
+  w: SurfaceConstraint,
+  preds: List(Pair(Text, Text)),
+  g: Text,
+  dup: Bool
+): CkContextFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+  match dup: CkContextFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+    true => ordinary => Refl
+    false => ordinary => Refl
+  }
+}
+pub theorem signature_pred_generic_frame_context(
+  c: Checker,
+  w: SurfaceConstraint,
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  o: Option(Text)
+): CkContextFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+  match o: CkContextFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+    None => ordinary => Refl
+    Some(g) => signature_pred_duplicate_frame_context(
+      c,
+      w,
+      preds,
+      g,
+      preds_have(preds, signature_constraint_class(w), g)
+    )
+  }
+}
+pub theorem signature_pred_missing_frame_context(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  missing: Bool
+): CkContextFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+  match missing: CkContextFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+    true => ordinary => Refl
+    false => signature_pred_generic_frame_context(
+      c,
+      w,
+      name,
+      preds,
+      constraint_generic(signature_constraint_type(w), gs)
+    )
+  }
+}
+pub theorem ck_where_pred_frame_context(
+  c: Checker,
+  w: SurfaceConstraint,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): CkContextFrame(c, ck_where_pred(c, w, gs, name, preds)) {
+  Eq::subst(
+    (z: Mut1(List(Pair(Text, Text)), Checker)) => CkContextFrame(c, z),
+    Eq::sym(signature_pred_unf(c, w, gs, name, preds)),
+    signature_pred_missing_frame_context(c, w, gs, name, preds, signature_class_missing(c, w))
+  )
+}
+
+pub theorem signature_preds_cons_frame_context(
+  w: SurfaceConstraint,
+  rest: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text)),
+  ih: ∀ next: Checker. ∀ ps: List(
+    Pair(Text, Text)
+  ). CkContextFrame(next, ck_where_preds(rest, next, gs, name, ps))
+): CkContextFrame(c, signature_preds_cons(w, rest, c, gs, name, preds)) {
+  context_bind(
+    List(Pair(Text, Text)),
+    List(Pair(Text, Text)),
+    c,
+    (head: List(Pair(Text, Text)), c1: Checker) => ck_rewrap1(
+      ck_where_preds(rest, c1, gs, name, head)
+    ),
+    ck_where_pred(c, w, gs, name, preds),
+    ck_where_pred_frame_context(c, w, gs, name, preds),
+    head => c1 => context_rewrap(c1, ck_where_preds(rest, c1, gs, name, head), ih(c1, head))
+  )
+}
+
+pub theorem ck_where_preds_frame_context(
+  ws: List(SurfaceConstraint),
+  c: Checker,
+  gs: List(Pair(Text, Kind)),
+  name: Text,
+  preds: List(Pair(Text, Text))
+): CkContextFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+  match ws: CkContextFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+    Nil => ordinary => Refl
+    Cons(w, rest) => Eq::subst(
+      (z: Mut1(List(Pair(Text, Text)), Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_preds_unf(w, rest, c, gs, name, preds)),
+      signature_preds_cons_frame_context(
+        w,
+        rest,
+        c,
+        gs,
+        name,
+        preds,
+        next => ps => ck_where_preds_frame_context(rest, next, gs, name, ps)
+      )
+    )
+  }
+}
+
+pub theorem signature_read_frame_context(
+  c: Checker,
+  f: SurfaceFn,
+  g: SigGenerics
+): CkContextFrame(c, signature_read(c, f, g)) {
+  context_bind(
+    List(Ty),
+    Scheme,
+    c,
+    (params: List(Ty), c1: Checker) => frame_bind(
+      Ty,
+      Scheme,
+      (result: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Scheme,
+        (ignored: Unit, c3: Checker) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+            signature_scheme(g, params, result, preds),
+            c4
+          ),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+      ),
+      ck_sig_result(c1, f, signature_map(g))
+    ),
+    ck_sig_params(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    ck_sig_params_context(signature_ptypes(f), c, signature_borrows(f), signature_map(g)),
+    params => c1 => context_bind(
+      Ty,
+      Scheme,
+      c1,
+      (result: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Scheme,
+        (ignored: Unit, c3: Checker) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+            signature_scheme(g, params, result, preds),
+            c4
+          ),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f))
+      ),
+      ck_sig_result(c1, f, signature_map(g)),
+      ck_sig_result_frame_context(c1, f, signature_map(g)),
+      result => c2 => context_bind(
+        Unit,
+        Scheme,
+        c2,
+        (ignored: Unit, c3: Checker) => frame_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+            signature_scheme(g, params, result, preds),
+            c4
+          ),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil)
+        ),
+        ck_report(c2, ck_view_result_message(c2, params, result), ck_sig_span(f)),
+        ck_report_frame_context(c2, ck_view_result_message(c2, params, result), ck_sig_span(f)),
+        ignored => c3 => context_bind(
+          List(Pair(Text, Text)),
+          Scheme,
+          c3,
+          (preds: List(Pair(Text, Text)), c4: Checker) => mut1(
+            signature_scheme(g, params, result, preds),
+            c4
+          ),
+          ck_where_preds(signature_wheres(f), c3, signature_gens(g), signature_name(f), Nil),
+          ck_where_preds_frame_context(
+            signature_wheres(f),
+            c3,
+            signature_gens(g),
+            signature_name(f),
+            Nil
+          ),
+          preds => c4 => ordinary => Refl
+        )
+      )
+    )
+  )
+}
+
+pub theorem ck_signature_frame_context(
+  c: Checker,
+  f: SurfaceFn
+): CkContextFrame(c, ck_signature(c, f)) {
+  Eq::subst(
+    (z: Mut1(Scheme, Checker)) => CkContextFrame(c, z),
+    Eq::sym(signature_read_unf(c, f)),
+    signature_read_frame_context(c, f, signature_generics(f))
+  )
+}
+
+pub theorem signature_store_frame_context(
+  c: Checker,
+  f: SurfaceFn,
+  scheme: Scheme
+): CkContextFrame(c, signature_store(c, f, scheme)) { ordinary => Refl }
+
+pub theorem signature_add_frame_context(
+  c: Checker,
+  f: SurfaceFn
+): CkContextFrame(c, signature_add(c, f)) {
+  context_bind(
+    Scheme,
+    Scheme,
+    c,
+    (scheme: Scheme, c1: Checker) => signature_store(c1, f, scheme),
+    ck_signature(c, f),
+    ck_signature_frame_context(c, f),
+    scheme => c1 => signature_store_frame_context(c1, f, scheme)
+  )
+}
+
+pub theorem ck_add_fn_frame_context(c: Checker, f: SurfaceFn): CkContextFrame(c, ck_add_fn(c, f)) {
+  Eq::subst(
+    (z: Mut1(Scheme, Checker)) => CkContextFrame(c, z),
+    Eq::sym(signature_add_unf(c, f)),
+    signature_add_frame_context(c, f)
+  )
+}
+pub theorem signature_prelude_if_frame_context(
+  c: Checker,
+  f: SurfaceFn,
+  take: Bool
+): CkContextFrame(c, signature_prelude_if(c, f, take)) {
+  match take: CkContextFrame(c, signature_prelude_if(c, f, take)) {
+    true => context_return(c, Star, ck_add_fn(c, f), ck_add_fn_frame_context(c, f))
+    false => ordinary => Refl
+  }
+}
+
+pub theorem signature_prelude_fns_each_cons_frame_context(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Bool),
+  ih: ∀ next: Checker. CkContextFrame(next, ck_prelude_fns_each(rest, next, own))
+): CkContextFrame(c, signature_prelude_fns_each_cons(f, rest, c, own)) {
+  context_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns_each(rest, c1, own)),
+    signature_prelude_if(c, f, not(types_is_own(own, signature_name(f)))),
+    signature_prelude_if_frame_context(c, f, not(types_is_own(own, signature_name(f)))),
+    ignored => c1 => context_rewrap(c1, ck_prelude_fns_each(rest, c1, own), ih(c1))
+  )
+}
+
+pub theorem ck_prelude_fns_each_frame_context(
+  fs: List(SurfaceFn),
+  c: Checker,
+  own: Ordmap(Text, Bool)
+): CkContextFrame(c, ck_prelude_fns_each(fs, c, own)) {
+  match fs: CkContextFrame(c, ck_prelude_fns_each(fs, c, own)) {
+    Nil => ordinary => Refl
+    Cons(f, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_prelude_fns_each_unf(f, rest, c, own)),
+      signature_prelude_fns_each_cons_frame_context(
+        f,
+        rest,
+        c,
+        own,
+        next => ck_prelude_fns_each_frame_context(rest, next, own)
+      )
+    )
+  }
+}
+
+pub theorem signature_extern_fns_cons_frame_context(
+  f: SurfaceFn,
+  rest: List(SurfaceFn),
+  c: Checker,
+  ih: ∀ next: Checker. CkContextFrame(next, ck_extern_fns(rest, next))
+): CkContextFrame(c, signature_extern_fns_cons(f, rest, c)) {
+  context_bind(
+    Scheme,
+    Unit,
+    c,
+    (ignored: Scheme, c1: Checker) => ck_rewrap1(ck_extern_fns(rest, c1)),
+    ck_add_fn(c, f),
+    ck_add_fn_frame_context(c, f),
+    ignored => c1 => context_rewrap(c1, ck_extern_fns(rest, c1), ih(c1))
+  )
+}
+
+pub theorem ck_extern_fns_frame_context(
+  fs: List(SurfaceFn),
+  c: Checker
+): CkContextFrame(c, ck_extern_fns(fs, c)) {
+  match fs: CkContextFrame(c, ck_extern_fns(fs, c)) {
+    Nil => ordinary => Refl
+    Cons(f, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_extern_fns_unf(f, rest, c)),
+      signature_extern_fns_cons_frame_context(
+        f,
+        rest,
+        c,
+        next => ck_extern_fns_frame_context(rest, next)
+      )
+    )
+  }
+}
+
+pub theorem ck_prelude_fns_one_frame_context(
+  c: Checker,
+  s: SurfaceStmt,
+  own: Ordmap(Text, Bool)
+): CkContextFrame(c, ck_prelude_fns_one(c, s, own)) {
+  match s: CkContextFrame(c, ck_prelude_fns_one(c, s, own)) {
+    StLet(name, ty, value, borrow, mutable) => ordinary => Refl
+    StVar(name, ty, value, borrow) => ordinary => Refl
+    StModule(name, stmts, start, end) => ordinary => Refl
+    StAssign(name, name_place, value) => ordinary => Refl
+    StCalled(name_generates, value) => ordinary => Refl
+    StFn(f) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_prelude_fns_one_StFn_unf(f, c, own)),
+      context_rewrap(
+        c,
+        ck_prelude_fns_each(Cons(f, Nil), c, own),
+        ck_prelude_fns_each_frame_context(Cons(f, Nil), c, own)
+      )
+    )
+    StTheorem(t) => ordinary => Refl
+    StDef(t) => ordinary => Refl
+    StMutual(stmts, start, end) => ordinary => Refl
+    StImport(path, start, end) => ordinary => Refl
+    StInductive(i) => ordinary => Refl
+    StEffect(e) => ordinary => Refl
+    StStruct(d) => ordinary => Refl
+    StEnum(d) => ordinary => Refl
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_prelude_fns_one_StExtern_unf(abi, fns, start, end, c, own)),
+      context_rewrap(
+        c,
+        ck_prelude_fns_each(fns, c, own),
+        ck_prelude_fns_each_frame_context(fns, c, own)
+      )
+    )
+    StClass(klass) => ordinary => Refl
+    StInstance(i) => ordinary => Refl
+    StWhile(cond, body) => ordinary => Refl
+    StReturn(value) => ordinary => Refl
+    StExpr(value) => ordinary => Refl
+    StOther(what, start, end) => ordinary => Refl
+    StMacro(name, function, start, end) => ordinary => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordinary => Refl
+    StSyntax(name, grammar, start, end) => ordinary => Refl
+  }
+}
+
+pub theorem ck_program_decl_frame_context(
+  c: Checker,
+  s: SurfaceStmt
+): CkContextFrame(c, ck_program_decl(c, s)) {
+  match s: CkContextFrame(c, ck_program_decl(c, s)) {
+    StLet(name, ty, value, borrow, mutable) => ordinary => Refl
+    StVar(name, ty, value, borrow) => ordinary => Refl
+    StModule(name, stmts, start, end) => ordinary => Refl
+    StAssign(name, name_place, value) => ordinary => Refl
+    StCalled(name_generates, value) => ordinary => Refl
+    StFn(f) => Eq::subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_program_decl_StFn_unf(f, c)),
+      context_bind(
+        Scheme,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (scheme: Scheme, c1: Checker) => mut1(Some(Pair { fst: f, snd: scheme }), c1),
+        ck_add_fn(c, f),
+        ck_add_fn_frame_context(c, f),
+        scheme => c1 => ordinary => Refl
+      )
+    )
+    StTheorem(t) => ordinary => Refl
+    StDef(t) => ordinary => Refl
+    StMutual(stmts, start, end) => ordinary => Refl
+    StImport(path, start, end) => ordinary => Refl
+    StInductive(i) => ordinary => Refl
+    StEffect(e) => Eq::subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_program_decl_StEffect_unf(e, c)),
+      context_bind(
+        Unit,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (ignored: Unit, c1: Checker) => mut1(None, c1),
+        ck_declare_effect(c, e),
+        ck_declare_effect_frame_context(c, e),
+        ignored => c1 => ordinary => Refl
+      )
+    )
+    StStruct(d) => ordinary => Refl
+    StEnum(d) => ordinary => Refl
+    StExtern(abi, fns, start, end) => Eq::subst(
+      (z: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_program_decl_StExtern_unf(abi, fns, start, end, c)),
+      context_bind(
+        Unit,
+        Option(Pair(SurfaceFn, Scheme)),
+        c,
+        (ignored: Unit, c1: Checker) => mut1(None, c1),
+        ck_extern_fns(fns, c),
+        ck_extern_fns_frame_context(fns, c),
+        ignored => c1 => ordinary => Refl
+      )
+    )
+    StClass(klass) => ordinary => Refl
+    StInstance(i) => ordinary => Refl
+    StWhile(cond, body) => ordinary => Refl
+    StReturn(value) => ordinary => Refl
+    StExpr(value) => ordinary => Refl
+    StOther(what, start, end) => ordinary => Refl
+    StMacro(name, function, start, end) => ordinary => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => ordinary => Refl
+    StSyntax(name, grammar, start, end) => ordinary => Refl
+  }
+}
+
+pub theorem signature_prelude_fns_cons_frame_context(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Bool),
+  ih: ∀ next: Checker. CkContextFrame(next, ck_prelude_fns(rest, next, own))
+): CkContextFrame(c, signature_prelude_fns_cons(s, rest, c, own)) {
+  context_bind(
+    Unit,
+    Unit,
+    c,
+    (head: Unit, c1: Checker) => ck_rewrap1(ck_prelude_fns(rest, c1, own)),
+    ck_prelude_fns_one(c, s, own),
+    ck_prelude_fns_one_frame_context(c, s, own),
+    head => c1 => context_rewrap(c1, ck_prelude_fns(rest, c1, own), ih(c1))
+  )
+}
+
+pub theorem ck_prelude_fns_frame_context(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  own: Ordmap(Text, Bool)
+): CkContextFrame(c, ck_prelude_fns(ss, c, own)) {
+  match ss: CkContextFrame(c, ck_prelude_fns(ss, c, own)) {
+    Nil => ordinary => Refl
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_prelude_fns_cons_unf(s, rest, c, own)),
+      signature_prelude_fns_cons_frame_context(
+        s,
+        rest,
+        c,
+        own,
+        next => ck_prelude_fns_frame_context(rest, next, own)
+      )
+    )
+  }
+}
+
+pub theorem signature_program_decls_cons_frame_context(
+  s: SurfaceStmt,
+  rest: List(SurfaceStmt),
+  c: Checker,
+  ih: ∀ next: Checker. CkContextFrame(next, ck_program_decls(rest, next))
+): CkContextFrame(c, signature_program_decls_cons(s, rest, c)) {
+  context_bind(
+    Option(Pair(SurfaceFn, Scheme)),
+    List(Pair(SurfaceFn, Scheme)),
+    c,
+    (head: Option(Pair(SurfaceFn, Scheme)), c1: Checker) => frame_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1)
+    ),
+    ck_program_decl(c, s),
+    ck_program_decl_frame_context(c, s),
+    head => c1 => context_bind(
+      List(Pair(SurfaceFn, Scheme)),
+      List(Pair(SurfaceFn, Scheme)),
+      c1,
+      (tail: List(Pair(SurfaceFn, Scheme)), c2: Checker) => mut1(opt_cons(head, tail), c2),
+      ck_program_decls(rest, c1),
+      ih(c1),
+      tail => c2 => ordinary => Refl
+    )
+  )
+}
+
+pub theorem ck_program_decls_frame_context(
+  ss: List(SurfaceStmt),
+  c: Checker
+): CkContextFrame(c, ck_program_decls(ss, c)) {
+  match ss: CkContextFrame(c, ck_program_decls(ss, c)) {
+    Nil => ordinary => Refl
+    Cons(s, rest) => Eq::subst(
+      (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_program_decls_cons_unf(s, rest, c)),
+      signature_program_decls_cons_frame_context(
+        s,
+        rest,
+        c,
+        next => ck_program_decls_frame_context(rest, next)
+      )
+    )
+  }
+}

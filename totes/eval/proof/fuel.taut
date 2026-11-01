@@ -1,0 +1,346 @@
+import "../src/eval.taut"
+
+// More fuel may resolve exhaustion, but cannot change a completed outcome.
+pub fn e_refines<A>(before: EResult(A), after: EResult(A)): Prop {
+  match before {
+    ErFuel => True
+    ErValue(v, cx) => ErValue(v, cx) = after
+    ErError(message) => ErError(message) = after
+    ErUnsupported(construct) => ErUnsupported(construct) = after
+  }
+}
+
+pub theorem e_refines_refl<A>(r: EResult(A)): e_refines(r, r) {
+  match r {
+    ErFuel => Trivial
+    ErValue(v, cx) => Refl
+    ErError(message) => Refl
+    ErUnsupported(construct) => Refl
+  }
+}
+
+pub theorem e_bind_refines<A, B>(
+  before: EResult(A),
+  after: EResult(A),
+  f: (A, MCx) -> EResult(B),
+  g: (A, MCx) -> EResult(B),
+  input: e_refines(before, after),
+  next: (v: A, cx: MCx) -> e_refines(f(v, cx), g(v, cx))
+): e_refines(e_bind(before, f), e_bind(after, g)) {
+  match before {
+    ErFuel => Trivial
+    ErValue(v, cx) => Eq::subst(
+      EResult(A),
+      ErValue(v, cx),
+      after,
+      (r: EResult(A)) => e_refines(f(v, cx), e_bind(r, g)),
+      input,
+      next(v, cx)
+    )
+    ErError(message) => Eq::congr((r: EResult(A)) => e_bind(r, g), input)
+    ErUnsupported(construct) => Eq::congr((r: EResult(A)) => e_bind(r, g), input)
+  }
+}
+
+mutual {
+  pub theorem e_eval_more(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    e: Cps,
+    cx: MCx
+  ): e_refines(e_eval(fuel, ctors, env, e, cx), e_eval(Succ(fuel), ctors, env, e, cx)) {
+    match fuel {
+      Zero => Trivial
+      Succ(f) => match e: e_refines(
+        e_eval(Succ(f), ctors, env, e, cx),
+        e_eval(Succ(Succ(f)), ctors, env, e, cx)
+      ) {
+        CPure(v) => Refl
+        CRead(id, deref) => e_refines_refl(e_read(ctors, cx, env, id, deref))
+        MkCPrim(op, args) => e_bind_refines(
+          e_args(f, ctors, env, args, cx),
+          e_args(Succ(f), ctors, env, args, cx),
+          (vs: List(MVal), heap: MCx) => e_operation(
+            ctors,
+            heap,
+            e_primitive(op, List::length(args)),
+            vs
+          ),
+          (vs: List(MVal), heap: MCx) => e_operation(
+            ctors,
+            heap,
+            e_primitive(op, List::length(args)),
+            vs
+          ),
+          e_args_more(f, ctors, env, args, cx),
+          (vs: List(MVal), heap: MCx) => e_refines_refl(
+            e_operation(ctors, heap, e_primitive(op, List::length(args)), vs)
+          )
+        )
+        CMap(value, op) => e_bind_refines(
+          e_eval(f, ctors, env, value, cx),
+          e_eval(Succ(f), ctors, env, value, cx),
+          (v: MVal, heap: MCx) => e_operation(ctors, heap, e_unary(op), Cons(v, Nil)),
+          (v: MVal, heap: MCx) => e_operation(ctors, heap, e_unary(op), Cons(v, Nil)),
+          e_eval_more(f, ctors, env, value, cx),
+          (v: MVal, heap: MCx) => e_refines_refl(
+            e_operation(ctors, heap, e_unary(op), Cons(v, Nil))
+          )
+        )
+        CBranch(cond, then, otherwise) => e_bind_refines(
+          e_eval(f, ctors, env, cond, cx),
+          e_eval(Succ(f), ctors, env, cond, cx),
+          (v: MVal, heap: MCx) => e_branch(f, ctors, env, v, then, otherwise, heap),
+          (v: MVal, heap: MCx) => e_branch(Succ(f), ctors, env, v, then, otherwise, heap),
+          e_eval_more(f, ctors, env, cond, cx),
+          (v: MVal, heap: MCx) => e_branch_more(f, ctors, env, v, then, otherwise, heap)
+        )
+        CSeq(items) => e_sequence_more(f, ctors, env, items, cx)
+        CCall(callee, args, ticked) => Refl
+        CTail(inst, args) => Refl
+        CBuiltin(name, args) => Refl
+        CDefine(id, is_shared, init) => Refl
+        CAssign(id, path, through, value) => Refl
+        CWhile(cond, body, ticked) => Refl
+        CReturn(value) => Refl
+        CMatch(scrut, pats, guards, bodies) => Refl
+        CClosure(body, params, captures, borrowed, refs) => Refl
+        CPerform(op, quant, args) => Refl
+        CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => Refl
+        CBorrow(id, path, through) => Refl
+        CBudget(memory, steps, body) => Refl
+      }
+    }
+  }
+
+  pub theorem e_branch_more(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    value: MVal,
+    then: Cps,
+    otherwise: Cps,
+    cx: MCx
+  ): e_refines(
+    e_branch(fuel, ctors, env, value, then, otherwise, cx),
+    e_branch(Succ(fuel), ctors, env, value, then, otherwise, cx)
+  ) {
+    match fuel {
+      Zero => Trivial
+      Succ(f) => match m_get(
+        ctors,
+        cx,
+        value
+      ) eqn got: e_refines(
+        e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
+        e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
+      ) {
+        MvBool(go) => ⊢ e_refines(
+          e_eval(f, ctors, env, e_choose(go, then, otherwise), cx),
+          e_eval(Succ(f), ctors, env, e_choose(go, then, otherwise), cx)
+        ) from e_eval_more(f, ctors, env, e_choose(go, then, otherwise), cx)
+        _ => ⊢ Eq(
+          EResult(MVal),
+          ErError("internal: a branch condition is not a boolean"),
+          ErError("internal: a branch condition is not a boolean")
+        ) from Refl
+      }
+    }
+  }
+
+  pub theorem e_args_more(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    es: List(Cps),
+    cx: MCx
+  ): e_refines(e_args(fuel, ctors, env, es, cx), e_args(Succ(fuel), ctors, env, es, cx)) {
+    match fuel {
+      Zero => Trivial
+      Succ(f) => match es: e_refines(
+        e_args(Succ(f), ctors, env, es, cx),
+        e_args(Succ(Succ(f)), ctors, env, es, cx)
+      ) {
+        Nil => Refl
+        Cons(e, rest) => e_bind_refines(
+          e_eval(f, ctors, env, e, cx),
+          e_eval(Succ(f), ctors, env, e, cx),
+          (v: MVal, heap: MCx) => e_bind(
+            e_args(f, ctors, env, rest, heap),
+            (vs: List(MVal), heap2: MCx) => ErValue(Cons(v, vs), heap2)
+          ),
+          (v: MVal, heap: MCx) => e_bind(
+            e_args(Succ(f), ctors, env, rest, heap),
+            (vs: List(MVal), heap2: MCx) => ErValue(Cons(v, vs), heap2)
+          ),
+          e_eval_more(f, ctors, env, e, cx),
+          (v: MVal, heap: MCx) => e_bind_refines(
+            e_args(f, ctors, env, rest, heap),
+            e_args(Succ(f), ctors, env, rest, heap),
+            (vs: List(MVal), heap2: MCx) => ErValue(Cons(v, vs), heap2),
+            (vs: List(MVal), heap2: MCx) => ErValue(Cons(v, vs), heap2),
+            e_args_more(f, ctors, env, rest, heap),
+            (vs: List(MVal), heap2: MCx) => e_refines_refl(ErValue(Cons(v, vs), heap2))
+          )
+        )
+      }
+    }
+  }
+
+  pub theorem e_sequence_more(
+    fuel: Nat,
+    ctors: List(MCtor),
+    env: List(Pair(Nat, EBinding)),
+    es: List(Cps),
+    cx: MCx
+  ): e_refines(e_sequence(fuel, ctors, env, es, cx), e_sequence(Succ(fuel), ctors, env, es, cx)) {
+    match fuel {
+      Zero => Trivial
+      Succ(f) => match es: e_refines(
+        e_sequence(Succ(f), ctors, env, es, cx),
+        e_sequence(Succ(Succ(f)), ctors, env, es, cx)
+      ) {
+        Nil => Refl
+        Cons(e, rest) => match rest: e_refines(
+          e_sequence(Succ(f), ctors, env, Cons(e, rest), cx),
+          e_sequence(Succ(Succ(f)), ctors, env, Cons(e, rest), cx)
+        ) {
+          Nil => e_eval_more(f, ctors, env, e, cx)
+          Cons(next, more) => e_bind_refines(
+            e_eval(f, ctors, env, e, cx),
+            e_eval(Succ(f), ctors, env, e, cx),
+            (v: MVal, heap: MCx) => e_sequence(f, ctors, env, Cons(next, more), heap),
+            (v: MVal, heap: MCx) => e_sequence(Succ(f), ctors, env, Cons(next, more), heap),
+            e_eval_more(f, ctors, env, e, cx),
+            (v: MVal, heap: MCx) => e_sequence_more(f, ctors, env, Cons(next, more), heap)
+          )
+        }
+      }
+    }
+  }
+}
+
+pub theorem e_eval_value_more(
+  fuel: Nat,
+  ctors: List(MCtor),
+  env: List(Pair(Nat, EBinding)),
+  e: Cps,
+  cx: MCx,
+  v: MVal,
+  cx2: MCx,
+  done: e_eval(fuel, ctors, env, e, cx) = ErValue(v, cx2)
+): e_eval(Succ(fuel), ctors, env, e, cx) = ErValue(v, cx2) {
+  Eq::sym(
+    Eq::subst(
+      EResult(MVal),
+      e_eval(fuel, ctors, env, e, cx),
+      ErValue(v, cx2),
+      (r: EResult(MVal)) => e_refines(r, e_eval(Succ(fuel), ctors, env, e, cx)),
+      done,
+      e_eval_more(fuel, ctors, env, e, cx)
+    )
+  )
+}
+
+pub theorem e_refines_trans<A>(
+  a: EResult(A),
+  b: EResult(A),
+  c: EResult(A),
+  ab: e_refines(a, b),
+  bc: e_refines(b, c)
+): e_refines(a, c) {
+  match a {
+    ErFuel => Trivial
+    ErValue(v, cx) => Eq::subst(
+      EResult(A),
+      b,
+      ErValue(v, cx),
+      (r: EResult(A)) => e_refines(r, c),
+      Eq::sym(ab),
+      bc
+    )
+    ErError(message) => Eq::subst(
+      EResult(A),
+      b,
+      ErError(message),
+      (r: EResult(A)) => e_refines(r, c),
+      Eq::sym(ab),
+      bc
+    )
+    ErUnsupported(construct) => Eq::subst(
+      EResult(A),
+      b,
+      ErUnsupported(construct),
+      (r: EResult(A)) => e_refines(r, c),
+      Eq::sym(ab),
+      bc
+    )
+  }
+}
+
+pub theorem e_eval_add_fuel(
+  extra: Nat,
+  fuel: Nat,
+  ctors: List(MCtor),
+  env: List(Pair(Nat, EBinding)),
+  e: Cps,
+  cx: MCx
+): e_refines(e_eval(fuel, ctors, env, e, cx), e_eval(Nat::add(fuel, extra), ctors, env, e, cx)) {
+  match extra {
+    Zero => e_refines_refl(e_eval(fuel, ctors, env, e, cx))
+    Succ(n) => e_refines_trans(
+      e_eval(fuel, ctors, env, e, cx),
+      e_eval(Nat::add(fuel, n), ctors, env, e, cx),
+      e_eval(Succ(Nat::add(fuel, n)), ctors, env, e, cx),
+      e_eval_add_fuel(n, fuel, ctors, env, e, cx),
+      e_eval_more(Nat::add(fuel, n), ctors, env, e, cx)
+    )
+  }
+}
+
+pub theorem e_eval_value_add_fuel(
+  extra: Nat,
+  fuel: Nat,
+  ctors: List(MCtor),
+  env: List(Pair(Nat, EBinding)),
+  e: Cps,
+  cx: MCx,
+  v: MVal,
+  cx2: MCx,
+  done: e_eval(fuel, ctors, env, e, cx) = ErValue(v, cx2)
+): e_eval(Nat::add(fuel, extra), ctors, env, e, cx) = ErValue(v, cx2) {
+  Eq::sym(
+    Eq::subst(
+      EResult(MVal),
+      e_eval(fuel, ctors, env, e, cx),
+      ErValue(v, cx2),
+      (r: EResult(MVal)) => e_refines(r, e_eval(Nat::add(fuel, extra), ctors, env, e, cx)),
+      done,
+      e_eval_add_fuel(extra, fuel, ctors, env, e, cx)
+    )
+  )
+}
+
+pub theorem e_eval_deterministic(
+  fuel1: Nat,
+  fuel2: Nat,
+  ctors: List(MCtor),
+  env: List(Pair(Nat, EBinding)),
+  e: Cps,
+  cx: MCx,
+  v1: MVal,
+  cx1: MCx,
+  v2: MVal,
+  cx2: MCx,
+  first: e_eval(fuel1, ctors, env, e, cx) = ErValue(v1, cx1),
+  second: e_eval(fuel2, ctors, env, e, cx) = ErValue(v2, cx2)
+): Eq(EResult(MVal), ErValue(v1, cx1), ErValue(v2, cx2)) {
+  Eq::trans(
+    Eq::sym(e_eval_value_add_fuel(fuel2, fuel1, ctors, env, e, cx, v1, cx1, first)),
+    Eq::trans(
+      Eq::congr((n: Nat) => e_eval(n, ctors, env, e, cx), Nat::add_comm(fuel1, fuel2)),
+      e_eval_value_add_fuel(fuel1, fuel2, ctors, env, e, cx, v2, cx2, second)
+    )
+  )
+}

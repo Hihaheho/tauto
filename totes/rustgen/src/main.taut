@@ -1,31 +1,48 @@
-import "loader.taut"
+import "reader.taut"
 
-fn rustgen_fail(message: Text) -> () {
-  os_eprint(text_concat_all(Cons("rustgen: ", Cons(message, Cons(text_newline(), Nil)))))
-  os_exit(1)
+pub fn rustgen_fail(message: Text): Unit {
+  eprint(Text::concat_all(Cons("rustgen: ", Cons(message, Cons(text_newline(), Nil)))))
+  perform exit(1)
 }
 
-fn rustgen_main(path: Text, entry: Text) -> () {
-  match os_read_file(path) {
-    Err(message) => rustgen_fail(message)
+// Machine protocol, enabled by --contract; without it, diagnostics and generated
+// code are the default ones.
+// Operational failures must not satisfy source-language rejection expectations.
+pub fn rustgen_contract_status(stage: Text): Unit {
+  eprint(Text::concat_all(Cons("TAUTO-RUSTGEN-CONTRACT/1 ", Cons(stage, Cons(text_newline(), Nil)))))
+}
+pub fn rustgen_mode_fail(contract: Bool, stage: Text, message: Text): Unit {
+  if contract { rustgen_contract_status(stage) } else { #() }
+  rustgen_fail(message)
+}
+
+pub fn rustgen_main(path: Text, entry: Text, contract: Bool): Unit {
+  match read_file(path) {
+    Err(message) => rustgen_mode_fail(contract, "input-error", message)
     Ok(source) => match syntax_tables() {
-      None => rustgen_fail("damaged syntax tables")
+      None => rustgen_mode_fail(contract, "tables-error", "damaged syntax tables")
 
       Some(tables) => match syntax_parse(tables, source) {
-        None => rustgen_fail("cannot parse source")
+        None => rustgen_mode_fail(contract, "source-rejected", "cannot parse source")
 
         Some(root) => if rustgen_generated(surface_size(root) + 1, Cons(root, Nil)) {
-          rustgen_fail("generated declarations are unsupported")
+          rustgen_mode_fail(contract, "source-rejected", "generated declarations are unsupported")
         } else {
-          let stmts = surface_program_of(
-            SurfaceCtx { source: source, base: 0, classes: unicode_classes(), fuel: surface_size(
-              root
-            ) + 1 },
+          let stmts := surface_program_of(
+            SurfaceCtx {
+              source: source,
+              base: 0,
+              classes: unicode_classes(),
+              fuel: surface_size(root) + 1
+            },
             root
           )
           match rustgen_program(source, stmts, entry) {
-            RustgenErr(message) => rustgen_fail(message)
-            RustgenOk(code) => os_print(code)
+            RustgenErr(message) => rustgen_mode_fail(contract, "source-rejected", message)
+            RustgenOk(code) => {
+              if contract { rustgen_contract_status("generated") } else { #() }
+              print(code)
+            }
           }
         }
       }
@@ -33,39 +50,87 @@ fn rustgen_main(path: Text, entry: Text) -> () {
   }
 }
 
-fn rustgen_bundle_main(path: Text, module: Text, entry: Text, graph_only: Bool) -> () {
-  match os_read_file(path) {
+pub fn rustgen_bundle_main(path: Text, r#module: Text, entry: Text, graph_only: Bool): Unit {
+  match read_file(path) {
     Err(message) => rustgen_fail(message)
-    Ok(bundle) => match rustgen_load_bundle(bundle, module) {
+    Ok(bundle) => match rustgen_load_bundle(bundle, r#module) {
       RustgenErr(message) => rustgen_fail(message)
       RustgenOk(graph) => if graph_only {
-        os_print(text_concat_all(rustgen_graph_lines(graph.files)))
+        print(Text::concat_all(rustgen_graph_lines(graph.files)))
       } else { match graph.generated_files {
-          Cons(
-            id,
-            rest
-          ) => rustgen_fail(
-            text_concat_all(Cons("generated declarations unsupported in module: ", Cons(id, Nil)))
+          Cons(id, rest) => rustgen_fail(
+            Text::concat_all(Cons("generated declarations unsupported in module: ", Cons(id, Nil)))
           )
           Nil => match rustgen_program(graph.source, graph.stmts, entry) {
             RustgenErr(message) => rustgen_fail(message)
-            RustgenOk(code) => os_print(code)
+            RustgenOk(code) => print(code)
           }
         } }
     }
   }
 }
-fn rustgen_usage() -> () {
-  rustgen_fail("usage: rustgen SOURCE ENTRY | --bundle BUNDLE MODULE ENTRY | --graph BUNDLE MODULE")
+
+pub fn rustgen_input_status(stage: Text): Unit {
+  eprint(Text::concat_all(Cons("TAUTO-RUSTGEN-CONTRACT/2 ", Cons(stage, Cons("\n", Nil)))))
 }
-match os_args() {
-  Cons(mode, Cons(path, Cons(module, rest))) => if mode == "--graph" {
-    match rest { Nil => rustgen_bundle_main(path, module, "", true)
+pub fn rustgen_input_fail(stage: Text, message: Text): Unit {
+  rustgen_input_status(stage)
+  rustgen_fail(message)
+}
+pub fn rustgen_inputs_main(path: Text, entry: Text, audit: Bool, reader: Bool): Unit {
+  match read_file(path) {
+    Err(message) => rustgen_input_fail("input-error", message)
+    Ok(contents) => match if audit { rustgen_load_inputs(contents) } else {
+      rustgen_read_inputs(contents)
+    } {
+      RustgenLoadError(stage, message) => rustgen_input_fail(stage, message)
+      RustgenLoaded(input) => if audit {
+        rustgen_input_status("input-complete")
+        print(rustgen_input_report(input))
+      } else if reader {
+        rustgen_input_status("reader-complete")
+        print(rustgen_reader_report(input))
+      } else {
+        match input.graph.generated_files {
+          Cons(id, rest) => rustgen_input_fail(
+            "source-rejected",
+            Text::concat("generated declarations unsupported in module: ", id)
+          )
+          Nil => match rustgen_program(input.graph.source, input.graph.stmts, entry) {
+            RustgenErr(message) => rustgen_input_fail("source-rejected", message)
+            RustgenOk(code) => {
+              rustgen_input_status("generated")
+              print(code)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+pub fn rustgen_usage(): Unit {
+  rustgen_fail(
+    "usage: rustgen SOURCE ENTRY | --bundle BUNDLE MODULE ENTRY | --graph BUNDLE MODULE | --contract-inputs BUNDLE | --contract-reader BUNDLE | --contract-bundle BUNDLE ENTRY"
+  )
+}
+match perform argv() {
+  Cons(mode, Cons(path, Cons(r#module, rest))) => if mode == "--graph" {
+    match rest { Nil => rustgen_bundle_main(path, r#module, "", true)
+      _ => rustgen_usage() }
+  } else if mode == "--contract" {
+    match rest { Nil => rustgen_main(path, r#module, true)
+      _ => rustgen_usage() }
+  } else if mode == "--contract-bundle" {
+    match rest { Nil => rustgen_inputs_main(path, r#module, false, false)
       _ => rustgen_usage() }
   } else if mode == "--bundle" {
-    match rest { Cons(entry, Nil) => rustgen_bundle_main(path, module, entry, false)
+    match rest { Cons(entry, Nil) => rustgen_bundle_main(path, r#module, entry, false)
       _ => rustgen_usage() }
   } else { rustgen_usage() }
-  Cons(path, Cons(entry, Nil)) => rustgen_main(path, entry)
+  Cons(path, Cons(entry, Nil)) => if path == "--contract-inputs" {
+    rustgen_inputs_main(entry, "", true, false)
+  } else if path == "--contract-reader" { rustgen_inputs_main(entry, "", false, true) } else {
+    rustgen_main(path, entry, false)
+  }
   _ => rustgen_usage()
 }

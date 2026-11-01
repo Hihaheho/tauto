@@ -1,0 +1,131 @@
+import "signature_parameters_sound.taut"
+
+pub theorem ck_sig_param_context(
+  c: Checker,
+  source: Option(SurfaceTerm),
+  borrow: Option(Bool),
+  generics: Ordmap(Text, Ty)
+): CkContextFrame(c, ck_sig_param(c, source, borrow, generics)) {
+  context_reset_frame(
+    c,
+    ck_sig_param(c, source, borrow, generics),
+    ck_sig_param_reset(c, source, borrow, generics)
+  )
+}
+pub theorem signature_params_cons_context(
+  p: Option(SurfaceTerm),
+  rest: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Bool)),
+  map: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. ∀ bs: List(
+    Option(Bool)
+  ). CkContextFrame(next, ck_sig_params(rest, next, bs, map))
+): CkContextFrame(c, signature_params_cons(p, rest, c, borrows, map)) {
+  context_bind(
+    Ty,
+    List(Ty),
+    c,
+    (head: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_sig_params(rest, c1, List::tail(borrows), map)
+    ),
+    ck_sig_param(c, p, list_head_or_none(borrows), map),
+    ck_sig_param_context(c, p, list_head_or_none(borrows), map),
+    head => c1 => context_bind(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
+      ck_sig_params(rest, c1, List::tail(borrows), map),
+      ih(c1, List::tail(borrows)),
+      tail => c2 => ordinary => Refl
+    )
+  )
+}
+
+pub theorem ck_sig_params_context(
+  pts: List(Option(SurfaceTerm)),
+  c: Checker,
+  borrows: List(Option(Bool)),
+  map: Ordmap(Text, Ty)
+): CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  match pts: CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) {
+    Nil => ordinary => Refl
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
+      Eq::sym(signature_params_unf(p, rest, c, borrows, map)),
+      signature_params_cons_context(
+        p,
+        rest,
+        c,
+        borrows,
+        map,
+        next => bs => ck_sig_params_context(rest, next, bs, map)
+      )
+    )
+  }
+}
+
+pub theorem signature_result_type(
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  source: Option(SurfaceTerm),
+  clean: DiagnosticClean(ck_st(signature_result_k(c, generics, source)))
+): SignatureType(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  frame_under_borrow(c),
+  source,
+  ck_val(signature_result_k(c, generics, source))
+) {
+  match source: SignatureType(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    frame_under_borrow(c),
+    source,
+    ck_val(signature_result_k(c, generics, source))
+  ) {
+    None => SignatureTypeInferred(signature_fresh_index(c))
+    Some(term) => ck_sig_written_sound(Some(term), c, generics, clean)
+  }
+}
+pub theorem ck_sig_result_sound(
+  c: Checker,
+  source: SurfaceFn,
+  generics: Ordmap(Text, Ty),
+  clean: DiagnosticClean(ck_st(ck_sig_result(c, source, generics)))
+): SignatureType(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  frame_under_borrow(c),
+  signature_result(source),
+  ck_val(ck_sig_result(c, source, generics))
+) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => SignatureType(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      frame_under_borrow(c),
+      signature_result(source),
+      ck_val(m)
+    ),
+    Eq::sym(signature_result_unf(c, source, generics)),
+    signature_result_type(
+      c,
+      generics,
+      signature_result(source),
+      Eq::subst(
+        (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+        signature_result_unf(c, source, generics),
+        clean
+      )
+    )
+  )
+}

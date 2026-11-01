@@ -1,0 +1,1175 @@
+import "operations.taut"
+
+// The machine `tauto run --backend vm` runs. `compile.taut` writes its code from the
+// lowering every backend shares; `step` runs one instruction. Each instruction holds the
+// code after it, a block ends in `mc_ret`, and a frame saves where `mc_ret` returns to.
+// The locals are the slots of the running function, so a block writes them in place; a
+// local that is borrowed, or shared with a closure or a handler, holds a borrow of a cell
+// of the heap (`compile.taut` decides which).
+//
+// An operation's continuation is data: the frames from the `handle`'s body up, with the
+// code, slots and stack where it was performed. Values never change in place, so
+// resuming a continuation more than once needs no copy. Tasks take turns: one runs, the
+// others wait in the state. What only the host can do, the machine asks of the shell
+// (`main.taut`).
+
+pub(open) inductive MStep: Type {
+  MstepNext(s: MState): MStep
+  // The program and every task have ended.
+  MstepDone: MStep
+  MstepExit(code: Int): MStep
+  // The host shows `shown` by `name`, then goes on with `s`.
+  MstepShow(name: Text, shown: Text, s: MState): MStep
+  // The host answers the request; its answer goes on top of the stack of `s`.
+  MstepAsk(name: Text, args: List(MVal), s: MState): MStep
+  // Every task waits for a timer: the host sleeps until the clock reads `until`, then wakes
+  // the machine (`m_wake`).
+  MstepSleep(until: Int, cx: MCx): MStep
+  MstepError(message: Text): MStep
+}
+
+// ---- the state ------------------------------------------------------------------------
+
+pub fn p_fns(p: MProgram): List(MFn) {
+  match p {
+    Mprogram(fns, ctors, main) => fns
+  }
+}
+
+pub fn p_ctors(p: MProgram): List(MCtor) {
+  match p {
+    Mprogram(fns, ctors, main) => ctors
+  }
+}
+
+pub fn m_go(code: MCode, slots: List(MVal), st: List(MVal), fr: List(MFrame), cx: MCx): MStep {
+  MstepNext(Mstate(code, slots, st, fr, cx))
+}
+
+pub fn m_bad(): MStep {
+  MstepError(m_internal())
+}
+
+pub fn cx_tasks(cx: MCx): List(MTask) {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => Tasks
+  }
+}
+
+pub fn cx_result(cx: MCx): Option(Nat) {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => result
+  }
+}
+
+pub fn cx_timers(cx: MCx): List(Nat) {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => Timers
+  }
+}
+
+pub fn cx_top_done(cx: MCx): Bool {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => TopDone
+  }
+}
+
+pub fn cx_with_tasks(cx: MCx, ts: List(MTask), r: Option(Nat)): MCx {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => Mcx(
+      MkHeap,
+      next,
+      left,
+      Cells,
+      now,
+      ts,
+      r,
+      Timers,
+      TopDone
+    )
+  }
+}
+
+pub fn cx_with_timers(cx: MCx, ts: List(Nat)): MCx {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => Mcx(
+      MkHeap,
+      next,
+      left,
+      Cells,
+      now,
+      Tasks,
+      result,
+      ts,
+      TopDone
+    )
+  }
+}
+
+pub fn cx_done(cx: MCx): MCx {
+  match cx {
+    Mcx(MkHeap, next, left, Cells, now, Tasks, result, Timers, TopDone) => Mcx(
+      MkHeap,
+      next,
+      left,
+      Cells,
+      now,
+      Tasks,
+      result,
+      Timers,
+      true
+    )
+  }
+}
+
+pub fn m_apply_binds(slots: List(MVal), binds: List(Pair(Nat, MVal))): List(MVal) {
+  match binds {
+    Nil => slots
+    Cons(b, rest) => match b {
+      Pair { fst: i, snd: v } => m_apply_binds(m_set(slots, i, v), rest)
+    }
+  }
+}
+
+// ---- patterns ---------------------------------------------------------------------------
+
+mutual {
+  // The bindings of the pattern, when the value fits it. A field of a borrow is matched
+  // as a borrow of the field.
+  pub fn m_fit(
+    ctors: List(MCtor),
+    cx: MCx,
+    p: MPat,
+    v: MVal,
+    binds: List(Pair(Nat, MVal))
+  ): Option(Pair(List(Pair(Nat, MVal)), MCx)) {
+    match p {
+      MpWild => Some(Pair { fst: binds, snd: cx })
+      MpBind(slot, borrow) => match borrow {
+        true => match v {
+          MvRef(c, path) => Some(Pair { fst: Cons(Pair { fst: slot, snd: v }, binds), snd: cx })
+          _ => match cx_temp(cx, v) {
+            Pair { fst: r, snd: cx2 } => Some(
+              Pair { fst: Cons(Pair { fst: slot, snd: r }, binds), snd: cx2 }
+            )
+          }
+        }
+        false => Some(
+          Pair { fst: Cons(Pair { fst: slot, snd: m_get(ctors, cx, v) }, binds), snd: cx }
+        )
+      }
+      MpLit(l) => if m_eq(ctors, cx, l, v) { Some(Pair { fst: binds, snd: cx }) } else { None }
+      MpCtor(c, ps) => match m_get(ctors, cx, v) {
+        MvData(d, fs) => if Nat::eq(c, d) {
+          match v {
+            MvRef(cell, path) => m_fit_ref(ctors, cx, ps, cell, path, 0, binds)
+            _ => m_fit_list(ctors, cx, ps, fs, binds)
+          }
+        } else {
+          None
+        }
+        _ => None
+      }
+    }
+  }
+
+  pub fn m_fit_list(
+    ctors: List(MCtor),
+    cx: MCx,
+    ps: List(MPat),
+    vs: List(MVal),
+    binds: List(Pair(Nat, MVal))
+  ): Option(Pair(List(Pair(Nat, MVal)), MCx)) {
+    match ps {
+      Nil => Some(Pair { fst: binds, snd: cx })
+      Cons(p, rest) => match vs {
+        Nil => None
+        Cons(v, vrest) => match m_fit(ctors, cx, p, v, binds) {
+          None => None
+          Some(r) => match r {
+            Pair { fst: b2, snd: cx2 } => m_fit_list(ctors, cx2, rest, vrest, b2)
+          }
+        }
+      }
+    }
+  }
+
+  // The fields of the data a borrow names, from field `i`.
+  pub fn m_fit_ref(
+    ctors: List(MCtor),
+    cx: MCx,
+    ps: List(MPat),
+    cell: Nat,
+    path: MRefPath,
+    i: Nat,
+    binds: List(Pair(Nat, MVal))
+  ): Option(Pair(List(Pair(Nat, MVal)), MCx)) {
+    match ps {
+      Nil => Some(Pair { fst: binds, snd: cx })
+      Cons(p, rest) => match m_fit(ctors, cx, p, MvRef(cell, mr_child(path, MpathIndex(i))), binds) {
+        None => None
+        Some(r) => match r {
+          Pair { fst: b2, snd: cx2 } => m_fit_ref(ctors, cx2, rest, cell, path, Succ(i), b2)
+        }
+      }
+    }
+  }
+}
+
+// ---- calls and returns --------------------------------------------------------------------
+
+pub fn m_enter(p: MProgram, f: Nat, args: List(MVal), fr: List(MFrame), cx: MCx): MStep {
+  match List::nth(p_fns(p), f) {
+    None => m_bad()
+    Some(g) => match g {
+      Mfn(arity, n, body) => m_go(
+        body,
+        List::append(args, m_units(Nat::sub(n, List::length(args)))),
+        Nil,
+        fr,
+        cx
+      )
+    }
+  }
+}
+
+// Calls `callee` with `args`; its value lands on `st` and `k` goes on.
+pub fn m_call_value(
+  p: MProgram,
+  callee: MVal,
+  args: List(MVal),
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  let back := Cons(MfCall(k, slots, st), fr)
+  match m_get(p_ctors(p), cx, callee) {
+    MvFn(f) => m_enter(p, f, args, back, cx)
+    MvClosure(f, caps) => m_enter(p, f, List::append(args, caps), back, cx)
+    MvCont(id) => match cx_obj(cx, id) {
+      Some(o) => match o {
+        MoCont(kc, sc, stc, frc) => m_go(
+          kc,
+          sc,
+          Cons(m_nth_or_unit(args, 0), stc),
+          List::append(frc, Cons(MfResume(k, slots, st), fr)),
+          cx
+        )
+        _ => m_bad()
+      }
+      None => m_bad()
+    }
+    _ => MstepError("internal: a call of a value that is not a function")
+  }
+}
+
+// The frames under a tail call: the blocks of the running function end with it. `None`
+// when a `handle`, a budget or a `direct` arm is in between.
+pub fn m_tail_frames(fr: List(MFrame)): Option(List(MFrame)) {
+  match fr {
+    Nil => Some(Nil)
+    Cons(f, rest) => match f {
+      MfCall(k, s, st) => Some(fr)
+      MfBlock(k, st) => m_tail_frames(rest)
+      MfCond(c, b, k, st) => m_tail_frames(rest)
+      MfBody(c, b, k, st) => m_tail_frames(rest)
+      MfGuard(Scrut, ps, gs, bs, body, k, st) => m_tail_frames(rest)
+      _ => None
+    }
+  }
+}
+
+// ---- tasks ------------------------------------------------------------------------------------
+
+pub fn m_raised(cx: MCx, s: Nat): Bool {
+  match cx_obj(cx, s) {
+    Some(o) => match o {
+      MoSignal(raised, handed) => raised
+      _ => false
+    }
+    None => false
+  }
+}
+
+// Puts the running task aside; with `front`, it is the next to run.
+pub fn m_park(cx: MCx, t: MTask, front: Bool): MCx {
+  match t {
+    Mtask(MkCode, slots, st, fr, Wait, result, Asked) => {
+      let t2 := Mtask(MkCode, slots, st, fr, Wait, cx_result(cx), Asked)
+      match front {
+        true => cx_with_tasks(cx, Cons(t2, cx_tasks(cx)), None)
+        false => cx_with_tasks(cx, List::append(cx_tasks(cx), Cons(t2, Nil)), None)
+      }
+    }
+  }
+}
+
+// The timers that have not run out, and the state where those that have are ready.
+pub fn m_tick_timers(cx: MCx, ts: List(Nat)): Pair(List(Nat), MCx) {
+  match ts {
+    Nil => Pair { fst: Nil, snd: cx }
+    Cons(t, rest) => match m_ready(cx, t) {
+      Pair { fst: r, snd: cx2 } => match m_tick_timers(cx2, rest) {
+        Pair { fst: left, snd: cx3 } => match r {
+          true => Pair { fst: left, snd: cx3 }
+          false => Pair { fst: Cons(t, left), snd: cx3 }
+        }
+      }
+    }
+  }
+}
+
+// The first timer to run out.
+pub fn m_first_timer(cx: MCx, ts: List(Nat), best: Option(Int)): Option(Int) {
+  match ts {
+    Nil => best
+    Cons(t, rest) => match m_pending_of(cx, t) {
+      Pair { fst: state, snd: s } => match state {
+        MpendTimer(at) => match best {
+          None => m_first_timer(cx, rest, Some(at))
+          Some(b) => m_first_timer(cx, rest, if Int::lt(at, b) { Some(at) } else { best })
+        }
+        _ => m_first_timer(cx, rest, best)
+      }
+    }
+  }
+}
+
+// The first task that may run, and the others in order.
+pub fn m_pick(cx: MCx, ts: List(MTask)): Option(Pair(MTask, List(MTask))) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => match t {
+      Mtask(MkCode, slots, st, fr, Wait, result, Asked) => {
+        let runs := match Wait: Bool {
+          None => true
+          Some(s) => m_raised(cx, s)
+        }
+        if runs {
+          Some(Pair { fst: t, snd: rest })
+        } else {
+          match m_pick(cx, rest) {
+            None => None
+            Some(r) => match r {
+              Pair { fst: found, snd: others } => Some(Pair { fst: found, snd: Cons(t, others) })
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Runs the next task that may run; with none, sleeps until the first timer, ends, or finds
+// the tasks deadlocked.
+pub fn m_switch(cx0: MCx): MStep {
+  match m_tick_timers(cx0, cx_timers(cx0)) {
+    Pair { fst: Timers, snd: cx1 } => {
+      let cx := cx_with_timers(cx1, Timers)
+      match m_pick(cx, cx_tasks(cx)) {
+        Some(r) => match r {
+          Pair { fst: t, snd: others } => match t {
+            Mtask(MkCode, slots, st, fr, Wait, result, Asked) => match Asked {
+              None => m_go(MkCode, slots, st, fr, cx_with_tasks(cx, others, result))
+              Some(pid) => match m_ready(cx, pid) {
+                Pair { fst: ready, snd: cx2 } => m_go(
+                  MkCode,
+                  slots,
+                  Cons(MvBool(ready), st),
+                  fr,
+                  cx_with_tasks(cx2, others, result)
+                )
+              }
+            }
+          }
+        }
+        None => match m_first_timer(cx, Timers, None) {
+          Some(at) => MstepSleep(at, cx)
+          None => if cx_top_done(cx) { MstepDone } else { MstepError(m_deadlock()) }
+        }
+      }
+    }
+  }
+}
+
+// The clock reads `now`: the tasks go on.
+pub fn m_wake(cx: MCx, now: Int): MStep {
+  m_switch(cx_set_now(cx, now))
+}
+
+// The running task has ended with `v`.
+pub fn m_finish(v: MVal, cx: MCx): MStep {
+  match cx_result(cx) {
+    None => m_switch(cx_done(cx))
+    Some(pid) => match m_pending_of(cx, pid) {
+      Pair { fst: state, snd: s } => m_switch(
+        cx_with_tasks(
+          m_raise(cx_put(cx, pid, MoPending(MpendReady(v), s)), s, None),
+          cx_tasks(cx),
+          None
+        )
+      )
+    }
+  }
+}
+
+// ---- returns ------------------------------------------------------------------------------------
+
+// The end of a block: `v` goes to the frame below.
+pub fn m_ret(p: MProgram, v: MVal, slots: List(MVal), fr: List(MFrame), cx: MCx): MStep {
+  match fr {
+    Nil => m_finish(v, cx)
+    Cons(f, rest) => match f {
+      MfCall(k, slots2, st2) => m_go(k, slots2, Cons(v, st2), rest, cx)
+      MfResume(k, slots2, st2) => m_go(k, slots2, Cons(v, st2), rest, cx)
+      MfBlock(k, st2) => m_go(k, slots, Cons(v, st2), rest, cx)
+      MfCond(c, b, k, st2) => {
+        let g: MVal := if m_is_ref(v) { m_get(p_ctors(p), cx, v) } else { v }
+        match g {
+          MvBool(go) => match go {
+            true => m_go(b, slots, Nil, Cons(MfBody(c, b, k, st2), rest), cx)
+            false => m_go(k, slots, Cons(MvUnit, st2), rest, cx)
+          }
+          _ => m_bad()
+        }
+      }
+      MfBody(c, b, k, st2) => m_go(McWhile(c, b, k), slots, st2, rest, cx)
+      MfGuard(Scrut, pats, Guards, bodies, body, k, st2) => {
+        let g: MVal := if m_is_ref(v) { m_get(p_ctors(p), cx, v) } else { v }
+        match g {
+          MvBool(go) => match go {
+            true => m_go(body, slots, Nil, Cons(MfBlock(k, st2), rest), cx)
+            false => m_go(McMatch(pats, Guards, bodies, k), slots, Cons(Scrut, st2), rest, cx)
+          }
+          _ => m_bad()
+        }
+      }
+      MfHandle(Ops, pats, ks, bodies, Rpats, Rguards, Rbodies) => match Rpats {
+        Nil => m_ret(p, v, slots, rest, cx)
+        _ => m_go(McMatch(Rpats, Rguards, Rbodies, McRet), slots, Cons(v, Nil), rest, cx)
+      }
+      MfDirect(skip) => m_ret(p, v, slots, rest, cx)
+      MfBudget(memory, left) => m_ret(p, v, slots, rest, cx)
+    }
+  }
+}
+
+// Returns `v` from the running function.
+pub fn m_return(v: MVal, fr: List(MFrame), cx: MCx): MStep {
+  match fr {
+    Nil => m_finish(v, cx)
+    Cons(f, rest) => match f {
+      MfCall(k, slots2, st2) => m_go(k, slots2, Cons(v, st2), rest, cx)
+      _ => m_return(v, rest, cx)
+    }
+  }
+}
+
+// ---- effects ------------------------------------------------------------------------------------
+
+// Where an arm answers: the index of the `handle`'s frame, the arm's body, the slot its
+// continuation goes to (plus one; 0 for none), and its bindings.
+pub(open) inductive MFound: Type {
+  Mfound(at: Nat, body: MCode, k: Nat, binds: List(Pair(Nat, MVal)), cx: MCx): MFound
+}
+
+// The first arm for `op` whose patterns fit the arguments.
+pub fn m_arm(
+  ctors: List(MCtor),
+  cx: MCx,
+  at: Nat,
+  ops: List(Text),
+  pats: List(List(MPat)),
+  ks: List(Nat),
+  bodies: List(MCode),
+  op: Text,
+  args: List(MVal)
+): Option(MFound) {
+  match ops {
+    Nil => None
+    Cons(o, os) => match pats {
+      Nil => None
+      Cons(ps, pss) => match ks {
+        Nil => None
+        Cons(k, kss) => match bodies {
+          Nil => None
+          Cons(b, bs) => {
+            let next := m_arm(ctors, cx, at, os, pss, kss, bs, op, args)
+            if Bool::and(m_text_eq(o, op), Nat::eq(List::length(ps), List::length(args))) {
+              match m_fit_list(ctors, cx, ps, args, Nil) {
+                None => next
+                Some(r) => match r {
+                  Pair { fst: binds, snd: cx2 } => Some(Mfound(at, b, k, binds, cx2))
+                }
+              }
+            } else {
+              next
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The nearest arm for `op`, in the frames from index `at`; frames before `from` answer
+// nothing. A `direct` arm's frame skips the frames under it down to its handler.
+pub fn m_find(
+  fuel: Nat,
+  ctors: List(MCtor),
+  cx: MCx,
+  fr: List(MFrame),
+  at: Nat,
+  r#from: Nat,
+  op: Text,
+  args: List(MVal)
+): Option(MFound) {
+  match fuel {
+    Zero => None
+    Succ(f) => match fr {
+      Nil => None
+      Cons(fr0, rest) => match fr0 {
+        MfDirect(skip) => m_find(
+          f,
+          ctors,
+          cx,
+          List::drop(skip, rest),
+          Nat::add(at, Succ(skip)),
+          r#from,
+          op,
+          args
+        )
+        MfHandle(Ops, pats, ks, bodies, rp, rg, rb) => {
+          let here: Option(
+            MFound
+          ) := if Nat::lt(
+            at,
+            r#from
+          ) { None } else { m_arm(ctors, cx, at, Ops, pats, ks, bodies, op, args) }
+          match here {
+            Some(found) => Some(found)
+            None => m_find(f, ctors, cx, rest, Succ(at), r#from, op, args)
+          }
+        }
+        _ => m_find(f, ctors, cx, rest, Succ(at), r#from, op, args)
+      }
+    }
+  }
+}
+
+// The slots of the function the frame at index `n` belongs to: those of the last call
+// above it, or the running ones.
+pub fn m_site(fr: List(MFrame), n: Nat, cur: List(MVal)): List(MVal) {
+  match n {
+    Zero => cur
+    Succ(m) => match fr {
+      Nil => cur
+      Cons(f, rest) => m_site(rest, m, match f {
+        MfCall(k, slots, st) => slots
+        MfResume(k, slots, st) => slots
+        _ => cur
+      })
+    }
+  }
+}
+
+// Performs `op` with `args`, answered by an arm of the frames from index `from`; `k` goes
+// on with the answer. Quantity 3 is `direct`.
+pub fn m_perform(
+  p: MProgram,
+  op: Text,
+  quant: Nat,
+  args: List(MVal),
+  r#from: Nat,
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  let ctors := p_ctors(p)
+  match m_find(Succ(List::length(fr)), ctors, cx, fr, 0, r#from, op, args) {
+    Some(found) => match found {
+      Mfound(j, body, kslot, binds, cx2) => {
+        let site := m_apply_binds(m_site(fr, j, slots), binds)
+        if Nat::eq(quant, 3) {
+          m_go(body, site, Nil, Cons(MfDirect(Nat::add(j, 2)), Cons(MfCall(k, slots, st), fr)), cx2)
+        } else {
+          match cx_alloc(cx2, MoCont(k, slots, st, List::take(Succ(j), fr))) {
+            Pair { fst: id, snd: cx3 } => {
+              let site2 := match kslot {
+                Zero => site
+                Succ(s) => m_set(site, s, MvCont(id))
+              }
+              m_go(body, site2, Nil, List::drop(Succ(j), fr), cx3)
+            }
+          }
+        }
+      }
+    }
+    None => m_unhandled(p, op, args, k, slots, st, fr, cx)
+  }
+}
+
+// What no arm answers: the host shows a value and waits for a signal.
+pub fn m_unhandled(
+  p: MProgram,
+  op: Text,
+  args: List(MVal),
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  let ctors := p_ctors(p)
+  if Bool::and(m_text_eq(op, "show"), Nat::eq(List::length(args), 2)) {
+    let v := m_nth_or_unit(args, 1)
+    let shown := match v {
+      MvShown(t) => t
+      _ => m_show(ctors, cx, v)
+    }
+    MstepShow(
+      m_as_text(m_get(ctors, cx, m_nth_or_unit(args, 0))),
+      shown,
+      Mstate(k, slots, Cons(MvUnit, st), fr, cx)
+    )
+  } else {
+    if Bool::and(m_text_eq(op, "wait"), Nat::eq(List::length(args), 1)) {
+      match m_get(ctors, cx, m_nth_or_unit(args, 0)) {
+        MvSignal(s) => if m_raised(cx, s) {
+          m_go(k, slots, Cons(MvUnit, st), fr, cx)
+        } else {
+          m_switch(m_park(cx, Mtask(k, slots, Cons(MvUnit, st), fr, Some(s), None, None), false))
+        }
+        _ => MstepError(m_nothing_handles(op))
+      }
+    } else {
+      MstepError(m_nothing_handles(op))
+    }
+  }
+}
+
+// ---- budgets ------------------------------------------------------------------------------------
+
+// The indices of the budgets' frames, innermost first.
+pub fn m_budgets(fuel: Nat, fr: List(MFrame), at: Nat): List(Nat) {
+  match fuel {
+    Zero => Nil
+    Succ(f) => match fr {
+      Nil => Nil
+      Cons(fr0, rest) => match fr0 {
+        MfDirect(skip) => m_budgets(f, List::drop(skip, rest), Nat::add(at, Succ(skip)))
+        MfBudget(memory, left) => Cons(at, m_budgets(f, rest, Succ(at)))
+        _ => m_budgets(f, rest, Succ(at))
+      }
+    }
+  }
+}
+
+// Whether the budget of the frame has run out.
+pub fn m_budget_out(cx: MCx, f: Option(MFrame)): Bool {
+  match f {
+    Some(fr0) => match fr0 {
+      MfBudget(memory, left) => match left {
+        None => false
+        Some(n) => match memory {
+          true => Int::lt(n, cx_cells(cx))
+          false => Int::le(n, IntOfNat(0))
+        }
+      }
+      _ => false
+    }
+    None => false
+  }
+}
+
+pub fn m_first_out(cx: MCx, fr: List(MFrame), bs: List(Nat)): Option(Nat) {
+  match bs {
+    Nil => None
+    Cons(b, rest) => if m_budget_out(
+      cx,
+      List::nth(fr, b)
+    ) { Some(b) } else { m_first_out(cx, fr, rest) }
+  }
+}
+
+pub fn m_contains(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => Bool::or(Nat::eq(x, y), m_contains(rest, x))
+  }
+}
+
+// A step of the budgets `bs`.
+pub fn m_spend(fr: List(MFrame), bs: List(Nat), at: Nat): List(MFrame) {
+  match fr {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      if m_contains(bs, at) {
+        match f {
+          MfBudget(memory, left) => match memory {
+            true => f
+            false => match left {
+              None => f
+              Some(n) => MfBudget(false, Some(Int::sub(n, IntOfNat(1))))
+            }
+          }
+          _ => f
+        }
+      } else {
+        f
+      },
+      m_spend(rest, bs, Succ(at))
+    )
+  }
+}
+
+// Whether a budget is among the frames: when none is, a step counts only to the host's limit.
+pub fn m_has_budget(fr: List(MFrame)): Bool {
+  match fr {
+    Nil => false
+    Cons(f, rest) => match f {
+      MfBudget(memory, left) => true
+      _ => m_has_budget(rest)
+    }
+  }
+}
+
+pub fn m_tick(
+  p: MProgram,
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  let bs: List(Nat) := if m_has_budget(fr) { m_budgets(Succ(List::length(fr)), fr, 0) } else { Nil }
+  match bs {
+    Nil => match cx_left(cx) {
+      None => m_go(k, slots, st, fr, cx)
+      Some(n) => match n {
+        Zero => MstepError(m_step_limit())
+        Succ(m) => m_go(k, slots, st, fr, cx_set_left(cx, Some(m)))
+      }
+    }
+    bs => match m_first_out(cx, fr, bs) {
+      Some(b) => m_perform(
+        p,
+        "exceeded",
+        1,
+        Cons(MvInfo, Nil),
+        Succ(b),
+        McTickAnswer(k),
+        slots,
+        st,
+        fr,
+        cx
+      )
+      None => m_go(k, slots, st, m_spend(fr, bs, 0), cx)
+    }
+  }
+}
+
+pub fn m_tick_answer(
+  p: MProgram,
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  match st {
+    Nil => m_bad()
+    Cons(a, rest) => match m_first_out(cx, fr, m_budgets(Succ(List::length(fr)), fr, 0)) {
+      None => MstepError("internal: an answer of exceeded with no budget run out")
+      Some(b) => match m_get(p_ctors(p), cx, a) {
+        MvMore(n) => match List::nth(fr, b) {
+          Some(f) => match f {
+            MfBudget(memory, left) => {
+              let left2 := match n {
+                None => None
+                Some(m) => match memory {
+                  true => Some(Int::add(cx_cells(cx), m))
+                  false => Some(m)
+                }
+              }
+              m_go(k, slots, rest, m_set(fr, b, MfBudget(memory, left2)), cx)
+            }
+            _ => m_bad()
+          }
+          None => m_bad()
+        }
+        MvAnswer(v) => m_ret(p, v, m_site(fr, b, slots), List::drop(Succ(b), fr), cx)
+        _ => MstepError("internal: exceeded answered something else")
+      }
+    }
+  }
+}
+
+// What a builtin or an operation answered: `k` goes on with its value.
+pub fn m_out(
+  p: MProgram,
+  o: MOut,
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame)
+): MStep {
+  match o {
+    MoutVal(v, cx) => m_go(k, slots, Cons(v, st), fr, cx)
+    MoutErr(m) => MstepError(m)
+    MoutExit(c) => MstepExit(c)
+    MoutAsk(name, args, cx) => MstepAsk(name, args, Mstate(k, slots, st, fr, cx))
+    MoutPerform(op) => MstepError(m_nothing_handles(op))
+    MoutSpawn(f, pid, cx) => {
+      // The task runs at once, until it waits; then the spawner goes on.
+      let cx2 := m_park(cx, Mtask(k, slots, Cons(MvPending(pid), st), fr, None, None, None), true)
+      m_go(McCall(0, McRet), Nil, Cons(f, Nil), Nil, cx_with_tasks(cx2, cx_tasks(cx2), Some(pid)))
+    }
+    MoutYield(pid, cx) => m_switch(
+      m_park(cx, Mtask(k, slots, st, fr, None, None, Some(pid)), false)
+    )
+  }
+}
+
+// The `vm_timer` builtin: a pending that is there once the clock reads `now + ms`.
+pub fn m_timer(ms: MVal, now: MVal, cx: MCx): MOut {
+  match m_new_pending(cx, MpendTimer(Int::add(m_as_int(now), m_as_int(ms))), false) {
+    Pair { fst: pid, snd: cx2 } => MoutVal(
+      MvPending(pid),
+      cx_with_timers(cx2, Cons(pid, cx_timers(cx2)))
+    )
+  }
+}
+
+// ---- one instruction --------------------------------------------------------------------------------
+
+pub fn step_parts(
+  p: MProgram,
+  MkCode: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  let ctors := p_ctors(p)
+  match MkCode {
+    McRet => match st {
+      Nil => m_bad()
+      Cons(v, rest) => m_ret(p, v, slots, fr, cx)
+    }
+    McReturn => match st {
+      Nil => m_bad()
+      Cons(v, rest) => m_return(v, fr, cx)
+    }
+    McPush(v, k) => m_go(k, slots, Cons(v, st), fr, cx)
+    McLoad(i, k) => m_go(k, slots, Cons(m_nth_or_unit(slots, i), st), fr, cx)
+    McStore(i, k) => match st {
+      Nil => m_bad()
+      Cons(v, rest) => m_go(k, m_set(slots, i, v), rest, fr, cx)
+    }
+    McBox(i, k) => match st {
+      Nil => m_bad()
+      Cons(v, rest) => match cx_temp(cx, v) {
+        Pair { fst: r, snd: cx2 } => m_go(k, m_set(slots, i, r), rest, fr, cx2)
+      }
+    }
+    McAssign(i, path, through, k) => match st {
+      Nil => m_bad()
+      Cons(v, rest) => {
+        let held := m_nth_or_unit(slots, i)
+        match held {
+          MvRef(cell, p0) => if through {
+            m_go(k, slots, rest, fr, m_put(ctors, cx, cell, mr_extend(p0, path), v))
+          } else {
+            m_go(k, m_set(slots, i, m_with_path(ctors, held, path, v)), rest, fr, cx)
+          }
+          _ => m_go(k, m_set(slots, i, m_with_path(ctors, held, path, v)), rest, fr, cx)
+        }
+      }
+    }
+    McBorrow(i, path, k) => match m_nth_or_unit(slots, i) {
+      MvRef(cell, p0) => m_go(k, slots, Cons(MvRef(cell, mr_extend(p0, path)), st), fr, cx)
+      held => match cx_alloc(cx, MoCell(held)) {
+        Pair { fst: cell, snd: cx2 } => m_go(
+          k,
+          m_set(slots, i, MvRef(cell, MrPath(Nil))),
+          Cons(MvRef(cell, MrPath(List::reverse(path))), st),
+          fr,
+          cx2
+        )
+      }
+    }
+    McPop(k) => match st {
+      Nil => m_bad()
+      Cons(v, rest) => m_go(k, slots, rest, fr, cx)
+    }
+    McOp(op, k) => match m_pop(m_op_arity(op), st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: args, snd: rest } => m_out(p, m_op(ctors, cx, op, args), k, slots, rest, fr)
+      }
+    }
+    McCall(n, k) => match m_pop(n, st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: args, snd: rest } => match rest {
+          Nil => m_bad()
+          Cons(callee, rest2) => m_call_value(p, callee, args, k, slots, rest2, fr, cx)
+        }
+      }
+    }
+    McTail(f, n) => match m_pop(n, st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: args, snd: rest } => match m_tail_frames(fr) {
+          Some(fr2) => m_enter(p, f, args, fr2, cx)
+          None => m_call_value(p, MvFn(f), args, McReturn, slots, rest, fr, cx)
+        }
+      }
+    }
+    McTick(k) => m_tick(p, k, slots, st, fr, cx)
+    McTickAnswer(k) => m_tick_answer(p, k, slots, st, fr, cx)
+    McBranch(t, e, k) => match st {
+      Nil => m_bad()
+      Cons(c, rest) => {
+        let g: MVal := if m_is_ref(c) { m_get(ctors, cx, c) } else { c }
+        match g {
+          MvBool(b) => match b {
+            true => m_go(t, slots, Nil, Cons(MfBlock(k, rest), fr), cx)
+            false => m_go(e, slots, Nil, Cons(MfBlock(k, rest), fr), cx)
+          }
+          _ => m_bad()
+        }
+      }
+    }
+    McWhile(c, b, k) => m_go(c, slots, Nil, Cons(MfCond(c, b, k, st), fr), cx)
+    McMatch(pats, Guards, bodies, k) => match st {
+      Nil => m_bad()
+      Cons(Scrut, rest) => match pats {
+        Nil => MstepError(m_no_arm())
+        Cons(pt, ps) => match Guards {
+          Nil => m_bad()
+          Cons(g, gs) => match bodies {
+            Nil => m_bad()
+            Cons(b, bs) => match m_fit(ctors, cx, pt, Scrut, Nil) {
+              None => m_go(McMatch(ps, gs, bs, k), slots, st, fr, cx)
+              Some(r) => match r {
+                Pair { fst: binds, snd: cx2 } => m_go(
+                  g,
+                  m_apply_binds(slots, binds),
+                  Nil,
+                  Cons(MfGuard(Scrut, ps, gs, bs, b, k, rest), fr),
+                  cx2
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+    McClosure(f, n, k) => match m_pop(n, st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: caps, snd: rest } => m_go(
+          k,
+          slots,
+          Cons(MvClosure(f, caps), rest),
+          fr,
+          cx_add_cells(cx, 1)
+        )
+      }
+    }
+    McPerform(op, quant, n, k) => match m_pop(n, st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: args, snd: rest } => m_perform(p, op, quant, args, 0, k, slots, rest, fr, cx)
+      }
+    }
+    McHandle(body, Ops, pats, ks, bodies, rp, rg, rb, k) => m_go(
+      body,
+      slots,
+      Nil,
+      Cons(MfHandle(Ops, pats, ks, bodies, rp, rg, rb), Cons(MfBlock(k, st), fr)),
+      cx
+    )
+    McBudget(memory, body, k) => match st {
+      Nil => m_bad()
+      Cons(steps, rest) => {
+        let left := match m_get(ctors, cx, steps) {
+          MvInt(n) => match memory {
+            true => Some(Int::add(cx_cells(cx), n))
+            false => Some(n)
+          }
+          _ => None
+        }
+        m_go(body, slots, Nil, Cons(MfBudget(memory, left), Cons(MfBlock(k, rest), fr)), cx)
+      }
+    }
+    McBuiltin(b, n, k) => match m_pop(n, st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: args, snd: rest } => if Nat::eq(b, 115) {
+          // `Os::sleep_pending`: the host says the clock, then `vm_timer` makes the timer.
+          MstepAsk(
+            "vm_now",
+            Nil,
+            Mstate(McBuiltin(126, 2, k), slots, Cons(m_nth_or_unit(args, 0), rest), fr, cx)
+          )
+        } else {
+          if Nat::eq(b, 126) {
+            m_out(
+              p,
+              m_timer(m_get(ctors, cx, m_nth_or_unit(args, 0)), m_nth_or_unit(args, 1), cx),
+              k,
+              slots,
+              rest,
+              fr
+            )
+          } else {
+            match m_builtin(ctors, cx, b, args) {
+              MoutPerform(op) => m_perform(p, op, 0, Nil, 0, k, slots, rest, fr, cx)
+              o => m_out(p, o, k, slots, rest, fr)
+            }
+          }
+        }
+      }
+    }
+    McAsk(name, n, k) => match m_pop(n, st) {
+      None => m_bad()
+      Some(r) => match r {
+        Pair { fst: args, snd: rest } => MstepAsk(
+          name,
+          m_get_all(ctors, cx, args),
+          Mstate(k, slots, rest, fr, cx)
+        )
+      }
+    }
+  }
+}
+
+pub fn step(p: MProgram, s: MState): MStep {
+  match s {
+    Mstate(code, slots, st, fr, cx) => step_parts(p, code, slots, st, fr, cx)
+  }
+}
+
+// Runs frequent instructions with the state in its arguments. A state is packaged
+// at a boundary or by the general transition function.
+pub fn mexec(
+  p: MProgram,
+  fuel: Nat,
+  code: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  match fuel {
+    Zero => m_go(code, slots, st, fr, cx)
+    Succ(f) => match code {
+      McPush(v, k) => mexec(p, f, k, slots, Cons(v, st), fr, cx)
+      McLoad(i, k) => mexec(p, f, k, slots, Cons(m_nth_or_unit(slots, i), st), fr, cx)
+      McStore(i, k) => match st {
+        Nil => m_bad()
+        Cons(v, rest) => mexec(p, f, k, m_set(slots, i, v), rest, fr, cx)
+      }
+      McPop(k) => match st {
+        Nil => m_bad()
+        Cons(v, rest) => mexec(p, f, k, slots, rest, fr, cx)
+      }
+      McRet => match st {
+        Nil => m_bad()
+        Cons(v, unused) => match fr {
+          Cons(frame, rest) => match frame {
+            MfCall(k, sl2, st2) => mexec(p, f, k, sl2, Cons(v, st2), rest, cx)
+            MfResume(k, sl2, st2) => mexec(p, f, k, sl2, Cons(v, st2), rest, cx)
+            MfBlock(k, st2) => mexec(p, f, k, slots, Cons(v, st2), rest, cx)
+            MfBody(c, b, k, st2) => mexec(p, f, McWhile(c, b, k), slots, st2, rest, cx)
+            MfCond(c, b, k, st2) => {
+              let g: MVal := if m_is_ref(v) { m_get(p_ctors(p), cx, v) } else { v }
+              match g {
+                MvBool(go) => match go {
+                  true => mexec(p, f, b, slots, Nil, Cons(MfBody(c, b, k, st2), rest), cx)
+                  false => mexec(p, f, k, slots, Cons(MvUnit, st2), rest, cx)
+                }
+                _ => m_bad()
+              }
+            }
+            other => match m_ret(p, v, slots, Cons(other, rest), cx) {
+              MstepNext(s2) => match s2 {
+                Mstate(c2, sl2, st2, fr2, cx2) => mexec(p, f, c2, sl2, st2, fr2, cx2)
+              }
+              result => result
+            }
+          }
+          Nil => match m_finish(v, cx) {
+            MstepNext(s2) => match s2 {
+              Mstate(c2, sl2, st2, fr2, cx2) => mexec(p, f, c2, sl2, st2, fr2, cx2)
+            }
+            result => result
+          }
+        }
+      }
+      McWhile(c, b, k) => mexec(p, f, c, slots, Nil, Cons(MfCond(c, b, k, st), fr), cx)
+      McOp(op, k) => match m_pop(m_op_arity(op), st) {
+        None => m_bad()
+        Some(r) => match r {
+          Pair { fst: args, snd: rest } => match m_op(p_ctors(p), cx, op, args) {
+            MoutVal(v, cx2) => mexec(p, f, k, slots, Cons(v, rest), fr, cx2)
+            out => match m_out(p, out, k, slots, rest, fr) {
+              MstepNext(s2) => match s2 {
+                Mstate(c2, sl2, st2, fr2, cx2) => mexec(p, f, c2, sl2, st2, fr2, cx2)
+              }
+              result => result
+            }
+          }
+        }
+      }
+      other => match step_parts(p, other, slots, st, fr, cx) {
+        MstepNext(s2) => match s2 {
+          Mstate(c2, sl2, st2, fr2, cx2) => mexec(p, f, c2, sl2, st2, fr2, cx2)
+        }
+        result => result
+      }
+    }
+  }
+}
+
+// Runs at most `fuel` instructions, up to the first that asks the host or ends the run.
+// `MstepNext` is where the fuel ran out.
+pub fn mrun(p: MProgram, fuel: Nat, s: MState): MStep {
+  match s {
+    Mstate(code, slots, st, fr, cx) => mexec(p, fuel, code, slots, st, fr, cx)
+  }
+}
+
+// The host's answer on top of the stack.
+pub fn m_answer(s: MState, v: MVal): MState {
+  match s {
+    Mstate(MkCode, slots, st, fr, cx) => Mstate(MkCode, slots, Cons(v, st), fr, cx)
+  }
+}
+
+// The state that calls the program's `main` with no arguments, with the host's limit of
+// steps and its clock.
+pub fn mstart(p: MProgram, left: Option(Nat), now: Int): MState {
+  match p {
+    Mprogram(fns, ctors, main) => Mstate(
+      McCall(0, McRet),
+      Nil,
+      Cons(MvFn(main), Nil),
+      Nil,
+      Mcx(MtLeaf, 0, left, IntOfNat(0), now, Nil, None, Nil, false)
+    )
+  }
+}
+
+pub fn m_set_now(s: MState, now: Int): MState {
+  match s {
+    Mstate(MkCode, slots, st, fr, cx) => Mstate(MkCode, slots, st, fr, cx_set_now(cx, now))
+  }
+}

@@ -1,0 +1,116 @@
+import "function_table_steps.taut"
+import "field_recheck_frame.taut"
+
+pub theorem fnt_recheck_fields_cons_frame(
+  f: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_recheck_fields(rest, next, generics))
+): CkFnsFrame(c, recheck_fields_cons(f, rest, c, generics)) {
+  fnt_frame_bind_ok(
+    Ty,
+    Unit,
+    c,
+    (ignored: Ty, next: Checker) => ck_rewrap1(ck_recheck_fields(rest, next, generics)),
+    ck_written(c, registration_field_ty(f), generics),
+    fnt_ck_written_frame(c, registration_field_ty(f), generics),
+    ignored => next => fnt_frame_rewrap(next, ck_recheck_fields(rest, next, generics), ih(next))
+  )
+}
+pub theorem fnt_ck_recheck_fields_frame(
+  xs: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_recheck_fields(xs, c, generics)) {
+  match xs: CkFnsFrame(c, ck_recheck_fields(xs, c, generics)) {
+    Nil => Refl
+    Cons(f, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
+      Eq::sym(recheck_fields_cons_unf(f, rest, c, generics)),
+      fnt_recheck_fields_cons_frame(
+        f,
+        rest,
+        c,
+        generics,
+        next => fnt_ck_recheck_fields_frame(rest, next, generics)
+      )
+    )
+  }
+}
+
+pub theorem fnt_recheck_ctors_cons_frame(
+  k: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_recheck_ctors(rest, next, generics))
+): CkFnsFrame(c, recheck_ctors_cons(k, rest, c, generics)) {
+  fnt_frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_ctors(rest, next, generics)),
+    ck_recheck_fields(registration_ctor_fields(k), c, generics),
+    fnt_ck_recheck_fields_frame(registration_ctor_fields(k), c, generics),
+    ignored => next => fnt_frame_rewrap(next, ck_recheck_ctors(rest, next, generics), ih(next))
+  )
+}
+pub theorem fnt_ck_recheck_ctors_frame(
+  xs: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty)
+): CkFnsFrame(c, ck_recheck_ctors(xs, c, generics)) {
+  match xs: CkFnsFrame(c, ck_recheck_ctors(xs, c, generics)) {
+    Nil => Refl
+    Cons(k, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
+      Eq::sym(recheck_ctors_cons_unf(k, rest, c, generics)),
+      fnt_recheck_ctors_cons_frame(
+        k,
+        rest,
+        c,
+        generics,
+        next => fnt_ck_recheck_ctors_frame(rest, next, generics)
+      )
+    )
+  }
+}
+
+pub theorem fnt_recheck_datas_cons_frame(
+  d: SurfaceData,
+  rest: List(SurfaceData),
+  c: Checker,
+  ih: ∀ next: Checker. CkFnsFrame(next, ck_recheck_datas(rest, next))
+): CkFnsFrame(c, recheck_datas_cons(d, rest, c)) {
+  fnt_frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_recheck_datas(rest, next)),
+    ck_recheck_ctors(
+      registration_ctors(d),
+      c,
+      ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+    ),
+    fnt_ck_recheck_ctors_frame(
+      registration_ctors(d),
+      c,
+      ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+    ),
+    ignored => next => fnt_frame_rewrap(next, ck_recheck_datas(rest, next), ih(next))
+  )
+}
+pub theorem fnt_ck_recheck_datas_frame(
+  xs: List(SurfaceData),
+  c: Checker
+): CkFnsFrame(c, ck_recheck_datas(xs, c)) {
+  match xs: CkFnsFrame(c, ck_recheck_datas(xs, c)) {
+    Nil => Refl
+    Cons(d, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
+      Eq::sym(recheck_datas_cons_unf(d, rest, c)),
+      fnt_recheck_datas_cons_frame(d, rest, c, next => fnt_ck_recheck_datas_frame(rest, next))
+    )
+  }
+}

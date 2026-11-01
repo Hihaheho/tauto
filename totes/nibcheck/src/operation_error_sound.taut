@@ -1,0 +1,72 @@
+import "error_frame.taut"
+
+pub theorem error_frame_grows<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  grows: Grows(c, ck_st(m))
+): CkErrorFrame(c, m) {
+  error_frame_same(
+    c,
+    m,
+    Eq::sym(And::left(And::right(And::right(And::right(And::right(And::right(grows)))))))
+  )
+}
+pub theorem ck_unify_error_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkErrorFrame(c, ck_unify(c, a, b)) {
+  error_frame_grows(c, ck_unify(c, a, b), And::left(ck_unify_ok(c, a, b)(ordered)))
+}
+pub theorem ck_fits_error_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkErrorFrame(c, ck_fits(c, a, b)) {
+  error_frame_grows(c, ck_fits(c, a, b), And::left(ck_fits_ok(c, a, b)(ordered)))
+}
+pub theorem ck_attempt_fits_error_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkErrorFrame(c, ck_attempt_fits(c, a, b)) {
+  error_frame_grows(c, ck_attempt_fits(c, a, b), And::left(ck_attempt_fits_ok(c, a, b)(ordered)))
+}
+pub theorem ck_join_error_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkErrorFrame(c, ck_join(c, a, b)) {
+  error_frame_grows(c, ck_join(c, a, b), And::left(ck_join_ok(c, a, b)(ordered)))
+}
+pub theorem ck_expect_error_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  ordered: CkOrdered(c)
+): CkErrorFrame(c, ck_expect(c, a, b, span, what)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
+    Eq::sym(run_expect_unf(c, a, b, span, what)),
+    error_frame_bind(
+      Bool,
+      Unit,
+      c,
+      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+      ck_fits(c, a, b),
+      ck_fits_error_frame(c, a, b, ordered),
+      fits => next => error_frame_if(
+        next,
+        ck_expect_message(ck_shown(next, a), ck_shown(next, b), what),
+        span,
+        not(fits)
+      )
+    )
+  )
+}

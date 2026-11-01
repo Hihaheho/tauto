@@ -1,0 +1,373 @@
+import "written_leaf_sound.taut"
+import "written_context_sound.taut"
+import "written_error_sound.taut"
+
+// Mapping the result of a state computation does not alter its diagnostics.
+pub fn written_map<A: Type, B: Type>(f: (A) -> B, m: Mut1(A, Checker)): Mut1(B, Checker) {
+  frame_bind(A, B, (value: A, state: Checker) => mut1(f(value), state), m)
+}
+pub theorem written_map_value<A: Type, B: Type>(
+  f: (A) -> B,
+  m: Mut1(A, Checker)
+): ck_val(written_map(f, m)) = f(ck_val(m)) {
+  match m: ck_val(written_map(f, m)) = f(ck_val(m)) { mut1(value, state) => Refl }
+}
+pub theorem written_map_clean<A: Type, B: Type>(
+  f: (A) -> B,
+  m: Mut1(A, Checker),
+  clean: DiagnosticClean(ck_st(written_map(f, m)))
+): DiagnosticClean(ck_st(m)) {
+  match m: DiagnosticClean(ck_st(m)) { mut1(value, state) => clean }
+}
+
+pub theorem written_union_sound(
+  parts: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_each(parts, c, generics))
+  ). WrittenTerms(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    parts,
+    ck_val(ck_written_each(parts, c, generics))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_union(parts, c, generics)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkUnion(parts),
+  ck_val(frame_written_union(parts, c, generics))
+) {
+  Eq::subst(
+    (t: Ty) => WrittenKind(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      under_borrow,
+      SkUnion(parts),
+      t
+    ),
+    Eq::sym(written_map_value(ty_union, ck_written_each(parts, c, generics))),
+    WrittenKindUnion(
+      parts,
+      ck_val(ck_written_each(parts, c, generics)),
+      ih(written_map_clean(ty_union, ck_written_each(parts, c, generics), clean))
+    )
+  )
+}
+
+pub theorem written_product_sound(
+  parts: List(SurfaceTerm),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_each(parts, c, generics))
+  ). WrittenTerms(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    parts,
+    ck_val(ck_written_each(parts, c, generics))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_product(parts, c, generics)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkProduct(parts),
+  ck_val(frame_written_product(parts, c, generics))
+) {
+  Eq::subst(
+    (t: Ty) => WrittenKind(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      under_borrow,
+      SkProduct(parts),
+      t
+    ),
+    Eq::sym(written_map_value(ty_product, ck_written_each(parts, c, generics))),
+    WrittenKindProduct(
+      parts,
+      ck_val(ck_written_each(parts, c, generics)),
+      ih(written_map_clean(ty_product, ck_written_each(parts, c, generics), clean))
+    )
+  )
+}
+
+pub theorem written_tagged_sound(
+  tag: Text,
+  body: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(body, c, generics))
+  ). WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    false,
+    body,
+    ck_val(ck_written_in(body, c, generics))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_tagged(tag, body, c, generics)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkTagged(tag, body),
+  ck_val(frame_written_tagged(tag, body, c, generics))
+) {
+  Eq::subst(
+    (t: Ty) => WrittenKind(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      under_borrow,
+      SkTagged(tag, body),
+      t
+    ),
+    Eq::sym(
+      written_map_value(
+        Ty,
+        Ty,
+        (t: Ty) => ty_tagged(Cons(tag, Nil), t),
+        ck_written_in(body, c, generics)
+      )
+    ),
+    WrittenKindTagged(
+      tag,
+      body,
+      ck_val(ck_written_in(body, c, generics)),
+      ih(
+        written_map_clean(
+          Ty,
+          Ty,
+          (t: Ty) => ty_tagged(Cons(tag, Nil), t),
+          ck_written_in(body, c, generics),
+          clean
+        )
+      )
+    )
+  )
+}
+
+pub theorem written_borrow_sound(
+  mutable: Bool,
+  body: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(body, frame_set_under_borrow(c, true), generics))
+  ). WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    true,
+    body,
+    ck_val(ck_written_in(body, frame_set_under_borrow(c, true), generics))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_borrow(mutable, body, c, generics)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkBorrow(mutable, body),
+  ck_val(frame_written_borrow(mutable, body, c, generics))
+) {
+  Eq::subst(
+    (t: Ty) => WrittenKind(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      under_borrow,
+      SkBorrow(mutable, body),
+      t
+    ),
+    Eq::sym(
+      written_map_value(
+        Ty,
+        Ty,
+        (t: Ty) => TyBorrow(t, mutable),
+        ck_written_in(body, frame_set_under_borrow(c, true), generics)
+      )
+    ),
+    WrittenKindBorrow(
+      mutable,
+      body,
+      ck_val(ck_written_in(body, frame_set_under_borrow(c, true), generics)),
+      ih(
+        written_map_clean(
+          Ty,
+          Ty,
+          (t: Ty) => TyBorrow(t, mutable),
+          ck_written_in(body, frame_set_under_borrow(c, true), generics),
+          clean
+        )
+      )
+    )
+  )
+}
+
+pub fn written_fnkind_after(
+  spelling: Text,
+  span: TySpan,
+  m: Mut1(Ty, Checker)
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (value: Ty, state: Checker) => ck_written_fn_kind(value, state, spelling, span),
+    m
+  )
+}
+pub theorem written_fnkind_after_sound(
+  c: Checker,
+  spelling: Text,
+  span: TySpan,
+  body: SurfaceTerm,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  m: Mut1(Ty, Checker),
+  frame: CkReadFrame(c, m),
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, body, ck_val(m)),
+  clean: DiagnosticClean(ck_st(written_fnkind_after(spelling, span, m)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkFnKind(spelling, body),
+  ck_val(written_fnkind_after(spelling, span, m))
+) {
+  match m: WrittenKind(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    under_borrow,
+    SkFnKind(spelling, body),
+    ck_val(written_fnkind_after(spelling, span, m))
+  ) {
+    mut1(value, state) => Eq::subst(
+      (env: Datas) => WrittenKind(
+        env,
+        generics,
+        frame_constructor_position(c),
+        under_borrow,
+        SkFnKind(spelling, body),
+        ck_val(ck_written_fn_kind(value, state, spelling, span))
+      ),
+      Eq::congr(frame_read_datas, frame),
+      ck_written_fn_kind_sound(
+        value,
+        state,
+        spelling,
+        span,
+        generics,
+        frame_constructor_position(c),
+        under_borrow,
+        body,
+        Eq::subst(
+          (env: Datas) => WrittenTerm(
+            env,
+            generics,
+            frame_constructor_position(c),
+            false,
+            body,
+            value
+          ),
+          Eq::sym(Eq::congr(frame_read_datas, frame)),
+          ih(ck_written_fn_kind_frame_errors(value, state, spelling, span, clean))
+        ),
+        clean
+      )
+    )
+  }
+}
+
+pub theorem written_fnkind_rewrap(
+  spelling: Text,
+  span: TySpan,
+  m: Mut1(Ty, Checker)
+): frame_bind(
+    Ty,
+    Ty,
+    (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
+    m
+  ) = written_fnkind_after(spelling, span, m) {
+  match m: frame_bind(
+      Ty,
+      Ty,
+      (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
+      m
+    ) = written_fnkind_after(spelling, span, m) {
+    mut1(value, state) => ck_rewrap1_id(ck_written_fn_kind(value, state, spelling, span))
+  }
+}
+pub theorem written_fnkind_sound(
+  spelling: Text,
+  span: TySpan,
+  body: SurfaceTerm,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(body, c, generics))
+  ). WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    false,
+    body,
+    ck_val(ck_written_in(body, c, generics))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_fnkind(spelling, body, c, generics, span)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkFnKind(spelling, body),
+  ck_val(frame_written_fnkind(spelling, body, c, generics, span))
+) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => WrittenKind(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      under_borrow,
+      SkFnKind(spelling, body),
+      ck_val(m)
+    ),
+    Eq::sym(written_fnkind_rewrap(spelling, span, ck_written_in(body, c, generics))),
+    written_fnkind_after_sound(
+      c,
+      spelling,
+      span,
+      body,
+      generics,
+      under_borrow,
+      ck_written_in(body, c, generics),
+      ck_written_in_frame(body, c, generics),
+      ih,
+      Eq::subst(
+        (m: Mut1(Ty, Checker)) => DiagnosticClean(ck_st(m)),
+        written_fnkind_rewrap(spelling, span, ck_written_in(body, c, generics)),
+        clean
+      )
+    )
+  )
+}

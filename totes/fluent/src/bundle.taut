@@ -1,0 +1,160 @@
+import std::Base
+import std::Text
+import "syntax.taut"
+import "resolve.taut"
+
+// The entry points on `Text`: a bundle holds the messages of one locale, read from FTL
+// resources, and formats them with arguments.
+
+// A problem with a resource: an entry that could not be read (its text), or a message or term
+// whose name an earlier resource already used (the earlier one is kept).
+pub(open) inductive ResourceError: Type {
+  Junk(text: Text): ResourceError
+  Duplicate(id: Text): ResourceError
+}
+
+pub(open) inductive Added: Type {
+  Mk(b: Bundle, errors: List(ResourceError)): Added
+}
+
+// A formatted message and what went wrong while formatting it.
+pub(open) inductive Formatted: Type {
+  Mk(text: Text, errors: List(FluentError)): Formatted
+}
+
+// An empty bundle for the locale `locale`, such as `"en-US"`. Placeables are isolated.
+pub fn bundle_new(locale: Text): Bundle {
+  Bundle::Mk(Text::bytes(locale), true, Nil)
+}
+
+// The same bundle, with placeables isolated or not.
+pub fn bundle_isolating(b: Bundle, on: Bool): Bundle {
+  match b: Bundle {
+    Mk(l, iso, es) => Bundle::Mk(l, on, es)
+  }
+}
+
+pub fn arg_str(name: Text, v: Text): Arg {
+  Arg::Mk(Text::bytes(name), VStr(Text::bytes(v)))
+}
+
+pub fn arg_num(name: Text, n: Nat): Arg {
+  Arg::Mk(Text::bytes(name), VNum(n))
+}
+
+pub fn entry_id(e: Entry): List(Nat) {
+  match e: List(Nat) {
+    Message(i, v, a) => i
+    Term(i, v, a) => Cons(45, i)
+  }
+}
+
+pub fn is_term(e: Entry): Bool {
+  match e: Bool {
+    Message(i, v, a) => false
+    Term(i, v, a) => true
+  }
+}
+
+pub fn defined(es: List(Entry), e: Entry): Bool {
+  match es: Bool {
+    Nil => false
+    Cons(x, rest) => Bool::or(
+      Bool::and(Bool::eq(is_term(x), is_term(e)), byte_list_eq(entry_id(x), entry_id(e))),
+      defined(rest, e)
+    )
+  }
+}
+
+pub fn add_dup(
+  id: List(Nat),
+  p: Pair(List(Entry), List(ResourceError))
+): Pair(List(Entry), List(ResourceError)) {
+  Pair { fst: p.fst, snd: Cons(Duplicate(Text::Mk(id)), p.snd) }
+}
+
+// The new entries not defined before, and the names of those that were.
+pub fn add_entries(old: List(Entry), new: List(Entry)): Pair(List(Entry), List(ResourceError)) {
+  match new: Pair(List(Entry), List(ResourceError)) {
+    Nil => Pair { fst: old, snd: Nil }
+    Cons(e, rest) => match defined(old, e): Pair(List(Entry), List(ResourceError)) {
+      true => add_dup(entry_id(e), add_entries(old, rest))
+      false => add_entries(List::append(old, Cons(e, Nil)), rest)
+    }
+  }
+}
+
+pub fn junk_errors(js: List(List(Nat))): List(ResourceError) {
+  match js: List(ResourceError) {
+    Nil => Nil
+    Cons(j, rest) => Cons(Junk(Text::Mk(j)), junk_errors(rest))
+  }
+}
+
+pub fn add_parsed(b: Bundle, r: Resource): Added {
+  match b: Added {
+    Mk(l, iso, es) => match r: Added {
+      Mk(new, js) => Added::Mk(
+        Bundle::Mk(l, iso, add_entries(es, new).fst),
+        List::append(junk_errors(js), add_entries(es, new).snd)
+      )
+    }
+  }
+}
+
+// The bundle with the messages and terms of the FTL text `ftl` added.
+pub fn add_resource(b: Bundle, ftl: Text): Added {
+  add_parsed(b, parse_bytes(Text::bytes(ftl)))
+}
+
+// `add_resource` keeping only the bundle.
+pub fn with_resource(b: Bundle, ftl: Text): Bundle {
+  match add_resource(b, ftl): Bundle {
+    Added::Mk(b2, errs) => b2
+  }
+}
+
+pub fn has_message(b: Bundle, id: Text): Bool {
+  match find_message(bundle_entries(b), Text::bytes(id)): Bool {
+    None => false
+    Some(m) => true
+  }
+}
+
+pub fn formatted_of(x: Ev): Formatted {
+  match x: Formatted {
+    Mk(v, es) => Formatted::Mk(Text::Mk(value_bytes(v)), es)
+  }
+}
+
+// The message `id` formatted with `args`.
+pub fn format(b: Bundle, id: Text, args: List(Arg)): Formatted {
+  formatted_of(r_expr(depth(), b, args, ExMsg(Text::bytes(id), None)))
+}
+
+// The attribute `name` of the message `id` formatted with `args`.
+pub fn format_attr(b: Bundle, id: Text, name: Text, args: List(Arg)): Formatted {
+  formatted_of(r_expr(depth(), b, args, ExMsg(Text::bytes(id), Some(Text::bytes(name)))))
+}
+
+// Only the text of `format`.
+pub fn format_text(b: Bundle, id: Text, args: List(Arg)): Text {
+  match format(b, id, args): Text {
+    Formatted::Mk(t, es) => t
+  }
+}
+
+// An error as a sentence.
+pub fn error_text(e: FluentError): Text {
+  match e: Text {
+    UnknownMessage(i) => Text::concat("unknown message: ", Text::Mk(i))
+    UnknownTerm(i) => Text::concat("unknown term: -", Text::Mk(i))
+    UnknownAttribute(i, a) => Text::concat(
+      Text::concat(Text::concat("unknown attribute: ", Text::Mk(i)), "."),
+      Text::Mk(a)
+    )
+    UnknownVariable(n) => Text::concat("unknown variable: $", Text::Mk(n))
+    NoValue(i) => Text::concat("message has no value: ", Text::Mk(i))
+    TooDeep => "references nest too deep (a cycle?)"
+  }
+}

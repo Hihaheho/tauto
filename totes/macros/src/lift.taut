@@ -1,4 +1,4 @@
-// The surface syntax as a macro's values (`Lift` of `crates/tauto/src/macros/syn.rs`,
+// The surface syntax as a macro's values (`Lift` of `crates/tauto-surface/src/macros/syn.rs`,
 // for the text of a macro's input and the body of a `quote`).
 //
 // What cannot be written as a value is pushed to `errs.errs`: `lit` for a macro
@@ -10,26 +10,34 @@
 // in the high bits which of the nodes that start there. Every function that
 // gives out spans takes the state, and the calls are in the order of the Rust
 // walk's.
+import std::Text
 
 // A variable of a typed macro's context, written as its atom.
-struct LfAtom { name: Text, id: i64 }
+import "../../surface/src/surface.taut"
+
+pub(open) struct LfAtom { name: Text, id: i64 }
 
 // With `reflip`, the names already carry the scopes of a `Lower` that flipped
-// this expansion's scope: flip it back, as `syn_expand` does when it
+// this expansion's scope: flip it back, as `Syn::expand` does when it
 // reads an expansion again.
-struct LfCtx { scopes: List(i64), in_quote: Bool, atoms: List(LfAtom), reflip: Option(i64) }
-
-// A span given out: its number, where it starts and where it ends.
-struct LfIss { id: u64, start: u64, end: u64 }
-
-// The errors, and the spans given out.
-struct LfSt { errs: Vec(Text), tabled: Bool, issued: Vec(LfIss) }
-
-fn lf_st_new(tabled: Bool) -> LfSt {
-  LfSt { errs: vec_new(), tabled: tabled, issued: vec_new() }
+pub(open) struct LfCtx {
+  scopes: List(i64),
+  in_quote: Bool,
+  atoms: List(LfAtom),
+  reflip: Option(i64)
 }
 
-fn lf_atom(xs: List(LfAtom), name: Text) -> Option(i64) {
+// A span given out: its number, where it starts and where it ends.
+pub(open) struct LfIss { id: u64, start: Nat, end: Nat }
+
+// The errors, and the spans given out.
+pub(open) struct LfSt { errs: Vec(Text), tabled: Bool, issued: Vec(LfIss) }
+
+pub fn lf_st_new(tabled: Bool): LfSt {
+  LfSt { errs: Vec::new(), tabled: tabled, issued: Vec::new() }
+}
+
+pub fn lf_atom(xs: List(LfAtom), name: Text): Option(i64) {
   match xs {
     Nil => None
     Cons(a, rest) => if a.name == name {
@@ -41,9 +49,9 @@ fn lf_atom(xs: List(LfAtom), name: Text) -> Option(i64) {
 }
 
 // A span: where it starts and where it ends.
-struct LfSp { start: u64, end: u64 }
+pub(open) struct LfSp { start: Nat, end: Nat }
 
-fn lf_ints(xs: List(i64)) -> List(Node) {
+pub fn lf_ints(xs: List(i64)): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => Cons(NInt(x), lf_ints(rest))
@@ -51,11 +59,11 @@ fn lf_ints(xs: List(i64)) -> List(Node) {
 }
 
 // How many of the spans given out start at `start`.
-fn lf_issued_at(&xs: Vec(LfIss), start: u64) -> u64 {
-  var n: u64 = 0
-  var i: u64 = 0
-  while i < vec_len(&xs) {
-    let &x = vec_index(&xs, i)
+pub fn lf_issued_at(&xs: Vec(LfIss), start: Nat): u64 {
+  var n: u64 := 0
+  var i: u64 := 0
+  while i < Vec::len(&xs) {
+    let &x := Vec::index(&xs, i)
     if x.start == start {
       n := n + 1
     }
@@ -65,22 +73,25 @@ fn lf_issued_at(&xs: Vec(LfIss), start: u64) -> u64 {
 }
 
 // A span of the Rust walk (`Lift::span`): the next one at that start.
-fn lf_span(&mut errs: LfSt, at: LfSp) -> Node {
+pub fn lf_span(&mut errs: LfSt, at: LfSp): Node {
   if errs.tabled {
-    let k = lf_issued_at(&errs.issued, at.start)
-    let id = at.start + k * 4294967296
-    vec_push(&mut errs.issued, LfIss { id: id, start: at.start, end: at.end })
-    nd_st("SynSpan", Cons(NLabeled { name: "id", value: NInt(i64_of_u64(id)) }, Nil))
+    let k := lf_issued_at(&errs.issued, at.start)
+    let id := U64::of_nat(at.start) + k * 4294967296
+    Vec::push(&mut errs.issued, LfIss { id: id, start: at.start, end: at.end })
+    nd_st("SynSpan", Cons(NLabeled { name: "id", value: NInt(I64::of_u64(id)) }, Nil))
   } else {
-    nd_st("SynSpan", Cons(NLabeled { name: "id", value: NInt(i64_of_u64(at.start)) }, Nil))
+    nd_st(
+      "SynSpan",
+      Cons(NLabeled { name: "id", value: NInt(I64::of_u64(U64::of_nat(at.start))) }, Nil)
+    )
   }
 }
 
 // The name after a leading `$`, in a quote.
-fn lf_dollar(c: LfCtx, name: Text) -> Option(Text) {
+pub fn lf_dollar(c: LfCtx, name: Text): Option(Text) {
   if c.in_quote {
-    match text_byte(name, 0) {
-      Some(36) => text_slice(name, 1, text_len(name))
+    match std::prelude::Text::byte(name, 0) {
+      Some(36) => std::prelude::Text::slice(name, 1, std::prelude::Text::len(name))
       other => None
     }
   } else {
@@ -89,9 +100,9 @@ fn lf_dollar(c: LfCtx, name: Text) -> Option(Text) {
 }
 
 // A name and the scopes it carries.
-struct LfNamed { name: Text, scopes: List(i64) }
+pub(open) struct LfNamed { name: Text, scopes: List(i64) }
 
-fn lf_scope_cons(s: Text, rest: List(i64)) -> List(i64) {
+pub fn lf_scope_cons(s: Text, rest: List(i64)): List(i64) {
   match text_parse_i64(s) {
     Some(n) => Cons(n, rest)
     None => rest
@@ -99,40 +110,45 @@ fn lf_scope_cons(s: Text, rest: List(i64)) -> List(i64) {
 }
 
 // The numbers in `1,3`, those that are numbers.
-fn lf_scopes_from(marks: Text, at: u64) -> List(i64) {
+pub fn lf_scopes_from(marks: Text, at: Nat): List(i64) {
   match text_find(marks, ",", at) {
-    Some(i) => lf_scope_cons(text_slice_or_empty(marks, at, i), lf_scopes_from(marks, i + 1))
-    None => lf_scope_cons(text_slice_or_empty(marks, at, text_len(marks)), Nil)
+    Some(i) => lf_scope_cons(Text::slice_or_empty(marks, at, i), lf_scopes_from(marks, i + 1))
+    None => lf_scope_cons(Text::slice_or_empty(marks, at, Nat::of_u64(std::prelude::Text::len(marks))), Nil)
   }
 }
 
 // The name as it is written and the scopes it is given: its own, or with the
 // scope of the expansion flipped back, the base name kept.
-fn lf_reflipped(c: LfCtx, name: Text) -> LfNamed {
+pub fn lf_reflipped(c: LfCtx, name: Text): LfNamed {
   match c.reflip {
     None => LfNamed { name: name, scopes: c.scopes }
     Some(scope) => {
-      let sp = rs_split(text_code_point(1), name)
+      let sp := rs_split(text_code_point(1), name)
       LfNamed { name: sp.plain, scopes: lw_flip(lf_scopes_from(sp.marks, 0), scope) }
     }
   }
 }
 
-fn lf_ident(c: LfCtx, &mut errs: LfSt, name: Text, at: LfSp) -> Node {
+pub fn lf_ident(c: LfCtx, &mut errs: LfSt, name: Text, at: LfSp): Node {
   match lf_dollar(c, name) {
-    Some(vn) => NSplice(SurfaceTerm { kind: SkVar(vn), start: at.start, end: at.end })
+    Some(vn) => NSplice(
+      SurfaceTerm { occurrence: None, kind: SkVar(vn), start: at.start, end: at.end }
+    )
     None => {
-      let sp = lf_reflipped(c, name)
-      let span = lf_span(&mut errs, at)
+      let sp := lf_reflipped(c, name)
+      let span := lf_span(&mut errs, at)
       nd_st(
         "SynIdent",
         Cons(
           NLabeled { name: "name", value: NText(sp.name) },
           Cons(
-            NLabeled { name: "ctx", value: nd_st(
-              "SynCtx",
-              Cons(NLabeled { name: "scopes", value: NList(lf_ints(sp.scopes)) }, Nil)
-            ) },
+            NLabeled {
+              name: "ctx",
+              value: nd_st(
+                "SynCtx",
+                Cons(NLabeled { name: "scopes", value: NList(lf_ints(sp.scopes)) }, Nil)
+              )
+            },
             Cons(NLabeled { name: "span", value: span }, Nil)
           )
         )
@@ -141,61 +157,61 @@ fn lf_ident(c: LfCtx, &mut errs: LfSt, name: Text, at: LfSp) -> Node {
   }
 }
 
-fn lf_binder(c: LfCtx, &mut errs: LfSt, name: Text, ty: Option(Node), at: LfSp) -> Node {
-  let id = lf_ident(c, &mut errs, name, at)
-  nd_ctor("SynBinder::BName", Cons(id, Cons(NOpt(ty), Nil)))
+pub fn lf_binder(c: LfCtx, &mut errs: LfSt, name: Text, ty: Option(Node), at: LfSp): Node {
+  let id := lf_ident(c, &mut errs, name, at)
+  nd_ctor("SynBinder.BName", Cons(id, Cons(NOpt(ty), Nil)))
 }
 
-fn lf_ex(ctor: Text, fields: List(Node)) -> Node {
-  nd_ctor(text_concat_all(Cons("SynExpr::", Cons(ctor, Nil))), fields)
+pub fn lf_ex(ctor: Text, fields: List(Node)): Node {
+  nd_ctor(Text::concat_all(Cons("SynExpr.", Cons(ctor, Nil))), fields)
 }
 
-fn lf_stm(ctor: Text, fields: List(Node)) -> Node {
-  nd_ctor(text_concat_all(Cons("SynStmt::", Cons(ctor, Nil))), fields)
+pub fn lf_stm(ctor: Text, fields: List(Node)): Node {
+  nd_ctor(Text::concat_all(Cons("SynStmt.", Cons(ctor, Nil))), fields)
 }
 
-fn lf_pt(ctor: Text, fields: List(Node)) -> Node {
-  nd_ctor(text_concat_all(Cons("SynPattern::", Cons(ctor, Nil))), fields)
+pub fn lf_pt(ctor: Text, fields: List(Node)): Node {
+  nd_ctor(Text::concat_all(Cons("SynPattern.", Cons(ctor, Nil))), fields)
 }
 
-fn lf_err(&mut errs: LfSt, why: Text) -> Node {
-  vec_push(&mut errs.errs, why)
+pub fn lf_err(&mut errs: LfSt, why: Text): Node {
+  Vec::push(&mut errs.errs, why)
   NList(Nil)
 }
 
-fn lf_opt_expr(c: LfCtx, &mut errs: LfSt, t: Option(SurfaceTerm)) -> Node {
+pub fn lf_opt_expr(c: LfCtx, &mut errs: LfSt, t: Option(SurfaceTerm)): Node {
   NOpt(match t {
     None => None
     Some(x) => Some(lf_expr(c, &mut errs, x))
   })
 }
 
-fn lf_opt_ident(c: LfCtx, &mut errs: LfSt, h: Option(Text), at: LfSp) -> Node {
+pub fn lf_opt_ident(c: LfCtx, &mut errs: LfSt, h: Option(Text), at: LfSp): Node {
   NOpt(match h {
     None => None
     Some(x) => Some(lf_ident(c, &mut errs, x, at))
   })
 }
 
-fn lf_exprs(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceTerm)) -> Node {
+pub fn lf_exprs(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceTerm)): Node {
   NList(lf_expr_list(c, &mut errs, xs))
 }
 
-fn lf_expr_list(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceTerm)) -> List(Node) {
+pub fn lf_expr_list(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceTerm)): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
-      let n = lf_expr(c, &mut errs, x)
+      let n := lf_expr(c, &mut errs, x)
       Cons(n, lf_expr_list(c, &mut errs, rest))
     }
   }
 }
 
-fn lf_opt_bools(xs: List(Option(Bool))) -> Node {
+pub fn lf_opt_bools(xs: List(Option(Bool))): Node {
   NList(lf_opt_bool_list(xs))
 }
 
-fn lf_opt_bool_list(xs: List(Option(Bool))) -> List(Node) {
+pub fn lf_opt_bool_list(xs: List(Option(Bool))): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => Cons(NOpt(match x {
@@ -205,16 +221,16 @@ fn lf_opt_bool_list(xs: List(Option(Bool))) -> List(Node) {
   }
 }
 
-fn lf_pi_params(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceParam), at: LfSp) -> List(Node) {
+pub fn lf_pi_params(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceParam), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
-      let name = NOpt(match p.name {
+      let name := NOpt(match p.name {
         None => None
         Some(n) => Some(lf_ident(c, &mut errs, n, at))
       })
-      let ty = lf_expr(c, &mut errs, p.ty)
-      let one = nd_st(
+      let ty := lf_expr(c, &mut errs, p.ty)
+      let one := nd_st(
         "SynParam",
         Cons(NLabeled { name: "name", value: name }, Cons(NLabeled { name: "ty", value: ty }, Nil))
       )
@@ -223,37 +239,46 @@ fn lf_pi_params(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceParam), at: LfSp) -> 
   }
 }
 
-fn lf_binders(c: LfCtx, &mut errs: LfSt, xs: List(Text), at: LfSp) -> List(Node) {
+pub fn lf_binders(c: LfCtx, &mut errs: LfSt, xs: List(Text), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
-      let b = lf_binder(c, &mut errs, x, None, at)
+      let b := lf_binder(c, &mut errs, x, None, at)
       Cons(b, lf_binders(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_fields(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceField), at: LfSp) -> List(Node) {
+pub fn lf_fields(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceField), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
-      let v = lf_expr(c, &mut errs, f.value)
-      Cons(NPair(NText(f.name), v), lf_fields(c, &mut errs, rest, at))
+      let v := lf_expr(c, &mut errs, f.value)
+      Cons(nd_product2("Text", NText(f.name), "SynExpr", v), lf_fields(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_expr(c: LfCtx, &mut errs: LfSt, t: SurfaceTerm) -> Node {
-  let at = LfSp { start: t.start, end: t.end }
-  let span = lf_span(&mut errs, at)
+// `()`, the unit, is read as `Tuple` applied to nothing; it is the node `ExUnit`.
+pub fn lf_is_unit(f: SurfaceTerm, args: List(SurfaceTerm)): Bool {
+  match args: Bool {
+    Nil => match f.kind: Bool {
+      SkVar(n) => n == "Tuple"
+      _ => false
+    }
+    Cons(a, rest) => false
+  }
+}
+
+pub fn lf_expr(c: LfCtx, &mut errs: LfSt, t: SurfaceTerm): Node {
+  let at := LfSp { start: t.start, end: t.end }
+  let span := lf_span(&mut errs, at)
   match t.kind {
     SkVar(n) => match lf_dollar(c, n) {
-      Some(
-        vn
-      ) => NSplice(
+      Some(vn) => NSplice(
         nd_app(
-          "syn_expr_of",
-          Cons(SurfaceTerm { kind: SkVar(vn), start: t.start, end: t.end }, Nil),
+          "Syn::expr_of",
+          Cons(SurfaceTerm { occurrence: None, kind: SkVar(vn), start: t.start, end: t.end }, Nil),
           NdSp { start: t.start, end: t.end }
         )
       )
@@ -263,139 +288,145 @@ fn lf_expr(c: LfCtx, &mut errs: LfSt, t: SurfaceTerm) -> Node {
       }
     }
     SkNat(s) => lf_ex("ExNat", Cons(NText(s), Cons(span, Nil)))
+    SkFloat(s) => lf_err(&mut errs, "a float cannot be written in a quote yet")
+    SkRow(e) => lf_err(&mut errs, "a row cannot be written in a quote yet")
     SkText(s) => lf_ex("ExText", Cons(NText(s), Cons(span, Nil)))
     SkBool(b) => lf_ex("ExBool", Cons(NBool(b), Cons(span, Nil)))
-    SkApp(f, args) => {
-      let f2 = lf_expr(c, &mut errs, f)
-      let a2 = lf_exprs(c, &mut errs, args)
+    SkApp(f, args) => if lf_is_unit(f, args) {
+      lf_ex("ExUnit", Cons(span, Nil))
+    } else {
+      let f2 := lf_expr(c, &mut errs, f)
+      let a2 := lf_exprs(c, &mut errs, args)
       lf_ex("ExApp", Cons(f2, Cons(a2, Cons(span, Nil))))
     }
     SkPi(params, result, effects) => {
-      let ps = lf_pi_params(c, &mut errs, params, at)
-      let r = lf_expr(c, &mut errs, result)
+      let ps := lf_pi_params(c, &mut errs, params, at)
+      let r := lf_expr(c, &mut errs, result)
       lf_ex("ExPi", Cons(NList(ps), Cons(r, Cons(nd_opt_texts(effects), Cons(span, Nil)))))
     }
     SkExists(binder, domain, body) => {
-      let bd = lf_binder(c, &mut errs, binder, None, at)
-      let d = lf_expr(c, &mut errs, domain)
-      let b = lf_expr(c, &mut errs, body)
+      let bd := lf_binder(c, &mut errs, binder, None, at)
+      let d := lf_expr(c, &mut errs, domain)
+      let b := lf_expr(c, &mut errs, body)
       lf_ex("ExExists", Cons(bd, Cons(d, Cons(b, Cons(span, Nil)))))
     }
     SkLam(params, body) => {
-      let bs = lf_binders(c, &mut errs, params, at)
-      let b = lf_expr(c, &mut errs, body)
+      let bs := lf_binders(c, &mut errs, params, at)
+      let b := lf_expr(c, &mut errs, body)
       lf_ex("ExLam", Cons(NList(bs), Cons(b, Cons(span, Nil))))
     }
     SkUnion(items) => {
-      let xs = lf_exprs(c, &mut errs, items)
+      let xs := lf_exprs(c, &mut errs, items)
       lf_ex("ExUnion", Cons(xs, Cons(span, Nil)))
     }
     SkTagged(tag, term) => {
-      let x = lf_expr(c, &mut errs, term)
+      let x := lf_expr(c, &mut errs, term)
       lf_ex("ExTagged", Cons(NText(tag), Cons(x, Cons(span, Nil))))
     }
     SkIf(cond, a, b) => {
-      let c2 = lf_expr(c, &mut errs, cond)
-      let a2 = lf_expr(c, &mut errs, a)
-      let b2 = lf_opt_expr(c, &mut errs, b)
+      let c2 := lf_expr(c, &mut errs, cond)
+      let a2 := lf_expr(c, &mut errs, a)
+      let b2 := lf_opt_expr(c, &mut errs, b)
       lf_ex("ExIf", Cons(c2, Cons(a2, Cons(b2, Cons(span, Nil)))))
     }
     SkField(base, name) => {
-      let b = lf_expr(c, &mut errs, base)
+      let b := lf_expr(c, &mut errs, base)
       lf_ex("ExField", Cons(b, Cons(NText(name), Cons(span, Nil))))
     }
     SkBlock(stmts) => {
-      let xs = lf_stmts(c, &mut errs, stmts)
+      let xs := lf_stmts(c, &mut errs, stmts)
       lf_ex("ExBlock", Cons(NList(xs), Cons(span, Nil)))
     }
     SkPerform(eff, args) => {
-      let e = lf_ident(c, &mut errs, eff, at)
-      let a = lf_exprs(c, &mut errs, args)
+      let e := lf_ident(c, &mut errs, eff, at)
+      let a := lf_exprs(c, &mut errs, args)
       lf_ex("ExPerform", Cons(e, Cons(a, Cons(span, Nil))))
     }
     SkHandle(body, handlers) => {
-      let hs = lf_handlers(c, &mut errs, handlers, at)
-      let b = lf_expr(c, &mut errs, body)
+      let hs := lf_handlers(c, &mut errs, handlers, at)
+      let b := lf_expr(c, &mut errs, body)
       lf_ex("ExHandle", Cons(b, Cons(NList(hs), Cons(span, Nil))))
     }
-    SkBudget(steps, body) => {
-      let s = lf_expr(c, &mut errs, steps)
-      let b = lf_expr(c, &mut errs, body)
+    SkBudget(memory, steps, body) => if memory {
+      lf_err(&mut errs, "a memory budget cannot be written in a quote yet")
+    } else {
+      let s := lf_expr(c, &mut errs, steps)
+      let b := lf_expr(c, &mut errs, body)
       lf_ex("ExBudget", Cons(s, Cons(b, Cons(span, Nil))))
     }
     SkMatch(scrutinee, result, arms, binder) => {
-      let as_ = lf_arms(c, &mut errs, arms, at)
-      let s = lf_expr(c, &mut errs, scrutinee)
-      let r = lf_opt_expr(c, &mut errs, result)
-      let h = lf_opt_ident(c, &mut errs, binder, at)
+      let as_ := lf_arms(c, &mut errs, arms, at)
+      let s := lf_expr(c, &mut errs, scrutinee)
+      let r := lf_opt_expr(c, &mut errs, result)
+      let h := lf_opt_ident(c, &mut errs, binder, at)
       lf_ex("ExMatch", Cons(s, Cons(r, Cons(NList(as_), Cons(h, Cons(span, Nil))))))
     }
     SkRecord(name, fields) => {
-      let fs = lf_fields(c, &mut errs, fields, at)
-      let n = lf_ident(c, &mut errs, name, at)
+      let fs := lf_fields(c, &mut errs, fields, at)
+      let n := lf_ident(c, &mut errs, name, at)
       lf_ex("ExRecord", Cons(n, Cons(NList(fs), Cons(span, Nil))))
     }
     SkBorrow(m, term) => {
-      let x = lf_expr(c, &mut errs, term)
+      let x := lf_expr(c, &mut errs, term)
       lf_ex("ExBorrow", Cons(NBool(m), Cons(x, Cons(span, Nil))))
     }
     SkFnKind(kind, ty) => {
-      let x = lf_expr(c, &mut errs, ty)
+      let x := lf_expr(c, &mut errs, ty)
       lf_ex("ExFnKind", Cons(NText(kind), Cons(x, Cons(span, Nil))))
     }
     SkBorrowLam(borrows, lam) => {
-      let x = lf_expr(c, &mut errs, lam)
+      let x := lf_expr(c, &mut errs, lam)
       lf_ex("ExBorrowLam", Cons(lf_opt_bools(borrows), Cons(x, Cons(span, Nil))))
     }
     SkMacroCall(name, arg) => match arg.kind {
       SkSyntaxLit(n, text) => lf_err(&mut errs, "lit")
       other => {
-        let n = lf_ident(c, &mut errs, name, at)
-        let a = lf_expr(c, &mut errs, arg)
+        let n := lf_ident(c, &mut errs, name, at)
+        let a := lf_expr(c, &mut errs, arg)
         lf_ex("ExMacroExpr", Cons(n, Cons(a, Cons(span, Nil))))
       }
     }
     SkQuote(stmts, body) => lf_err(&mut errs, "a quote is not written inside a quote")
     SkSplice(inner) => if c.in_quote {
-      NSplice(nd_app("syn_expr_of", Cons(inner, Nil), NdSp { start: t.start, end: t.end }))
+      NSplice(nd_app("Syn::expr_of", Cons(inner, Nil), NdSp { start: t.start, end: t.end }))
     } else {
       lf_err(&mut errs, "$ is written only inside quote")
     }
-    SkSyntaxLit(
-      n,
-      text
-    ) => lf_err(&mut errs, "a syntax literal is not written inside a quote; call a macro")
+    SkSyntaxLit(n, text) => lf_err(
+      &mut errs,
+      "a syntax literal is not written inside a quote; call a macro"
+    )
     SkHole(n) => lf_ex("ExHole", Cons(NText(n), Cons(span, Nil)))
-    SkStep(
-      tactic,
-      arg,
-      cs,
-      ce,
-      before,
-      arms
-    ) => lf_err(&mut errs, "a step cannot be written in a quote")
+    SkStep(tactic, arg, cs, ce, Before, arms) => lf_err(
+      &mut errs,
+      "a step cannot be written in a quote"
+    )
+    SkProduct(items) => lf_err(&mut errs, "a product cannot be written in a quote yet")
+    SkProject(base, ty) => lf_err(&mut errs, "a product cannot be written in a quote yet")
     SkOther(n) => lf_err(&mut errs, "cannot be written in a quote yet")
   }
 }
 
 // ---------------------------------------------------------------- statements
 
-fn lf_stmts(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceStmt)) -> List(Node) {
+pub fn lf_stmts(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceStmt)): List(Node) {
   match xs {
     Nil => Nil
     Cons(s, rest) => {
-      let n = lf_stmt_or_splice(c, &mut errs, s)
+      let n := lf_stmt_or_splice(c, &mut errs, s)
       Cons(n, lf_stmts(c, &mut errs, rest))
     }
   }
 }
 
 // A lone `$name` in a `quote stmts` is a list of statements to put in.
-fn lf_stmt_or_splice(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt) -> Node {
+pub fn lf_stmt_or_splice(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt): Node {
   match s {
     StExpr(t) => match t.kind {
       SkVar(n) => match lf_dollar(c, n) {
-        Some(vn) => NSpliceList(SurfaceTerm { kind: SkVar(vn), start: t.start, end: t.end })
+        Some(vn) => NSpliceList(
+          SurfaceTerm { occurrence: None, kind: SkVar(vn), start: t.start, end: t.end }
+        )
         None => lf_stmt(c, &mut errs, s)
       }
       other => lf_stmt(c, &mut errs, s)
@@ -404,32 +435,38 @@ fn lf_stmt_or_splice(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt) -> Node {
   }
 }
 
-fn lf_stmt(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt) -> Node {
+pub fn lf_stmt(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt): Node {
   match s {
     StLet(name, ty, value, borrow, borrow_mut) => {
-      let at = LfSp { start: value.start, end: value.end }
-      let id = lf_ident(c, &mut errs, name, at)
-      let t = lf_opt_expr(c, &mut errs, ty)
-      let v = lf_expr(c, &mut errs, value)
-      let span = lf_span(&mut errs, at)
+      let at := LfSp { start: value.start, end: value.end }
+      let id := lf_ident(c, &mut errs, name, at)
+      let t := lf_opt_expr(c, &mut errs, ty)
+      let v := lf_expr(c, &mut errs, value)
+      let span := lf_span(&mut errs, at)
       lf_stm(
         "StLet",
         Cons(id, Cons(t, Cons(v, Cons(NBool(borrow), Cons(NBool(borrow_mut), Cons(span, Nil))))))
       )
     }
     StVar(name, ty, value, borrow) => {
-      let at = LfSp { start: value.start, end: value.end }
-      let id = lf_ident(c, &mut errs, name, at)
-      let t = lf_opt_expr(c, &mut errs, ty)
-      let v = lf_expr(c, &mut errs, value)
-      let span = lf_span(&mut errs, at)
+      let at := LfSp { start: value.start, end: value.end }
+      let id := lf_ident(c, &mut errs, name, at)
+      let t := lf_opt_expr(c, &mut errs, ty)
+      let v := lf_expr(c, &mut errs, value)
+      let span := lf_span(&mut errs, at)
       lf_stm("StVar", Cons(id, Cons(t, Cons(v, Cons(NBool(borrow), Cons(span, Nil))))))
     }
-    StAssign(name, value) => {
-      let at = LfSp { start: value.start, end: value.end }
-      let id = lf_ident(c, &mut errs, name, at)
-      let v = lf_expr(c, &mut errs, value)
-      let span = lf_span(&mut errs, at)
+    StAssign(name, Some(place), value) => lf_err(
+      &mut errs,
+      "an assignment to a field cannot be written in a quote yet"
+    )
+    StCalled(generates, call) => lf_err(&mut errs, "this statement cannot be written in a quote")
+    StAttributed(name, arg, generates, inner) => lf_err(&mut errs, "an attributed statement cannot be written in a quote yet")
+    StAssign(name, None, value) => {
+      let at := LfSp { start: value.start, end: value.end }
+      let id := lf_ident(c, &mut errs, name, at)
+      let v := lf_expr(c, &mut errs, value)
+      let span := lf_span(&mut errs, at)
       lf_stm("StAssign", Cons(id, Cons(v, Cons(span, Nil))))
     }
     StFn(f) => lf_stm("StFn", Cons(lf_fn(c, &mut errs, f), Nil))
@@ -441,8 +478,8 @@ fn lf_stmt(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt) -> Node {
       other => lf_stm("StExpr", Cons(lf_expr(c, &mut errs, t), Nil))
     }
     StWhile(cond, body) => {
-      let a = lf_expr(c, &mut errs, cond)
-      let b = lf_expr(c, &mut errs, body)
+      let a := lf_expr(c, &mut errs, cond)
+      let b := lf_expr(c, &mut errs, body)
       lf_stm("StWhile", Cons(a, Cons(b, Nil)))
     }
     StReturn(e) => lf_stm("StReturn", Cons(lf_opt_expr(c, &mut errs, e), Nil))
@@ -452,8 +489,8 @@ fn lf_stmt(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt) -> Node {
     StEnum(d) => lf_stm("StEnum", Cons(lf_data(c, &mut errs, d), Nil))
     StEffect(e) => lf_stm("StEffect", Cons(lf_effect(c, &mut errs, e), Nil))
     StMutual(items, start, end) => {
-      let xs = lf_stmts(c, &mut errs, items)
-      let span = lf_span(&mut errs, LfSp { start: start, end: end })
+      let xs := lf_stmts(c, &mut errs, items)
+      let span := lf_span(&mut errs, LfSp { start: start, end: end })
       lf_stm("StMutual", Cons(NList(xs), Cons(span, Nil)))
     }
     StImport(n, a, b) => lf_err(&mut errs, "this statement cannot be written in a quote")
@@ -468,7 +505,7 @@ fn lf_stmt(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt) -> Node {
   }
 }
 
-fn lf_bound_nodes(xs: List(Option(Text))) -> List(Node) {
+pub fn lf_bound_nodes(xs: List(Option(Text))): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => Cons(NOpt(match x {
@@ -478,34 +515,34 @@ fn lf_bound_nodes(xs: List(Option(Text))) -> List(Node) {
   }
 }
 
-fn lf_idents(c: LfCtx, &mut errs: LfSt, xs: List(Text), at: LfSp) -> List(Node) {
+pub fn lf_idents(c: LfCtx, &mut errs: LfSt, xs: List(Text), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
-      let n = lf_ident(c, &mut errs, x, at)
+      let n := lf_ident(c, &mut errs, x, at)
       Cons(n, lf_idents(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_opt_expr_list(c: LfCtx, &mut errs: LfSt, xs: List(Option(SurfaceTerm))) -> List(Node) {
+pub fn lf_opt_expr_list(c: LfCtx, &mut errs: LfSt, xs: List(Option(SurfaceTerm))): List(Node) {
   match xs {
     Nil => Nil
     Cons(x, rest) => {
-      let n = lf_opt_expr(c, &mut errs, x)
+      let n := lf_opt_expr(c, &mut errs, x)
       Cons(n, lf_opt_expr_list(c, &mut errs, rest))
     }
   }
 }
 
-fn lf_fn(c: LfCtx, &mut errs: LfSt, f: SurfaceFn) -> Node {
-  let at = LfSp { start: f.start, end: f.end }
-  let types = lf_opt_expr_list(c, &mut errs, f.param_types)
-  let name = lf_ident(c, &mut errs, f.name, at)
-  let params = lf_idents(c, &mut errs, f.params, at)
-  let result = lf_opt_expr(c, &mut errs, f.result)
-  let body = lf_expr(c, &mut errs, f.body)
-  let span = lf_span(&mut errs, at)
+pub fn lf_fn(c: LfCtx, &mut errs: LfSt, f: SurfaceFn): Node {
+  let at := LfSp { start: f.start, end: f.end }
+  let types := lf_opt_expr_list(c, &mut errs, f.param_types)
+  let name := lf_ident(c, &mut errs, f.name, at)
+  let params := lf_idents(c, &mut errs, f.params, at)
+  let result := lf_opt_expr(c, &mut errs, f.result)
+  let body := lf_expr(c, &mut errs, f.body)
+  let span := lf_span(&mut errs, at)
   nd_st(
     "SynFn",
     Cons(
@@ -539,30 +576,30 @@ fn lf_fn(c: LfCtx, &mut errs: LfSt, f: SurfaceFn) -> Node {
   )
 }
 
-fn lf_named(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceNamed), at: LfSp) -> List(Node) {
+pub fn lf_named(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceNamed), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
-      let id = lf_ident(c, &mut errs, p.name, at)
-      let t = lf_expr(c, &mut errs, p.ty)
-      Cons(NPair(id, t), lf_named(c, &mut errs, rest, at))
+      let id := lf_ident(c, &mut errs, p.name, at)
+      let t := lf_expr(c, &mut errs, p.ty)
+      Cons(nd_product2("SynIdent", id, "SynExpr", t), lf_named(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_theorem(c: LfCtx, &mut errs: LfSt, d: SurfaceTheorem) -> Node {
-  let at = LfSp { start: d.start, end: d.end }
-  let params = lf_named(c, &mut errs, d.params, at)
-  let name = lf_ident(c, &mut errs, d.name, at)
-  let ty = lf_expr(c, &mut errs, d.ty)
-  let body = lf_opt_expr(c, &mut errs, d.body)
-  let span = lf_span(&mut errs, at)
+pub fn lf_theorem(c: LfCtx, &mut errs: LfSt, d: SurfaceTheorem): Node {
+  let at := LfSp { start: d.start, end: d.end }
+  let params := lf_named(c, &mut errs, d.params, at)
+  let name := lf_ident(c, &mut errs, d.name, at)
+  let ty := lf_expr(c, &mut errs, d.ty)
+  let body := lf_opt_expr(c, &mut errs, d.body)
+  let span := lf_span(&mut errs, at)
   nd_st(
     "SynTheorem",
     Cons(
       NLabeled { name: "name", value: name },
       Cons(
-        NLabeled { name: "implicit", value: NInt(i64_of_u64(d.implicit)) },
+        NLabeled { name: "implicit", value: NInt(I64::of_u64(U64::of_nat(d.implicit))) },
         Cons(
           NLabeled { name: "params", value: NList(params) },
           Cons(
@@ -578,27 +615,35 @@ fn lf_theorem(c: LfCtx, &mut errs: LfSt, d: SurfaceTheorem) -> Node {
   )
 }
 
-fn lf_data_fields(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceDataField), at: LfSp) -> List(Node) {
+pub fn lf_data_fields(
+  c: LfCtx,
+  &mut errs: LfSt,
+  xs: List(SurfaceDataField),
+  at: LfSp
+): List(Node) {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
-      let name = NOpt(match f.name {
+      let name := NOpt(match f.name {
         None => None
         Some(n) => Some(lf_ident(c, &mut errs, n, at))
       })
-      let t = lf_expr(c, &mut errs, f.ty)
-      Cons(NPair(name, t), lf_data_fields(c, &mut errs, rest, at))
+      let t := lf_expr(c, &mut errs, f.ty)
+      Cons(
+        nd_product2("Option(SynIdent)", name, "SynExpr", t),
+        lf_data_fields(c, &mut errs, rest, at)
+      )
     }
   }
 }
 
-fn lf_ctors(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceDataCtor), at: LfSp) -> List(Node) {
+pub fn lf_ctors(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceDataCtor), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(k, rest) => {
-      let fields = lf_data_fields(c, &mut errs, k.fields, at)
-      let name = lf_ident(c, &mut errs, k.name, at)
-      let one = nd_st(
+      let fields := lf_data_fields(c, &mut errs, k.fields, at)
+      let name := lf_ident(c, &mut errs, k.name, at)
+      let one := nd_st(
         "SynCtor",
         Cons(
           NLabeled { name: "name", value: name },
@@ -610,11 +655,11 @@ fn lf_ctors(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceDataCtor), at: LfSp) -> L
   }
 }
 
-fn lf_data(c: LfCtx, &mut errs: LfSt, d: SurfaceData) -> Node {
-  let at = LfSp { start: d.start, end: d.end }
-  let ctors = lf_ctors(c, &mut errs, d.constructors, at)
-  let name = lf_ident(c, &mut errs, d.name, at)
-  let span = lf_span(&mut errs, at)
+pub fn lf_data(c: LfCtx, &mut errs: LfSt, d: SurfaceData): Node {
+  let at := LfSp { start: d.start, end: d.end }
+  let ctors := lf_ctors(c, &mut errs, d.constructors, at)
+  let name := lf_ident(c, &mut errs, d.name, at)
+  let span := lf_span(&mut errs, at)
   nd_st(
     "SynData",
     Cons(
@@ -636,19 +681,19 @@ fn lf_data(c: LfCtx, &mut errs: LfSt, d: SurfaceData) -> Node {
   )
 }
 
-fn lf_ind_ctors(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceCtor), at: LfSp) -> List(Node) {
+pub fn lf_ind_ctors(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceCtor), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(k, rest) => {
-      let name = lf_ident(c, &mut errs, k.name, at)
-      let params = lf_named(c, &mut errs, k.params, at)
-      let result = lf_expr(c, &mut errs, k.result)
-      let one = nd_st(
+      let name := lf_ident(c, &mut errs, k.name, at)
+      let params := lf_named(c, &mut errs, k.params, at)
+      let result := lf_expr(c, &mut errs, k.result)
+      let one := nd_st(
         "SynIndCtor",
         Cons(
           NLabeled { name: "name", value: name },
           Cons(
-            NLabeled { name: "implicit", value: NInt(i64_of_u64(k.implicit)) },
+            NLabeled { name: "implicit", value: NInt(I64::of_u64(U64::of_nat(k.implicit))) },
             Cons(
               NLabeled { name: "params", value: NList(params) },
               Cons(NLabeled { name: "result", value: result }, Nil)
@@ -661,13 +706,13 @@ fn lf_ind_ctors(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceCtor), at: LfSp) -> L
   }
 }
 
-fn lf_inductive(c: LfCtx, &mut errs: LfSt, d: SurfaceInductive) -> Node {
-  let at = LfSp { start: d.start, end: d.end }
-  let ctors = lf_ind_ctors(c, &mut errs, d.constructors, at)
-  let name = lf_ident(c, &mut errs, d.name, at)
-  let params = lf_named(c, &mut errs, d.params, at)
-  let sort = lf_expr(c, &mut errs, d.sort)
-  let span = lf_span(&mut errs, at)
+pub fn lf_inductive(c: LfCtx, &mut errs: LfSt, d: SurfaceInductive): Node {
+  let at := LfSp { start: d.start, end: d.end }
+  let ctors := lf_ind_ctors(c, &mut errs, d.constructors, at)
+  let name := lf_ident(c, &mut errs, d.name, at)
+  let params := lf_named(c, &mut errs, d.params, at)
+  let sort := lf_expr(c, &mut errs, d.sort)
+  let span := lf_span(&mut errs, at)
   nd_st(
     "SynInductive",
     Cons(
@@ -686,12 +731,12 @@ fn lf_inductive(c: LfCtx, &mut errs: LfSt, d: SurfaceInductive) -> Node {
   )
 }
 
-fn lf_effect(c: LfCtx, &mut errs: LfSt, e: SurfaceEffect) -> Node {
-  let at = LfSp { start: e.start, end: e.end }
-  let params = lf_opt_expr_list(c, &mut errs, e.params)
-  let name = lf_ident(c, &mut errs, e.name, at)
-  let result = lf_opt_expr(c, &mut errs, e.result)
-  let span = lf_span(&mut errs, at)
+pub fn lf_effect(c: LfCtx, &mut errs: LfSt, e: SurfaceEffect): Node {
+  let at := LfSp { start: e.start, end: e.end }
+  let params := lf_opt_expr_list(c, &mut errs, e.params)
+  let name := lf_ident(c, &mut errs, e.name, at)
+  let result := lf_opt_expr(c, &mut errs, e.result)
+  let span := lf_span(&mut errs, at)
   nd_st(
     "SynEffect",
     Cons(
@@ -703,7 +748,7 @@ fn lf_effect(c: LfCtx, &mut errs: LfSt, e: SurfaceEffect) -> Node {
           Cons(
             NLabeled { name: "result", value: result },
             Cons(
-              NLabeled { name: "resume", value: NOpt(match e.resume {
+              NLabeled { name: "resume", value: NOpt(match e.r#resume {
                 None => None
                 Some(r) => Some(NText(r))
               }) },
@@ -718,68 +763,68 @@ fn lf_effect(c: LfCtx, &mut errs: LfSt, e: SurfaceEffect) -> Node {
 
 // ---------------------------------------------------------------- patterns
 
-fn lf_patterns(c: LfCtx, &mut errs: LfSt, xs: List(SurfacePattern), at: LfSp) -> List(Node) {
+pub fn lf_patterns(c: LfCtx, &mut errs: LfSt, xs: List(SurfacePattern), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
-      let n = lf_pattern(c, &mut errs, p, at)
+      let n := lf_pattern(c, &mut errs, p, at)
       Cons(n, lf_patterns(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_pattern_fields(
+pub fn lf_pattern_fields(
   c: LfCtx,
   &mut errs: LfSt,
   xs: List(SurfacePatternField),
   at: LfSp
-) -> List(Node) {
+): List(Node) {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
-      let n = lf_pattern(c, &mut errs, f.pattern, at)
-      Cons(NPair(NText(f.name), n), lf_pattern_fields(c, &mut errs, rest, at))
+      let n := lf_pattern(c, &mut errs, f.pattern, at)
+      Cons(nd_product2("Text", NText(f.name), "SynPattern", n), lf_pattern_fields(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_pattern(c: LfCtx, &mut errs: LfSt, p: SurfacePattern, at: LfSp) -> Node {
+pub fn lf_pattern(c: LfCtx, &mut errs: LfSt, p: SurfacePattern, at: LfSp): Node {
   match p {
     PtWild => lf_pt("PtWild", Nil)
     PtBind(n) => lf_pt("PtBind", Cons(lf_ident(c, &mut errs, n, at), Nil))
-    PtInt(neg, mag) => lf_pt(
+    PtInt(Neg, mag) => lf_pt(
       "PtInt",
-      Cons(NInt(if neg {
-        0 - i64_of_u64(mag)
+      Cons(NInt(if Neg {
+        0 - I64::of_u64(U64::of_nat(mag))
       } else {
-        i64_of_u64(mag)
+        I64::of_u64(U64::of_nat(mag))
       }), Nil)
     )
     PtBool(b) => lf_pt("PtBool", Cons(NBool(b), Nil))
     PtText(t) => lf_pt("PtText", Cons(NText(t), Nil))
     PtCtor(name, args) => {
-      let a = lf_patterns(c, &mut errs, args, at)
-      let n = lf_ident(c, &mut errs, name, at)
+      let a := lf_patterns(c, &mut errs, args, at)
+      let n := lf_ident(c, &mut errs, name, at)
       lf_pt("PtCtor", Cons(n, Cons(NList(a), Nil)))
     }
     PtRecord(name, fields) => {
-      let a = lf_pattern_fields(c, &mut errs, fields, at)
-      let n = lf_ident(c, &mut errs, name, at)
+      let a := lf_pattern_fields(c, &mut errs, fields, at)
+      let n := lf_ident(c, &mut errs, name, at)
       lf_pt("PtRecord", Cons(n, Cons(NList(a), Nil)))
     }
     PtOther(n) => NList(Nil)
   }
 }
 
-fn lf_arms(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceArm), at: LfSp) -> List(Node) {
+pub fn lf_arms(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceArm), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(a, rest) => {
-      let pat = lf_pattern_checked(c, &mut errs, a.pattern, at)
-      let guard = lf_opt_expr(c, &mut errs, a.guard)
-      let goal = lf_opt_expr(c, &mut errs, a.goal)
-      let body = lf_expr(c, &mut errs, a.body)
-      let one = nd_st(
+      let pat := lf_pattern_checked(c, &mut errs, a.pattern, at)
+      let guard := lf_opt_expr(c, &mut errs, a.guard)
+      let goal := lf_opt_expr(c, &mut errs, a.goal)
+      let body := lf_expr(c, &mut errs, a.body)
+      let one := nd_st(
         "SynArm",
         Cons(
           NLabeled { name: "pattern", value: pat },
@@ -798,14 +843,14 @@ fn lf_arms(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceArm), at: LfSp) -> List(No
 }
 
 // A pattern the walk cannot write (`PtOther`, anywhere inside) is an error.
-fn lf_pattern_checked(c: LfCtx, &mut errs: LfSt, p: SurfacePattern, at: LfSp) -> Node {
+pub fn lf_pattern_checked(c: LfCtx, &mut errs: LfSt, p: SurfacePattern, at: LfSp): Node {
   if lf_has_other(p) {
-    vec_push(&mut errs.errs, "a pattern cannot be written in a quote")
+    Vec::push(&mut errs.errs, "a pattern cannot be written in a quote")
   }
   lf_pattern(c, &mut errs, p, at)
 }
 
-fn lf_has_other(p: SurfacePattern) -> Bool {
+pub fn lf_has_other(p: SurfacePattern): Bool {
   match p {
     PtOther(n) => true
     PtCtor(name, args) => lf_any_other(args)
@@ -814,57 +859,66 @@ fn lf_has_other(p: SurfacePattern) -> Bool {
   }
 }
 
-fn lf_any_other(xs: List(SurfacePattern)) -> Bool {
+pub fn lf_any_other(xs: List(SurfacePattern)): Bool {
   match xs {
     Nil => false
     Cons(p, rest) => lf_has_other(p) || lf_any_other(rest)
   }
 }
 
-fn lf_any_other_field(xs: List(SurfacePatternField)) -> Bool {
+pub fn lf_any_other_field(xs: List(SurfacePatternField)): Bool {
   match xs {
     Nil => false
     Cons(f, rest) => lf_has_other(f.pattern) || lf_any_other_field(rest)
   }
 }
 
-fn lf_handlers(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceHandler), at: LfSp) -> List(Node) {
+pub fn lf_handlers(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceHandler), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(h, rest) => {
-      let n = lf_handler(c, &mut errs, h, at)
+      let n := lf_handler(c, &mut errs, h, at)
       Cons(n, lf_handlers(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_checked_patterns(c: LfCtx, &mut errs: LfSt, xs: List(SurfacePattern), at: LfSp) -> List(Node) {
+pub fn lf_checked_patterns(
+  c: LfCtx,
+  &mut errs: LfSt,
+  xs: List(SurfacePattern),
+  at: LfSp
+): List(Node) {
   match xs {
     Nil => Nil
     Cons(p, rest) => {
-      let n = lf_pattern_checked(c, &mut errs, p, at)
+      let n := lf_pattern_checked(c, &mut errs, p, at)
       Cons(n, lf_checked_patterns(c, &mut errs, rest, at))
     }
   }
 }
 
-fn lf_handler(c: LfCtx, &mut errs: LfSt, h: SurfaceHandler, at: LfSp) -> Node {
+pub fn lf_handler(c: LfCtx, &mut errs: LfSt, h: SurfaceHandler, at: LfSp): Node {
   match h {
     HdReturn(p, body) => {
-      let pat = lf_pattern_checked(c, &mut errs, p, at)
-      let b = lf_expr(c, &mut errs, body)
-      nd_ctor("SynHandler::HReturn", Cons(pat, Cons(b, Nil)))
+      let pat := lf_pattern_checked(c, &mut errs, p, at)
+      let b := lf_expr(c, &mut errs, body)
+      nd_ctor("SynHandler.HReturn", Cons(pat, Cons(b, Nil)))
     }
-    HdOperation(eff, patterns, cont, guard, body) => {
-      let ps = lf_checked_patterns(c, &mut errs, patterns, at)
-      let e = lf_ident(c, &mut errs, eff, at)
-      let k = NOpt(match cont {
+    HdOperation(eff, hfa, hty, patterns, cont, guard, body) => {
+      let ps := lf_checked_patterns(c, &mut errs, patterns, at)
+      let e := lf_ident(c, &mut errs, eff, at)
+      let k := NOpt(match cont {
         None => None
         Some(name) => Some(lf_ident(c, &mut errs, name, at))
       })
-      let g = lf_opt_expr(c, &mut errs, guard)
-      let b = lf_expr(c, &mut errs, body)
-      nd_ctor("SynHandler::HOp", Cons(e, Cons(NList(ps), Cons(k, Cons(g, Cons(b, Nil))))))
+      let g := lf_opt_expr(c, &mut errs, guard)
+      let b := lf_expr(c, &mut errs, body)
+      let tys := lf_exprs(c, &mut errs, hty)
+      nd_ctor(
+        "SynHandler.HOp",
+        Cons(e, Cons(NList(ps), Cons(k, Cons(g, Cons(b, Cons(nd_texts(hfa), Cons(tys, Nil)))))))
+      )
     }
   }
 }
@@ -872,16 +926,16 @@ fn lf_handler(c: LfCtx, &mut errs: LfSt, h: SurfaceHandler, at: LfSp) -> Node {
 // ---------------------------------------------------------------- quote
 
 // `quote::desugar`: the term that makes the syntax of `body`, all at `sp`.
-fn lf_desugar(&mut errs: LfSt, stmts: Bool, body: List(SurfaceStmt), sp: LfSp) -> SurfaceTerm {
-  let c = LfCtx { scopes: Nil, in_quote: true, atoms: Nil, reflip: None }
-  let node = if stmts {
+pub fn lf_desugar(&mut errs: LfSt, stmts: Bool, body: List(SurfaceStmt), sp: LfSp): SurfaceTerm {
+  let c := LfCtx { scopes: Nil, in_quote: true, atoms: Nil, reflip: None }
+  let node := if stmts {
     NList(lf_stmts(c, &mut errs, body))
   } else {
     match body {
-      Cons(StExpr(only), Nil) => lf_expr(c, &mut errs, only)
+      Cons(SurfaceStmt::StExpr(only), Nil) => lf_expr(c, &mut errs, only)
       other => {
-        let xs = NList(lf_stmts(c, &mut errs, body))
-        let span = lf_span(&mut errs, LfSp { start: sp.start, end: sp.end })
+        let xs := NList(lf_stmts(c, &mut errs, body))
+        let span := lf_span(&mut errs, LfSp { start: sp.start, end: sp.end })
         lf_ex("ExBlock", Cons(xs, Cons(span, Nil)))
       }
     }

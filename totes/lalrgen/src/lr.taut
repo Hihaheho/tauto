@@ -1,0 +1,913 @@
+// Derived from lalry 0.1.0 (Jörg Singer, Geoffry Song; MIT OR Apache-2.0), the crate parol uses; see NOTICE.
+// The LALR(1) table of a grammar, made as the crate lalry 0.1.0 makes it for
+// parol: the LR(0) state machine, its extended grammar, the FIRST and FOLLOW
+// sets of that grammar, and the actions. `README.md` says what each step
+// decides.
+
+// ---------------------------------------------------------------- the grammar
+
+// A symbol: a terminal is its number, the non-terminal `n` is
+// `lr_nt_base() + n`, so that terminals come before non-terminals.
+pub fn lr_nt_base(): u64 {
+  1048576
+}
+
+pub fn lr_is_nt(s: u64): Bool {
+  s >= lr_nt_base()
+}
+
+// An item: the rank of its production (below) times this, plus its position.
+pub fn lr_item_base(): u64 {
+  65536
+}
+
+pub(open) struct LrGrammar {
+  lhs: Array(u64)
+  syms: Array(List(u64))
+  // The place of each production in the order of (left side, symbols), as
+  // lalry orders the items; equal productions have the same.
+  rank: Array(u64)
+  // For each rank, the first production that has it.
+  prod_of_rank: Array(u64)
+  // For each non-terminal, its productions in order.
+  prods_of: Array(List(u64))
+  start: u64
+}
+
+pub fn lr_or<A: Shared>(a: Array(A), i: u64, d: A): A {
+  match Array::get(a, i) {
+    Some(x) => x
+    None => d
+  }
+}
+
+pub fn lr_at(a: Array(u64), i: u64): u64 {
+  lr_or(a, i, 0)
+}
+
+pub fn lr_syms_of(g: LrGrammar, p: u64): List(u64) {
+  lr_or(g.syms, p, Nil)
+}
+
+pub fn lr_sym_words(xs: List(MSym)): List(u64) {
+  match xs {
+    Nil => Nil
+    Cons(s, rest) => Cons(
+      match s {
+        MN(n) => lr_nt_base() + n
+        MT(t, clipped) => t
+      },
+      lr_sym_words(rest)
+    )
+  }
+}
+
+// Whether production `a` comes before `b`: by left side, then by symbols
+// (a shorter one first when it begins the other).
+pub fn lr_before(g: LrGrammar, a: u64, b: u64): Bool {
+  let la := lr_at(g.lhs, a)
+  let lb := lr_at(g.lhs, b)
+  if la != lb {
+    la < lb
+  } else {
+    lr_list_before(lr_syms_of(g, a), lr_syms_of(g, b))
+  }
+}
+
+pub fn lr_list_before(xs: List(u64), ys: List(u64)): Bool {
+  match xs {
+    Nil => match ys {
+      Nil => false
+      Cons(y, rest) => true
+    }
+    Cons(x, xr) => match ys {
+      Nil => false
+      Cons(y, yr) => if x != y { x < y } else { lr_list_before(xr, yr) }
+    }
+  }
+}
+
+pub fn lr_insert_by(g: LrGrammar, xs: List(u64), p: u64): List(u64) {
+  match xs {
+    Nil => Cons(p, Nil)
+    Cons(x, rest) => if lr_before(g, p, x) { Cons(p, xs) } else {
+      Cons(x, lr_insert_by(g, rest, p))
+    }
+  }
+}
+
+pub fn lr_count(n: u64): List(u64) {
+  var out: List(u64) := Nil
+  var i := n
+  while i > 0 {
+    i := i - 1
+    out := Cons(i, out)
+  }
+  out
+}
+
+pub fn lr_grammar(m: MModel): LrGrammar {
+  let n_nts := md_len_text(m.nts)
+  var lhs: List(u64) := Nil
+  var syms: List(List(u64)) := Nil
+  var prods_of: Vec(List(u64)) := Vec::new()
+  var k: u64 := 0
+  while k < n_nts {
+    Vec::push(&mut prods_of, Nil)
+    k := k + 1
+  }
+  var rest := m.prods
+  var p: u64 := 0
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        lhs := Cons(x.lhs, lhs)
+        syms := Cons(lr_sym_words(x.rhs), syms)
+        match Vec::get_mut(&mut prods_of, x.lhs) {
+          Some(slot) => {
+            slot := Cons(p, slot)
+          }
+          None => par_die("a production's left side is not a non-terminal")
+        }
+        p := p + 1
+        rest := more
+      }
+    }
+  }
+  var nt_prods: List(List(u64)) := Nil
+  var left := Vec::into_list(prods_of)
+  var walking := true
+  while walking {
+    match left {
+      Nil => {
+        walking := false
+      }
+      Cons(ps, more) => {
+        nt_prods := Cons(lg_rev(ps), nt_prods)
+        left := more
+      }
+    }
+  }
+  let g0 := LrGrammar {
+    lhs: Array::of_list(lg_rev(lhs))
+    syms: Array::of_list(lr_rev_lists(syms))
+    rank: Array::of_list(lr_count(0))
+    prod_of_rank: Array::of_list(lr_count(0))
+    prods_of: Array::of_list(lr_rev_lists(nt_prods))
+    start: m.start
+  }
+  // The productions in order, then a rank for each.
+  var order: List(u64) := Nil
+  var all := lr_count(p)
+  var sorting := true
+  while sorting {
+    match all {
+      Nil => {
+        sorting := false
+      }
+      Cons(x, more) => {
+        order := lr_insert_by(g0, order, x)
+        all := more
+      }
+    }
+  }
+  var rank: Vec(u64) := Vec::new()
+  var j: u64 := 0
+  while j < p {
+    Vec::push(&mut rank, 0)
+    j := j + 1
+  }
+  var firsts: List(u64) := Nil
+  var r: u64 := 0
+  var prev: Option(u64) := None
+  var ranking := true
+  while ranking {
+    match order {
+      Nil => {
+        ranking := false
+      }
+      Cons(x, more) => {
+        let same := match prev {
+          None => false
+          Some(y) => not(lr_before(g0, y, x))
+        }
+        if not(same) {
+          match prev {
+            None => #()
+            Some(y) => {
+              r := r + 1
+            }
+          }
+          firsts := Cons(x, firsts)
+        }
+        match Vec::get_mut(&mut rank, x) {
+          Some(slot) => {
+            slot := r
+          }
+          None => #()
+        }
+        prev := Some(x)
+        order := more
+      }
+    }
+  }
+  LrGrammar {
+    lhs: g0.lhs
+    syms: g0.syms
+    rank: Vec::into_array(rank)
+    prod_of_rank: Array::of_list(lg_rev(firsts))
+    prods_of: g0.prods_of
+    start: g0.start
+  }
+}
+
+pub fn lr_rev_lists(xs: List(List(u64))): List(List(u64)) {
+  var out: List(List(u64)) := Nil
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------- items
+
+pub fn lr_item_prod(g: LrGrammar, item: u64): u64 {
+  lr_at(g.prod_of_rank, div(item, lr_item_base()))
+}
+
+pub fn lr_item_pos(item: u64): u64 {
+  mod(item, lr_item_base())
+}
+
+// The symbol after the dot, if any.
+pub fn lr_next_sym(g: LrGrammar, item: u64): Option(u64) {
+  lr_nth(lr_syms_of(g, lr_item_prod(g, item)), lr_item_pos(item))
+}
+
+pub fn lr_nth(xs: List(u64), i: u64): Option(u64) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => if i == 0 { Some(x) } else { lr_nth(rest, i - 1) }
+  }
+}
+
+pub fn lr_has(xs: List(u64), x: u64): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => if y == x { true } else if y > x { false } else { lr_has(rest, x) }
+  }
+}
+
+// The items of a state: `kernel` and, for each item before a non-terminal,
+// the productions of that non-terminal at position 0, sorted.
+pub fn lr_closure(g: LrGrammar, kernel: List(u64)): List(u64) {
+  var set := lg_sort(kernel)
+  var todo := kernel
+  var running := true
+  while running {
+    match todo {
+      Nil => {
+        running := false
+      }
+      Cons(item, rest) => {
+        todo := rest
+        match lr_next_sym(g, item) {
+          None => #()
+          Some(s) => if lr_is_nt(s) {
+            var ps := lr_or(g.prods_of, s - lr_nt_base(), Nil)
+            var adding := true
+            while adding {
+              match ps {
+                Nil => {
+                  adding := false
+                }
+                Cons(q, more) => {
+                  let new_item := lr_at(g.rank, q) * lr_item_base()
+                  if not(lr_has(set, new_item)) {
+                    set := lg_union(set, Cons(new_item, Nil))
+                    todo := Cons(new_item, todo)
+                  }
+                  ps := more
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  set
+}
+
+// ---------------------------------------------------------------- the LR(0) machine
+
+pub(open) struct LrMachine {
+  // The items of each state, sorted; state 0 starts.
+  sets: Array(List(u64))
+  // The transitions of each state, `symbol * 2^32 + target`, sorted by symbol.
+  trans: Array(List(u64))
+}
+
+pub fn lr_shift(): u64 {
+  4294967296
+}
+
+pub fn lr_same(a: List(u64), b: List(u64)): Bool {
+  match a {
+    Nil => match b {
+      Nil => true
+      Cons(y, rest) => false
+    }
+    Cons(x, xs) => match b {
+      Nil => false
+      Cons(y, ys) => x == y && lr_same(xs, ys)
+    }
+  }
+}
+
+pub fn lr_vec_list(&v: Vec(List(u64)), i: u64): List(u64) {
+  match Vec::get(&v, i) {
+    Some(x) => {
+      let &y := x
+      y
+    }
+    None => Nil
+  }
+}
+
+pub fn lr_find(&v: Vec(List(u64)), set: List(u64)): Option(u64) {
+  var i: u64 := 0
+  var out: Option(u64) := None
+  while i < Vec::len(&v) {
+    if lr_same(lr_vec_list(&v, i), set) {
+      out := Some(i)
+      i := Vec::len(&v)
+    } else {
+      i := i + 1
+    }
+  }
+  out
+}
+
+// The moves out of the items: `symbol * 2^32 + the item advanced`, sorted.
+pub fn lr_moves(g: LrGrammar, items: List(u64)): List(u64) {
+  match items {
+    Nil => Nil
+    Cons(item, rest) => match lr_next_sym(g, item) {
+      None => lr_moves(g, rest)
+      Some(s) => lg_union(Cons(s * lr_shift() + item + 1, Nil), lr_moves(g, rest))
+    }
+  }
+}
+
+// The states in the order lalry numbers them: from the first, each state's
+// targets in the order of their symbols, each new item set a new state.
+pub fn lr_machine(g: LrGrammar): LrMachine {
+  var sets: Vec(List(u64)) := Vec::new()
+  var trans: Vec(List(u64)) := Vec::new()
+  let first := lr_at(g.rank, lr_at_list(lr_or(g.prods_of, g.start, Nil), 0)) * lr_item_base()
+  Vec::push(&mut sets, lr_closure(g, Cons(first, Nil)))
+  var done: u64 := 0
+  while done < Vec::len(&sets) {
+    var moves := lr_moves(g, lr_vec_list(&sets, done))
+    var out: List(u64) := Nil
+    var running := true
+    while running {
+      match moves {
+        Nil => {
+          running := false
+        }
+        Cons(x, more) => {
+          let sym := div(x, lr_shift())
+          var nub: List(u64) := Nil
+          var rest := moves
+          var taking := true
+          while taking {
+            match rest {
+              Nil => {
+                taking := false
+              }
+              Cons(y, ys) => if div(y, lr_shift()) == sym {
+                nub := Cons(mod(y, lr_shift()), nub)
+                rest := ys
+              } else {
+                taking := false
+              }
+            }
+          }
+          moves := rest
+          let set := lr_closure(g, nub)
+          let target := match lr_find(&sets, set) {
+            Some(i) => i
+            None => {
+              let i := Vec::len(&sets)
+              Vec::push(&mut sets, set)
+              i
+            }
+          }
+          out := Cons(sym * lr_shift() + target, out)
+        }
+      }
+    }
+    Vec::push(&mut trans, lg_rev(out))
+    done := done + 1
+  }
+  LrMachine { sets: Vec::into_array(sets), trans: Vec::into_array(trans) }
+}
+
+pub fn lr_at_list(xs: List(u64), i: u64): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => if i == 0 { x } else { lr_at_list(rest, i - 1) }
+  }
+}
+
+pub fn lr_target(trans: List(u64), sym: u64): u64 {
+  match trans {
+    Nil => 0
+    Cons(x, rest) => if div(
+      x,
+      lr_shift()
+    ) == sym { mod(x, lr_shift()) } else { lr_target(rest, sym) }
+  }
+}
+
+// ---------------------------------------------------------------- the extended grammar
+
+// A non-terminal of the extended grammar: a state and a non-terminal, as
+// `state * lr_nt_base() + n`, ordered as lalry orders them.
+// A symbol of the extended grammar: a terminal, or `lr_ext_base() + ` such a non-terminal.
+pub fn lr_ext_base(): u64 {
+  1099511627776
+}
+
+// A production of the extended grammar: its left side, its symbols, the
+// state where it ends and the production it comes from.
+pub(open) struct LrExt { lhs: u64, syms: List(u64), end: u64, prod: u64 }
+
+pub fn lr_ext_rules(g: LrGrammar, m: LrMachine): List(LrExt) {
+  var out: List(LrExt) := Nil
+  var ix: u64 := 0
+  while ix < Array::len(m.sets) {
+    var items := lr_or(m.sets, ix, Nil)
+    var running := true
+    while running {
+      match items {
+        Nil => {
+          running := false
+        }
+        Cons(item, more) => {
+          items := more
+          if lr_item_pos(item) == 0 {
+            let p := lr_item_prod(g, item)
+            var ss := lr_syms_of(g, p)
+            var state := ix
+            var syms: List(u64) := Nil
+            var walking := true
+            while walking {
+              match ss {
+                Nil => {
+                  walking := false
+                }
+                Cons(s, more) => {
+                  ss := more
+                  let old := state
+                  state := lr_target(lr_or(m.trans, old, Nil), s)
+                  syms := if lr_is_nt(s) {
+                    Cons(lr_ext_base() + old * lr_nt_base() + (s - lr_nt_base()), syms)
+                  } else {
+                    Cons(s, syms)
+                  }
+                }
+              }
+            }
+            out := Cons(
+              LrExt {
+                lhs: ix * lr_nt_base() + lr_at(g.lhs, p)
+                syms: lg_rev(syms)
+                end: state
+                prod: p
+              },
+              out
+            )
+          }
+        }
+      }
+    }
+    ix := ix + 1
+  }
+  lr_rev_ext(out)
+}
+
+pub fn lr_rev_ext(xs: List(LrExt)): List(LrExt) {
+  var out: List(LrExt) := Nil
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        out := Cons(x, out)
+        rest := more
+      }
+    }
+  }
+  out
+}
+
+pub fn lr_ext_lhs(rules: List(LrExt)): List(u64) {
+  match rules {
+    Nil => Nil
+    Cons(r, rest) => lg_union(Cons(r.lhs, Nil), lr_ext_lhs(rest))
+  }
+}
+
+// Where `key` is in the sorted `keys`.
+pub fn lr_index(keys: Array(u64), key: u64): u64 {
+  var lo: u64 := 0
+  var hi := Array::len(keys)
+  while lo + 1 < hi {
+    let mid := div(lo + hi, 2)
+    if lr_at(keys, mid) <= key {
+      lo := mid
+    } else {
+      hi := mid
+    }
+  }
+  lo
+}
+
+pub fn lr_get(&v: Vec(List(u64)), i: u64): List(u64) {
+  lr_vec_list(&v, i)
+}
+
+pub fn lr_add(&mut v: Vec(List(u64)), i: u64, xs: List(u64)): Bool {
+  let before := lr_get(&v, i)
+  let after := lg_union(before, xs)
+  if lg_len(after) == lg_len(before) {
+    false
+  } else {
+    match Vec::get_mut(&mut v, i) {
+      Some(slot) => {
+        slot := after
+      }
+      None => #()
+    }
+    true
+  }
+}
+
+pub fn lr_flag(&v: Vec(u64), i: u64): Bool {
+  handle {
+    let &y := Vec::index(&v, i)
+    y == 1
+  } with {
+    out_of_bounds() => false
+  }
+}
+
+pub fn lr_set_flag(&mut v: Vec(u64), i: u64): Unit {
+  match Vec::get_mut(&mut v, i) {
+    Some(slot) => {
+      slot := 1
+    }
+    None => #()
+  }
+}
+
+pub(open) struct LrSets {
+  keys: Array(u64)
+  first: Vec(List(u64))
+  nullable: Vec(u64)
+  follow: Vec(List(u64))
+  eof: Vec(u64)
+}
+
+// FIRST, nullable, FOLLOW and whether the end of the input follows, for each
+// non-terminal of the extended grammar.
+pub fn lr_sets(rules: List(LrExt), start: u64): LrSets {
+  let keys := Array::of_list(lr_ext_lhs(rules))
+  let n := Array::len(keys)
+  var first: Vec(List(u64)) := Vec::new()
+  var nullable: Vec(u64) := Vec::new()
+  var follow: Vec(List(u64)) := Vec::new()
+  var eof: Vec(u64) := Vec::new()
+  var k: u64 := 0
+  while k < n {
+    Vec::push(&mut first, Nil)
+    Vec::push(&mut nullable, 0)
+    Vec::push(&mut follow, Nil)
+    Vec::push(&mut eof, 0)
+    k := k + 1
+  }
+  var changed := true
+  while changed {
+    changed := false
+    var rest := rules
+    var running := true
+    while running {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(r, more) => {
+          rest := more
+          let i := lr_index(keys, r.lhs)
+          var syms := r.syms
+          var walking := true
+          while walking {
+            match syms {
+              Nil => {
+                walking := false
+                if not(lr_flag(&nullable, i)) {
+                  lr_set_flag(&mut nullable, i)
+                  changed := true
+                }
+              }
+              Cons(s, ss) => if s >= lr_ext_base() {
+                let j := lr_index(keys, s - lr_ext_base())
+                if lr_add(&mut first, i, lr_get(&first, j)) {
+                  changed := true
+                }
+                if lr_flag(&nullable, j) {
+                  syms := ss
+                } else {
+                  walking := false
+                }
+              } else {
+                if lr_add(&mut first, i, Cons(s, Nil)) {
+                  changed := true
+                }
+                walking := false
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lr_set_flag(&mut eof, lr_index(keys, start))
+  changed := true
+  while changed {
+    changed := false
+    var rest := rules
+    var running := true
+    while running {
+      match rest {
+        Nil => {
+          running := false
+        }
+        Cons(r, more) => {
+          rest := more
+          let i := lr_index(keys, r.lhs)
+          var f := lr_get(&follow, i)
+          var e := lr_flag(&eof, i)
+          var syms := lr_rev_syms(r.syms)
+          var walking := true
+          while walking {
+            match syms {
+              Nil => {
+                walking := false
+              }
+              Cons(s, ss) => {
+                syms := ss
+                if s >= lr_ext_base() {
+                  let j := lr_index(keys, s - lr_ext_base())
+                  if lr_add(&mut follow, j, f) {
+                    changed := true
+                  }
+                  if e && not(lr_flag(&eof, j)) {
+                    lr_set_flag(&mut eof, j)
+                    changed := true
+                  }
+                  if lr_flag(&nullable, j) {
+                    f := lg_union(f, lr_get(&first, j))
+                  } else {
+                    f := lr_get(&first, j)
+                    e := false
+                  }
+                } else {
+                  f := Cons(s, Nil)
+                  e := false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  LrSets { keys: keys, first: first, nullable: nullable, follow: follow, eof: eof }
+}
+
+pub fn lr_rev_syms(xs: List(u64)): List(u64) {
+  lg_rev(xs)
+}
+
+// ---------------------------------------------------------------- the table
+
+// An action: `shift(s)` is `s * 4`, `reduce(p)` is `p * 4 + 1`, accepting
+// by `p` is `p * 4 + 2`.
+// For each state, `terminal * 2^32 + action`, sorted by terminal; the end of
+// the input is the terminal 0.
+pub(open) struct LrTable { actions: Array(List(u64)), gotos: Array(List(u64)) }
+
+pub fn lr_action_of(row: List(u64), t: u64): Option(u64) {
+  match row {
+    Nil => None
+    Cons(x, rest) => if div(
+      x,
+      lr_shift()
+    ) == t { Some(mod(x, lr_shift())) } else { lr_action_of(rest, t) }
+  }
+}
+
+pub fn lr_set_action(row: List(u64), t: u64, a: u64): List(u64) {
+  match row {
+    Nil => Cons(t * lr_shift() + a, Nil)
+    Cons(x, rest) => if div(x, lr_shift()) == t {
+      Cons(t * lr_shift() + a, rest)
+    } else if div(x, lr_shift()) > t {
+      Cons(t * lr_shift() + a, row)
+    } else {
+      Cons(x, lr_set_action(rest, t, a))
+    }
+  }
+}
+
+// A reduce by `p` on `t`: a shift there wins, and of two reduces the
+// production written first (lalry with parol's priorities).
+pub fn lr_reduce(row: List(u64), t: u64, p: u64): List(u64) {
+  match lr_action_of(row, t) {
+    None => lr_set_action(row, t, p * 4 + 1)
+    Some(a) => if mod(a, 4) == 2 {
+      lr_end_conflict()
+    } else if mod(a, 4) == 1 && p < div(a, 4) {
+      lr_set_action(row, t, p * 4 + 1)
+    } else {
+      row
+    }
+  }
+}
+
+// Accepting at the end of the input, where nothing else may be done then
+// (lalry stops when something is).
+pub fn lr_accept(row: List(u64), p: u64): List(u64) {
+  match lr_action_of(row, 0) {
+    None => lr_set_action(row, 0, p * 4 + 2)
+    Some(a) => lr_end_conflict()
+  }
+}
+
+pub fn lr_end_conflict(): Never {
+  par_die(
+    "not LALR(1): at the end of the input, a state both accepts and reduces (the start symbol is used inside the grammar or ends more than one way)"
+  )
+}
+
+pub fn lr_table(g: LrGrammar): LrTable {
+  let m := lr_machine(g)
+  let rules := lr_ext_rules(g, m)
+  let sets := lr_sets(rules, g.start)
+  var actions: Vec(List(u64)) := Vec::new()
+  var gotos: Vec(List(u64)) := Vec::new()
+  var ix: u64 := 0
+  while ix < Array::len(m.trans) {
+    var row: List(u64) := Nil
+    var go: List(u64) := Nil
+    var ts := lr_or(m.trans, ix, Nil)
+    var running := true
+    while running {
+      match ts {
+        Nil => {
+          running := false
+        }
+        Cons(x, more) => {
+          let sym := div(x, lr_shift())
+          let target := mod(x, lr_shift())
+          if lr_is_nt(sym) {
+            go := Cons((sym - lr_nt_base()) * lr_shift() + target, go)
+          } else {
+            row := Cons(sym * lr_shift() + target * 4, row)
+          }
+          ts := more
+        }
+      }
+    }
+    Vec::push(&mut actions, lg_rev(row))
+    Vec::push(&mut gotos, lg_rev(go))
+    ix := ix + 1
+  }
+  var rest := rules
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(r, more) => {
+        rest := more
+        let i := lr_index(sets.keys, r.lhs)
+        var row := lr_get(&actions, r.end)
+        var ts := lr_get(&sets.follow, i)
+        var adding := true
+        while adding {
+          match ts {
+            Nil => {
+              adding := false
+            }
+            Cons(t, tmore) => {
+              row := lr_reduce(row, t, r.prod)
+              ts := tmore
+            }
+          }
+        }
+        if lr_flag(&sets.eof, i) {
+          row := if mod(r.lhs, lr_nt_base()) == g.start {
+            lr_accept(row, r.prod)
+          } else {
+            lr_reduce(row, 0, r.prod)
+          }
+        }
+        match Vec::get_mut(&mut actions, r.end) {
+          Some(slot) => {
+            slot := row
+          }
+          None => #()
+        }
+      }
+    }
+  }
+  LrTable { actions: Vec::into_array(actions), gotos: Vec::into_array(gotos) }
+}
+
+// The `lr` line: the number of states, then for each its actions (the
+// number, then terminal, kind 0 shift, 1 reduce or 2 accept, and the state
+// or production) and its gotos (the number, then non-terminal and state).
+pub fn lr_line(t: LrTable): Text {
+  var b := Buf::new()
+  Buf::push(&mut b, &"lr ")
+  Buf::push(&mut b, &Text::of_u64(Array::len(t.actions)))
+  var i: u64 := 0
+  while i < Array::len(t.actions) {
+    let row := lr_or(t.actions, i, Nil)
+    Buf::push(&mut b, &" ")
+    Buf::push(&mut b, &Text::of_u64(lg_len(row)))
+    var xs := row
+    var running := true
+    while running {
+      match xs {
+        Nil => {
+          running := false
+        }
+        Cons(x, more) => {
+          let a := mod(x, lr_shift())
+          Buf::push(&mut b, &" ")
+          Buf::push(&mut b, &Text::of_u64(div(x, lr_shift())))
+          Buf::push(&mut b, &" ")
+          Buf::push(&mut b, &Text::of_u64(mod(a, 4)))
+          Buf::push(&mut b, &" ")
+          Buf::push(&mut b, &Text::of_u64(div(a, 4)))
+          xs := more
+        }
+      }
+    }
+    let go := lr_or(t.gotos, i, Nil)
+    Buf::push(&mut b, &" ")
+    Buf::push(&mut b, &Text::of_u64(lg_len(go)))
+    var ys := go
+    var walking := true
+    while walking {
+      match ys {
+        Nil => {
+          walking := false
+        }
+        Cons(y, more) => {
+          Buf::push(&mut b, &" ")
+          Buf::push(&mut b, &Text::of_u64(div(y, lr_shift())))
+          Buf::push(&mut b, &" ")
+          Buf::push(&mut b, &Text::of_u64(mod(y, lr_shift())))
+          ys := more
+        }
+      }
+    }
+    i := i + 1
+  }
+  Text::of(b)
+}

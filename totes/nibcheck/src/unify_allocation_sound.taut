@@ -1,0 +1,129 @@
+import "unify_allocation_rest.taut"
+
+pub def UnifyAllocationAt(
+  fuel: Nat
+): Prop := And(
+  UnifyAllocated(fuel),
+  And(UnifyAllocatedRest(fuel), And(UnifyPairsAllocated(fuel), UnifyAppAllocated(fuel)))
+)
+pub theorem unify_allocation_at(fuel: Nat): UnifyAllocationAt(fuel) {
+  match fuel: UnifyAllocationAt(fuel) {
+    Zero => AndIntro(
+      c => a => b => ordered => state => left => right => AndIntro(Refl, state),
+      AndIntro(
+        c => a => b => ordered => state => left => right => AndIntro(Refl, state),
+        AndIntro(
+          c => a => b => ordered => state => left => right => AndIntro(Refl, state),
+          c => head => arg => name => args => ordered => state => fn_type => arg_type => args_type => AndIntro(
+            Refl,
+            state
+          )
+        )
+      )
+    )
+    Succ(rest) => {
+      let ih: UnifyAllocationAt(rest) := unify_allocation_at(rest)
+      AndIntro(
+        c => a => b => ordered => state => left => right => allocated_unify_step(
+          rest,
+          And::left(And::right(ih)),
+          c,
+          a,
+          b,
+          ordered,
+          state,
+          left,
+          right
+        ),
+        AndIntro(
+          c => a => b => ordered => state => left => right => allocated_unify_rest_step(
+            rest,
+            And::left(ih),
+            And::left(And::right(And::right(ih))),
+            And::right(And::right(And::right(ih))),
+            c,
+            a,
+            b,
+            ordered,
+            state,
+            left,
+            right
+          ),
+          AndIntro(
+            c => a => b => ordered => state => left => right => allocated_unify_pairs_step(
+              rest,
+              And::left(ih),
+              And::left(And::right(And::right(ih))),
+              c,
+              a,
+              b,
+              ordered,
+              state,
+              left,
+              right
+            ),
+            c => head => arg => name => args => ordered => state => fn_type => arg_type => args_type => allocated_unify_app_step(
+              rest,
+              And::left(ih),
+              c,
+              head,
+              arg,
+              name,
+              args,
+              ordered,
+              state,
+              fn_type,
+              arg_type,
+              args_type
+            )
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_unify_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationRun(c, ck_unify(c, a, b)) {
+  allocation_run_rewrap(
+    c,
+    ck_unify_in(ck_steps_of(c), c, a, b),
+    And::left(unify_allocation_at(ck_steps_of(c)))(c, a, b, ordered, state, left, right)
+  )
+}
+
+pub theorem allocation_attempt_result(
+  c: Checker,
+  m: Mut1(Bool, Checker),
+  state: CheckerAllocation(c),
+  h: AllocationRun(c, m)
+): AllocationRun(c, ck_attempt_k(c, m)) {
+  match m: AllocationRun(c, ck_attempt_k(c, m)) {
+    mut1(flag, next) => match flag: AllocationRun(c, ck_attempt_k(c, mut1(flag, next))) {
+      true => h
+      false => AndIntro(Refl, state)
+    }
+  }
+}
+pub theorem ck_attempt_unify_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationRun(c, ck_attempt_unify(c, a, b)) {
+  allocation_attempt_result(
+    c,
+    ck_unify(c, a, b),
+    state,
+    ck_unify_allocation(c, a, b, ordered, state, left, right)
+  )
+}

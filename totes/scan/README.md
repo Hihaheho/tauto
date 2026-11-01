@@ -35,6 +35,16 @@ accept a token.
    current one and changes, *pop* goes back to the last remembered mode (and
    does nothing with none).
 
+6. **The states of the scanner.** A grammar may declare states (`%state`,
+   see `totes/pargen/README.md`). An accept entry of a terminal written with
+   `%validate` holds only if the token fits what its state holds: a count of
+   the unit that equals it (or is in the range), or the same text. A
+   terminal written with `%capture` may be cut only if its text can be split
+   as the part before, the captured units or text, and the part after; when
+   it becomes the token, its state holds the count (the most units that fit)
+   or the text (the widest, the earliest of the widest). The token is chosen
+   first, by the rules above, and only then does a `%capture` store.
+
 Positions are bytes. The scanner cuts the whole text at once: which mode
 comes next depends on the tokens alone, never on the parser, so the parser
 reading two tokens ahead does not change what is cut.
@@ -55,6 +65,19 @@ reaches is longer (`scan_find_longest`).
 `scan_tables_read`. All the automata, the modes' and the lookaheads', are
 numbered together; `rows` is one long vector with a row of `classes` entries
 for each state.
+
+A grammar with states adds a fifth text, `dynamic`, read by
+`scan_tables_read_dynamic` (`Tables::scan_texts` of `crates/tauto-syntax`
+writes all five): the number of states, then each one's kind (0 count,
+1 text), least and greatest count; the number of terminals that use one, then
+for each its token, operation (0 capture a count, 1 validate a count,
+2 capture a text, 3 validate a text), state, the number of code points of
+the unit and the code points, whether a range follows (1) and its two ends
+(five numbers each: whether the first is the state's value, it, the
+operation 0 none, 1 `+`, 2 `-`, whether the second is the state's value, it),
+the automata of the part before and the part after, and the captured text's
+automaton plus one (0 for none). These automata come after the lookaheads'.
+An empty `dynamic` is a scanner without states.
 
 A table shorter than its counts say is not a scanner: `scan_tables_read`
 gives `None`. (Every read is checked against the end of its table once,

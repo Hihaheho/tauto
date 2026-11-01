@@ -1,0 +1,48 @@
+import "../src/bundle.taut"
+
+// Plural categories of CLDR for a few languages, checked by computation.
+
+fn ru(n: Nat): Category {
+  plural(Text::bytes("ru-RU"), n)
+}
+
+theorem ru_1(): ru(1) = COne { Refl }
+theorem ru_21(): ru(21) = COne { Refl }
+theorem ru_11(): ru(11) = CMany { Refl }
+theorem ru_3(): ru(3) = CFew { Refl }
+theorem ru_13(): ru(13) = CMany { Refl }
+theorem ru_104(): ru(104) = CFew { Refl }
+theorem ru_5(): ru(5) = CMany { Refl }
+theorem pl_22(): plural(Text::bytes("pl"), 22) = CFew { Refl }
+theorem pl_21(): plural(Text::bytes("pl"), 21) = CMany { Refl }
+theorem fr_0(): plural(Text::bytes("fr-CA"), 0) = COne { Refl }
+theorem en_0(): plural(Text::bytes("en"), 0) = COther { Refl }
+theorem cs_3(): plural(Text::bytes("cs"), 3) = CFew { Refl }
+theorem ar_2(): plural(Text::bytes("ar"), 2) = CTwo { Refl }
+theorem ar_103(): plural(Text::bytes("ar"), 103) = CFew { Refl }
+theorem ar_111(): plural(Text::bytes("ar"), 111) = CMany { Refl }
+theorem ar_100(): plural(Text::bytes("ar"), 100) = COther { Refl }
+theorem ja_1(): plural(Text::bytes("ja-JP"), 1) = COther { Refl }
+theorem unknown_language(): plural(Text::bytes("xx"), 1) = COther { Refl }
+theorem upper_case_locale(): plural(Text::bytes("EN_us"), 1) = COne { Refl }
+
+fn files(): Text {
+  "files = {$n ->
+    [one] {$n} файл
+    [few] {$n} файла
+   *[many] {$n} файлов
+}
+"
+}
+
+fn files_ru(n: Nat): Text {
+  format_text(
+    bundle_isolating(with_resource(bundle_new("ru"), files()), false),
+    "files",
+    Cons(arg_num("n", n), Nil)
+  )
+}
+
+theorem files_21(): files_ru(21) = "21 файл" { Refl }
+theorem files_3(): files_ru(3) = "3 файла" { Refl }
+theorem files_12(): files_ru(12) = "12 файлов" { Refl }

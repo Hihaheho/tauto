@@ -1,0 +1,155 @@
+import "data_fields_function_table.taut"
+import "registration_context_sound.taut"
+
+pub theorem fnt_registration_ctor_state_context(
+  c: Checker,
+  ctor: DataCtor,
+  dname: Text,
+  i: Nat
+): fnt_table(registration_ctor_state(c, ctor, dname, i)) = fnt_table(c) { Refl }
+pub theorem fnt_ck_register_ctors_context(
+  ctors: List(DataCtor),
+  c: Checker,
+  dname: Text,
+  is_struct: Bool,
+  i: Nat
+): CkFnsFrame(c, ck_register_ctors(ctors, c, dname, i)) {
+  match ctors: CkFnsFrame(c, ck_register_ctors(ctors, c, dname, i)) {
+    Nil => Refl
+    Cons(ctor, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
+      Eq::sym(registration_register_unf(ctor, rest, c, dname, i)),
+      fnt_frame_changed(
+        c,
+        registration_ctor_state(c, ctor, dname, i),
+        ck_rewrap1(
+          ck_register_ctors(rest, registration_ctor_state(c, ctor, dname, i), dname, i + 1)
+        ),
+        fnt_registration_ctor_state_context(c, ctor, dname, i),
+        fnt_frame_rewrap(
+          registration_ctor_state(c, ctor, dname, i),
+          ck_register_ctors(rest, registration_ctor_state(c, ctor, dname, i), dname, i + 1),
+          fnt_ck_register_ctors_context(
+            rest,
+            registration_ctor_state(c, ctor, dname, i),
+            dname,
+            is_struct,
+            i + 1
+          )
+        )
+      )
+    )
+  }
+}
+pub theorem fnt_registration_insert_context(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  constructors: List(DataCtor)
+): CkFnsFrame(c, registration_insert(c, d, is_struct, builtin, constructors)) { Refl }
+pub theorem fnt_registration_declare_context(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool
+): CkFnsFrame(c, registration_declare(c, d, is_struct, builtin)) {
+  fnt_frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      List(DataCtor),
+      Unit,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      )
+    ),
+    frame_error_if(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      Bool::and(
+        surface_data_is_view(d),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    fnt_frame_error_if_ok(
+      c,
+      "a view struct has no fields: it is an opaque type",
+      registration_span(d),
+      Bool::and(
+        surface_data_is_view(d),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(d)))
+      )
+    ),
+    ignored => c1 => fnt_frame_bind_ok(
+      List(DataCtor),
+      Unit,
+      c1,
+      (constructors: List(DataCtor), c2: Checker) => frame_bind(
+        Unit,
+        Unit,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0)
+      ),
+      ck_data_ctors(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      ),
+      fnt_ck_data_ctors_frame_context(
+        registration_ctors(d),
+        c1,
+        ck_param_generics(registration_generics(d), KindLinear, Ordmap::empty())
+      ),
+      constructors => c2 => fnt_frame_bind_ok(
+        Unit,
+        Unit,
+        c2,
+        (ignored2: Unit, c3: Checker) => registration_insert(
+          c3,
+          d,
+          is_struct,
+          builtin,
+          constructors
+        ),
+        ck_register_ctors(constructors, c2, registration_name(d), 0),
+        fnt_ck_register_ctors_context(constructors, c2, registration_name(d), is_struct, 0),
+        ignored2 => c3 => fnt_registration_insert_context(c3, d, is_struct, builtin, constructors)
+      )
+    )
+  )
+}
+pub theorem fnt_ck_declare_data_context(
+  c: Checker,
+  d: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool
+): CkFnsFrame(c, ck_declare_data(c, d, is_struct, builtin)) {
+  Eq::subst(
+    (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
+    Eq::sym(registration_declare_unf(c, d, is_struct, builtin)),
+    fnt_registration_declare_context(c, d, is_struct, builtin)
+  )
+}

@@ -1,0 +1,123 @@
+import "../src/bundle.taut"
+
+// How resources are read: junk is reported and skipped, an earlier definition is kept, CRLF is
+// a line end, and references that nest without end stop with an error.
+
+fn added_errors(a: Added): List(ResourceError) {
+  match a: List(ResourceError) {
+    Mk(b, es) => es
+  }
+}
+
+fn added_bundle(a: Added): Bundle {
+  match a: Bundle {
+    Mk(b, es) => b
+  }
+}
+
+fn messy(): Text {
+  "ok = fine
+broken = {$x
+  still broken
+-t = {$y}
+    .a = {-t.a}
+after = still read
+"
+}
+
+theorem junk_is_reported(): added_errors(add_resource(bundle_new("en"), messy())) = Cons(Junk("broken = {$x\n  still broken\n"), Cons(Junk("-t = {$y}\n    .a = {-t.a}\n"), Nil)) {
+  Refl
+}
+
+theorem after_junk(): format_text(with_resource(bundle_new("en"), messy()), "after", Nil) = "still read" {
+  Refl
+}
+
+// A term attribute cannot be a placeable, so `.a` is junk, together with its term.
+theorem private_attribute(): format(with_resource(bundle_new("en"), "-t = x\n    .a = {-t.a}\nm = {-t}\n"), "m", Nil) = Formatted::Mk("{-t}", Cons(UnknownTerm(Text::bytes("t")), Nil)) {
+  Refl
+}
+
+theorem first_definition_kept(): format(with_resource(with_resource(bundle_new("en"), "a = one\n"), "a = two\n"), "a", Nil) = Formatted::Mk("one", Nil) {
+  Refl
+}
+
+theorem duplicate_reported(): added_errors(add_resource(with_resource(bundle_new("en"), "a = one\n"), "a = two\n")) = Cons(Duplicate("a"), Nil) {
+  Refl
+}
+
+theorem crlf(): format_text(with_resource(bundle_new("en"), "a = x\r\n  y\r\n"), "a", Nil) = "x\ny" {
+  Refl
+}
+
+// A select expression needs exactly one default variant.
+theorem no_default_is_junk(): has_message(with_resource(bundle_new("en"), "a = {$n ->\n  [one] x\n  [other] y\n}\n"), "a") = false {
+  Refl
+}
+
+theorem message_with_only_attributes(): format(with_resource(bundle_new("en"), "a =\n    .title = T\n"), "a", Nil) = Formatted::Mk("{a}", Cons(NoValue(Text::bytes("a")), Nil)) {
+  Refl
+}
+
+theorem string_literal_escapes(): format_text(with_resource(bundle_new("en"), "a = {\"\\\"q\\\\\"}\n"), "a", Nil) = "\"q\\" {
+  Refl
+}
+
+fn has_too_deep(es: List(FluentError)): Bool {
+  match es: Bool {
+    Nil => false
+    Cons(e, rest) => match e: Bool {
+      TooDeep => true
+      UnknownMessage(i) => has_too_deep(rest)
+      UnknownTerm(i) => has_too_deep(rest)
+      UnknownAttribute(i, a) => has_too_deep(rest)
+      UnknownVariable(n) => has_too_deep(rest)
+      NoValue(i) => has_too_deep(rest)
+    }
+  }
+}
+
+fn stops_deep(f: Formatted): Bool {
+  match f: Bool {
+    Mk(t, es) => has_too_deep(es)
+  }
+}
+
+// References in a cycle stop at the depth budget instead of running forever.
+theorem cycle_stops(): stops_deep(format(with_resource(bundle_new("en"), "a = {b}\nb = {a}\n"), "a", Nil)) = true {
+  Refl
+}
+
+// Only the indentation the lines of a pattern share is taken off: a line indented further keeps
+// the extra, so nested text stays nested.
+theorem common_indent_block(): format_text(
+    with_resource(bundle_new("en"), "a =\n    Usage:\n        run\n\n      check\n"),
+    "a",
+    Nil
+  ) = "Usage:\n    run\n\n  check" {
+  Refl
+}
+
+// A pattern that begins on the line of its `=` has no indentation there, so only the lines
+// after it count.
+theorem common_indent_inline(): format_text(with_resource(bundle_new("en"), "a = Usage:\n    run\n      --fast\n"), "a", Nil) = "Usage:\nrun\n  --fast" {
+  Refl
+}
+
+// A line that begins with a placeable counts too, and so do the lines of an attribute and of a
+// variant, each pattern on its own.
+theorem common_indent_placeable(): format_text(
+    bundle_isolating(with_resource(bundle_new("en"), "a =\n      {\"x\"}\n    y\n"), false),
+    "a",
+    Nil
+  ) = "  x\ny" {
+  Refl
+}
+
+theorem common_indent_variant(): format_text(
+    with_resource(bundle_new("en"), "a = {$n ->\n    *[other]\n        p\n          q\n}\n"),
+    "a",
+    Cons(arg_num("n", 2), Nil)
+  ) = "p\n  q" {
+  Refl
+}

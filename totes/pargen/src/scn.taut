@@ -1,0 +1,773 @@
+// The scanner of a grammar: the patterns of each of its modes, and the
+// scanner tables made of them (the `classes`, `modes` and `lookahead_dfas`
+// lines), checked against the reference tables.
+//
+// Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import std::Text
+
+// ---------------------------------------------------------------- the patterns of a mode
+
+pub fn sc_snoc(xs: List(Text), x: Text): List(Text) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, sc_snoc(rest, x))
+  }
+}
+
+pub fn sc_is_escaped_in_class(c: u64): Bool {
+  c == 45 || c == 93 || c == 94 || c == 92
+}
+
+// A character escaped: `\t`, `\r`, `\n`, `\'`, `\"` and `\\`, the other
+// printable ASCII as it is, any other as `\u{…}` in hex.
+pub fn sc_escape_default(c: u64): Text {
+  if c == 9 {
+    "\\t"
+  } else if c == 13 {
+    "\\r"
+  } else if c == 10 {
+    "\\n"
+  } else if c == 39 {
+    "\\'"
+  } else if c == 34 {
+    "\\\""
+  } else if c == 92 {
+    "\\\\"
+  } else if c >= 32 && c <= 126 {
+    rx_text_of(Cons(c, Nil))
+  } else {
+    Text::concat_all(Cons("\\u{", Cons(sd_hex(c), Cons("}", Nil))))
+  }
+}
+
+// The characters of a text, a backslash and the next one as one atom.
+pub fn sc_atoms(p: Text): List(Text) {
+  var out: List(Text) := Nil
+  var at: u64 := 0
+  while at < std::prelude::Text::len(p) {
+    match lk_decode(p, at) {
+      Some(#(@code code, @len len)) => {
+        if code == 92 {
+          match lk_decode(p, at + len) {
+            Some(#(@code _, @len escape_len)) => {
+              out := sc_snoc(out, lk_slice(p, at, at + len + escape_len))
+              at := at + len + escape_len
+            }
+            None => par_die("a block comment end has a dangling escape")
+          }
+        } else {
+          out := sc_snoc(out, lk_slice(p, at, at + len))
+          at := at + len
+        }
+      }
+      None => par_die("not UTF-8")
+    }
+  }
+  out
+}
+
+pub fn sc_class_safe(atom: Text): Text {
+  match lk_decode(atom, 0) {
+    Some(#(@code first, @len first_len)) => {
+      let ch := if first == 92 {
+        match lk_decode(atom, first_len) {
+          Some(#(@code escaped, @len _)) => escaped
+          None => 92
+        }
+      } else {
+        first
+      }
+      if sc_is_escaped_in_class(ch) {
+        Text::concat_all(Cons("\\", Cons(rx_text_of(Cons(ch, Nil)), Nil)))
+      } else {
+        sc_escape_default(ch)
+      }
+    }
+    None => ""
+  }
+}
+
+pub fn sc_atom_at(xs: List(Text), i: u64): Text {
+  match xs {
+    Nil => ""
+    Cons(x, rest) => if i == 0 { x } else { sc_atom_at(rest, i - 1) }
+  }
+}
+
+pub fn sc_len(xs: List(Text)): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sc_len(rest)
+  }
+}
+
+pub fn sc_push_all(&mut b: Buf, xs: List(Text)): Unit {
+  var rest := xs
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(x, more) => {
+        Buf::push(&mut b, &x)
+        rest := more
+      }
+    }
+  }
+}
+
+// The pattern of a block comment from its start and end.
+pub fn sc_block_comment(s: Text, e: Text): Text {
+  if s == "/\\*" && e == "\\*/" {
+    "/\\*/?([^/]|[^*]/)*\\*/"
+  } else {
+    let atoms := sc_atoms(e)
+    let n := sc_len(atoms)
+    var b := Buf::new()
+    if n == 0 {
+      par_die("a block comment end is empty")
+    } else if n > 3 {
+      par_die("a block comment end is too long")
+    } else if n == 2 {
+      let a0 := sc_atom_at(atoms, 0)
+      let a1 := sc_atom_at(atoms, 1)
+      let c0 := sc_class_safe(a0)
+      let c1 := sc_class_safe(a1)
+      if a0 == a1 {
+        sc_push_all(&mut b, Cons(s, Cons("([^", Cons(c0, Cons("]|", Nil)))))
+        sc_push_all(&mut b, Cons(a0, Cons("[^", Cons(c1, Cons("])*", Cons(e, Nil))))))
+      } else {
+        sc_push_all(&mut b, Cons(s, Cons("[^", Cons(c0, Cons("]*(", Nil)))))
+        sc_push_all(&mut b, Cons(a0, Cons("+[^", Cons(c0, Cons(c1, Cons("][^", Nil))))))
+        sc_push_all(&mut b, Cons(c0, Cons("]*)*", Cons(a0, Cons("+", Cons(a1, Nil))))))
+      }
+    } else {
+      var alts: List(Text) := Nil
+      var i: u64 := 0
+      while i < n {
+        var prefix := ""
+        var k: u64 := 0
+        while k < i {
+          prefix := Text::concat_all(Cons(prefix, Cons(sc_atom_at(atoms, k), Nil)))
+          k := k + 1
+        }
+        alts := sc_snoc(
+          alts,
+          Text::concat_all(
+            Cons(prefix, Cons("[^", Cons(sc_class_safe(sc_atom_at(atoms, i)), Cons("]", Nil))))
+          )
+        )
+        i := i + 1
+      }
+      sc_push_all(&mut b, Cons(s, Cons("(", Cons(text_join(alts, "|"), Cons(")*", Cons(e, Nil))))))
+    }
+    Text::of(b)
+  }
+}
+
+pub fn sc_pat(pattern: Text, terminal: u64): SPat {
+  SPat {
+    context: "scanner directive",
+    pattern: pattern,
+    terminal: terminal,
+    priority: 0,
+    la_kind: 0,
+    la: "",
+    validates: false
+  }
+}
+
+pub fn sc_has_state(xs: List(u64), s: u64): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => x == s || sc_has_state(rest, s)
+  }
+}
+
+pub fn sc_snoc_pat(xs: List(SPat), x: SPat): List(SPat) {
+  match xs {
+    Nil => Cons(x, Nil)
+    Cons(y, rest) => Cons(y, sc_snoc_pat(rest, x))
+  }
+}
+
+// All rules directly containing this terminal; shared patterns retain every owner.
+pub fn sc_has_terminal(rhs: List(MSym), terminal: u64): Bool {
+  match rhs {
+    Nil => false
+    Cons(sym, rest) => match sym {
+      MN(n) => sc_has_terminal(rest, terminal)
+      MT(t, clipped) => t == terminal || sc_has_terminal(rest, terminal)
+    }
+  }
+}
+
+pub fn sc_rule_names(ps: List(MProd), names: List(Text), terminal: u64): List(Text) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => if sc_has_terminal(p.rhs, terminal) {
+      md_insert(sc_rule_names(rest, names, terminal), sc_name_at(names, p.lhs))
+    } else { sc_rule_names(rest, names, terminal) }
+  }
+}
+
+pub fn sc_name_at(names: List(Text), i: u64): Text {
+  match names {
+    Nil => "<unknown>"
+    Cons(n, rest) => if i == 0 { n } else { sc_name_at(rest, i - 1) }
+  }
+}
+
+pub fn sc_rule_context(m: MModel, terminal: u64): Text {
+  Text::concat("rule ", text_join(sc_rule_names(m.prods, m.nts, terminal), ", "))
+}
+
+// The patterns of the scanner
+// number `state`, in order, with their terminals.
+pub fn sc_patterns(m: MModel, state: u64, sc: PScanner): List(SPat) {
+  var out: List(SPat) := Nil
+  if not(sc.auto_newline_off) {
+    out := sc_snoc_pat(out, sc_pat("\\r\\n|\\r|\\n", 1))
+  }
+  if not(sc.auto_ws_off) {
+    out := sc_snoc_pat(out, sc_pat("[\\s--\\r\\n]+", 2))
+  }
+  match sc.line_comments {
+    Nil => #()
+    others => {
+      var alts: List(Text) := Nil
+      var rest := sc.line_comments
+      var running := true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(s, more) => {
+            alts := sc_snoc(alts, Text::concat_all(Cons(s, Cons(".*(\\r\\n|\\r|\\n)?", Nil))))
+            rest := more
+          }
+        }
+      }
+      out := sc_snoc_pat(out, sc_pat(text_join(alts, "|"), 3))
+    }
+  }
+  match sc.block_comments {
+    Nil => #()
+    others => {
+      var alts: List(Text) := Nil
+      var rest := sc.block_comments
+      var running := true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(p, more) => {
+            alts := sc_snoc(alts, sc_block_comment(p.fst, p.snd))
+            rest := more
+          }
+        }
+      }
+      out := sc_snoc_pat(out, sc_pat(text_join(alts, "|"), 4))
+    }
+  }
+  var i: u64 := 0
+  var terms := m.terms
+  var running2 := true
+  while running2 {
+    match terms {
+      Nil => {
+        running2 := false
+      }
+      Cons(t, more) => {
+        if sc_has_state(t.states, state) {
+          out := sc_snoc_pat(out, match t.la {
+            None => SPat { context: sc_rule_context(m, 5 + i), pattern: md_expand(t), terminal: 5 + i, priority: 0, la_kind: 0, la: "", validates: sc_validates(t) }
+            Some(l) => SPat {
+              context: sc_rule_context(m, 5 + i)
+              pattern: md_expand(t)
+              terminal: 5 + i
+              priority: 0
+              la_kind: if l.positive { 1 } else { 2 }
+              la: md_expand(PTerm { text: l.text, kind: l.kind, states: Nil, clipped: false, la: None, dynamic: None })
+              validates: sc_validates(t)
+            }
+          })
+        }
+        i := i + 1
+        terms := more
+      }
+    }
+  }
+  if not(sc.allow_unmatched) {
+    out := sc_snoc_pat(out, sc_pat(".", md_count_texts(m.terminal_names) - 1))
+  }
+  out
+}
+
+pub fn md_count_texts(xs: List(Text)): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + md_count_texts(rest)
+  }
+}
+
+// ---------------------------------------------------------------- the tables
+
+pub fn sc_words_u(xs: List(u64)): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(Text::of_u64(x), sc_words_u(rest))
+  }
+}
+
+pub fn sc_la_dfa(p: SPat, cc: CcOut): List(SdSt) {
+  sd_minimize(sd_subset(sd_convert(nf_lookahead(p), cc)))
+}
+
+pub fn sc_push_words(&mut out: Vec(Text), w: Text): Unit {
+  Vec::push(&mut out, w)
+}
+
+// The words of a state of a mode: the words of the states, the lookahead
+// automata of the patterns pushed on `look` as they are met.
+pub fn sc_state_words(st: SdSt, cc: CcOut, &mut look: Vec(Text), &mut b: Buf): Unit {
+  Buf::push(&mut b, &Text::of_u64(sc_len_pats(st.acc)))
+  Buf::push(&mut b, &" ")
+  var rest := st.acc
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        var la_dfa: u64 := 0
+        if p.la_kind > 0 {
+          let dfa := sc_la_dfa(p, cc)
+          var lb := Buf::new()
+          sc_states_words(dfa, cc, &mut look, &mut lb)
+          la_dfa := Vec::len(&look)
+          Vec::push(&mut look, Text::of(lb))
+        }
+        Buf::push(&mut b, &Text::of_u64(p.terminal))
+        Buf::push(&mut b, &" ")
+        Buf::push(&mut b, &Text::of_u64(p.priority))
+        Buf::push(&mut b, &" ")
+        Buf::push(&mut b, &Text::of_u64(p.la_kind))
+        Buf::push(&mut b, &" ")
+        Buf::push(&mut b, &Text::of_u64(la_dfa))
+        Buf::push(&mut b, &" ")
+        rest := more
+      }
+    }
+  }
+  Buf::push(&mut b, &Text::of_u64(sc_len_trs(st.trans)))
+  var ts := st.trans
+  var running2 := true
+  while running2 {
+    match ts {
+      Nil => {
+        running2 := false
+      }
+      Cons(t, more) => {
+        Buf::push(&mut b, &" ")
+        Buf::push(&mut b, &Text::of_u64(t.cc))
+        Buf::push(&mut b, &" ")
+        Buf::push(&mut b, &Text::of_u64(t.to))
+        ts := more
+      }
+    }
+  }
+}
+
+pub fn sc_len_pats(xs: List(SPat)): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sc_len_pats(rest)
+  }
+}
+
+pub fn sc_len_trs(xs: List(SdTr)): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sc_len_trs(rest)
+  }
+}
+
+pub fn sc_len_sts(xs: List(SdSt)): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sc_len_sts(rest)
+  }
+}
+
+// `states(…)`: the count and each state.
+pub fn sc_states_words(states: List(SdSt), cc: CcOut, &mut look: Vec(Text), &mut b: Buf): Unit {
+  Buf::push(&mut b, &Text::of_u64(sc_len_sts(states)))
+  var rest := states
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        Buf::push(&mut b, &" ")
+        sc_state_words(s, cc, &mut look, &mut b)
+        rest := more
+      }
+    }
+  }
+}
+
+pub fn sc_class_line(cc: CcOut): Text {
+  var keys: List(u64) := Nil
+  var g: u64 := 0
+  var gs := cc.groups
+  var running := true
+  while running {
+    match gs {
+      Nil => {
+        running := false
+      }
+      Cons(rs, more) => {
+        var rest := rs
+        var walking := true
+        while walking {
+          match rest {
+            Nil => {
+              walking := false
+            }
+            Cons(r, others) => {
+              keys := Cons(r.lo * 4398046511104 + r.hi * 2097152 + g, keys)
+              rest := others
+            }
+          }
+        }
+        g := g + 1
+        gs := more
+      }
+    }
+  }
+  let sorted := lg_sort_keep(keys)
+  var words: List(Text) := Nil
+  var rest2 := sorted
+  var running2 := true
+  var count: u64 := 0
+  while running2 {
+    match rest2 {
+      Nil => {
+        running2 := false
+      }
+      Cons(k, more) => {
+        words := Cons(
+          Text::of_u64(mod(k, 2097152)),
+          Cons(
+            Text::of_u64(mod(div(k, 2097152), 2097152)),
+            Cons(Text::of_u64(div(k, 4398046511104)), words)
+          )
+        )
+        count := count + 1
+        rest2 := more
+      }
+    }
+  }
+  em_line("classes", count, text_list_reverse(words))
+}
+
+pub fn sc_nfa_leaves(nfas: List(Nfa)): List(RHir) {
+  var leaves: List(RHir) := Nil
+  var rest := nfas
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(a, more) => {
+        leaves := sd_leaves(a, leaves)
+        rest := more
+      }
+    }
+  }
+  leaves
+}
+
+pub fn sc_patterns_each(m: MModel, state: u64, scanners: List(PScanner)): List(List(SPat)) {
+  match scanners {
+    Nil => Nil
+    Cons(sc, rest) => Cons(sc_patterns(m, state, sc), sc_patterns_each(m, state + 1, rest))
+  }
+}
+
+pub fn sc_nfas(ps: List(List(SPat))): List(Nfa) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(nf_of_patterns(p), sc_nfas(rest))
+  }
+}
+
+pub fn sc_trans_words(ts: List(MTrans)): List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(
+      Text::of_u64(t.tok),
+      Cons(Text::of_u64(t.kind), Cons(Text::of_u64(t.target), sc_trans_words(rest)))
+    )
+  }
+}
+
+pub fn sc_len_ts(xs: List(MTrans)): u64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + sc_len_ts(rest)
+  }
+}
+
+// The lines `classes`, `modes` and `lookahead_dfas` of the table file.
+pub fn sc_lines(m: MModel): List(Text) {
+  let pats := sc_patterns_each(m, 0, m.scanners)
+  let nfas := sc_nfas(pats)
+  let cc := cc_make(sc_nfa_leaves(nfas))
+  var look: Vec(Text) := Vec::new()
+  var b := Buf::new()
+  var n_modes: u64 := 0
+  var scs := m.scanners
+  var nf := nfas
+  var tr := m.ttrans
+  var running := true
+  while running {
+    match scs {
+      Nil => {
+        running := false
+      }
+      Cons(sc, more) => match nf {
+        Nil => {
+          running := false
+        }
+        Cons(a, nfa_rest) => match tr {
+          Nil => {
+            running := false
+          }
+          Cons(ts, tr_rest) => {
+            if n_modes > 0 {
+              Buf::push(&mut b, &" ")
+            }
+            Buf::push(&mut b, &sc.name)
+            Buf::push(&mut b, &" ")
+            Buf::push(&mut b, &Text::of_u64(sc_len_ts(ts)))
+            Buf::push(&mut b, &" ")
+            let tw := text_join(sc_trans_words(ts), " ")
+            if std::prelude::Text::len(tw) > 0 {
+              Buf::push(&mut b, &tw)
+              Buf::push(&mut b, &" ")
+            }
+            let dfa := sd_minimize(sd_subset(sd_convert(a, cc)))
+            sc_states_words(dfa, cc, &mut look, &mut b)
+            n_modes := n_modes + 1
+            scs := more
+            nf := nfa_rest
+            tr := tr_rest
+          }
+        }
+      }
+    }
+  }
+  var las := Buf::new()
+  var i: u64 := 0
+  while i < Vec::len(&look) {
+    if i > 0 {
+      Buf::push(&mut las, &" ")
+    }
+    Buf::push(&mut las, &sd_keys_get(&look, i))
+    i := i + 1
+  }
+  Cons(
+    sc_class_line(cc),
+    Cons(
+      Text::concat_all(
+        Cons("modes ", Cons(Text::of_u64(n_modes), Cons(" ", Cons(text_of_buf(b), Nil))))
+      ),
+      Cons(
+        Text::concat_all(
+          Cons(
+            "lookahead_dfas ",
+            Cons(
+              Text::of_u64(Vec::len(&look)),
+              Cons(if Vec::len(&look) > 0 { " " } else { "" }, Cons(text_of_buf(las), Nil))
+            )
+          )
+        ),
+        sc_dynamic_lines(m, cc)
+      )
+    )
+  )
+}
+
+pub fn text_of_buf(b: Buf): Text {
+  Text::of(b)
+}
+
+// ---------------------------------------------------------------- the states of the scanner
+
+// The automaton of a regular expression that a terminal with `%capture` or
+// `%validate` is cut into, in the words of `states(…)`.
+pub fn sc_sub_dfa_words(pattern: Text, context: Text, cc: CcOut): Text {
+  let dfa := sc_la_dfa(
+    SPat {
+      context: context,
+      pattern: "",
+      terminal: 0,
+      priority: 0,
+      la_kind: 1,
+      la: pattern,
+      validates: false
+    },
+    cc
+  )
+  var look: Vec(Text) := Vec::new()
+  var b := Buf::new()
+  sc_states_words(dfa, cc, &mut look, &mut b)
+  Text::of(b)
+}
+
+pub fn sc_expr_words(e: PExpr): List(Text) {
+  Cons(
+    if e.a_state { "1" } else { "0" },
+    Cons(
+      Text::of_u64(e.a),
+      Cons(Text::of_u64(e.op), Cons(if e.b_state { "1" } else { "0" }, Cons(Text::of_u64(e.b), Nil)))
+    )
+  )
+}
+
+pub fn sc_code_points(t: Text): List(Text) {
+  var out: List(Text) := Nil
+  var n: u64 := 0
+  var at: u64 := 0
+  while at < std::prelude::Text::len(t) {
+    match lk_decode(t, at) {
+      Some(#(@code code, @len len)) => {
+        out := Cons(Text::of_u64(code), out)
+        n := n + 1
+        at := at + len
+      }
+      None => par_die("not UTF-8")
+    }
+  }
+  Cons(Text::of_u64(n), text_list_reverse(out))
+}
+
+pub fn sc_state_at(xs: List(PState), i: u64): PState {
+  match xs {
+    Nil => par_die("a state that is not declared")
+    Cons(x, rest) => if i == 0 { x } else { sc_state_at(rest, i - 1) }
+  }
+}
+
+// The lines `dyn_states`, `dynamic` and `dynamic_dfas`, written only when the
+// grammar declares a state: the states (0 a count from `min` to `max`, 1 a
+// str), for each terminal with `%capture` or `%validate` its terminal, its
+// operation (0 capture a count, 1 validate a count, 2 capture a str, 3
+// validate a str), the state, the unit's code points, the range (0 equal, or
+// 1 and its two ends), and the automata of the parts before and after it and
+// of the captured str (-1 if none), numbered in `dynamic_dfas`.
+pub fn sc_dynamic_lines(m: MModel, cc: CcOut): List(Text) {
+  match m.dyn_states {
+    Nil => Nil
+    Cons(first, others) => {
+      var sw: List(Text) := Nil
+      var n_states: u64 := 0
+      var ss := m.dyn_states
+      var running := true
+      while running {
+        match ss {
+          Nil => {
+            running := false
+          }
+          Cons(st, more) => {
+            sw := Cons(
+              Text::of_u64(st.max),
+              Cons(Text::of_u64(st.min), Cons(if st.count { "0" } else { "1" }, sw))
+            )
+            n_states := n_states + 1
+            ss := more
+          }
+        }
+      }
+      var dw: List(Text) := Nil
+      var n_dyn: u64 := 0
+      var dfas: List(Text) := Nil
+      var n_dfas: u64 := 0
+      var i: u64 := 0
+      var terms := m.terms
+      var running2 := true
+      while running2 {
+        match terms {
+          Nil => {
+            running2 := false
+          }
+          Cons(t, more) => {
+            match t.dynamic {
+              None => #()
+              Some(d) => {
+                let st := sc_state_at(m.dyn_states, d.state)
+                let context := sc_rule_context(m, 5 + i)
+                let op: u64 := if st.count { if d.capture { 0 } else { 1 } } else if d.capture {
+                  2
+                } else { 3 }
+                var words: List(
+                  Text
+                ) := Cons(
+                  Text::of_u64(5 + i),
+                  Cons(Text::of_u64(op), Cons(Text::of_u64(d.state), sc_code_points(d.unit)))
+                )
+                words := em_cat(words, match d.range {
+                  None => Cons("0", Nil)
+                  Some(r) => Cons("1", em_cat(sc_expr_words(r.fst), sc_expr_words(r.snd)))
+                })
+                dfas := Cons(
+                  sc_sub_dfa_words(d.suffix, context, cc),
+                  Cons(sc_sub_dfa_words(d.prefix, context, cc), dfas)
+                )
+                words := em_cat(
+                  words,
+                  Cons(Text::of_u64(n_dfas), Cons(Text::of_u64(n_dfas + 1), Nil))
+                )
+                n_dfas := n_dfas + 2
+                if op == 2 {
+                  dfas := Cons(sc_sub_dfa_words(st.pattern, context, cc), dfas)
+                  words := em_cat(words, Cons(Text::of_u64(n_dfas), Nil))
+                  n_dfas := n_dfas + 1
+                } else {
+                  words := em_cat(words, Cons("-1", Nil))
+                }
+                dw := em_cat(dw, words)
+                n_dyn := n_dyn + 1
+              }
+            }
+            i := i + 1
+            terms := more
+          }
+        }
+      }
+      Cons(
+        em_line("dyn_states", n_states, text_list_reverse(sw)),
+        Cons(
+          em_line("dynamic", n_dyn, dw),
+          Cons(em_line("dynamic_dfas", n_dfas, text_list_reverse(dfas)), Nil)
+        )
+      )
+    }
+  }
+}
+
+pub fn sc_validates(t: PTerm): Bool {
+  match t.dynamic {
+    None => false
+    Some(d) => not(d.capture)
+  }
+}

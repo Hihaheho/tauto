@@ -1,0 +1,31 @@
+import "rules_ty.taut"
+
+// A function accepts a pointwise compatible argument list. Borrowed callees
+// keep the same calling signature; their uses are checked by linearity.
+pub(open) inductive CallType(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  inst: (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop,
+  dup: (Ty) -> Prop
+): (Ty, List(Ty), Ty) -> Prop {
+  CallFunction<args: List(
+    Ty
+  ), ps: List(
+    Ty
+  ), result: Ty>(
+    kind: Kind,
+    fits: TySubList(s, ok, inst, dup, args, ps)
+  ): CallType(s, ok, inst, dup, TyFn(ps, result, kind), args, result)
+  CallBorrow<function: Ty, args: List(
+    Ty
+  ), result: Ty>(
+    mutable: Bool,
+    inner: CallType(s, ok, inst, dup, function, args, result)
+  ): CallType(s, ok, inst, dup, TyBorrow(function, mutable), args, result)
+  CallConvert<function: Ty, resolved: Ty, args: List(
+    Ty
+  ), result: Ty>(
+    equal: TyEq(s, ok, function, resolved),
+    inner: CallType(s, ok, inst, dup, resolved, args, result)
+  ): CallType(s, ok, inst, dup, function, args, result)
+}

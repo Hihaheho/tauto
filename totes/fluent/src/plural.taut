@@ -1,0 +1,287 @@
+// Contains the plural rules of Unicode CLDR (Unicode License v3); see NOTICE.
+import std::Base
+
+// CLDR plural categories of whole numbers, for the languages listed in `plural`. A language not
+// listed has the rules of CLDR's root locale: every number is `other`.
+
+pub(open) inductive Category: Type {
+  CZero: Category
+  COne: Category
+  CTwo: Category
+  CFew: Category
+  CMany: Category
+  COther: Category
+}
+
+// The name a variant key uses for the category: `[one]`.
+pub fn category_name(c: Category): List(Nat) {
+  match c: List(Nat) {
+    CZero => Cons(122, Cons(101, Cons(114, Cons(111, Nil))))
+    COne => Cons(111, Cons(110, Cons(101, Nil)))
+    CTwo => Cons(116, Cons(119, Cons(111, Nil)))
+    CFew => Cons(102, Cons(101, Cons(119, Nil)))
+    CMany => Cons(109, Cons(97, Cons(110, Cons(121, Nil))))
+    COther => Cons(111, Cons(116, Cons(104, Cons(101, Cons(114, Nil)))))
+  }
+}
+
+// The rule families.
+pub(open) inductive Rule: Type {
+  // ja, zh, ko, th, vi, id, ms, my, lo, km, yue: `other` only.
+  ROther: Rule
+  // en, de, nl, sv, da, nb, nn, no, fi, et, it, es, ca, gl, el, hu, tr, bg, eu, af, sw, ur:
+  // `one` for 1.
+  ROne: Rule
+  // fr, pt, hy, kab: `one` for 0 and 1.
+  RZeroOne: Rule
+  // ru, uk, be, hr, sr, bs: `one`, `few`, `many` by the last two digits.
+  RSlavic: Rule
+  // pl: `one` for 1, `few` and `many` by the last two digits.
+  RPolish: Rule
+  // cs, sk: `one` for 1, `few` for 2 to 4.
+  RCzech: Rule
+  // ar: `zero`, `one`, `two`, `few`, `many`.
+  RArabic: Rule
+}
+
+pub fn in_two_four(d: Nat): Bool {
+  Bool::and(Nat::le(2, d), Nat::le(d, 4))
+}
+
+// `n` is 2, 3 or 4 modulo 10 and not 12, 13 or 14 modulo 100.
+pub fn few_slavic(n: Nat): Bool {
+  Bool::and(in_two_four(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl))), not(in_two_four(Nat::sub(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 10))))
+}
+
+// `n` ends in 1 but not in 11.
+pub fn ends_in_one(n: Nat): Bool {
+  Bool::and(Nat::eq(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 1), not(Nat::eq(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 11)))
+}
+
+pub fn one_or_other(one: Bool): Category {
+  match one: Category {
+    true => COne
+    false => COther
+  }
+}
+
+pub fn slavic(one: Bool, few: Bool): Category {
+  match one: Category {
+    true => COne
+    false => match few: Category {
+      true => CFew
+      false => CMany
+    }
+  }
+}
+
+pub fn is_other(c: Category): Bool {
+  match c: Bool {
+    CZero => false
+    COne => false
+    CTwo => false
+    CFew => false
+    CMany => false
+    COther => true
+  }
+}
+
+pub fn rule_category(r: Rule, n: Nat): Category {
+  match r: Category {
+    ROther => COther
+    ROne => one_or_other(Nat::eq(n, 1))
+    RZeroOne => match Nat::le(n, 1): Category {
+      true => COne
+      false => COther
+    }
+    RSlavic => slavic(ends_in_one(n), few_slavic(n))
+    RPolish => match Nat::eq(n, 1): Category {
+      true => COne
+      false => match few_slavic(n): Category {
+        true => CFew
+        false => CMany
+      }
+    }
+    RCzech => match Nat::eq(n, 1): Category {
+      true => COne
+      false => match in_two_four(n): Category {
+        true => CFew
+        false => COther
+      }
+    }
+    RArabic => match Nat::eq(n, 0): Category {
+      true => CZero
+      false => match Nat::eq(n, 1): Category {
+        true => COne
+        false => match Nat::eq(n, 2): Category {
+          true => CTwo
+          false => match Bool::and(Nat::le(3, Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl))), Nat::le(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 10)): Category {
+            true => CFew
+            false => match Nat::le(11, Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl))): Category {
+              true => CMany
+              false => COther
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The language of a locale: the letters before `-` or `_`, in lower case.
+pub fn language(s: List(Nat)): List(Nat) {
+  match s: List(Nat) {
+    Nil => Nil
+    Cons(c, t) => match Bool::and(Nat::le(65, c), Nat::le(c, 90)): List(Nat) {
+      true => Cons(Nat::add(c, 32), language(t))
+      false => match Bool::and(Nat::le(97, c), Nat::le(c, 122)): List(Nat) {
+        true => Cons(c, language(t))
+        false => Nil
+      }
+    }
+  }
+}
+
+pub fn two(a: Nat, b: Nat): List(Nat) {
+  Cons(a, Cons(b, Nil))
+}
+
+pub fn lang_is(l: List(Nat), a: Nat, b: Nat): Bool {
+  match l: Bool {
+    Nil => false
+    Cons(c, t) => match t: Bool {
+      Nil => false
+      Cons(d, u) => match u: Bool {
+        Cons(e, v) => false
+        Nil => Bool::and(Nat::eq(c, a), Nat::eq(d, b))
+      }
+    }
+  }
+}
+
+// Whether `l` is one of the two-letter codes in `codes`, each written as two bytes.
+pub fn lang_in(l: List(Nat), codes: List(List(Nat))): Bool {
+  match codes: Bool {
+    Nil => false
+    Cons(code, rest) => match code: Bool {
+      Nil => lang_in(l, rest)
+      Cons(a, t) => match t: Bool {
+        Nil => lang_in(l, rest)
+        Cons(b, u) => Bool::or(lang_is(l, a, b), lang_in(l, rest))
+      }
+    }
+  }
+}
+
+// en de nl sv da nb nn no fi et it es ca gl el hu tr bg eu af sw ur
+pub fn one_langs(): List(List(Nat)) {
+  Cons(
+    two(101, 110),
+    Cons(
+      two(100, 101),
+      Cons(
+        two(110, 108),
+        Cons(
+          two(115, 118),
+          Cons(
+            two(100, 97),
+            Cons(
+              two(110, 98),
+              Cons(
+                two(110, 110),
+                Cons(
+                  two(110, 111),
+                  Cons(
+                    two(102, 105),
+                    Cons(
+                      two(101, 116),
+                      Cons(
+                        two(105, 116),
+                        Cons(
+                          two(101, 115),
+                          Cons(
+                            two(99, 97),
+                            Cons(
+                              two(103, 108),
+                              Cons(
+                                two(101, 108),
+                                Cons(
+                                  two(104, 117),
+                                  Cons(
+                                    two(116, 114),
+                                    Cons(
+                                      two(98, 103),
+                                      Cons(
+                                        two(101, 117),
+                                        Cons(
+                                          two(97, 102),
+                                          Cons(two(115, 119), Cons(two(117, 114), Nil))
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// fr pt hy
+pub fn zero_one_langs(): List(List(Nat)) {
+  Cons(two(102, 114), Cons(two(112, 116), Cons(two(104, 121), Nil)))
+}
+
+// ru uk be hr sr bs
+pub fn slavic_langs(): List(List(Nat)) {
+  Cons(
+    two(114, 117),
+    Cons(
+      two(117, 107),
+      Cons(two(98, 101), Cons(two(104, 114), Cons(two(115, 114), Cons(two(98, 115), Nil))))
+    )
+  )
+}
+
+// cs sk
+pub fn czech_langs(): List(List(Nat)) {
+  Cons(two(99, 115), Cons(two(115, 107), Nil))
+}
+
+pub fn rule_of_language(l: List(Nat)): Rule {
+  match lang_in(l, one_langs()): Rule {
+    true => ROne
+    false => match lang_in(l, zero_one_langs()): Rule {
+      true => RZeroOne
+      false => match lang_in(l, slavic_langs()): Rule {
+        true => RSlavic
+        false => match lang_is(l, 112, 108): Rule {
+          true => RPolish
+          false => match lang_in(l, czech_langs()): Rule {
+            true => RCzech
+            false => match lang_is(l, 97, 114): Rule {
+              true => RArabic
+              false => ROther
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The plural category of the whole number `n` in the locale `locale` (such as `en-US`).
+pub fn plural(locale: List(Nat), n: Nat): Category {
+  rule_category(rule_of_language(language(locale)), n)
+}

@@ -1,0 +1,151 @@
+import "instantiation_allocation_sound.taut"
+import "local_lookup_sound.taut"
+
+pub fn LocalsAllocated(limit: Nat, env: List(Local)): Prop {
+  match env: Prop { Nil => True
+    Cons(head, rest) => And(
+      TypeAllocated(limit, expr_local_ty(head)),
+      LocalsAllocated(limit, rest)
+    ) }
+}
+pub theorem locals_allocated_weaken(
+  env: List(Local),
+  before: Nat,
+  after: Nat,
+  advanced: Nat::le(before, after) = true,
+  h: LocalsAllocated(before, env)
+): LocalsAllocated(after, env) {
+  match env: LocalsAllocated(after, env) { Nil => Trivial
+    Cons(head, rest) => AndIntro(
+      type_allocated_weaken(expr_local_ty(head), before, after, advanced, And::left(h)),
+      locals_allocated_weaken(rest, before, after, advanced, And::right(h))
+    ) }
+}
+pub theorem local_binding_allocated<env: List(
+  Local
+), name: Text, local: Local>(
+  binding: LocalBinding(env, name, local),
+  limit: Nat,
+  bounded: LocalsAllocated(limit, env)
+): TypeAllocated(limit, expr_local_ty(local)) {
+  match binding: TypeAllocated(limit, expr_local_ty(local)) {
+    LocalBindingHere(found, rest) => And::left(bounded)
+    LocalBindingLater(rest, key, found, head, different, tail) => local_binding_allocated(
+      tail,
+      limit,
+      And::right(bounded)
+    )
+  }
+}
+pub theorem env_find_allocated(
+  env: List(Local),
+  name: Text,
+  local: Local,
+  limit: Nat,
+  bounded: LocalsAllocated(limit, env),
+  found: env_find(env, name) = Some(local)
+): TypeAllocated(limit, expr_local_ty(local)) {
+  local_binding_allocated(env_find_sound(env, name, local, found), limit, bounded)
+}
+pub theorem ck_lookup_local_allocation(
+  c: Checker,
+  name: Text,
+  env: List(Local),
+  span: TySpan,
+  local: Local,
+  state: CheckerAllocation(c),
+  bounded: LocalsAllocated(ck_next_of(c), env),
+  found: env_find(env, name) = Some(local)
+): AllocationResult(c, ck_lookup(c, name, env, span)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(ck_lookup_local_value(c, name, env, span, local, found)),
+    allocation_result_return(
+      c,
+      expr_local_ty(local),
+      state,
+      env_find_allocated(env, name, local, ck_next_of(c), bounded, found)
+    )
+  )
+}
+pub fn allocation_scope_items(scope: Scope): List(Local) { scope.items }
+pub fn allocation_result_scope<A>(m: Mut2(A, Checker, Scope)): Scope {
+  match m: Scope { mut2(value, next, env) => env }
+}
+pub def ScopeAllocation<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope)
+): Prop := And(
+  AllocationAdvance(c, pattern_checker(m)),
+  LocalsAllocated(
+    ck_next_of(ck_st(pattern_checker(m))),
+    allocation_scope_items(allocation_result_scope(m))
+  )
+)
+pub theorem ck_bind_local_allocation(
+  c: Checker,
+  env: Scope,
+  name: Text,
+  ty: Ty,
+  mutable: Bool,
+  site: Nat,
+  state: CheckerAllocation(c),
+  bounded: LocalsAllocated(ck_next_of(c), allocation_scope_items(env)),
+  value: TypeAllocated(ck_next_of(c), ty)
+): ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) {
+  match env: ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) {
+    ScopeMk(items) => AndIntro(
+      AndIntro(Nat::le_refl(ck_next_of(c)), state),
+      AndIntro(value, bounded)
+    )
+  }
+}
+pub theorem scope_allocation_rewrap<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope),
+  h: ScopeAllocation(c, m)
+): ScopeAllocation(c, pattern_rewrap(m)) {
+  Eq::subst(
+    (result: Mut2(A, Checker, Scope)) => ScopeAllocation(c, result),
+    Eq::sym(pattern_rewrap_id(m)),
+    h
+  )
+}
+pub theorem scope_allocation_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker, Scope) -> Mut2(B, Checker, Scope),
+  m: Mut2(A, Checker, Scope),
+  first: ScopeAllocation(c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ env: Scope. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(
+    next
+  ). ∀ bounded: LocalsAllocated(
+    ck_next_of(next),
+    allocation_scope_items(env)
+  ). ScopeAllocation(next, k(value, next, env))
+): ScopeAllocation(c, pattern_bind(A, B, k, m)) {
+  match m: ScopeAllocation(c, pattern_bind(A, B, k, m)) {
+    mut2(value, next, env) => {
+      let last: ScopeAllocation(
+        next,
+        k(value, next, env)
+      ) := tail(
+        value,
+        next,
+        env,
+        And::left(And::left(first)),
+        And::right(And::left(first)),
+        And::right(first)
+      )
+      AndIntro(
+        allocation_advance_start(
+          c,
+          next,
+          pattern_checker(k(value, next, env)),
+          And::left(And::left(first)),
+          And::left(last)
+        ),
+        And::right(last)
+      )
+    }
+  }
+}

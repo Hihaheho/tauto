@@ -1,0 +1,249 @@
+import "rules_class_assumption.taut"
+import "instantiation_frame.taut"
+import "unify_sound.taut"
+import "kind_sound.taut"
+
+pub theorem class_assumption_weaken(
+  assume: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  head: Pair(Text, Text),
+  h: ClassAssumption(assume, r#class, name)
+): ClassAssumption(Cons(head, assume), r#class, name) {
+  match h: ClassAssumption(Cons(head, assume), r#class, name) {
+    ClassAssumeDirect(given, parameter, present) => ClassAssumeDirect(
+      given,
+      parameter,
+      MemThere(head, assume, present)
+    )
+    ClassAssumeDecEq(parameter, present) => ClassAssumeDecEq(
+      parameter,
+      MemThere(head, assume, present)
+    )
+  }
+}
+pub theorem class_pair_equal(
+  p: Pair(Text, Text),
+  r#class: Text,
+  name: Text,
+  left: instantiation_constraint(p) = r#class,
+  right: instantiation_parameter(p) = name
+): p = (Pair {fst: r#class, snd: name}) {
+  match p: p = (Pair {fst: r#class, snd: name}) {
+    Pair {fst: first, snd: second} => Eq::trans(
+      Eq::congr((label: Text) => Pair {fst: label, snd: second}, left),
+      Eq::congr((parameter: Text) => Pair {fst: r#class, snd: parameter}, right)
+    )
+  }
+}
+pub fn class_assumption_test(p: Pair(Text, Text), r#class: Text, name: Text): Bool {
+  Bool::and(
+    Text::eq(p.snd, name),
+    Bool::or(Text::eq(p.fst, r#class), Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(p.fst, "DecEq")))
+  )
+}
+pub theorem class_assumption_head(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  h: class_assumption_test(p, r#class, name) = true
+): ClassAssumption(Cons(p, rest), r#class, name) {
+  let same_name: instantiation_parameter(p) = name := text_eq_sound(
+    instantiation_parameter(p),
+    name,
+    ck_bool_and_left(
+      Text::eq(instantiation_parameter(p), name),
+      Bool::or(
+        Text::eq(instantiation_constraint(p), r#class),
+        Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(instantiation_constraint(p), "DecEq"))
+      ),
+      h
+    )
+  )
+  let alternatives: Bool::or(
+      Text::eq(instantiation_constraint(p), r#class),
+      Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(instantiation_constraint(p), "DecEq"))
+    ) = true := ck_bool_and_right(
+    Text::eq(instantiation_parameter(p), name),
+    Bool::or(
+      Text::eq(instantiation_constraint(p), r#class),
+      Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(instantiation_constraint(p), "DecEq"))
+    ),
+    h
+  )
+  kyn_or_true(
+    Text::eq(instantiation_constraint(p), r#class),
+    Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(instantiation_constraint(p), "DecEq")),
+    ClassAssumption(Cons(p, rest), r#class, name),
+    alternatives,
+    r#direct => ClassAssumeDirect(
+      r#class,
+      name,
+      mem_of_eq(
+        Pair {fst: r#class, snd: name},
+        p,
+        rest,
+        Eq::sym(
+          class_pair_equal(
+            p,
+            r#class,
+            name,
+            text_eq_sound(instantiation_constraint(p), r#class, r#direct),
+            same_name
+          )
+        )
+      )
+    ),
+    inherited => Eq::subst(
+      (label: Text) => ClassAssumption(Cons(p, rest), label, name),
+      Eq::sym(
+        text_eq_sound(
+          r#class,
+          "PartialEq",
+          ck_bool_and_left(
+            Text::eq(r#class, "PartialEq"),
+            Text::eq(instantiation_constraint(p), "DecEq"),
+            inherited
+          )
+        )
+      ),
+      ClassAssumeDecEq(
+        name,
+        mem_of_eq(
+          Pair {fst: "DecEq", snd: name},
+          p,
+          rest,
+          Eq::sym(
+            class_pair_equal(
+              p,
+              "DecEq",
+              name,
+              text_eq_sound(
+                instantiation_constraint(p),
+                "DecEq",
+                ck_bool_and_right(
+                  Text::eq(r#class, "PartialEq"),
+                  Text::eq(instantiation_constraint(p), "DecEq"),
+                  inherited
+                )
+              ),
+              same_name
+            )
+          )
+        )
+      )
+    )
+  )
+}
+pub fn class_assumption_choice(
+  rest: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  test: Bool
+): Bool {
+  match test: Bool { true => true
+    false => class_assumed(rest, r#class, name) }
+}
+pub theorem class_assumption_unf(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text
+): class_assumed(Cons(p, rest), r#class, name) = class_assumption_choice(rest, r#class, name, class_assumption_test(p, r#class, name)) { Refl }
+pub theorem class_assumption_step(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  test: Bool,
+  tested: class_assumption_test(p, r#class, name) = test,
+  accepted: class_assumption_choice(rest, r#class, name, test) = true,
+  ih: ∀ h: class_assumed(rest, r#class, name) = true. ClassAssumption(rest, r#class, name)
+): ClassAssumption(Cons(p, rest), r#class, name) {
+  match test: ClassAssumption(Cons(p, rest), r#class, name) {
+    true => class_assumption_head(p, rest, r#class, name, tested)
+    false => class_assumption_weaken(rest, r#class, name, p, ih(accepted))
+  }
+}
+pub theorem class_assumed_sound(
+  assume: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  accepted: class_assumed(assume, r#class, name) = true
+): ClassAssumption(assume, r#class, name) {
+  match assume: ClassAssumption(assume, r#class, name) {
+    Nil => False::elim(false_ne_true(accepted))
+    Cons(p, rest) => class_assumption_step(
+      p,
+      rest,
+      r#class,
+      name,
+      class_assumption_test(p, r#class, name),
+      Refl,
+      Eq::trans(Eq::sym(class_assumption_unf(p, rest, r#class, name)), accepted),
+      h => class_assumed_sound(rest, r#class, name, h)
+    )
+  }
+}
+
+pub theorem preds_have_assumption(
+  assume: List(Pair(Text, Text)),
+  r#class: Text,
+  name: Text,
+  accepted: preds_have(assume, r#class, name) = true
+): ClassAssumption(assume, r#class, name) {
+  match assume: ClassAssumption(assume, r#class, name) {
+    Nil => False::elim(false_ne_true(accepted))
+    Cons(p, rest) => kyn_or_true(
+      Bool::and(
+        Text::eq(instantiation_constraint(p), r#class),
+        Text::eq(instantiation_parameter(p), name)
+      ),
+      preds_have(rest, r#class, name),
+      ClassAssumption(Cons(p, rest), r#class, name),
+      accepted,
+      here => ClassAssumeDirect(
+        r#class,
+        name,
+        mem_of_eq(
+          Pair {fst: r#class, snd: name},
+          p,
+          rest,
+          Eq::sym(
+            class_pair_equal(
+              p,
+              r#class,
+              name,
+              text_eq_sound(
+                instantiation_constraint(p),
+                r#class,
+                ck_bool_and_left(
+                  Text::eq(instantiation_constraint(p), r#class),
+                  Text::eq(instantiation_parameter(p), name),
+                  here
+                )
+              ),
+              text_eq_sound(
+                instantiation_parameter(p),
+                name,
+                ck_bool_and_right(
+                  Text::eq(instantiation_constraint(p), r#class),
+                  Text::eq(instantiation_parameter(p), name),
+                  here
+                )
+              )
+            )
+          )
+        )
+      ),
+      tail => class_assumption_weaken(
+        rest,
+        r#class,
+        name,
+        p,
+        preds_have_assumption(rest, r#class, name, tail)
+      )
+    )
+  }
+}

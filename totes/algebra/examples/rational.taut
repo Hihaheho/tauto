@@ -1,45 +1,45 @@
 import "../src/Rational.taut"
 
-def fraction_half(): AlgebraRational := algebra_rational(
+pub def fraction_half(): AlgebraRational := AlgebraRational::Mk(
   integer_of_nat(1),
   2,
   natural_succ_nonzero(1)
 )
-def fraction_two_fourths(): AlgebraRational := algebra_rational(
+pub def fraction_two_fourths(): AlgebraRational := AlgebraRational::Mk(
   integer_of_nat(2),
   4,
   natural_succ_nonzero(3)
 )
-def fraction_shifted_half(): AlgebraRational := algebra_rational(
-  algebra_integer(4, 2),
+pub def fraction_shifted_half(): AlgebraRational := AlgebraRational::Mk(
+  AlgebraInteger::Mk(4, 2),
   4,
   natural_succ_nonzero(3)
 )
-def fraction_negative_half(): AlgebraRational := algebra_rational(
-  algebra_integer(2, 3),
+pub def fraction_negative_half(): AlgebraRational := AlgebraRational::Mk(
+  AlgebraInteger::Mk(2, 3),
   2,
   natural_succ_nonzero(1)
 )
 
-theorem halves_equal(): RationalEq(fraction_half, fraction_two_fourths) { refl() }
-theorem shifted_halves_equal(): RationalEq(fraction_half, fraction_shifted_half) { refl() }
-theorem halves_sum(): RationalEq(
+pub theorem halves_equal(): RationalEq(fraction_half, fraction_two_fourths) { Refl }
+pub theorem shifted_halves_equal(): RationalEq(fraction_half, fraction_shifted_half) { Refl }
+pub theorem halves_sum(): RationalEq(
   rational_add(fraction_half, fraction_two_fourths),
   rational_one
-) { refl() }
-theorem opposite_halves(): RationalEq(
+) { Refl }
+pub theorem opposite_halves(): RationalEq(
   rational_add(fraction_half, fraction_negative_half),
   rational_zero
-) { refl() }
-theorem negative_product(): RationalEq(
+) { Refl }
+pub theorem negative_product(): RationalEq(
   rational_mul(fraction_negative_half, fraction_negative_half),
-  algebra_rational(integer_of_nat(1), 4, natural_succ_nonzero(3))
-) { refl() }
+  AlgebraRational::Mk(integer_of_nat(1), 4, natural_succ_nonzero(3))
+) { Refl }
 
-theorem half_nonzero(): RationalNonzero(
+pub theorem half_nonzero(): RationalNonzero(
   fraction_half
-) { h => integer_nat_zero_ne_succ(0, Eq_sym(h)) }
-theorem shifted_half_nonzero(): RationalNonzero(fraction_shifted_half) {
+) { h => integer_nat_zero_ne_succ(0, Eq::sym(h)) }
+pub theorem shifted_half_nonzero(): RationalNonzero(fraction_shifted_half) {
   rational_nonzero_respects(
     fraction_half,
     fraction_shifted_half,
@@ -47,25 +47,25 @@ theorem shifted_half_nonzero(): RationalNonzero(fraction_shifted_half) {
     half_nonzero
   )
 }
-theorem negative_half_nonzero(): RationalNonzero(fraction_negative_half) {
-  h => integer_nat_zero_ne_succ(0, Eq_congr(nat_pred, Eq_congr(nat_pred, h)))
+pub theorem negative_half_nonzero(): RationalNonzero(fraction_negative_half) {
+  h => integer_nat_zero_ne_succ(0, Eq::congr(Nat::pred, Eq::congr(Nat::pred, h)))
 }
 
-theorem half_inverse(): RationalEq(
+pub theorem half_inverse(): RationalEq(
   rational_inverse(fraction_half, half_nonzero),
   rational_of_integer(integer_of_nat(2))
-) { refl() }
-theorem negative_half_inverse(): RationalEq(
+) { Refl }
+pub theorem negative_half_inverse(): RationalEq(
   rational_inverse(fraction_negative_half, negative_half_nonzero),
-  rational_of_integer(algebra_integer(0, 2))
-) { refl() }
-theorem division_cancel(): RationalEq(
+  rational_of_integer(AlgebraInteger::Mk(0, 2))
+) { Refl }
+pub theorem division_cancel(): RationalEq(
   rational_div(fraction_half, fraction_half, half_nonzero),
   rational_one
 ) {
   rational_inverse_law(fraction_half, half_nonzero)
 }
-theorem division_representatives(): RationalEq(
+pub theorem division_representatives(): RationalEq(
   rational_div(fraction_half, fraction_half, half_nonzero),
   rational_div(fraction_two_fourths, fraction_shifted_half, shifted_half_nonzero)
 ) {
@@ -81,14 +81,14 @@ theorem division_representatives(): RationalEq(
   )
 }
 
-theorem no_negative_zero(
-  n: Nat
-): IntegerEq(integer_neg(algebra_integer(n, n)), integer_zero) { refl() }
-theorem natural_embedding(
+pub theorem no_negative_zero(n: Nat): IntegerEq(integer_neg(AlgebraInteger::Mk(n, n)), integer_zero) {
+  Eq::sym(Nat::add_zero_left(n))
+}
+pub theorem natural_embedding(
   a: Nat,
   b: Nat,
   h: RationalEq(rational_of_integer(integer_of_nat(a)), rational_of_integer(integer_of_nat(b)))
-): Eq(Nat, a, b) {
+): a = b {
   integer_of_nat_injective(
     a,
     b,
@@ -96,12 +96,14 @@ theorem natural_embedding(
   )
 }
 
-theorem zero_fraction_cannot_divide(
+pub theorem zero_fraction_cannot_divide(
   n: Nat,
   d: Nat,
   hd: NaturalNonzero(d),
-  nz: RationalNonzero(algebra_rational(algebra_integer(n, n), d, hd))
-): False { nz(refl()) }
+  nz: RationalNonzero(AlgebraRational::Mk(AlgebraInteger::Mk(n, n), d, hd))
+): False {
+  nz(Eq::sym(Nat::add_zero_left(n)))
+}
 
 import "../src/RationalSemiring.taut"
 import "../src/RelationMatrix.taut"
@@ -109,40 +111,43 @@ import "../src/RelationMatrix.taut"
 // The entry at (row, column) is the integer (row + 1) - 2 * column times `half`.
 // `fraction_matrices_related` relates the matrices at `fraction_half` and at
 // `fraction_shifted_half`, whose numerator is shifted and denominator not reduced.
-fn fraction_matrix_entry(
+pub fn fraction_matrix_entry(
   rows: Nat,
   columns: Nat,
   row: AlgebraFin(rows),
   column: AlgebraFin(columns),
   half: AlgebraRational
-) -> AlgebraRational {
+): AlgebraRational {
   rational_mul(
     rational_of_integer(
-      algebra_integer(
-        succ(algebra_fin_value(rows, row)),
-        nat_mul(2, algebra_fin_value(columns, column))
+      AlgebraInteger::Mk(
+        Succ(algebra_fin_value(rows, row)),
+        Nat::mul(2, algebra_fin_value(columns, column))
       )
     ),
     half
   )
 }
 
-fn fraction_matrix(
+pub fn fraction_matrix(
   rows: Nat,
   columns: Nat,
   half: AlgebraRational
-) -> AlgebraMatrix(AlgebraRational, rows, columns) {
+): AlgebraMatrix(AlgebraRational, rows, columns) {
   row => column => fraction_matrix_entry(rows, columns, row, column, half)
 }
 
-fn fraction_vector(columns: Nat, half: AlgebraRational) -> AlgebraVector(AlgebraRational, columns) {
+pub fn fraction_vector(
+  columns: Nat,
+  half: AlgebraRational
+): AlgebraVector(AlgebraRational, columns) {
   column => rational_mul(
-    rational_of_integer(integer_of_nat(succ(algebra_fin_value(columns, column)))),
+    rational_of_integer(integer_of_nat(Succ(algebra_fin_value(columns, column)))),
     half
   )
 }
 
-theorem fraction_matrices_related(
+pub theorem fraction_matrices_related(
   rows: Nat,
   columns: Nat
 ): AlgebraMatrixRelated(
@@ -155,24 +160,24 @@ theorem fraction_matrices_related(
 ) {
   row => column => rational_mul_respects(
     rational_of_integer(
-      algebra_integer(
-        succ(algebra_fin_value(rows, row)),
-        nat_mul(2, algebra_fin_value(columns, column))
+      AlgebraInteger::Mk(
+        Succ(algebra_fin_value(rows, row)),
+        Nat::mul(2, algebra_fin_value(columns, column))
       )
     ),
     rational_of_integer(
-      algebra_integer(
-        succ(algebra_fin_value(rows, row)),
-        nat_mul(2, algebra_fin_value(columns, column))
+      AlgebraInteger::Mk(
+        Succ(algebra_fin_value(rows, row)),
+        Nat::mul(2, algebra_fin_value(columns, column))
       )
     ),
     fraction_half,
     fraction_shifted_half,
     rational_eq_refl(
       rational_of_integer(
-        algebra_integer(
-          succ(algebra_fin_value(rows, row)),
-          nat_mul(2, algebra_fin_value(columns, column))
+        AlgebraInteger::Mk(
+          Succ(algebra_fin_value(rows, row)),
+          Nat::mul(2, algebra_fin_value(columns, column))
         )
       )
     ),
@@ -180,7 +185,7 @@ theorem fraction_matrices_related(
   )
 }
 
-theorem fraction_vectors_related(
+pub theorem fraction_vectors_related(
   columns: Nat
 ): AlgebraVectorRelated(
   AlgebraRational,
@@ -190,16 +195,16 @@ theorem fraction_vectors_related(
   fraction_vector(columns, fraction_shifted_half)
 ) {
   column => rational_mul_respects(
-    rational_of_integer(integer_of_nat(succ(algebra_fin_value(columns, column)))),
-    rational_of_integer(integer_of_nat(succ(algebra_fin_value(columns, column)))),
+    rational_of_integer(integer_of_nat(Succ(algebra_fin_value(columns, column)))),
+    rational_of_integer(integer_of_nat(Succ(algebra_fin_value(columns, column)))),
     fraction_half,
     fraction_shifted_half,
-    rational_eq_refl(rational_of_integer(integer_of_nat(succ(algebra_fin_value(columns, column))))),
+    rational_eq_refl(rational_of_integer(integer_of_nat(Succ(algebra_fin_value(columns, column))))),
     shifted_halves_equal
   )
 }
 
-theorem fraction_matrix_action_representatives(
+pub theorem fraction_matrix_action_representatives(
   rows: Nat,
   columns: Nat,
   row: AlgebraFin(rows)
@@ -245,7 +250,7 @@ theorem fraction_matrix_action_representatives(
   )
 }
 
-theorem fraction_matrix_product_representatives(
+pub theorem fraction_matrix_product_representatives(
   rows: Nat,
   inner: Nat,
   columns: Nat,
@@ -297,7 +302,7 @@ theorem fraction_matrix_product_representatives(
   )
 }
 
-theorem fraction_matrix_action_value(): RationalEq(
+pub theorem fraction_matrix_action_value(): RationalEq(
   algebra_relation_matrix_apply(
     AlgebraRational,
     rational_zero,
@@ -307,11 +312,11 @@ theorem fraction_matrix_action_value(): RationalEq(
     2,
     fraction_matrix(2, 2, fraction_half),
     fraction_vector(2, fraction_half)
-  )(algebra_first(1)),
-  algebra_rational(algebra_integer(0, 1), 4, natural_succ_nonzero(3))
-) { refl() }
+  )(AlgebraFirst(1)),
+  AlgebraRational::Mk(AlgebraInteger::Mk(0, 1), 4, natural_succ_nonzero(3))
+) { Refl }
 
-theorem fraction_matrix_product_value(): RationalEq(
+pub theorem fraction_matrix_product_value(): RationalEq(
   algebra_relation_matrix_product(
     AlgebraRational,
     rational_zero,
@@ -322,6 +327,6 @@ theorem fraction_matrix_product_value(): RationalEq(
     2,
     fraction_matrix(2, 2, fraction_half),
     fraction_matrix(2, 2, fraction_half)
-  )(algebra_next(1, algebra_first(0)), algebra_next(1, algebra_first(0))),
+  )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(1, AlgebraFirst(0))),
   fraction_negative_half
-) { refl() }
+) { Refl }

@@ -1,13 +1,143 @@
-// Explicit changes of an integer's width (`docs/design/self-host.md`). A number
-// that does not fit is the run error "the number is too large".
+module I64 {
+  // Explicit changes of an integer's width (`docs/design/self-host.md`). A number
+  // that does not fit is the run error "the number is too large".
 
-extern {
-  fn i64_of_i32(n: i32) -> i64
-  fn i32_of_i64(n: i64) -> i32
-  fn i64_of_u64(n: u64) -> i64
-  fn u64_of_i64(n: i64) -> u64
-  fn u64_of_u32(n: u32) -> u64
-  fn u32_of_u64(n: u64) -> u32
-  fn u64_of_u8(n: u8) -> u64
-  fn u8_of_u64(n: u64) -> u8
+  extern {
+    fn of_i32(n: i32): i64
+    fn of_u64(n: u64): i64
+    fn of_float(x: Float): i64
+  }
+}
+
+module I32 {
+  extern {
+    fn of_i64(n: i64): i32
+  }
+}
+
+module U64 {
+  extern {
+    fn of_i64(n: i64): u64
+    fn of_u32(n: u32): u64
+    fn of_u8(n: u8): u64
+    fn of_nat(n: nat): u64
+    fn and(a: u64, b: u64): u64
+    fn or(a: u64, b: u64): u64
+    fn xor(a: u64, b: u64): u64
+    fn shl(a: u64, s: u64): u64
+    fn shr(a: u64, s: u64): u64
+    fn rotl(a: u64, s: u64): u64
+    fn rotr(a: u64, s: u64): u64
+  }
+}
+
+module U32 {
+  extern {
+    fn of_u64(n: u64): u32
+    // The bits of a word: and, or, exclusive or, and shifts and rotations by
+    // `s` modulo the width (`docs/design/self-host.md`).
+    fn and(a: u32, b: u32): u32
+    fn or(a: u32, b: u32): u32
+    fn xor(a: u32, b: u32): u32
+    fn shl(a: u32, s: u64): u32
+    fn shr(a: u32, s: u64): u32
+    fn rotl(a: u32, s: u64): u32
+    fn rotr(a: u32, s: u64): u32
+  }
+}
+
+module U8 {
+  extern {
+    fn of_u64(n: u64): u8
+  }
+}
+
+module Nat {
+  extern {
+    fn of_u64(n: u64): nat
+  }
+}
+
+module Float {
+  // `Float` (IEEE 754 binary64, `docs/design/float.md`). Every backend computes
+  // the same bits: the functions that are not exact in IEEE 754 (`Float::sin`,
+  // `Float::ln`, `Float::pow`, …) are the runtime's own, not the platform's.
+  // `Float::of_text` reads a number as a literal writes one (with an optional
+  // `-`), and `Text::of_float` writes the shortest digits that read back as the
+  // same `Float`, without an exponent (`0.1`, `1`, `-0`, `NaN`, `inf`).
+  // `I64::of_float` takes the integer part; NaN, an infinity or a part outside
+  // `i64` is the run error "the number is too large".
+  extern {
+    fn of_i64(n: i64): Float
+    fn of_text(t: Text): Option(Float)
+    fn bits(x: Float): u64
+    fn of_bits(b: u64): Float
+    fn is_nan(x: Float): Bool
+    fn abs(x: Float): Float
+    fn floor(x: Float): Float
+    fn ceil(x: Float): Float
+    fn trunc(x: Float): Float
+    fn round(x: Float): Float
+    fn sqrt(x: Float): Float
+    fn cbrt(x: Float): Float
+    fn exp(x: Float): Float
+    fn ln(x: Float): Float
+    fn log2(x: Float): Float
+    fn log10(x: Float): Float
+    fn pow(x: Float, y: Float): Float
+    fn sin(x: Float): Float
+    fn cos(x: Float): Float
+    fn tan(x: Float): Float
+    fn asin(x: Float): Float
+    fn acos(x: Float): Float
+    fn atan(x: Float): Float
+    fn atan2(y: Float, x: Float): Float
+    fn sinh(x: Float): Float
+    fn cosh(x: Float): Float
+    fn tanh(x: Float): Float
+    fn of_float32(x: Float32): Float
+  }
+}
+
+module Text {
+  extern {
+    fn of_float(x: Float): Text
+  }
+}
+
+module Float32 {
+  // `Float32` (IEEE 754 binary32, `docs/design/float.md`). It has no literal:
+  // `Float32::of_float(0.1)` is the `Float32` nearest to the `Float` `0.1`.
+  // `+ - * /`, the comparisons and `Float32::sqrt` are IEEE 754's; the other
+  // functions are the `Float` one of the same number, rounded to the nearest
+  // `Float32`, so every backend computes the same bits. `show` writes the
+  // digits of the same number as a `Float`.
+  extern {
+    fn of_float(x: Float): Float32
+    fn bits(x: Float32): u32
+    fn of_bits(b: u32): Float32
+    fn is_nan(x: Float32): Bool
+    fn abs(x: Float32): Float32
+    fn floor(x: Float32): Float32
+    fn ceil(x: Float32): Float32
+    fn trunc(x: Float32): Float32
+    fn round(x: Float32): Float32
+    fn sqrt(x: Float32): Float32
+    fn cbrt(x: Float32): Float32
+    fn exp(x: Float32): Float32
+    fn ln(x: Float32): Float32
+    fn log2(x: Float32): Float32
+    fn log10(x: Float32): Float32
+    fn pow(x: Float32, y: Float32): Float32
+    fn sin(x: Float32): Float32
+    fn cos(x: Float32): Float32
+    fn tan(x: Float32): Float32
+    fn asin(x: Float32): Float32
+    fn acos(x: Float32): Float32
+    fn atan(x: Float32): Float32
+    fn atan2(y: Float32, x: Float32): Float32
+    fn sinh(x: Float32): Float32
+    fn cosh(x: Float32): Float32
+    fn tanh(x: Float32): Float32
+  }
 }

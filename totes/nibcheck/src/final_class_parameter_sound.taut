@@ -1,0 +1,81 @@
+import "class_parameter_sound.taut"
+import "final_pending_sound.taut"
+
+pub theorem final_parameter_class_step(
+  c: Checker,
+  p: TyPending,
+  name: Text,
+  kind: Kind,
+  member: Mem(TyPending, p, finish_pending_items(c)),
+  resolved: ck_resolve(c, finish_pending_ty(p)) = TyParam(name, kind),
+  final: FinalDiagnostics0(c),
+  structural: Bool,
+  classified: class_is_structural(finish_pending_class(p)) = structural
+): ClassAssumption(finish_pending_assume(p), finish_pending_class(p), name) {
+  match structural: ClassAssumption(finish_pending_assume(p), finish_pending_class(p), name) {
+    true => structural_parameter_sound(
+      summary_steps(ck_datas_of(c)),
+      ck_datas_of(c),
+      finish_pending_class(p),
+      name,
+      kind,
+      finish_pending_assume(p),
+      Nil,
+      Eq::subst(
+        (ty: Ty) => datas_structural(ck_datas_of(c), finish_pending_class(p), ty, finish_pending_assume(p)) = true,
+        resolved,
+        final_structural_pending(c, p, member, classified, final)
+      )
+    )
+    false => {
+      let checked: DiagnosticClass(
+        c,
+        p
+      ) := Eq::subst(
+        (flag: Bool) => DiagnosticPendingKind(c, p, flag),
+        Eq::congr(not, classified),
+        final_pending_checked(c, p, member, final)
+      )
+      ck_resolve_class_parameter_sound(
+        ck_steps_of(c),
+        c,
+        finish_pending_class(p),
+        name,
+        kind,
+        finish_pending_assume(p),
+        Eq::subst(
+          (ty: Ty) => ck_resolve_class_in(
+              ck_steps_of(c),
+              c,
+              finish_pending_class(p),
+              ty_strip_one(ty),
+              finish_pending_assume(p)
+            ) = UnresolvedNone,
+          resolved,
+          checked
+        )
+      )
+    }
+  }
+}
+pub theorem final_parameter_class(
+  c: Checker,
+  p: TyPending,
+  name: Text,
+  kind: Kind,
+  member: Mem(TyPending, p, finish_pending_items(c)),
+  resolved: ck_resolve(c, finish_pending_ty(p)) = TyParam(name, kind),
+  final: FinalDiagnostics0(c)
+): ClassAssumption(finish_pending_assume(p), finish_pending_class(p), name) {
+  final_parameter_class_step(
+    c,
+    p,
+    name,
+    kind,
+    member,
+    resolved,
+    final,
+    class_is_structural(finish_pending_class(p)),
+    Refl
+  )
+}

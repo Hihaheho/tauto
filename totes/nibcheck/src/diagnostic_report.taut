@@ -1,0 +1,73 @@
+import "diagnostic_final_lists.taut"
+pub fn diagnostic_report_errors(r: TypeReport): List(TypeError) { r.errors }
+pub def DiagnosticReportClean(
+  m: Mut1(TypeReport, Checker)
+): Prop := diagnostic_report_errors(ck_val(m)) = Nil
+pub theorem diagnostic_report_state_clean(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  clean: diagnostic_report_errors(finish_report(c, widths)) = Nil
+): DiagnosticClean(c) {
+  Eq::trans(
+    Eq::sym(List::reverse_reverse(decl_names_errors(c))),
+    Eq::congr((xs: List(TypeError)) => List::reverse(xs), clean)
+  )
+}
+pub fn diagnostic_report_after(
+  k: (Checker) -> Mut1(TypeReport, Checker),
+  m: Mut1(Unit, Checker)
+): Mut1(TypeReport, Checker) {
+  match m: Mut1(TypeReport, Checker) { mut1(v, next) => k(next) }
+}
+pub def DiagnosticReportResult(
+  p: (Checker) -> Prop,
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  m: Mut1(TypeReport, Checker)
+): Prop := And(p(c), m = mut1(finish_report(c, Widths), c))
+pub def DiagnosticReportTail(
+  p: (Checker) -> Prop,
+  widths: Ordmap(TermAt, Width),
+  k: (Checker) -> Mut1(TypeReport, Checker)
+): Prop := ∀ c: Checker. ∀ clean: DiagnosticReportClean(
+  k(c)
+). DiagnosticReportResult(p, c, Widths, k(c))
+pub theorem diagnostic_report_cons(
+  c: Checker,
+  widths: Ordmap(TermAt, Width),
+  m: Mut1(Unit, Checker),
+  k: (Checker) -> Mut1(TypeReport, Checker),
+  p: Prop,
+  q: (Checker) -> Prop,
+  first: ∀ clean: DiagnosticClean(ck_st(m)). And(p, m = mut1(Star, c)),
+  tail: DiagnosticReportTail(q, widths, k),
+  clean: DiagnosticReportClean(diagnostic_report_after(k, m))
+): And(
+  And(p, q(c)),
+  diagnostic_report_after(k, m) = mut1(finish_report(c, Widths), c)
+) {
+  match m: And(
+    And(p, q(c)),
+    diagnostic_report_after(k, m) = mut1(finish_report(c, Widths), c)
+  ) {
+    mut1(v, next) => {
+      let remaining: DiagnosticReportResult(q, next, Widths, k(next)) := tail(next, clean)
+      let clean_next: DiagnosticClean(
+        next
+      ) := diagnostic_report_state_clean(
+        next,
+        Widths,
+        Eq::subst(DiagnosticReportClean, And::right(remaining), clean)
+      )
+      let head: And(p, mut1(v, next) = mut1(Star, c)) := first(clean_next)
+      let same: next = c := Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), And::right(head))
+      AndIntro(
+        AndIntro(And::left(head), Eq::subst(q, same, And::left(remaining))),
+        Eq::trans(
+          And::right(remaining),
+          Eq::congr((state: Checker) => mut1(finish_report(state, Widths), state), same)
+        )
+      )
+    }
+  }
+}

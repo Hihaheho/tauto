@@ -1,0 +1,105 @@
+import "allocation_result.taut"
+
+pub def AllocationSame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := allocation_state_view(c) = allocation_state_view(ck_st(m))
+pub theorem allocation_same_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: AllocationSame(c, m)
+): AllocationSame(
+  c,
+  ck_rewrap1(m)
+) { Eq::subst((result: Mut1(A, Checker)) => AllocationSame(c, result), Eq::sym(ck_rewrap1_id(m)), h) }
+pub theorem allocation_same_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: AllocationSame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. AllocationSame(next, k(value, next))
+): AllocationSame(c, frame_bind(A, B, k, m)) {
+  match m: AllocationSame(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => Eq::trans(first, tail(value, next))
+  }
+}
+pub theorem allocation_same_run<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  same: AllocationSame(c, m),
+  state: CheckerAllocation(c)
+): AllocationRun(c, m) {
+  AndIntro(
+    Eq::congr(allocation_view_counter, same),
+    allocation_state_transfer(c, ck_st(m), same, state)
+  )
+}
+pub theorem instantiation_pred_allocation_same(
+  c: Checker,
+  p: Pair(Text, Text),
+  what: Text,
+  span: TySpan,
+  found: Option(Ty)
+): AllocationSame(c, instantiation_pred(c, p, what, span, found)) {
+  match found: AllocationSame(c, instantiation_pred(c, p, what, span, found)) { None => Refl
+    Some(value) => Refl }
+}
+pub theorem instantiation_preds_cons_allocation_same(
+  p: Pair(Text, Text),
+  rest: List(Pair(Text, Text)),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan,
+  ih: ∀ next: Checker. AllocationSame(next, ck_pend_preds(rest, next, map, what, span))
+): AllocationSame(c, instantiation_preds_cons(p, rest, c, map, what, span)) {
+  allocation_same_bind(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, next: Checker) => ck_rewrap1(ck_pend_preds(rest, next, map, what, span)),
+    instantiation_pred(
+      c,
+      p,
+      what,
+      span,
+      Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text)
+    ),
+    instantiation_pred_allocation_same(
+      c,
+      p,
+      what,
+      span,
+      Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text)
+    ),
+    ignored => next => allocation_same_rewrap(
+      next,
+      ck_pend_preds(rest, next, map, what, span),
+      ih(next)
+    )
+  )
+}
+pub theorem ck_pend_preds_allocation_same(
+  ps: List(Pair(Text, Text)),
+  c: Checker,
+  map: Ordmap(Text, Ty),
+  what: Text,
+  span: TySpan
+): AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) {
+  match ps: AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) {
+    Nil => Refl
+    Cons(p, rest) => Eq::subst(
+      (result: Mut1(Unit, Checker)) => AllocationSame(c, result),
+      Eq::sym(instantiation_preds_cons_unf(p, rest, c, map, what, span)),
+      instantiation_preds_cons_allocation_same(
+        p,
+        rest,
+        c,
+        map,
+        what,
+        span,
+        next => ck_pend_preds_allocation_same(rest, next, map, what, span)
+      )
+    )
+  }
+}

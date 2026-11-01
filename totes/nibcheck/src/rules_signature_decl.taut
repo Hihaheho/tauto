@@ -1,0 +1,44 @@
+import "rules_signature_body.taut"
+import "rules_signature_generics.taut"
+
+// Elaboration records the declared binders and written signature. Constraints,
+// inference-variable discharge, and body checking are separate obligations.
+pub fn signature_source_generics(source: SurfaceFn): List(Text) { source.generics }
+pub fn signature_source_bounds(source: SurfaceFn): List(Option(Text)) { source.bounds }
+pub fn signature_header(scheme: Scheme): Pair(List(Pair(Text, Kind)), List(Pair(Text, Kind))) {
+  Pair { fst: scheme.generics, snd: scheme.ctors }
+}
+pub fn signature_expected_header(
+  g: SigGenerics
+): Pair(List(Pair(Text, Kind)), List(Pair(Text, Kind))) {
+  Pair { fst: List::reverse(g.generics), snd: List::reverse(g.ctors) }
+}
+pub def SignatureHeader(
+  g: SigGenerics,
+  scheme: Scheme
+): Prop := signature_header(scheme) = signature_expected_header(g)
+pub(open) inductive SignatureElaborated(
+  env: Datas,
+  partial: Bool,
+  source: SurfaceFn,
+  scheme: Scheme
+): Prop {
+  Mk(
+    generics: SigGenerics,
+    bindings: SignatureGenerics(
+      signature_source_generics(source),
+      signature_source_bounds(source),
+      0,
+      SigGenericsMk(Nil, Ordmap::empty(), Nil),
+      generics
+    ),
+    header: SignatureHeader(generics, scheme),
+    body: SignatureBody(
+      env,
+      signature_acc_map(generics),
+      partial,
+      source,
+      signature_scheme_ty(scheme)
+    )
+  ): SignatureElaborated(env, partial, source, scheme)
+}

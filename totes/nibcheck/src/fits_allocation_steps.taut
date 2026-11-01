@@ -1,0 +1,1939 @@
+import "fits_allocation_choices.taut"
+
+pub theorem fits_alloc_step_U(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_in(Succ(fuel), c, a, b)) {
+  fits_alloc_c1(
+    fuel,
+    And::left(And::right(And::right(ih))),
+    c,
+    ck_resolve(c, a),
+    ck_resolve(c, b),
+    ordered,
+    state,
+    ck_resolve_allocated(c, a, And::right(state), a_bound),
+    ck_resolve_allocated(c, b, And::right(state), b_bound),
+    ty_is_never(ck_resolve(c, a))
+  )
+}
+
+pub theorem fits_alloc_step_A(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_attempt_fits_in(Succ(fuel), c, a, b)) {
+  allocation_advance_attempt(
+    c,
+    ck_fits_in(fuel, c, a, b),
+    state,
+    And::left(ih)(c, a, b, ordered, state, a_bound, b_bound)
+  )
+}
+
+pub theorem fits_alloc_step_Po(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_poly_in(Succ(fuel), c, a, b)) {
+  match b: AllocationAdvance(c, ck_fits_poly_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyInt(width)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyInt(width), ordered, state, a_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyBool),
+      And::left(And::right(And::right(And::right(ih))))(c, a, TyBool, ordered, state, a_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyText),
+      And::left(And::right(And::right(And::right(ih))))(c, a, TyText, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyUnit),
+      And::left(And::right(And::right(And::right(ih))))(c, a, TyUnit, ordered, state, a_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyNever),
+      And::left(And::right(And::right(And::right(ih))))(c, a, TyNever, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyDecimal),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyDecimal, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyFloat),
+      And::left(And::right(And::right(And::right(ih))))(c, a, TyFloat, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyParam(name, kind)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyParam(name, kind), ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyVar(index)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyVar(index), ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyFn(params, result, kind)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyFn(params, result, kind), ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyUnion(members)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyUnion(members), ordered, state, a_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyProduct(members)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyProduct(members), ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyNamed(name, params)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyNamed(name, params), ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyTagged(tags, inner)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyTagged(tags, inner), ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyInfo(inner)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyInfo(inner), ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyBorrow(inner, mutable)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyBorrow(inner, mutable), ordered, state, a_bound, b_bound)
+    )
+    TyPoly(gs, inner) => fits_alloc_poly_r(
+      fuel,
+      And::left(ih),
+      c,
+      a,
+      gs,
+      inner,
+      ordered,
+      state,
+      a_bound,
+      b_bound
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_inst_in(fuel, c, a, TyApp(head, arg)),
+      And::left(
+        And::right(And::right(And::right(ih)))
+      )(c, a, TyApp(head, arg), ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_L(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_inst_in(Succ(fuel), c, a, b)) {
+  match a: AllocationAdvance(c, ck_fits_inst_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyInt(width), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyInt(width), b, ordered, state, a_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyBool, b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyBool, b, ordered, state, a_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyText, b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyText, b, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyUnit, b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyUnit, b, ordered, state, a_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyNever, b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyNever, b, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyDecimal, b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyDecimal, b, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyFloat, b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyFloat, b, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyParam(name, kind), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyParam(name, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyVar(index), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyVar(index), b, ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyFn(params, result, kind), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyFn(params, result, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyUnion(members), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyUnion(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyProduct(members), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyProduct(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyNamed(name, params), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyNamed(name, params), b, ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyTagged(tags, inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyTagged(tags, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyInfo(inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyInfo(inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyBorrow(inner, mutable), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyBorrow(inner, mutable), b, ordered, state, a_bound, b_bound)
+    )
+    TyPoly(gs, inner) => fits_alloc_poly_l(
+      fuel,
+      And::left(ih),
+      c,
+      gs,
+      inner,
+      b,
+      ordered,
+      state,
+      a_bound,
+      b_bound
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_borrow_in(fuel, c, TyApp(head, arg), b),
+      And::left(
+        And::right(And::right(And::right(And::right(ih))))
+      )(c, TyApp(head, arg), b, ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_B(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_borrow_in(Succ(fuel), c, a, b)) {
+  match a: AllocationAdvance(c, ck_fits_borrow_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyInt(width), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyInt(width), b, ordered, state, a_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyBool, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyBool, b, ordered, state, a_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyText, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyText, b, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyUnit, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyUnit, b, ordered, state, a_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyNever, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyNever, b, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyDecimal, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyDecimal, b, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyFloat, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyFloat, b, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyParam(name, kind), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyParam(name, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyVar(index), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyVar(index), b, ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyFn(params, result, kind), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyFn(params, result, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyUnion(members), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyUnion(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyProduct(members), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyProduct(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyNamed(name, params), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyNamed(name, params), b, ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyTagged(tags, inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyTagged(tags, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyInfo(inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyInfo(inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_fits_lend_in(fuel, c, inner, mutable, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(ih)))))
+      )(c, inner, mutable, b, ordered, state, a_bound, b_bound)
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyPoly(gs, inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyPoly(gs, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_value_in(fuel, c, TyApp(head, arg), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+      )(c, TyApp(head, arg), b, ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_Le(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  x: Ty,
+  ma: Bool,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  x_bound: TypeAllocated(ck_next_of(c), x),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_lend_in(Succ(fuel), c, x, ma, b)) {
+  match b: AllocationAdvance(c, ck_fits_lend_in(Succ(fuel), c, x, ma, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyInt(width)),
+      And::left(ih)(c, x, TyInt(width), ordered, state, x_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyBool),
+      And::left(ih)(c, x, TyBool, ordered, state, x_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyText),
+      And::left(ih)(c, x, TyText, ordered, state, x_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyUnit),
+      And::left(ih)(c, x, TyUnit, ordered, state, x_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyNever),
+      And::left(ih)(c, x, TyNever, ordered, state, x_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyDecimal),
+      And::left(ih)(c, x, TyDecimal, ordered, state, x_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyFloat),
+      And::left(ih)(c, x, TyFloat, ordered, state, x_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyParam(name, kind)),
+      And::left(ih)(c, x, TyParam(name, kind), ordered, state, x_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyVar(index)),
+      And::left(ih)(c, x, TyVar(index), ordered, state, x_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyFn(params, result, kind)),
+      And::left(ih)(c, x, TyFn(params, result, kind), ordered, state, x_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyUnion(members)),
+      And::left(ih)(c, x, TyUnion(members), ordered, state, x_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyProduct(members)),
+      And::left(ih)(c, x, TyProduct(members), ordered, state, x_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyNamed(name, params)),
+      And::left(ih)(c, x, TyNamed(name, params), ordered, state, x_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyTagged(tags, inner)),
+      And::left(ih)(c, x, TyTagged(tags, inner), ordered, state, x_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyInfo(inner)),
+      And::left(ih)(c, x, TyInfo(inner), ordered, state, x_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_choice_ok(
+      c,
+      ck_rewrap1(ck_fits_in(fuel, c, x, inner)),
+      ck_rewrap1(ck_fits_in(fuel, c, x, TyBorrow(inner, mutable))),
+      allocation_advance_rewrap(
+        c,
+        ck_fits_in(fuel, c, x, inner),
+        And::left(ih)(c, x, inner, ordered, state, x_bound, b_bound)
+      ),
+      allocation_advance_rewrap(
+        c,
+        ck_fits_in(fuel, c, x, TyBorrow(inner, mutable)),
+        And::left(ih)(c, x, TyBorrow(inner, mutable), ordered, state, x_bound, b_bound)
+      ),
+      Bool::or(Bool::eq(ma, mutable), not(mutable))
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyPoly(gs, inner)),
+      And::left(ih)(c, x, TyPoly(gs, inner), ordered, state, x_bound, b_bound)
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyApp(head, arg)),
+      And::left(ih)(c, x, TyApp(head, arg), ordered, state, x_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_V(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_value_in(Succ(fuel), c, a, b)) {
+  match b: AllocationAdvance(c, ck_fits_value_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyInt(width)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyInt(width), ordered, state, a_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyBool),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyBool, ordered, state, a_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyText),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyText, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyUnit),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyUnit, ordered, state, a_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyNever),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyNever, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyDecimal),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyDecimal, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyFloat),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyFloat, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyParam(name, kind)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyParam(name, kind), ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyVar(index)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyVar(index), ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyFn(params, result, kind)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyFn(params, result, kind), ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyUnion(members)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyUnion(members), ordered, state, a_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyProduct(members)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyProduct(members), ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyNamed(name, params)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyNamed(name, params), ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyTagged(tags, inner)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyTagged(tags, inner), ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyInfo(inner)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyInfo(inner), ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_choice_ok(
+      c,
+      ck_rewrap1(ck_fits_in(fuel, c, a, inner)),
+      ck_rewrap1(ck_fits_shape_in(fuel, c, a, TyBorrow(inner, mutable))),
+      allocation_advance_rewrap(
+        c,
+        ck_fits_in(fuel, c, a, inner),
+        And::left(ih)(c, a, inner, ordered, state, a_bound, b_bound)
+      ),
+      allocation_advance_rewrap(
+        c,
+        ck_fits_shape_in(fuel, c, a, TyBorrow(inner, mutable)),
+        And::left(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+        )(c, a, TyBorrow(inner, mutable), ordered, state, a_bound, b_bound)
+      ),
+      kind_dup(ck_kind(c, a))
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyPoly(gs, inner)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyPoly(gs, inner), ordered, state, a_bound, b_bound)
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_shape_in(fuel, c, a, TyApp(head, arg)),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )(c, a, TyApp(head, arg), ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_S(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_shape_in(Succ(fuel), c, a, b)) {
+  match a: AllocationAdvance(c, ck_fits_shape_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyInt(width), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyInt(width), b, ordered, state, a_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyBool, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyBool, b, ordered, state, a_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyText, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyText, b, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyUnit, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyUnit, b, ordered, state, a_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyNever, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyNever, b, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyDecimal, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyDecimal, b, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyFloat, b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyFloat, b, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyParam(name, kind), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyParam(name, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyVar(index), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyVar(index), b, ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyFn(params, result, kind), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyFn(params, result, kind), b, ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_each_in(fuel, c, members, b),
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                )
+              )
+            )
+          )
+        )
+      )(c, members, b, ordered, state, a_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyProduct(members), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyProduct(members), b, ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyNamed(name, params), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyNamed(name, params), b, ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyTagged(tags, inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyTagged(tags, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyInfo(inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyInfo(inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyBorrow(inner, mutable), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyBorrow(inner, mutable), b, ordered, state, a_bound, b_bound)
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyPoly(gs, inner), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyPoly(gs, inner), b, ordered, state, a_bound, b_bound)
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_into_in(fuel, c, TyApp(head, arg), b),
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      )(c, TyApp(head, arg), b, ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_I(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_into_in(Succ(fuel), c, a, b)) {
+  match b: AllocationAdvance(c, ck_fits_into_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyInt(width)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyInt(width), ordered, state, a_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyBool),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyBool, ordered, state, a_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyText),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyText, ordered, state, a_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyUnit),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyUnit, ordered, state, a_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyNever),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyNever, ordered, state, a_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyDecimal),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyDecimal, ordered, state, a_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyFloat),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyFloat, ordered, state, a_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyParam(name, kind)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyParam(name, kind), ordered, state, a_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyVar(index)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyVar(index), ordered, state, a_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyFn(params, result, kind)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyFn(params, result, kind), ordered, state, a_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_or(
+      c,
+      (next: Checker) => ck_fits_any_in(fuel, next, a, members),
+      ck_attempt_unify(c, a, TyUnion(members)),
+      allocation_advance_fixed(
+        c,
+        ck_attempt_unify(c, a, TyUnion(members)),
+        ck_attempt_unify_allocation(c, a, TyUnion(members), ordered, state, a_bound, b_bound)
+      ),
+      And::left(And::left(attempt_unify_sub(c, a, TyUnion(members))(ordered))),
+      next => advanced => current => order => And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                  )
+                )
+              )
+            )
+          )
+        )
+      )(
+        next,
+        a,
+        members,
+        order,
+        current,
+        type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
+        type_list_allocated_weaken(members, ck_next_of(c), ck_next_of(next), advanced, b_bound)
+      )
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyProduct(members)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyProduct(members), ordered, state, a_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyNamed(name, params)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyNamed(name, params), ordered, state, a_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyTagged(tags, inner)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyTagged(tags, inner), ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyInfo(inner)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyInfo(inner), ordered, state, a_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyBorrow(inner, mutable)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyBorrow(inner, mutable), ordered, state, a_bound, b_bound)
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyPoly(gs, inner)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyPoly(gs, inner), ordered, state, a_bound, b_bound)
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_tagged_in(fuel, c, a, TyApp(head, arg)),
+      And::left(
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        )
+      )(c, a, TyApp(head, arg), ordered, state, a_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_T(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_tagged_in(Succ(fuel), c, a, b)) {
+  match a: AllocationAdvance(c, ck_fits_tagged_in(Succ(fuel), c, a, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyInt(width), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyInt(width), b),
+        ck_unify_allocation(c, TyInt(width), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyBool, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyBool, b),
+        ck_unify_allocation(c, TyBool, b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyText, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyText, b),
+        ck_unify_allocation(c, TyText, b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyUnit, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyUnit, b),
+        ck_unify_allocation(c, TyUnit, b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyNever, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyNever, b),
+        ck_unify_allocation(c, TyNever, b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyDecimal, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyDecimal, b),
+        ck_unify_allocation(c, TyDecimal, b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFloat, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFloat, b),
+        ck_unify_allocation(c, TyFloat, b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyParam(name, kind), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyParam(name, kind), b),
+        ck_unify_allocation(c, TyParam(name, kind), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyVar(index), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyVar(index), b),
+        ck_unify_allocation(c, TyVar(index), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_fn_in(fuel, c, params, result, kind, b),
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+              )
+            )
+          )
+        )
+      )(c, params, result, kind, b, ordered, state, And::left(a_bound), And::right(a_bound), b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyUnion(members), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyUnion(members), b),
+        ck_unify_allocation(c, TyUnion(members), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyProduct(members), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyProduct(members), b),
+        ck_unify_allocation(c, TyProduct(members), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyNamed(name, params), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyNamed(name, params), b),
+        ck_unify_allocation(c, TyNamed(name, params), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_untag_in(fuel, c, tags, inner, b),
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+            )
+          )
+        )
+      )(c, tags, inner, b, ordered, state, a_bound, b_bound)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyInfo(inner), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyInfo(inner), b),
+        ck_unify_allocation(c, TyInfo(inner), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyBorrow(inner, mutable), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyBorrow(inner, mutable), b),
+        ck_unify_allocation(c, TyBorrow(inner, mutable), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyPoly(gs, inner), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyPoly(gs, inner), b),
+        ck_unify_allocation(c, TyPoly(gs, inner), b, ordered, state, a_bound, b_bound)
+      )
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyApp(head, arg), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyApp(head, arg), b),
+        ck_unify_allocation(c, TyApp(head, arg), b, ordered, state, a_bound, b_bound)
+      )
+    )
+  }
+}
+
+pub theorem fits_alloc_step_Ut(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  x_bound: TypeAllocated(ck_next_of(c), x),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_untag_in(Succ(fuel), c, ta, x, b)) {
+  match b: AllocationAdvance(c, ck_fits_untag_in(Succ(fuel), c, ta, x, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyInt(width)),
+      And::left(ih)(c, x, TyInt(width), ordered, state, x_bound, b_bound)
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyBool),
+      And::left(ih)(c, x, TyBool, ordered, state, x_bound, b_bound)
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyText),
+      And::left(ih)(c, x, TyText, ordered, state, x_bound, b_bound)
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyUnit),
+      And::left(ih)(c, x, TyUnit, ordered, state, x_bound, b_bound)
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyNever),
+      And::left(ih)(c, x, TyNever, ordered, state, x_bound, b_bound)
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyDecimal),
+      And::left(ih)(c, x, TyDecimal, ordered, state, x_bound, b_bound)
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyFloat),
+      And::left(ih)(c, x, TyFloat, ordered, state, x_bound, b_bound)
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyParam(name, kind)),
+      And::left(ih)(c, x, TyParam(name, kind), ordered, state, x_bound, b_bound)
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyVar(index)),
+      And::left(ih)(c, x, TyVar(index), ordered, state, x_bound, b_bound)
+    )
+    TyFn(params, result, kind) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyFn(params, result, kind)),
+      And::left(ih)(c, x, TyFn(params, result, kind), ordered, state, x_bound, b_bound)
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyUnion(members)),
+      And::left(ih)(c, x, TyUnion(members), ordered, state, x_bound, b_bound)
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyProduct(members)),
+      And::left(ih)(c, x, TyProduct(members), ordered, state, x_bound, b_bound)
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyNamed(name, params)),
+      And::left(ih)(c, x, TyNamed(name, params), ordered, state, x_bound, b_bound)
+    )
+    TyTagged(tags, inner) => allocation_advance_choice_ok(
+      c,
+      ck_rewrap1(ck_fits_in(fuel, c, x, inner)),
+      ck_rewrap1(ck_unify(c, TyTagged(ta, x), TyTagged(tags, inner))),
+      allocation_advance_rewrap(
+        c,
+        ck_fits_in(fuel, c, x, inner),
+        And::left(ih)(c, x, inner, ordered, state, x_bound, b_bound)
+      ),
+      allocation_advance_rewrap(
+        c,
+        ck_unify(c, TyTagged(ta, x), TyTagged(tags, inner)),
+        allocation_advance_fixed(
+          c,
+          ck_unify(c, TyTagged(ta, x), TyTagged(tags, inner)),
+          ck_unify_allocation(
+            c,
+            TyTagged(ta, x),
+            TyTagged(tags, inner),
+            ordered,
+            state,
+            x_bound,
+            b_bound
+          )
+        )
+      ),
+      tags_subset(tags, ta)
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyInfo(inner)),
+      And::left(ih)(c, x, TyInfo(inner), ordered, state, x_bound, b_bound)
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyBorrow(inner, mutable)),
+      And::left(ih)(c, x, TyBorrow(inner, mutable), ordered, state, x_bound, b_bound)
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyPoly(gs, inner)),
+      And::left(ih)(c, x, TyPoly(gs, inner), ordered, state, x_bound, b_bound)
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_fits_in(fuel, c, x, TyApp(head, arg)),
+      And::left(ih)(c, x, TyApp(head, arg), ordered, state, x_bound, b_bound)
+    )
+  }
+}
+
+pub theorem fits_alloc_step_F(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  pa_bound: TypeListAllocated(ck_next_of(c), pa),
+  ra_bound: TypeAllocated(ck_next_of(c), ra),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_fn_in(Succ(fuel), c, pa, ra, ka, b)) {
+  match b: AllocationAdvance(c, ck_fits_fn_in(Succ(fuel), c, pa, ra, ka, b)) {
+    TyInt(width) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyInt(width)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyInt(width)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyInt(width),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyBool => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyBool),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyBool),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyBool,
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyText => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyText),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyText),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyText,
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyUnit => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyUnit),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyUnit),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyUnit,
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyNever => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyNever),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyNever),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyNever,
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyDecimal => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyDecimal),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyDecimal),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyDecimal,
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyFloat => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyFloat),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyFloat),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyFloat,
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyParam(name, kind) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyParam(name, kind)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyParam(name, kind)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyParam(name, kind),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyVar(index) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyVar(index)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyVar(index)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyVar(index),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyFn(params, result, kind) => allocation_advance_choice_ok(
+      c,
+      ck_and(
+        (next: Checker) => ck_fits_in(fuel, next, ra, result),
+        ck_fits_params_in(fuel, c, pa, params)
+      ),
+      ck_rewrap1(ck_unify(c, TyFn(pa, ra, ka), TyFn(params, result, kind))),
+      fits_alloc_fn_seq(
+        fuel,
+        And::left(ih),
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        ),
+        c,
+        pa,
+        ra,
+        params,
+        result,
+        ordered,
+        state,
+        pa_bound,
+        ra_bound,
+        And::left(b_bound),
+        And::right(b_bound)
+      ),
+      allocation_advance_rewrap(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyFn(params, result, kind)),
+        allocation_advance_fixed(
+          c,
+          ck_unify(c, TyFn(pa, ra, ka), TyFn(params, result, kind)),
+          ck_unify_allocation(
+            c,
+            TyFn(pa, ra, ka),
+            TyFn(params, result, kind),
+            ordered,
+            state,
+            AndIntro(pa_bound, ra_bound),
+            b_bound
+          )
+        )
+      ),
+      Bool::and(Nat::eq(list_len(pa), list_len(params)), kind_fits(ka, kind))
+    )
+    TyUnion(members) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyUnion(members)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyUnion(members)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyUnion(members),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyProduct(members) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyProduct(members)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyProduct(members)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyProduct(members),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyNamed(name, params) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyNamed(name, params)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyNamed(name, params)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyNamed(name, params),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyTagged(tags, inner) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyTagged(tags, inner)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyTagged(tags, inner)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyTagged(tags, inner),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyInfo(inner) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyInfo(inner)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyInfo(inner)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyInfo(inner),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyBorrow(inner, mutable) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyBorrow(inner, mutable)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyBorrow(inner, mutable)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyBorrow(inner, mutable),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyPoly(gs, inner) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyPoly(gs, inner)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyPoly(gs, inner)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyPoly(gs, inner),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+    TyApp(head, arg) => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyFn(pa, ra, ka), TyApp(head, arg)),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyFn(pa, ra, ka), TyApp(head, arg)),
+        ck_unify_allocation(
+          c,
+          TyFn(pa, ra, ka),
+          TyApp(head, arg),
+          ordered,
+          state,
+          AndIntro(pa_bound, ra_bound),
+          b_bound
+        )
+      )
+    )
+  }
+}
+
+pub theorem fits_alloc_step_E(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  xs: List(Ty),
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  xs_bound: TypeListAllocated(ck_next_of(c), xs),
+  b_bound: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_each_in(Succ(fuel), c, xs, b)) {
+  match xs: AllocationAdvance(c, ck_fits_each_in(Succ(fuel), c, xs, b)) {
+    Nil => allocation_advance_return(c, true, state)
+    Cons(x, rest) => allocation_advance_and(
+      c,
+      (next: Checker) => ck_fits_each_in(fuel, next, rest, b),
+      ck_fits_in(fuel, c, x, b),
+      And::left(ih)(c, x, b, ordered, state, And::left(xs_bound), b_bound),
+      fits_alloc_ordered_U(fuel, c, x, b, ordered),
+      next => advanced => current => order => And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                )
+              )
+            )
+          )
+        )
+      )(
+        next,
+        rest,
+        b,
+        order,
+        current,
+        type_list_allocated_weaken(
+          rest,
+          ck_next_of(c),
+          ck_next_of(next),
+          advanced,
+          And::right(xs_bound)
+        ),
+        type_allocated_weaken(b, ck_next_of(c), ck_next_of(next), advanced, b_bound)
+      )
+    )
+  }
+}
+
+pub theorem fits_alloc_step_Y(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  a: Ty,
+  ys: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  ys_bound: TypeListAllocated(ck_next_of(c), ys)
+): AllocationAdvance(c, ck_fits_any_in(Succ(fuel), c, a, ys)) {
+  match ys: AllocationAdvance(c, ck_fits_any_in(Succ(fuel), c, a, ys)) {
+    Nil => allocation_advance_return(c, false, state)
+    Cons(x, rest) => allocation_advance_or(
+      c,
+      (next: Checker) => ck_fits_any_in(fuel, next, a, rest),
+      ck_attempt_fits_in(fuel, c, a, x),
+      And::left(And::right(ih))(c, a, x, ordered, state, a_bound, And::left(ys_bound)),
+      fits_alloc_ordered_A(fuel, c, a, x, ordered),
+      next => advanced => current => order => And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                  )
+                )
+              )
+            )
+          )
+        )
+      )(
+        next,
+        a,
+        rest,
+        order,
+        current,
+        type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
+        type_list_allocated_weaken(
+          rest,
+          ck_next_of(c),
+          ck_next_of(next),
+          advanced,
+          And::right(ys_bound)
+        )
+      )
+    )
+  }
+}
+
+pub theorem fits_alloc_step_P(
+  fuel: Nat,
+  ih: FitsAllocationAt(fuel),
+  c: Checker,
+  pa: List(Ty),
+  pb: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  pa_bound: TypeListAllocated(ck_next_of(c), pa),
+  pb_bound: TypeListAllocated(ck_next_of(c), pb)
+): AllocationAdvance(c, ck_fits_params_in(Succ(fuel), c, pa, pb)) {
+  match pa: AllocationAdvance(c, ck_fits_params_in(Succ(fuel), c, pa, pb)) {
+    Nil => allocation_advance_return(c, true, state)
+    Cons(x, rest) => match pb: AllocationAdvance(
+      c,
+      ck_fits_params_in(Succ(fuel), c, Cons(x, rest), pb)
+    ) {
+      Nil => allocation_advance_return(c, true, state)
+      Cons(y, more) => allocation_advance_and(
+        c,
+        (next: Checker) => ck_fits_params_in(fuel, next, rest, more),
+        ck_fits_in(fuel, c, y, x),
+        And::left(ih)(c, y, x, ordered, state, And::left(pb_bound), And::left(pa_bound)),
+        fits_alloc_ordered_U(fuel, c, y, x, ordered),
+        next => advanced => current => order => And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )(
+          next,
+          rest,
+          more,
+          order,
+          current,
+          type_list_allocated_weaken(
+            rest,
+            ck_next_of(c),
+            ck_next_of(next),
+            advanced,
+            And::right(pa_bound)
+          ),
+          type_list_allocated_weaken(
+            more,
+            ck_next_of(c),
+            ck_next_of(next),
+            advanced,
+            And::right(pb_bound)
+          )
+        )
+      )
+    }
+  }
+}

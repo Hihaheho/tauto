@@ -1,0 +1,29 @@
+import "checker.taut"
+import "rules_signature_parameters.taut"
+
+pub fn signature_scheme_ty(scheme: Scheme): Ty { scheme.ty }
+pub fn signature_source_parameters(
+  source: SurfaceFn
+): List(Option(SurfaceTerm)) { source.param_types }
+pub fn signature_source_borrows(source: SurfaceFn): List(Option(Bool)) { source.borrows }
+pub fn signature_source_result(source: SurfaceFn): Option(SurfaceTerm) { source.result }
+pub(open) inductive SignatureBody(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  partial: Bool,
+  source: SurfaceFn
+): (Ty) -> Prop {
+  Mk(
+    params: List(Ty),
+    result: Ty,
+    parameters: SignatureParameters(
+      env,
+      generics,
+      partial,
+      signature_source_parameters(source),
+      signature_source_borrows(source),
+      params
+    ),
+    answer: SignatureType(env, generics, partial, false, signature_source_result(source), result)
+  ): SignatureBody(env, generics, partial, source, TyFn(params, result, KindShared))
+}

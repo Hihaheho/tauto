@@ -1,0 +1,373 @@
+import "unary.taut"
+
+pub fn e_argument_stack(values: List(MVal), stack: List(MVal)): List(MVal) {
+  List::append(List::reverse(values), stack)
+}
+
+pub theorem e_argument_stack_cons(
+  v: MVal,
+  values: List(MVal),
+  stack: List(MVal)
+): e_argument_stack(Cons(v, values), stack) = e_argument_stack(values, Cons(v, stack)) {
+  Eq::trans(
+    Eq::congr((prefix: List(MVal)) => List::append(prefix, stack), List::reverse_cons(v, values)),
+    List::append_assoc(List::reverse(values), Cons(v, Nil), stack)
+  )
+}
+
+pub theorem e_compile_parts(r: CR, cs: CSt, same: e_compile_state(r) = cs): r = Cr(e_code(r), cs) {
+  match r {
+    Cr(code, state) => Eq::congr((s: CSt) => Cr(code, s), same)
+  }
+}
+
+// Code is assembled from the end; its first expression still executes first.
+pub theorem e_compile_arguments_cons(
+  fuel: Nat,
+  e: Cps,
+  rest: List(Cps),
+  k: MCode,
+  cs: CSt,
+  same: e_compile_state(c_all(fuel, rest, k, cs)) = cs
+): c_all(Succ(fuel), Cons(e, rest), k, cs) =
+c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs) {
+  Eq::congr((compiled: CR) => match compiled: CR {
+    Cr(code, state) => c_expr(fuel, e, code, state)
+  }, e_compile_parts(c_all(fuel, rest, k, cs), cs, same))
+}
+
+pub theorem e_operation_wrong_arity(
+  ctors: List(MCtor),
+  cx: MCx,
+  op: MOp,
+  args: List(MVal),
+  wrong: Nat::eq(m_op_arity(op), List::length(args)) = false
+): e_operation(ctors, cx, op, args) = ErError("internal: a primitive has the wrong arity") {
+  Eq::congr((same: Bool) => match same: EResult(MVal) {
+    true => e_primitive_out(m_op(ctors, cx, op, args))
+    false => ErError("internal: a primitive has the wrong arity")
+  }, wrong)
+}
+
+pub theorem e_operation_value_arity(
+  ctors: List(MCtor),
+  cx: MCx,
+  op: MOp,
+  args: List(MVal),
+  v: MVal,
+  final: MCx,
+  done: e_operation(ctors, cx, op, args) = ErValue(v, final)
+): m_op_arity(op) = List::length(args) {
+  match Nat::eq(m_op_arity(op), List::length(args)) eqn same: m_op_arity(op) = List::length(args) {
+    true => ⊢ m_op_arity(op) = List::length(args) from
+    Nat::eq_sound(m_op_arity(op), List::length(args), same)
+    false => ⊢ m_op_arity(op) = List::length(args) from {
+      let impossible: Eq(
+        EResult(MVal),
+        ErError("internal: a primitive has the wrong arity"),
+        ErValue(v, final)
+      ) :=
+      Eq::trans(Eq::sym(e_operation_wrong_arity(ctors, cx, op, args, same)), done)
+      match impossible: m_op_arity(op) = List::length(args) {}
+    }
+  }
+}
+
+pub theorem e_primitive_step(
+  p: MProgram,
+  op: CPrim,
+  count: Nat,
+  args: List(MVal),
+  cx: MCx,
+  v: MVal,
+  final: MCx,
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  done: e_operation(p_ctors(p), cx, e_primitive(op, count), args) = ErValue(v, final)
+): step(p, Mstate(McOp(c_prim_op(op, count), k), slots, e_argument_stack(args, stack), frames, cx)) =
+MstepNext(Mstate(k, slots, Cons(v, stack), frames, final)) {
+  let arity: m_op_arity(e_primitive(op, count)) = List::length(args) :=
+  e_operation_value_arity(p_ctors(p), cx, e_primitive(op, count), args, v, final, done)
+  let primitive: m_op(p_ctors(p), cx, e_primitive(op, count), args) = MoutVal(v, final) :=
+  e_primitive_value(
+    m_op(p_ctors(p), cx, e_primitive(op, count), args),
+    v,
+    final,
+    Eq::trans(Eq::sym(e_operation_arity(p_ctors(p), cx, e_primitive(op, count), args, arity)), done)
+  )
+  Eq::trans(
+    Eq::congr(
+      (operation: MOp) => step(
+        p,
+        Mstate(McOp(operation, k), slots, e_argument_stack(args, stack), frames, cx)
+      ),
+      Eq::sym(e_primitive_compiles(op, count))
+    ),
+    And::right(
+      e_operation_value_agrees(
+        p,
+        e_primitive(op, count),
+        args,
+        k,
+        slots,
+        stack,
+        frames,
+        cx,
+        v,
+        final,
+        arity,
+        primitive
+      )
+    )
+  )
+}
+
+// A compiled piece preserves compiler state and reaches its continuation with
+// the specified stack and heap, in exactly the stated number of instructions.
+pub fn ECodeResult(
+  p: MProgram,
+  steps: Nat,
+  compiled: CR,
+  cs: CSt,
+  k: MCode,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  result: List(MVal),
+  final: MCx
+): Prop {
+  (e_compile_state(compiled) = cs) ∧
+  ERuns(
+    p,
+    steps,
+    Mstate(e_code(compiled), slots, stack, frames, cx),
+    Mstate(k, slots, result, frames, final)
+  )
+}
+
+pub theorem e_arguments_cons_result<n: Nat, m: Nat>(
+  fuel: Nat,
+  e: Cps,
+  rest: List(Cps),
+  p: MProgram,
+  k: MCode,
+  cs: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  v: MVal,
+  heap: MCx,
+  values: List(MVal),
+  final: MCx,
+  first: ECodeResult(
+    p,
+    n,
+    c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs),
+    cs,
+    e_code(c_all(fuel, rest, k, cs)),
+    slots,
+    stack,
+    frames,
+    cx,
+    Cons(v, stack),
+    heap
+  ),
+  later: ECodeResult(
+    p,
+    m,
+    c_all(fuel, rest, k, cs),
+    cs,
+    k,
+    slots,
+    Cons(v, stack),
+    frames,
+    heap,
+    e_argument_stack(values, Cons(v, stack)),
+    final
+  )
+): ECodeResult(
+  p,
+  Nat::add(m, n),
+  c_all(Succ(fuel), Cons(e, rest), k, cs),
+  cs,
+  k,
+  slots,
+  stack,
+  frames,
+  cx,
+  e_argument_stack(Cons(v, values), stack),
+  final
+) {
+  let joined: ERuns(
+    p,
+    Nat::add(m, n),
+    Mstate(e_code(c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs)), slots, stack, frames, cx),
+    Mstate(k, slots, e_argument_stack(values, Cons(v, stack)), frames, final)
+  ) := e_runs_trans(
+    And::right(first),
+    m,
+    Mstate(k, slots, e_argument_stack(values, Cons(v, stack)), frames, final),
+    And::right(later)
+  )
+  Eq::subst(
+    CR,
+    c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs),
+    c_all(Succ(fuel), Cons(e, rest), k, cs),
+    (compiled: CR) => ECodeResult(
+      p,
+      Nat::add(m, n),
+      compiled,
+      cs,
+      k,
+      slots,
+      stack,
+      frames,
+      cx,
+      e_argument_stack(Cons(v, values), stack),
+      final
+    ),
+    Eq::sym(e_compile_arguments_cons(fuel, e, rest, k, cs, And::left(later))),
+    AndIntro(
+      And::left(first),
+      Eq::subst(
+        List(MVal),
+        e_argument_stack(values, Cons(v, stack)),
+        e_argument_stack(Cons(v, values), stack),
+        (result: List(MVal)) => ERuns(
+          p,
+          Nat::add(m, n),
+          Mstate(
+            e_code(c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs)),
+            slots,
+            stack,
+            frames,
+            cx
+          ),
+          Mstate(k, slots, result, frames, final)
+        ),
+        Eq::sym(e_argument_stack_cons(v, values, stack)),
+        joined
+      )
+    )
+  )
+}
+
+pub theorem e_compile_sequence_cons(
+  fuel: Nat,
+  first: Cps,
+  next: Cps,
+  rest: List(Cps),
+  k: MCode,
+  cs: CSt,
+  same: e_compile_state(c_seq_from(fuel, next, rest, k, cs)) = cs
+): c_seq_from(Succ(fuel), first, Cons(next, rest), k, cs) =
+c_expr(fuel, first, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs) {
+  Eq::congr((compiled: CR) => match compiled: CR {
+    Cr(code, state) => c_expr(fuel, first, McPop(code), state)
+  }, e_compile_parts(c_seq_from(fuel, next, rest, k, cs), cs, same))
+}
+
+pub theorem e_sequence_cons_result<n: Nat, m: Nat>(
+  fuel: Nat,
+  e: Cps,
+  next: Cps,
+  rest: List(Cps),
+  p: MProgram,
+  k: MCode,
+  cs: CSt,
+  slots: List(MVal),
+  stack: List(MVal),
+  frames: List(MFrame),
+  cx: MCx,
+  discarded: MVal,
+  heap: MCx,
+  value: MVal,
+  final: MCx,
+  first: ECodeResult(
+    p,
+    n,
+    c_expr(fuel, e, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs),
+    cs,
+    McPop(e_code(c_seq_from(fuel, next, rest, k, cs))),
+    slots,
+    stack,
+    frames,
+    cx,
+    Cons(discarded, stack),
+    heap
+  ),
+  later: ECodeResult(
+    p,
+    m,
+    c_seq_from(fuel, next, rest, k, cs),
+    cs,
+    k,
+    slots,
+    stack,
+    frames,
+    heap,
+    Cons(value, stack),
+    final
+  )
+): ECodeResult(
+  p,
+  Nat::add(m, Succ(n)),
+  c_seq_from(Succ(fuel), e, Cons(next, rest), k, cs),
+  cs,
+  k,
+  slots,
+  stack,
+  frames,
+  cx,
+  Cons(value, stack),
+  final
+) {
+  let popped: ERuns(
+    p,
+    Succ(n),
+    Mstate(
+      e_code(c_expr(fuel, e, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs)),
+      slots,
+      stack,
+      frames,
+      cx
+    ),
+    Mstate(e_code(c_seq_from(fuel, next, rest, k, cs)), slots, stack, frames, heap)
+  ) := e_runs_snoc(
+    And::right(first),
+    Mstate(e_code(c_seq_from(fuel, next, rest, k, cs)), slots, stack, frames, heap),
+    Refl
+  )
+  Eq::subst(
+    CR,
+    c_expr(fuel, e, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs),
+    c_seq_from(Succ(fuel), e, Cons(next, rest), k, cs),
+    (compiled: CR) => ECodeResult(
+      p,
+      Nat::add(m, Succ(n)),
+      compiled,
+      cs,
+      k,
+      slots,
+      stack,
+      frames,
+      cx,
+      Cons(value, stack),
+      final
+    ),
+    Eq::sym(e_compile_sequence_cons(fuel, e, next, rest, k, cs, And::left(later))),
+    AndIntro(
+      And::left(first),
+      e_runs_trans(
+        popped,
+        m,
+        Mstate(k, slots, Cons(value, stack), frames, final),
+        And::right(later)
+      )
+    )
+  )
+}

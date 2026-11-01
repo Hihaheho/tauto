@@ -1,0 +1,365 @@
+import "rules_data_fields.taut"
+import "written_sound.taut"
+import "data_fields_context_sound.taut"
+import "registration_error_sound.taut"
+
+pub theorem data_fields_state(
+  c: Checker,
+  next: Checker,
+  generics: Ordmap(Text, Ty),
+  fields: List(SurfaceDataField),
+  types: List(DataField),
+  env: ck_datas_of(next) = ck_datas_of(c),
+  position: frame_constructor_position(next) = frame_constructor_position(c),
+  meaning: WrittenDataFields(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    fields,
+    types
+  )
+): WrittenDataFields(ck_datas_of(c), generics, frame_constructor_position(c), fields, types) {
+  Eq::subst(
+    (partial: Bool) => WrittenDataFields(ck_datas_of(c), generics, partial, fields, types),
+    position,
+    Eq::subst(
+      (datas: Datas) => WrittenDataFields(
+        datas,
+        generics,
+        frame_constructor_position(next),
+        fields,
+        types
+      ),
+      env,
+      meaning
+    )
+  )
+}
+pub fn data_fields_after(
+  name: Option(Text),
+  rest: List(SurfaceDataField),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker)
+): Mut1(List(DataField), Checker) {
+  frame_bind(
+    Ty,
+    List(DataField),
+    (t: Ty, next: Checker) => written_map(
+      List(DataField),
+      List(DataField),
+      (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
+      ck_data_fields(rest, next, generics)
+    ),
+    m
+  )
+}
+pub theorem data_fields_after_sound(
+  c: Checker,
+  name: Option(Text),
+  body: SurfaceTerm,
+  rest: List(SurfaceDataField),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker),
+  read: CkReadFrame(c, m),
+  context: CkWrittenReset(c, m),
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, body, ck_val(m)),
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_data_fields(rest, next, generics))
+  ). WrittenDataFields(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_data_fields(rest, next, generics))
+  ),
+  clean: DiagnosticClean(ck_st(data_fields_after(name, rest, generics, m)))
+): WrittenDataFields(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(surface_data_field_mk(name, body), rest),
+  ck_val(data_fields_after(name, rest, generics, m))
+) {
+  match m: WrittenDataFields(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(surface_data_field_mk(name, body), rest),
+    ck_val(data_fields_after(name, rest, generics, m))
+  ) {
+    mut1(t, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_data_fields(rest, next, generics))
+      ) := written_map_clean(
+        List(DataField),
+        List(DataField),
+        (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
+        ck_data_fields(rest, next, generics),
+        clean
+      )
+      Eq::subst(
+        (types: List(DataField)) => WrittenDataFields(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(surface_data_field_mk(name, body), rest),
+          types
+        ),
+        Eq::sym(
+          written_map_value(
+            List(DataField),
+            List(DataField),
+            (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
+            ck_data_fields(rest, next, generics)
+          )
+        ),
+        WrittenDataFieldsCons(
+          name,
+          body,
+          rest,
+          t,
+          ck_val(ck_data_fields(rest, next, generics)),
+          ihhead(ck_data_fields_frame_errors(rest, next, generics, tail_clean)),
+          data_fields_state(
+            c,
+            next,
+            generics,
+            rest,
+            ck_val(ck_data_fields(rest, next, generics)),
+            Eq::congr(frame_read_datas, read),
+            Eq::congr(written_context_position, context),
+            ihtail(next, Eq::congr(written_context_borrow, context), tail_clean)
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem data_fields_after_errors(
+  c: Checker,
+  name: Option(Text),
+  rest: List(SurfaceDataField),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(Ty, Checker),
+  before: CkErrorFrame(c, m)
+): CkErrorFrame(c, data_fields_after(name, rest, generics, m)) {
+  clean => before(
+    written_bind_input_clean(
+      Ty,
+      List(DataField),
+      m,
+      (t: Ty, next: Checker) => written_map(
+        List(DataField),
+        List(DataField),
+        (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
+        ck_data_fields(rest, next, generics)
+      ),
+      t => next => tail_clean => ck_data_fields_frame_errors(
+        rest,
+        next,
+        generics,
+        written_map_clean(
+          List(DataField),
+          List(DataField),
+          (types: List(DataField)) => Cons(DataFieldMk(name, t), types),
+          ck_data_fields(rest, next, generics),
+          tail_clean
+        )
+      ),
+      clean
+    )
+  )
+}
+
+pub fn data_fields_checked(
+  name: Option(Text),
+  body: SurfaceTerm,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  condition: Bool
+): Mut1(List(DataField), Checker) {
+  frame_bind(
+    Unit,
+    List(DataField),
+    (ignored: Unit, next: Checker) => data_fields_after(
+      name,
+      rest,
+      generics,
+      ck_written(next, body, generics)
+    ),
+    frame_error_if(c, "a borrow cannot be a field", span_of(body), condition)
+  )
+}
+pub theorem data_fields_checked_allowed(
+  name: Option(Text),
+  body: SurfaceTerm,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  condition: Bool,
+  clean: DiagnosticClean(ck_st(data_fields_checked(name, body, rest, c, generics, condition)))
+): condition = false {
+  written_error_if_false(
+    c,
+    "a borrow cannot be a field",
+    span_of(body),
+    condition,
+    written_bind_input_clean(
+      Unit,
+      List(DataField),
+      frame_error_if(c, "a borrow cannot be a field", span_of(body), condition),
+      (ignored: Unit, next: Checker) => data_fields_after(
+        name,
+        rest,
+        generics,
+        ck_written(next, body, generics)
+      ),
+      ignored => next => data_fields_after_errors(
+        next,
+        name,
+        rest,
+        generics,
+        ck_written(next, body, generics),
+        ck_written_frame_errors(next, body, generics)
+      ),
+      clean
+    )
+  )
+}
+pub theorem ck_written_reset(
+  c: Checker,
+  term: SurfaceTerm,
+  generics: Ordmap(Text, Ty)
+): CkWrittenReset(c, ck_written(c, term, generics)) {
+  Eq::subst(
+    (m: Mut1(Ty, Checker)) => CkWrittenReset(c, m),
+    Eq::sym(ck_rewrap1_id(ck_written_in(term, c, generics))),
+    And::left(ck_written_in_frame_context(term, c, generics))
+  )
+}
+pub theorem data_fields_cons_elaborates(
+  field: SurfaceDataField,
+  rest: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ordinary: frame_under_borrow(c) = false,
+  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_data_fields(rest, next, generics))
+  ). WrittenDataFields(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_data_fields(rest, next, generics))
+  ),
+  clean: DiagnosticClean(ck_st(registration_fields_cons(field, rest, c, generics)))
+): WrittenDataFields(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(field, rest),
+  ck_val(registration_fields_cons(field, rest, c, generics))
+) {
+  match field: WrittenDataFields(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(field, rest),
+    ck_val(registration_fields_cons(field, rest, c, generics))
+  ) {
+    surface_data_field_mk(name, body) => {
+      let allowed: term_has_borrow(body) = false := data_fields_checked_allowed(name, body, rest, c, generics, term_has_borrow(body), clean)
+      Eq::subst(
+        (b: Bool) => WrittenDataFields(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(surface_data_field_mk(name, body), rest),
+          ck_val(data_fields_checked(name, body, rest, c, generics, b))
+        ),
+        Eq::sym(allowed),
+        data_fields_after_sound(
+          c,
+          name,
+          body,
+          rest,
+          generics,
+          ck_written(c, body, generics),
+          ck_written_frame(c, body, generics),
+          ck_written_reset(c, body, generics),
+          inner_clean => written_term_ordinary(
+            c,
+            generics,
+            body,
+            ck_val(ck_written(c, body, generics)),
+            ordinary,
+            ck_written_sound(c, body, generics, inner_clean)
+          ),
+          ih,
+          Eq::subst(
+            (b: Bool) => DiagnosticClean(
+              ck_st(data_fields_checked(name, body, rest, c, generics, b))
+            ),
+            allowed,
+            clean
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_data_fields_sound(
+  fields: List(SurfaceDataField),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_data_fields(fields, c, generics)))
+): WrittenDataFields(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  fields,
+  ck_val(ck_data_fields(fields, c, generics))
+) {
+  match fields: WrittenDataFields(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    fields,
+    ck_val(ck_data_fields(fields, c, generics))
+  ) {
+    Nil => WrittenDataFieldsNil
+    Cons(field, rest) => written_transfer(
+      List(DataField),
+      (types: List(DataField)) => WrittenDataFields(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        Cons(field, rest),
+        types
+      ),
+      ck_data_fields(Cons(field, rest), c, generics),
+      registration_fields_cons(field, rest, c, generics),
+      registration_fields_unf(field, rest, c, generics),
+      branch_clean => data_fields_cons_elaborates(
+        field,
+        rest,
+        c,
+        generics,
+        ordinary,
+        next => ordinary_next => inner_clean => ck_data_fields_sound(
+          rest,
+          next,
+          generics,
+          ordinary_next,
+          inner_clean
+        ),
+        branch_clean
+      ),
+      clean
+    )
+  }
+}

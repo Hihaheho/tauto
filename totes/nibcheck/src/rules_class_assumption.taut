@@ -1,0 +1,16 @@
+import "ty.taut"
+import std::Row
+
+// Class assumptions are declarations in the context. DecEq also supplies
+// PartialEq, independently of the implementation's boolean search.
+pub(open) inductive ClassAssumption(assume: List(Pair(Text, Text))): (Text, Text) -> Prop {
+  ClassAssumeDirect(
+    r#class: Text,
+    name: Text,
+    present: Mem(Pair(Text, Text), Pair {fst: r#class, snd: name}, assume)
+  ): ClassAssumption(assume, r#class, name)
+  ClassAssumeDecEq(
+    name: Text,
+    present: Mem(Pair(Text, Text), Pair {fst: "DecEq", snd: name}, assume)
+  ): ClassAssumption(assume, "PartialEq", name)
+}

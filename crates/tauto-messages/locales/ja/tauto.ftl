@@ -1,0 +1,221 @@
+tauto-not-imported = { $message }{ $hint }
+tauto-in-std = 。標準ライブラリにある: `import std::{ $module }`
+tauto-why-builtin = プレリュードの組み込みである{ $hint }
+tauto-why-inductive-struct = カーネルに渡せない `inductive struct` である
+tauto-why-inductive-enum = カーネルに渡せない `inductive enum` である
+tauto-why-struct = `struct` であり、カーネルの型ではない。証明から見えるようにするには `inductive struct` と書く
+tauto-why-enum = `enum` であり、カーネルの型ではない。証明から見えるようにするには `inductive enum` と書く
+tauto-why-extern = ホストの `extern` 関数である
+tauto-why-let = トップレベルの `let` または `var` である
+tauto-why-effect = カーネルが読まないエフェクトである
+tauto-why-uses-because = 書かれたとおりに実行される `{ $name }` を使う: { $why }
+tauto-why-uses = 書かれたとおりに実行される `{ $name }` を使う
+tauto-why-unread = カーネルが読まないエフェクトまたは部分がある
+tauto-runs-as-written = `{ $name }` は証明では定義されていない。書かれたとおりに実行され、カーネルは検査しない。理由: { $reason }。証明はカーネルが検査したものだけを使う
+tauto-runs-as-written-builtin = `{ $name }` は証明では定義されていない。書かれたとおりに実行され、カーネルは検査しない。理由: { $reason }。証明はカーネルが検査したものだけを使う。その名前のカーネル宣言のつもりなら、名前を書いた場所でインポートする。マクロの `quote` が書く名前は、マクロ自身のファイルから見えるものを指す
+tauto-lint-typed-macro-in-proof = typed-macro-in-proof: 証明の中の `{ $name }!(…)`。展開結果を書く (tauto macro expand)
+tauto-lint-step-tactic = step-tactic: `by { $tactic }!(…)` は std にないタクティクを呼ぶ ({ $tactics })
+tauto-lint-macro-capture = macro-capture: `Syn::ident_like` は呼び出し側の名前を捕捉する。呼び出し側が使う宣言の名前には `Syn::decl_name`、マクロのトートのグローバルには `Syn::global` と書く
+tauto-lint-escape = escape: `{ $escape }` ではなく記号を書く（tauto fmt が直す）
+tauto-lint-wild-arm = `_ =>` の腕。代わりにすべてのコンストラクタを挙げる
+tauto-lint-rest-arm = rest-arm: 名前つきの残りの腕は、整数・文字・`Text` のリテラルの後ろにだけ置く。代わりにすべてのコンストラクタを挙げる
+tauto-lint-indexed-arm-goal = indexed-arm-goal: 添字つきの型の `match` の腕は目標を書く（`C => ⊢ G from p`）
+tauto-lint-hole = 穴 `?{ $name }`。完成したファイルには穴がない
+tauto-lint-braced-name = braced-name: `${"{"}{ $name }{"}"}` ではなく `${ $name }` と書く
+tauto-lint-hand-generalize = hand-generalize: motive の結論が `->` で、腕が λ で仮定を受け直している。`match` は対象より後ろの引数を一般化し、等式は `match e eqn h` で名前を付ける
+tauto-lint-bool-cases = bool-cases: `Bool` の場合分けは `Bool::cases` ではなく `match` で書く
+tauto-lint-bool-mix = bool-mix: `&&` と `||` を混ぜた式は括弧で包む（`(a && b) || c`）
+tauto-lint-mk-constructor = mk-constructor: `{ $name }` はコンストラクタが複数ある `{ $ty }` のコンストラクタ。`Mk` はコンストラクタが一つの型だけに使う
+tauto-lint-raw-local = raw-local: 局所の束縛 `r#{ $name }`。`r#` はフィールド・公開の名前・外部との境界の名前に限るので、別の名前にする
+tauto-lint-pair-projection = pair-projection: `{ $name }(e)` ではなく `e.{ $field }` と書く
+tauto-lint-named-prop = named-prop: `{ $name }(…)` ではなく `{ $sign }` と書く
+tauto-lint-explicit-implicit = explicit-implicit: `{ $name }(…)` が第一階のマッチングで決まる暗黙引数を書き出している。明示の引数だけを渡す
+tauto-lint-unused-forall = unused-forall: `∀ { $name }` の名前はどこでも使われない。`(P) -> Q` と書く
+tauto-lint-product-order = product-order: 成分は、ラベルのあるものをラベルの順に、次にほかのものを型の順に書く: `{ $written }`
+tauto-lint-product-order-value = product-order: 組の成分は、ラベルのあるものをラベルの順に、次にほかのものを型の順に書く: `{ $written }`（tauto lint --fix が直す）
+tauto-lint-product-order-effect = product-order: 組の成分は書いた順に評価される。`let` で先に評価してから正規の順で組む: `{ $written }`
+tauto-dead-function = 関数 `{ $name }` は一度も呼ばれない
+tauto-dead-import = `{ $path }` のものは何も使われていない
+tauto-dead-binding = { $what ->
+    [parameter] 引数
+    [binder] 束縛子
+    [pattern] パターン変数
+    [type] 型
+    [continuation] 継続
+    [variable] 変数
+    [binding] 束縛
+   *[other] { $what }
+    } `{ $name }` は定義されているが使われていない
+tauto-dead-after-return = この文は `return` の後にあり、実行されない
+tauto-fmt-unclosed-comment = 閉じていないブロックコメント
+tauto-fmt-unclosed-string = 閉じていない文字列
+tauto-fmt-too-deep = ソースの入れ子が深すぎる
+tauto-fmt-unmatched = 対応のない `{ $token }`
+tauto-fmt-unclosed = 閉じていない `{ $token }`
+tauto-fmt-unclosed-bracket = 閉じていない括弧
+tauto-fmt-changes-tokens = レイアウトによってトークンが変わってしまう
+tauto-fmt-not-read = ファイルが読み込んだファイルの中にない
+tauto-fmt-does-not-fit = 整形したテキストがリテラルの形に合わない
+tauto-fmt-literal-left = 構文 { $syntax }: リテラルは書かれたままにする ({ $why })
+tauto-dep-fetched-from-git = 依存 { $name }: { $dir } は Git から取得された。その依存を固定する Tauto.lock を持つプロジェクトを通して読む
+tauto-dep-not-locked = 依存 { $name } ({ $source }) は { $lock } にない。そこで `tauto lock` を実行する
+tauto-dep-lock-differs = 依存 { $name }: { $lock } は { $locked } に固定しているが、{ $source } として求められている。{ $project } で `tauto lock` を実行する
+tauto-dep-offline = 依存 { $name } ({ $url } の { $rev }) は取得されておらず、ネットワークはオフである。{ $project } で `tauto fetch` を実行する
+tauto-dep-fetching = { $name } { $rev } を { $url } から取得中
+tauto-dep-error = 依存 { $name }: { $error }
+tauto-import-error = `import { $name }`: { $message }
+tauto-import-no-std-module = 標準ライブラリにモジュール { $module } はない
+tauto-import-not-dependency = { $dependency } はこのファイルのトートの依存ではない。Tauto.eure の `dependencies` に挙げるか、std を `import std::List` のようにインポートする
+tauto-import-misnamed = { $dir } の名前は { $dependency } ではなく { $found } である
+tauto-import-name-module = `import { $dependency }.Module` のようにモジュールを挙げる
+tauto-import-no-module = { $dependency } にモジュール { $module } はない ({ $sources } の下で { $stem }.taut を探した)
+tauto-import-many-modules = { $dependency } にモジュール { $module } が複数ある: { $paths }
+tauto-imports-need-path = インポートにはファイルパスが必要である: check_file を使う
+tauto-skipped-runs = 書かれたとおりに実行される。カーネルは検査しない
+tauto-in-expansion =
+    { $message }
+    {"  "}`{ $name }!` の展開の中
+tauto-in-expansion-at =
+    { $message }
+    {"  "}`{ $name }!` の展開の中 (バイト { $byte })
+tauto-written-in-macro-at =
+    { $message }
+    {"  "}マクロ内の { $file }:{ $line }:{ $column } に書かれている
+tauto-not-a-term = `{ $expr }` は項として読めない: { $error }
+tauto-program-too-large = プログラムが大きすぎる
+tauto-no-command = トート { $tote } にコマンド { $name } はない
+tauto-tote-panicked = トートの検査がパニックした
+tauto-command-main-missing = { $tote } のコマンド { $name } は { $main } を実行するが、それは { $dir } のファイルではない
+tauto-command-main-elsewhere = { $tote } のコマンド { $name } は { $main } を実行するが、それはトート { $tote } のファイルではない
+tauto-tote-cycle = トートが互いに依存している: { $totes }
+tauto-tote-named-twice = 二つのトートが { $name } という名前である: { $first } と { $second }。プロジェクトには各名前のトートが一つだけある
+tauto-dep-of-error = { $tote } の依存 { $name }: { $error }
+tauto-dep-misnamed = { $tote } は { $name } に依存するが、{ $dir } の名前は { $found } である
+tauto-untrusted-externs =
+    依存 { $tote } は extern 関数を宣言しており、そのホストへのアクセスはどの --allow-* 権限でも許されない:
+    { $externs }
+    それでも実行するには、プロジェクトの Tauto.eure に `trust {"{"} extern = ["{ $tote }"] {"}"}` を加える
+tauto-include-argument = include.argument: { $name }! はテキストリテラルを一つ、ファイルのパスとして取る
+tauto-include-empty = include.path: パスが空である
+tauto-include-absolute-relative = include.absolute: `{ $path }` は絶対パスである。パスはそれを書いたファイルからの相対パスである
+tauto-include-outside = include.outside: `{ $path }` は { $root } の外に出る。ファイルが読めるのは自分のトートの中だけである
+tauto-include-absolute = include.absolute: `{ $path }` は絶対パスである
+tauto-include-symlink = include.outside: `{ $path }` はシンボリックリンクを通って { $root } の外に出る
+tauto-include-read = include.read: `{ $path }`: { $error }
+tauto-include-not-utf8 = include.not_utf8: `{ $path }` は UTF-8 ではない
+tauto-reg = 構文 { $syntax }: { $role } 関数 `{ $function }` は{ $problem }
+tauto-reg-not-defined = 定義されていない
+tauto-reg-not-function = 関数ではない
+tauto-reg-wrong = { $what }。正しい型は `{ $wanted }` である
+tauto-reg-arity = 引数を { $count } 個取る
+tauto-reg-reads = { $ty } を読む
+tauto-reg-width = 幅として { $ty } を取る
+tauto-reg-makes = { $ty } を作る
+tauto-reg-unknown-effect = 追跡できないエフェクトを実行する ({ $effect })
+tauto-reg-div-only = Div しか実行してはならないが、{ $effect } を実行する
+tauto-reg-reaches = 呼んではならない { $path } に到達する
+tauto-reg-call-error = `{ $function }`: { $error }
+tauto-reg-not-text = `{ $function }` は Text を作らなかった
+tauto-reg-not-option = `{ $function }` は Option を作らなかった
+tauto-reg-not-idempotent = `{ $function }` は冪等ではない: 自分の出力を整形し直すと変わる
+tauto-reg-not-list = `{ $function }` は List を作らなかった
+tauto-reg-malformed = `{ $function }` は不正な SynHighlight を作った
+tauto-reg-colour = `{ $function }` は凡例にない色 `{ $kind }` を作った
+tauto-reg-range = `{ $function }` はテキストの外の範囲を作った ({ $start }..{ $end })
+tauto-reg-not-token = このテキストは構文のトークンではない (バイト { $byte })
+tauto-reg-not-syntax = このテキストは構文に合わない (バイト { $byte })
+tauto-reg-too-deep = 木が関数に渡せる深さを超えている
+tauto-reg-laid-not-token = テキストは構文のトークンではない (バイト { $byte })
+tauto-reg-laid-not-syntax = 整形したテキストが構文に合わない
+tauto-reg-laid-changes = 整形したテキストが空白以外も変えている
+tauto-manifest-dep-leaves = 依存 { $name }: { $path } は { $tree } に取得したトートの外に出る
+tauto-manifest-unknown-key = Tauto.eure の不明なキー { $key }
+tauto-manifest-not-tote-name = { $name } はトート名ではない
+tauto-manifest-no-ref = 依存 { $name } に ref がない (refs/heads/NAME または refs/tags/NAME)
+tauto-manifest-no-source = 依存 { $name } に path も git もない
+tauto-manifest-path-and-git = 依存 { $name }: パス依存には git、ref、dir、project を書かない
+tauto-manifest-unknown-trust-key = Tauto.eure の不明な trust キー { $key }
+tauto-manifest-not-command-name = { $name } はコマンド名ではない (英小文字、数字、- からなり、英字で始まる)
+tauto-manifest-unknown-js-key = Tauto.eure の不明な javascript キー { $key }
+tauto-manifest-executor = rust.executor は { $value } ではなく "threads" か "tokio" である
+tauto-manifest-uniffi = rust.uniffi は true か false である
+tauto-manifest-unknown-nonresuming-key = 不明な rust.nonresuming キー { $key }
+tauto-manifest-bad-tote-name = { $name } はトート名ではない (英小文字、数字、- からなり、英字で始まる)
+tauto-manifest-bound-twice = error: { $name } が二度束縛されている: { $first } と { $second }
+tauto-manifest-bound-twice-at = error: { $name } が二度束縛されている: { $first_at } の { $first } と { $second_at } の { $second }
+tauto-manifest-expected-block = ブロックが必要である
+tauto-manifest-expected-text = テキストが必要である
+tauto-manifest-expected-texts = テキストのリストが必要である
+tauto-manifest-dep-unsupported = { $key }: 対応していない値
+tauto-manifest-dep-expected = { $key }: バージョンかブロックが必要である
+tauto-manifest-command-key = 不明なキー { $key }。キーは main と about である
+tauto-manifest-command-main = main はプログラムのファイルである。例: "cmd/bk.taut"
+tauto-manifest-command-main-path = main はトート内の .taut か .tauto ファイルで、ルートから . や .. を使わずに書く: { $main }
+tauto-manifest-command-about = about はコマンドが何をするかを述べる一行である
+tauto-manifest-trust-false = { $key }: `false` は既定値である。キーを省く
+tauto-manifest-trust-clipboard = clipboard は `true` である。何も挙げない
+tauto-manifest-trust-empty = { $key }: 空のリストは何も許可しない。キーを省く
+tauto-manifest-trust-bad-name = { $key }: { $name } は権限が持てる名前ではない
+tauto-manifest-trust-expected = { $key }: `true` かテキストのリストが必要である
+tauto-manifest-trust-all = all はコマンドには許可しない。必要な種類をそれぞれ挙げる (read, write, env, net, run, clipboard)
+tauto-manifest-trust-key = 不明なキー { $key }。キーは tote、read、write、env、net、run、clipboard である
+tauto-manifest-trust-tote = tote はこのコマンドが属するトートを挙げる
+tauto-unreachable-arm = この腕に届く値はない: 前の腕がこの腕の受ける値をすべて受け取る
+tauto-unchecked-builtin = `{ $name }` は書かれたとおりに実行され、カーネルは検査しない: `std::{ $module }::{ $builtin }` ではなくプレリュードの組み込み `{ $builtin }` を呼ぶ。プログラムは `std::{ $module }` を読むが、このファイルはそれをインポートしていないからである (依存が標準ライブラリからインポートしたものは、その依存をインポートするファイルには届かない)。カーネルに検査させるには、このファイルで `import std::{ $module }` と書く
+tauto-no-hole = { $path } に穴 `?{ $name }` はない
+tauto-hole-many = 穴 `?{ $name }` が { $path } に二度以上書かれている
+tauto-hole-text-differs = `?{ $name }` の位置のテキストは穴ではない
+tauto-hole-text-missing = `?{ $name }` の位置にテキストがない
+tauto-hole-no-instance = `?{ $name }` に `{ $class }` のインスタンスはない
+tauto-hole-no-class = クラス `{ $class }` はない
+tauto-hole-no-law = `{ $class }` に法則 `{ $law }` はない
+tauto-hole-law-text = 法則 `{ $law }` は `{ $class }` のテキストにない
+tauto-hole-no-brace = `?{ $name }` のインスタンスに閉じ括弧がない
+tauto-fill-breaks = `?{ $name }` に `{ $expr }` を入れるとファイルが読めなくなる: { $error }
+tauto-extract-uses-axioms = { $name } は公理を使う: { $axioms }
+tauto-extract-incomplete = { $name } は未完成である
+tauto-extract-skipped = { $name } は証明言語の宣言ではない: { $why }
+tauto-extract-unchecked-takes-proof = `{ $name }` は証明を取るが、カーネルが検査しないコードは証明を渡せない。カーネルが検査する関数の中で使う
+tauto-extract-unchecked-takes-refined = `{ $name }` は述語を消去した値を取るが、カーネルが検査しないコードは別の述語の値と区別できない。カーネルが検査する関数の中で使う
+tauto-extract-unchecked-refined-field = `{ $name }` には述語を消去したフィールドがあるが、カーネルが検査しないコードは別の述語の値と区別できない。カーネルが検査する関数の中で使う
+tauto-extract-unchecked-proof-field = `{ $name }` には証明のフィールドがあるが、カーネルが検査しないコードは証明を渡せない。カーネルが検査する関数の中で使う
+tauto-extract-a-constant-is-not-extracted = `{ $name }`: 定数はまだ抽出されない
+tauto-extract-only-declarations-of-the-proof = 抽出されるのは証明言語の宣言だけである
+tauto-extract-did-not-check = `{ $name }` は検査に通らなかった
+tauto-extract-has-indices-a-family-of = `{ $name }` にはインデックスがある。データの族はパラメータだけを持つ
+tauto-extract-parameter-has-no-type = `{ $name }`: パラメータ `{ $n }` に型がない
+tauto-extract-member-parameter-has-no-type = `{ $class }.{ $member }`: パラメータ `{ $n }` に型がない
+tauto-extract-has-no-result-type = `{ $name }` に結果の型がない
+tauto-extract-member-has-no-result-type = `{ $class }.{ $member }` に結果の型がない
+tauto-extract-a-parameter-has-no-type = `{ $name }`: 型のないパラメータがある
+tauto-extract-a-type-is-not-extracted = 型 `{ $ty }` は抽出されない
+tauto-extract-is-given-types-for-parameters = `{ $n }` にはパラメータ { $params } 個に対して型が { $count } 個与えられている
+tauto-extract-a-type-alias-s-body = `{ $n }`: 型エイリアスの本体は抽出されない
+tauto-extract-is-not-a-type-of = `{ $n }` はデータの型ではない
+tauto-extract-is-not-extracted = `{ $ty }` は抽出されない
+tauto-extract-a-match-whose-result-takes = 結果が証明を取る match は、すべてのパラメータに適用する
+tauto-extract-arm-is-lambda = 結果が証明を取る match の腕は、パラメータを持つ `=>` である
+tauto-extract-arm-binds-parameters = 結果が証明を取る match の腕は、すべてのパラメータを束縛する
+tauto-extract-a-handler-arm-s-pattern = 名前以外のハンドラの腕のパターンは抽出されない
+tauto-extract-a-guard-on-a-handler = ハンドラの腕のガードは抽出されない
+tauto-extract-is-a-field-of-no = `.{ $name }` はどのレコードのフィールドでもないか、複数のレコードのフィールドである
+tauto-extract-a-block-holds-only-let = ブロックの値の前に置けるのは `let`、`var`、`:=`、項だけである
+tauto-extract-takes-two-arguments = `{ $n }` は引数を二つ取る
+tauto-extract-minus-takes-two-arguments = `-` は引数を二つ取る
+tauto-extract-the-takes-a-type-and = `the` は型と値を取る
+tauto-extract-is-not-a-declaration-that = `{ $n }` は検査に通った宣言ではない
+tauto-extract-is-used-as-a-value = `{ $n }` は値として使われているがデータではない
+tauto-extract-is-applied-to-arguments-write = `{ $n }` は引数 { $count } 個に適用されている: すべて書く
+tauto-extract-has-no-executable-constructor-representation = `{ $n }` には実行できるコンストラクタの表現がない
+tauto-extract-is-an-eliminator-write-a = `{ $n }` は除去子である: `match` を書く
+tauto-extract-a-match-on-a-proof = 腕が二つ以上ある証明への match は抽出されない
+tauto-extract-a-match-on-text-binds = `Text::Mk` への match はそのバイト列を名前に束縛する
+tauto-extract-match-on-secret = `Secret` への match は実行されるコードでそれを読む: `ct_` 関数を使うか、`expose` で公開する
+tauto-extract-a-match-on-has-no = `{ $family }` への match には実行できる表現がない
+tauto-extract-a-guard-is-not-extracted = ガードは抽出されない
+tauto-extract-nested-arms-overlap = `Nat` か `Bool` の部分のまわりで形が重なる腕は抽出されない
+tauto-extract-in-a-match-on-at = `Nat` または `Bool` への match の中の `{ $name }`
+tauto-extract-a-pattern-that-is-not = 抽出されないパターン
+tauto-extract-in-a-pattern-has-the = パターンの中の `{ $name }` はフィールドの数が違う
+tauto-already-defined-in = { $message } (最初の定義は `{ $earlier }`)
+tauto-std-by-path = { $message }。`{ $path }` は標準ライブラリの `{ $module }.taut` の写しである: パスで import せず `import std::{ $module }` と書けば一度だけ読まれる

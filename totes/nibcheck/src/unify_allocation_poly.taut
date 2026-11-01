@@ -1,0 +1,163 @@
+import "unify_allocation_app.taut"
+
+pub fn allocation_guard(
+  c: Checker,
+  chosen: Mut1(Bool, Checker),
+  fallback: Bool,
+  flag: Bool
+): Mut1(Bool, Checker) {
+  match flag: Mut1(Bool, Checker) { false => mut1(fallback, c)
+    true => chosen }
+}
+pub theorem allocation_guard_ok(
+  c: Checker,
+  chosen: Mut1(Bool, Checker),
+  fallback: Bool,
+  state: CheckerAllocation(c),
+  h: AllocationRun(c, chosen),
+  flag: Bool
+): AllocationRun(c, allocation_guard(c, chosen, fallback, flag)) {
+  match flag: AllocationRun(c, allocation_guard(c, chosen, fallback, flag)) {
+    false => AndIntro(Refl, state)
+    true => h
+  }
+}
+pub fn allocation_view_counter(r#view: Pair(Nat, Ordmap(Nat, Ty))): Nat { (r#view: Nat) }
+pub theorem ck_rigid_counter(
+  gs: List(Pair(Text, Kind)),
+  c: Checker
+): CounterUnchanged(c, ck_rigid(gs, c)) {
+  Eq::congr(allocation_view_counter, ck_rigid_allocation_state(gs, c))
+}
+pub theorem ck_keep_allocation_run(
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  rigid: Ordmap(Text, Ty),
+  a: Ty,
+  b: Ty,
+  state: CheckerAllocation(c)
+): AllocationRun(c, ck_keep(c, ga, rigid, a, b)) {
+  AndIntro(
+    Eq::congr(allocation_view_counter, ck_keep_allocation_state(c, ga, rigid, a, b)),
+    ck_keep_allocation(c, ga, rigid, a, b, state)
+  )
+}
+pub theorem allocation_run_start<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  same: ck_next_of(c) = ck_next_of(next),
+  tail: AllocationRun(next, m)
+): AllocationRun(c, m) {
+  AndIntro(Eq::trans(same, And::left(tail)), And::right(tail))
+}
+pub theorem allocated_poly_after(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  same: CounterUnchanged(c, m),
+  ordered: CkOrdered(ck_st(m)),
+  state: CheckerAllocation(ck_st(m)),
+  left: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(ta, ck_val(m))),
+  right: TypeAllocated(ck_next_of(ck_st(m)), ty_substitute(tb, ty_poly_map(gb, ga, ck_val(m))))
+): AllocationRun(c, ck_poly_k(fuel, ga, ta, gb, tb, m)) {
+  match m: AllocationRun(c, ck_poly_k(fuel, ga, ta, gb, tb, m)) {
+    mut1(rigid, next) => allocation_run_start(
+      c,
+      next,
+      ck_and(
+        (last: Checker) => ck_keep(last, ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
+        ck_unify_in(
+          fuel,
+          next,
+          ty_substitute(ta, rigid),
+          ty_substitute(tb, ty_poly_map(gb, ga, rigid))
+        )
+      ),
+      same,
+      allocation_and(
+        next,
+        (last: Checker) => ck_keep(last, ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
+        ck_unify_in(
+          fuel,
+          next,
+          ty_substitute(ta, rigid),
+          ty_substitute(tb, ty_poly_map(gb, ga, rigid))
+        ),
+        hu(
+          next,
+          ty_substitute(ta, rigid),
+          ty_substitute(tb, ty_poly_map(gb, ga, rigid)),
+          ordered,
+          state,
+          left,
+          right
+        ),
+        unify_in_allocation_ordered(
+          fuel,
+          next,
+          ty_substitute(ta, rigid),
+          ty_substitute(tb, ty_poly_map(gb, ga, rigid)),
+          ordered
+        ),
+        last => unchanged => current => order => ck_keep_allocation_run(
+          last,
+          ga,
+          rigid,
+          TyPoly(ga, ta),
+          TyPoly(gb, tb),
+          current
+        )
+      )
+    )
+  }
+}
+pub theorem allocated_poly_call(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  c: Checker,
+  ga: List(Pair(Text, Kind)),
+  ta: Ty,
+  gb: List(Pair(Text, Kind)),
+  tb: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), ta),
+  right: TypeAllocated(ck_next_of(c), tb)
+): AllocationRun(c, ck_poly_k(fuel, ga, ta, gb, tb, ck_rigid(ga, c))) {
+  let types: And(
+    TypeAllocated(ck_next_of(c), ty_substitute(ta, ck_val(ck_rigid(ga, c)))),
+    TypeAllocated(ck_next_of(c), ty_substitute(tb, ty_poly_map(gb, ga, ck_val(ck_rigid(ga, c)))))
+  ) := ck_poly_substitutions_allocated(c, ga, gb, ta, tb, ck_next_of(c), left, right)
+  allocated_poly_after(
+    fuel,
+    hu,
+    c,
+    ga,
+    ta,
+    gb,
+    tb,
+    ck_rigid(ga, c),
+    ck_rigid_counter(ga, c),
+    And::left(grows_of_same(c, ck_st(ck_rigid(ga, c)), ordered, ck_rigid_same(ga, c))),
+    ck_rigid_allocation(ga, c, state),
+    Eq::subst(
+      (limit: Nat) => TypeAllocated(limit, ty_substitute(ta, ck_val(ck_rigid(ga, c)))),
+      ck_rigid_counter(ga, c),
+      And::left(types)
+    ),
+    Eq::subst(
+      (limit: Nat) => TypeAllocated(
+        limit,
+        ty_substitute(tb, ty_poly_map(gb, ga, ck_val(ck_rigid(ga, c))))
+      ),
+      ck_rigid_counter(ga, c),
+      And::right(types)
+    )
+  )
+}

@@ -1,0 +1,44 @@
+import "literal_inference_sound.taut"
+import "finish_literal_sound.taut"
+import "finish_error_sound.taut"
+
+// An isolated natural expression, from inference through the final checks.
+// Programs additionally need record preservation across subsequent inference.
+pub theorem ck_infer_natural_final_sound(
+  k: Nat,
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticReportClean(
+    ck_finish(ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)))
+  )
+): NaturalTypingIn(
+  ck_subst_of(
+    ck_st(ck_finish(ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env))))
+  ),
+  surface_term_mk(SkNat(value), start, end),
+  ck_val(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env))
+) {
+  ck_finish_natural_sound(
+    ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)),
+    value,
+    start,
+    end,
+    ck_val(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)),
+    ck_infer_natural_recorded(
+      k,
+      c,
+      value,
+      start,
+      end,
+      env,
+      ck_finish_input_clean(
+        ck_st(ck_infer_in(k, c, surface_term_mk(SkNat(value), start, end), env)),
+        clean
+      )
+    ),
+    clean
+  )
+}

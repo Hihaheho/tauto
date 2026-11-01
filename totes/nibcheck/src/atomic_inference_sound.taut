@@ -1,0 +1,200 @@
+import "local_lookup_sound.taut"
+import "inference_terms.taut"
+import "inference_lists.taut"
+import "inference_value_fact.taut"
+
+pub theorem ck_infer_term_text_sound(
+  k: Nat,
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticClean(
+    ck_st(ck_infer_term_in(k, c, surface_term_mk(SkText(value), start, end), env))
+  )
+): AtomicTyping(
+  env,
+  surface_term_mk(SkText(value), start, end),
+  ck_val(ck_infer_term_in(k, c, surface_term_mk(SkText(value), start, end), env))
+) {
+  match k: AtomicTyping(
+    env,
+    surface_term_mk(SkText(value), start, end),
+    ck_val(ck_infer_term_in(k, c, surface_term_mk(SkText(value), start, end), env))
+  ) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan {start: 0, end: 0},
+        clean
+      )
+    )
+    Succ(j) => AtomicText(value, start, end)
+  }
+}
+pub theorem ck_infer_term_bool_sound(
+  k: Nat,
+  c: Checker,
+  value: Bool,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticClean(
+    ck_st(ck_infer_term_in(k, c, surface_term_mk(SkBool(value), start, end), env))
+  )
+): AtomicTyping(
+  env,
+  surface_term_mk(SkBool(value), start, end),
+  ck_val(ck_infer_term_in(k, c, surface_term_mk(SkBool(value), start, end), env))
+) {
+  match k: AtomicTyping(
+    env,
+    surface_term_mk(SkBool(value), start, end),
+    ck_val(ck_infer_term_in(k, c, surface_term_mk(SkBool(value), start, end), env))
+  ) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan {start: 0, end: 0},
+        clean
+      )
+    )
+    Succ(j) => AtomicBool(value, start, end)
+  }
+}
+pub theorem ck_infer_term_local_sound(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  local: Local,
+  found: env_find(env, name) = Some(local),
+  clean: DiagnosticClean(
+    ck_st(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+  )
+): AtomicTyping(
+  env,
+  surface_term_mk(SkVar(name), start, end),
+  ck_val(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+) {
+  match k: AtomicTyping(
+    env,
+    surface_term_mk(SkVar(name), start, end),
+    ck_val(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+  ) {
+    Zero => False::elim(
+      diagnostic_error_impossible(
+        c,
+        "type checking ran out of steps",
+        TySpan {start: 0, end: 0},
+        clean
+      )
+    )
+    Succ(j) => Eq::subst(
+      (m: Mut1(Ty, Checker)) => AtomicTyping(
+        env,
+        surface_term_mk(SkVar(name), start, end),
+        ck_val(m)
+      ),
+      Eq::sym(ck_rewrap1_id(ck_lookup(c, name, env, TySpan {start: start, end: end}))),
+      ck_lookup_local_sound(c, name, env, start, end, local, found)
+    )
+  }
+}
+
+pub theorem ck_infer_atom_lift(
+  k: Nat,
+  c: Checker,
+  term: SurfaceTerm,
+  env: List(Local),
+  ih: ∀ fuel: Nat. ∀ accepted: DiagnosticClean(
+    ck_st(ck_infer_term_in(fuel, c, term, env))
+  ). AtomicTyping(env, term, ck_val(ck_infer_term_in(fuel, c, term, env))),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, term, env)))
+): AtomicTyping(env, term, ck_val(ck_infer_in(k, c, term, env))) {
+  ck_infer_value_fact((ty: Ty) => AtomicTyping(env, term, ty), k, c, term, env, ih, clean)
+}
+
+pub theorem ck_infer_text_sound(
+  k: Nat,
+  c: Checker,
+  value: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkText(value), start, end), env)))
+): AtomicTyping(
+  env,
+  surface_term_mk(SkText(value), start, end),
+  ck_val(ck_infer_in(k, c, surface_term_mk(SkText(value), start, end), env))
+) {
+  ck_infer_atom_lift(
+    k,
+    c,
+    surface_term_mk(SkText(value), start, end),
+    env,
+    fuel => accepted => ck_infer_term_text_sound(fuel, c, value, start, end, env, accepted),
+    clean
+  )
+}
+pub theorem ck_infer_bool_sound(
+  k: Nat,
+  c: Checker,
+  value: Bool,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkBool(value), start, end), env)))
+): AtomicTyping(
+  env,
+  surface_term_mk(SkBool(value), start, end),
+  ck_val(ck_infer_in(k, c, surface_term_mk(SkBool(value), start, end), env))
+) {
+  ck_infer_atom_lift(
+    k,
+    c,
+    surface_term_mk(SkBool(value), start, end),
+    env,
+    fuel => accepted => ck_infer_term_bool_sound(fuel, c, value, start, end, env, accepted),
+    clean
+  )
+}
+pub theorem ck_infer_local_sound(
+  k: Nat,
+  c: Checker,
+  name: Text,
+  start: Nat,
+  end: Nat,
+  env: List(Local),
+  local: Local,
+  found: env_find(env, name) = Some(local),
+  clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkVar(name), start, end), env)))
+): AtomicTyping(
+  env,
+  surface_term_mk(SkVar(name), start, end),
+  ck_val(ck_infer_in(k, c, surface_term_mk(SkVar(name), start, end), env))
+) {
+  ck_infer_atom_lift(
+    k,
+    c,
+    surface_term_mk(SkVar(name), start, end),
+    env,
+    fuel => accepted => ck_infer_term_local_sound(
+      fuel,
+      c,
+      name,
+      start,
+      end,
+      env,
+      local,
+      found,
+      accepted
+    ),
+    clean
+  )
+}

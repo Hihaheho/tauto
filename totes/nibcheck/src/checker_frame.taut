@@ -1,0 +1,193 @@
+import "prepare_sound.taut"
+
+// Expression checking can extend the substitution, but keeps the data environment.
+pub def CkRunFrame<A: Type>(c: Checker, m: Mut1(A, Checker)): Prop :=
+And(CkOrdered(ck_st(m)), ck_datas_of(ck_st(m)) = ck_datas_of(c))
+
+pub theorem run_frame_read<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: CkReadFrame(c, m),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, m) {
+  AndIntro(frame_subst_ordered(c, m, h, ordered), Eq::congr(frame_read_datas, h))
+}
+pub theorem run_frame_grows<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: Grows(c, ck_st(m))
+): CkRunFrame(c, m) {
+  AndIntro(And::left(h), Eq::sym(And::left(And::right(And::right(And::right(h))))))
+}
+pub theorem run_frame_return<A: Type>(
+  c: Checker,
+  v: A,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, mut1(v, c)) {
+  AndIntro(ordered, Refl)
+}
+pub theorem run_frame_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: CkRunFrame(c, m)
+): CkRunFrame(c, ck_rewrap1(m)) {
+  Eq::subst((z: Mut1(A, Checker)) => CkRunFrame(c, z), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub theorem run_frame_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  hm: CkRunFrame(c, m),
+  hk: ∀ v: A. ∀ next: Checker. ∀ ordered: CkOrdered(next). CkRunFrame(next, k(v, next))
+): CkRunFrame(c, frame_bind(k, m)) {
+  match m: CkRunFrame(c, frame_bind(k, m)) {
+    mut1(v, next) => {
+      let h: CkRunFrame(next, k(v, next)) := hk(v, next, And::left(hm))
+      AndIntro(And::left(h), Eq::trans(And::right(h), And::right(hm)))
+    }
+  }
+}
+pub theorem run_frame_changed<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  same: ck_datas_of(next) = ck_datas_of(c),
+  h: CkRunFrame(next, m)
+): CkRunFrame(c, m) {
+  AndIntro(And::left(h), Eq::trans(And::right(h), same))
+}
+pub theorem run_frame_summary<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: CkRunFrame(c, m),
+  ok: CkSummaryOk(c)
+): CkSummaryOk(ck_st(m)) {
+  Eq::subst(SummaryOk, Eq::sym(And::right(h)), ok)
+}
+pub theorem ck_set_subst_run_frame(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_set_subst(c, v, t)) {
+  AndIntro(
+    Ordmap::insert_ordered(
+      Ordmap::compare_nat,
+      Ordmap::compare_nat_law(),
+      ck_subst_of(c),
+      v,
+      t,
+      ordered
+    ),
+    Refl
+  )
+}
+pub theorem ck_unify_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_unify(c, a, b)) {
+  run_frame_grows(c, ck_unify(c, a, b), And::left(ck_unify_ok(c, a, b)(ordered)))
+}
+pub theorem ck_fits_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_fits(c, a, b)) {
+  run_frame_grows(c, ck_fits(c, a, b), And::left(ck_fits_ok(c, a, b)(ordered)))
+}
+pub theorem ck_attempt_fits_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_attempt_fits(c, a, b)) {
+  run_frame_grows(c, ck_attempt_fits(c, a, b), And::left(ck_attempt_fits_ok(c, a, b)(ordered)))
+}
+pub theorem ck_join_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_join(c, a, b)) {
+  run_frame_grows(c, ck_join(c, a, b), And::left(ck_join_ok(c, a, b)(ordered)))
+}
+pub fn run_expect_after(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  fits: Bool
+): Mut1(Unit, Checker) {
+  frame_error_if(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits))
+}
+pub theorem run_expect_after_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  fits: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, run_expect_after(c, a, b, span, what, fits)) {
+  run_frame_read(
+    c,
+    run_expect_after(c, a, b, span, what, fits),
+    frame_error_if_ok(
+      c,
+      ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
+      span,
+      not(fits)
+    ),
+    ordered
+  )
+}
+pub fn run_expect(c: Checker, a: Ty, b: Ty, span: TySpan, what: Text): Mut1(Unit, Checker) {
+  frame_bind(
+    Bool,
+    Unit,
+    (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+    ck_fits(c, a, b)
+  )
+}
+pub theorem run_expect_unf(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text
+): ck_expect(c, a, b, span, what) = run_expect(c, a, b, span, what) { Refl }
+pub theorem ck_expect_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_expect(c, a, b, span, what)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
+    Eq::sym(run_expect_unf(c, a, b, span, what)),
+    run_frame_bind(
+      Bool,
+      Unit,
+      c,
+      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+      ck_fits(c, a, b),
+      ck_fits_run_frame(c, a, b, ordered),
+      fits => next => onext => run_expect_after_frame(next, a, b, span, what, fits, onext)
+    )
+  )
+}
+
+pub theorem ck_attempt_unify_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_attempt_unify(c, a, b)) {
+  run_frame_grows(c, ck_attempt_unify(c, a, b), And::left(attempt_unify_sub(c, a, b)(ordered)))
+}

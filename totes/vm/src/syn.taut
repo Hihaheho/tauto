@@ -1,0 +1,656 @@
+import "builtins.taut"
+
+// `syn_run`: a text read with the parser of a `syntax` (`syntab.taut`) into the values
+// of the syntax's types, or why it is not of the syntax. It gives what the other backends
+// give (`crates/tauto-syntax`: `parse`, then `build_ast`, then the values): the same
+// tree, spans and diagnostics. The scanner is `totes/scan`; the parse builds the values
+// as each node closes, as the production's shape says.
+
+// What ends a parse that does not succeed.
+pub(open) inductive SynFail: Type {
+  // No token starts at the byte.
+  SfLex(at: Nat): SynFail
+  // The token the parser could not use (none at the end of the text), and the terminals
+  // it would have taken.
+  SfSyntax(token: Option(ScanToken), expected: List(Nat)): SynFail
+  SfLimit(message: Text): SynFail
+  // The tables do not fit the schema.
+  SfSchema(message: Text): SynFail
+}
+
+// What a node or token became, with the span of its node: where its text starts and ends.
+// A repetition's items are in order for an LL(k) grammar, and last first for an LALR(1)
+// one, whose repetitions grow at the end.
+pub(open) inductive SynV: Type {
+  SvOne(v: MVal, start: Nat, end: Nat): SynV
+  SvOpt(v: Option(MVal), start: Nat, end: Nat): SynV
+  SvList(items: List(MVal), start: Nat, end: Nat): SynV
+}
+
+pub fn sv_start(v: SynV): Nat {
+  match v {
+    SvOne(x, s, e) => s
+    SvOpt(x, s, e) => s
+    SvList(x, s, e) => s
+  }
+}
+
+pub fn sv_end(v: SynV): Nat {
+  match v {
+    SvOne(x, s, e) => e
+    SvOpt(x, s, e) => e
+    SvList(x, s, e) => e
+  }
+}
+
+// Whether the value covers any text: an empty list or option does not move its
+// parent's start.
+pub fn sv_has_text(v: SynV): Bool {
+  match v {
+    SvOne(x, s, e) => true
+    SvOpt(x, s, e) => match x {
+      None => false
+      Some(y) => true
+    }
+    SvList(x, s, e) => match x {
+      Nil => false
+      Cons(y, rest) => true
+    }
+  }
+}
+
+pub fn sv_respan(v: SynV, s: Nat, e: Nat): SynV {
+  match v {
+    SvOne(x, s0, e0) => SvOne(x, s, e)
+    SvOpt(x, s0, e0) => SvOpt(x, s, e)
+    SvList(x, s0, e0) => SvList(x, s, e)
+  }
+}
+
+pub fn sv_value(lr: Bool, v: SynV): MVal {
+  match v {
+    SvOne(x, s, e) => x
+    SvOpt(x, s, e) => m_option(x)
+    SvList(x, s, e) => m_list(if lr { List::reverse(x) } else { x })
+  }
+}
+
+// A node being built: its production, its values so far (last first), and where the text
+// before it ends.
+pub(open) inductive SynFrame: Type {
+  Mk(production: Nat, values: List(SynV), open_end: Nat): SynFrame
+}
+
+pub fn syn_nat_max(a: Nat, b: Nat): Nat {
+  if a < b { b } else { a }
+}
+
+// ---- the values ---------------------------------------------------------------------------
+
+pub fn syn_span(p: SynParser, at: Nat): MVal {
+  MvData(p.span, Cons(MvInt(IntOfNat(at)), Nil))
+}
+
+pub fn syn_token(p: SynParser, text: Text, t: ScanToken): SynV {
+  SvOne(
+    MvData(
+      p.token,
+      Cons(
+        MvText(Text::slice_or_empty(text, t.start, t.end)),
+        Cons(syn_span(p, t.start), Cons(MvData(p.ctx, Cons(m_list(Nil), Nil)), Nil))
+      )
+    ),
+    t.start,
+    t.end
+  )
+}
+
+// The first start of a value with text, if one has.
+pub fn syn_first_start(values: List(SynV)): Option(Nat) {
+  match values {
+    Nil => None
+    Cons(v, rest) => if sv_has_text(v) { Some(sv_start(v)) } else { syn_first_start(rest) }
+  }
+}
+
+pub fn syn_last_end(values: List(SynV), end: Nat): Nat {
+  match values {
+    Nil => end
+    Cons(v, rest) => syn_last_end(rest, syn_nat_max(end, sv_end(v)))
+  }
+}
+
+// The fields of the values whose `keep` is true.
+pub fn syn_fields(lr: Bool, values: List(SynV), keep: List(Bool)): List(MVal) {
+  match values {
+    Nil => Nil
+    Cons(v, rest) => match keep {
+      Nil => Nil
+      Cons(k, more) => if k {
+        Cons(sv_value(lr, v), syn_fields(lr, rest, more))
+      } else {
+        syn_fields(lr, rest, more)
+      }
+    }
+  }
+}
+
+pub fn syn_node(p: SynParser, ctor: Nat, spanned: Bool, keep: List(Bool), values: List(SynV), start: Nat): MVal {
+  let fields := syn_fields(p.lr, values, keep)
+  MvData(ctor, if spanned { Cons(syn_span(p, start), fields) } else { fields })
+}
+
+pub fn syn_element(p: SynParser, e: SynElem, values: List(SynV), start: Nat): Result(MVal, SynFail) {
+  match e {
+    SeItem => match values {
+      Cons(v, rest) => match rest {
+        Nil => Ok(sv_value(p.lr, v))
+        Cons(w, more) => Err(SfSchema("a single-item element does not have one item"))
+      }
+      Nil => Err(SfSchema("a single-item element does not have one item"))
+    }
+    SeNode(ctor, spanned, keep) => Ok(syn_node(p, ctor, spanned, keep, values, start))
+  }
+}
+
+// All the values but the last, and the last.
+pub fn syn_split_last(values: List(SynV)): Option(Pair(List(SynV), SynV)) {
+  match values {
+    Nil => None
+    Cons(v, rest) => match syn_split_last(rest) {
+      None => Some(Pair { fst: Nil, snd: v })
+      Some(r) => Some(Pair { fst: Cons(v, r.fst), snd: r.snd })
+    }
+  }
+}
+
+// What the node of the production becomes, of its values in order.
+pub fn syn_close(p: SynParser, production: Nat, values: List(SynV), open_end: Nat): Result(SynV, SynFail) {
+  let end := syn_last_end(values, open_end)
+  let start := match syn_first_start(values) {
+    None => end
+    Some(s) => s
+  }
+  match Array::get(p.productions, production) {
+    None => Err(SfSchema("an event names a production of another non-terminal"))
+    Some(prod) => match prod.shape {
+      ShNode(ctor, spanned, keep) => Ok(SvOne(syn_node(p, ctor, spanned, keep, values, start), start, end))
+      ShPass => match values {
+        Nil => Err(SfSchema("a token non-terminal without its token"))
+        Cons(v, rest) => Ok(sv_respan(v, start, end))
+      }
+      ShSome(e) => match syn_element(p, e, values, start) {
+        Err(f) => Err(f)
+        Ok(x) => Ok(SvOpt(Some(x), start, end))
+      }
+      ShNone => Ok(SvOpt(None, start, end))
+      ShEmpty => Ok(SvList(Nil, start, end))
+      ShMore(e) => if p.lr {
+        // Left recursive: the repetition so far, then the item, whose span starts at
+        // the text of the values after the first.
+        match values {
+          Cons(head, rest) => match head {
+            SvList(items, s0, e0) => {
+              let item_start := match syn_first_start(rest) {
+                None => end
+                Some(s) => s
+              }
+              match syn_element(p, e, rest, item_start) {
+                Err(f) => Err(f)
+                Ok(x) => Ok(SvList(Cons(x, items), start, end))
+              }
+            }
+            _ => Err(SfSchema("a repetition does not start with itself"))
+          }
+          Nil => Err(SfSchema("a repetition does not start with itself"))
+        }
+      } else {
+        // Right recursive: the item, then the rest of the repetition.
+        match syn_split_last(values) {
+          None => Err(SfSchema("a repetition does not end in itself"))
+          Some(r) => match r.snd {
+            SvList(items, s0, e0) => match syn_element(p, e, r.fst, start) {
+              Err(f) => Err(f)
+              Ok(x) => Ok(SvList(Cons(x, items), start, end))
+            }
+            _ => Err(SfSchema("a repetition does not end in itself"))
+          }
+        }
+      }
+      ShBad(m) => Err(SfSchema(m))
+    }
+  }
+}
+
+// ---- the tokens ---------------------------------------------------------------------------
+
+// Where the first byte no token covers is, if there is one before `n`.
+pub fn syn_gap(tokens: List(ScanToken), pos: Nat, n: Nat): Option(Nat) {
+  match tokens {
+    Nil => if pos < n { Some(pos) } else { None }
+    Cons(t, rest) => if t.start == pos { syn_gap(rest, t.end, n) } else { Some(pos) }
+  }
+}
+
+pub fn syn_seen(p: SynParser, tokens: List(ScanToken)): List(ScanToken) {
+  match tokens {
+    Nil => Nil
+    Cons(t, rest) => match Array::get(p.skipped, t.token_type) {
+      Some(skip) => if skip { syn_seen(p, rest) } else { Cons(t, syn_seen(p, rest)) }
+      None => Cons(t, syn_seen(p, rest))
+    }
+  }
+}
+
+// The terminal of the token at `i`; the end of the input (0) past the last.
+pub fn syn_term_at(seen: Array(ScanToken), i: Nat): Nat {
+  match Array::get(seen, i) {
+    None => 0
+    Some(t) => t.token_type
+  }
+}
+
+// The terminals in order, each once.
+pub fn syn_dedup(ts: List(Nat)): List(Nat) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => match rest {
+      Nil => Cons(t, Nil)
+      Cons(u, more) => if t == u { syn_dedup(rest) } else { Cons(t, syn_dedup(rest)) }
+    }
+  }
+}
+
+// The parse fails past these, as the other backends' does.
+pub fn syn_max_input(): Nat {
+  1048576
+}
+
+pub fn syn_max_stack(): Nat {
+  65536
+}
+
+// ---- LL(k) ----------------------------------------------------------------------------------
+
+pub fn syn_find_transition(ts: List(SynTrans), state: Nat, term: Nat): Option(SynTrans) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => if Bool::and(t.state == state, t.terminal == term) {
+      Some(t)
+    } else {
+      syn_find_transition(rest, state, term)
+    }
+  }
+}
+
+pub fn syn_outgoing(ts: List(SynTrans), state: Nat): List(Nat) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if t.state == state {
+      Cons(t.terminal, syn_outgoing(rest, state))
+    } else {
+      syn_outgoing(rest, state)
+    }
+  }
+}
+
+// At most `k` more tokens, from the `i`-th ahead, through the automaton from `state`, until
+// a production (plus one) is chosen.
+pub fn syn_predict_in(
+  k: Nat,
+  la: SynLook,
+  seen: Array(ScanToken),
+  cur: Nat,
+  i: Nat,
+  state: Nat,
+  production: Nat
+): Result(Nat, SynFail) {
+  match k {
+    Zero => match production {
+      Succ(chosen) => Ok(chosen)
+      Zero => Err(SfSyntax(Array::get(seen, cur), Nil))
+    }
+    Succ(k2) => match production {
+      Succ(chosen) => Ok(chosen)
+      Zero => match syn_find_transition(la.transitions, state, syn_term_at(seen, cur + i)) {
+        Some(t) => syn_predict_in(k2, la, seen, cur, i + 1, t.to, t.production)
+        None => Err(SfSyntax(Array::get(seen, cur + i), syn_dedup(syn_outgoing(la.transitions, state))))
+      }
+    }
+  }
+}
+
+pub fn syn_predict(p: SynParser, seen: Array(ScanToken), n: Nat, cur: Nat): Result(Nat, SynFail) {
+  match Array::get(p.lookahead, n) {
+    Some(o) => match o {
+      Some(la) => syn_predict_in(la.k, la, seen, cur, 0, 0, la.prod0)
+      None => Err(SfLimit("a non-terminal has no lookahead automaton"))
+    }
+    None => Err(SfLimit("a non-terminal has no lookahead automaton"))
+  }
+}
+
+// What is left to do: a symbol to expand or match, or the close of a node.
+pub(open) inductive SynItem: Type {
+  SiSym(s: SynSym): SynItem
+  SiClose: SynItem
+}
+
+pub fn syn_push_rhs(rhs: List(SynSym), rest: List(SynItem)): List(SynItem) {
+  match rhs {
+    Nil => rest
+    Cons(s, more) => Cons(SiSym(s), syn_push_rhs(more, rest))
+  }
+}
+
+pub fn syn_add(frames: List(SynFrame), v: SynV): Option(List(SynFrame)) {
+  match frames {
+    Nil => None
+    Cons(f, up) => Some(Cons(SynFrame { production: f.production, values: Cons(v, f.values), open_end: f.open_end }, up))
+  }
+}
+
+// At most `fuel` steps of the LL(k) parse: `items` is the stack (`depth` long), `frames`
+// the nodes open, the innermost first, `cur` the next token and `last_end` where the last
+// token read ends. `result` is the start symbol's value once its node closed.
+pub fn syn_ll(
+  fuel: Nat,
+  p: SynParser,
+  text: Text,
+  seen: Array(ScanToken),
+  items: List(SynItem),
+  depth: Nat,
+  frames: List(SynFrame),
+  cur: Nat,
+  last_end: Nat,
+  result: Option(SynV)
+): Result(SynV, SynFail) {
+  match fuel {
+    Zero => Err(SfLimit("the parse takes more steps than the limit"))
+    Succ(f) => match items {
+      Nil => if cur < Array::len(seen) {
+        Err(SfSyntax(Array::get(seen, cur), Cons(0, Nil)))
+      } else {
+        match result {
+          None => Err(SfSchema("no events"))
+          Some(v) => Ok(v)
+        }
+      }
+      Cons(item, rest) => match item {
+        SiClose => match frames {
+          Nil => Err(SfSchema("a close without an open"))
+          Cons(fr, up) => match syn_close(p, fr.production, List::reverse(fr.values), fr.open_end) {
+            Err(e) => Err(e)
+            Ok(v) => match up {
+              Nil => syn_ll(f, p, text, seen, rest, Nat::sub(depth, 1), Nil, cur, last_end, Some(v))
+              Cons(parent, up2) => match syn_add(up, v) {
+                None => Err(SfSchema("a close without an open"))
+                Some(up3) => syn_ll(f, p, text, seen, rest, Nat::sub(depth, 1), up3, cur, last_end, result)
+              }
+            }
+          }
+        }
+        SiSym(s) => match s {
+          SynN(n) => match syn_predict(p, seen, n, cur) {
+            Err(e) => Err(e)
+            Ok(production) => match Array::get(p.productions, production) {
+              None => Err(SfSchema("an event names a production of another non-terminal"))
+              Some(prod) => {
+                let width := List::length(prod.rhs)
+                if syn_max_stack() < Nat::sub(depth, 1) + 1 + width {
+                  Err(SfLimit("the parse stack is deeper than the limit"))
+                } else {
+                  syn_ll(
+                    f,
+                    p,
+                    text,
+                    seen,
+                    syn_push_rhs(prod.rhs, Cons(SiClose, rest)),
+                    depth + width,
+                    Cons(SynFrame { production: production, values: Nil, open_end: last_end }, frames),
+                    cur,
+                    last_end,
+                    result
+                  )
+                }
+              }
+            }
+          }
+          SynT(t) => match Array::get(seen, cur) {
+            None => Err(SfSyntax(None, Cons(t, Nil)))
+            Some(tok) => if tok.token_type == t {
+              match syn_add(frames, syn_token(p, text, tok)) {
+                None => Err(SfSchema("a token outside a node"))
+                Some(frames2) => syn_ll(f, p, text, seen, rest, Nat::sub(depth, 1), frames2, cur + 1, tok.end, result)
+              }
+            } else {
+              Err(SfSyntax(Some(tok), Cons(t, Nil)))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- LALR(1) --------------------------------------------------------------------------------
+
+pub fn syn_find_action(actions: List(SynAction), term: Nat): Option(SynAction) {
+  match actions {
+    Nil => None
+    Cons(a, rest) => if a.terminal == term { Some(a) } else { syn_find_action(rest, term) }
+  }
+}
+
+pub fn syn_find_goto(gotos: List(SynGoto), n: Nat): Option(SynGoto) {
+  match gotos {
+    Nil => None
+    Cons(g, rest) => if g.non_terminal == n { Some(g) } else { syn_find_goto(rest, n) }
+  }
+}
+
+pub fn syn_action_terms(actions: List(SynAction)): List(Nat) {
+  match actions {
+    Nil => Nil
+    Cons(a, rest) => Cons(a.terminal, syn_action_terms(rest))
+  }
+}
+
+pub fn syn_top(states: List(Nat)): Nat {
+  match states {
+    Nil => 0
+    Cons(s, rest) => s
+  }
+}
+
+pub fn syn_state(p: SynParser, s: Nat): SynState {
+  match Array::get(p.states, s) {
+    None => SynState { actions: Nil, gotos: Nil }
+    Some(st) => st
+  }
+}
+
+// At most `fuel` steps of the LALR(1) parse: the states and the values on the stack, top
+// first (one more state than values), the next token and where the last one shifted ends.
+pub fn syn_lr(
+  fuel: Nat,
+  p: SynParser,
+  text: Text,
+  seen: Array(ScanToken),
+  states: List(Nat),
+  values: List(SynV),
+  depth: Nat,
+  cur: Nat,
+  last_end: Nat
+): Result(SynV, SynFail) {
+  match fuel {
+    Zero => Err(SfLimit("the parse takes more steps than the limit"))
+    Succ(f) => {
+      let st := syn_state(p, syn_top(states))
+      match syn_find_action(st.actions, syn_term_at(seen, cur)) {
+        None => Err(SfSyntax(Array::get(seen, cur), syn_dedup(syn_action_terms(st.actions))))
+        Some(a) => if a.kind == 0 {
+          if syn_max_stack() <= depth + 1 {
+            Err(SfLimit("the parse stack is deeper than the limit"))
+          } else {
+            match Array::get(seen, cur) {
+              None => Err(SfSyntax(None, Nil))
+              Some(tok) => syn_lr(
+                f,
+                p,
+                text,
+                seen,
+                Cons(a.arg, states),
+                Cons(syn_token(p, text, tok), values),
+                depth + 1,
+                cur + 1,
+                tok.end
+              )
+            }
+          }
+        } else {
+          match Array::get(p.productions, a.arg) {
+            None => Err(SfSyntax(Array::get(seen, cur), Nil))
+            Some(prod) => {
+              let m := List::length(prod.rhs)
+              if depth < m {
+                Err(SfSyntax(Array::get(seen, cur), Nil))
+              } else {
+                let children := List::reverse(List::take(m, values))
+                if a.kind == 1 {
+                  let below := List::drop(m, states)
+                  match syn_find_goto(syn_state(p, syn_top(below)).gotos, prod.lhs) {
+                    None => Err(SfSyntax(Array::get(seen, cur), Nil))
+                    Some(g) => match syn_close(p, a.arg, children, last_end) {
+                      Err(e) => Err(e)
+                      Ok(v) => syn_lr(
+                        f,
+                        p,
+                        text,
+                        seen,
+                        Cons(g.state, below),
+                        Cons(v, List::drop(m, values)),
+                        Nat::sub(depth, m) + 1,
+                        cur,
+                        last_end
+                      )
+                    }
+                  }
+                } else {
+                  if depth == m {
+                    syn_close(p, a.arg, children, last_end)
+                  } else {
+                    Err(SfSyntax(Array::get(seen, cur), Nil))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- the result -----------------------------------------------------------------------------
+
+pub fn syn_name(p: SynParser, t: Nat): Text {
+  match Array::get(p.terminals, t) {
+    None => ""
+    Some(n) => n
+  }
+}
+
+pub fn syn_names(p: SynParser, ts: List(Nat)): List(Text) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(syn_name(p, t), syn_names(p, rest))
+  }
+}
+
+pub fn syn_texts(ts: List(Text)): List(MVal) {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(MvText(t), syn_texts(rest))
+  }
+}
+
+pub fn syn_diag(p: SynParser, message: Text, at: Nat, expected: List(Text)): MVal {
+  m_errv(
+    MvData(
+      p.diag,
+      Cons(
+        MvText(message),
+        Cons(
+          MvInt(IntOfNat(at)),
+          Cons(m_list(syn_texts(expected)), Cons(MvText("macro.syntax_error"), Nil))
+        )
+      )
+    )
+  )
+}
+
+pub fn syn_failed(p: SynParser, text: Text, fail: SynFail): MVal {
+  let within := Text::concat("macro.syntax_error: in ", Text::concat(p.name, ": "))
+  match fail {
+    SfLex(at) => syn_diag(p, Text::concat(within, "this text is not a token of the syntax"), at, Nil)
+    SfSyntax(token, expected) => {
+      let names := syn_names(p, expected)
+      let list := match names {
+        Nil => "something else"
+        Cons(n, rest) => text_join(names, " or ")
+      }
+      let found := match token {
+        None => "found the end of the text"
+        Some(t) => Text::concat("found ", syn_name(p, t.token_type))
+      }
+      let at := match token {
+        None => Text::len(text)
+        Some(t) => t.start
+      }
+      syn_diag(
+        p,
+        Text::concat(within, Text::concat("expected ", Text::concat(list, Text::concat(", ", found)))),
+        at,
+        names
+      )
+    }
+    SfLimit(m) => syn_diag(p, Text::concat(within, m), 0, Nil)
+    SfSchema(m) => syn_diag(p, Text::concat("macro.syntax_error: ", m), 0, Nil)
+  }
+}
+
+pub fn syn_rhs_total(prods: List(SynProd)): Nat {
+  match prods {
+    Nil => 0
+    Cons(pr, rest) => List::length(pr.rhs) + 1 + syn_rhs_total(rest)
+  }
+}
+
+// `Ok` of the values of the text, or `Err` of the diagnostic.
+pub fn syn_run(p: SynParser, text: Text): MVal {
+  if syn_max_input() < Text::len(text) {
+    syn_failed(p, text, SfLimit("the input is longer than the limit"))
+  } else {
+    let tables := p.scan
+    let tokens := scan_all(tables, text)
+    match syn_gap(tokens, 0, Text::len(text)) {
+      Some(at) => syn_failed(p, text, SfLex(at))
+      None => {
+        let seen := Array::of_list(syn_seen(p, tokens))
+        // Every step reads a token, or opens or closes a node; between two tokens a
+        // node of each symbol of every production opens and closes at most once.
+        let fuel := (Array::len(seen) + 1) * (syn_rhs_total(Array::to_list(p.productions)) + 1) * 2 + 2
+        let r: Result(SynV, SynFail) := if p.lr {
+          syn_lr(fuel, p, text, seen, Cons(0, Nil), Nil, 0, 0, 0)
+        } else {
+          syn_ll(fuel, p, text, seen, Cons(SiSym(SynN(p.start)), Nil), 1, Nil, 0, 0, None)
+        }
+        match r {
+          Err(e) => syn_failed(p, text, e)
+          Ok(v) => m_ok(sv_value(p.lr, v))
+        }
+      }
+    }
+  }
+}

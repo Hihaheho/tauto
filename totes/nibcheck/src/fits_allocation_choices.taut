@@ -1,0 +1,95 @@
+import "fits_allocation_poly.taut"
+
+pub theorem fits_alloc_c2(
+  fuel: Nat,
+  hpo: FitsAllocPo(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b),
+  flag: Bool
+): AllocationAdvance(c, ck_fits_c2(fuel, c, a, b, flag)) {
+  match flag: AllocationAdvance(c, ck_fits_c2(fuel, c, a, b, flag)) {
+    true => allocation_advance_rewrap(
+      c,
+      ck_unify(c, a, b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, a, b),
+        ck_unify_allocation(c, a, b, ordered, state, left, right)
+      )
+    )
+    false => allocation_advance_rewrap(
+      c,
+      ck_fits_poly_in(fuel, c, a, b),
+      hpo(c, a, b, ordered, state, left, right)
+    )
+  }
+}
+pub theorem fits_alloc_c1(
+  fuel: Nat,
+  hpo: FitsAllocPo(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b),
+  flag: Bool
+): AllocationAdvance(c, ck_fits_c1(fuel, c, a, b, flag)) {
+  match flag: AllocationAdvance(c, ck_fits_c1(fuel, c, a, b, flag)) {
+    true => allocation_advance_return(c, true, state)
+    false => fits_alloc_c2(
+      fuel,
+      hpo,
+      c,
+      a,
+      b,
+      ordered,
+      state,
+      left,
+      right,
+      Bool::or(ty_is_var(a), ty_is_var(b))
+    )
+  }
+}
+pub theorem fits_alloc_fn_seq(
+  fuel: Nat,
+  hu: FitsAllocU(fuel),
+  hp: FitsAllocP(fuel),
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  pb: List(Ty),
+  rb: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  pa_bound: TypeListAllocated(ck_next_of(c), pa),
+  ra_bound: TypeAllocated(ck_next_of(c), ra),
+  pb_bound: TypeListAllocated(ck_next_of(c), pb),
+  rb_bound: TypeAllocated(ck_next_of(c), rb)
+): AllocationAdvance(
+  c,
+  ck_and((next: Checker) => ck_fits_in(fuel, next, ra, rb), ck_fits_params_in(fuel, c, pa, pb))
+) {
+  allocation_advance_and(
+    c,
+    (next: Checker) => ck_fits_in(fuel, next, ra, rb),
+    ck_fits_params_in(fuel, c, pa, pb),
+    hp(c, pa, pb, ordered, state, pa_bound, pb_bound),
+    fits_alloc_ordered_P(fuel, c, pa, pb, ordered),
+    next => advanced => current => order => hu(
+      next,
+      ra,
+      rb,
+      order,
+      current,
+      type_allocated_weaken(ra, ck_next_of(c), ck_next_of(next), advanced, ra_bound),
+      type_allocated_weaken(rb, ck_next_of(c), ck_next_of(next), advanced, rb_bound)
+    )
+  )
+}

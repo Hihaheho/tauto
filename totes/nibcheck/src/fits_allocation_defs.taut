@@ -1,0 +1,503 @@
+import "allocation_advance.taut"
+
+pub def FitsAllocU(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_U(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_in(fuel, c, a, b))) {
+  And::left(And::left(And::left(fits_all(fuel))(c, a, b)(ordered)))
+}
+pub def FitsAllocA(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(
+  ck_next_of(c),
+  b
+). AllocationAdvance(c, ck_attempt_fits_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_A(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_attempt_fits_in(fuel, c, a, b))) {
+  And::left(And::left(And::left(And::right(fits_all(fuel)))(c, a, b)(ordered)))
+}
+pub def FitsAllocPo(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_poly_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_Po(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_poly_in(fuel, c, a, b))) {
+  And::left(And::left(And::left(And::right(And::right(fits_all(fuel))))(c, a, b)(ordered)))
+}
+pub def FitsAllocL(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_inst_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_L(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_inst_in(fuel, c, a, b))) {
+  And::left(And::left(And::left(And::right(And::right(And::right(fits_all(fuel)))))(c, a, b)(ordered)))
+}
+pub def FitsAllocB(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(
+  ck_next_of(c),
+  b
+). AllocationAdvance(c, ck_fits_borrow_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_B(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_borrow_in(fuel, c, a, b))) {
+  And::left(
+    And::left(And::left(And::right(And::right(And::right(And::right(fits_all(fuel))))))(c, a, b)(ordered))
+  )
+}
+pub def FitsAllocLe(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ x: Ty. ∀ ma: Bool. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ x_bound: TypeAllocated(
+  ck_next_of(c),
+  x
+). ∀ b_bound: TypeAllocated(
+  ck_next_of(c),
+  b
+). AllocationAdvance(c, ck_fits_lend_in(fuel, c, x, ma, b))
+pub theorem fits_alloc_ordered_Le(
+  fuel: Nat,
+  c: Checker,
+  x: Ty,
+  ma: Bool,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_lend_in(fuel, c, x, ma, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(fits_all(fuel))))))
+      )(c, x, ma, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocV(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_value_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_V(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_value_in(fuel, c, a, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel)))))))
+      )(c, a, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocS(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_shape_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_S(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_shape_in(fuel, c, a, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel))))))))
+      )(c, a, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocI(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_into_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_I(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_into_in(fuel, c, a, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(
+          And::right(
+            And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel)))))))
+          )
+        )
+      )(c, a, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocT(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ b_bound: TypeAllocated(
+  ck_next_of(c),
+  b
+). AllocationAdvance(c, ck_fits_tagged_in(fuel, c, a, b))
+pub theorem fits_alloc_ordered_T(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_tagged_in(fuel, c, a, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel)))))))
+            )
+          )
+        )
+      )(c, a, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocUt(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ ta: List(
+  Text
+). ∀ x: Ty. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ x_bound: TypeAllocated(
+  ck_next_of(c),
+  x
+). ∀ b_bound: TypeAllocated(
+  ck_next_of(c),
+  b
+). AllocationAdvance(c, ck_fits_untag_in(fuel, c, ta, x, b))
+pub theorem fits_alloc_ordered_Ut(
+  fuel: Nat,
+  c: Checker,
+  ta: List(Text),
+  x: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_untag_in(fuel, c, ta, x, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel)))))))
+              )
+            )
+          )
+        )
+      )(c, ta, x, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocF(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ pa: List(
+  Ty
+). ∀ ra: Ty. ∀ ka: Kind. ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ pa_bound: TypeListAllocated(
+  ck_next_of(c),
+  pa
+). ∀ ra_bound: TypeAllocated(
+  ck_next_of(c),
+  ra
+). ∀ b_bound: TypeAllocated(
+  ck_next_of(c),
+  b
+). AllocationAdvance(c, ck_fits_fn_in(fuel, c, pa, ra, ka, b))
+pub theorem fits_alloc_ordered_F(
+  fuel: Nat,
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  ka: Kind,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_fn_in(fuel, c, pa, ra, ka, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel)))))))
+                )
+              )
+            )
+          )
+        )
+      )(c, pa, ra, ka, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocE(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ xs: List(
+  Ty
+). ∀ b: Ty. ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ xs_bound: TypeListAllocated(
+  ck_next_of(c),
+  xs
+). ∀ b_bound: TypeAllocated(ck_next_of(c), b). AllocationAdvance(c, ck_fits_each_in(fuel, c, xs, b))
+pub theorem fits_alloc_ordered_E(
+  fuel: Nat,
+  c: Checker,
+  xs: List(Ty),
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_each_in(fuel, c, xs, b))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(And::right(And::right(And::right(And::right(And::right(fits_all(fuel)))))))
+                  )
+                )
+              )
+            )
+          )
+        )
+      )(c, xs, b)(ordered)
+    )
+  )
+}
+pub def FitsAllocY(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ a: Ty. ∀ ys: List(
+  Ty
+). ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ a_bound: TypeAllocated(
+  ck_next_of(c),
+  a
+). ∀ ys_bound: TypeListAllocated(
+  ck_next_of(c),
+  ys
+). AllocationAdvance(c, ck_fits_any_in(fuel, c, a, ys))
+pub theorem fits_alloc_ordered_Y(
+  fuel: Nat,
+  c: Checker,
+  a: Ty,
+  ys: List(Ty),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_any_in(fuel, c, a, ys))) {
+  And::left(
+    And::left(
+      And::left(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(And::right(And::right(And::right(And::right(fits_all(fuel))))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )(c, a, ys)(ordered)
+    )
+  )
+}
+pub def FitsAllocP(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ pa: List(
+  Ty
+). ∀ pb: List(
+  Ty
+). ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ pa_bound: TypeListAllocated(
+  ck_next_of(c),
+  pa
+). ∀ pb_bound: TypeListAllocated(
+  ck_next_of(c),
+  pb
+). AllocationAdvance(c, ck_fits_params_in(fuel, c, pa, pb))
+pub theorem fits_alloc_ordered_P(
+  fuel: Nat,
+  c: Checker,
+  pa: List(Ty),
+  pb: List(Ty),
+  ordered: CkOrdered(c)
+): CkOrdered(ck_st(ck_fits_params_in(fuel, c, pa, pb))) {
+  And::left(
+    And::left(
+      And::right(
+        And::right(
+          And::right(
+            And::right(
+              And::right(
+                And::right(
+                  And::right(
+                    And::right(
+                      And::right(
+                        And::right(And::right(And::right(And::right(And::right(fits_all(fuel))))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )(c, pa, pb)(ordered)
+    )
+  )
+}
+pub def FitsAllocationAt(
+  fuel: Nat
+): Prop := And(
+  FitsAllocU(fuel),
+  And(
+    FitsAllocA(fuel),
+    And(
+      FitsAllocPo(fuel),
+      And(
+        FitsAllocL(fuel),
+        And(
+          FitsAllocB(fuel),
+          And(
+            FitsAllocLe(fuel),
+            And(
+              FitsAllocV(fuel),
+              And(
+                FitsAllocS(fuel),
+                And(
+                  FitsAllocI(fuel),
+                  And(
+                    FitsAllocT(fuel),
+                    And(
+                      FitsAllocUt(fuel),
+                      And(
+                        FitsAllocF(fuel),
+                        And(FitsAllocE(fuel), And(FitsAllocY(fuel), FitsAllocP(fuel)))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)

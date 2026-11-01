@@ -1,0 +1,472 @@
+import "expr_access_frame.taut"
+import "../../surface/src/surface.taut"
+
+pub fn record_field_name(f: SurfaceField): Text { f.name }
+pub fn record_field_value(f: SurfaceField): SurfaceTerm { f.value }
+pub fn record_data_name(f: DataField): Option(Text) { f.name }
+
+pub fn record_field_found(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  found: Option(Ty)
+): Mut1(Unit, Checker) {
+  match found: Mut1(Unit, Checker) {
+    Some(t) => ck_rewrap1(
+      ck_expect(c, v, t, span_of(record_field_value(f)), cat3("field `", record_field_name(f), "`"))
+    )
+    None => ck_rewrap1(
+      ck_error(
+        c,
+        cat4(name, " has no field `", record_field_name(f), "`"),
+        span_of(record_field_value(f))
+      )
+    )
+  }
+}
+
+pub theorem record_field_found_frame(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  found: Option(Ty),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, record_field_found(c, name, f, v, found)) {
+  match found: CkRunFrame(c, record_field_found(c, name, f, v, found)) {
+    Some(t) => run_frame_rewrap(
+      c,
+      ck_expect(
+        c,
+        v,
+        t,
+        span_of(record_field_value(f)),
+        cat3("field `", record_field_name(f), "`")
+      ),
+      ck_expect_run_frame(
+        c,
+        v,
+        t,
+        span_of(record_field_value(f)),
+        cat3("field `", record_field_name(f), "`"),
+        ordered
+      )
+    )
+    None => run_frame_read(
+      c,
+      ck_rewrap1(
+        ck_error(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        )
+      ),
+      frame_rewrap(
+        c,
+        ck_error(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        ),
+        ck_error_frame(
+          c,
+          cat4(name, " has no field `", record_field_name(f), "`"),
+          span_of(record_field_value(f))
+        )
+      ),
+      ordered
+    )
+  }
+}
+
+pub fn record_field_after(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  again: Bool
+): Mut1(Bool, Checker) {
+  frame_bind(
+    Unit,
+    Bool,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Unit,
+      Bool,
+      (ignored2: Unit, c2: Checker) => mut1(again, c2),
+      record_field_found(c1, name, f, v, ck_field_find(declared, record_field_name(f)))
+    ),
+    frame_error_if(
+      c,
+      cat3("field `", record_field_name(f), "` is given twice"),
+      span_of(record_field_value(f)),
+      again
+    )
+  )
+}
+
+pub theorem record_field_after_frame(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  again: Bool,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, record_field_after(c, name, f, v, declared, again)) {
+  run_frame_bind(
+    Unit,
+    Bool,
+    c,
+    (ignored: Unit, c1: Checker) => frame_bind(
+      Unit,
+      Bool,
+      (ignored2: Unit, c2: Checker) => mut1(again, c2),
+      record_field_found(c1, name, f, v, ck_field_find(declared, record_field_name(f)))
+    ),
+    frame_error_if(
+      c,
+      cat3("field `", record_field_name(f), "` is given twice"),
+      span_of(record_field_value(f)),
+      again
+    ),
+    run_frame_read(
+      c,
+      frame_error_if(
+        c,
+        cat3("field `", record_field_name(f), "` is given twice"),
+        span_of(record_field_value(f)),
+        again
+      ),
+      frame_error_if_ok(
+        c,
+        cat3("field `", record_field_name(f), "` is given twice"),
+        span_of(record_field_value(f)),
+        again
+      ),
+      ordered
+    ),
+    ignored => c1 => o_c1 => run_frame_bind(
+      Unit,
+      Bool,
+      c1,
+      (ignored2: Unit, c2: Checker) => mut1(again, c2),
+      record_field_found(c1, name, f, v, ck_field_find(declared, record_field_name(f))),
+      record_field_found_frame(c1, name, f, v, ck_field_find(declared, record_field_name(f)), o_c1),
+      ignored2 => c2 => o_c2 => run_frame_return(c2, again, o_c2)
+    )
+  )
+}
+
+pub fn record_field(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  seen: List(Text)
+): Mut1(Bool, Checker) {
+  frame_bind(
+    Unit,
+    Bool,
+    (ignored: Unit, c1: Checker) => record_field_after(
+      c1,
+      name,
+      f,
+      v,
+      declared,
+      list_has_text(seen, record_field_name(f))
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(record_field_value(f)),
+      term_is_borrow(record_field_value(f))
+    )
+  )
+}
+
+pub theorem record_field_frame(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  seen: List(Text),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, record_field(c, name, f, v, declared, seen)) {
+  run_frame_bind(
+    Unit,
+    Bool,
+    c,
+    (ignored: Unit, c1: Checker) => record_field_after(
+      c1,
+      name,
+      f,
+      v,
+      declared,
+      list_has_text(seen, record_field_name(f))
+    ),
+    frame_error_if(
+      c,
+      "a borrow cannot be a field",
+      span_of(record_field_value(f)),
+      term_is_borrow(record_field_value(f))
+    ),
+    run_frame_read(
+      c,
+      frame_error_if(
+        c,
+        "a borrow cannot be a field",
+        span_of(record_field_value(f)),
+        term_is_borrow(record_field_value(f))
+      ),
+      frame_error_if_ok(
+        c,
+        "a borrow cannot be a field",
+        span_of(record_field_value(f)),
+        term_is_borrow(record_field_value(f))
+      ),
+      ordered
+    ),
+    ignored => c1 => o_c1 => record_field_after_frame(
+      c1,
+      name,
+      f,
+      v,
+      declared,
+      list_has_text(seen, record_field_name(f)),
+      o_c1
+    )
+  )
+}
+
+pub theorem record_field_unf(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  seen: List(Text)
+): ck_record_field_check(c, name, f, v, declared, seen) = record_field(c, name, f, v, declared, seen) { Refl }
+
+pub theorem ck_record_field_check_run_frame(
+  c: Checker,
+  name: Text,
+  f: SurfaceField,
+  v: Ty,
+  declared: List(DataField),
+  seen: List(Text),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_record_field_check(c, name, f, v, declared, seen)) {
+  Eq::subst(
+    (z: Mut1(Bool, Checker)) => CkRunFrame(c, z),
+    Eq::sym(record_field_unf(c, name, f, v, declared, seen)),
+    record_field_frame(c, name, f, v, declared, seen, ordered)
+  )
+}
+
+pub fn record_missing_name(
+  c: Checker,
+  name: Text,
+  seen: List(Text),
+  span: TySpan,
+  fieldname: Option(Text)
+): Mut1(Unit, Checker) {
+  match fieldname: Mut1(Unit, Checker) {
+    None => mut1(Star, c)
+    Some(n) => frame_error_if(
+      c,
+      cat4("field `", n, "` of ", cat2(name, " is missing")),
+      span,
+      not(list_has_text(seen, n))
+    )
+  }
+}
+
+pub theorem record_missing_name_frame(
+  c: Checker,
+  name: Text,
+  seen: List(Text),
+  span: TySpan,
+  fieldname: Option(Text)
+): CkReadFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
+  match fieldname: CkReadFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
+    None => Refl
+    Some(n) => frame_error_if_ok(
+      c,
+      cat4("field `", n, "` of ", cat2(name, " is missing")),
+      span,
+      not(list_has_text(seen, n))
+    )
+  }
+}
+
+pub theorem record_missing_one_unf(
+  c: Checker,
+  name: Text,
+  f: DataField,
+  seen: List(Text),
+  span: TySpan
+): ck_record_missing_one(c, name, f, seen, span) = record_missing_name(c, name, seen, span, record_data_name(f)) { Refl }
+
+pub theorem ck_record_missing_one_frame(
+  c: Checker,
+  name: Text,
+  f: DataField,
+  seen: List(Text),
+  span: TySpan
+): CkReadFrame(c, ck_record_missing_one(c, name, f, seen, span)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+    Eq::sym(record_missing_one_unf(c, name, f, seen, span)),
+    record_missing_name_frame(c, name, seen, span, record_data_name(f))
+  )
+}
+
+pub fn record_missing_cons(
+  f: DataField,
+  rest: List(DataField),
+  c: Checker,
+  name: Text,
+  seen: List(Text),
+  span: TySpan
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_record_missing(rest, c1, name, seen, span)),
+    ck_record_missing_one(c, name, f, seen, span)
+  )
+}
+
+pub theorem record_missing_cons_frame(
+  f: DataField,
+  rest: List(DataField),
+  c: Checker,
+  name: Text,
+  seen: List(Text),
+  span: TySpan,
+  ih: ∀ next: Checker. CkReadFrame(next, ck_record_missing(rest, next, name, seen, span))
+): CkReadFrame(c, record_missing_cons(f, rest, c, name, seen, span)) {
+  frame_bind_ok(
+    Unit,
+    Unit,
+    c,
+    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_record_missing(rest, c1, name, seen, span)),
+    ck_record_missing_one(c, name, f, seen, span),
+    ck_record_missing_one_frame(c, name, f, seen, span),
+    ignored => c1 => frame_rewrap(c1, ck_record_missing(rest, c1, name, seen, span), ih(c1))
+  )
+}
+
+pub theorem record_missing_cons_unf(
+  f: DataField,
+  rest: List(DataField),
+  c: Checker,
+  name: Text,
+  seen: List(Text),
+  span: TySpan
+): ck_record_missing(Cons(f, rest), c, name, seen, span) = record_missing_cons(f, rest, c, name, seen, span) { Refl }
+
+pub theorem ck_record_missing_frame(
+  fs: List(DataField),
+  c: Checker,
+  name: Text,
+  seen: List(Text),
+  span: TySpan
+): CkReadFrame(c, ck_record_missing(fs, c, name, seen, span)) {
+  match fs: CkReadFrame(c, ck_record_missing(fs, c, name, seen, span)) {
+    Nil => Refl
+    Cons(f, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
+      Eq::sym(record_missing_cons_unf(f, rest, c, name, seen, span)),
+      record_missing_cons_frame(
+        f,
+        rest,
+        c,
+        name,
+        seen,
+        span,
+        next => ck_record_missing_frame(rest, next, name, seen, span)
+      )
+    )
+  }
+}
+pub theorem ck_top_level_only_frame(
+  c: Checker,
+  message: Text,
+  start: Nat,
+  end: Nat
+): CkReadFrame(c, ck_top_level_only(c, message, start, end)) { Refl }
+
+pub fn record_stmt_label(
+  c: Checker,
+  what: Text,
+  start: Nat,
+  end: Nat,
+  label: Bool
+): Mut1(Ty, Checker) {
+  match label: Mut1(Ty, Checker) {
+    true => mut1(TyUnit, c)
+    false => ck_rewrap1(ck_top_level_only(c, cat2("not supported yet: ", what), start, end))
+  }
+}
+
+pub theorem record_stmt_label_frame(
+  c: Checker,
+  what: Text,
+  start: Nat,
+  end: Nat,
+  label: Bool
+): CkReadFrame(c, record_stmt_label(c, what, start, end, label)) {
+  match label: CkReadFrame(c, record_stmt_label(c, what, start, end, label)) {
+    true => Refl
+    false => frame_rewrap(
+      c,
+      ck_top_level_only(c, cat2("not supported yet: ", what), start, end),
+      ck_top_level_only_frame(c, cat2("not supported yet: ", what), start, end)
+    )
+  }
+}
+
+pub theorem record_stmt_label_unf(
+  c: Checker,
+  what: Text,
+  start: Nat,
+  end: Nat
+): ck_stmt_other(c, StOther(what, start, end)) = record_stmt_label(c, what, start, end, Text::eq(what, "LabelDecl")) { Refl }
+
+pub theorem ck_stmt_other_frame(c: Checker, s: SurfaceStmt): CkReadFrame(c, ck_stmt_other(c, s)) {
+  match s: CkReadFrame(c, ck_stmt_other(c, s)) {
+    StLet(pat_name, pat_ty, pat_value, pat_borrow, pat_mutable) => Refl
+    StVar(pat_name, pat_ty, pat_value, pat_borrow) => Refl
+    StModule(pat_name, pat_stmts, pat_start, pat_end) => Refl
+    StAssign(pat_name, pat_name_place, pat_value) => Refl
+    StCalled(pat_name_generates, pat_value) => Refl
+    StFn(pat_f) => Refl
+    StTheorem(pat_t) => Refl
+    StDef(pat_t) => Refl
+    StMutual(pat_stmts, pat_start, pat_end) => Refl
+    StImport(pat_path, pat_start, pat_end) => Refl
+    StInductive(pat_i) => Refl
+    StEffect(pat_e) => Refl
+    StStruct(pat_d) => Refl
+    StEnum(pat_d) => Refl
+    StExtern(pat_abi, pat_fns, pat_start, pat_end) => Refl
+    StClass(pat_c) => Refl
+    StInstance(pat_i) => Refl
+    StWhile(pat_cond, pat_body) => Refl
+    StReturn(pat_value) => Refl
+    StExpr(pat_value) => Refl
+    StOther(what, start, end) => Eq::subst(
+      (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
+      Eq::sym(record_stmt_label_unf(c, what, start, end)),
+      record_stmt_label_frame(c, what, start, end, Text::eq(what, "LabelDecl"))
+    )
+    StMacro(pat_name, pat_function, pat_start, pat_end) => Refl
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Refl
+    StSyntax(pat_name, pat_grammar, pat_start, pat_end) => Refl
+  }
+}

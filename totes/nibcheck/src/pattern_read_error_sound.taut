@@ -1,0 +1,61 @@
+import "pattern_mutual.taut"
+import "pattern_frame.taut"
+import "written_error_sound.taut"
+
+pub theorem pattern_fresh_cons_frame_errors(
+  g: Text,
+  rest: List(Text),
+  c: Checker,
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_fresh_each(rest, next))
+): CkErrorFrame(c, pattern_fresh_cons(g, rest, c)) {
+  error_frame_bind(
+    Ty,
+    List(Ty),
+    c,
+    (h: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
+      ck_fresh_each(rest, c1)
+    ),
+    ck_fresh(c),
+    ck_fresh_frame_errors(c),
+    h => c1 => error_frame_bind(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tl: List(Ty), c2: Checker) => mut1(Cons(h, tl), c2),
+      ck_fresh_each(rest, c1),
+      ih(c1),
+      tl => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem ck_fresh_each_frame_errors(
+  gs: List(Text),
+  c: Checker
+): CkErrorFrame(c, ck_fresh_each(gs, c)) {
+  match gs: CkErrorFrame(c, ck_fresh_each(gs, c)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(g, rest) => Eq::subst(
+      (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(pattern_fresh_unf(g, rest, c)),
+      pattern_fresh_cons_frame_errors(g, rest, c, next => ck_fresh_each_frame_errors(rest, next))
+    )
+  }
+}
+
+pub theorem ck_fresh_int_read_frame_errors(
+  c: Checker
+): CkErrorFrame(c, ck_fresh_int(c)) { clean_errors => clean_errors }
+pub theorem pattern_literal_record_frame_errors(
+  c: Checker,
+  negative: Bool,
+  magnitude: Nat,
+  t: Ty,
+  span: TySpan
+): CkErrorFrame(
+  c,
+  pattern_literal_record(c, negative, magnitude, t, span)
+) { clean_errors => clean_errors }

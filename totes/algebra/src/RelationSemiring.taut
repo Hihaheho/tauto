@@ -1,7 +1,7 @@
 import "Setoid.taut"
 
 // Operations respect mathematical equality between representatives.
-inductive AlgebraRelationSemiring(
+pub(open) inductive AlgebraRelationSemiring(
   R: Type,
   related: (R, R) -> Prop,
   zero_value: R,
@@ -9,7 +9,7 @@ inductive AlgebraRelationSemiring(
   add: (R, R) -> R,
   mul: (R, R) -> R
 ): Prop {
-  algebra_relation_semiring(
+  Mk(
     equivalence: AlgebraSetoid(R, related),
     add_respects: ∀ a: R. ∀ b: R. ∀ c: R. ∀ d: R. ∀ first: related(
       a,
@@ -33,7 +33,7 @@ inductive AlgebraRelationSemiring(
   ): AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 }
 
-theorem algebra_relation_equivalence<R: Type, related: (
+pub theorem algebra_relation_equivalence<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -45,8 +45,8 @@ theorem algebra_relation_equivalence<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): AlgebraSetoid(R, related) {
-  match laws -> AlgebraSetoid(R, related) {
-    algebra_relation_semiring(
+  match laws: AlgebraSetoid(R, related) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -65,7 +65,7 @@ theorem algebra_relation_equivalence<R: Type, related: (
   }
 }
 
-theorem algebra_relation_add_respects<R: Type, related: (
+pub theorem algebra_relation_add_respects<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -80,11 +80,11 @@ theorem algebra_relation_add_respects<R: Type, related: (
   a,
   b
 ). ∀ second: related(c, d). related(add(a, c), add(b, d)) {
-  match laws -> ∀ a: R. ∀ b: R. ∀ c: R. ∀ d: R. ∀ first: related(
+  match laws: ∀ a: R. ∀ b: R. ∀ c: R. ∀ d: R. ∀ first: related(
     a,
     b
   ). ∀ second: related(c, d). related(add(a, c), add(b, d)) {
-    algebra_relation_semiring(
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -103,7 +103,7 @@ theorem algebra_relation_add_respects<R: Type, related: (
   }
 }
 
-theorem algebra_relation_mul_respects<R: Type, related: (
+pub theorem algebra_relation_mul_respects<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -118,11 +118,11 @@ theorem algebra_relation_mul_respects<R: Type, related: (
   a,
   b
 ). ∀ second: related(c, d). related(mul(a, c), mul(b, d)) {
-  match laws -> ∀ a: R. ∀ b: R. ∀ c: R. ∀ d: R. ∀ first: related(
+  match laws: ∀ a: R. ∀ b: R. ∀ c: R. ∀ d: R. ∀ first: related(
     a,
     b
   ). ∀ second: related(c, d). related(mul(a, c), mul(b, d)) {
-    algebra_relation_semiring(
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -141,7 +141,7 @@ theorem algebra_relation_mul_respects<R: Type, related: (
   }
 }
 
-theorem algebra_relation_add_assoc<R: Type, related: (
+pub theorem algebra_relation_add_assoc<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -153,8 +153,8 @@ theorem algebra_relation_add_assoc<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. ∀ y: R. ∀ z: R. related(add(add(x, y), z), add(x, add(y, z))) {
-  match laws -> ∀ x: R. ∀ y: R. ∀ z: R. related(add(add(x, y), z), add(x, add(y, z))) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. ∀ y: R. ∀ z: R. related(add(add(x, y), z), add(x, add(y, z))) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -173,7 +173,7 @@ theorem algebra_relation_add_assoc<R: Type, related: (
   }
 }
 
-theorem algebra_relation_add_comm<R: Type, related: (
+pub theorem algebra_relation_add_comm<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -185,8 +185,8 @@ theorem algebra_relation_add_comm<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. ∀ y: R. related(add(x, y), add(y, x)) {
-  match laws -> ∀ x: R. ∀ y: R. related(add(x, y), add(y, x)) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. ∀ y: R. related(add(x, y), add(y, x)) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -205,7 +205,7 @@ theorem algebra_relation_add_comm<R: Type, related: (
   }
 }
 
-theorem algebra_relation_add_zero_left<R: Type, related: (
+pub theorem algebra_relation_add_zero_left<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -217,8 +217,8 @@ theorem algebra_relation_add_zero_left<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. related(add(zero_value, x), x) {
-  match laws -> ∀ x: R. related(add(zero_value, x), x) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. related(add(zero_value, x), x) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -237,7 +237,7 @@ theorem algebra_relation_add_zero_left<R: Type, related: (
   }
 }
 
-theorem algebra_relation_add_zero_right<R: Type, related: (
+pub theorem algebra_relation_add_zero_right<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -249,8 +249,8 @@ theorem algebra_relation_add_zero_right<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. related(add(x, zero_value), x) {
-  match laws -> ∀ x: R. related(add(x, zero_value), x) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. related(add(x, zero_value), x) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -269,7 +269,7 @@ theorem algebra_relation_add_zero_right<R: Type, related: (
   }
 }
 
-theorem algebra_relation_mul_assoc<R: Type, related: (
+pub theorem algebra_relation_mul_assoc<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -281,8 +281,8 @@ theorem algebra_relation_mul_assoc<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. ∀ y: R. ∀ z: R. related(mul(mul(x, y), z), mul(x, mul(y, z))) {
-  match laws -> ∀ x: R. ∀ y: R. ∀ z: R. related(mul(mul(x, y), z), mul(x, mul(y, z))) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. ∀ y: R. ∀ z: R. related(mul(mul(x, y), z), mul(x, mul(y, z))) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -301,7 +301,7 @@ theorem algebra_relation_mul_assoc<R: Type, related: (
   }
 }
 
-theorem algebra_relation_mul_one_left<R: Type, related: (
+pub theorem algebra_relation_mul_one_left<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -313,8 +313,8 @@ theorem algebra_relation_mul_one_left<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. related(mul(one_value, x), x) {
-  match laws -> ∀ x: R. related(mul(one_value, x), x) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. related(mul(one_value, x), x) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -333,7 +333,7 @@ theorem algebra_relation_mul_one_left<R: Type, related: (
   }
 }
 
-theorem algebra_relation_mul_one_right<R: Type, related: (
+pub theorem algebra_relation_mul_one_right<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -345,8 +345,8 @@ theorem algebra_relation_mul_one_right<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. related(mul(x, one_value), x) {
-  match laws -> ∀ x: R. related(mul(x, one_value), x) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. related(mul(x, one_value), x) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -365,7 +365,7 @@ theorem algebra_relation_mul_one_right<R: Type, related: (
   }
 }
 
-theorem algebra_relation_distribute_left<R: Type, related: (
+pub theorem algebra_relation_distribute_left<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -377,8 +377,8 @@ theorem algebra_relation_distribute_left<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. ∀ y: R. ∀ z: R. related(mul(x, add(y, z)), add(mul(x, y), mul(x, z))) {
-  match laws -> ∀ x: R. ∀ y: R. ∀ z: R. related(mul(x, add(y, z)), add(mul(x, y), mul(x, z))) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. ∀ y: R. ∀ z: R. related(mul(x, add(y, z)), add(mul(x, y), mul(x, z))) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -397,7 +397,7 @@ theorem algebra_relation_distribute_left<R: Type, related: (
   }
 }
 
-theorem algebra_relation_distribute_right<R: Type, related: (
+pub theorem algebra_relation_distribute_right<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -409,8 +409,8 @@ theorem algebra_relation_distribute_right<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. ∀ y: R. ∀ z: R. related(mul(add(x, y), z), add(mul(x, z), mul(y, z))) {
-  match laws -> ∀ x: R. ∀ y: R. ∀ z: R. related(mul(add(x, y), z), add(mul(x, z), mul(y, z))) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. ∀ y: R. ∀ z: R. related(mul(add(x, y), z), add(mul(x, z), mul(y, z))) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -429,7 +429,7 @@ theorem algebra_relation_distribute_right<R: Type, related: (
   }
 }
 
-theorem algebra_relation_mul_zero_left<R: Type, related: (
+pub theorem algebra_relation_mul_zero_left<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -441,8 +441,8 @@ theorem algebra_relation_mul_zero_left<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. related(mul(zero_value, x), zero_value) {
-  match laws -> ∀ x: R. related(mul(zero_value, x), zero_value) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. related(mul(zero_value, x), zero_value) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -461,7 +461,7 @@ theorem algebra_relation_mul_zero_left<R: Type, related: (
   }
 }
 
-theorem algebra_relation_mul_zero_right<R: Type, related: (
+pub theorem algebra_relation_mul_zero_right<R: Type, related: (
   R,
   R
 ) -> Prop, zero_value: R, one_value: R, add: (
@@ -473,8 +473,8 @@ theorem algebra_relation_mul_zero_right<R: Type, related: (
 ) -> R>(
   laws: AlgebraRelationSemiring(R, related, zero_value, one_value, add, mul)
 ): ∀ x: R. related(mul(x, zero_value), zero_value) {
-  match laws -> ∀ x: R. related(mul(x, zero_value), zero_value) {
-    algebra_relation_semiring(
+  match laws: ∀ x: R. related(mul(x, zero_value), zero_value) {
+    Mk(
       equivalence,
       add_respects,
       mul_respects,
@@ -493,16 +493,16 @@ theorem algebra_relation_mul_zero_right<R: Type, related: (
   }
 }
 
-theorem algebra_relation_refl<R: Type, related: (
+pub theorem algebra_relation_refl<R: Type, related: (
   R,
   R
 ) -> Prop>(equivalence: AlgebraSetoid(R, related), x: R): related(x, x) {
-  match equivalence -> related(x, x) {
-    algebra_setoid(reflexive, symmetric, transitive) => reflexive(x)
+  match equivalence: related(x, x) {
+    Mk(reflexive, symmetric, transitive) => reflexive(x)
   }
 }
 
-theorem algebra_relation_sym<R: Type, related: (
+pub theorem algebra_relation_sym<R: Type, related: (
   R,
   R
 ) -> Prop>(
@@ -511,12 +511,12 @@ theorem algebra_relation_sym<R: Type, related: (
   y: R,
   equal: related(x, y)
 ): related(y, x) {
-  match equivalence -> related(y, x) {
-    algebra_setoid(reflexive, symmetric, transitive) => symmetric(x, y, equal)
+  match equivalence: related(y, x) {
+    Mk(reflexive, symmetric, transitive) => symmetric(x, y, equal)
   }
 }
 
-theorem algebra_relation_trans<R: Type, related: (
+pub theorem algebra_relation_trans<R: Type, related: (
   R,
   R
 ) -> Prop>(
@@ -527,7 +527,7 @@ theorem algebra_relation_trans<R: Type, related: (
   first: related(x, y),
   second: related(y, z)
 ): related(x, z) {
-  match equivalence -> related(x, z) {
-    algebra_setoid(reflexive, symmetric, transitive) => transitive(x, y, z, first, second)
+  match equivalence: related(x, z) {
+    Mk(reflexive, symmetric, transitive) => transitive(x, y, z, first, second)
   }
 }

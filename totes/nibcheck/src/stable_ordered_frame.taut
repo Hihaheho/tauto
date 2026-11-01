@@ -1,0 +1,92 @@
+import "stable_state_frame.taut"
+
+pub def StableOrderedFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := And(CkOrdered(ck_st(m)), StableStateFrame(c, m))
+pub theorem stable_ordered_return<A: Type>(
+  c: Checker,
+  value: A,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, mut1(value, c)) { AndIntro(ordered, Refl) }
+pub theorem stable_ordered_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  frame: StableOrderedFrame(c, m)
+): StableOrderedFrame(c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(A, Checker)) => StableOrderedFrame(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    frame
+  )
+}
+pub theorem stable_ordered_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: StableOrderedFrame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ ordered: CkOrdered(
+    next
+  ). StableOrderedFrame(next, k(value, next))
+): StableOrderedFrame(c, frame_bind(A, B, k, m)) {
+  match m: StableOrderedFrame(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => {
+      let later: StableOrderedFrame(next, k(value, next)) := tail(value, next, And::left(first))
+      AndIntro(And::left(later), Eq::trans(And::right(later), And::right(first)))
+    }
+  }
+}
+pub theorem ck_set_subst_stable_ordered(
+  c: Checker,
+  variable: Nat,
+  value: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_set_subst(c, variable, value)) {
+  AndIntro(And::left(ck_set_subst_run_frame(c, variable, value, ordered)), Refl)
+}
+pub theorem ck_attempt_fits_stable_ordered(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_attempt_fits(c, a, b)) {
+  AndIntro(
+    And::left(ck_attempt_fits_run_frame(c, a, b, ordered)),
+    ck_attempt_fits_stable_frame(c, a, b, ordered)
+  )
+}
+pub theorem ck_attempt_unify_stable_ordered(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_attempt_unify(c, a, b)) {
+  AndIntro(
+    And::left(ck_attempt_unify_run_frame(c, a, b, ordered)),
+    ck_attempt_unify_stable_frame(c, a, b, ordered)
+  )
+}
+pub theorem ck_fits_stable_ordered(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_fits(c, a, b)) {
+  AndIntro(And::left(ck_fits_run_frame(c, a, b, ordered)), ck_fits_stable_frame(c, a, b, ordered))
+}
+pub theorem ck_unify_stable_ordered(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_unify(c, a, b)) {
+  AndIntro(And::left(ck_unify_run_frame(c, a, b, ordered)), ck_unify_stable_frame(c, a, b, ordered))
+}
+pub theorem ck_join_stable_ordered(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): StableOrderedFrame(c, ck_join(c, a, b)) {
+  AndIntro(And::left(ck_join_run_frame(c, a, b, ordered)), ck_join_stable_frame(c, a, b, ordered))
+}

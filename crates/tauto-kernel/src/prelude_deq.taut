@@ -1,0 +1,106 @@
+module Bool {
+  // The decisions on `Bool` and the lemmas that connect `Nat::eq`, `Bool::eq` and
+  // `Bool::and` to equality: what the decidable equality an inductive lists
+  // (`=> fn T::beq, theorem T::beq_refl, theorem T::beq_sound, theorem T::deq`)
+  // is generated from. They are here, not in a library, so that an inductive
+  // gets its decidable equality without importing anything.
+
+  fn and(a: Bool, b: Bool): Bool {
+    match a: Bool {
+      false => false
+      true => b
+    }
+  }
+}
+
+fn not(a: Bool): Bool {
+  match a: Bool {
+    false => true
+    true => false
+  }
+}
+
+module Bool {
+  fn eq(a: Bool, b: Bool): Bool {
+    match a: Bool {
+      false => not(b)
+      true => b
+    }
+  }
+
+  theorem eq_refl(a: Bool): (eq(a, a) = true) {
+    match a: (eq(a, a) = true) {
+      false => Refl
+      true => Refl
+    }
+  }
+}
+
+theorem true_ne_false(e: true = false): False {
+  match e: False {
+  }
+}
+
+module Nat {
+  theorem eq_refl(n: Nat): (Nat::eq(n, n) = true) {
+    match n: (Nat::eq(n, n) = true) {
+      Zero => Refl
+      Succ(k) => eq_refl(k)
+    }
+  }
+
+  theorem eq_sound(a: Nat, b: Nat, e: Nat::eq(a, b) = true): (a = b) {
+    match a: (a = b) {
+      Zero => match b: (Zero = b) {
+        Zero => Refl
+        Succ(b2) => False::elim(true_ne_false(Eq::sym(e)))
+      }
+      Succ(a2) => match b: (Succ(a2) = b) {
+        Zero => False::elim(true_ne_false(Eq::sym(e)))
+        Succ(b2) => Eq::congr(Succ, eq_sound(a2, b2, e))
+      }
+    }
+  }
+}
+
+theorem false_ne_true(e: false = true): False {
+  true_ne_false(Eq::sym(e))
+}
+
+module Bool {
+  theorem eq_sound(a: Bool, b: Bool, e: eq(a, b) = true): (a = b) {
+    match a: (a = b) {
+      false => match b: false = b {
+        false => Refl
+        true => False::elim(false_ne_true(e))
+      }
+      true => match b: true = b {
+        false => False::elim(false_ne_true(e))
+        true => Refl
+      }
+    }
+  }
+
+  theorem and_intro(
+    p: Bool,
+    q: Bool,
+    hp: p = true,
+    hq: q = true
+  ): (and(p, q) = true) {
+    match p: (and(p, q) = true) {
+      false => False::elim(false_ne_true(hp))
+      true => hq
+    }
+  }
+
+  theorem and_split(
+    p: Bool,
+    q: Bool,
+    e: and(p, q) = true
+  ): And(p = true, q = true) {
+    match p: And(p = true, q = true) {
+      false => False::elim(false_ne_true(e))
+      true => AndIntro(Refl, e)
+    }
+  }
+}

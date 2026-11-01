@@ -1,0 +1,189 @@
+import "written_unique_application.taut"
+
+pub theorem written_fn_kind_equal<params: List(
+  Ty
+), result: Ty, original: Kind, other_params: List(
+  Ty
+), other_result: Ty, other_original: Kind>(
+  equal: TyFn(params, result, original) = TyFn(other_params, other_result, other_original),
+  kind: Kind,
+  other_kind: Kind,
+  annotation: kind = other_kind
+): TyFn(params, result, kind) = TyFn(other_params, other_result, other_kind) {
+  match equal: TyFn(params, result, kind) = TyFn(other_params, other_result, other_kind) {
+    Refl => Eq::congr((k: Kind) => TyFn(params, result, k), annotation)
+  }
+}
+pub theorem written_unique_fn_kind<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, borrow: Bool, spelling: Text, body: SurfaceTerm, other: Ty>(
+  meaning: WrittenKind(env, generics, partial, borrow, SkFnKind(spelling, body), other),
+  params: List(Ty),
+  result: Ty,
+  original: Kind,
+  kind: Kind,
+  ih: WrittenTermUnique(generics, partial, false, body, TyFn(params, result, original)),
+  annotation: WrittenFunctionKind(spelling, kind)
+): TyFn(params, result, kind) = other {
+  match meaning: TyFn(params, result, kind) = other {
+    WrittenKindFunctionKind(
+      gs,
+      mode,
+      borrowing,
+      label,
+      term,
+      other_params,
+      other_result,
+      other_original,
+      other_kind,
+      function,
+      other_annotation
+    ) => written_fn_kind_equal(
+      ih(env, TyFn(other_params, other_result, other_original), function),
+      kind,
+      other_kind,
+      Eq::trans(
+        Eq::sym(written_function_kind_determined(annotation)),
+        written_function_kind_determined(other_annotation)
+      )
+    )
+  }
+}
+pub theorem written_unique_function<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), partial: Bool, borrow: Bool, params: List(
+  SurfaceParam
+), result: SurfaceTerm, effects: Option(
+  List(Text)
+), other: Ty>(
+  meaning: WrittenKind(env, generics, partial, borrow, SkPi(params, result, effects), other),
+  binders: List(Pair(Text, Kind)),
+  suffix: List(SurfaceParam),
+  inner: Ordmap(Text, Ty),
+  arguments: List(Ty),
+  returns: Ty,
+  t: Ty,
+  split: WrittenBindersPrefix(params, binders, suffix),
+  scope: WrittenBinderMap(binders, generics, inner),
+  polymorphic: WrittenPolymorphicType(binders, TyFn(arguments, returns, KindShared), t),
+  ihparams: WrittenParametersUnique(inner, partial, suffix, arguments),
+  ihresult: WrittenTermUnique(inner, partial, false, result, returns)
+): t = other {
+  match meaning: t = other {
+    WrittenKindFunction(
+      gs,
+      mode,
+      borrowing,
+      source_params,
+      source_result,
+      source_effects,
+      other_binders,
+      other_suffix,
+      other_inner,
+      other_arguments,
+      other_returns,
+      value,
+      other_split,
+      other_scope,
+      parameter_types,
+      result_type,
+      other_polymorphic
+    ) => {
+      let prefixes: Eq(
+        Pair(List(Pair(Text, Kind)), List(SurfaceParam)),
+        Pair { fst: binders, snd: suffix },
+        Pair { fst: other_binders, snd: other_suffix }
+      ) := Eq::trans(
+        Eq::sym(written_prefix_determined(source_params, binders, suffix, split)),
+        written_prefix_determined(source_params, other_binders, other_suffix, other_split)
+      )
+      let scopes: inner = other_inner := Eq::trans(
+        Eq::sym(written_binder_map_value(binders, gs, inner, scope)),
+        Eq::trans(
+          Eq::congr(
+            List(Pair(Text, Kind)),
+            Ordmap(Text, Ty),
+            binders,
+            other_binders,
+            (bs: List(Pair(Text, Kind))) => binders_map(bs, gs),
+            Eq::congr(written_binders_prefix, prefixes)
+          ),
+          written_binder_map_value(other_binders, gs, other_inner, other_scope)
+        )
+      )
+      let parameter_values: arguments = other_arguments := ihparams(
+        env,
+        other_arguments,
+        Eq::subst(
+          Ordmap(Text, Ty),
+          other_inner,
+          inner,
+          (map: Ordmap(Text, Ty)) => WrittenParameters(env, map, mode, suffix, other_arguments),
+          Eq::sym(scopes),
+          Eq::subst(
+            List(SurfaceParam),
+            other_suffix,
+            suffix,
+            (remaining: List(SurfaceParam)) => WrittenParameters(
+              env,
+              other_inner,
+              mode,
+              remaining,
+              other_arguments
+            ),
+            Eq::sym(Eq::congr(written_binders_suffix, prefixes)),
+            parameter_types
+          )
+        )
+      )
+      let result_value: returns = other_returns := ihresult(
+        env,
+        other_returns,
+        Eq::subst(
+          Ordmap(Text, Ty),
+          other_inner,
+          inner,
+          (map: Ordmap(Text, Ty)) => WrittenTerm(env, map, mode, false, source_result, other_returns),
+          Eq::sym(scopes),
+          result_type
+        )
+      )
+      let functions: TyFn(arguments, returns, KindShared) = TyFn(other_arguments, other_returns, KindShared) := Eq::trans(
+        Eq::congr(
+          List(Ty),
+          Ty,
+          arguments,
+          other_arguments,
+          (ps: List(Ty)) => TyFn(ps, returns, KindShared),
+          parameter_values
+        ),
+        Eq::congr(
+          Ty,
+          Ty,
+          returns,
+          other_returns,
+          (r: Ty) => TyFn(other_arguments, r, KindShared),
+          result_value
+        )
+      )
+      Eq::trans(
+        Eq::sym(written_poly_value(polymorphic)),
+        Eq::trans(
+          Eq::congr((body_type: Ty) => ty_poly_of(binders, body_type), functions),
+          Eq::trans(
+            Eq::congr(
+              (bs: List(Pair(Text, Kind))) => ty_poly_of(
+                bs,
+                TyFn(other_arguments, other_returns, KindShared)
+              ),
+              Eq::congr(written_binders_prefix, prefixes)
+            ),
+            written_poly_value(other_polymorphic)
+          )
+        )
+      )
+    }
+  }
+}

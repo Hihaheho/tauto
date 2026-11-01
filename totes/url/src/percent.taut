@@ -1,0 +1,190 @@
+import "bytes.taut"
+
+// Percent-encoding (URL Standard, "Percent-encoded bytes"). A set is a
+// decision on bytes; a byte in the set is written `%XY` with upper-case hex
+// digits, every other byte as it is. `%` is in none of the sets the parser
+// uses, so encoding a second time changes nothing.
+
+// ---- the sets -----------------------------------------------------------------
+
+// C0 controls and every byte above `~`.
+pub fn c0_control_set(b: Nat): Bool {
+  Bool::or(Nat::lt(b, 32), Nat::lt(126, b))
+}
+
+// Each set is the C0 control set and the bytes of its `_extra`.
+pub fn fragment_extra(b: Nat): Bool {
+  Bool::or(Nat::eq(b, 32), Bool::or(Nat::eq(b, 34), Bool::or(Nat::eq(b, 60), Bool::or(Nat::eq(b, 62), Nat::eq(b, 96)))))
+}
+
+pub fn fragment_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), fragment_extra(b))
+}
+
+pub fn query_extra(b: Nat): Bool {
+  Bool::or(Nat::eq(b, 32), Bool::or(Nat::eq(b, 34), Bool::or(Nat::eq(b, 35), Bool::or(Nat::eq(b, 60), Nat::eq(b, 62)))))
+}
+
+pub fn query_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), query_extra(b))
+}
+
+pub fn special_query_extra(b: Nat): Bool {
+  Bool::or(query_extra(b), Nat::eq(b, 39))
+}
+
+pub fn special_query_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), special_query_extra(b))
+}
+
+pub fn path_extra(b: Nat): Bool {
+  Bool::or(
+    query_extra(b),
+    Bool::or(
+      Nat::eq(b, 63),
+      Bool::or(Nat::eq(b, 94), Bool::or(Nat::eq(b, 96), Bool::or(Nat::eq(b, 123), Nat::eq(b, 125))))
+    )
+  )
+}
+
+pub fn path_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), path_extra(b))
+}
+
+pub fn userinfo_extra(b: Nat): Bool {
+  Bool::or(
+    path_extra(b),
+    Bool::or(
+      Nat::eq(b, 47),
+      Bool::or(
+        Nat::eq(b, 58),
+        Bool::or(
+          Nat::eq(b, 59),
+          Bool::or(
+            Nat::eq(b, 61),
+            Bool::or(Nat::eq(b, 64), Bool::or(Bool::and(Nat::le(91, b), Nat::le(b, 93)), Nat::eq(b, 124)))
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn userinfo_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), userinfo_extra(b))
+}
+
+// What `encodeURIComponent`-like encoding uses; `%` is in it, so decoding
+// undoes it.
+pub fn component_extra(b: Nat): Bool {
+  Bool::or(
+    userinfo_extra(b),
+    Bool::or(Bool::and(Nat::le(36, b), Nat::le(b, 38)), Bool::or(Nat::eq(b, 43), Nat::eq(b, 44)))
+  )
+}
+
+pub fn component_set(b: Nat): Bool {
+  Bool::or(c0_control_set(b), component_extra(b))
+}
+
+// ---- encoding -----------------------------------------------------------------
+
+// The upper-case hex digit of a number below 16. The high digit of a byte
+// is taken modulo 16 too, so every digit written is a hex digit.
+pub fn hex_digit(d: Nat): Nat {
+  match Nat::lt(d, 10): Nat {
+    true => Nat::add(d, 48)
+    false => Nat::add(d, 55)
+  }
+}
+
+// The value of a hex digit of either case.
+pub fn hex_value(b: Nat): Option(Nat) {
+  match is_digit(b): Option(Nat) {
+    true => Some(Nat::sub(b, 48))
+    false => match Bool::and(Nat::le(65, b), Nat::le(b, 70)): Option(Nat) {
+      true => Some(Nat::sub(b, 55))
+      false => match Bool::and(Nat::le(97, b), Nat::le(b, 102)): Option(Nat) {
+        true => Some(Nat::sub(b, 87))
+        false => None
+      }
+    }
+  }
+}
+
+pub fn pct_byte(set: (Nat) -> Bool, b: Nat, rest: List(Nat)): List(Nat) {
+  match set(b): List(Nat) {
+    true => Cons(37, Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), rest)))
+    false => Cons(b, rest)
+  }
+}
+
+pub fn pct_encode(set: (Nat) -> Bool, l: List(Nat)): List(Nat) {
+  match l: List(Nat) {
+    Nil => Nil
+    Cons(b, t) => pct_byte(set, b, pct_encode(set, t))
+  }
+}
+
+// ---- decoding -----------------------------------------------------------------
+
+pub fn is_hex(b: Nat): Bool {
+  match hex_value(b): Bool {
+    None => false
+    Some(v) => true
+  }
+}
+
+// The byte of two hex digits.
+pub fn hex_pair(h1: Nat, h2: Nat): Option(Nat) {
+  match hex_value(h1): Option(Nat) {
+    None => None
+    Some(v1) => match hex_value(h2): Option(Nat) {
+      None => None
+      Some(v2) => Some(Nat::add(Nat::mul(v1, 16), v2))
+    }
+  }
+}
+
+// Where decoding is: after ordinary bytes, after `%`, or after `%` and one
+// hex digit.
+pub(open) inductive Escape: Type {
+  Plain: Escape
+  Percent: Escape
+  Digit(h: Nat): Escape
+}
+
+// `%XY` is the byte of `XY`; a `%` without two hex digits after it stays.
+pub fn pct_decode(l: List(Nat)): List(Nat) {
+  decode_from(Plain, l)
+}
+
+pub fn decode_from(st: Escape, l: List(Nat)): List(Nat) {
+  match l: List(Nat) {
+    Nil => match st: List(Nat) {
+      Plain => Nil
+      Percent => Cons(37, Nil)
+      Digit(h) => Cons(37, Cons(h, Nil))
+    }
+    Cons(b, t) => match st: List(Nat) {
+      Plain => match Nat::eq(b, 37): List(Nat) {
+        true => decode_from(Percent, t)
+        false => Cons(b, decode_from(Plain, t))
+      }
+      Percent => match is_hex(b): List(Nat) {
+        true => decode_from(Digit(b), t)
+        false => Cons(37, match Nat::eq(b, 37): List(Nat) {
+          true => decode_from(Percent, t)
+          false => Cons(b, decode_from(Plain, t))
+        })
+      }
+      Digit(h) => match hex_pair(h, b): List(Nat) {
+        Some(v) => Cons(v, decode_from(Plain, t))
+        None => Cons(37, Cons(h, match Nat::eq(b, 37): List(Nat) {
+          true => decode_from(Percent, t)
+          false => Cons(b, decode_from(Plain, t))
+        }))
+      }
+    }
+  }
+}

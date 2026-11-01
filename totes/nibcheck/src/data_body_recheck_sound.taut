@@ -1,0 +1,87 @@
+import "rules_data_body.taut"
+import "field_recheck_sound.taut"
+
+pub theorem data_generic_map_sound(
+  names: List(Text),
+  initial: Ordmap(Text, Ty)
+): DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) {
+  match names: DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) {
+    Nil => DataGenericMapNil(initial)
+    Cons(name, rest) => DataGenericMapCons(
+      name,
+      rest,
+      initial,
+      ck_param_generics(
+        rest,
+        KindLinear,
+        Ordmap::insert(initial, name, TyParam(name, KindLinear), Ordmap::compare_text)
+      ),
+      data_generic_map_sound(
+        rest,
+        Ordmap::insert(initial, name, TyParam(name, KindLinear), Ordmap::compare_text)
+      )
+    )
+  }
+}
+pub theorem data_generic_map_determined<names: List(
+  Text
+), initial: Ordmap(
+  Text,
+  Ty
+), final: Ordmap(
+  Text,
+  Ty
+)>(
+  bindings: DataGenericMap(names, initial, final)
+): ck_param_generics(names, KindLinear, initial) = final {
+  match bindings: ck_param_generics(names, KindLinear, initial) = final {
+    DataGenericMapNil(map) => Refl
+    DataGenericMapCons(name, rest, before, after, tail) => data_generic_map_determined(tail)
+  }
+}
+pub theorem data_body_recheck<source: SurfaceData, constructors: List(
+  DataCtor
+)>(
+  known: DataBodyKnown(source, constructors),
+  c: Checker,
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticClean(
+    ck_st(
+      ck_recheck_ctors(
+        body_source_ctors(source),
+        c,
+        ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty())
+      )
+    )
+  )
+): DataBodyFormed(ck_datas_of(c), source, constructors) {
+  match known: DataBodyFormed(ck_datas_of(c), source, constructors) {
+    Mk(old_env, generics, bindings, meaning) => DataBodyFormed::Mk(
+      ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty()),
+      data_generic_map_sound(body_source_generics(source), Ordmap::empty()),
+      ck_recheck_ctors_sound(
+        old_env,
+        ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty()),
+        false,
+        body_source_ctors(source),
+        constructors,
+        Eq::subst(
+          (map: Ordmap(Text, Ty)) => WrittenDataCtors(
+            old_env,
+            map,
+            false,
+            body_source_ctors(source),
+            constructors
+          ),
+          Eq::sym(data_generic_map_determined(bindings)),
+          meaning
+        ),
+        c,
+        ordinary,
+        position,
+        clean
+      )
+    )
+  }
+}

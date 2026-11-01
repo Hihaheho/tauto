@@ -1,0 +1,51 @@
+import "program_function_table_ordered.taut"
+
+pub def FntStateStep(
+  c: Checker,
+  next: Checker
+): Prop := ∀ ordered: CkFnsOrdered(c). CkFnsOrdered(next)
+pub theorem fnt_step_changed<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  change: FntStateStep(c, next),
+  step: CkFnsStep(next, m)
+): CkFnsStep(c, m) {
+  ordered => step(change(ordered))
+}
+pub theorem fnt_error_step(
+  c: Checker,
+  message: Text,
+  span: TySpan
+): CkFnsStep(c, ck_error(c, message, span)) {
+  ordered => ordered
+}
+pub theorem fnt_signature_step(
+  c: Checker,
+  source: SurfaceFn
+): CkFnsStep(c, ck_signature(c, source)) {
+  fnt_step_read(c, ck_signature(c, source), fnt_ck_signature_frame(c, source))
+}
+pub theorem fnt_written_step(
+  c: Checker,
+  term: SurfaceTerm,
+  generics: Ordmap(Text, Ty)
+): CkFnsStep(c, ck_written(c, term, generics)) {
+  fnt_step_read(c, ck_written(c, term, generics), fnt_ck_written_frame(c, term, generics))
+}
+pub theorem fnt_error_if_step(
+  c: Checker,
+  message: Text,
+  span: TySpan,
+  cond: Bool
+): CkFnsStep(c, frame_error_if(c, message, span, cond)) {
+  fnt_step_read(
+    c,
+    frame_error_if(c, message, span, cond),
+    fnt_frame_error_if_ok(c, message, span, cond)
+  )
+}
+pub theorem fnt_constructor_step(
+  c: Checker,
+  partial: Bool
+): FntStateStep(c, frame_set_constructor_position(c, partial)) { ordered => ordered }

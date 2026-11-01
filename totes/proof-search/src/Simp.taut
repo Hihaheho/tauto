@@ -1,10 +1,10 @@
 // Explicit equations and a pure, bounded rewrite plan. The generated proof is
 // checked again by the ordinary proof-step boundary.
-struct ProofSimpRule { equation: SynExpr, left: SynExpr, right: SynExpr }
-struct ProofSimpMove { before: SynExpr, after: SynExpr, rule: ProofSimpRule }
-struct ProofSimpPlan { goal: SynExpr, moves: List(ProofSimpMove) }
+pub(open) struct ProofSimpRule { equation: SynExpr, left: SynExpr, right: SynExpr }
+pub(open) struct ProofSimpMove { before: SynExpr, after: SynExpr, rule: ProofSimpRule }
+pub(open) struct ProofSimpPlan { goal: SynExpr, moves: List(ProofSimpMove) }
 
-fn proof_simp_supported(e: SynExpr) -> Bool {
+pub fn proof_simp_supported(e: SynExpr): Bool {
   match e {
     ExVar(_) => true
     ExAtom(_, _) => true
@@ -16,42 +16,42 @@ fn proof_simp_supported(e: SynExpr) -> Bool {
   }
 }
 
-fn proof_simp_supported_all(xs: List(SynExpr)) -> Bool {
+pub fn proof_simp_supported_all(xs: List(SynExpr)): Bool {
   match xs {
     Nil => true
     Cons(x, rest) => proof_simp_supported(x) && proof_simp_supported_all(rest)
   }
 }
 
-fn proof_simp_seen(e: SynExpr, seen: List(SynExpr)) -> Bool {
+pub fn proof_simp_seen(e: SynExpr, seen: List(SynExpr)): Bool {
   match seen {
     Nil => false
-    Cons(x, rest) => syn_same(e, x) || proof_simp_seen(e, rest)
+    Cons(x, rest) => Syn::same(e, x) || proof_simp_seen(e, rest)
   }
 }
 
 // The first changing rule wins. The declared order is the search order;
 // no global declarations are enumerated and no rules are inferred.
-fn proof_simp_next(goal: SynExpr, rules: List(ProofSimpRule)) -> Option(ProofSimpMove) {
+pub fn proof_simp_next(goal: SynExpr, rules: List(ProofSimpRule)): Option(ProofSimpMove) {
   match rules {
     Nil => None
     Cons(rule, rest) => {
-      let after = syn_replace(goal, rule.left, rule.right)
-      if syn_same(goal, after) { proof_simp_next(goal, rest) } else {
+      let after := Syn::replace(goal, rule.left, rule.right)
+      if Syn::same(goal, after) { proof_simp_next(goal, rest) } else {
         Some(ProofSimpMove { before: goal, after: after, rule: rule })
       }
     }
   }
 }
 
-fn proof_simp_reflexive(goal: SynExpr) -> Bool {
-  match syn_app_parts(goal) {
+pub fn proof_simp_reflexive(goal: SynExpr): Bool {
+  match Syn::app_parts(goal) {
     None => false
-    Some(p) => match syn_name_of(p.fst) {
+    Some(p) => match Syn::name_of((p: SynExpr)) {
       None => false
       Some(name) => if name == "Eq" {
-        match p.snd {
-          Cons(_, Cons(left, Cons(right, Nil))) => syn_same(left, right)
+        match (p: List(SynExpr)) {
+          Cons(_, Cons(left, Cons(right, Nil))) => Syn::same(left, right)
           _ => false
         }
       } else { false }
@@ -59,13 +59,13 @@ fn proof_simp_reflexive(goal: SynExpr) -> Bool {
   }
 }
 
-fn proof_simp_walk(
+pub fn proof_simp_walk(
   goal: SynExpr,
   rules: List(ProofSimpRule),
   fuel: u64,
   seen: List(SynExpr),
   moves: List(ProofSimpMove)
-) -> Result(ProofSimpPlan, Text) {
+): Result(ProofSimpPlan, Text) {
   if proof_simp_reflexive(goal) {
     Ok(ProofSimpPlan { goal: goal, moves: moves })
   } else {
@@ -92,11 +92,11 @@ fn proof_simp_walk(
 
 // Public pure planning API. Rules contain already instantiated equations.
 // The tactic performs their typing checks before invoking this function.
-fn proof_simp_plan(
+pub fn proof_simp_plan(
   goal: SynExpr,
   rules: List(ProofSimpRule),
   fuel: u64
-) -> Result(ProofSimpPlan, Text) {
+): Result(ProofSimpPlan, Text) {
   if fuel > 256 { Err("simp_only!: rewrite budget must be at most 256") } else {
     if proof_simp_supported(goal) {
       proof_simp_walk(goal, rules, fuel, Cons(goal, Nil), Nil)
@@ -106,118 +106,116 @@ fn proof_simp_plan(
   }
 }
 
-fn proof_simp_budget(text: Text, i: u64, n: u64, at: SynSpan) -> u64 ! {macro_error} {
-  if i == text_len(text) {
+pub fn proof_simp_budget(text: Text, i: u64, n: u64, at: SynSpan): u64 ! {macro_error, Div} {
+  if i == Text::len(text) {
     n
   } else {
-    match text_byte(text, i) {
+    match Text::byte(text, i) {
       Some(b) => if b >= 48 && b <= 57 {
-        let next = n * 10 + u64_of_u8(b) - 48
-        if next > 256 { syn_error(at, "simp_only!: rewrite budget must be at most 256") } else {
+        let next := n * 10 + U64::of_u8(b) - 48
+        if next > 256 { Syn::error(at, "simp_only!: rewrite budget must be at most 256") } else {
           proof_simp_budget(text, i + 1, next, at)
         }
-      } else { syn_error(at, "simp_only!: write a decimal rewrite budget") }
-      None => syn_error(at, "simp_only!: invalid rewrite budget")
+      } else { Syn::error(at, "simp_only!: write a decimal rewrite budget") }
+      None => Syn::error(at, "simp_only!: invalid rewrite budget")
     }
   }
 }
 
-fn proof_simp_rules(
+pub fn proof_simp_rules(
   xs: List(SynExpr),
-  ctx: Code,
+  ctx: Judgement,
   left: u64,
   at: SynSpan
-) -> List(ProofSimpRule) ! {macro_error, elab} {
+): List(ProofSimpRule) ! {macro_error, Div, elab} {
   match xs {
     Nil => Nil
     Cons(e, rest) => if left == 0 {
-      syn_error(at, "simp_only!: at most 64 explicit equations are accepted")
+      Syn::error(at, "simp_only!: at most 64 explicit equations are accepted")
     } else {
-      let checked = match elab_check(e, ctx, None) {
-        Err(d) => syn_error(at, concat("simp_only!: equation does not check: ", d.message))
+      let checked := match Elab::check(e, ctx, None) {
+        Err(d) => Syn::error(at, concat("simp_only!: equation does not check: ", d.message))
         Ok(c) => c
       }
-      let parts = match syn_app_parts(code_term(elab_whnf(code_type(checked)))) {
-        None => syn_error(at, "simp_only!: each rule must prove Eq(A, left, right)")
+      let parts := match Syn::app_parts(Judgement::term(Elab::whnf(Judgement::type_of(checked)))) {
+        None => Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)")
         Some(p) => p
       }
-      let name = match syn_name_of(parts.fst) {
-        None => syn_error(at, "simp_only!: each rule must prove Eq(A, left, right)")
+      let name := match Syn::name_of((parts: SynExpr)) {
+        None => Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)")
         Some(n) => n
       }
-      if name != "Eq" { syn_error(at, "simp_only!: each rule must prove Eq(A, left, right)") } else {
-        match parts.snd {
+      if name != "Eq" { Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)") } else {
+        match (parts: List(SynExpr)) {
           Cons(_, Cons(l, Cons(r, Nil))) => if proof_simp_supported(l) && proof_simp_supported(r) {
             Cons(
-              ProofSimpRule { equation: code_term(checked), left: l, right: r },
+              ProofSimpRule { equation: Judgement::term(checked), left: l, right: r },
               proof_simp_rules(rest, ctx, left - 1, at)
             )
-          } else { syn_error(at, "simp_only!: equation sides must be application trees") }
-          _ => syn_error(at, "simp_only!: each rule must prove Eq(A, left, right)")
+          } else { Syn::error(at, "simp_only!: equation sides must be application trees") }
+          _ => Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)")
         }
       }
     }
   }
 }
 
-fn proof_simp_wrap(
+pub fn proof_simp_wrap(
   moves: List(ProofSimpMove),
   proof: SynExpr,
   at: SynSpan
-) -> SynExpr ! {macro_error, Div} {
+): SynExpr ! {macro_error, Div} {
   match moves {
     Nil => proof
     Cons(change, rest) => {
-      let binder = SynIdent { name: "simp_value", ctx: SynCtx { scopes: Nil }, span: at }
-      let body = match syn_abstract(
+      let binder := SynIdent { name: "simp_value", ctx: SynCtx { scopes: Nil }, span: at }
+      let body := match Syn::abstract(
         change.before,
         change.after,
         change.rule.left,
         change.rule.right,
         ExVar(binder)
       ) {
-        None => syn_error(at, "simp_only!: rewrite motive could not be reconstructed")
+        None => Syn::error(at, "simp_only!: rewrite motive could not be reconstructed")
         Some(m) => m
       }
-      let motive = ExLam(Cons(BName(binder, None), Nil), body, at)
-      let equation = change.rule.equation
-      let result = quote { Eq_subst($motive, Eq_sym($equation), $proof) }
+      let motive := ExLam(Cons(BName(binder, None), Nil), body, at)
+      let equation := change.rule.equation
+      let result := quote { Eq::subst($motive, Eq::sym($equation), $proof) }
       proof_simp_wrap(rest, result, at)
     }
   }
 }
 
-fn proof_simp_tactic(s: ProofStep) -> SynExpr ! {macro_error, elab, Div} {
-  let args = match syn_app_parts(s.arg) {
-    None => syn_error(s.span, "simp_only!: expected rules(budget, equation, ...)")
-    Some(p) => match syn_name_of(p.fst) {
-      Some(name) => if name == "rules" { p.snd } else {
-        syn_error(s.span, "simp_only!: expected rules(budget, equation, ...)")
+pub macro fn simp_only(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
+  let args := match Syn::app_parts(s.arg) {
+    None => Syn::error(s.span, "simp_only!: expected rules(budget, equation, ...)")
+    Some(p) => match Syn::name_of((p: SynExpr)) {
+      Some(name) => if name == "rules" { (p: List(SynExpr)) } else {
+        Syn::error(s.span, "simp_only!: expected rules(budget, equation, ...)")
       }
-      None => syn_error(s.span, "simp_only!: expected rules(budget, equation, ...)")
+      None => Syn::error(s.span, "simp_only!: expected rules(budget, equation, ...)")
     }
   }
-  let config = match args {
-    Nil => syn_error(s.span, "simp_only!: write the rewrite budget")
-    Cons(n, equations) => match syn_nat_text(n) {
-      None => syn_error(s.span, "simp_only!: write a decimal rewrite budget")
+  let config := match args {
+    Nil => Syn::error(s.span, "simp_only!: write the rewrite budget")
+    Cons(n, equations) => match Syn::nat_text(n) {
+      None => Syn::error(s.span, "simp_only!: write a decimal rewrite budget")
       Some(t) => Pair { fst: proof_simp_budget(t, 0, 0, s.span), snd: equations }
     }
   }
-  let rules = proof_simp_rules(config.snd, s.before, 64, s.span)
-  let plan = match proof_simp_plan(code_term(s.before), rules, config.fst) {
-    Err(message) => syn_error(s.span, message)
+  let rules := proof_simp_rules(config.snd, s.before, 64, s.span)
+  let plan := match proof_simp_plan(Judgement::term(s.before), rules, config.fst) {
+    Err(message) => Syn::error(s.span, message)
     Ok(p) => p
   }
-  let terminal = match elab_check(
-    quote { refl() },
+  let terminal := match Elab::check(
+    quote { Refl },
     s.before,
-    Some(code_ty_of(s.before, plan.goal))
+    Some(Judgement::ty_of(s.before, plan.goal))
   ) {
-    Ok(c) => code_term(c)
-    Err(_) => syn_hole(1, s.span)
+    Ok(c) => Judgement::term(c)
+    Err(_) => Syn::hole(1, s.span)
   }
   proof_simp_wrap(plan.moves, terminal, s.span)
 }
-
-macro simp_only = proof_simp_tactic

@@ -1,0 +1,107 @@
+import "data_presence_sound.taut"
+import "summary_state.taut"
+
+pub theorem data_presence_mark_k(
+  d: Datas,
+  n: Text,
+  o: Option(Data),
+  ordered: SummaryOrdered(d)
+): DataSummaryPresence(d, summary_mark_k(d, n, o)) {
+  match o: DataSummaryPresence(d, summary_mark_k(d, n, o)) {
+    None => key => h => h
+    Some(data) => data_presence_insert(
+      summary_decls(d),
+      n,
+      data_with_recursive(data, datas_reaches_from(d, n, n)),
+      ordered
+    )
+  }
+}
+
+pub theorem data_presence_mark(
+  d: Datas,
+  n: Text,
+  ordered: SummaryOrdered(d)
+): DataSummaryPresence(d, datas_mark_recursive(d, n)) {
+  Eq::subst(
+    (next: Datas) => DataSummaryPresence(d, next),
+    Eq::sym(summary_mark_unf(d, n)),
+    data_presence_mark_k(d, n, datas_decl(d, n), ordered)
+  )
+}
+
+pub theorem ck_mark_preserves_declarations(
+  es: List(Pair(Text, Data)),
+  c: Checker,
+  ordered: SummaryOrdered(ck_datas_of(c))
+): DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+  match es: DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+    Nil => n => h => h
+    Cons(e, rest) => {
+      let next: Checker := summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
+      let tail: DataSummaryPresence(
+        ck_datas_of(next),
+        ck_datas_of(ck_st(ck_mark_recursive(rest, next)))
+      ) := ck_mark_preserves_declarations(
+        rest,
+        next,
+        summary_mark_ordered(ck_datas_of(c), summary_key(e), ordered)
+      )
+      Eq::subst(
+        (z: Mut1(Unit, Checker)) => DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(z))),
+        Eq::sym(
+          Eq::trans(summary_mark_step(e, rest, c), ck_rewrap1_id(ck_mark_recursive(rest, next)))
+        ),
+        n => h => tail(n, data_presence_mark(ck_datas_of(c), summary_key(e), ordered)(n, h))
+      )
+    }
+  }
+}
+
+pub theorem data_presence_finish_k(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ordered: SummaryOrdered(ck_datas_of(ck_st(m)))
+): DataSummaryPresence(
+  ck_datas_of(ck_st(m)),
+  ck_datas_of(ck_st(summary_finish_datas_k(program, m)))
+) {
+  match m: DataSummaryPresence(
+    ck_datas_of(ck_st(m)),
+    ck_datas_of(ck_st(summary_finish_datas_k(program, m)))
+  ) {
+    mut1(v, next) => Eq::subst(
+      (d: Datas) => DataSummaryPresence(ck_datas_of(next), d),
+      Eq::sym(
+        Eq::trans(
+          Eq::congr(
+            (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
+            ck_rewrap1_id(
+              ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+            )
+          ),
+          ck_finish_stmts_datas(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
+        )
+      ),
+      datas_summarize_preserves_declarations(ck_datas_of(next), ordered)
+    )
+  }
+}
+
+pub theorem ck_finish_datas_preserves_declarations(
+  c: Checker,
+  program: List(SurfaceStmt),
+  ordered: SummaryOrdered(ck_datas_of(c))
+): DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(ck_finish_datas(c, program)))) {
+  let es: List(Pair(Text, Data)) := Ordmap::entries(summary_decls(ck_datas_of(c)))
+  let marked: Mut1(Unit, Checker) := ck_mark_recursive(es, c)
+  let tail: DataSummaryPresence(
+    ck_datas_of(ck_st(marked)),
+    ck_datas_of(ck_st(summary_finish_datas_k(program, marked)))
+  ) := data_presence_finish_k(program, marked, ck_mark_summary_ordered(es, c, ordered))
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => DataSummaryPresence(ck_datas_of(c), ck_datas_of(ck_st(z))),
+    Eq::sym(summary_finish_datas_unf(c, program)),
+    n => h => tail(n, ck_mark_preserves_declarations(es, c, ordered)(n, h))
+  )
+}

@@ -1,0 +1,79 @@
+import std::Text
+import "../src/types.taut"
+import "../src/bindings.taut"
+import "../src/generic_core.taut"
+import "../src/closure_core.taut"
+
+pub fn rg_callable_reject(left: RustgenType, right: RustgenType): Bool {
+  match rustgen_unify(100, left, right, Nil): Bool {
+    RustgenErr(message) => true
+    RustgenOk(subst) => false
+  }
+}
+pub fn rg_callable_resolves(): Bool {
+  let unknown := RustgenCallable(Cons(RustgenMeta("arg"), Nil), RustgenMeta("result"))
+  let expected := RustgenCallable(Cons(RustgenInt, Nil), RustgenText)
+  match rustgen_unify(100, unknown, expected, Nil): Bool {
+    RustgenErr(message) => false
+    RustgenOk(subst) => match rustgen_resolve(100, unknown, subst): Bool {
+      RustgenErr(message) => false
+      RustgenOk(actual) => rustgen_same(actual, expected)
+    }
+  }
+}
+pub fn rg_callable_substitutes(): Bool {
+  let ty := RustgenCallable(Cons(RustgenVar("A"), Nil), RustgenVar("B"))
+  let bindings := Cons(
+    RustgenBinding::Mk("A", RustgenVar("B")),
+    Cons(RustgenBinding::Mk("B", RustgenInt), Nil)
+  )
+  match rustgen_substitute(100, ty, bindings): Bool {
+    RustgenErr(message) => false
+    RustgenOk(actual) => rustgen_same(
+      actual,
+      RustgenCallable(Cons(RustgenVar("B"), Nil), RustgenInt)
+    )
+  }
+}
+pub fn rg_closure_shadow_keeps_inner(): Bool {
+  let inner := RustgenBinding::Mk("value", RustgenInt)
+  let outer := RustgenBinding::Mk("value", RustgenText)
+  match rustgen_closure_visible(Cons(inner, Cons(outer, Nil)), Nil): Bool {
+    Nil => false
+    Cons(binding, rest) => rustgen_same(binding.ty, RustgenInt) && List::length(rest) == 0
+  }
+}
+pub fn rg_closure_duplicate_rejects(): Bool {
+  match rustgen_closure_parameters(
+    Cons("value", Cons("value", Nil)),
+    Cons(RustgenInt, Cons(RustgenInt, Nil)),
+    Nil,
+    Nil
+  ): Bool {
+    RustgenErr(message) => true
+    RustgenOk(bindings) => false
+  }
+}
+
+pub theorem rg_pure_callable_structure(): rustgen_same(
+    RustgenCallable(Cons(RustgenInt, Nil), RustgenBool),
+    RustgenCallable(Cons(RustgenInt, Nil), RustgenBool)
+  ) = true { Refl }
+pub theorem rg_pure_callable_result_matters(): rustgen_same(
+    RustgenCallable(Cons(RustgenInt, Nil), RustgenBool),
+    RustgenCallable(Cons(RustgenInt, Nil), RustgenText)
+  ) = false { Refl }
+pub theorem rg_pure_callable_arity_rejects(): rg_callable_reject(
+    RustgenCallable(Nil, RustgenInt),
+    RustgenCallable(Cons(RustgenInt, Nil), RustgenInt)
+  ) = true { Refl }
+pub theorem rg_pure_callable_occurs_rejects(): rg_callable_reject(RustgenMeta("self"), RustgenCallable(Nil, RustgenMeta("self"))) = true { Refl }
+pub theorem rg_pure_callable_unification_resolves(): rg_callable_resolves() = true { Refl }
+pub theorem rg_pure_callable_substitution_is_simultaneous(): rg_callable_substitutes() = true { Refl }
+pub theorem rg_pure_capture_rigid_rejects(): rustgen_capture_concrete(100, RustgenCallable(Cons(RustgenVar("A"), Nil), RustgenInt)) = false { Refl }
+pub theorem rg_pure_capture_fuel_rejects(): rustgen_capture_concrete(0, RustgenInt) = false { Refl }
+pub theorem rg_pure_nested_callable_field_rejects(): rustgen_contains_callable(100, RustgenApply("Box", Cons(RustgenCallable(Nil, RustgenInt), Nil))) = true { Refl }
+pub theorem rg_pure_visible_scope_is_inner(): rg_closure_shadow_keeps_inner() = true {
+  Refl
+}
+pub theorem rg_pure_duplicate_parameter_rejects(): rg_closure_duplicate_rejects() = true { Refl }

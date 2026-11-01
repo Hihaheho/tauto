@@ -1,0 +1,435 @@
+import "IntLaws.taut"
+import "NatNorm.taut"
+import "Tactic.taut"
+
+// Reflection for the equations of `Int`'s commutative ring, on top of
+// `NatNorm.taut`. Each variable `x` of an `IntExpr` is read as the
+// difference of two natural variables, `Int::pos(x) - Int::negp(x)`, so an
+// expression is a pair of `NatExpr`s, the parts added and the parts
+// subtracted (`ie_part`). Two expressions are equal when the first's added
+// parts and the second's subtracted ones normalise to the same thing as the
+// other way round (`Int::norm_eq`). `int_norm!` finds the expressions.
+
+pub(open) inductive IntExpr: Type {
+  IeConst(n: Nat): IntExpr
+  IeVar(i: Nat): IntExpr
+  IeAdd(a: IntExpr, b: IntExpr): IntExpr
+  IeMul(a: IntExpr, b: IntExpr): IntExpr
+  IeNeg(a: IntExpr): IntExpr
+  // `int_of_nat` of a natural expression, over the natural variables
+  // (`ie_parts_env`): it has no subtracted part.
+  IeNat(e: NatExpr): IntExpr
+}
+
+// The value of variable `i`; the variables not in the list are 0.
+pub fn ie_env_get(env: List(Int), i: Nat): Int {
+  match env: Int {
+    Nil => IntOfNat(Zero)
+    Cons(h, t) => match i: Int {
+      Zero => h
+      Succ(k) => ie_env_get(t, k)
+    }
+  }
+}
+
+pub fn ie_eval(env: List(Int), e: IntExpr): Int {
+  match e: Int {
+    IeConst(n) => IntOfNat(n)
+    IeVar(i) => ie_env_get(env, i)
+    IeAdd(a, b) => Int::add(ie_eval(env, a), ie_eval(env, b))
+    IeMul(a, b) => Int::mul(ie_eval(env, a), ie_eval(env, b))
+    IeNeg(a) => Int::neg(ie_eval(env, a))
+    IeNat(n) => IntOfNat(Ne::eval(ie_parts_env(env), n))
+  }
+}
+
+// The natural variables: `Int::pos` and `Int::negp` of each variable in turn.
+pub fn ie_parts_env(env: List(Int)): List(Nat) {
+  match env: List(Nat) {
+    Nil => Nil
+    Cons(h, t) => Cons(Int::pos(h), Cons(Int::negp(h), ie_parts_env(t)))
+  }
+}
+
+// Where `Int::pos` of variable `i` is among the natural variables.
+pub fn ie_pv(i: Nat): Nat {
+  match i: Nat {
+    Zero => Zero
+    Succ(k) => Succ(Succ(ie_pv(k)))
+  }
+}
+
+// The parts added (`false`) or subtracted (`true`).
+pub fn ie_part(e: IntExpr, s: Bool): NatExpr {
+  match e: NatExpr {
+    IeConst(n) => match s: NatExpr {
+      false => NeConst(n)
+      true => NeConst(Zero)
+    }
+    IeVar(i) => match s: NatExpr {
+      false => NeVar(ie_pv(i))
+      true => NeVar(Succ(ie_pv(i)))
+    }
+    IeAdd(a, b) => NeAdd(ie_part(a, s), ie_part(b, s))
+    IeMul(a, b) => NeAdd(
+      NeMul(ie_part(a, false), ie_part(b, s)),
+      NeMul(ie_part(a, true), ie_part(b, not(s)))
+    )
+    IeNeg(a) => ie_part(a, not(s))
+    IeNat(n) => match s: NatExpr {
+      false => n
+      true => NeConst(Zero)
+    }
+  }
+}
+
+pub theorem ie_var_sound(
+  env: List(Int),
+  i: Nat
+): ie_env_get(
+  env,
+  i
+) = Int::sub_nat(
+  Ne::env_get(ie_parts_env(env), ie_pv(i)),
+  Ne::env_get(ie_parts_env(env), Succ(ie_pv(i)))
+) {
+  match env: ie_env_get(
+    env,
+    i
+  ) = Int::sub_nat(
+    Ne::env_get(ie_parts_env(env), ie_pv(i)),
+    Ne::env_get(ie_parts_env(env), Succ(ie_pv(i)))
+  ) {
+    Nil => match i: IntOfNat(
+      Zero
+    ) = Int::sub_nat(Ne::env_get(Nil, ie_pv(i)), Ne::env_get(Nil, Succ(ie_pv(i)))) {
+      Zero => Refl
+      Succ(k) => Refl
+    }
+    Cons(h, t) => match i: ie_env_get(
+      Cons(h, t),
+      i
+    ) = Int::sub_nat(
+      Ne::env_get(ie_parts_env(Cons(h, t)), ie_pv(i)),
+      Ne::env_get(ie_parts_env(Cons(h, t)), Succ(ie_pv(i)))
+    ) {
+      Zero => Int::parts(h)
+      Succ(k) => ie_var_sound(t, k)
+    }
+  }
+}
+
+pub theorem ie_sound(
+  env: List(Int),
+  e: IntExpr
+): ie_eval(
+  env,
+  e
+) = Int::sub_nat(
+  Ne::eval(ie_parts_env(env), ie_part(e, false)),
+  Ne::eval(ie_parts_env(env), ie_part(e, true))
+) {
+  match e: ie_eval(
+    env,
+    e
+  ) = Int::sub_nat(
+    Ne::eval(ie_parts_env(env), ie_part(e, false)),
+    Ne::eval(ie_parts_env(env), ie_part(e, true))
+  ) {
+    IeConst(n) => Eq::sym(Int::sub_nat_zero(n))
+    IeVar(i) => ie_var_sound(env, i)
+    IeAdd(a, b) => Eq::trans(
+      Eq::congr(⟦Int::add(□, ie_eval(env, b))⟧, ie_sound(env, a)),
+      Eq::trans(
+        Eq::congr(
+          ⟦Int::add(
+            Int::sub_nat(
+              Ne::eval(ie_parts_env(env), ie_part(a, false)),
+              Ne::eval(ie_parts_env(env), ie_part(a, true))
+            ),
+            □
+          )⟧,
+          ie_sound(env, b)
+        ),
+        Int::add_sub(
+          Ne::eval(ie_parts_env(env), ie_part(a, false)),
+          Ne::eval(ie_parts_env(env), ie_part(a, true)),
+          Ne::eval(ie_parts_env(env), ie_part(b, false)),
+          Ne::eval(ie_parts_env(env), ie_part(b, true))
+        )
+      )
+    )
+    IeMul(a, b) => Eq::trans(
+      Eq::congr(⟦Int::mul(□, ie_eval(env, b))⟧, ie_sound(env, a)),
+      Eq::trans(
+        Eq::congr(
+          ⟦Int::mul(
+            Int::sub_nat(
+              Ne::eval(ie_parts_env(env), ie_part(a, false)),
+              Ne::eval(ie_parts_env(env), ie_part(a, true))
+            ),
+            □
+          )⟧,
+          ie_sound(env, b)
+        ),
+        Int::mul_sub(
+          Ne::eval(ie_parts_env(env), ie_part(a, false)),
+          Ne::eval(ie_parts_env(env), ie_part(a, true)),
+          Ne::eval(ie_parts_env(env), ie_part(b, false)),
+          Ne::eval(ie_parts_env(env), ie_part(b, true))
+        )
+      )
+    )
+    IeNeg(a) => Eq::trans(
+      Eq::congr(Int::neg, ie_sound(env, a)),
+      Int::neg_sub(
+        Ne::eval(ie_parts_env(env), ie_part(a, false)),
+        Ne::eval(ie_parts_env(env), ie_part(a, true))
+      )
+    )
+    IeNat(n) => Eq::sym(Int::sub_nat_zero(Ne::eval(ie_parts_env(env), n)))
+  }
+}
+
+module Int {
+  // The sides are equal when `a`'s added parts with `b`'s subtracted ones have
+  // the same normal form as `b`'s added parts with `a`'s subtracted ones.
+  pub theorem norm_eq(
+    env: List(Int),
+    a: IntExpr,
+    b: IntExpr,
+    same: Ne::norm(
+      NeAdd(ie_part(a, false), ie_part(b, true))
+    ) = Ne::norm(NeAdd(ie_part(b, false), ie_part(a, true)))
+  ): ie_eval(env, a) = ie_eval(env, b) {
+    Eq::trans(
+      ie_sound(env, a),
+      Eq::trans(
+        sub_eq(
+          Ne::eval(ie_parts_env(env), ie_part(a, false)),
+          Ne::eval(ie_parts_env(env), ie_part(a, true)),
+          Ne::eval(ie_parts_env(env), ie_part(b, false)),
+          Ne::eval(ie_parts_env(env), ie_part(b, true)),
+          Nat::norm_eq(
+            ie_parts_env(env),
+            NeAdd(ie_part(a, false), ie_part(b, true)),
+            NeAdd(ie_part(b, false), ie_part(a, true)),
+            same
+          )
+        ),
+        Eq::sym(ie_sound(env, b))
+      )
+    )
+  }
+}
+
+// ---- the macro ----------------------------------------------------------------------
+
+// `int_norm!()`, for a goal `l = r` at type Int whose sides are made of
+// `Int::add`, `Int::sub`, `Int::mul`, `Int::neg`, `int_of_nat` of a numeral, and
+// anything else (which is a variable of the equation): reflection, as
+// `nat_norm!`. `Int::norm_eq` is the trust; a wrong reading is a term that
+// does not check. No goal is left: write no arm.
+pub macro fn int_norm(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
+  match s.after {
+    Cons(_, _) => Syn::error(s.span, "int_norm! leaves no goal: write no arm")
+    Nil => match Tac::eq_goal(s.before) {
+      None => Syn::error(s.span, "int_norm!: the goal is not an equation of Int")
+      Some(#(@lhs l, @rhs r, @ty ty)) => if Syn::name_of(ty) == Some("Int") {
+        Tac::int_norm_sides(l, r, s.span)
+      } else {
+        Syn::error(s.span, "int_norm!: the goal is not an equation of Int")
+      }
+    }
+  }
+}
+
+module Tac {
+  pub fn int_norm_sides(l: SynExpr, r: SynExpr, at: SynSpan): SynExpr ! {macro_error, Div} {
+    let a := Tac::ie_read(l, Nil, at)
+    let b := Tac::ie_read(r, (a: List(SynExpr)), at)
+    let env := Tac::nn_list((b: List(SynExpr)))
+    let x := (a: SynExpr)
+    let y := (b: SynExpr)
+    quote { Int::norm_eq($env, $x, $y, Refl) }
+  }
+
+  // The `IntExpr` of `e`, with the variables met so far and then the ones `e` adds.
+  pub fn ie_read(
+    e: SynExpr,
+    vars: List(SynExpr),
+    at: SynSpan
+  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+    // A numeral where `Int` is expected (`0`, `3`) is `IntOfNat` of it, so a constant.
+    match Syn::nat_text(e) {
+      Some(n) => {
+        let k := ExNat(n, at)
+        #(quote { IeConst($k) }, vars)
+      }
+      None => Tac::ie_read_app(e, vars, at)
+    }
+  }
+
+  // Whether `e` is a numeral.
+  pub fn is_numeral(e: SynExpr): Bool {
+    match Syn::nat_text(e) {
+      Some(_) => true
+      None => false
+    }
+  }
+
+  // [`Tac::ie_read`] of an expression that is not a numeral.
+  pub fn ie_read_app(
+    e: SynExpr,
+    vars: List(SynExpr),
+    at: SynSpan
+  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+    match Syn::app_parts(e) {
+      None => Tac::ie_var(e, vars)
+      Some(p) => match Syn::name_of((p: SynExpr)) {
+        None => Tac::ie_var(e, vars)
+        Some(name) => match (p: List(SynExpr)) {
+          Nil => Tac::ie_var(e, vars)
+          Cons(a, rest) => match rest {
+            Nil => if name == "Int::neg" || (name == "-" && Tac::is_numeral(a)) {
+              let x := Tac::ie_read(a, vars, at)
+              let u := (x: SynExpr)
+              #(quote { IeNeg($u) }, (x: List(SynExpr)))
+            } else {
+              if name == "IntOfNat" {
+                Tac::ie_of_nat(e, a, vars, at)
+              } else {
+                Tac::ie_var(e, vars)
+              }
+            }
+            Cons(b, extra) => match extra {
+              Cons(_, _) => Tac::ie_var(e, vars)
+              Nil => if name == "Int::add" || name == "Int::sub" || name == "Int::mul" {
+                let x := Tac::ie_read(a, vars, at)
+                let y := Tac::ie_read(b, (x: List(SynExpr)), at)
+                let u := (x: SynExpr)
+                let v := (y: SynExpr)
+                if name == "Int::add" {
+                  #(quote { IeAdd($u, $v) }, (y: List(SynExpr)))
+                } else {
+                  if name == "Int::sub" {
+                    #(quote { IeAdd($u, IeNeg($v)) }, (y: List(SynExpr)))
+                  } else {
+                    #(quote { IeMul($u, $v) }, (y: List(SynExpr)))
+                  }
+                }
+              } else {
+                Tac::ie_var(e, vars)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // `int_of_nat(a)`: a constant for a numeral or `Zero`, else `IeNat` of `a`
+  // read as a natural expression. Its natural variables `t` are kept as Int
+  // variables `int_of_nat(t)`, whose `Int::pos` is `t`.
+  pub fn ie_of_nat(
+    e: SynExpr,
+    a: SynExpr,
+    vars: List(SynExpr),
+    at: SynSpan
+  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+    match Syn::nat_text(a) {
+      Some(n) => {
+        let k := ExNat(n, at)
+        #(quote { IeConst($k) }, vars)
+      }
+      None => {
+        let x := Tac::ie_nat_read(a, vars, at)
+        let u := (x: SynExpr)
+        #(quote { IeNat($u) }, (x: List(SynExpr)))
+      }
+    }
+  }
+
+  // The `NatExpr` of `e` for `IeNat`.
+  pub fn ie_nat_read(
+    e: SynExpr,
+    vars: List(SynExpr),
+    at: SynSpan
+  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+    match Syn::nat_text(e) {
+      Some(n) => {
+        let k := ExNat(n, at)
+        #(quote { NeConst($k) }, vars)
+      }
+      None => match Syn::app_parts(e) {
+        None => match Syn::name_of(e) {
+          Some(name) => if name == "Zero" {
+            #(quote { NeConst(Zero) }, vars)
+          } else {
+            Tac::ie_nat_var(e, vars)
+          }
+          None => Tac::ie_nat_var(e, vars)
+        }
+        Some(p) => match Syn::name_of((p: SynExpr)) {
+          None => Tac::ie_nat_var(e, vars)
+          Some(name) => match (p: List(SynExpr)) {
+            Nil => Tac::ie_nat_var(e, vars)
+            Cons(a, rest) => match rest {
+              Nil => if name == "Succ" {
+                let x := Tac::ie_nat_read(a, vars, at)
+                let u := (x: SynExpr)
+                #(quote { NeAdd($u, NeConst(Succ(Zero))) }, (x: List(SynExpr)))
+              } else {
+                Tac::ie_nat_var(e, vars)
+              }
+              Cons(b, extra) => match extra {
+                Cons(_, _) => Tac::ie_nat_var(e, vars)
+                Nil => if name == "Nat::add" || name == "+" || name == "Nat::mul" || name == "*" {
+                  let x := Tac::ie_nat_read(a, vars, at)
+                  let y := Tac::ie_nat_read(b, (x: List(SynExpr)), at)
+                  let u := (x: SynExpr)
+                  let v := (y: SynExpr)
+                  if name == "Nat::add" || name == "+" {
+                    #(quote { NeAdd($u, $v) }, (y: List(SynExpr)))
+                  } else {
+                    #(quote { NeMul($u, $v) }, (y: List(SynExpr)))
+                  }
+                } else {
+                  Tac::ie_nat_var(e, vars)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A natural variable `t`: the Int variable `int_of_nat(t)`, at `2 i` among
+  // the natural ones.
+  pub fn ie_nat_var(t: SynExpr, vars: List(SynExpr)): List(SynExpr) × SynExpr {
+    let e := quote { IntOfNat($t) }
+    let x := Tac::ie_var(e, vars)
+    match Tac::nn_index(e, (x: List(SynExpr)), 0) {
+      Some(i) => {
+        let n := Tac::nn_nat(i + i)
+        #(quote { NeVar($n) }, (x: List(SynExpr)))
+      }
+      None => x
+    }
+  }
+
+  pub fn ie_var(e: SynExpr, vars: List(SynExpr)): List(SynExpr) × SynExpr {
+    match Tac::nn_index(e, vars, 0) {
+      Some(i) => {
+        let n := Tac::nn_nat(i)
+        #(quote { IeVar($n) }, vars)
+      }
+      None => {
+        let n := Tac::nn_nat(Tac::nn_length(vars, 0))
+        let grown := Syn::append(vars, Cons(e, Nil))
+        #(quote { IeVar($n) }, grown)
+      }
+    }
+  }
+}

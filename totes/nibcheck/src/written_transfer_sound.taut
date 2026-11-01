@@ -1,0 +1,123 @@
+import "written_nested_sound.taut"
+import "written_drop_sound.taut"
+
+pub theorem written_transfer<A: Type>(
+  p: (A) -> Prop,
+  before: Mut1(A, Checker),
+  after: Mut1(A, Checker),
+  equal: before = after,
+  h: ∀ clean: DiagnosticClean(ck_st(after)). p(ck_val(after)),
+  clean: DiagnosticClean(ck_st(before))
+): p(ck_val(before)) {
+  Eq::subst(
+    (m: Mut1(A, Checker)) => p(ck_val(m)),
+    Eq::sym(equal),
+    h(Eq::subst((m: Mut1(A, Checker)) => DiagnosticClean(ck_st(m)), equal, clean))
+  )
+}
+pub theorem written_term_ordinary(
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  term: SurfaceTerm,
+  t: Ty,
+  ordinary: frame_under_borrow(c) = false,
+  meaning: WrittenTerm(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    frame_under_borrow(c),
+    term,
+    t
+  )
+): WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, term, t) {
+  Eq::subst(
+    (borrow: Bool) => WrittenTerm(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      borrow,
+      term,
+      t
+    ),
+    ordinary,
+    meaning
+  )
+}
+pub theorem written_in_step(
+  ast_occurrence: Option(TermOccurrence),
+  sk: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ih: ∀ clean: DiagnosticClean(
+    ck_st(
+      ck_written_kind(
+        sk,
+        frame_set_under_borrow(c, false),
+        generics,
+        TySpan { start: start, end: end },
+        frame_under_borrow(c)
+      )
+    )
+  ). WrittenKind(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    frame_under_borrow(c),
+    sk,
+    ck_val(
+      ck_written_kind(
+        sk,
+        frame_set_under_borrow(c, false),
+        generics,
+        TySpan { start: start, end: end },
+        frame_under_borrow(c)
+      )
+    )
+  ),
+  clean: DiagnosticClean(
+    ck_st(ck_written_in(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), c, generics))
+  )
+): WrittenTerm(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  frame_under_borrow(c),
+  SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+  ck_val(ck_written_in(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), c, generics))
+) {
+  written_transfer(
+    Ty,
+    (t: Ty) => WrittenTerm(
+      ck_datas_of(c),
+      generics,
+      frame_constructor_position(c),
+      frame_under_borrow(c),
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+      t
+    ),
+    ck_written_in(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), c, generics),
+    ck_written_kind(
+      sk,
+      frame_set_under_borrow(c, false),
+      generics,
+      TySpan { start: start, end: end },
+      frame_under_borrow(c)
+    ),
+    Eq::trans(
+      frame_written_in_unf(ast_occurrence, sk, start, end, c, generics),
+      ck_rewrap1_id(
+        ck_written_kind(
+          sk,
+          frame_set_under_borrow(c, false),
+          generics,
+          TySpan { start: start, end: end },
+          frame_under_borrow(c)
+        )
+      )
+    ),
+    inner_clean => WrittenTerm::Mk(start, end, ih(inner_clean)),
+    clean
+  )
+}

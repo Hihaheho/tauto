@@ -1,0 +1,317 @@
+import "bytes.taut"
+import "../src/percent.taut"
+
+// Percent-encoding changes nothing that is already encoded, a second
+// encoding changes nothing, and decoding undoes an encoding whose set holds
+// `%`.
+
+pub theorem not_true(x: Bool, h: not(x) = true): x = false {
+  match x: (not(x) = true) -> x = false {
+    true => (e: false = true) => False::elim(false_ne_true(e))
+    false => (e: true = true) => Refl
+  }(h)
+}
+
+// `set` without `%` and without the hex digits: what an encoding writes is
+// left alone by it.
+pub def Stable(set: (Nat) -> Bool): Prop :=
+And(set(37) = false, below(16, (d: Nat) => not(set(hex_digit(d)))) = true)
+
+pub theorem enc_clean_byte(
+  set: (Nat) -> Bool,
+  b: Nat,
+  t: List(Nat),
+  h: set(b) = false
+): pct_encode(set, Cons(b, t)) = Cons(b, pct_encode(set, t)) {
+  Eq::subst(
+    (z: Bool) => (match z: List(Nat) {
+        true => Cons(
+          37,
+          Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)))
+        )
+        false => Cons(b, pct_encode(set, t))
+      }) = Cons(b, pct_encode(set, t)),
+    Eq::sym(h),
+    Refl
+  )
+}
+
+pub theorem enc_set_byte(
+  set: (Nat) -> Bool,
+  b: Nat,
+  t: List(Nat),
+  h: set(b) = true
+): pct_encode(set, Cons(b, t)) = Cons(
+  37,
+  Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)))
+) {
+  Eq::subst(
+    (z: Bool) => (match z: List(Nat) {
+        true => Cons(
+          37,
+          Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)))
+        )
+        false => Cons(b, pct_encode(set, t))
+      }) = Cons(
+      37,
+      Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)))
+    ),
+    Eq::sym(h),
+    Refl
+  )
+}
+
+// Bytes outside the set are left as they are.
+pub theorem pct_encode_clean(
+  set: (Nat) -> Bool,
+  x: List(Nat),
+  h: all_bytes((b: Nat) => not(set(b)), x) = true
+): pct_encode(set, x) = x {
+  match x: pct_encode(set, x) = x {
+    Nil => Refl
+    Cons(b, t) => Eq::trans(
+      enc_clean_byte(set, b, t, not_true(set(b), all_bytes_head((y: Nat) => not(set(y)), b, t, h))),
+      Eq::congr(
+        (z: List(Nat)) => Cons(b, z),
+        pct_encode_clean(set, t, all_bytes_tail((y: Nat) => not(set(y)), b, t, h))
+      )
+    )
+  }
+}
+
+pub theorem hex_not_in(set: (Nat) -> Bool, s: Stable(set), d: Nat): set(hex_digit(Nat::rem_nz(d, 16, Nat::ne_zero(16, Refl)))) = false {
+  not_true(
+    set(hex_digit(Nat::rem_nz(d, 16, Nat::ne_zero(16, Refl)))),
+    below_sound(16, (y: Nat) => not(set(hex_digit(y))), Nat::rem_nz(d, 16, Nat::ne_zero(16, Refl)), s.b, Nat::mod_lt(d, 16, Refl))
+  )
+}
+
+// Encoding twice is encoding once.
+pub theorem pct_encode_idem(
+  set: (Nat) -> Bool,
+  s: Stable(set),
+  x: List(Nat)
+): pct_encode(set, pct_encode(set, x)) = pct_encode(set, x) {
+  match x: pct_encode(set, pct_encode(set, x)) = pct_encode(set, x) {
+    Nil => Refl
+    Cons(b, t) => Bool::cases(
+      (z: Bool) => pct_encode(set, pct_encode(set, Cons(b, t))) = pct_encode(set, Cons(b, t)),
+      set(b),
+      (e: set(b) = false) => Eq::subst(
+        (w: List(Nat)) => pct_encode(set, w) = w,
+        Eq::sym(enc_clean_byte(set, b, t, e)),
+        Eq::trans(
+          enc_clean_byte(set, b, pct_encode(set, t), e),
+          Eq::congr((z: List(Nat)) => Cons(b, z), pct_encode_idem(set, s, t))
+        )
+      ),
+      (e: set(b) = true) => Eq::subst(
+        (w: List(Nat)) => pct_encode(set, w) = w,
+        Eq::sym(enc_set_byte(set, b, t, e)),
+        Eq::trans(
+          enc_clean_byte(
+            set,
+            37,
+            Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t))),
+            s.a
+          ),
+          Eq::congr(
+            (z: List(Nat)) => Cons(37, z),
+            Eq::trans(
+              enc_clean_byte(
+                set,
+                hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))),
+                Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)),
+                hex_not_in(set, s, Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)))
+              ),
+              Eq::congr(
+                (z: List(Nat)) => Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), z),
+                Eq::trans(
+                  enc_clean_byte(set, hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t), hex_not_in(set, s, b)),
+                  Eq::congr((z: List(Nat)) => Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), z), pct_encode_idem(set, s, t))
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+// ---- decoding -----------------------------------------------------------------------
+
+pub fn opt_is(o: Option(Nat), v: Nat): Bool {
+  match o: Bool {
+    None => false
+    Some(w) => Nat::eq(w, v)
+  }
+}
+
+pub theorem opt_is_sound(o: Option(Nat), v: Nat, h: opt_is(o, v) = true): o = Some(v) {
+  match o: (opt_is(o, v) = true) -> o = Some(v) {
+    None => (e: false = true) => False::elim(false_ne_true(e))
+    Some(w) => (e: Nat::eq(w, v) = true) => Eq::congr(Some, Nat::eq_sound(w, v, e))
+  }(h)
+}
+
+// The two digits written for a byte read back as the byte.
+pub theorem hex_pair_byte(
+  b: Nat,
+  hb: Nat::lt(b, 256) = true
+): hex_pair(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)))) = Some(b) {
+  opt_is_sound(
+    hex_pair(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)))),
+    b,
+    below_sound(
+      256,
+      (y: Nat) => opt_is(hex_pair(hex_digit(Nat::rem_nz(Nat::div_nz(y, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), hex_digit(Nat::rem_nz(y, 16, Nat::ne_zero(16, Refl)))), y),
+      b,
+      Refl,
+      hb
+    )
+  )
+}
+
+pub theorem not_percent(
+  set: (Nat) -> Bool,
+  b: Nat,
+  h37: set(37) = true,
+  hb: set(b) = false
+): Nat::eq(b, 37) = false {
+  Bool::cases(
+    (z: Bool) => z = false,
+    Nat::eq(b, 37),
+    (e: Nat::eq(b, 37) = false) => Refl,
+    (e: Nat::eq(b, 37) = true) => False::elim(
+      true_ne_false(
+        Eq::trans(Eq::sym(h37), Eq::subst((z: Nat) => set(z) = false, Nat::eq_sound(b, 37, e), hb))
+      )
+    )
+  )
+}
+
+pub theorem dec_plain(
+  b: Nat,
+  r: List(Nat),
+  e: Nat::eq(b, 37) = false
+): decode_from(Plain, Cons(b, r)) = Cons(b, decode_from(Plain, r)) {
+  Eq::subst(
+    (z: Bool) => (match z: List(Nat) {
+        true => decode_from(Percent, r)
+        false => Cons(b, decode_from(Plain, r))
+      }) = Cons(b, decode_from(Plain, r)),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+pub theorem dec_percent(
+  b: Nat,
+  r: List(Nat),
+  e: is_hex(b) = true
+): decode_from(Percent, Cons(b, r)) = decode_from(Digit(b), r) {
+  Eq::subst(
+    (z: Bool) => (match z: List(Nat) {
+        true => decode_from(Digit(b), r)
+        false => Cons(37, match Nat::eq(b, 37): List(Nat) {
+          true => decode_from(Percent, r)
+          false => Cons(b, decode_from(Plain, r))
+        })
+      }) = decode_from(Digit(b), r),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+pub theorem dec_digit(
+  h: Nat,
+  b: Nat,
+  r: List(Nat),
+  v: Nat,
+  e: hex_pair(h, b) = Some(v)
+): decode_from(Digit(h), Cons(b, r)) = Cons(v, decode_from(Plain, r)) {
+  Eq::subst(
+    (o: Option(Nat)) => (match o: List(Nat) {
+        Some(w) => Cons(w, decode_from(Plain, r))
+        None => Cons(37, Cons(h, match Nat::eq(b, 37): List(Nat) {
+          true => decode_from(Percent, r)
+          false => Cons(b, decode_from(Plain, r))
+        }))
+      }) = Cons(v, decode_from(Plain, r)),
+    Eq::sym(e),
+    Refl
+  )
+}
+
+pub theorem hex_digit_is_hex(d: Nat): is_hex(hex_digit(Nat::rem_nz(d, 16, Nat::ne_zero(16, Refl)))) = true {
+  below_sound(16, (y: Nat) => is_hex(hex_digit(y)), Nat::rem_nz(d, 16, Nat::ne_zero(16, Refl)), Refl, Nat::mod_lt(d, 16, Refl))
+}
+
+// Decoding undoes encoding with a set that holds `%`.
+pub theorem pct_decode_encode(
+  set: (Nat) -> Bool,
+  h37: set(37) = true,
+  x: List(Nat),
+  hx: all_bytes(is_byte, x) = true
+): pct_decode(pct_encode(set, x)) = x {
+  match x: pct_decode(pct_encode(set, x)) = x {
+    Nil => Refl
+    Cons(b, t) => Bool::cases(
+      (z: Bool) => pct_decode(pct_encode(set, Cons(b, t))) = Cons(b, t),
+      set(b),
+      (e: set(b) = false) => Eq::subst(
+        (w: List(Nat)) => pct_decode(w) = Cons(b, t),
+        Eq::sym(enc_clean_byte(set, b, t, e)),
+        Eq::trans(
+          dec_plain(b, pct_encode(set, t), not_percent(set, b, h37, e)),
+          Eq::congr(
+            (z: List(Nat)) => Cons(b, z),
+            pct_decode_encode(set, h37, t, all_bytes_tail(is_byte, b, t, hx))
+          )
+        )
+      ),
+      (e: set(b) = true) => Eq::subst(
+        (w: List(Nat)) => pct_decode(w) = Cons(b, t),
+        Eq::sym(enc_set_byte(set, b, t, e)),
+        Eq::trans(
+          dec_percent(
+            hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))),
+            Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)),
+            hex_digit_is_hex(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)))
+          ),
+          Eq::trans(
+            dec_digit(
+              hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))),
+              hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))),
+              pct_encode(set, t),
+              b,
+              hex_pair_byte(b, all_bytes_head(is_byte, b, t, hx))
+            ),
+            Eq::congr(
+              (z: List(Nat)) => Cons(b, z),
+              pct_decode_encode(set, h37, t, all_bytes_tail(is_byte, b, t, hx))
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+// ---- the sets of the standard ---------------------------------------------------------
+
+pub theorem fragment_stable(): Stable(fragment_set) { AndIntro(Refl, Refl) }
+pub theorem query_stable(): Stable(query_set) { AndIntro(Refl, Refl) }
+pub theorem special_query_stable(): Stable(special_query_set) { AndIntro(Refl, Refl) }
+pub theorem path_stable(): Stable(path_set) { AndIntro(Refl, Refl) }
+pub theorem userinfo_stable(): Stable(userinfo_set) { AndIntro(Refl, Refl) }
+pub theorem c0_control_stable(): Stable(c0_control_set) { AndIntro(Refl, Refl) }
+
+// The component set holds `%`: decoding undoes it on any bytes.
+pub theorem component_round(
+  x: List(Nat),
+  hx: all_bytes(is_byte, x) = true
+): pct_decode(pct_encode(component_set, x)) = x {
+  pct_decode_encode(component_set, Refl, x, hx)
+}

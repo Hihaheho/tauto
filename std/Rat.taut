@@ -1,0 +1,180 @@
+import "Int.taut"
+import "UInt.taut"
+
+// Rational numbers as the proofs see them: `num / (den + 1)`, so that no
+// denominator is zero. A number has many representations (`1/2` and `2/4`);
+// `Rat::eq` and `Rat::le` compare the numbers, `=` the
+// representations. `Rat::add` and `Rat::mul` give lowest terms, which keeps
+// the numbers small enough for the kernel to compute them at once. Every finite `Float` is one of these (`std/FloatReal.taut`).
+
+pub(open) inductive Rat: Type {
+  Mk(num: Int, den: Nat): Rat
+}
+
+module Rat {
+  pub fn num(x: Rat): Int {
+    match x: Int {
+      Mk(n, d) => n
+    }
+  }
+
+  // The denominator itself, at least 1.
+  pub fn den(x: Rat): Nat {
+    match x: Nat {
+      Mk(n, d) => Succ(d)
+    }
+  }
+
+  pub fn of_int(n: Int): Rat {
+    Rat::Mk(n, 0)
+  }
+
+  pub fn of_nat(n: Nat): Rat {
+    Rat::Mk(IntOfNat(n), 0)
+  }
+
+  // `n / d` for a denominator `d` that is not zero: `frac(n, d)` is `n / (d + 1)`.
+  pub fn frac(n: Int, d: Nat): Rat {
+    Rat::Mk(n, d)
+  }
+
+  // The greatest common divisor, by Euclid's steps counted down from `fuel`.
+  pub fn gcd(fuel: Nat, a: Nat, b: Nat): Nat {
+    match fuel: Nat {
+      Zero => a
+      Succ(j) => match Nat::eq(b, 0) eqn h: Nat {
+        true => a
+        false => gcd(j, b, Nat::rem_nz(a, b, Nat::ne_zero(b, h)))
+      }
+    }
+  }
+
+  // `n / d` in lowest terms, for `d > 0`. 400 steps reduce every pair below
+  // `2^256`; past that `g` may not divide both, and `n / d` is kept as it is, a
+  // correct but larger representation. A `g` of 0 (only when `n` and `d` are 0)
+  // keeps `n / d` too.
+  pub fn reduce(n: Int, d: Nat): Rat {
+    match Nat::eq(gcd(400, d, Int::abs_nat(n)), 0) eqn hg: Rat {
+      true => Rat::Mk(n, d - 1)
+      false => reduce_by(n, d, gcd(400, d, Int::abs_nat(n)), Nat::ne_zero(gcd(400, d, Int::abs_nat(n)), hg))
+    }
+  }
+
+  pub fn reduce_by(n: Int, d: Nat, g: Nat, hg: ¬(g = 0)): Rat {
+    pick_by(
+      divides(n, d, g, hg),
+      Rat::Mk(n, d - 1),
+      Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(d, g, hg) - 1)
+    )
+  }
+
+  // `g` divides both `d` and `n`.
+  pub fn divides(n: Int, d: Nat, g: Nat, hg: ¬(g = 0)): Bool {
+    Nat::eq(Nat::rem_nz(d, g, hg), 0) && Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0)
+  }
+
+  // `c` when `o`, else `x`.
+  pub fn pick_by(o: Bool, x: Rat, c: Rat): Rat {
+    match o: Rat {
+      false => x
+      true => c
+    }
+  }
+
+  pub fn neg(x: Rat): Rat {
+    Rat::Mk(Int::neg(num(x)), den(x) - 1)
+  }
+
+  pub fn add(x: Rat, y: Rat): Rat {
+    reduce(
+      Int::add(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x)))),
+      Nat::mul(den(x), den(y))
+    )
+  }
+
+  pub fn sub(x: Rat, y: Rat): Rat {
+    add(x, neg(y))
+  }
+
+  pub fn mul(x: Rat, y: Rat): Rat {
+    reduce(Int::mul(num(x), num(y)), Nat::mul(den(x), den(y)))
+  }
+
+  pub fn is_zero(x: Rat): Bool {
+    Int::eq(num(x), 0)
+  }
+
+  // `1 / x` of an `x` that is not zero.
+  pub fn inv(x: Rat, h: is_zero(x) = false): Rat {
+    match num(x): Rat {
+      IntOfNat(n) => Rat::Mk(IntOfNat(den(x)), n - 1)
+      IntNegSucc(n) => Rat::Mk(Int::neg(IntOfNat(den(x))), n)
+    }
+  }
+
+  pub fn div(x: Rat, y: Rat, h: is_zero(y) = false): Rat {
+    mul(x, inv(y, h))
+  }
+
+  pub fn eq(x: Rat, y: Rat): Bool {
+    Int::eq(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))))
+  }
+
+  pub fn lt(x: Rat, y: Rat): Bool {
+    Int::lt(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))))
+  }
+
+  pub fn le(x: Rat, y: Rat): Bool {
+    Int::le(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))))
+  }
+
+  pub fn abs(x: Rat): Rat {
+    match num(x): Rat {
+      IntOfNat(n) => x
+      IntNegSucc(n) => neg(x)
+    }
+  }
+
+  // `|x - y|`.
+  pub fn dist(x: Rat, y: Rat): Rat {
+    abs(sub(x, y))
+  }
+
+  // `2^k` and `2^-k`.
+  pub fn pow2(k: Nat): Rat {
+    of_nat(Nat::pow2(k))
+  }
+
+  pub fn pow2_neg(k: Nat): Rat {
+    Rat::Mk(1, Nat::pow2(k) - 1)
+  }
+
+  pub theorem examples(): eq(
+    add(frac(1, 1), frac(1, 2)),
+    frac(5, 5)
+  ) = true {
+    Refl
+  }
+
+  pub theorem lt_example(): lt(neg(pow2_neg(3)), of_nat(0)) = true {
+    Refl
+  }
+}
+
+module Int {
+  // `|n|`.
+  pub fn abs_nat(n: Int): Nat {
+    match n: Nat {
+      IntOfNat(k) => k
+      IntNegSucc(k) => Succ(k)
+    }
+  }
+
+  // `n / g` of a multiple `n` of `g`.
+  pub fn div_nat(n: Int, g: Nat, hg: ¬(g = 0)): Int {
+    match n: Int {
+      IntOfNat(k) => IntOfNat(Nat::div_nz(k, g, hg))
+      IntNegSucc(k) => neg(IntOfNat(Nat::div_nz(Succ(k), g, hg)))
+    }
+  }
+}

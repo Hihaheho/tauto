@@ -1,0 +1,188 @@
+import "data_shape_sound.taut"
+import "run_prepared_data_fact.taut"
+import "../../surface/src/surface.taut"
+
+pub fn DataStmtViewShape(stmt: SurfaceStmt): Prop {
+  match stmt: Prop {
+    StLet(name, ty, value, borrow, mutable) => True
+    StVar(name, ty, value, borrow) => True
+    StModule(name, stmts, start, end) => True
+    StAssign(name, name_place, value) => True
+    StCalled(name_generates, value) => True
+    StFn(f) => True
+    StTheorem(t) => True
+    StDef(t) => True
+    StMutual(stmts, start, end) => True
+    StImport(path, start, end) => True
+    StInductive(i) => True
+    StEffect(e) => True
+    StExtern(abi, fns, start, end) => True
+    StClass(klass) => True
+    StInstance(i) => True
+    StWhile(cond, body) => True
+    StReturn(value) => True
+    StExpr(value) => True
+    StOther(what, start, end) => True
+    StMacro(name, function, start, end) => True
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => True
+    StSyntax(name, grammar, start, end) => True
+    StStruct(d) => DataViewShape(surface_data_is_view(d), true, registration_ctors(d))
+    StEnum(d) => DataViewShape(surface_data_is_view(d), false, registration_ctors(d))
+  }
+}
+pub(open) inductive ProgramViewShapes: (List(SurfaceStmt)) -> Prop {
+  ProgramViewShapesNil: ProgramViewShapes(Nil)
+  ProgramViewShapesCons(
+    stmt: SurfaceStmt,
+    rest: List(SurfaceStmt),
+    head: DataStmtViewShape(stmt),
+    tail: ProgramViewShapes(rest)
+  ): ProgramViewShapes(Cons(stmt, rest))
+}
+pub theorem ck_program_data_one_view_shape(
+  stmt: SurfaceStmt,
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_program_data_one(c, stmt)))
+): DataStmtViewShape(Stmt) {
+  match Stmt: DataStmtViewShape(Stmt) {
+    StLet(name, ty, value, borrow, mutable) => Trivial
+    StVar(name, ty, value, borrow) => Trivial
+    StModule(name, stmts, start, end) => Trivial
+    StAssign(name, name_place, value) => Trivial
+    StCalled(name_generates, value) => Trivial
+    StFn(f) => Trivial
+    StTheorem(t) => Trivial
+    StDef(t) => Trivial
+    StMutual(stmts, start, end) => Trivial
+    StImport(path, start, end) => Trivial
+    StInductive(i) => Trivial
+    StEffect(e) => Trivial
+    StExtern(abi, fns, start, end) => Trivial
+    StClass(klass) => Trivial
+    StInstance(i) => Trivial
+    StWhile(cond, body) => Trivial
+    StReturn(value) => Trivial
+    StExpr(value) => Trivial
+    StOther(what, start, end) => Trivial
+    StMacro(name, function, start, end) => Trivial
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => Trivial
+    StSyntax(name, grammar, start, end) => Trivial
+    StStruct(d) => ck_declare_data_view_shape(
+      c,
+      d,
+      true,
+      false,
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        Eq::trans(
+          registration_program_StStruct_unf(d, c),
+          ck_rewrap1_id(ck_declare_data(c, d, true, false))
+        ),
+        clean
+      )
+    )
+    StEnum(d) => ck_declare_data_view_shape(
+      c,
+      d,
+      false,
+      false,
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        Eq::trans(
+          registration_program_StEnum_unf(d, c),
+          ck_rewrap1_id(ck_declare_data(c, d, false, false))
+        ),
+        clean
+      )
+    )
+  }
+}
+pub theorem program_view_tail<P: Prop>(
+  rest: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  ih: ∀ next: Checker. ∀ clean: DiagnosticClean(ck_st(ck_program_data(rest, next))). P,
+  clean: DiagnosticClean(ck_st(body_program_after(rest, m)))
+): P {
+  match m: P {
+    mut1(ignored, next) => ih(next, recheck_clean_unwrap(ck_program_data(rest, next), clean))
+  }
+}
+pub theorem ck_program_data_view_shapes(
+  stmts: List(SurfaceStmt),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_program_data(stmts, c)))
+): ProgramViewShapes(stmts) {
+  match stmts: ProgramViewShapes(stmts) {
+    Nil => ProgramViewShapesNil
+    Cons(Stmt, rest) => {
+      let accepted: DiagnosticClean(
+        ck_st(body_program_after(rest, ck_program_data_one(c, Stmt)))
+      ) := Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        registration_program_unf(Stmt, rest, c),
+        clean
+      )
+      ProgramViewShapesCons(
+        Stmt,
+        rest,
+        ck_program_data_one_view_shape(
+          Stmt,
+          c,
+          body_prefix_clean(rest, ck_program_data_one(c, Stmt), accepted)
+        ),
+        program_view_tail(
+          ProgramViewShapes(rest),
+          rest,
+          ck_program_data_one(c, Stmt),
+          next => next_clean => ck_program_data_view_shapes(rest, next, next_clean),
+          accepted
+        )
+      )
+    }
+  }
+}
+pub theorem program_view_after(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
+): ProgramViewShapes(program) {
+  match m: ProgramViewShapes(program) {
+    mut1(ignored, next) => ck_program_data_view_shapes(
+      program,
+      next,
+      body_finish_after_clean(program, ck_program_data(program, next), clean)
+    )
+  }
+}
+pub theorem ck_prepare_datas_view_shapes(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  own: Ordmap(Text, Bool),
+  clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
+): ProgramViewShapes(program) {
+  program_view_after(
+    program,
+    ck_prelude_data(prelude, c, own),
+    Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+      registration_prepare_unf(c, prelude, program, own),
+      clean
+    )
+  )
+}
+pub theorem types_check_view_shapes(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): ProgramViewShapes(program) {
+  types_check_prepared_data_fact(
+    ProgramViewShapes(program),
+    prelude,
+    program,
+    errors,
+    clean,
+    c => own => accepted => ck_prepare_datas_view_shapes(c, prelude, program, own, accepted)
+  )
+}

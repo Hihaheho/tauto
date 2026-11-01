@@ -1,0 +1,54 @@
+import "argument_frame.taut"
+import "expr_checks_error_sound.taut"
+
+pub theorem argument_lambda_cons_frame_errors(
+  p: Text,
+  rest: List(Text),
+  c: Checker,
+  borrows: List(Option(Bool)),
+  ih: ∀ next: Checker. CkErrorFrame(next, ck_lambda_params(rest, next, List::tail(borrows)))
+): CkErrorFrame(c, argument_lambda_cons(p, rest, c, borrows)) {
+  error_frame_bind(
+    Ty,
+    List(Ty),
+    c,
+    (t: Ty, c1: Checker) => frame_bind(
+      List(Ty),
+      List(Ty),
+      (tl: List(Ty), c2: Checker) => mut1(Cons(field_under(t, list_head_or_none(borrows)), tl), c2),
+      ck_lambda_params(rest, c1, List::tail(borrows))
+    ),
+    ck_fresh(c),
+    ck_fresh_frame_errors(c),
+    t => c1 => error_frame_bind(
+      List(Ty),
+      List(Ty),
+      c1,
+      (tl: List(Ty), c2: Checker) => mut1(Cons(field_under(t, list_head_or_none(borrows)), tl), c2),
+      ck_lambda_params(rest, c1, List::tail(borrows)),
+      ih(c1),
+      tl => c2 => (clean_errors => clean_errors)
+    )
+  )
+}
+
+pub theorem ck_lambda_params_frame_errors(
+  ps: List(Text),
+  c: Checker,
+  borrows: List(Option(Bool))
+): CkErrorFrame(c, ck_lambda_params(ps, c, borrows)) {
+  match ps: CkErrorFrame(c, ck_lambda_params(ps, c, borrows)) {
+    Nil => (clean_errors => clean_errors)
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
+      Eq::sym(argument_lambda_cons_unf(p, rest, c, borrows)),
+      argument_lambda_cons_frame_errors(
+        p,
+        rest,
+        c,
+        borrows,
+        next => ck_lambda_params_frame_errors(rest, next, List::tail(borrows))
+      )
+    )
+  }
+}

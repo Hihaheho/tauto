@@ -1,0 +1,225 @@
+// General properties of the index core and the lemmas they need.
+
+import "../src/engine.taut"
+
+pub theorem ix_and_left(
+  left: Bool,
+  right: Bool,
+  accepted: Bool::and(left, right) = true
+): left = true { And::left(Bool::and_split(left, right, accepted)) }
+
+pub theorem ix_and_right(
+  left: Bool,
+  right: Bool,
+  accepted: Bool::and(left, right) = true
+): right = true { And::right(Bool::and_split(left, right, accepted)) }
+
+pub fn ix_option_or<A>(value: Option(A), fallback: A): A {
+  match value: A {
+    None => fallback
+    Some(item) => item
+  }
+}
+
+pub theorem ix_some_injective<A>(
+  left: A,
+  right: A,
+  equality: Some(left) = Some(right)
+): left = right { Eq::congr((value: Option(A)) => ix_option_or(value, left), equality) }
+
+pub theorem ix_none_ne_some<A>(
+  value: A,
+  equality: None = Some(value)
+): False { match equality: False { } }
+
+pub theorem ix_gate_sound<A>(
+  allowed: Bool,
+  result: Option(A),
+  output: A,
+  accepted: ix_gate(allowed, result) = Some(output)
+): And(allowed = true, result = Some(output)) {
+  match allowed: And(allowed = true, result = Some(output)) {
+    false => False::elim(ix_none_ne_some(output, accepted))
+    true => AndIntro(Refl, accepted)
+  }
+}
+
+pub theorem ix_state_option_subst(
+  predicate: (Option(IxState)) -> Prop,
+  left: Option(IxState),
+  right: Option(IxState),
+  equality: left = right,
+  proof: predicate(left)
+): predicate(right) {
+  Eq::subst(predicate, equality, proof)
+}
+
+pub theorem ix_batch_atomic(
+  state: IxState,
+  batch: IxBatch,
+  rejected: ix_step(state, batch) = None
+): ix_commit(state, batch) = state {
+  ix_state_option_subst((result: Option(IxState)) => match result: IxState {
+      None => state
+      Some(next) => next
+    } = state, None, ix_step(state, batch), Eq::sym(rejected), Refl)
+}
+
+pub theorem ix_source_bound(
+  observers: List(IxTrust),
+  witnesses: List(IxWitness),
+  limits: IxLimits,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  key: IxKey,
+  expected: Nat,
+  actual: Nat,
+  accepted: ix_usable(
+      observers,
+      witnesses,
+      limits,
+      states,
+      origins,
+      local_receipts,
+      now,
+      key,
+      expected,
+      actual
+    ) = true
+): expected = actual {
+  Nat::eq_sound(
+    expected,
+    actual,
+    ix_and_right(
+      ix_eligible(
+        observers,
+        witnesses,
+        limits,
+        states,
+        origins,
+        local_receipts,
+        now,
+        key,
+        expected
+      ),
+      Nat::eq(expected, actual),
+      accepted
+    )
+  )
+}
+
+pub theorem ix_bool_subst(
+  predicate: (Bool) -> Prop,
+  left: Bool,
+  right: Bool,
+  equality: left = right,
+  proof: predicate(left)
+): predicate(right) { Eq::subst(predicate, equality, proof) }
+
+pub theorem ix_clock_monotone(
+  previous_now: Nat,
+  observers: List(IxTrust),
+  witnesses: List(IxWitness),
+  limits: IxLimits,
+  states: List(IxState),
+  origins: List(IxOrigin),
+  local_receipts: List(IxReceipt),
+  now: Nat,
+  key: IxKey,
+  digest: Nat,
+  accepted: ix_evaluate(
+      previous_now,
+      observers,
+      witnesses,
+      limits,
+      states,
+      origins,
+      local_receipts,
+      now,
+      key,
+      digest
+    ) = true
+): Nat::le(previous_now, now) = true {
+  ix_and_left(
+    Nat::le(previous_now, now),
+    ix_eligible(observers, witnesses, limits, states, origins, local_receipts, now, key, digest),
+    accepted
+  )
+}
+
+pub theorem ix_and_no_right(left: Bool): Bool::and(left, false) = false {
+  match left: Bool::and(left, false) = false {
+    false => Refl
+    true => Refl
+  }
+}
+
+pub theorem ix_reobserve_rejected(
+  state: IxState,
+  key: IxKey,
+  digest: Nat,
+  first: Nat,
+  known: ix_observed(key, state) = true
+): ix_event_allowed(state, IxObserve(key, digest, first)) = false {
+  ix_bool_subst(
+    (observed: Bool) => Bool::and(
+        not(ix_state_retired(state)),
+        Bool::and(not(observed), Nat::le(first, ix_state_issued(state)))
+      ) = false,
+    true,
+    ix_observed(key, state),
+    Eq::sym(known),
+    ix_and_no_right(not(ix_state_retired(state)))
+  )
+}
+
+pub theorem ix_receipt_ignores_backdating(
+  trust: IxTrust,
+  state: IxState,
+  key: IxKey,
+  digest: Nat,
+  first: Nat,
+  backdated: Nat,
+  born: Nat,
+  now: Nat,
+  age: Nat,
+  receipt: IxReceipt
+): ix_receipt_ready(trust, state, IxObservation::Mk(key, digest, first, born), now, age, receipt) = ix_receipt_ready(trust, state, IxObservation::Mk(key, digest, backdated, born), now, age, receipt) {
+  Refl
+}
+
+pub theorem ix_frozen_final(
+  prefix: IxState,
+  batch: IxBatch
+): ix_ingest_grounded(IxFrozen(prefix), batch) = IxFrozen(prefix) { Refl }
+
+pub theorem ix_pin_source_fixed(
+  trust: IxTrust,
+  state: IxState,
+  origins: List(IxOrigin),
+  next: IxTrust,
+  accepted: ix_advance_pin(trust, state, origins) = Some(next)
+): And(
+  ix_trust_index(trust) = ix_trust_index(next),
+  ix_trust_source(trust) = ix_trust_source(next)
+) {
+  let checked: And(
+    ix_pin_allowed(trust, state, origins) = true,
+    Some(IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state))) = Some(next)
+  ) :=
+  ix_gate_sound(
+    ix_pin_allowed(trust, state, origins),
+    Some(IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state))),
+    next,
+    accepted
+  )
+  let equality: IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state)) = next :=
+  ix_some_injective(
+    IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state)),
+    next,
+    And::right(checked)
+  )
+  AndIntro(Eq::congr(ix_trust_index, equality), Eq::congr(ix_trust_source, equality))
+}

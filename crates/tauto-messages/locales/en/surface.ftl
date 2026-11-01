@@ -1,0 +1,59 @@
+# The messages of reading a program (tauto-surface): syntax declarations,
+# modules, visibility, effect sets and quotes. `macro.…` codes stay as they are.
+
+surface-tables-missing = the tables of this syntax are missing (grammar { $grammar }…); run `tauto syntax gen`
+surface-tables-of-another-grammar = { $path } holds the tables of another grammar; run `tauto syntax gen`
+surface-grammar-not-par = the grammar of syntax { $name } is a block named par
+surface-syntax-declared-twice = syntax { $name } is declared twice
+surface-syntax-error = syntax { $name }: { $error }
+surface-syntax-generates-mismatch = syntax { $name }: the list of what it makes does not match what it made
+surface-made-not-listed = { $before }; made but not listed: { $items }
+surface-listed-not-made = { $before }; listed but not made: { $items }
+surface-syntax-with-role = syntax { $name }: `with` registers `fmt` and `tokens`, not `{ $role }`
+surface-syntax-registered-twice = syntax { $name }: `{ $role }` is registered twice
+surface-not-a-syntax = `{ $name }` is not a syntax
+surface-literal-needs-name = a syntax literal needs the syntax's name, as in name`…`; write plaintext`…` for text
+surface-expr-no-inductive = `${"{"}…{"}"}` has no inductive form (its terminal makes a SynExpr)
+surface-effect-set-generic = the effect set { $name } has type parameters; a set of effects takes none yet
+surface-effect-set-names-itself = the effect set { $name } names itself: { $path } -> { $name }
+surface-module-collides-with-class = module { $name } collides with class { $name }
+surface-module-declared-twice = module { $name } is declared twice
+surface-dot-names-a-declaration = `.` takes a field; write the name of a declaration with `::`: `{ $name }`
+surface-name-of-a-module = { $name } is the name of a module
+surface-block-indent = macro.block_indent: this line is indented { $lead }, the closing fence { $indent }
+surface-extern-rust-path = write extern {"{"} … {"}"}; the rust path goes in Tauto.eure
+surface-expected-one-expression = expected one expression
+surface-pub-before-statement = { $what }: `pub` and `pub(open)` are written before `fn`, `theorem`, `axiom`, `def`, `inductive`, `struct`, `enum`, `effect` and `class`; `syntax`, `macro` and the other statements are seen from every file
+surface-the-file = the file `{ $file }`
+surface-the-prelude = the prelude
+surface-names-and = { $before } and { $name }
+surface-ambiguous = `{ $name }` is ambiguous: it is declared as { $names }; write the full name
+surface-ambiguous-prelude = `{ $name }` is ambiguous: it is declared as { $names }; write the full name, or import the file that declares the one meant
+surface-ambiguous-constructor = `{ $name }` is ambiguous: it is a constructor of more than one type ({ $names }), and the type wanted here does not say which; write it with its type, `T.{ $name }`
+surface-private = `{ $name }` is private to { $file }; write `pub` before its declaration there to use it from another file
+surface-sealed-constructor = `{ $name }` is a constructor of `{ $ty }`, which { $file } declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public
+surface-sealed-field = `{ $field }` is a field of `{ $ty }`, which { $file } declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public
+surface-sealed-effect = `{ $name }` is an effect { $file } declares without `pub(open)`: only that file may handle it; perform it here, and leave its answer to the handler that file writes
+surface-sealed-extern = `{ $name }` is an extern of the tote { $tote }, which only { $tote } may call; call a function { $tote } writes around it
+surface-not-a-constructor-of = `{ $name }` is not a constructor of `{ $ty }`, the type of the matched value; it is declared as { $names }
+surface-quote-spread-expr = `{ $name }` puts in the values of a list, and is written only where a list goes (the arguments of a call, the parameters of a λ, the arguments of a constructor's pattern, statements)
+surface-quote-spread-pattern = `{ $name }` puts in the values of a list, and is written only where a list goes (the arguments of a constructor's pattern)
+surface-quote-splice-outside = $ is written only inside quote
+surface-quote-float = the Float literal { $literal } is not supported in a macro's syntax tree
+surface-quote-in-quote = a quote is not written inside a quote
+surface-quote-syntax-literal = a syntax literal is not written inside a quote; call a macro
+surface-quote-step = a step cannot be written in a quote
+surface-quote-row = an effect row argument cannot be written in a quote
+surface-quote-product = a product cannot be written in a quote yet
+surface-quote-other = { $what } cannot be written in a quote yet
+surface-quote-field-assign = a macro cannot take an assignment to a field (`x.f := v`) yet
+surface-quote-statement = this statement cannot be written in a quote
+surface-quote-pattern = pattern { $what } cannot be written in a quote
+surface-scope-extrusion = macro.scope_extrusion: the atom { $atom } is used outside the binder it was opened by
+surface-bare-kind = the kind `{ $kind }` is written `{ $written }`
+surface-old-effect-operation = an effect operation is written `effect ask(question: Text): i64`, with its parameters in parentheses before the result
+surface-row-variables = a row has at most one row variable
+surface-row-repeats-effect = the effect `{ $name }` is written twice in one set literal
+surface-raw-underscore = `r#_` is not a name: `_` is not written as a raw name
+surface-syntax-macro-shape = `{ $macro }` takes a name, a grammar block and, when it registers functions, `with(fmt: f, tokens: g)`
+surface-match-scrutinee-ascription = a `match` scrutinee with a type, `match (e: T): G`, is not read; bind it first with `let x: T := e`

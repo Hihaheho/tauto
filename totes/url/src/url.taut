@@ -1,0 +1,206 @@
+import "percent.taut"
+import std::Text
+
+// A URL record and its serialization (URL Standard, "URL serializing").
+
+pub(open) inductive Authority: Type {
+  // `user:pass@host:port`; the empty user and password are left out, and so is
+  // a port that is the scheme's default.
+  Auth(user: List(Nat), pass: List(Nat), host: List(Nat), port: Option(Nat)): Authority
+}
+
+pub(open) inductive UrlPath: Type {
+  // `mailto:a@b`: the path of a URL without authority that does not start
+  // with `/`.
+  Opaque(p: List(Nat)): UrlPath
+  // `/a/b/` is `["a", "b", ""]`.
+  Segments(ss: List(List(Nat))): UrlPath
+}
+
+pub(open) inductive Url: Type {
+  MkUrl(
+    scheme: List(Nat),
+    auth: Option(Authority),
+    path: UrlPath,
+    query: Option(List(Nat)),
+    fragment: Option(List(Nat))
+  ): Url
+}
+
+// ---- schemes --------------------------------------------------------------------
+
+pub(open) inductive SchemeKind: Type {
+  // A special scheme and its default port.
+  Special(default_port: Nat): SchemeKind
+  File: SchemeKind
+  NotSpecial: SchemeKind
+}
+
+pub fn scheme_kind(s: List(Nat)): SchemeKind {
+  match bytes_eq(s, Text::bytes("http")): SchemeKind {
+    true => Special(80)
+    false => match bytes_eq(s, Text::bytes("https")): SchemeKind {
+      true => Special(443)
+      false => match bytes_eq(s, Text::bytes("ws")): SchemeKind {
+        true => Special(80)
+        false => match bytes_eq(s, Text::bytes("wss")): SchemeKind {
+          true => Special(443)
+          false => match bytes_eq(s, Text::bytes("ftp")): SchemeKind {
+            true => Special(21)
+            false => match bytes_eq(s, Text::bytes("file")): SchemeKind {
+              true => File
+              false => NotSpecial
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn is_special(s: List(Nat)): Bool {
+  match scheme_kind(s): Bool {
+    Special(d) => true
+    File => true
+    NotSpecial => false
+  }
+}
+
+// A lower-case letter, a digit, `+`, `-` or `.`.
+pub fn scheme_byte(b: Nat): Bool {
+  Bool::or(is_lower(b), Bool::or(is_digit(b), Bool::or(Nat::eq(b, 43), Bool::or(Nat::eq(b, 45), Nat::eq(b, 46)))))
+}
+
+// A scheme as the parser leaves it: a lower-case letter, then scheme bytes.
+pub fn scheme_ok(s: List(Nat)): Bool {
+  match s: Bool {
+    Nil => false
+    Cons(b, t) => Bool::and(is_lower(b), all_bytes(scheme_byte, t))
+  }
+}
+
+pub fn query_set_of(s: List(Nat)): (Nat) -> Bool {
+  match is_special(s): (Nat) -> Bool {
+    true => special_query_set
+    false => query_set
+  }
+}
+
+// ---- ports ----------------------------------------------------------------------
+
+// The decimal digits of `n`, with `fuel` digits at most.
+pub fn decimal(fuel: Nat, n: Nat): List(Nat) {
+  match fuel: List(Nat) {
+    Zero => Nil
+    Succ(k) => match Nat::lt(n, 10): List(Nat) {
+      true => Cons(Nat::add(n, 48), Nil)
+      false => List::append(decimal(k, Nat::div_nz(n, 10, Nat::ne_zero(10, Refl))), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), Nil))
+    }
+  }
+}
+
+// A port is below 65536: five digits.
+pub fn port_text(n: Nat): List(Nat) {
+  decimal(5, n)
+}
+
+// The value of decimal digits, read after `acc`.
+pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
+  match l: Option(Nat) {
+    Nil => Some(acc)
+    Cons(b, t) => match is_digit(b): Option(Nat) {
+      true => digits_value(Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), t)
+      false => None
+    }
+  }
+}
+
+// ---- serializing ----------------------------------------------------------------
+
+pub fn opt_bytes(c: Nat, o: Option(List(Nat))): List(Nat) {
+  match o: List(Nat) {
+    None => Nil
+    Some(x) => Cons(c, x)
+  }
+}
+
+pub fn port_part(o: Option(Nat)): List(Nat) {
+  match o: List(Nat) {
+    None => Nil
+    Some(n) => Cons(58, port_text(n))
+  }
+}
+
+pub fn pass_part(pass: List(Nat)): List(Nat) {
+  match pass: List(Nat) {
+    Nil => Nil
+    Cons(b, t) => Cons(58, pass)
+  }
+}
+
+// `user:pass@`, or nothing when both are empty.
+pub fn cred_part(user: List(Nat), pass: List(Nat)): List(Nat) {
+  match Bool::and(is_empty(user), is_empty(pass)): List(Nat) {
+    true => Nil
+    false => List::append(user, List::append(pass_part(pass), Cons(64, Nil)))
+  }
+}
+
+pub fn auth_part(a: Authority): List(Nat) {
+  match a: List(Nat) {
+    Auth(user, pass, host, port) => List::append(cred_part(user, pass), List::append(host, port_part(port)))
+  }
+}
+
+// `/a/b` for `["a", "b"]`.
+pub fn segments_part(ss: List(List(Nat))): List(Nat) {
+  match ss: List(Nat) {
+    Nil => Nil
+    Cons(s, rest) => Cons(47, join(47, ss))
+  }
+}
+
+// Without an authority, a path whose first segment is empty would read as
+// one: `/.` goes before it.
+pub fn dot_prefix(ss: List(List(Nat))): List(Nat) {
+  match ss: List(Nat) {
+    Nil => Nil
+    Cons(s, rest) => match is_empty(s): List(Nat) {
+      false => Nil
+      true => match rest: List(Nat) {
+        Nil => Nil
+        Cons(s2, more) => Cons(47, Cons(46, Nil))
+      }
+    }
+  }
+}
+
+pub fn path_part(has_auth: Bool, p: UrlPath): List(Nat) {
+  match p: List(Nat) {
+    Opaque(o) => o
+    Segments(ss) => match has_auth: List(Nat) {
+      true => segments_part(ss)
+      false => List::append(dot_prefix(ss), segments_part(ss))
+    }
+  }
+}
+
+pub fn hier_part(a: Option(Authority), p: UrlPath): List(Nat) {
+  match a: List(Nat) {
+    None => path_part(false, p)
+    Some(x) => Cons(47, Cons(47, List::append(auth_part(x), path_part(true, p))))
+  }
+}
+
+pub fn serialize(u: Url): List(Nat) {
+  match u: List(Nat) {
+    MkUrl(scheme, auth, path, query, fragment) => List::append(
+      scheme,
+      Cons(58, List::append(hier_part(auth, path), List::append(opt_bytes(63, query), opt_bytes(35, fragment))))
+    )
+  }
+}
+
+pub fn url_text(u: Url): Text {
+  Text::Mk(serialize(u))
+}

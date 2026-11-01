@@ -1,0 +1,241 @@
+import "rules_signature_generics.taut"
+
+pub fn signature_bound_value(bound: Option(Option(Text))): Option(Kind) {
+  match bound: Option(Kind) {
+    None => Some(KindAffine)
+    Some(annotation) => match annotation: Option(Kind) {
+      None => Some(KindAffine)
+      Some(spelling) => kind_parse(spelling)
+    }
+  }
+}
+pub fn signature_bound_ctor(bound: Option(Option(Text))): Option(Pair(Kind, Kind)) {
+  match bound: Option(Pair(Kind, Kind)) {
+    None => None
+    Some(annotation) => match annotation: Option(Pair(Kind, Kind)) {
+      None => None
+      Some(spelling) => kind_parse_ctor(spelling)
+    }
+  }
+}
+pub theorem signature_bound_sound(
+  bound: Option(Option(Text))
+): SignatureGenericBound(bound, signature_bound_ctor(bound), signature_bound_value(bound)) {
+  match bound: SignatureGenericBound(
+    bound,
+    signature_bound_ctor(bound),
+    signature_bound_value(bound)
+  ) {
+    None => SignatureBoundMissing
+    Some(annotation) => match annotation: SignatureGenericBound(
+      Some(annotation),
+      signature_bound_ctor(Some(annotation)),
+      signature_bound_value(Some(annotation))
+    ) {
+      None => SignatureBoundDefault
+      Some(spelling) => SignatureBoundWritten(spelling)
+    }
+  }
+}
+pub fn signature_generic_value_step(
+  name: Text,
+  rest: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat,
+  acc: SigGenerics,
+  kind: Option(Kind)
+): SigGenerics {
+  match kind: SigGenerics {
+    None => sig_generics(rest, bounds, Nat::add(index, 1), acc)
+    Some(k) => sig_generics(rest, bounds, Nat::add(index, 1), signature_bind_value(name, k, acc))
+  }
+}
+pub fn signature_generic_step(
+  name: Text,
+  rest: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat,
+  acc: SigGenerics,
+  ctor: Option(Pair(Kind, Kind))
+): SigGenerics {
+  match ctor: SigGenerics {
+    None => signature_generic_value_step(name, rest, bounds, index, acc, ck_bound_of(bounds, index))
+    Some(kinds) => sig_generics(
+      rest,
+      bounds,
+      Nat::add(index, 1),
+      signature_bind_constructor(name, kinds.fst, kinds.snd, acc)
+    )
+  }
+}
+pub def SignatureGenericTail(
+  rest: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat
+): Prop := ∀ acc: SigGenerics. SignatureGenerics(
+  rest,
+  bounds,
+  Nat::add(index, 1),
+  acc,
+  sig_generics(rest, bounds, Nat::add(index, 1), acc)
+)
+pub theorem signature_generic_value_step_sound(
+  name: Text,
+  rest: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat,
+  acc: SigGenerics,
+  kind: Option(Kind),
+  bound: SignatureGenericBound(nth_item(bounds, index), None, kind),
+  ih: SignatureGenericTail(rest, bounds, index)
+): SignatureGenerics(
+  Cons(name, rest),
+  bounds,
+  index,
+  acc,
+  signature_generic_value_step(name, rest, bounds, index, acc, kind)
+) {
+  match kind: SignatureGenerics(
+    Cons(name, rest),
+    bounds,
+    index,
+    acc,
+    signature_generic_value_step(name, rest, bounds, index, acc, kind)
+  ) {
+    None => SignatureGenericsRow(
+      name,
+      rest,
+      bounds,
+      index,
+      acc,
+      sig_generics(rest, bounds, Nat::add(index, 1), acc),
+      bound,
+      ih(acc)
+    )
+    Some(k) => SignatureGenericsValue(
+      name,
+      rest,
+      bounds,
+      index,
+      acc,
+      sig_generics(rest, bounds, Nat::add(index, 1), signature_bind_value(name, k, acc)),
+      k,
+      bound,
+      ih(signature_bind_value(name, k, acc))
+    )
+  }
+}
+pub theorem signature_generic_ctor_step_sound(
+  name: Text,
+  rest: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat,
+  acc: SigGenerics,
+  kinds: Pair(Kind, Kind),
+  bound: SignatureGenericBound(nth_item(bounds, index), Some(kinds), ck_bound_of(bounds, index)),
+  ih: SignatureGenericTail(rest, bounds, index)
+): SignatureGenerics(
+  Cons(name, rest),
+  bounds,
+  index,
+  acc,
+  signature_generic_step(name, rest, bounds, index, acc, Some(kinds))
+) {
+  match kinds: SignatureGenerics(
+    Cons(name, rest),
+    bounds,
+    index,
+    acc,
+    signature_generic_step(name, rest, bounds, index, acc, Some(kinds))
+  ) {
+    Pair { fst: argument, snd: result } => SignatureGenericsConstructor(
+      name,
+      rest,
+      bounds,
+      index,
+      acc,
+      sig_generics(
+        rest,
+        bounds,
+        Nat::add(index, 1),
+        signature_bind_constructor(name, argument, result, acc)
+      ),
+      argument,
+      result,
+      ck_bound_of(bounds, index),
+      bound,
+      ih(signature_bind_constructor(name, argument, result, acc))
+    )
+  }
+}
+pub theorem signature_generic_step_sound(
+  name: Text,
+  rest: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat,
+  acc: SigGenerics,
+  ctor: Option(Pair(Kind, Kind)),
+  bound: SignatureGenericBound(nth_item(bounds, index), ctor, ck_bound_of(bounds, index)),
+  ih: SignatureGenericTail(rest, bounds, index)
+): SignatureGenerics(
+  Cons(name, rest),
+  bounds,
+  index,
+  acc,
+  signature_generic_step(name, rest, bounds, index, acc, ctor)
+) {
+  match ctor: SignatureGenerics(
+    Cons(name, rest),
+    bounds,
+    index,
+    acc,
+    signature_generic_step(name, rest, bounds, index, acc, ctor)
+  ) {
+    None => signature_generic_value_step_sound(
+      name,
+      rest,
+      bounds,
+      index,
+      acc,
+      ck_bound_of(bounds, index),
+      bound,
+      ih
+    )
+    Some(kinds) => signature_generic_ctor_step_sound(
+      name,
+      rest,
+      bounds,
+      index,
+      acc,
+      kinds,
+      bound,
+      ih
+    )
+  }
+}
+pub theorem sig_generics_sound(
+  names: List(Text),
+  bounds: List(Option(Text)),
+  index: Nat,
+  acc: SigGenerics
+): SignatureGenerics(names, bounds, index, acc, sig_generics(names, bounds, index, acc)) {
+  match names: SignatureGenerics(
+    names,
+    bounds,
+    index,
+    acc,
+    sig_generics(names, bounds, index, acc)
+  ) {
+    Nil => SignatureGenericsNil(bounds, index, acc)
+    Cons(name, rest) => signature_generic_step_sound(
+      name,
+      rest,
+      bounds,
+      index,
+      acc,
+      ck_ctor_bound_of(bounds, index),
+      signature_bound_sound(nth_item(bounds, index)),
+      next => sig_generics_sound(rest, bounds, Nat::add(index, 1), next)
+    )
+  }
+}

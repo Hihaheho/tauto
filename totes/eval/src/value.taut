@@ -1,0 +1,77 @@
+import "../../vm/src/cps.taut"
+import "../../vm/src/operations.taut"
+
+pub fn e_value(v: CVal): MVal {
+  match v {
+    CvUnit => MvUnit
+    CvInt(i) => MvInt(i)
+    CvFloat(x) => MvFloat(x)
+    CvBool(b) => MvBool(b)
+    CvText(t) => MvText(t)
+    CvFn(f) => MvFn(f)
+  }
+}
+
+// Local identifiers are the source identifiers, not bytecode slot positions.
+pub(open) inductive EBinding: Type {
+  EbValue(value: MVal): EBinding
+  EbCell(cell: Nat): EBinding
+}
+
+pub fn e_lookup(env: List(Pair(Nat, EBinding)), id: Nat): Option(EBinding) {
+  match env {
+    Nil => None
+    Cons(entry, rest) => match entry: Option(EBinding) {
+      Pair { fst: key, snd: value } => if Nat::eq(key, id) {
+        Some(value)
+      } else {
+        e_lookup(rest, id)
+      }
+    }
+  }
+}
+
+pub fn e_binding(cx: MCx, b: EBinding): MVal {
+  match b {
+    EbValue(v) => v
+    EbCell(cell) => cx_cell(cx, cell)
+  }
+}
+
+pub fn e_deref(ctors: List(MCtor), cx: MCx, deref: Bool, v: MVal): MVal {
+  match deref {
+    false => v
+    true => m_get(ctors, cx, v)
+  }
+}
+
+pub fn e_primitive(op: CPrim, arity: Nat): MOp {
+  match op {
+    CprArith(a, w) => MoArith(a, w)
+    CprFloat(a) => MoFloat(a)
+    CprFloat32(a) => MoFloat32(a)
+    CprCmp(c) => MoCmp(c)
+    CprEq(negate) => MoEq(negate)
+    CprConstruct(ctor, order) => MoConstruct(ctor, arity, order)
+    CprProduct(picks) => MoProduct(arity, picks)
+    CprConcat => MoConcat
+    CprTextOfInt => MoTextOfInt
+    CprTextLen => MoTextLen
+    CprTextCompare => MoTextCompare
+    CprDivide(modulo, w) => MoDivide(modulo, w)
+    CprSynParse(parser) => MoSynParse(parser)
+  }
+}
+
+pub fn e_unary(op: CUnary): MOp {
+  match op {
+    CuNot => MoNot
+    CuMember(i) => MoMember(i)
+    CuField(path) => MoField(path)
+    CuShown => MoShown
+    CuTempRef => MoTempRef
+    CuDeref => MoDeref
+    CuInject(union, variant) => MoInject(union, variant)
+    CuRemap(to, table) => MoRemap(to, table)
+  }
+}

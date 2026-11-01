@@ -1,0 +1,73 @@
+import "allocation_substitution.taut"
+
+pub def RigidMapAllocation(
+  limit: Nat,
+  map: Ordmap(Text, Ty)
+): Prop := And(Ordmap::ordered(map, Ordmap::compare_text), GenericMapAllocated(limit, map))
+pub theorem rigid_map_allocation_cons(
+  limit: Nat,
+  generic: Pair(Text, Kind),
+  value: Ty,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  item: TypeAllocated(limit, value),
+  tail: RigidMapAllocation(limit, ck_val(m))
+): RigidMapAllocation(limit, ck_val(ck_rigid_k(generic, value, m))) {
+  match m: RigidMapAllocation(limit, ck_val(ck_rigid_k(generic, value, m))) {
+    mut1(map, next) => AndIntro(
+      Ordmap::insert_ordered(
+        Ordmap::compare_text,
+        Ordmap::compare_text_law(),
+        map,
+        tk_first(generic),
+        value,
+        And::left(tail)
+      ),
+      generic_map_insert_allocated(
+        limit,
+        map,
+        tk_first(generic),
+        value,
+        And::left(tail),
+        item,
+        And::right(tail)
+      )
+    )
+  }
+}
+pub theorem ck_rigid_map_allocated(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  limit: Nat
+): RigidMapAllocation(limit, ck_val(ck_rigid(gs, c))) {
+  match gs: RigidMapAllocation(limit, ck_val(ck_rigid(gs, c))) {
+    Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
+    Cons(generic, rest) => rigid_map_allocation_cons(
+      limit,
+      generic,
+      TyParam(
+        cat3(tk_first(generic), "#", Text::of_nat(Nat::add(ck_rigids_of(c), 1))),
+        tk_second(generic)
+      ),
+      ck_rigid(rest, ck_st(ck_bump_rigids(c))),
+      Trivial,
+      ck_rigid_map_allocated(rest, ck_st(ck_bump_rigids(c)), limit)
+    )
+  }
+}
+// Rigid parameters allocate no inference variables, even at counter zero.
+pub theorem ck_rigid_substitute_allocated(
+  gs: List(Pair(Text, Kind)),
+  c: Checker,
+  ty: Ty,
+  limit: Nat,
+  allocated: TypeAllocated(limit, ty)
+): TypeAllocated(limit, ty_substitute(ty, ck_val(ck_rigid(gs, c)))) {
+  allocated_substitute(
+    ty,
+    limit,
+    ck_val(ck_rigid(gs, c)),
+    And::left(ck_rigid_map_allocated(gs, c, limit)),
+    And::right(ck_rigid_map_allocated(gs, c, limit)),
+    allocated
+  )
+}

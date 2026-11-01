@@ -1,0 +1,107 @@
+import "checker_frame.taut"
+import "checked_frame.taut"
+import "written_error_sound.taut"
+
+pub theorem ck_set_subst_run_frame_checked(
+  c: Checker,
+  v: Nat,
+  t: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_set_subst(c, v, t)) {
+  AndIntro(
+    Ordmap::insert_ordered(
+      Ordmap::compare_nat,
+      Ordmap::compare_nat_law(),
+      ck_subst_of(c),
+      v,
+      t,
+      ordered
+    ),
+    (clean_errors => clean_errors)
+  )
+}
+pub theorem ck_unify_run_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_unify(c, a, b)) {
+  checked_frame_grows(c, ck_unify(c, a, b), And::left(ck_unify_ok(c, a, b)(ordered)))
+}
+pub theorem ck_fits_run_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_fits(c, a, b)) {
+  checked_frame_grows(c, ck_fits(c, a, b), And::left(ck_fits_ok(c, a, b)(ordered)))
+}
+pub theorem ck_attempt_fits_run_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_attempt_fits(c, a, b)) {
+  checked_frame_grows(c, ck_attempt_fits(c, a, b), And::left(ck_attempt_fits_ok(c, a, b)(ordered)))
+}
+pub theorem ck_join_run_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_join(c, a, b)) {
+  checked_frame_grows(c, ck_join(c, a, b), And::left(ck_join_ok(c, a, b)(ordered)))
+}
+pub theorem run_expect_after_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  fits: Bool,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, run_expect_after(c, a, b, span, what, fits)) {
+  checked_frame_read(
+    c,
+    run_expect_after(c, a, b, span, what, fits),
+    frame_error_if_ok(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits)),
+    frame_error_if_ok_errors(
+      c,
+      ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
+      span,
+      not(fits)
+    ),
+    ordered
+  )
+}
+pub theorem ck_expect_run_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  span: TySpan,
+  what: Text,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_expect(c, a, b, span, what)) {
+  Eq::subst(
+    (z: Mut1(Unit, Checker)) => CkCheckedFrame(c, z),
+    Eq::sym(run_expect_unf(c, a, b, span, what)),
+    checked_frame_bind(
+      Bool,
+      Unit,
+      c,
+      (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
+      ck_fits(c, a, b),
+      ck_fits_run_frame_checked(c, a, b, ordered),
+      fits => next => onext => run_expect_after_frame_checked(next, a, b, span, what, fits, onext)
+    )
+  )
+}
+
+pub theorem ck_attempt_unify_run_frame_checked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkCheckedFrame(c, ck_attempt_unify(c, a, b)) {
+  checked_frame_grows(c, ck_attempt_unify(c, a, b), And::left(attempt_unify_sub(c, a, b)(ordered)))
+}

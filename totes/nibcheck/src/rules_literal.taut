@@ -1,0 +1,21 @@
+import "rules_ty.taut"
+import "checker.taut"
+
+// Decimal natural literal text denotes the parsed magnitude. The selected
+// integer width must contain it; conversion uses the type equality relation.
+pub(open) inductive NaturalTyping(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+): (SurfaceTerm, Ty) -> Prop {
+  NaturalTyped(
+    value: Text,
+    magnitude: Nat,
+    width: Width,
+    start: Nat,
+    end: Nat,
+    ty: Ty,
+    parsed: text_parse_u64(value) = Some(magnitude),
+    within: width_fits(width, false, magnitude) = true,
+    equal: TyEq(s, ok, ty, TyInt(width))
+  ): NaturalTyping(s, ok, surface_term_mk(SkNat(value), start, end), ty)
+}

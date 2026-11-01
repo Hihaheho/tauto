@@ -1,0 +1,214 @@
+import "declaration_kind_sound.taut"
+import "diagnostic_lists.taut"
+import "../../surface/src/surface.taut"
+
+pub theorem declaration_parameters_eq(
+  gs: List(Text),
+  map: Ordmap(Text, Ty)
+): ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) {
+  match gs: ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) {
+    Nil => Refl
+    Cons(g, rest) => declaration_parameters_eq(
+      rest,
+      Ordmap::insert(map, g, TyParam(g, KindCopy), Ordmap::compare_text)
+    )
+  }
+}
+pub theorem declaration_kind_registered(
+  c: Checker,
+  s: SurfaceData,
+  clean: DiagnosticClean(ck_st(ck_finish_decl(c, s)))
+): DataDeclarationKinds(ck_datas_of(c), s) {
+  data => declared => found => Annotation => {
+    let checked: And(
+      RecursiveDeclarationKind(drec(data), declared),
+      DeclaredConstructorKinds(
+        ck_datas_of(c),
+        ck_param_generics(dgen(data), KindCopy, Ordmap::empty()),
+        declared,
+        dctors(data)
+      )
+    ) := ck_finish_decl_kind_sound(c, s, data, declared, found, Annotation, clean)
+    AndIntro(
+      And::left(checked),
+      Eq::subst(
+        (map: Ordmap(Text, Ty)) => DeclaredConstructorKinds(
+          ck_datas_of(c),
+          map,
+          declared,
+          dctors(data)
+        ),
+        declaration_parameters_eq(dgen(data), Ordmap::empty()),
+        And::right(checked)
+      )
+    )
+  }
+}
+pub def DeclarationStatement(
+  c: Checker,
+  s: SurfaceStmt
+): Prop := StatementDataKinds(ck_datas_of(c), s)
+pub theorem declaration_stmt_data(
+  c: Checker,
+  s: SurfaceData,
+  clean: DiagnosticClean(ck_st(ck_rewrap1(ck_finish_decl(c, s))))
+): And(
+  DataDeclarationKinds(ck_datas_of(c), s),
+  ck_rewrap1(ck_finish_decl(c, s)) = mut1(Star, c)
+) {
+  let inner: DiagnosticClean(
+    ck_st(ck_finish_decl(c, s))
+  ) := Eq::subst(
+    (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+    ck_rewrap1_id(ck_finish_decl(c, s)),
+    clean
+  )
+  AndIntro(
+    declaration_kind_registered(c, s, inner),
+    Eq::trans(ck_rewrap1_id(ck_finish_decl(c, s)), And::right(ck_finish_decl_accepts(c, s, inner)))
+  )
+}
+pub theorem ck_finish_stmt_accepts(
+  c: Checker,
+  s: SurfaceStmt,
+  clean: DiagnosticClean(ck_st(ck_finish_stmt(c, s)))
+): And(DeclarationStatement(c, s), ck_finish_stmt(c, s) = mut1(Star, c)) {
+  match s: And(
+    DeclarationStatement(c, s),
+    ck_finish_stmt(c, s) = mut1(Star, c)
+  ) {
+    StLet(n, ty, v, b, m) => AndIntro(Trivial, Refl)
+    StVar(n, ty, v, b) => AndIntro(Trivial, Refl)
+    StModule(n, ss, start, end) => AndIntro(Trivial, Refl)
+    StAssign(n, n_place, v) => AndIntro(Trivial, Refl)
+    StCalled(n_generates, v) => AndIntro(Trivial, Refl)
+    StFn(f) => AndIntro(Trivial, Refl)
+    StTheorem(t) => AndIntro(Trivial, Refl)
+    StDef(t) => AndIntro(Trivial, Refl)
+    StMutual(ss, start, end) => AndIntro(Trivial, Refl)
+    StImport(path, start, end) => AndIntro(Trivial, Refl)
+    StInductive(i) => AndIntro(Trivial, Refl)
+    StEffect(e) => AndIntro(Trivial, Refl)
+    StExtern(abi, fs, start, end) => AndIntro(Trivial, Refl)
+    StClass(cl) => AndIntro(Trivial, Refl)
+    StInstance(i) => AndIntro(Trivial, Refl)
+    StWhile(cond, body) => AndIntro(Trivial, Refl)
+    StReturn(v) => AndIntro(Trivial, Refl)
+    StExpr(v) => AndIntro(Trivial, Refl)
+    StOther(what, start, end) => AndIntro(Trivial, Refl)
+    StMacro(n, f, start, end) => AndIntro(Trivial, Refl)
+    StAttributed(attr_name, attr_arg, attr_generates, attr_stmt) => AndIntro(Trivial, Refl)
+    StSyntax(n, grammar, start, end) => AndIntro(Trivial, Refl)
+    StStruct(data) => declaration_stmt_data(c, data, clean)
+    StEnum(data) => declaration_stmt_data(c, data, clean)
+  }
+}
+pub theorem declaration_stmts_unf(
+  s: SurfaceStmt,
+  ss: List(SurfaceStmt),
+  c: Checker
+): ck_finish_stmts(Cons(s, ss), c) = diagnostic_after(next => ck_finish_stmts(ss, next), ck_finish_stmt(c, s)) { Refl }
+pub theorem ck_finish_stmts_accepts(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_finish_stmts(ss, c)))
+): DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) {
+  match ss: DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(s, rest) => Eq::subst(
+      (m: Mut1(Unit, Checker)) => DiagnosticItemsResult(DeclarationStatement, Cons(s, rest), c, m),
+      Eq::sym(declaration_stmts_unf(s, rest, c)),
+      diagnostic_items_cons_accepts(
+        DeclarationStatement,
+        s,
+        rest,
+        c,
+        ck_finish_stmt(c, s),
+        next => ck_finish_stmts(rest, next),
+        accepted => ck_finish_stmt_accepts(c, s, accepted),
+        next => accepted => ck_finish_stmts_accepts(rest, next, accepted),
+        Eq::subst(
+          (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+          declaration_stmts_unf(s, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem declaration_items_program(
+  c: Checker,
+  ss: List(SurfaceStmt),
+  checked: DiagnosticItems(SurfaceStmt, DeclarationStatement, c, ss)
+): ProgramDataKinds(ck_datas_of(c), ss) {
+  match checked: ProgramDataKinds(ck_datas_of(c), ss) {
+    DiagnosticItemsNil => ProgramDataKindsNil
+    DiagnosticItemsCons(s, rest, head, tail) => ProgramDataKindsCons(
+      head,
+      declaration_items_program(c, rest, tail)
+    )
+  }
+}
+pub theorem ck_finish_stmts_kind_sound(
+  ss: List(SurfaceStmt),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_finish_stmts(ss, c)))
+): ProgramDataKinds(ck_datas_of(ck_st(ck_finish_stmts(ss, c))), ss) {
+  let checked: DiagnosticItemsResult(
+    DeclarationStatement,
+    ss,
+    c,
+    ck_finish_stmts(ss, c)
+  ) := ck_finish_stmts_accepts(ss, c, clean)
+  let same: ck_st(ck_finish_stmts(ss, c)) = c := Eq::congr((m: Mut1(Unit, Checker)) => ck_st(m), And::right(checked))
+  Eq::subst(
+    (state: Checker) => ProgramDataKinds(ck_datas_of(state), ss),
+    Eq::sym(same),
+    declaration_items_program(c, ss, And::left(checked))
+  )
+}
+
+pub theorem declaration_finish_datas_kind(
+  program: List(SurfaceStmt),
+  m: Mut1(Unit, Checker),
+  clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
+): ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) {
+  match m: ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) {
+    mut1(v, next) => {
+      let prepared: Checker := summary_replace(next, datas_summarize(ck_datas_of(next)))
+      let unwrapped: ck_rewrap1(ck_finish_stmts(program, prepared)) = ck_finish_stmts(program, prepared) := ck_rewrap1_id(ck_finish_stmts(program, prepared))
+      Eq::subst(
+        (result: Mut1(Unit, Checker)) => ProgramDataKinds(ck_datas_of(ck_st(result)), program),
+        Eq::sym(unwrapped),
+        ck_finish_stmts_kind_sound(
+          program,
+          prepared,
+          Eq::subst(
+            (result: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(result)),
+            unwrapped,
+            clean
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem ck_finish_datas_kind_sound(
+  c: Checker,
+  program: List(SurfaceStmt),
+  clean: DiagnosticClean(ck_st(ck_finish_datas(c, program)))
+): ProgramDataKinds(ck_datas_of(ck_st(ck_finish_datas(c, program))), program) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => ProgramDataKinds(ck_datas_of(ck_st(result)), program),
+    Eq::sym(summary_finish_datas_unf(c, program)),
+    declaration_finish_datas_kind(
+      program,
+      ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c),
+      Eq::subst(
+        (result: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(result)),
+        summary_finish_datas_unf(c, program),
+        clean
+      )
+    )
+  )
+}

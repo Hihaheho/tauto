@@ -1,0 +1,183 @@
+import "rules_where.taut"
+import "written_binder_sound.taut"
+import "kind_sound.taut"
+
+pub fn where_generic_name(entry: Pair(Text, Kind)): Text { (entry: Text) }
+pub fn where_generic_kind(entry: Pair(Text, Kind)): Kind { (entry: Kind) }
+pub theorem where_generic_head(
+  entry: Pair(Text, Kind),
+  rest: List(Pair(Text, Kind)),
+  name: Text,
+  equal: where_generic_name(entry) = name
+): WhereGeneric(Cons(entry, rest), name) {
+  match entry: WhereGeneric(Cons(entry, rest), name) {
+    Pair { fst: spelling, snd: kind } => {
+      let known: WhereGeneric(
+        Cons(Pair { fst: spelling, snd: kind }, rest),
+        spelling
+      ) := WhereGeneric::Mk(kind, MemHere(Pair(Text, Kind), Pair { fst: spelling, snd: kind }, rest))
+      Eq::subst(
+        Text,
+        spelling,
+        name,
+        (n: Text) => WhereGeneric(Cons(Pair { fst: spelling, snd: kind }, rest), n),
+        equal,
+        known
+      )
+    }
+  }
+}
+pub theorem where_generic_tail<rest: List(
+  Pair(Text, Kind)
+), name: Text>(
+  known: WhereGeneric(rest, name),
+  first: Pair(Text, Kind)
+): WhereGeneric(Cons(first, rest), name) {
+  match known: WhereGeneric(Cons(first, rest), name) {
+    Mk(kind, present) => WhereGeneric::Mk(kind, MemThere(first, rest, present))
+  }
+}
+pub theorem generics_have_sound(
+  generics: List(Pair(Text, Kind)),
+  name: Text,
+  found: generics_have(generics, name) = true
+): WhereGeneric(generics, name) {
+  match generics: WhereGeneric(generics, name) {
+    Nil => False::elim(false_ne_true(found))
+    Cons(entry, rest) => kyn_or_true(
+      Text::eq(where_generic_name(entry), name),
+      generics_have(rest, name),
+      WhereGeneric(Cons(entry, rest), name),
+      found,
+      equal => where_generic_head(
+        entry,
+        rest,
+        name,
+        text_eq_true(where_generic_name(entry), name, equal)
+      ),
+      tail => where_generic_tail(generics_have_sound(rest, name, tail), entry)
+    )
+  }
+}
+pub fn where_generic_choice(name: Text, present: Bool): Option(Text) {
+  match present: Option(Text) {
+    true => Some(name)
+    false => None
+  }
+}
+pub theorem where_generic_choice_sound(
+  ast_occurrence: Option(TermOccurrence),
+  generics: List(Pair(Text, Kind)),
+  spelling: Text,
+  start: Nat,
+  end: Nat,
+  name: Text,
+  present: Bool,
+  tested: generics_have(generics, spelling) = present,
+  found: where_generic_choice(spelling, present) = Some(name)
+): WhereGenericTerm(
+  generics,
+  SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
+  name
+) {
+  match present: WhereGenericTerm(
+    generics,
+    SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
+    name
+  ) {
+    false => False::elim(ck_none_ne_some(name, found))
+    true => match found: WhereGenericTerm(
+      generics,
+      SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
+      name
+    ) {
+      Refl => WhereGenericTerm::Mk(
+        spelling,
+        start,
+        end,
+        generics_have_sound(generics, spelling, tested)
+      )
+    }
+  }
+}
+
+pub theorem constraint_generic_shape_sound(
+  ast_occurrence: Option(TermOccurrence),
+  sk: SurfaceKind,
+  start: Nat,
+  end: Nat,
+  generics: List(Pair(Text, Kind)),
+  name: Text,
+  found: constraint_generic(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), generics) = Some(name)
+): WhereGenericTerm(generics, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), name) {
+  match sk: WhereGenericTerm(
+    generics,
+    SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+    name
+  ) {
+    SkVar(arg_name) => where_generic_choice_sound(
+      ast_occurrence,
+      generics,
+      arg_name,
+      start,
+      end,
+      name,
+      generics_have(generics, arg_name),
+      Refl,
+      found
+    )
+    SkNat(arg_digits) => False::elim(ck_none_ne_some(name, found))
+    SkText(arg_value) => False::elim(ck_none_ne_some(name, found))
+    SkBool(arg_value) => False::elim(ck_none_ne_some(name, found))
+    SkApp(arg_head, arg_args) => False::elim(ck_none_ne_some(name, found))
+    SkPi(arg_params, arg_result, arg_effects) => False::elim(ck_none_ne_some(name, found))
+    SkExists(arg_binder, arg_domain, arg_body) => False::elim(ck_none_ne_some(name, found))
+    SkLam(arg_params, arg_body) => False::elim(ck_none_ne_some(name, found))
+    SkUnion(arg_parts) => False::elim(ck_none_ne_some(name, found))
+    SkProduct(arg_parts) => False::elim(ck_none_ne_some(name, found))
+    SkTagged(arg_tag, arg_value) => False::elim(ck_none_ne_some(name, found))
+    SkIf(arg_cond, arg_then, arg_otherwise) => False::elim(ck_none_ne_some(name, found))
+    SkField(arg_value, arg_name) => False::elim(ck_none_ne_some(name, found))
+    SkBlock(arg_stmts) => False::elim(ck_none_ne_some(name, found))
+    SkPerform(arg_op, arg_args) => False::elim(ck_none_ne_some(name, found))
+    SkHandle(arg_body, arg_handlers) => False::elim(ck_none_ne_some(name, found))
+    SkBudget(arg_amount_memory, arg_amount, arg_body) => False::elim(ck_none_ne_some(name, found))
+    SkMatch(arg_scrutinee, arg_motive, arg_arms, arg_binder) => False::elim(
+      ck_none_ne_some(name, found)
+    )
+    SkHole(arg_name) => False::elim(ck_none_ne_some(name, found))
+    SkRecord(arg_name, arg_fields) => False::elim(ck_none_ne_some(name, found))
+    SkBorrow(arg_mutable, arg_value) => False::elim(ck_none_ne_some(name, found))
+    SkFnKind(arg_kind, arg_ty) => False::elim(ck_none_ne_some(name, found))
+    SkBorrowLam(arg_borrows, arg_lam) => False::elim(ck_none_ne_some(name, found))
+    SkOther(arg_what) => False::elim(ck_none_ne_some(name, found))
+    SkRow(arg_what_effects) => False::elim(ck_none_ne_some(name, found))
+    SkFloat(arg_what) => False::elim(ck_none_ne_some(name, found))
+    SkProject(arg_what, arg_what_ty) => False::elim(ck_none_ne_some(name, found))
+    SkMacroCall(arg_name, arg_arg) => False::elim(ck_none_ne_some(name, found))
+    SkQuote(arg_stmts_form, arg_stmts) => False::elim(ck_none_ne_some(name, found))
+    SkSplice(arg_value) => False::elim(ck_none_ne_some(name, found))
+    SkSyntaxLit(arg_name, arg_body) => False::elim(ck_none_ne_some(name, found))
+    SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms) => False::elim(
+      ck_none_ne_some(name, found)
+    )
+  }
+}
+pub theorem constraint_generic_sound(
+  source: SurfaceTerm,
+  generics: List(Pair(Text, Kind)),
+  name: Text,
+  found: constraint_generic(source, generics) = Some(name)
+): WhereGenericTerm(generics, source, name) {
+  match source: WhereGenericTerm(generics, source, name) {
+    SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => constraint_generic_shape_sound(
+      ast_occurrence,
+      sk,
+      start,
+      end,
+      generics,
+      name,
+      found
+    )
+  }
+}

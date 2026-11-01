@@ -1,0 +1,148 @@
+import "allocation_resolution.taut"
+
+pub def CheckerAllocation(
+  c: Checker
+): Prop := And(CheckerFresh(c), SubstValuesAllocated(ck_next_of(c), ck_subst_of(c)))
+pub theorem subst_values_allocated_weaken(
+  before: Nat,
+  after: Nat,
+  subst: Ordmap(Nat, Ty),
+  advanced: Nat::le(before, after) = true,
+  values: SubstValuesAllocated(before, subst)
+): SubstValuesAllocated(after, subst) {
+  index => value => found => type_allocated_weaken(
+    value,
+    before,
+    after,
+    advanced,
+    values(index, value, found)
+  )
+}
+pub theorem subst_values_allocated_insert(
+  limit: Nat,
+  subst: Ordmap(Nat, Ty),
+  key: Nat,
+  value: Ty,
+  ordered: Ordmap::ordered(subst, Ordmap::compare_nat),
+  item: TypeAllocated(limit, value),
+  values: SubstValuesAllocated(limit, subst)
+): SubstValuesAllocated(limit, Ordmap::insert(subst, key, value, Ordmap::compare_nat)) {
+  index => result => found => Ordering::cases(
+    (order: Ordering) => TypeAllocated(limit, result),
+    Ordmap::compare_nat(index, key),
+    less => values(
+      index,
+      result,
+      Eq::trans(
+        Eq::sym(
+          Ordmap::get_insert_other(
+            Ordmap::compare_nat,
+            Ordmap::compare_nat_law(),
+            subst,
+            key,
+            value,
+            index,
+            Less,
+            less_ne_equal,
+            less,
+            ordered
+          )
+        ),
+        found
+      )
+    ),
+    equal => Eq::subst(
+      (ty: Ty) => TypeAllocated(limit, ty),
+      ck_some_inj(
+        value,
+        result,
+        Eq::trans(
+          Eq::sym(
+            Ordmap::get_insert_same(
+              Ordmap::compare_nat,
+              Ordmap::compare_nat_law(),
+              subst,
+              key,
+              value,
+              ordered
+            )
+          ),
+          Eq::subst(
+            (at: Nat) => Ordmap::get(
+                Ordmap::insert(subst, key, value, Ordmap::compare_nat),
+                at,
+                Ordmap::compare_nat
+              ) = Some(result),
+            Ordmap::compare_nat_eq(index, key, equal),
+            found
+          )
+        )
+      ),
+      item
+    ),
+    greater => values(
+      index,
+      result,
+      Eq::trans(
+        Eq::sym(
+          Ordmap::get_insert_other(
+            Ordmap::compare_nat,
+            Ordmap::compare_nat_law(),
+            subst,
+            key,
+            value,
+            index,
+            Greater,
+            greater_ne_equal,
+            greater,
+            ordered
+          )
+        ),
+        found
+      )
+    )
+  )
+}
+pub theorem checker_new_allocation(steps: Nat): CheckerAllocation(checker_new(steps)) {
+  AndIntro(
+    checker_new_fresh(steps),
+    index => value => found => False::elim(ck_none_ne_some(value, found))
+  )
+}
+pub theorem ck_fresh_allocation(
+  c: Checker,
+  h: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_fresh(c))) {
+  AndIntro(
+    ck_fresh_preserves_freshness(c, And::left(h)),
+    subst_values_allocated_weaken(
+      ck_next_of(c),
+      Succ(ck_next_of(c)),
+      ck_subst_of(c),
+      Nat::le_succ(ck_next_of(c)),
+      And::right(h)
+    )
+  )
+}
+pub theorem ck_set_subst_allocation(
+  c: Checker,
+  key: Nat,
+  value: Ty,
+  ordered: CkOrdered(c),
+  allocated: TypeAllocated(ck_next_of(c), TyVar(key)),
+  item: TypeAllocated(ck_next_of(c), value),
+  h: CheckerAllocation(c)
+): CheckerAllocation(ck_st(ck_set_subst(c, key, value))) {
+  AndIntro(
+    ck_set_subst_preserves_freshness(c, key, value, ordered, allocated, And::left(h)),
+    subst_values_allocated_insert(
+      ck_next_of(c),
+      ck_subst_of(c),
+      key,
+      value,
+      ordered,
+      item,
+      And::right(h)
+    )
+  )
+}

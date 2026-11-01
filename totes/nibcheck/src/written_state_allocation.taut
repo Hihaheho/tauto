@@ -1,0 +1,96 @@
+import "written_counter_sound.taut"
+
+pub theorem allocation_advance_read<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  unchanged: CkReadFrame(c, m),
+  counter: CounterAdvance(c, m),
+  state: CheckerAllocation(c)
+): AllocationAdvance(c, m) {
+  AndIntro(
+    counter,
+    Eq::subst(
+      (subst: Ordmap(Nat, Ty)) => And(
+        SubstFutureEmpty(ck_next_of(ck_st(m)), subst),
+        SubstValuesAllocated(ck_next_of(ck_st(m)), subst)
+      ),
+      Eq::sym(Eq::congr(frame_read_subst, unchanged)),
+      AndIntro(
+        subst_future_empty_weaken(
+          ck_next_of(c),
+          ck_next_of(ck_st(m)),
+          ck_subst_of(c),
+          counter,
+          And::left(state)
+        ),
+        subst_values_allocated_weaken(
+          ck_next_of(c),
+          ck_next_of(ck_st(m)),
+          ck_subst_of(c),
+          counter,
+          And::right(state)
+        )
+      )
+    )
+  )
+}
+pub theorem ck_written_allocation_advance(
+  c: Checker,
+  term: SurfaceTerm,
+  generics: Ordmap(Text, Ty),
+  state: CheckerAllocation(c)
+): AllocationAdvance(c, ck_written(c, term, generics)) {
+  allocation_advance_read(
+    Ty,
+    c,
+    ck_written(c, term, generics),
+    ck_written_frame(c, term, generics),
+    ck_written_frame_counter(c, term, generics),
+    state
+  )
+}
+pub theorem ck_written_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  generics: Ordmap(Text, Ty),
+  state: CheckerAllocation(c),
+  bounded: RigidMapAllocation(ck_next_of(c), generics),
+  clean: DiagnosticClean(ck_st(ck_written(c, term, generics)))
+): AllocationResult(c, ck_written(c, term, generics)) {
+  AndIntro(
+    ck_written_allocation_advance(c, term, generics, state),
+    type_allocated_weaken(
+      ck_val(ck_written(c, term, generics)),
+      ck_next_of(c),
+      ck_next_of(ck_st(ck_written(c, term, generics))),
+      ck_written_frame_counter(c, term, generics),
+      ck_written_type_allocated(c, term, generics, ck_next_of(c), bounded, clean)
+    )
+  )
+}
+pub theorem ck_written_here_allocation_advance(
+  c: Checker,
+  term: SurfaceTerm,
+  state: CheckerAllocation(c)
+): AllocationAdvance(c, ck_written_here(c, term)) {
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(ck_written_here_allocation_unf(c, term)),
+    allocation_advance_rewrap(
+      c,
+      ck_written(c, term, type_scope(ck_type_params_of(c))),
+      ck_written_allocation_advance(c, term, type_scope(ck_type_params_of(c)), state)
+    )
+  )
+}
+pub theorem ck_written_here_allocation(
+  c: Checker,
+  term: SurfaceTerm,
+  state: CheckerAllocation(c),
+  clean: DiagnosticClean(ck_st(ck_written_here(c, term)))
+): AllocationResult(c, ck_written_here(c, term)) {
+  AndIntro(
+    ck_written_here_allocation_advance(c, term, state),
+    ck_written_here_type_allocated(c, term, ck_next_of(ck_st(ck_written_here(c, term))), clean)
+  )
+}

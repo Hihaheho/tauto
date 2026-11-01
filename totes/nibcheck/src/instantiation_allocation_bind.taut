@@ -1,0 +1,94 @@
+import "widen_allocation_sound.taut"
+import "instantiation_frame.taut"
+
+pub theorem generic_map_allocation_weaken(
+  before: Nat,
+  after: Nat,
+  map: Ordmap(Text, Ty),
+  advanced: Nat::le(before, after) = true,
+  values: GenericMapAllocated(before, map)
+): GenericMapAllocated(after, map) {
+  name => value => found => type_allocated_weaken(
+    value,
+    before,
+    after,
+    advanced,
+    values(name, value, found)
+  )
+}
+pub theorem map_allocation_start(
+  c: Checker,
+  next: Checker,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true,
+  tail: InstanceAllocation(next, m)
+): InstanceAllocation(c, m) {
+  AndIntro(
+    Nat::le_trans(ck_next_of(c), ck_next_of(next), ck_next_of(ck_st(m)), advanced, And::left(tail)),
+    And::right(tail)
+  )
+}
+pub theorem map_allocation_rewrap(
+  c: Checker,
+  m: Mut1(Ordmap(Text, Ty), Checker),
+  h: InstanceAllocation(c, m)
+): InstanceAllocation(c, ck_rewrap1(m)) {
+  Eq::subst(
+    (result: Mut1(Ordmap(Text, Ty), Checker)) => InstanceAllocation(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
+}
+pub theorem map_allocation_bind<A: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(Ordmap(Text, Ty), Checker),
+  m: Mut1(A, Checker),
+  first: AllocationAdvance(c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(next). InstanceAllocation(next, k(value, next))
+): InstanceAllocation(c, frame_bind(A, Ordmap(Text, Ty), k, m)) {
+  match m: InstanceAllocation(c, frame_bind(A, Ordmap(Text, Ty), k, m)) {
+    mut1(value, next) => map_allocation_start(
+      c,
+      next,
+      k(value, next),
+      And::left(first),
+      tail(value, next, And::left(first), And::right(first))
+    )
+  }
+}
+pub theorem map_allocation_fresh_bind(
+  c: Checker,
+  k: (Ty, Checker) -> Mut1(Ordmap(Text, Ty), Checker),
+  state: CheckerAllocation(c),
+  tail: ∀ value: Ty. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ current: CheckerAllocation(
+    next
+  ). ∀ bounded: TypeAllocated(ck_next_of(next), value). InstanceAllocation(next, k(value, next))
+): InstanceAllocation(c, frame_bind(Ty, Ordmap(Text, Ty), k, ck_fresh(c))) {
+  map_allocation_start(
+    c,
+    ck_st(ck_fresh(c)),
+    k(TyVar(ck_next_of(c)), ck_st(ck_fresh(c))),
+    Nat::le_succ(ck_next_of(c)),
+    tail(
+      TyVar(ck_next_of(c)),
+      ck_st(ck_fresh(c)),
+      Nat::le_succ(ck_next_of(c)),
+      ck_fresh_allocation(c, state),
+      ck_fresh_type_allocated(c)
+    )
+  )
+}
+pub theorem instantiation_bound_allocation(
+  c: Checker,
+  g: Pair(Text, Kind),
+  value: Ty,
+  name: Text,
+  span: TySpan,
+  state: CheckerAllocation(c),
+  arg: Option(Kind)
+): AllocationAdvance(c, instantiation_bound(c, g, value, name, span, arg)) {
+  match arg: AllocationAdvance(c, instantiation_bound(c, g, value, name, span, arg)) {
+    None => AndIntro(Nat::le_refl(ck_next_of(c)), state)
+    Some(kind) => AndIntro(Nat::le_refl(ck_next_of(c)), state)
+  }
+}

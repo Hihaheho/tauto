@@ -1,0 +1,143 @@
+import "run_data_invariant_sound.taut"
+import "run_data_body_sound.taut"
+pub theorem body_module_cons_context(
+  e: TypeError,
+  rest: List(TypeError),
+  c: Checker,
+  ih: ∀ next: Checker. CkContextFrame(next, ck_module_errors(rest, next))
+): CkContextFrame(c, run_module_cons(e, rest, c)) {
+  context_bind(
+    Unit,
+    Unit,
+    c,
+    (reported: Unit, c1: Checker) => ck_rewrap1(ck_module_errors(rest, c1)),
+    ck_error(c, run_error_message(e), run_error_span(e)),
+    ck_error_frame_context(c, run_error_message(e), run_error_span(e)),
+    reported => c1 => context_rewrap(c1, ck_module_errors(rest, c1), ih(c1))
+  )
+}
+
+pub theorem body_module_context(
+  es: List(TypeError),
+  c: Checker
+): CkContextFrame(c, ck_module_errors(es, c)) {
+  match es: CkContextFrame(c, ck_module_errors(es, c)) {
+    Nil => ordinary => Refl
+    Cons(e, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
+      Eq::sym(run_module_unf(e, rest, c)),
+      body_module_cons_context(e, rest, c, next => body_module_context(rest, next))
+    )
+  }
+}
+
+pub def DataBodyReport(
+  source: SurfaceData,
+  m: Mut1(TypeReport, Checker)
+): Prop := DataBodyChecked(finish_report_datas(ck_val(m)), source)
+pub theorem body_finish_report(
+  source: SurfaceData,
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  checked: ∀ clean: DiagnosticClean(ck_st(m)). DataBodyState(source, m),
+  clean: DiagnosticReportClean(run_finish_after(m))
+): DataBodyReport(source, run_finish_after(m)) {
+  accepted_data_finish((data: Datas) => DataBodyChecked(data, source), m, ordered, checked, clean)
+}
+
+pub theorem body_after_module_errors(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  declared: DeclaresData(program, source),
+  m: Mut1(Unit, Checker),
+  ordered: CkOrdered(ck_st(m)),
+  decls: CkDatasOrdered(ck_st(m)),
+  ordinary: frame_under_borrow(ck_st(m)) = false,
+  position: frame_constructor_position(ck_st(m)) = false,
+  clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
+): DataBodyReport(source, run_after_module_errors(prelude, program, m)) {
+  match m: DataBodyReport(source, run_after_module_errors(prelude, program, m)) {
+    mut1(v, next) => body_finish_report(
+      source,
+      ck_run(next, prelude, program),
+      And::left(ck_run_ready(next, prelude, program, ordered, decls)),
+      accepted => ck_run_data_body(
+        next,
+        prelude,
+        program,
+        source,
+        declared,
+        ordered,
+        decls,
+        ordinary,
+        position,
+        accepted
+      ),
+      clean
+    )
+  }
+}
+pub theorem ck_types_run_data_body(
+  c: Checker,
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  declared: DeclaresData(program, source),
+  errors: List(TypeError),
+  ordered: CkOrdered(c),
+  decls: CkDatasOrdered(c),
+  ordinary: frame_under_borrow(c) = false,
+  position: frame_constructor_position(c) = false,
+  clean: DiagnosticReportClean(ck_types_run(c, prelude, program, errors))
+): DataBodyReport(source, ck_types_run(c, prelude, program, errors)) {
+  Eq::subst(
+    (result: Mut1(TypeReport, Checker)) => DataBodyReport(source, result),
+    Eq::sym(run_types_unf(c, prelude, program, errors)),
+    body_after_module_errors(
+      prelude,
+      program,
+      source,
+      declared,
+      ck_module_errors(errors, c),
+      frame_subst_ordered(
+        c,
+        ck_module_errors(errors, c),
+        ck_module_errors_frame(errors, c),
+        ordered
+      ),
+      frame_ordered(c, ck_module_errors(errors, c), ck_module_errors_frame(errors, c), decls),
+      Eq::trans(
+        Eq::congr(written_context_borrow, body_module_context(errors, c, ordinary)),
+        ordinary
+      ),
+      Eq::trans(
+        Eq::congr(written_context_position, body_module_context(errors, c, ordinary)),
+        position
+      ),
+      Eq::subst(DiagnosticReportClean, run_types_unf(c, prelude, program, errors), clean)
+    )
+  )
+}
+pub theorem types_check_data_bodies(
+  prelude: List(SurfaceStmt),
+  program: List(SurfaceStmt),
+  source: SurfaceData,
+  declared: DeclaresData(program, source),
+  errors: List(TypeError),
+  clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
+): DataBodyChecked(finish_report_datas(types_check(prelude, program, errors)), source) {
+  ck_types_run_data_body(
+    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    prelude,
+    program,
+    source,
+    declared,
+    errors,
+    Trivial,
+    Trivial,
+    Refl,
+    Refl,
+    clean
+  )
+}

@@ -1,0 +1,146 @@
+import "../src/reader.taut"
+import "../../surface/src/surface.taut"
+
+pub fn reader_zero_fuel_rejected(): Bool {
+  var state := RustgenReaderState::Mk("m", 0, Nil, Nil, None)
+  let ignored: List(SurfaceStmt) := rustgen_reader_stmts(0, &mut state, Nil)
+  not(rustgen_reader_ready(state))
+}
+
+pub theorem reader_zero_fuel_is_not_success(): reader_zero_fuel_rejected() = true {
+  Refl
+}
+
+// Structural projections cover fields the shared Surface dump abbreviates.
+pub fn reader_test_call(path: Text): SurfaceTerm {
+  surface_term_mk(SkMacroCall("include_text", surface_term_mk(SkText(path), 3, 4)), 1, 9)
+}
+pub fn reader_test_state(): RustgenReaderState {
+  RustgenReaderState::Mk("m", 0, Cons(RustgenSource::Mk("d", "v"), Nil), Nil, None)
+}
+pub fn reader_test_constraint(path: Text): SurfaceConstraint {
+  SurfaceConstraintMk("C", reader_test_call(path), 10, 20)
+}
+pub fn reader_test_method(body: SurfaceTerm): SurfaceFn {
+  SurfaceFnMk(
+    "m",
+    Nil,
+    Nil,
+    Cons("x", Nil),
+    Cons(None, Nil),
+    Cons(Some(reader_test_call("d")), Nil),
+    Some(reader_test_call("d")),
+    None,
+    Cons(reader_test_constraint("u"), Nil),
+    0,
+    30,
+    body
+  )
+}
+pub fn reader_test_literal(term: SurfaceTerm): Bool {
+  term.start == 1 && term.end == 9 && match term.kind: Bool {
+    SkText(value) => value == "v"
+    _ => false
+  }
+}
+pub fn reader_test_optional_literal(term: Option(SurfaceTerm)): Bool {
+  match term: Bool {
+    Some(value) => reader_test_literal(value)
+    None => false
+  }
+}
+pub fn reader_test_constraint_untouched(items: List(SurfaceConstraint)): Bool {
+  match items: Bool {
+    Cons(item, rest) => List::length(rest) == 0 && item.r#class == "C" &&
+    item.start == 10 && item.end == 20 && item.ty.start == 1 && item.ty.end == 9 &&
+    match item.ty.kind: Bool {
+      SkMacroCall(name, arg) => name == "include_text" && match arg.kind: Bool {
+        SkText(path) => path == "u"
+        _ => false
+      }
+      _ => false
+    }
+    Nil => false
+  }
+}
+pub fn reader_test_method_fields(items: List(SurfaceFn), executable: Bool): Bool {
+  match items: Bool {
+    Cons(method, rest) => {
+      let parameter := match method.param_types: Bool {
+        Cons(item, more) => List::length(more) == 0 && reader_test_optional_literal(item)
+        Nil => false
+      }
+      let body: Bool := if executable { reader_test_literal(method.body) } else {
+        match method.body.kind: Bool {
+          SkOther(kind) => kind == "ExternFn"
+          _ => false
+        }
+      }
+      List::length(rest) == 0 && method.name == "m" && method.start == 0 &&
+      method.end == 30 && parameter && reader_test_optional_literal(method.result) &&
+      reader_test_constraint_untouched(method.wheres) && body
+    }
+    Nil => false
+  }
+}
+pub fn reader_test_class_fields(): Bool {
+  var state := reader_test_state()
+  let method := reader_test_method(surface_term_mk(SkOther("ExternFn"), 0, 30))
+  let input := SurfaceClassMk("C", "A", 1, None, Cons(method, Nil), Nil, 0, 40)
+  let output := rustgen_reader_stmt(20, &mut state, StClass(input))
+  rustgen_reader_ready(state) && List::length(state.resources) == 2 &&
+  match output: Bool {
+    StClass(value) => value.name == "C" && value.param == "A" && value.arity == 1 &&
+    value.start == 0 && value.end == 40 && reader_test_method_fields(value.methods, false)
+    _ => false
+  }
+}
+pub fn reader_test_instance_fields(): Bool {
+  var state := reader_test_state()
+  let input := SurfaceInstanceMk(
+    Nil,
+    Nil,
+    "C",
+    reader_test_call("d"),
+    Cons(reader_test_constraint("d"), Nil),
+    Cons(reader_test_method(reader_test_call("d")), Nil),
+    Nil,
+    0,
+    40
+  )
+  let output := rustgen_reader_stmt(20, &mut state, StInstance(input))
+  rustgen_reader_ready(state) && List::length(state.resources) == 5 &&
+  match output: Bool {
+    StInstance(value) => {
+      let constraint := match value.wheres: Bool {
+        Cons(item, rest) => List::length(rest) == 0 && item.r#class == "C" &&
+        item.start == 10 && item.end == 20 && reader_test_literal(item.ty)
+        Nil => false
+      }
+      value.r#class == "C" && value.start == 0 && value.end == 40 &&
+      reader_test_literal(value.head) && constraint &&
+      reader_test_method_fields(value.methods, true)
+    }
+    _ => false
+  }
+}
+pub fn reader_test_extern_fields(): Bool {
+  var state := reader_test_state()
+  let method := reader_test_method(surface_term_mk(SkOther("ExternFn"), 0, 30))
+  let output := rustgen_reader_stmt(20, &mut state, StExtern("", Cons(method, Nil), 0, 40))
+  rustgen_reader_ready(state) && List::length(state.resources) == 2 &&
+  match output: Bool {
+    StExtern(abi, methods, start, end) => abi == "" && start == 0 && end == 40 &&
+    reader_test_method_fields(methods, false)
+    _ => false
+  }
+}
+pub fn reader_test_function_fields(): Bool {
+  var state := reader_test_state()
+  let output := rustgen_reader_stmt(20, &mut state, StFn(reader_test_method(reader_test_call("d"))))
+  rustgen_reader_ready(state) && List::length(state.resources) == 3 &&
+  match output: Bool {
+    StFn(method) => reader_test_method_fields(Cons(method, Nil), true)
+    _ => false
+  }
+}

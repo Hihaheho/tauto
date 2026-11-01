@@ -1,0 +1,173 @@
+import "handle_frame.taut"
+import "checked_frame.taut"
+import "operation_checked_sound.taut"
+import "pattern_scope_checked.taut"
+import "pattern_mutual_checked.taut"
+import "written_error_sound.taut"
+import "instantiation_error_sound.taut"
+import "handle_error_sound.taut"
+
+pub theorem handle_patterns_cons_frame_checked(
+  p: SurfacePattern,
+  rest: List(SurfacePattern),
+  c: Checker,
+  inner: Scope,
+  body: SurfaceTerm,
+  tys: List(Ty),
+  ih: ∀ next: Checker. ∀ more: List(
+    Ty
+  ). ∀ env: Scope. ∀ ordered: CkOrdered(
+    next
+  ). CkScopeChecked(next, ck_handle_patterns(rest, next, more, env, body)),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
+  match tys: CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
+    Nil => pattern_return_frame_checked(c, inner, Star, ordered)
+    Cons(t, more) => pattern_bind_frame_checked(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker, inner1: Scope) => pattern_rewrap(
+        ck_handle_patterns(rest, c1, more, inner1, body)
+      ),
+      ck_pattern(c, p, t, inner, span_of(body), handle_body_start(body)),
+      ck_pattern_frame_checked(c, p, t, inner, span_of(body), handle_body_start(body), ordered),
+      ignored => c1 => inner1 => o_c1 => pattern_rewrap_frame_checked(
+        c1,
+        ck_handle_patterns(rest, c1, more, inner1, body),
+        ih(c1, more, inner1, o_c1)
+      )
+    )
+  }
+}
+
+pub theorem ck_handle_patterns_frame_checked(
+  ps: List(SurfacePattern),
+  c: Checker,
+  tys: List(Ty),
+  inner: Scope,
+  body: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) {
+  match ps: CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) {
+    Nil => AndIntro(ordered, (clean_errors => clean_errors))
+    Cons(p, rest) => Eq::subst(
+      (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+      Eq::sym(handle_patterns_unf(p, rest, c, tys, inner, body)),
+      handle_patterns_cons_frame_checked(
+        p,
+        rest,
+        c,
+        inner,
+        body,
+        tys,
+        next => more => env => onext => ck_handle_patterns_frame_checked(
+          rest,
+          next,
+          more,
+          env,
+          body,
+          onext
+        ),
+        ordered
+      )
+    )
+  }
+}
+
+pub theorem handle_cont_frame_checked(
+  c: Checker,
+  inner: Scope,
+  quant: Quant,
+  eff: Text,
+  answer: Ty,
+  result: Ty,
+  body: SurfaceTerm,
+  cont: Option(Text),
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
+  match cont: CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
+    None => pattern_return_frame_checked(c, inner, Star, ordered)
+    Some(k) => pattern_bind_one_frame_checked(
+      Unit,
+      Unit,
+      c,
+      (ignored: Unit, c1: Checker) => pattern_rewrap(
+        ck_bind_local(
+          c1,
+          inner,
+          k,
+          TyFn(Cons(answer, Nil), result, quant_continuation_kind(quant)),
+          false,
+          handle_body_start(body)
+        )
+      ),
+      frame_error_if(
+        c,
+        cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+        span_of(body),
+        quant_is_zero(quant)
+      ),
+      checked_frame_read(
+        c,
+        frame_error_if(
+          c,
+          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          span_of(body),
+          quant_is_zero(quant)
+        ),
+        frame_error_if_ok(
+          c,
+          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          span_of(body),
+          quant_is_zero(quant)
+        ),
+        frame_error_if_ok_errors(
+          c,
+          cat5(eff, " does not resume (`resume 0`): its arm has no `", k, "`", ""),
+          span_of(body),
+          quant_is_zero(quant)
+        ),
+        ordered
+      ),
+      ignored => c1 => o_c1 => pattern_rewrap_frame_checked(
+        c1,
+        ck_bind_local(
+          c1,
+          inner,
+          k,
+          TyFn(Cons(answer, Nil), result, quant_continuation_kind(quant)),
+          false,
+          handle_body_start(body)
+        ),
+        ck_bind_local_scope_frame_checked(
+          c1,
+          inner,
+          k,
+          TyFn(Cons(answer, Nil), result, quant_continuation_kind(quant)),
+          false,
+          handle_body_start(body),
+          o_c1
+        )
+      )
+    )
+  }
+}
+
+pub theorem ck_handle_cont_frame_checked(
+  c: Checker,
+  inner: Scope,
+  quant: Quant,
+  eff: Text,
+  cont: Option(Text),
+  answer: Ty,
+  result: Ty,
+  body: SurfaceTerm,
+  ordered: CkOrdered(c)
+): CkScopeChecked(c, ck_handle_cont(c, inner, quant, eff, cont, answer, result, body)) {
+  Eq::subst(
+    (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
+    Eq::sym(handle_cont_unf(c, inner, quant, eff, cont, answer, result, body)),
+    handle_cont_frame_checked(c, inner, quant, eff, answer, result, body, cont, ordered)
+  )
+}

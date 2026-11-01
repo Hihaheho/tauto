@@ -1,0 +1,313 @@
+import "rules_written_atomic.taut"
+import "rules_written_binders.taut"
+
+// Elaboration of written type syntax. A constructor position permits partial
+// application; the caller must separately establish the constructor's kind.
+pub(open) inductive WrittenArity(env: Datas, name: Text, args: List(Ty)): (Bool) -> Prop {
+  WrittenArityConstructor: WrittenArity(env, name, args, true)
+  WrittenArityValue(
+    complete: ∀ data: Data. ∀ found: datas_decl(env, name) = Some(data). DeclaredArity(data, args)
+  ): WrittenArity(env, name, args, false)
+}
+pub(open) inductive WrittenNameType(
+  env: Datas,
+  generics: Ordmap(Text, Ty),
+  name: Text
+): (Bool, Ty) -> Prop {
+  WrittenNameValue<t: Ty>(
+    meaning: WrittenAtomicType(env, generics, name, t)
+  ): WrittenNameType(env, generics, name, false, t)
+  WrittenNameConstructor<t: Ty>(
+    meaning: WrittenTypeName(generics, name, t)
+  ): WrittenNameType(env, generics, name, true, t)
+}
+pub(open) inductive WrittenFunctionKind(spelling: Text): (Kind) -> Prop {
+  MkWrittenFunctionKind(
+    k: Kind,
+    parsed: kind_parse(spelling) = Some(k)
+  ): WrittenFunctionKind(spelling, k)
+  WrittenFunctionKindDefault(
+    absent: kind_parse(spelling) = None
+  ): WrittenFunctionKind(spelling, KindShared)
+}
+
+mutual {
+  pub(open) inductive WrittenTerm(env: Datas): (Ordmap(Text, Ty), Bool, Bool, SurfaceTerm, Ty) -> Prop {
+    Mk<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool, sk: SurfaceKind, t: Ty>(
+      start: Nat,
+      end: Nat,
+      meaning: WrittenKind(env, generics, partial, under_borrow, sk, t)
+    ): WrittenTerm(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+      t
+    )
+  }
+  pub(open) inductive WrittenKind(env: Datas): (Ordmap(Text, Ty), Bool, Bool, SurfaceKind, Ty) -> Prop {
+    WrittenKindName<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      name: Text,
+      t: Ty,
+      meaning: WrittenNameType(env, generics, name, partial, t)
+    ): WrittenKind(env, generics, partial, under_borrow, SkVar(name), t)
+    WrittenKindUnit<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      start: Nat,
+      end: Nat
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkVar("Tuple"), start, end, ast_occurrence), Nil),
+      TyUnit
+    )
+    WrittenKindInfo<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      arg: SurfaceTerm,
+      t: Ty,
+      start: Nat,
+      end: Nat,
+      meaning: WrittenTerm(env, generics, partial, false, arg, t)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
+      TyInfo(t)
+    )
+    WrittenKindNamed<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      name: Text,
+      args: List(SurfaceTerm),
+      types: List(Ty),
+      start: Nat,
+      end: Nat,
+      not_tuple: (name = "Tuple") -> False,
+      not_info: (name = "Info") -> (list_len(args) = 1) -> False,
+      unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
+      slice_borrowed: (name = "Slice") -> (under_borrow = true),
+      arguments: WrittenTerms(env, generics, partial, args, types),
+      arity: WrittenArity(env, name, types, partial)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), args),
+      TyNamed(name, types)
+    )
+    WrittenKindGeneric<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      name: Text,
+      arg: SurfaceTerm,
+      head: Ty,
+      t: Ty,
+      bound: Ty,
+      start: Nat,
+      end: Nat,
+      not_info: (name = "Info") -> False,
+      parameter: Ordmap::get(generics, name, Ordmap::compare_text) = Some(bound),
+      constructor: WrittenTypeName(generics, name, head),
+      argument: WrittenTerm(env, generics, partial, false, arg, t)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
+      ty_apply(head, t)
+    )
+    WrittenKindNested<ast_occurrence: Option(
+      TermOccurrence
+    ), generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      function: SurfaceTerm,
+      before: List(SurfaceTerm),
+      args: List(SurfaceTerm),
+      start: Nat,
+      end: Nat,
+      name: Text,
+      first: List(Ty),
+      last: List(Ty),
+      constructor: WrittenTerm(
+        env,
+        generics,
+        true,
+        false,
+        SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence),
+        TyNamed(name, first)
+      ),
+      arguments: WrittenTerms(env, generics, partial, args, last),
+      arity: WrittenArity(env, name, List::append(first, last), partial)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
+      TyNamed(name, List::append(first, last))
+    )
+    WrittenKindFunction<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      params: List(SurfaceParam),
+      result: SurfaceTerm,
+      effects: Option(List(Text)),
+      binders: List(Pair(Text, Kind)),
+      remaining: List(SurfaceParam),
+      inner: Ordmap(Text, Ty),
+      arguments: List(Ty),
+      returns: Ty,
+      t: Ty,
+      split: WrittenBindersPrefix(params, binders, remaining),
+      scope: WrittenBinderMap(binders, generics, inner),
+      parameter_types: WrittenParameters(env, inner, partial, remaining, arguments),
+      result_type: WrittenTerm(env, inner, partial, false, result, returns),
+      polymorphic: WrittenPolymorphicType(binders, TyFn(arguments, returns, KindShared), t)
+    ): WrittenKind(env, generics, partial, under_borrow, SkPi(params, result, effects), t)
+    WrittenKindFunctionKind<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      spelling: Text,
+      body: SurfaceTerm,
+      params: List(Ty),
+      result: Ty,
+      original: Kind,
+      kind: Kind,
+      function: WrittenTerm(env, generics, partial, false, body, TyFn(params, result, original)),
+      annotation: WrittenFunctionKind(spelling, kind)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkFnKind(spelling, body),
+      TyFn(params, result, kind)
+    )
+    WrittenKindBorrow<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      mutable: Bool,
+      body: SurfaceTerm,
+      t: Ty,
+      meaning: WrittenTerm(env, generics, partial, true, body, t)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkBorrow(mutable, body),
+      TyBorrow(t, mutable)
+    )
+    WrittenKindUnion<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      parts: List(SurfaceTerm),
+      types: List(Ty),
+      meanings: WrittenTerms(env, generics, partial, parts, types)
+    ): WrittenKind(env, generics, partial, under_borrow, SkUnion(parts), ty_union(types))
+    WrittenKindProduct<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      parts: List(SurfaceTerm),
+      types: List(Ty),
+      meanings: WrittenTerms(env, generics, partial, parts, types)
+    ): WrittenKind(env, generics, partial, under_borrow, SkProduct(parts), ty_product(types))
+    WrittenKindTagged<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool, under_borrow: Bool>(
+      tag: Text,
+      body: SurfaceTerm,
+      t: Ty,
+      meaning: WrittenTerm(env, generics, partial, false, body, t)
+    ): WrittenKind(
+      env,
+      generics,
+      partial,
+      under_borrow,
+      SkTagged(tag, body),
+      ty_tagged(Cons(tag, Nil), t)
+    )
+  }
+  pub(open) inductive WrittenTerms(
+    env: Datas
+  ): (Ordmap(Text, Ty), Bool, List(SurfaceTerm), List(Ty)) -> Prop {
+    WrittenTermsNil<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool>: WrittenTerms(env, generics, partial, Nil, Nil)
+    WrittenTermsCons<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool>(
+      first: SurfaceTerm,
+      rest: List(SurfaceTerm),
+      t: Ty,
+      types: List(Ty),
+      head: WrittenTerm(env, generics, partial, false, first, t),
+      tail: WrittenTerms(env, generics, partial, rest, types)
+    ): WrittenTerms(env, generics, partial, Cons(first, rest), Cons(t, types))
+  }
+  pub(open) inductive WrittenParameters(
+    env: Datas
+  ): (Ordmap(Text, Ty), Bool, List(SurfaceParam), List(Ty)) -> Prop {
+    WrittenParametersNil<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool>: WrittenParameters(env, generics, partial, Nil, Nil)
+    WrittenParametersCons<generics: Ordmap(
+      Text,
+      Ty
+    ), partial: Bool>(
+      name: Option(Text),
+      ty: SurfaceTerm,
+      rest: List(SurfaceParam),
+      t: Ty,
+      types: List(Ty),
+      head: WrittenTerm(env, generics, partial, false, ty, t),
+      tail: WrittenParameters(env, generics, partial, rest, types)
+    ): WrittenParameters(
+      env,
+      generics,
+      partial,
+      Cons(SurfaceParamMk(name, ty), rest),
+      Cons(t, types)
+    )
+  }
+}

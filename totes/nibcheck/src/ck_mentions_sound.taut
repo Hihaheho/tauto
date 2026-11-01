@@ -1,0 +1,180 @@
+import "mentions_sound.taut"
+
+pub fn mentions_present(o: Option(Ty)): Bool { match o: Bool { None => false
+    Some(t) => true } }
+pub theorem mentions_bound(
+  c: Checker,
+  i: Nat,
+  t: Ty,
+  h: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)
+): ck_is_bound(c, i) = true { Eq::congr(mentions_present, h) }
+pub theorem mentions_or_left(
+  a: Bool,
+  b: Bool,
+  h: a = true
+): Bool::or(a, b) = true { Eq::subst((x: Bool) => Bool::or(x, b) = true, Eq::sym(h), Refl) }
+pub theorem mentions_or_right(a: Bool, b: Bool, h: b = true): Bool::or(a, b) = true {
+  match a: Bool::or(a, b) = true { false => h
+    true => Refl }
+}
+
+pub def MentionsHit(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ ns: List(
+  Text
+). ∀ n: Text. ∀ t: Ty. ∀ member: list_has_text(ns, n) = true. ∀ h: TyMentions(ck_subst_of(c), n, t). ck_mentions_in(k, c, ns, t) = true
+pub def MentionsListHit(
+  k: Nat
+): Prop := ∀ c: Checker. ∀ ns: List(
+  Text
+). ∀ n: Text. ∀ ts: List(
+  Ty
+). ∀ member: list_has_text(ns, n) = true. ∀ h: TyMentionsList(ck_subst_of(c), n, ts). ck_mentions_any_in(k, c, ns, ts) = true
+pub fn mentions_kind(j: Nat, c: Checker, ns: List(Text), t: Ty): Bool { match t: Bool {
+    TyInt(part_w) => false
+    TyBool => false
+    TyText => false
+    TyUnit => false
+    TyNever => false
+    TyDecimal => false
+    TyFloat => false
+    TyFn(part_params, part_result, part_kind) => Bool::or(
+      ck_mentions_any_in(j, c, ns, part_params),
+      ck_mentions_in(j, c, ns, part_result)
+    )
+    TyUnion(part_members) => ck_mentions_any_in(j, c, ns, part_members)
+    TyProduct(part_members) => ck_mentions_any_in(j, c, ns, part_members)
+    TyTagged(part_tags, part_inner) => ck_mentions_in(j, c, ns, part_inner)
+    TyNamed(part_name, part_args) => ck_mentions_any_in(j, c, ns, part_args)
+    TyParam(part_name, part_bound) => list_has_text(ns, part_name)
+    TyInfo(part_inner) => ck_mentions_in(j, c, ns, part_inner)
+    TyBorrow(part_inner, part_mutable) => ck_mentions_in(j, c, ns, part_inner)
+    TyVar(part_v) => ck_is_bound(c, part_v)
+    TyPoly(part_generics, part_inner) => ck_mentions_in(j, c, ns, part_inner)
+    TyApp(part_head, part_arg) => Bool::or(
+      ck_mentions_in(j, c, ns, part_head),
+      ck_mentions_in(j, c, ns, part_arg)
+    )
+  } }
+pub theorem mentions_kind_unf(
+  j: Nat,
+  c: Checker,
+  ns: List(Text),
+  t: Ty
+): ck_mentions_in(Succ(j), c, ns, t) = mentions_kind(j, c, ns, ck_resolve(c, t)) { Refl }
+pub theorem mentions_kind_hit(
+  j: Nat,
+  ht: MentionsHit(j),
+  hl: MentionsListHit(j),
+  c: Checker,
+  ns: List(Text),
+  n: Text,
+  t: Ty,
+  member: list_has_text(ns, n) = true,
+  h: TyMentions(ck_subst_of(c), n, t)
+): mentions_kind(j, c, ns, t) = true {
+  match h: mentions_kind(j, c, ns, t) = true {
+    MenParam(k) => member
+    MenVar(inner, i, eq, inside) => mentions_bound(c, i, inner, eq)
+    MenFnParam(ps, r, k, inside) => mentions_or_left(
+      ck_mentions_any_in(j, c, ns, ps),
+      ck_mentions_in(j, c, ns, r),
+      hl(c, ns, n, ps, member, inside)
+    )
+    MenFnResult(r, ps, k, inside) => mentions_or_right(
+      ck_mentions_any_in(j, c, ns, ps),
+      ck_mentions_in(j, c, ns, r),
+      ht(c, ns, n, r, member, inside)
+    )
+    MenUnion(ts, inside) => hl(c, ns, n, ts, member, inside)
+    MenProduct(ts, inside) => hl(c, ns, n, ts, member, inside)
+    MenTagged(inner, tags, inside) => ht(c, ns, n, inner, member, inside)
+    MenNamed(ts, name, inside) => hl(c, ns, n, ts, member, inside)
+    MenInfo(inner, inside) => ht(c, ns, n, inner, member, inside)
+    MenBorrow(inner, mutable, inside) => ht(c, ns, n, inner, member, inside)
+    MenPoly(inner, gs, inside) => ht(c, ns, n, inner, member, inside)
+    MenAppHead(head, arg, inside) => mentions_or_left(
+      ck_mentions_in(j, c, ns, head),
+      ck_mentions_in(j, c, ns, arg),
+      ht(c, ns, n, head, member, inside)
+    )
+    MenAppArg(arg, head, inside) => mentions_or_right(
+      ck_mentions_in(j, c, ns, head),
+      ck_mentions_in(j, c, ns, arg),
+      ht(c, ns, n, arg, member, inside)
+    )
+  }
+}
+pub theorem mentions_list_hit_step(
+  j: Nat,
+  ht: MentionsHit(j),
+  hl: MentionsListHit(j),
+  c: Checker,
+  ns: List(Text),
+  n: Text,
+  ts: List(Ty),
+  member: list_has_text(ns, n) = true,
+  h: TyMentionsList(ck_subst_of(c), n, ts)
+): ck_mentions_any_in(Succ(j), c, ns, ts) = true {
+  match h: ck_mentions_any_in(Succ(j), c, ns, ts) = true {
+    MenHead(x, rest, inside) => mentions_or_left(
+      ck_mentions_in(j, c, ns, x),
+      ck_mentions_any_in(j, c, ns, rest),
+      ht(c, ns, n, x, member, inside)
+    )
+    MenTail(rest, x, inside) => mentions_or_right(
+      ck_mentions_in(j, c, ns, x),
+      ck_mentions_any_in(j, c, ns, rest),
+      hl(c, ns, n, rest, member, inside)
+    )
+  }
+}
+pub theorem mentions_hit_all(k: Nat): And(MentionsHit(k), MentionsListHit(k)) {
+  match k: And(MentionsHit(k), MentionsListHit(k)) {
+    Zero => AndIntro(
+      c => ns => n => t => member => h => Refl,
+      c => ns => n => ts => member => h => Refl
+    )
+    Succ(j) => {
+      let ih: And(MentionsHit(j), MentionsListHit(j)) := mentions_hit_all(j)
+      AndIntro(
+        c => ns => n => t => member => h => Eq::trans(
+          mentions_kind_unf(j, c, ns, t),
+          mentions_kind_hit(
+            j,
+            And::left(ih),
+            And::right(ih),
+            c,
+            ns,
+            n,
+            ck_resolve(c, t),
+            member,
+            mentions_resolve(ck_steps_of(c), ck_subst_of(c), n, t, h)
+          )
+        ),
+        c => ns => n => ts => member => h => mentions_list_hit_step(
+          j,
+          And::left(ih),
+          And::right(ih),
+          c,
+          ns,
+          n,
+          ts,
+          member,
+          h
+        )
+      )
+    }
+  }
+}
+pub theorem ck_mentions_absent(
+  k: Nat,
+  c: Checker,
+  ns: List(Text),
+  t: Ty,
+  absent: ck_mentions_in(k, c, ns, t) = false
+): RigidAbsent(ck_subst_of(c), ns, t) {
+  n => member => occurs => false_ne_true(
+      Eq::trans(Eq::sym(absent), And::left(mentions_hit_all(k))(c, ns, n, t, member, occurs))
+    )
+}

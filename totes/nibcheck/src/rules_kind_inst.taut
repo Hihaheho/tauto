@@ -1,0 +1,30 @@
+import "rules_ty.taut"
+
+// The kind component of a valid instantiation: each substituted type is equal
+// to a representative whose kind fits its parameter's declared bound.
+pub fn instance_kind_name(g: Pair(Text, Kind)): Text { (g: Text) }
+pub fn instance_kind_bound(g: Pair(Text, Kind)): Kind { (g: Kind) }
+pub(open) inductive InstanceKinds(
+  s: Ordmap(Nat, Ty),
+  d: Datas
+): (List(Pair(Text, Kind)), Ordmap(Text, Ty)) -> Prop {
+  InstanceKindsNil: InstanceKinds(s, d, Nil, Ordmap::empty())
+  InstanceKindsCons<gs: List(
+    Pair(Text, Kind)
+  ), map: Ordmap(
+    Text,
+    Ty
+  )>(
+    g: Pair(Text, Kind),
+    value: Ty,
+    representative: Ty,
+    equal: TyEqIn(s, value, representative),
+    bound: kind_fits(datas_kind(d, representative), instance_kind_bound(g)) = true,
+    tail: InstanceKinds(s, d, gs, map)
+  ): InstanceKinds(
+    s,
+    d,
+    Cons(g, gs),
+    Ordmap::insert(map, instance_kind_name(g), value, Ordmap::compare_text)
+  )
+}

@@ -1,11 +1,774 @@
-// The host's operating system (`docs/design/self-host.md`). A failure is a
-// `Result` with a text a person reads.
+// The standard effects: what a program asks of the host it runs on
+// (`docs/design/host-effects.md`). A program performs them and may answer
+// them itself with a handler (a test can stand in for the file system or the
+// network). What reaches the top level unanswered is answered by the host:
+// standard input and output, the arguments, the exit, the clocks and the
+// random numbers (secure ones too) always; the file system, the environment
+// and the network only with the matching `--allow-*` permission. A request the permission does
+// not cover is the answer `Err(Denied(..))`.
 
-extern {
-  fn os_args() -> List(Text)
-  fn os_read_file(path: Text) -> Result(Text, Text)
-  fn os_write_file(path: Text, contents: Text) -> Result((), Text)
-  fn os_print(t: Text) -> ()
-  fn os_eprint(t: Text) -> ()
-  fn os_exit(code: i32) -> Never
+// Why a request of the host failed.
+pub(open) enum IoError {
+  // No permission covers the request; the text names what was asked.
+  Denied(Text)
+  // The host tried and failed; the text is the host's message.
+  Failed(Text)
+  // The deadline the request was given passed before it was done.
+  TimedOut
+}
+
+// A program `proc_run` starts: its name (looked up on `PATH`) or path,
+// its arguments, the directory it runs in (empty: the run's own), the
+// variables set on top of the run's environment, and its standard input.
+pub(open) struct Process {
+  program: Text,
+  args: List(Text),
+  dir: Text,
+  env: List(Pair(Text, Text)),
+  stdin: Bytes
+}
+// How it ended: its exit status (`None` when a signal ended it), its
+// standard output, and its standard error as text (bytes that are not UTF-8
+// become U+FFFD).
+pub(open) struct ProcessOutput { status: Option(u64), stdout: Bytes, stderr: Text }
+
+// An HTTP request and its response. Header names and values are as sent,
+// and the body is its bytes as sent. A header value that is not UTF-8 is
+// not given to the program changed: the host refuses that response instead.
+pub(open) struct Request { method: Text, url: Text, headers: List(Pair(Text, Text)), body: Bytes }
+pub(open) struct Response { status: u64, headers: List(Pair(Text, Text)), body: Bytes }
+
+// A byte stream's listener and the address the host bound (`tcp_listen`).
+pub(open) struct TcpListener { id: u64, address: Text }
+// A connected byte stream: its own address and its peer's.
+pub(open) struct TcpStream { id: u64, local: Text, peer: Text }
+// Which side of a stream `tcp_shutdown` ends.
+pub(open) enum Shutdown {
+  // No more reading: a read, waiting or not, sees the end of the stream.
+  ShutdownRead
+  // No more writing: the peer's reads see the end of the stream.
+  ShutdownWrite
+  ShutdownBoth
+}
+
+// TLS over a byte stream (`tls_*`). Certificates, keys and roots are PEM
+// as the program read them; a key stays a `Secret`.
+//
+// A certificate a server presents: the SNI names it answers (none: the
+// default, for a client that names no server or a name no other has), its
+// chain, leaf first, and its key.
+pub(open) struct TlsCert { names: List(Text), chain: Bytes, key: Secret(Bytes) }
+// A server's side: its certificates, the ALPN protocols it takes in order
+// of preference, and the roots a client certificate must chain to, when it
+// asks for one.
+pub(open) struct TlsServer { certs: List(TlsCert), alpn: List(Text), client_roots: Option(Bytes) }
+// The roots a client trusts. There is no way not to verify the server.
+pub(open) enum TlsRoots {
+  // The system's.
+  SystemRoots
+  // The system's and these.
+  SystemRootsAnd(Bytes)
+  // These alone, such as the CA of a server inside one's own network.
+  OnlyRoots(Bytes)
+}
+// A certificate a client presents: its chain and its key.
+pub(open) struct TlsClientCert { chain: Bytes, key: Secret(Bytes) }
+// A client's side: the name of the server, sent as SNI and checked against
+// its certificate (an IP address is checked, not sent), the roots, the
+// client certificate, and the ALPN protocols it offers.
+pub(open) struct TlsClient {
+  server_name: Text,
+  roots: TlsRoots,
+  client_cert: Option(TlsClientCert),
+  alpn: List(Text)
+}
+// An established session: the ALPN protocol chosen, on a server the SNI name
+// the client sent, and the peer's leaf certificate (DER) when it sent one.
+pub(open) struct TlsStream {
+  id: u64,
+  alpn: Option(Text),
+  server_name: Option(Text),
+  peer_certificate: Option(Bytes)
+}
+
+// Always allowed.
+pub(open) effect stdout(t: Text): Unit direct
+pub(open) effect stderr(t: Text): Unit direct
+// A line of standard input without its line break; `None` at its end.
+pub(open) effect stdin(): Option(Text) direct
+// The program's arguments, after `--`.
+pub(open) effect argv(): List(Text) direct
+// Ends the run with an exit code in 0..=255.
+pub(open) effect exit(code: i32): Never resume 0
+
+// Stops the run with `message`, for a value the program cannot go on with
+// (a broken invariant). A failure the caller should handle is `Option`,
+// `Result` or `fail` instead. A handler may answer it like any effect;
+// unanswered, the host ends the run with `message` as its error.
+pub(open) effect stop(message: Text): Never resume 0
+// Milliseconds since the Unix epoch.
+pub(open) effect wall_clock(): i64 direct
+// Nanoseconds since a fixed moment of this run; it never goes back.
+pub(open) effect monotonic_clock(): i64 direct
+// Waits at least `ms` milliseconds.
+pub(open) effect sleep(ms: u64): Unit resume 1
+// A flag the host raises once and never lowers: the end of a task, or a
+// mutex's content handed to the one that asked for it (`std/prelude/Par::taut`).
+pub shared struct Signal {}
+// Waits until the signal is raised. Every wait between tasks is this one
+// effect, so a host may run many tasks on one thread and go on with the
+// others while one waits.
+pub(open) effect wait(s: Signal): Unit resume 1
+// 63 random bits, below 2^63. Not for secrets.
+pub(open) effect random(): u64 direct
+// `n` bytes from the system's cryptographically secure random source, for
+// keys, tokens and salts. `Err(Failed(..))` when the system cannot give them.
+pub(open) effect secure_random(n: u64): Result(Secret(Bytes), IoError) direct
+
+// `--allow-read`: the contents of a file, as UTF-8.
+pub(open) effect fs_read(path: Text): Result(Text, IoError) direct
+// `--allow-write`: makes or replaces a file.
+pub(open) effect fs_write(path: Text, contents: Text): Result(Unit, IoError) direct
+// `--allow-read`: the contents of a file, byte by byte.
+pub(open) effect fs_read_bytes(path: Text): Result(Bytes, IoError) direct
+// `--allow-write`: makes or replaces a file with these bytes.
+pub(open) effect fs_write_bytes(path: Text, contents: Bytes): Result(Unit, IoError) direct
+// `--allow-write`: makes a directory and any missing parents. A directory
+// that is already there is not an error.
+pub(open) effect fs_create_dir(path: Text): Result(Unit, IoError) direct
+// `--allow-read`: the names of what a directory holds, in byte order,
+// without `.` and `..`.
+pub(open) effect fs_list_dir(path: Text): Result(List(Text), IoError) direct
+// `--allow-write`: removes a file, or a directory and all it holds.
+pub(open) effect fs_remove(path: Text): Result(Unit, IoError) direct
+// Makes a new empty directory of the system's temporary files and gives
+// its path. Always allowed: the host picked the path, not the program, and
+// the run may read and write under it from then on (as with a path the user
+// picked in the host's file dialog). The program removes it with
+// `fs_remove`.
+pub(open) effect fs_temp_dir(): Result(Text, IoError) direct
+// `--allow-run`: runs a program to its end. `--allow-run=git,clang` names
+// the programs, as `Process::program` spells them. The program runs with
+// everything the user running Tauto may do, outside these permissions:
+// allowing a program is allowing all it does. The program named `tauto` is
+// this run's own `tauto`.
+pub(open) effect proc_run(p: Process): Result(ProcessOutput, IoError) direct
+// `--allow-env`: an environment variable, `None` when it is not set.
+pub(open) effect env(name: Text): Result(Option(Text), IoError) direct
+// The host's permission check: what the run's permissions say about
+// `target` for `kind` (`read`, `write`, `run`, `env`, `net` or `socket`).
+// `Some` with the target as the host will use it when they cover it (a path
+// made absolute, say), `None` when they do not. Needs no permission: the
+// answer tells the program only what trying would. A program that answers
+// other programs' requests (a machine that runs them, say) asks it so it can
+// answer a denial as `Denied`, not as a failure.
+pub(open) effect permission(kind: Text, target: Text): Option(Text) direct
+// `--allow-net`: an HTTP request to the host of its URL.
+pub(open) effect net(request: Request): Result(Response, IoError) resume 1
+// `--allow-net`: an HTTP request to the host of its URL, connected to
+// `address` (one `net_resolve` gave, such as `93.184.215.14` or `::1`)
+// without resolving the host again, so the request reaches the address the
+// program resolved and checked, not one the name points to a moment later.
+// The `Host` header and the TLS name stay the URL's host. The permission
+// covers the URL as for `net`, and the address as the URL `http://address/`
+// reads it: `--allow-net` covers every address.
+pub(open) effect net_addr(request: Request, address: Text): Result(Response, IoError) resume 1
+// `--allow-net`: the addresses a host name resolves to, such as
+// `93.184.215.14` or `2606:2800:21f:cb07:6820:80da:af6b:8b2c`, each once and
+// in the order the system gave them. An address such as `127.0.0.1` resolves
+// to itself. The permission covers the name as the URL `http://host/` reads
+// it, so `--allow-net=example.com` covers it and `--allow-net=example.com:8080`
+// covers only that port's requests.
+pub(open) effect net_resolve(host: Text): Result(List(Text), IoError) resume 1
+
+// Byte streams: TCP at `HOST:PORT` (an IPv6 host in brackets), and Unix
+// domain sockets at `unix:PATH`. `--allow-net` covers them: `example.com`
+// every port of the host, `example.com:8080` one, `unix:DIR` the sockets at
+// or under DIR. Each request that waits takes a deadline, a value of
+// `monotonic_clock`, and answers `Err(TimedOut)` once it passes; `None`
+// waits as long as it takes. A TCP stream sends each write as soon as it
+// is made, without waiting to join it to the next (`TCP_NODELAY`).
+//
+// `--allow-net`: listens on an address; with port 0 the system picks the
+// port, and the listener's address names it.
+pub(open) effect tcp_listen(address: Text): Result(TcpListener, IoError) resume 1
+// The next connection to a listener.
+pub(open) effect tcp_accept(
+  listener: TcpListener,
+  deadline: Option(i64)
+): Result(TcpStream, IoError) resume 1
+// `--allow-net`: connects to an address.
+pub(open) effect tcp_connect(
+  address: Text,
+  deadline: Option(i64)
+): Result(TcpStream, IoError) resume 1
+// Up to `max` bytes, as soon as any arrive; none at the end of the stream.
+pub(open) effect tcp_read(
+  stream: TcpStream,
+  max: u64,
+  deadline: Option(i64)
+): Result(Bytes, IoError) resume 1
+// Writes all of the bytes. Some may have been sent when it fails or the
+// deadline passes.
+pub(open) effect tcp_write(
+  stream: TcpStream,
+  bytes: Bytes,
+  deadline: Option(i64)
+): Result(Unit, IoError) resume 1
+// Ends reading, writing or both. From another task, it wakes a read that
+// waits on the stream.
+pub(open) effect tcp_shutdown(stream: TcpStream, how: Shutdown): Result(Unit, IoError) resume 1
+// Closes a stream; a read or write waiting on it in another task ends.
+pub(open) effect tcp_close(stream: TcpStream): Unit resume 1
+// Stops listening; an accept waiting in another task fails.
+pub(open) effect tcp_unlisten(listener: TcpListener): Unit resume 1
+
+// TLS over a stream. The stream is the session's from then on, whether the
+// handshake succeeds or not: its number names no stream any more. No
+// permission beyond the stream's: `--allow-net` covers these as it covers
+// `tcp_read`. A program may answer them itself with a handler, such as a
+// TLS library written in Tauto.
+//
+// Answers a client's handshake.
+pub(open) effect tls_accept(
+  stream: TcpStream,
+  server: TlsServer,
+  deadline: Option(i64)
+): Result(TlsStream, IoError) resume 1
+// Starts a handshake with a server and verifies it.
+pub(open) effect tls_connect(
+  stream: TcpStream,
+  client: TlsClient,
+  deadline: Option(i64)
+): Result(TlsStream, IoError) resume 1
+// Up to `max` bytes, as soon as any are decrypted; none at the peer's
+// close_notify. A stream that ends without close_notify is `Err(Failed(..))`,
+// since what came may be cut short.
+pub(open) effect tls_read(
+  stream: TlsStream,
+  max: u64,
+  deadline: Option(i64)
+): Result(Bytes, IoError) resume 1
+// Writes all of the bytes.
+pub(open) effect tls_write(
+  stream: TlsStream,
+  bytes: Bytes,
+  deadline: Option(i64)
+): Result(Unit, IoError) resume 1
+// Ends reading, writing or both; ending writing sends close_notify first.
+// From another task, it wakes a read that waits on the session.
+pub(open) effect tls_shutdown(stream: TlsStream, how: Shutdown): Result(Unit, IoError) resume 1
+// Sends close_notify and closes the stream under the session.
+pub(open) effect tls_close(stream: TlsStream): Unit resume 1
+
+pub fn print(t: Text): Unit ! {stdout} {
+  perform stdout(t)
+}
+
+pub fn eprint(t: Text): Unit ! {stderr} {
+  perform stderr(t)
+}
+
+pub fn io_message(e: IoError): Text {
+  match e {
+    Denied(what) => concat("permission denied: ", what)
+    Failed(why) => why
+    TimedOut => "timed out"
+  }
+}
+
+// `fs_read` with the error as text.
+pub fn read_file(path: Text): Result(Text, Text) ! {fs_read} {
+  match perform fs_read(path) {
+    Ok(t) => Ok(t)
+    Err(e) => Err(io_message(e))
+  }
+}
+
+// `fs_write` with the error as text.
+pub fn write_file(path: Text, contents: Text): Result(Unit, Text) ! {fs_write} {
+  match perform fs_write(path, contents) {
+    Ok(u) => Ok(u)
+    Err(e) => Err(io_message(e))
+  }
+}
+
+pub fn http_get(url: Text): Result(Response, IoError) ! {net} {
+  perform net(Request { method: "GET", url: url, headers: Nil, body: Bytes::of_list(Nil) })
+}
+
+module Os {
+  // How the host answers the standard effects. Only the host's own code calls
+  // these; a program performs the effects instead.
+  extern {
+    fn args(): List(Text)
+    fn read_file(path: Text): Result(Text, Text)
+    fn write_file(path: Text, contents: Text): Result(Unit, Text)
+    fn read_bytes(path: Text): Result(Bytes, Text)
+    fn write_bytes(path: Text, contents: Bytes): Result(Unit, Text)
+    fn create_dir(path: Text): Result(Unit, Text)
+    fn list_dir(path: Text): Result(List(Text), Text)
+    fn remove(path: Text): Result(Unit, Text)
+    // Makes the directory and lets the run read and write under it.
+    fn temp_dir(): Result(Text, Text)
+    // The exit status (empty when a signal ended it) and standard error; and
+    // standard output. `env` is each variable's name and value; `dir` empty
+    // for the run's own.
+    fn run(
+      program: Text,
+      args: List(Text),
+      dir: Text,
+      env: List(Text),
+      stdin: Bytes
+    ): Result(Bytes × List(Text), Text)
+    fn print(t: Text): Unit
+    fn eprint(t: Text): Unit
+    fn exit(code: i32): Never
+    fn stop(message: Text): Never
+    fn read_line(): Option(Text)
+    fn env(name: Text): Option(Text)
+    fn wall_ms(): i64
+    fn monotonic_ns(): i64
+    // There once `ms` milliseconds have passed.
+    fn sleep_pending(ms: u64): Pending(Unit)
+    // Runs `f` where its blocking holds up no task, on a host that runs many
+    // tasks on one thread; there once `f` has returned.
+    fn offload<A>(f: () -> A): Pending(A)
+    fn random(): u64
+    fn secure_random(n: u64): Result(Bytes, Text)
+    // The status, then each header's name and value; and the body. With an
+    // address (not empty), the connection goes there and the URL's host is not
+    // resolved again.
+    fn fetch(
+      method: Text,
+      url: Text,
+      address: Text,
+      headers: List(Text),
+      body: Bytes
+    ): Result(Bytes × List(Text), Text)
+    // The status code `Os::fetch` gave as text.
+    fn status(t: Text): u64
+    // The addresses the host of a URL `Os::check` gave resolves to.
+    fn resolve(url: Text): Result(List(Text), Text)
+    // A stream listener on an address `Os::check` gave: its number, then the
+    // address bound.
+    fn tcp_listen(address: Text): Result(List(Text), Text)
+    // A stream: its number, its address and its peer's; `None` when the
+    // deadline passed first.
+    fn tcp_accept(listener: u64, deadline: Option(i64)): Result(Option(List(Text)), Text)
+    fn tcp_connect(address: Text, deadline: Option(i64)): Result(Option(List(Text)), Text)
+    fn tcp_read(stream: u64, max: u64, deadline: Option(i64)): Result(Option(Bytes), Text)
+    fn tcp_write(stream: u64, bytes: Bytes, deadline: Option(i64)): Result(Option(Unit), Text)
+    // 0 reading, 1 writing, 2 both.
+    fn tcp_shutdown(stream: u64, how: u64): Result(Unit, Text)
+    fn tcp_close(stream: u64): Unit
+    fn tcp_unlisten(listener: u64): Unit
+    // A session over a stream: its number, the ALPN protocol and the SNI name
+    // (empty for none); and the peer's certificate (empty for none). `None`
+    // when the deadline passed first. A server's `names` are each
+    // certificate's names joined by `,`, and `pems` each one's chain and key;
+    // `client_roots` is empty for none. A client's `roots` is 0 for the
+    // system's, 1 for the system's and the CAs, 2 for the CAs alone, and
+    // `pems` the CAs, the client chain and the client key (each empty for none).
+    fn tls_accept(
+      stream: u64,
+      names: List(Text),
+      pems: List(Bytes),
+      alpn: List(Text),
+      client_roots: Bytes,
+      deadline: Option(i64)
+    ): Result(Option(Bytes × List(Text)), Text)
+    fn tls_connect(
+      stream: u64,
+      server_name: Text,
+      roots: u64,
+      pems: List(Bytes),
+      alpn: List(Text),
+      deadline: Option(i64)
+    ): Result(Option(Bytes × List(Text)), Text)
+    fn tls_read(stream: u64, max: u64, deadline: Option(i64)): Result(Option(Bytes), Text)
+    fn tls_write(stream: u64, bytes: Bytes, deadline: Option(i64)): Result(Option(Unit), Text)
+    // 0 reading, 1 writing, 2 both.
+    fn tls_shutdown(stream: u64, how: u64): Result(Unit, Text)
+    fn tls_close(stream: u64): Unit
+    // What the host acts on when the run's permissions cover `kind` ("read",
+    // "write", "env", "net", "socket" or "run") for `target` (a path, a
+    // variable's name, a URL, a socket's address or a program): the path with
+    // its links followed, the URL as the HTTP client reads it. `None` when
+    // they do not.
+    fn check(kind: Text, target: Text): Option(Text)
+  }
+}
+
+module Host {
+  pub fn denied(kind: Text, target: Text): IoError {
+    Denied(concat(concat(concat(concat("--allow-", kind), " does not cover \""), target), "\""))
+  }
+
+  pub fn failed<T>(r: Result(T, Text)): Result(T, IoError) {
+    match r {
+      Ok(v) => Ok(v)
+      Err(why) => Err(Failed(why))
+    }
+  }
+
+  pub fn flat_headers(hs: List(Pair(Text, Text))): List(Text) {
+    match hs {
+      Nil => Nil
+      Cons(Pair { fst: name, snd: value }, rest) => Cons(name, Cons(value, Host::flat_headers(rest)))
+    }
+  }
+
+  pub fn paired_headers(ts: List(Text)): List(Pair(Text, Text)) {
+    match ts {
+      Cons(name, Cons(value, rest)) => Cons(Pair { fst: name, snd: value }, Host::paired_headers(rest))
+      Cons(_, Nil) => Nil
+      Nil => Nil
+    }
+  }
+
+  pub fn process(r: Result(Bytes × List(Text), Text)): Result(ProcessOutput, IoError) {
+    match r {
+      Ok(got) => match (got: List(Text)) {
+        Cons(status, Cons(stderr, _)) => {
+          let code := if Text::len(status) == 0 { None } else { Some(Os::status(status)) }
+          Ok(ProcessOutput { status: code, stdout: (got: Bytes), stderr: stderr })
+        }
+        Cons(_, Nil) => Err(Failed("the host gave no exit status"))
+        Nil => Err(Failed("the host gave no exit status"))
+      }
+      Err(why) => Err(Failed(why))
+    }
+  }
+
+  pub fn response(r: Result(Bytes × List(Text), Text)): Result(Response, IoError) {
+    match r {
+      Ok(got) => match (got: List(Text)) {
+        Cons(status, headers) => {
+          let code := Os::status(status)
+          let pairs := Host::paired_headers(headers)
+          Ok(Response { status: code, headers: pairs, body: (got: Bytes) })
+        }
+        Nil => Err(Failed("the host gave no response"))
+      }
+      Err(why) => Err(Failed(why))
+    }
+  }
+
+  pub fn fetch(r: Request): Result(Response, IoError) ! {wait} {
+    match Os::check("net", r.url) {
+      Some(url) => Host::fetch_checked(r, url, "")
+      None => Err(Host::denied("net", r.url))
+    }
+  }
+
+  // Sends `r` to the URL `Os::check` gave, connected to `address` if it is
+  // not empty.
+  pub fn fetch_checked(
+    r: Request,
+    url: Text,
+    address: Text
+  ): Result(Response, IoError) ! {wait} {
+    let method := r.method
+    let headers := Host::flat_headers(r.headers)
+    let body := r.body
+    Host::response(Pending::join(Os::offload(() => Os::fetch(method, url, address, headers, body))))
+  }
+
+  pub fn has_colon(t: Text, i: u64): Bool {
+    if i >= Text::len(t) {
+      false
+    } else {
+      match Text::byte(t, i) {
+        Some(b) => if b == 58 { true } else { Host::has_colon(t, i + 1) }
+        None => false
+      }
+    }
+  }
+
+  // The URL is checked as for `net`, and the address as the URL
+  // `http://address/` (an IPv6 address in brackets).
+  pub fn fetch_at(r: Request, address: Text): Result(Response, IoError) ! {wait} {
+    let shown := if Host::has_colon(address, 0) { concat(concat("[", address), "]") } else { address }
+    match Os::check("net", r.url) {
+      Some(url) => match Os::check("net", concat(concat("http://", shown), "/")) {
+        Some(_) => Host::fetch_checked(r, url, address)
+        None => Err(Host::denied("net", address))
+      }
+      None => Err(Host::denied("net", r.url))
+    }
+  }
+
+  // The name is checked as the URL `http://host/`, and the host resolves the
+  // host of the URL the check gave.
+  pub fn resolve(host: Text): Result(List(Text), IoError) ! {wait} {
+    let url := concat(concat("http://", host), "/")
+    match Os::check("net", url) {
+      Some(checked) => Host::failed(Pending::join(Os::offload(() => Os::resolve(checked))))
+      None => Err(Host::denied("net", host))
+    }
+  }
+
+  pub fn timed<T>(r: Result(Option(T), Text)): Result(T, IoError) {
+    match r {
+      Ok(Some(v)) => Ok(v)
+      Ok(None) => Err(TimedOut)
+      Err(why) => Err(Failed(why))
+    }
+  }
+
+  pub fn stream(r: Result(Option(List(Text)), Text)): Result(TcpStream, IoError) {
+    match Host::timed(r) {
+      Ok(Cons(id, Cons(local, Cons(peer, _)))) => Ok(
+        TcpStream { id: Os::status(id), local: local, peer: peer }
+      )
+      Ok(_) => Err(Failed("the host gave no stream"))
+      Err(e) => Err(e)
+    }
+  }
+
+  pub fn tcp_listen(address: Text): Result(TcpListener, IoError) ! {wait} {
+    match Os::check("socket", address) {
+      Some(checked) => match Pending::join(Os::offload(() => Os::tcp_listen(checked))) {
+        Ok(Cons(id, Cons(bound, _))) => Ok(TcpListener { id: Os::status(id), address: bound })
+        Ok(_) => Err(Failed("the host gave no listener"))
+        Err(why) => Err(Failed(why))
+      }
+      None => Err(Host::denied("net", address))
+    }
+  }
+
+  pub fn tcp_connect(
+    address: Text,
+    deadline: Option(i64)
+  ): Result(TcpStream, IoError) ! {wait} {
+    match Os::check("socket", address) {
+      Some(checked) => Host::stream(Pending::join(Os::offload(() => Os::tcp_connect(checked, deadline))))
+      None => Err(Host::denied("net", address))
+    }
+  }
+
+  pub fn shutdown_code(how: Shutdown): u64 {
+    match how {
+      ShutdownRead => 0
+      ShutdownWrite => 1
+      ShutdownBoth => 2
+    }
+  }
+
+  pub fn tcp_accept(
+    l: TcpListener,
+    deadline: Option(i64)
+  ): Result(TcpStream, IoError) ! {wait} {
+    let id := l.id
+    Host::stream(Pending::join(Os::offload(() => Os::tcp_accept(id, deadline))))
+  }
+
+  pub fn tcp_read(
+    s: TcpStream,
+    max: u64,
+    deadline: Option(i64)
+  ): Result(Bytes, IoError) ! {wait} {
+    let id := s.id
+    Host::timed(Pending::join(Os::offload(() => Os::tcp_read(id, max, deadline))))
+  }
+
+  pub fn tcp_write(
+    s: TcpStream,
+    bytes: Bytes,
+    deadline: Option(i64)
+  ): Result(Unit, IoError) ! {wait} {
+    let id := s.id
+    Host::timed(Pending::join(Os::offload(() => Os::tcp_write(id, bytes, deadline))))
+  }
+
+  pub fn joined_names(names: List(Text)): Text {
+    match names {
+      Nil => ""
+      Cons(n, Nil) => n
+      Cons(n, rest) => concat(concat(n, ","), Host::joined_names(rest))
+    }
+  }
+
+  pub fn cert_names(certs: List(TlsCert)): List(Text) {
+    match certs {
+      Nil => Nil
+      Cons(c, rest) => Cons(Host::joined_names(c.names), Host::cert_names(rest))
+    }
+  }
+
+  pub fn cert_pems(certs: List(TlsCert)): List(Bytes) {
+    match certs {
+      Nil => Nil
+      Cons(c, rest) => Cons(c.chain, Cons(expose(c.key), Host::cert_pems(rest)))
+    }
+  }
+
+  pub fn no_bytes(): Bytes {
+    Bytes::of_list(Nil)
+  }
+
+  pub fn some_text(t: Text): Option(Text) {
+    if Text::len(t) == 0 { None } else { Some(t) }
+  }
+
+  pub fn some_bytes(b: Bytes): Option(Bytes) {
+    if Bytes::len(b) == 0 { None } else { Some(b) }
+  }
+
+  pub fn tls(r: Result(Option(Bytes × List(Text)), Text)): Result(TlsStream, IoError) {
+    match Host::timed(r) {
+      Ok(got) => match (got: List(Text)) {
+        Cons(id, Cons(alpn, Cons(sni, _))) => Ok(TlsStream {
+          id: Os::status(id),
+          alpn: Host::some_text(alpn),
+          server_name: Host::some_text(sni),
+          peer_certificate: Host::some_bytes((got: Bytes))
+        })
+        Nil => Err(Failed("the host gave no session"))
+        Cons(_, Nil) => Err(Failed("the host gave no session"))
+        Cons(_, Cons(_, Nil)) => Err(Failed("the host gave no session"))
+      }
+      Err(e) => Err(e)
+    }
+  }
+
+  pub fn tls_accept(
+    s: TcpStream,
+    server: TlsServer,
+    deadline: Option(i64)
+  ): Result(TlsStream, IoError) ! {wait} {
+    let roots := match server.client_roots {
+      Some(r) => r
+      None => Host::no_bytes()
+    }
+    let id := s.id
+    let names := Host::cert_names(server.certs)
+    let pems := Host::cert_pems(server.certs)
+    let alpn := server.alpn
+    Host::tls(Pending::join(Os::offload(() => Os::tls_accept(id, names, pems, alpn, roots, deadline))))
+  }
+
+  pub fn tls_connect(
+    s: TcpStream,
+    client: TlsClient,
+    deadline: Option(i64)
+  ): Result(TlsStream, IoError) ! {wait} {
+    let kind := match client.roots {
+      SystemRoots => 0
+      SystemRootsAnd(_) => 1
+      OnlyRoots(_) => 2
+    }
+    let cas := match client.roots {
+      SystemRoots => Host::no_bytes()
+      SystemRootsAnd(r) => r
+      OnlyRoots(r) => r
+    }
+    let mine := match client.client_cert {
+      Some(c) => Cons(c.chain, Cons(expose(c.key), Nil))
+      None => Cons(Host::no_bytes(), Cons(Host::no_bytes(), Nil))
+    }
+    let id := s.id
+    let name := client.server_name
+    let pems := Cons(cas, mine)
+    let alpn := client.alpn
+    Host::tls(Pending::join(Os::offload(() => Os::tls_connect(id, name, kind, pems, alpn, deadline))))
+  }
+
+  pub fn tls_read(
+    s: TlsStream,
+    max: u64,
+    deadline: Option(i64)
+  ): Result(Bytes, IoError) ! {wait} {
+    let id := s.id
+    Host::timed(Pending::join(Os::offload(() => Os::tls_read(id, max, deadline))))
+  }
+
+  pub fn tls_write(
+    s: TlsStream,
+    bytes: Bytes,
+    deadline: Option(i64)
+  ): Result(Unit, IoError) ! {wait} {
+    let id := s.id
+    Host::timed(Pending::join(Os::offload(() => Os::tls_write(id, bytes, deadline))))
+  }
+
+  // The host's answers, around the whole program and around each task. What
+  // may take a while is a `Pending` the answer waits for: `wait` is left to
+  // the host that runs the tasks, which goes on with the others meanwhile.
+  pub fn run<A, !e>(
+    &body: () -> A ! {stdout, stderr, stdin, argv, exit, stop, wall_clock, monotonic_clock, sleep, random, secure_random, fs_read, fs_write, fs_read_bytes, fs_write_bytes, fs_create_dir, fs_list_dir, fs_remove, fs_temp_dir, proc_run, env, permission, net, net_addr, net_resolve, tcp_listen, tcp_accept, tcp_connect, tcp_read, tcp_write, tcp_shutdown, tcp_close, tcp_unlisten, tls_accept, tls_connect, tls_read, tls_write, tls_shutdown, tls_close} ∪ e
+  ): A ! {wait} ∪ e {
+    handle { body() } with {
+      stdout(t), k => k(Os::print(t))
+      stderr(t), k => k(Os::eprint(t))
+      stdin(), k => k(Os::read_line())
+      argv(), k => k(Os::args())
+      exit(code) => Os::exit(code)
+      stop(message) => Os::stop(message)
+      wall_clock(), k => k(Os::wall_ms())
+      monotonic_clock(), k => k(Os::monotonic_ns())
+      sleep(ms), k => k(Pending::join(Os::sleep_pending(ms)))
+      random(), k => k(Os::random())
+      secure_random(n), k => k(match Os::secure_random(n) {
+        Ok(bytes) => Ok(secret(bytes))
+        Err(why) => Err(Failed(why))
+      })
+      fs_read(path), k => k(match Os::check("read", path) {
+        Some(real) => Host::failed(Os::read_file(real))
+        None => Err(Host::denied("read", path))
+      })
+      fs_write(path, contents), k => k(match Os::check("write", path) {
+        Some(real) => Host::failed(Os::write_file(real, contents))
+        None => Err(Host::denied("write", path))
+      })
+      fs_read_bytes(path), k => k(match Os::check("read", path) {
+        Some(real) => Host::failed(Os::read_bytes(real))
+        None => Err(Host::denied("read", path))
+      })
+      fs_write_bytes(path, contents), k => k(match Os::check("write", path) {
+        Some(real) => Host::failed(Os::write_bytes(real, contents))
+        None => Err(Host::denied("write", path))
+      })
+      fs_create_dir(path), k => k(match Os::check("write", path) {
+        Some(real) => Host::failed(Os::create_dir(real))
+        None => Err(Host::denied("write", path))
+      })
+      fs_list_dir(path), k => k(match Os::check("read", path) {
+        Some(real) => Host::failed(Os::list_dir(real))
+        None => Err(Host::denied("read", path))
+      })
+      fs_remove(path), k => k(match Os::check("write", path) {
+        Some(real) => Host::failed(Os::remove(real))
+        None => Err(Host::denied("write", path))
+      })
+      fs_temp_dir(), k => k(Host::failed(Os::temp_dir()))
+      proc_run(p), k => k(match Os::check("run", p.program) {
+        Some(program) => Host::process(Os::run(program, p.args, p.dir, Host::flat_headers(p.env), p.stdin))
+        None => Err(Host::denied("run", p.program))
+      })
+      env(name), k => k(match Os::check("env", name) {
+        Some(n) => Ok(Os::env(n))
+        None => Err(Host::denied("env", name))
+      })
+      permission(kind, target), k => k(Os::check(kind, target))
+      net(r), k => k(Host::fetch(r))
+      net_addr(r, address), k => k(Host::fetch_at(r, address))
+      net_resolve(host), k => k(Host::resolve(host))
+      tcp_listen(address), k => k(Host::tcp_listen(address))
+      tcp_accept(l, deadline), k => k(Host::tcp_accept(l, deadline))
+      tcp_connect(address, deadline), k => k(Host::tcp_connect(address, deadline))
+      tcp_read(s, max, deadline), k => k(Host::tcp_read(s, max, deadline))
+      tcp_write(s, bytes, deadline), k => k(Host::tcp_write(s, bytes, deadline))
+      tcp_shutdown(s, how), k => k(Host::failed(Os::tcp_shutdown(s.id, Host::shutdown_code(how))))
+      tcp_close(s), k => k(Os::tcp_close(s.id))
+      tcp_unlisten(l), k => k(Os::tcp_unlisten(l.id))
+      tls_accept(s, server, deadline), k => k(Host::tls_accept(s, server, deadline))
+      tls_connect(s, client, deadline), k => k(Host::tls_connect(s, client, deadline))
+      tls_read(s, max, deadline), k => k(Host::tls_read(s, max, deadline))
+      tls_write(s, bytes, deadline), k => k(Host::tls_write(s, bytes, deadline))
+      tls_shutdown(s, how), k => k(Host::failed(Os::tls_shutdown(s.id, Host::shutdown_code(how))))
+      tls_close(s), k => k(Os::tls_close(s.id))
+    }
+  }
 }

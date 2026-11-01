@@ -1,0 +1,431 @@
+import "unify_allocation_poly.taut"
+
+pub def UnifyAppAllocated(
+  fuel: Nat
+): Prop := ∀ c: Checker. ∀ head: Ty. ∀ arg: Ty. ∀ name: Text. ∀ args: List(
+  Ty
+). ∀ ordered: CkOrdered(
+  c
+). ∀ state: CheckerAllocation(
+  c
+). ∀ fn_type: TypeAllocated(
+  ck_next_of(c),
+  head
+). ∀ arg_type: TypeAllocated(
+  ck_next_of(c),
+  arg
+). ∀ args_type: TypeListAllocated(
+  ck_next_of(c),
+  args
+). AllocationRun(c, ck_unify_app_in(fuel, c, head, arg, name, args))
+pub theorem allocated_unify_then(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  x: Ty,
+  y: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  a_bound: TypeAllocated(ck_next_of(c), a),
+  b_bound: TypeAllocated(ck_next_of(c), b),
+  x_bound: TypeAllocated(ck_next_of(c), x),
+  y_bound: TypeAllocated(ck_next_of(c), y)
+): AllocationRun(
+  c,
+  ck_and((next: Checker) => ck_unify_in(fuel, next, x, y), ck_unify_in(fuel, c, a, b))
+) {
+  allocation_and(
+    c,
+    (next: Checker) => ck_unify_in(fuel, next, x, y),
+    ck_unify_in(fuel, c, a, b),
+    hu(c, a, b, ordered, state, a_bound, b_bound),
+    unify_in_allocation_ordered(fuel, c, a, b, ordered),
+    next => same => current => order => hu(
+      next,
+      x,
+      y,
+      order,
+      current,
+      Eq::subst((limit: Nat) => TypeAllocated(limit, x), same, x_bound),
+      Eq::subst((limit: Nat) => TypeAllocated(limit, y), same, y_bound)
+    )
+  )
+}
+pub theorem allocated_unify_fn(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  hp: UnifyPairsAllocated(fuel),
+  c: Checker,
+  pa: List(Ty),
+  ra: Ty,
+  pb: List(Ty),
+  rb: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  pa_bound: TypeListAllocated(ck_next_of(c), pa),
+  ra_bound: TypeAllocated(ck_next_of(c), ra),
+  pb_bound: TypeListAllocated(ck_next_of(c), pb),
+  rb_bound: TypeAllocated(ck_next_of(c), rb)
+): AllocationRun(
+  c,
+  ck_and((next: Checker) => ck_unify_in(fuel, next, ra, rb), ck_unify_pairs_in(fuel, c, pa, pb))
+) {
+  allocation_and(
+    c,
+    (next: Checker) => ck_unify_in(fuel, next, ra, rb),
+    ck_unify_pairs_in(fuel, c, pa, pb),
+    hp(c, pa, pb, ordered, state, pa_bound, pb_bound),
+    And::left(And::left(And::left(And::right(And::right(unify_at(fuel))))(c, pa, pb)(ordered))),
+    next => same => current => order => hu(
+      next,
+      ra,
+      rb,
+      order,
+      current,
+      Eq::subst((limit: Nat) => TypeAllocated(limit, ra), same, ra_bound),
+      Eq::subst((limit: Nat) => TypeAllocated(limit, rb), same, rb_bound)
+    )
+  )
+}
+pub theorem allocated_unify_rest_step(
+  fuel: Nat,
+  hu: UnifyAllocated(fuel),
+  hp: UnifyPairsAllocated(fuel),
+  app_ih: UnifyAppAllocated(fuel),
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, b)) {
+  match b: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, b)) {
+    TyInt(wb) => AndIntro(Refl, state)
+    TyBool => AndIntro(Refl, state)
+    TyText => AndIntro(Refl, state)
+    TyUnit => AndIntro(Refl, state)
+    TyNever => AndIntro(Refl, state)
+    TyDecimal => AndIntro(Refl, state)
+    TyFloat => AndIntro(Refl, state)
+    TyParam(nb, kb) => AndIntro(Refl, state)
+    TyVar(vb) => allocation_run_rewrap(
+      c,
+      ck_bind(c, vb, a),
+      ck_bind_allocation_run(c, vb, a, ordered, state, right, left)
+    )
+    TyFn(pb, rb, kb) => match a: AllocationRun(
+      c,
+      ck_unify_rest_in(Succ(fuel), c, a, TyFn(pb, rb, kb))
+    ) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => allocation_guard_ok(
+        c,
+        ck_and(
+          (next: Checker) => ck_unify_in(fuel, next, ra, rb),
+          ck_unify_pairs_in(fuel, c, pa, pb)
+        ),
+        ty_eq(TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+        state,
+        allocated_unify_fn(
+          fuel,
+          hu,
+          hp,
+          c,
+          pa,
+          ra,
+          pb,
+          rb,
+          ordered,
+          state,
+          And::left(left),
+          And::right(left),
+          And::left(right),
+          And::right(right)
+        ),
+        Bool::and(
+          Nat::eq(list_len(pa), list_len(pb)),
+          Bool::or(kind_eq(ka, kb), Bool::and(kind_dup(ka), kind_dup(kb)))
+        )
+      )
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyUnion(tb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyUnion(tb))) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyUnion(ta) => allocation_guard_ok(
+        c,
+        ck_rewrap1(ck_unify_pairs_in(fuel, c, ta, tb)),
+        ty_eq(TyUnion(ta), TyUnion(tb)),
+        state,
+        allocation_run_rewrap(
+          c,
+          ck_unify_pairs_in(fuel, c, ta, tb),
+          hp(c, ta, tb, ordered, state, left, right)
+        ),
+        Nat::eq(list_len(ta), list_len(tb))
+      )
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyProduct(tb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyProduct(tb))) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => allocation_guard_ok(
+        c,
+        ck_rewrap1(ck_unify_pairs_in(fuel, c, ta, tb)),
+        ty_eq(TyProduct(ta), TyProduct(tb)),
+        state,
+        allocation_run_rewrap(
+          c,
+          ck_unify_pairs_in(fuel, c, ta, tb),
+          hp(c, ta, tb, ordered, state, left, right)
+        ),
+        Nat::eq(list_len(ta), list_len(tb))
+      )
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyNamed(nb, tb) => match a: AllocationRun(
+      c,
+      ck_unify_rest_in(Succ(fuel), c, a, TyNamed(nb, tb))
+    ) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => allocation_guard_ok(
+        c,
+        ck_rewrap1(ck_unify_pairs_in(fuel, c, ta, tb)),
+        ty_eq(TyNamed(na, ta), TyNamed(nb, tb)),
+        state,
+        allocation_run_rewrap(
+          c,
+          ck_unify_pairs_in(fuel, c, ta, tb),
+          hp(c, ta, tb, ordered, state, left, right)
+        ),
+        Bool::and(Text::eq(na, nb), Nat::eq(list_len(ta), list_len(tb)))
+      )
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => allocation_run_rewrap(
+        c,
+        ck_unify_app_in(fuel, c, ha, xa, nb, tb),
+        app_ih(c, ha, xa, nb, tb, ordered, state, And::left(left), And::right(left), right)
+      )
+    }
+    TyTagged(tagsb, xb) => match a: AllocationRun(
+      c,
+      ck_unify_rest_in(Succ(fuel), c, a, TyTagged(tagsb, xb))
+    ) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => allocation_guard_ok(
+        c,
+        ck_rewrap1(ck_unify_in(fuel, c, xa, xb)),
+        ty_eq(TyTagged(tagsa, xa), TyTagged(tagsb, xb)),
+        state,
+        allocation_run_rewrap(
+          c,
+          ck_unify_in(fuel, c, xa, xb),
+          hu(c, xa, xb, ordered, state, left, right)
+        ),
+        text_list_eq(tagsa, tagsb)
+      )
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyInfo(xb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyInfo(xb))) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => allocation_run_rewrap(
+        c,
+        ck_unify_in(fuel, c, xa, xb),
+        hu(c, xa, xb, ordered, state, left, right)
+      )
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyBorrow(xb, mb) => match a: AllocationRun(
+      c,
+      ck_unify_rest_in(Succ(fuel), c, a, TyBorrow(xb, mb))
+    ) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => allocation_guard_ok(
+        c,
+        ck_rewrap1(ck_unify_in(fuel, c, xa, xb)),
+        ty_eq(TyBorrow(xa, ma), TyBorrow(xb, mb)),
+        state,
+        allocation_run_rewrap(
+          c,
+          ck_unify_in(fuel, c, xa, xb),
+          hu(c, xa, xb, ordered, state, left, right)
+        ),
+        Bool::eq(ma, mb)
+      )
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyPoly(gb, xb) => match a: AllocationRun(
+      c,
+      ck_unify_rest_in(Succ(fuel), c, a, TyPoly(gb, xb))
+    ) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => AndIntro(Refl, state)
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => allocation_guard_ok(
+        c,
+        ck_poly_k(fuel, ga, xa, gb, xb, ck_rigid(ga, c)),
+        ty_eq(TyPoly(ga, xa), TyPoly(gb, xb)),
+        state,
+        allocated_poly_call(fuel, hu, c, ga, xa, gb, xb, ordered, state, left, right),
+        ty_kinds_match(ga, gb)
+      )
+      TyApp(ha, xa) => AndIntro(Refl, state)
+    }
+    TyApp(hb, xb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyApp(hb, xb))) {
+      TyInt(wa) => AndIntro(Refl, state)
+      TyBool => AndIntro(Refl, state)
+      TyText => AndIntro(Refl, state)
+      TyUnit => AndIntro(Refl, state)
+      TyNever => AndIntro(Refl, state)
+      TyDecimal => AndIntro(Refl, state)
+      TyFloat => AndIntro(Refl, state)
+      TyParam(na, ka) => AndIntro(Refl, state)
+      TyVar(va) => AndIntro(Refl, state)
+      TyFn(pa, ra, ka) => AndIntro(Refl, state)
+      TyUnion(ta) => AndIntro(Refl, state)
+      TyProduct(ta) => AndIntro(Refl, state)
+      TyNamed(na, ta) => allocation_run_rewrap(
+        c,
+        ck_unify_app_in(fuel, c, hb, xb, na, ta),
+        app_ih(c, hb, xb, na, ta, ordered, state, And::left(right), And::right(right), left)
+      )
+      TyTagged(tagsa, xa) => AndIntro(Refl, state)
+      TyInfo(xa) => AndIntro(Refl, state)
+      TyBorrow(xa, ma) => AndIntro(Refl, state)
+      TyPoly(ga, xa) => AndIntro(Refl, state)
+      TyApp(ha, xa) => allocated_unify_then(
+        fuel,
+        hu,
+        c,
+        ha,
+        hb,
+        xa,
+        xb,
+        ordered,
+        state,
+        And::left(left),
+        And::left(right),
+        And::right(left),
+        And::right(right)
+      )
+    }
+  }
+}

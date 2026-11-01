@@ -1,0 +1,79 @@
+import "rules_data_shape.taut"
+import "registration_body_sound.taut"
+
+pub theorem empty_data_ctor_step(
+  k: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  tail: ∀ h: ctors_have_fields(rest) = false. EmptyDataConstructors(rest),
+  clean: ctors_have_fields(Cons(k, rest)) = false
+): EmptyDataConstructors(Cons(k, rest)) {
+  match k: EmptyDataConstructors(Cons(k, rest)) {
+    surface_data_ctor_mk(name, fields) => match fields: EmptyDataConstructors(
+      Cons(surface_data_ctor_mk(name, fields), rest)
+    ) {
+      Nil => EmptyDataConstructorsCons(name, rest, tail(clean))
+      Cons(first, more) => False::elim(true_ne_false(clean))
+    }
+  }
+}
+pub theorem ctors_have_fields_sound(
+  cs: List(SurfaceDataCtor),
+  clean: ctors_have_fields(cs) = false
+): EmptyDataConstructors(cs) {
+  match cs: EmptyDataConstructors(cs) {
+    Nil => EmptyDataConstructorsNil
+    Cons(k, rest) => empty_data_ctor_step(k, rest, h => ctors_have_fields_sound(rest, h), clean)
+  }
+}
+pub theorem data_view_shape_checked(
+  source: SurfaceData,
+  is_struct: Bool,
+  r#view: Bool,
+  equal: surface_data_is_view(source) = r#view,
+  allowed: Bool::and(r#view, Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))) = false
+): DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) {
+  match r#view: DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) {
+    false => DataViewOrdinary(equal)
+    true => match is_struct: DataViewShape(
+      surface_data_is_view(source),
+      is_struct,
+      registration_ctors(source)
+    ) {
+      false => False::elim(true_ne_false(allowed))
+      true => DataViewOpaque(
+        equal,
+        Refl,
+        ctors_have_fields_sound(registration_ctors(source), allowed)
+      )
+    }
+  }
+}
+pub theorem ck_declare_data_view_shape(
+  c: Checker,
+  source: SurfaceData,
+  is_struct: Bool,
+  builtin: Bool,
+  clean: DiagnosticClean(ck_st(ck_declare_data(c, source, is_struct, builtin)))
+): DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) {
+  data_view_shape_checked(
+    source,
+    is_struct,
+    surface_data_is_view(source),
+    Refl,
+    body_declare_checked_allowed(
+      c,
+      source,
+      is_struct,
+      builtin,
+      Bool::and(
+        surface_data_is_view(source),
+        Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
+      ),
+      Eq::subst(
+        (m: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(m)),
+        registration_declare_unf(c, source, is_struct, builtin),
+        clean
+      )
+    )
+  )
+}

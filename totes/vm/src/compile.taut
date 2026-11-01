@@ -1,0 +1,750 @@
+import "machine.taut"
+import "cps.taut"
+import std::List
+
+// The compiler: from each function's continuation-passing form, the lowering every
+// backend shares (`tauto_nir::cps`, which Rust writes as `wire.taut` reads it), to the code
+// of `machine.taut`. Each piece is compiled with the code after it, so the code is built
+// from the end. A closure's body becomes a function of its own after the program's.
+//
+// A local is boxed (it holds a borrow of a cell of the heap) when it is borrowed, shared
+// with a closure (`var`), or written inside a `handle` or a `budget`, so that the code
+// that reads it later sees what was written. A local that holds a borrow itself (it is
+// read through, or written through) is never boxed: copies of the borrow name the same
+// place.
+
+// ---- which locals are boxed ---------------------------------------------------------------
+
+// What the analysis collects: the locals that are borrowed or shared, those written inside
+// a `handle` or a `budget`, and those that hold borrows.
+pub(open) inductive CUse: Type {
+  Cuse(boxed: List(Nat), holders: List(Nat)): CUse
+}
+
+pub fn cu_add_box(u: CUse, id: Nat): CUse {
+  match u {
+    Cuse(b, h) => Cuse(Cons(id, b), h)
+  }
+}
+
+pub fn cu_add_holder(u: CUse, id: Nat): CUse {
+  match u {
+    Cuse(b, h) => Cuse(b, Cons(id, h))
+  }
+}
+
+pub fn cu_add_boxes(u: CUse, ids: List(Nat)): CUse {
+  match ids {
+    Nil => u
+    Cons(id, rest) => cu_add_boxes(cu_add_box(u, id), rest)
+  }
+}
+
+pub fn c_ref_outers(refs: List(Pair(Nat, Nat))): List(Nat) {
+  List::map((r: Pair(Nat, Nat)) => match r {
+    Pair { fst: inner, snd: outer } => outer
+  }, refs)
+}
+
+mutual {
+  // `inside` once in a `handle` or a `budget`.
+  pub fn c_uses(e: Cps, inside: Bool, u: CUse): CUse {
+    match e {
+      CPure(v) => u
+      CRead(id, deref) => match deref {
+        true => cu_add_holder(u, id)
+        false => u
+      }
+      CCall(callee, args, ticked) => c_uses_list(args, inside, c_uses(callee, inside, u))
+      CTail(inst, args) => c_uses_list(args, inside, u)
+      CBuiltin(name, args) => c_uses_list(args, inside, u)
+      MkCPrim(op, args) => c_uses_list(args, inside, u)
+      CMap(value, op) => c_uses(value, inside, u)
+      CBranch(c, t, o) => c_uses(o, inside, c_uses(t, inside, c_uses(c, inside, u)))
+      CSeq(items) => c_uses_list(items, inside, u)
+      CDefine(id, r#shared, init) => {
+        let u2 := c_uses(init, inside, u)
+        match r#shared {
+          true => cu_add_box(u2, id)
+          false => u2
+        }
+      }
+      CAssign(id, path, through, value) => {
+        let u2 := c_uses(value, inside, u)
+        match through {
+          true => cu_add_holder(u2, id)
+          false => match inside {
+            true => cu_add_box(u2, id)
+            false => u2
+          }
+        }
+      }
+      CWhile(c, b, ticked) => c_uses(b, inside, c_uses(c, inside, u))
+      CReturn(v) => c_uses(v, inside, u)
+      CMatch(Scrut, Pats, Guards, Bodies) => c_uses_list(
+        Bodies,
+        inside,
+        c_uses_list(Guards, inside, c_uses(Scrut, inside, u))
+      )
+      CClosure(body, params, captures, Borrowed, refs) => {
+        let u2 := cu_add_boxes(u, c_ref_outers(refs))
+        match Borrowed {
+          true => cu_add_boxes(u2, captures)
+          false => u2
+        }
+      }
+      CPerform(op, quant, args) => c_uses_list(args, inside, u)
+      CHandle(body, Ops, Pats, Ks, Bodies, Rpats, Rguards, Rbodies) => c_uses_list(
+        Rbodies,
+        true,
+        c_uses_list(Rguards, true, c_uses_list(Bodies, true, c_uses(body, true, u)))
+      )
+      CBorrow(id, path, through) => match through {
+        true => cu_add_holder(u, id)
+        false => cu_add_box(u, id)
+      }
+      CBudget(memory, steps, body) => c_uses(body, true, c_uses(steps, inside, u))
+    }
+  }
+
+  pub fn c_uses_list(es: List(Cps), inside: Bool, u: CUse): CUse {
+    match es {
+      Nil => u
+      Cons(e, rest) => c_uses_list(rest, inside, c_uses(e, inside, u))
+    }
+  }
+}
+
+pub fn c_member(xs: List(Nat), x: Nat): Bool {
+  match xs {
+    Nil => false
+    Cons(y, rest) => Bool::or(Nat::eq(x, y), c_member(rest, x))
+  }
+}
+
+// The boxed locals of a body: those the analysis boxes, less those that hold borrows.
+pub fn c_boxed(body: Cps, more: List(Nat)): List(Nat) {
+  match c_uses(body, false, Cuse(more, Nil)) {
+    Cuse(b, h) => List::filter((id: Nat) => not(c_member(h, id)), b)
+  }
+}
+
+// ---- the compiler's state ------------------------------------------------------------------
+
+// The slots of the function being compiled (local, slot), the count of them, its boxed
+// locals, the functions of the closures so far (the first at `base`), and the first thing
+// the machine cannot run.
+pub(open) inductive CSt: Type {
+  Cst(
+    slots: List(Pair(Nat, Nat)),
+    count: Nat,
+    boxed: List(Nat),
+    extra: List(MFn),
+    base: Nat,
+    bad: Option(Text)
+  ): CSt
+}
+
+pub(open) inductive CR: Type {
+  Cr(code: MCode, st: CSt): CR
+}
+
+pub fn c_lookup(slots: List(Pair(Nat, Nat)), id: Nat): Option(Nat) {
+  match slots {
+    Nil => None
+    Cons(p, rest) => match p {
+      Pair { fst: i, snd: s } => if Nat::eq(i, id) { Some(s) } else { c_lookup(rest, id) }
+    }
+  }
+}
+
+// The slot of a local, given one if it has none.
+pub fn c_slot(st: CSt, id: Nat): Pair(Nat, CSt) {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => match c_lookup(slots, id) {
+      Some(s) => Pair { fst: s, snd: st }
+      None => Pair {
+        fst: count,
+        snd: Cst(Cons(Pair { fst: id, snd: count }, slots), Succ(count), boxed, extra, base, bad)
+      }
+    }
+  }
+}
+
+pub fn c_is_boxed(st: CSt, id: Nat): Bool {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => c_member(boxed, id)
+  }
+}
+
+pub fn c_fail(st: CSt, what: Text): CSt {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => match bad {
+      Some(b) => st
+      None => Cst(slots, count, boxed, extra, base, Some(what))
+    }
+  }
+}
+
+// ---- values and operations -------------------------------------------------------------
+
+pub fn c_value(v: CVal): MVal {
+  match v {
+    CvUnit => MvUnit
+    CvInt(i) => MvInt(i)
+    CvFloat(x) => MvFloat(x)
+    CvBool(b) => MvBool(b)
+    CvText(t) => MvText(t)
+    CvFn(f) => MvFn(f)
+  }
+}
+
+pub fn c_prim_op(op: CPrim, n: Nat): MOp {
+  match op {
+    CprArith(a, w) => MoArith(a, w)
+    CprFloat(a) => MoFloat(a)
+    CprFloat32(a) => MoFloat32(a)
+    CprCmp(c) => MoCmp(c)
+    CprEq(negate) => MoEq(negate)
+    CprConstruct(c, order) => MoConstruct(c, n, order)
+    CprProduct(picks) => MoProduct(n, picks)
+    CprConcat => MoConcat
+    CprTextOfInt => MoTextOfInt
+    CprTextLen => MoTextLen
+    CprTextCompare => MoTextCompare
+    CprDivide(modulo, w) => MoDivide(modulo, w)
+    CprSynParse(parser) => MoSynParse(parser)
+  }
+}
+
+pub fn c_unary(op: CUnary): MOp {
+  match op {
+    CuNot => MoNot
+    CuMember(i) => MoMember(i)
+    CuField(s) => MoField(s)
+    CuShown => MoShown
+    CuTempRef => MoTempRef
+    CuDeref => MoDeref
+    CuInject(u, i) => MoInject(u, i)
+    CuRemap(to, table) => MoRemap(to, table)
+  }
+}
+
+// The index of the name in the list.
+pub fn c_index(names: List(Text), n: Text, at: Nat): Option(Nat) {
+  match names {
+    Nil => None
+    Cons(x, rest) => if m_text_eq(x, n) { Some(at) } else { c_index(rest, n, Succ(at)) }
+  }
+}
+
+// ---- patterns ---------------------------------------------------------------------------
+
+// The pattern, with its locals given slots, and the locals it binds.
+mutual {
+  pub fn c_pat(p: CPat, st: CSt, ids: List(Nat)): Pair(MPat, Pair(CSt, List(Nat))) {
+    match p {
+      CpWild => Pair { fst: MpWild, snd: Pair { fst: st, snd: ids } }
+      CpBind(id, borrow) => match c_slot(st, id) {
+        Pair { fst: s, snd: st2 } => Pair {
+          fst: MpBind(s, borrow),
+          snd: Pair { fst: st2, snd: Cons(id, ids) }
+        }
+      }
+      CpLit(v) => Pair { fst: MpLit(c_value(v)), snd: Pair { fst: st, snd: ids } }
+      CpCtor(c, fields) => match c_pats(fields, st, ids) {
+        Pair { fst: ps, snd: rest } => Pair { fst: MpCtor(c, ps), snd: rest }
+      }
+    }
+  }
+
+  pub fn c_pats(ps: List(CPat), st: CSt, ids: List(Nat)): Pair(List(MPat), Pair(CSt, List(Nat))) {
+    match ps {
+      Nil => Pair { fst: Nil, snd: Pair { fst: st, snd: ids } }
+      Cons(p, rest) => match c_pat(p, st, ids) {
+        Pair { fst: mp, snd: r } => match r {
+          Pair { fst: st2, snd: ids2 } => match c_pats(rest, st2, ids2) {
+            Pair { fst: mps, snd: r2 } => Pair { fst: Cons(mp, mps), snd: r2 }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Boxes the boxed locals among `ids`, then runs `k`.
+pub fn c_box_all(ids: List(Nat), st: CSt, k: MCode): CR {
+  match ids {
+    Nil => Cr(k, st)
+    Cons(id, rest) => match c_box_all(rest, st, k) {
+      Cr(k2, st2) => if c_is_boxed(st2, id) {
+        match c_slot(st2, id) {
+          Pair { fst: s, snd: st3 } => Cr(McLoad(s, McBox(s, k2)), st3)
+        }
+      } else {
+        Cr(k2, st2)
+      }
+    }
+  }
+}
+
+// ---- expressions --------------------------------------------------------------------------
+
+pub fn c_with_slots(st: CSt, slots: List(Pair(Nat, Nat)), count: Nat, boxed: List(Nat)): CSt {
+  match st {
+    Cst(s, c, b, extra, base, bad) => Cst(slots, count, boxed, extra, base, bad)
+  }
+}
+
+pub fn c_slots_of(st: CSt): Pair(List(Pair(Nat, Nat)), Pair(Nat, List(Nat))) {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => Pair {
+      fst: slots,
+      snd: Pair { fst: count, snd: boxed }
+    }
+  }
+}
+
+// Adds the function of a closure; its index.
+pub fn c_add_fn(st: CSt, f: MFn): Pair(Nat, CSt) {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => Pair {
+      fst: Nat::add(base, List::length(extra)),
+      snd: Cst(slots, count, boxed, List::append(extra, Cons(f, Nil)), base, bad)
+    }
+  }
+}
+
+// The slots of a new function: `ids` in order from 0.
+pub fn c_fresh(ids: List(Nat), at: Nat): List(Pair(Nat, Nat)) {
+  match ids {
+    Nil => Nil
+    Cons(id, rest) => Cons(Pair { fst: id, snd: at }, c_fresh(rest, Succ(at)))
+  }
+}
+
+// The captures a closure finds in the code around it, in order.
+pub fn c_found(slots: List(Pair(Nat, Nat)), ids: List(Nat)): List(Pair(Nat, Nat)) {
+  match ids {
+    Nil => Nil
+    Cons(id, rest) => match c_lookup(slots, id) {
+      None => c_found(slots, rest)
+      Some(s) => Cons(Pair { fst: id, snd: s }, c_found(slots, rest))
+    }
+  }
+}
+
+// The captures that are not the closure's names of the references it is passed.
+pub fn c_not_inner(captures: List(Nat), refs: List(Pair(Nat, Nat))): List(Nat) {
+  List::filter((id: Nat) => not(c_member(c_inner_ids(refs), id)), captures)
+}
+
+pub fn c_slot_all(ids: List(Nat), st: CSt): CSt {
+  match ids {
+    Nil => st
+    Cons(id, rest) => match c_slot(st, id) {
+      Pair { fst: s, snd: st2 } => c_slot_all(rest, st2)
+    }
+  }
+}
+
+// Loads the outer slots in order, then `k`.
+pub fn c_loads(found: List(Pair(Nat, Nat)), k: MCode): MCode {
+  match found {
+    Nil => k
+    Cons(f, rest) => match f {
+      Pair { fst: id, snd: s } => McLoad(s, c_loads(rest, k))
+    }
+  }
+}
+
+pub fn c_inner_ids(refs: List(Pair(Nat, Nat))): List(Nat) {
+  List::map((r: Pair(Nat, Nat)) => match r {
+    Pair { fst: inner, snd: outer } => inner
+  }, refs)
+}
+
+pub fn c_ids(found: List(Pair(Nat, Nat))): List(Nat) {
+  List::map((f: Pair(Nat, Nat)) => match f {
+    Pair { fst: id, snd: s } => id
+  }, found)
+}
+
+// The slot of each ref's outer local, for the refs found.
+pub fn c_ref_slots(slots: List(Pair(Nat, Nat)), refs: List(Pair(Nat, Nat))): List(Pair(Nat, Nat)) {
+  match refs {
+    Nil => Nil
+    Cons(r, rest) => match r {
+      Pair { fst: inner, snd: outer } => match c_lookup(slots, outer) {
+        None => c_ref_slots(slots, rest)
+        Some(s) => Cons(Pair { fst: inner, snd: s }, c_ref_slots(slots, rest))
+      }
+    }
+  }
+}
+
+mutual {
+  // The code of `e`, which leaves its value on the stack, then `k`.
+  pub fn c_expr(fuel: Nat, e: Cps, k: MCode, st: CSt): CR {
+    match fuel {
+      Zero => Cr(k, c_fail(st, "a program nested too deep"))
+      Succ(f) => match e {
+        CPure(v) => Cr(McPush(c_value(v), k), st)
+        CRead(id, deref) => match c_slot(st, id) {
+          Pair { fst: s, snd: st2 } => {
+            let k2 := match deref {
+              true => McOp(MoDeref, k)
+              false => k
+            }
+            let k3 := if c_is_boxed(st2, id) { McOp(MoUnbox, k2) } else { k2 }
+            Cr(McLoad(s, k3), st2)
+          }
+        }
+        CCall(callee, args, ticked) => {
+          let call := McCall(List::length(args), k)
+          let call2 := match ticked {
+            true => McTick(call)
+            false => call
+          }
+          match c_all(f, args, call2, st) {
+            Cr(MkCode, st2) => c_expr(f, callee, MkCode, st2)
+          }
+        }
+        CTail(inst, args) => c_all(f, args, McTail(inst, List::length(args)), st)
+        CBuiltin(name, args) => match c_index(m_builtin_names(), name, 0) {
+          Some(b) => c_all(f, args, McBuiltin(b, List::length(args), k), st)
+          None => match c_index(m_host_names(), name, 0) {
+            Some(h) => c_all(f, args, McAsk(name, List::length(args), k), st)
+            None => Cr(k, c_fail(st, Text::concat("the builtin ", name)))
+          }
+        }
+        MkCPrim(op, args) => c_all(f, args, McOp(c_prim_op(op, List::length(args)), k), st)
+        CMap(value, op) => c_expr(f, value, McOp(c_unary(op), k), st)
+        CBranch(c, t, o) => match c_expr(f, t, McRet, st) {
+          Cr(tc, st2) => match c_expr(f, o, McRet, st2) {
+            Cr(oc, st3) => c_expr(f, c, McBranch(tc, oc, k), st3)
+          }
+        }
+        CSeq(items) => match items {
+          Nil => Cr(McPush(MvUnit, k), st)
+          Cons(first, rest) => c_seq_from(f, first, rest, k, st)
+        }
+        CDefine(id, r#shared, init) => match c_slot(st, id) {
+          Pair { fst: s, snd: st2 } => {
+            let put := if c_is_boxed(
+              st2,
+              id
+            ) { McBox(s, McPush(MvUnit, k)) } else { McStore(s, McPush(MvUnit, k)) }
+            c_expr(f, init, put, st2)
+          }
+        }
+        CAssign(id, path, through, value) => match c_slot(st, id) {
+          Pair { fst: s, snd: st2 } => {
+            let via := Bool::or(through, c_is_boxed(st2, id))
+            c_expr(f, value, McAssign(s, path, via, McPush(MvUnit, k)), st2)
+          }
+        }
+        CWhile(c, b, ticked) => match c_expr(f, c, McRet, st) {
+          Cr(cc, st2) => match c_expr(f, b, McRet, st2) {
+            Cr(bc, st3) => Cr(McWhile(cc, match ticked {
+              true => McTick(bc)
+              false => bc
+            }, k), st3)
+          }
+        }
+        CReturn(v) => c_expr(f, v, McReturn, st)
+        CMatch(Scrut, pats, guards, bodies) => match c_arms(f, pats, guards, bodies, st) {
+          Pair { fst: arms, snd: st2 } => match arms {
+            Pair { fst: ps, snd: gbs } => match gbs {
+              Pair { fst: gs, snd: bs } => c_expr(f, Scrut, McMatch(ps, gs, bs, k), st2)
+            }
+          }
+        }
+        // The code is compiled from its end, so a capture may have no slot yet.
+        CClosure(body, params, captures, Borrowed, refs) => match c_slots_of(
+          c_slot_all(List::append(c_not_inner(captures, refs), c_ref_outers(refs)), st)
+        ) {
+          Pair { fst: outer, snd: cb } => match cb {
+            Pair { fst: count, snd: boxed } => {
+              let found := c_found(outer, c_not_inner(captures, refs))
+              let rslots := c_ref_slots(outer, refs)
+              let ids := List::append(params, List::append(c_ids(found), c_ids(rslots)))
+              // A capture of a boxed local shares its cell, and is boxed inside too.
+              let r#shared := List::filter((id: Nat) => c_member(boxed, id), c_ids(found))
+              let inner := c_with_slots(
+                st,
+                c_fresh(ids, 0),
+                List::length(ids),
+                c_boxed(body, r#shared)
+              )
+              match c_expr(f, body, McRet, inner) {
+                // A capture boxed only inside gets its box there, as a parameter does.
+                Cr(bc, st2) => match c_box_all(
+                  List::append(
+                    params,
+                    List::filter((id: Nat) => not(c_member(r#shared, id)), c_ids(found))
+                  ),
+                  st2,
+                  bc
+                ) {
+                  Cr(bc2, st3) => match c_slots_of(st3) {
+                    Pair { fst: s3, snd: cb3 } => match cb3 {
+                      Pair { fst: n3, snd: b3 } => match c_add_fn(
+                        c_with_slots(st3, outer, count, boxed),
+                        Mfn(List::length(params), n3, bc2)
+                      ) {
+                        Pair { fst: f, snd: st4 } => Cr(
+                          c_loads(
+                            found,
+                            c_loads(
+                              rslots,
+                              McClosure(f, Nat::add(List::length(found), List::length(rslots)), k)
+                            )
+                          ),
+                          st4
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        CPerform(op, quant, args) => c_all(f, args, McPerform(op, quant, List::length(args), k), st)
+        CHandle(body, Ops, pats, ks, bodies, Rpats, Rguards, Rbodies) => match c_expr(
+          f,
+          body,
+          McRet,
+          st
+        ) {
+          Cr(bc, st2) => match c_handler_arms(f, pats, ks, bodies, st2) {
+            Pair { fst: arms, snd: st3 } => match arms {
+              Pair { fst: mps, snd: kb } => match kb {
+                Pair { fst: mks, snd: mbs } => match c_arms(f, Rpats, Rguards, Rbodies, st3) {
+                  Pair { fst: rarms, snd: st4 } => match rarms {
+                    Pair { fst: rps, snd: rgbs } => match rgbs {
+                      Pair { fst: rgs, snd: rbs } => Cr(
+                        McHandle(bc, Ops, mps, mks, mbs, rps, rgs, rbs, k),
+                        st4
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        CBorrow(id, path, through) => match c_slot(st, id) {
+          Pair { fst: s, snd: st2 } => Cr(McBorrow(s, path, k), st2)
+        }
+        CBudget(memory, steps, body) => match c_expr(f, body, McRet, st) {
+          Cr(bc, st2) => c_expr(f, steps, McBudget(memory, bc, k), st2)
+        }
+      }
+    }
+  }
+
+  // The values in order, then `k`.
+  pub fn c_all(fuel: Nat, es: List(Cps), k: MCode, st: CSt): CR {
+    match fuel {
+      Zero => Cr(k, c_fail(st, "a program nested too deep"))
+      Succ(f) => match es {
+        Nil => Cr(k, st)
+        Cons(e, rest) => match c_all(f, rest, k, st) {
+          Cr(MkCode, st2) => c_expr(f, e, MkCode, st2)
+        }
+      }
+    }
+  }
+
+  // A sequence: each value but the last is dropped.
+  pub fn c_seq_from(fuel: Nat, first: Cps, rest: List(Cps), k: MCode, st: CSt): CR {
+    match fuel {
+      Zero => Cr(k, c_fail(st, "a program nested too deep"))
+      Succ(f) => match rest {
+        Nil => c_expr(f, first, k, st)
+        Cons(next, more) => match c_seq_from(f, next, more, k, st) {
+          Cr(MkCode, st2) => c_expr(f, first, McPop(MkCode), st2)
+        }
+      }
+    }
+  }
+
+  // The arms of a `match`: patterns, guards and bodies, each ending in `mc_ret`.
+  pub fn c_arms(
+    fuel: Nat,
+    pats: List(CPat),
+    guards: List(Cps),
+    bodies: List(Cps),
+    st: CSt
+  ): Pair(Pair(List(MPat), Pair(List(MCode), List(MCode))), CSt) {
+    match fuel {
+      Zero => Pair {
+        fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+        snd: c_fail(st, "a program nested too deep")
+      }
+      Succ(f) => match pats {
+        Nil => Pair { fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } }, snd: st }
+        Cons(p, ps) => match guards {
+          Nil => Pair {
+            fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+            snd: c_fail(st, m_internal())
+          }
+          Cons(g, gs) => match bodies {
+            Nil => Pair {
+              fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+              snd: c_fail(st, m_internal())
+            }
+            Cons(b, bs) => match c_pat(p, st, Nil) {
+              Pair { fst: mp, snd: r } => match r {
+                Pair { fst: st2, snd: ids } => match c_expr(f, b, McRet, st2) {
+                  Cr(bc, st3) => match c_box_all(ids, st3, bc) {
+                    Cr(bc2, st4) => match c_expr(f, g, McRet, st4) {
+                      Cr(gc, st5) => match c_arms(f, ps, gs, bs, st5) {
+                        Pair { fst: arms, snd: st6 } => match arms {
+                          Pair { fst: mps, snd: gbs } => match gbs {
+                            Pair { fst: mgs, snd: mbs } => Pair {
+                              fst: Pair {
+                                fst: Cons(mp, mps),
+                                snd: Pair { fst: Cons(gc, mgs), snd: Cons(bc2, mbs) }
+                              },
+                              snd: st6
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // The arms of a `handle`: patterns, continuation slots and bodies.
+  pub fn c_handler_arms(
+    fuel: Nat,
+    pats: List(List(CPat)),
+    ks: List(Nat),
+    bodies: List(Cps),
+    st: CSt
+  ): Pair(Pair(List(List(MPat)), Pair(List(Nat), List(MCode))), CSt) {
+    match fuel {
+      Zero => Pair {
+        fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+        snd: c_fail(st, "a program nested too deep")
+      }
+      Succ(f) => match pats {
+        Nil => Pair { fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } }, snd: st }
+        Cons(ps, pss) => match ks {
+          Nil => Pair {
+            fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+            snd: c_fail(st, m_internal())
+          }
+          Cons(kid, kss) => match bodies {
+            Nil => Pair {
+              fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+              snd: c_fail(st, m_internal())
+            }
+            Cons(b, bs) => match c_pats(ps, st, Nil) {
+              Pair { fst: mps, snd: r } => match r {
+                Pair { fst: st2, snd: ids } => {
+                  let kr := match kid: Pair(Nat, CSt) {
+                    Zero => Pair { fst: 0, snd: st2 }
+                    Succ(id) => match c_slot(st2, id) {
+                      Pair { fst: s, snd: st3 } => Pair { fst: Succ(s), snd: st3 }
+                    }
+                  }
+                  match kr {
+                    Pair { fst: kslot, snd: st3 } => match c_expr(f, b, McRet, st3) {
+                      Cr(bc, st4) => match c_box_all(ids, st4, bc) {
+                        Cr(bc2, st5) => match c_handler_arms(f, pss, kss, bs, st5) {
+                          Pair { fst: arms, snd: st6 } => match arms {
+                            Pair { fst: mpss, snd: kbs } => match kbs {
+                              Pair { fst: mks, snd: mbs } => Pair {
+                                fst: Pair {
+                                  fst: Cons(mps, mpss),
+                                  snd: Pair { fst: Cons(kslot, mks), snd: Cons(bc2, mbs) }
+                                },
+                                snd: st6
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---- functions and the program ------------------------------------------------------------
+
+pub fn c_bad(st: CSt): Option(Text) {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => bad
+  }
+}
+
+pub fn c_extra(st: CSt): List(MFn) {
+  match st {
+    Cst(slots, count, boxed, extra, base, bad) => extra
+  }
+}
+
+// A function: its parameters take the first slots.
+pub fn c_fn(f: CFn, st: CSt): Pair(MFn, CSt) {
+  match f {
+    Cfn(params, body) => {
+      let inner := c_with_slots(st, c_fresh(params, 0), List::length(params), c_boxed(body, Nil))
+      match c_expr(100000000, body, McRet, inner) {
+        Cr(bc, st2) => match c_box_all(params, st2, bc) {
+          Cr(bc2, st3) => match c_slots_of(st3) {
+            Pair { fst: s, snd: cb } => match cb {
+              Pair { fst: n, snd: b } => Pair { fst: Mfn(List::length(params), n, bc2), snd: st3 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn c_fns(fs: List(CFn), st: CSt): Pair(List(MFn), CSt) {
+  match fs {
+    Nil => Pair { fst: Nil, snd: st }
+    Cons(f, rest) => match c_fn(f, st) {
+      Pair { fst: mf, snd: st2 } => match c_fns(rest, st2) {
+        Pair { fst: mfs, snd: st3 } => Pair { fst: Cons(mf, mfs), snd: st3 }
+      }
+    }
+  }
+}
+
+pub(open) inductive CResult: Type {
+  COk(p: MProgram): CResult
+  // What the machine cannot run yet.
+  CUnsupported(what: Text): CResult
+}
+
+// The program the machine runs: the program's functions, then those of its closures.
+pub fn compile(p: CProgram): CResult {
+  match p {
+    Cprogram(fns, ctors, main) => match c_fns(fns, Cst(Nil, 0, Nil, Nil, List::length(fns), None)) {
+      Pair { fst: mfs, snd: st } => match c_bad(st) {
+        Some(what) => CUnsupported(what)
+        None => COk(Mprogram(List::append(mfs, c_extra(st)), ctors, main))
+      }
+    }
+  }
+}

@@ -29,7 +29,7 @@ prelude 全体はロードせず、`Nat` や `Eq` などを暗黙に公理とし
 ```sh
 cargo run --locked -p tauto-cli -- build --release totes/elaborator
 target/tauto/target/release/elaborator example.taut
-cargo test --locked -p tauto-selfhost --test elaborator
+cargo test --locked -p selfhost-harness --test elaborator
 ```
 
 入力例:

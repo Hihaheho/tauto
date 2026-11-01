@@ -1,0 +1,1334 @@
+import "handler_result_checked.taut"
+import "arm_frame.taut"
+import "inference_scopes.taut"
+
+// After the continuation is bound: the arm's names are put in scope, its
+// guard and body checked, and the arm finished with the outer names back.
+pub fn inference_arm_tail(
+  j: Nat,
+  c: Checker,
+  inner: Scope,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  rigid: List(Text),
+  names: List(TypeName),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (entered: Unit, c1: Checker) => frame_bind(
+      Unit,
+      Unit,
+      (guarded: Unit, c2: Checker) => frame_bind(
+        Ty,
+        Unit,
+        (a: Ty, c3: Checker) => ck_rewrap1(
+          ck_handle_arm_finish(
+            c3,
+            eff,
+            rigid,
+            env,
+            ck_type_params_of(c),
+            a,
+            result,
+            rv,
+            span_of(body)
+          )
+        ),
+        ck_infer_in(j, c2, body, inference_scope_items(inner))
+      ),
+      ck_guard_in(j, c1, guard, inference_scope_items(inner))
+    ),
+    ck_arm_enter(c, names)
+  )
+}
+
+pub theorem inference_arm_tail_frame(
+  j: Nat,
+  c: Checker,
+  inner: Scope,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  rigid: List(Text),
+  names: List(TypeName),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_arm_tail(j, c, inner, env, result, rv, eff, rigid, names, guard, body)) {
+  run_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (entered: Unit, c1: Checker) => frame_bind(
+      Unit,
+      Unit,
+      (guarded: Unit, c2: Checker) => frame_bind(
+        Ty,
+        Unit,
+        (a: Ty, c3: Checker) => ck_rewrap1(
+          ck_handle_arm_finish(
+            c3,
+            eff,
+            rigid,
+            env,
+            ck_type_params_of(c),
+            a,
+            result,
+            rv,
+            span_of(body)
+          )
+        ),
+        ck_infer_in(j, c2, body, inference_scope_items(inner))
+      ),
+      ck_guard_in(j, c1, guard, inference_scope_items(inner))
+    ),
+    ck_arm_enter(c, names),
+    run_frame_read(c, ck_arm_enter(c, names), ck_arm_enter_frame(c, names), ordered),
+    entered => c1 => o_c1 => run_frame_bind(
+      Unit,
+      Unit,
+      c1,
+      (guarded: Unit, c2: Checker) => frame_bind(
+        Ty,
+        Unit,
+        (a: Ty, c3: Checker) => ck_rewrap1(
+          ck_handle_arm_finish(
+            c3,
+            eff,
+            rigid,
+            env,
+            ck_type_params_of(c),
+            a,
+            result,
+            rv,
+            span_of(body)
+          )
+        ),
+        ck_infer_in(j, c2, body, inference_scope_items(inner))
+      ),
+      ck_guard_in(j, c1, guard, inference_scope_items(inner)),
+      inference_use_ck_guard_in(j, c1, guard, inference_scope_items(inner), o_c1, ih),
+      guarded => c2 => o_c2 => run_frame_bind(
+        Ty,
+        Unit,
+        c2,
+        (a: Ty, c3: Checker) => ck_rewrap1(
+          ck_handle_arm_finish(
+            c3,
+            eff,
+            rigid,
+            env,
+            ck_type_params_of(c),
+            a,
+            result,
+            rv,
+            span_of(body)
+          )
+        ),
+        ck_infer_in(j, c2, body, inference_scope_items(inner)),
+        inference_use_ck_infer_in(j, c2, body, inference_scope_items(inner), o_c2, ih),
+        a => c3 => o_c3 => run_frame_rewrap(
+          c3,
+          ck_handle_arm_finish(
+            c3,
+            eff,
+            rigid,
+            env,
+            ck_type_params_of(c),
+            a,
+            result,
+            rv,
+            span_of(body)
+          ),
+          ck_handle_arm_finish_run_frame(
+            c3,
+            eff,
+            rigid,
+            env,
+            ck_type_params_of(c),
+            a,
+            result,
+            rv,
+            span_of(body),
+            o_c3
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn inference_handle_body_step(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  quant: Quant
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Unit,
+    Unit,
+    (r#direct: Unit, c1: Checker) => inference_bind_scope(
+      Unit,
+      Unit,
+      (matched: Unit, c2: Checker, inner: Scope) => inference_bind_scope(
+        Unit,
+        Unit,
+        (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
+          j,
+          c3,
+          inner2,
+          env,
+          result,
+          rv,
+          eff,
+          rigid,
+          names,
+          guard,
+          body
+        ),
+        ck_handle_cont(c2, inner, quant, eff, cont, answer, result, body)
+      ),
+      ck_handle_patterns(patterns, c1, params, ScopeMk(env), body)
+    ),
+    ck_handle_direct(c, quant, eff, cont, guard, body)
+  )
+}
+
+pub theorem inference_handle_body_step_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  quant: Quant,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_handle_body_step(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body,
+    quant
+  )
+) {
+  run_frame_bind(
+    Unit,
+    Unit,
+    c,
+    (r#direct: Unit, c1: Checker) => inference_bind_scope(
+      Unit,
+      Unit,
+      (matched: Unit, c2: Checker, inner: Scope) => inference_bind_scope(
+        Unit,
+        Unit,
+        (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
+          j,
+          c3,
+          inner2,
+          env,
+          result,
+          rv,
+          eff,
+          rigid,
+          names,
+          guard,
+          body
+        ),
+        ck_handle_cont(c2, inner, quant, eff, cont, answer, result, body)
+      ),
+      ck_handle_patterns(patterns, c1, params, ScopeMk(env), body)
+    ),
+    ck_handle_direct(c, quant, eff, cont, guard, body),
+    run_frame_read(
+      c,
+      ck_handle_direct(c, quant, eff, cont, guard, body),
+      ck_handle_direct_frame(c, quant, eff, cont, guard, body),
+      ordered
+    ),
+    r#direct => c1 => o_c1 => inference_bind_scope_frame(
+      Unit,
+      Unit,
+      c1,
+      (matched: Unit, c2: Checker, inner: Scope) => inference_bind_scope(
+        Unit,
+        Unit,
+        (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
+          j,
+          c3,
+          inner2,
+          env,
+          result,
+          rv,
+          eff,
+          rigid,
+          names,
+          guard,
+          body
+        ),
+        ck_handle_cont(c2, inner, quant, eff, cont, answer, result, body)
+      ),
+      ck_handle_patterns(patterns, c1, params, ScopeMk(env), body),
+      ck_handle_patterns_frame(patterns, c1, params, ScopeMk(env), body, o_c1),
+      matched => c2 => inner => o_c2 => inference_bind_scope_frame(
+        Unit,
+        Unit,
+        c2,
+        (bound: Unit, c3: Checker, inner2: Scope) => inference_arm_tail(
+          j,
+          c3,
+          inner2,
+          env,
+          result,
+          rv,
+          eff,
+          rigid,
+          names,
+          guard,
+          body
+        ),
+        ck_handle_cont(c2, inner, quant, eff, cont, answer, result, body),
+        ck_handle_cont_frame(c2, inner, quant, eff, cont, answer, result, body, o_c2),
+        bound => c3 => inner2 => o_c3 => inference_arm_tail_frame(
+          j,
+          c3,
+          inner2,
+          env,
+          result,
+          rv,
+          eff,
+          rigid,
+          names,
+          guard,
+          body,
+          ih,
+          o_c3
+        )
+      )
+    )
+  )
+}
+
+pub fn inference_step_ck_handle_body_in(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): Mut1(Unit, Checker) {
+  inference_handle_body_step(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body,
+    ck_quant_of(c, eff)
+  )
+}
+
+pub theorem inference_step_ck_handle_body_in_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_step_ck_handle_body_in(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body
+  )
+) {
+  inference_handle_body_step_frame(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body,
+    ck_quant_of(c, eff),
+    ih,
+    ordered
+  )
+}
+
+pub theorem inference_unf_ck_handle_body_in(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  eff: Text,
+  params: List(Ty),
+  answer: Ty,
+  rigid: List(Text),
+  names: List(TypeName),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): ck_handle_body_in(
+    Succ(j),
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body
+  ) = inference_step_ck_handle_body_in(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    eff,
+    params,
+    answer,
+    rigid,
+    names,
+    patterns,
+    cont,
+    guard,
+    body
+  ) { Refl }
+
+pub fn inference_handler_arity(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  pa: ArmSig,
+  wrong: Bool
+): Mut1(Unit, Checker) {
+  match wrong: Mut1(Unit, Checker) {
+    true => ck_rewrap1(
+      ck_error(
+        c,
+        cat5(
+          "`",
+          eff,
+          "` gives ",
+          Text::of_nat(list_len(inference_handler_params(pa))),
+          cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
+        ),
+        span_of(body)
+      )
+    )
+    false => ck_rewrap1(
+      ck_handle_body_in(
+        j,
+        c,
+        env,
+        result,
+        rv,
+        eff,
+        inference_handler_params(pa),
+        inference_handler_answer(pa),
+        inference_handler_rigid(pa),
+        inference_handler_names(pa),
+        patterns,
+        cont,
+        guard,
+        body
+      )
+    )
+  }
+}
+
+pub theorem inference_handler_arity_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  pa: ArmSig,
+  wrong: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_handler_arity(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    budget_ty,
+    eff,
+    binds,
+    types,
+    patterns,
+    cont,
+    guard,
+    body,
+    pa,
+    wrong
+  )
+) {
+  match wrong: CkRunFrame(
+    c,
+    inference_handler_arity(
+      j,
+      c,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      pa,
+      wrong
+    )
+  ) {
+    true => run_frame_read(
+      c,
+      ck_rewrap1(
+        ck_error(
+          c,
+          cat5(
+            "`",
+            eff,
+            "` gives ",
+            Text::of_nat(list_len(inference_handler_params(pa))),
+            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
+          ),
+          span_of(body)
+        )
+      ),
+      frame_rewrap(
+        c,
+        ck_error(
+          c,
+          cat5(
+            "`",
+            eff,
+            "` gives ",
+            Text::of_nat(list_len(inference_handler_params(pa))),
+            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
+          ),
+          span_of(body)
+        ),
+        ck_error_frame(
+          c,
+          cat5(
+            "`",
+            eff,
+            "` gives ",
+            Text::of_nat(list_len(inference_handler_params(pa))),
+            cat2(" values, the arm takes ", Text::of_nat(list_len(patterns)))
+          ),
+          span_of(body)
+        )
+      ),
+      ordered
+    )
+    false => run_frame_rewrap(
+      c,
+      ck_handle_body_in(
+        j,
+        c,
+        env,
+        result,
+        rv,
+        eff,
+        inference_handler_params(pa),
+        inference_handler_answer(pa),
+        inference_handler_rigid(pa),
+        inference_handler_names(pa),
+        patterns,
+        cont,
+        guard,
+        body
+      ),
+      inference_use_ck_handle_body_in(
+        j,
+        c,
+        env,
+        result,
+        rv,
+        eff,
+        inference_handler_params(pa),
+        inference_handler_answer(pa),
+        inference_handler_rigid(pa),
+        inference_handler_names(pa),
+        patterns,
+        cont,
+        guard,
+        body,
+        ordered,
+        ih
+      )
+    )
+  }
+}
+
+pub fn inference_handler_signature(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  signature: Option(ArmSig)
+): Mut1(Unit, Checker) {
+  match signature: Mut1(Unit, Checker) {
+    None => mut1(Star, c)
+    Some(pa) => inference_handler_arity(
+      j,
+      c,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      pa,
+      not(Nat::eq(list_len(inference_handler_params(pa)), list_len(patterns)))
+    )
+  }
+}
+
+pub theorem inference_handler_signature_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  signature: Option(ArmSig),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_handler_signature(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    budget_ty,
+    eff,
+    binds,
+    types,
+    patterns,
+    cont,
+    guard,
+    body,
+    signature
+  )
+) {
+  match signature: CkRunFrame(
+    c,
+    inference_handler_signature(
+      j,
+      c,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      signature
+    )
+  ) {
+    None => run_frame_return(c, Star, ordered)
+    Some(pa) => inference_handler_arity_frame(
+      j,
+      c,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      pa,
+      not(Nat::eq(list_len(inference_handler_params(pa)), list_len(patterns))),
+      ih,
+      ordered
+    )
+  }
+}
+
+pub fn inference_step_ck_handle_arm_in(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): Mut1(Unit, Checker) {
+  frame_bind(
+    Option(ArmSig),
+    Unit,
+    (signature: Option(ArmSig), c1: Checker) => inference_handler_signature(
+      j,
+      c1,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      signature
+    ),
+    ck_handle_arm_sig(c, eff, binds, types, result, rv, budget_ty, body)
+  )
+}
+
+pub theorem inference_step_ck_handle_arm_in_frame(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(
+  c,
+  inference_step_ck_handle_arm_in(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    budget_ty,
+    eff,
+    binds,
+    types,
+    patterns,
+    cont,
+    guard,
+    body
+  )
+) {
+  run_frame_bind(
+    Option(ArmSig),
+    Unit,
+    c,
+    (signature: Option(ArmSig), c1: Checker) => inference_handler_signature(
+      j,
+      c1,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      signature
+    ),
+    ck_handle_arm_sig(c, eff, binds, types, result, rv, budget_ty, body),
+    run_frame_read(
+      c,
+      ck_handle_arm_sig(c, eff, binds, types, result, rv, budget_ty, body),
+      ck_handle_arm_sig_frame(c, eff, binds, types, result, rv, budget_ty, body),
+      ordered
+    ),
+    signature => c1 => o_c1 => inference_handler_signature_frame(
+      j,
+      c1,
+      env,
+      result,
+      rv,
+      budget_ty,
+      eff,
+      binds,
+      types,
+      patterns,
+      cont,
+      guard,
+      body,
+      signature,
+      ih,
+      o_c1
+    )
+  )
+}
+
+pub theorem inference_unf_ck_handle_arm_in(
+  j: Nat,
+  c: Checker,
+  env: List(Local),
+  result: Ty,
+  rv: Option(Nat),
+  budget_ty: Ty,
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  patterns: List(SurfacePattern),
+  cont: Option(Text),
+  guard: Option(SurfaceTerm),
+  body: SurfaceTerm
+): ck_handle_arm_in(
+    Succ(j),
+    c,
+    env,
+    result,
+    rv,
+    budget_ty,
+    eff,
+    binds,
+    types,
+    patterns,
+    cont,
+    guard,
+    body
+  ) = inference_step_ck_handle_arm_in(
+    j,
+    c,
+    env,
+    result,
+    rv,
+    budget_ty,
+    eff,
+    binds,
+    types,
+    patterns,
+    cont,
+    guard,
+    body
+  ) { Refl }
+
+pub fn inference_budget_push(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  budget_ty: Ty,
+  answers: Bool
+): Mut1(Unit, Checker) {
+  match answers: Mut1(Unit, Checker) {
+    true => inference_set_exceeded(c, Cons(budget_ty, inference_exceeded(c)))
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem inference_budget_push_frame(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  budget_ty: Ty,
+  answers: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_budget_push(j, c, body, handlers, env, budget_ty, answers)) {
+  match answers: CkRunFrame(
+    c,
+    inference_budget_push(j, c, body, handlers, env, budget_ty, answers)
+  ) {
+    true => run_frame_read(
+      c,
+      inference_set_exceeded(c, Cons(budget_ty, inference_exceeded(c))),
+      inference_set_exceeded_frame(c, Cons(budget_ty, inference_exceeded(c))),
+      ordered
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn inference_budget_pop(j: Nat, c: Checker, answers: Bool): Mut1(Unit, Checker) {
+  match answers: Mut1(Unit, Checker) {
+    true => inference_set_exceeded(c, List::tail(inference_exceeded(c)))
+    false => mut1(Star, c)
+  }
+}
+
+pub theorem inference_budget_pop_frame(
+  j: Nat,
+  c: Checker,
+  answers: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_budget_pop(j, c, answers)) {
+  match answers: CkRunFrame(c, inference_budget_pop(j, c, answers)) {
+    true => run_frame_read(
+      c,
+      inference_set_exceeded(c, List::tail(inference_exceeded(c))),
+      inference_set_exceeded_frame(c, List::tail(inference_exceeded(c))),
+      ordered
+    )
+    false => run_frame_return(c, Star, ordered)
+  }
+}
+
+pub fn inference_handle_budget(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  budget_ty: Ty,
+  answers: Bool
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Unit,
+    Ty,
+    (pushed: Unit, c1: Checker) => frame_bind(
+      Ty,
+      Ty,
+      (b: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (popped: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (result: Ty, c4: Checker) => frame_bind(
+            Ty,
+            Ty,
+            (first: Ty, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
+            ),
+            ck_handle_first_in(j, c4, handlers, b, env)
+          ),
+          ck_fresh(c3)
+        ),
+        inference_budget_pop(j, c2, answers)
+      ),
+      ck_infer_in(j, c1, body, env)
+    ),
+    inference_budget_push(j, c, body, handlers, env, budget_ty, answers)
+  )
+}
+
+pub theorem inference_handle_budget_frame(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  budget_ty: Ty,
+  answers: Bool,
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_handle_budget(j, c, body, handlers, env, budget_ty, answers)) {
+  run_frame_bind(
+    Unit,
+    Ty,
+    c,
+    (pushed: Unit, c1: Checker) => frame_bind(
+      Ty,
+      Ty,
+      (b: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (popped: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (result: Ty, c4: Checker) => frame_bind(
+            Ty,
+            Ty,
+            (first: Ty, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
+            ),
+            ck_handle_first_in(j, c4, handlers, b, env)
+          ),
+          ck_fresh(c3)
+        ),
+        inference_budget_pop(j, c2, answers)
+      ),
+      ck_infer_in(j, c1, body, env)
+    ),
+    inference_budget_push(j, c, body, handlers, env, budget_ty, answers),
+    inference_budget_push_frame(j, c, body, handlers, env, budget_ty, answers, ih, ordered),
+    pushed => c1 => o_c1 => run_frame_bind(
+      Ty,
+      Ty,
+      c1,
+      (b: Ty, c2: Checker) => frame_bind(
+        Unit,
+        Ty,
+        (popped: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (result: Ty, c4: Checker) => frame_bind(
+            Ty,
+            Ty,
+            (first: Ty, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
+            ),
+            ck_handle_first_in(j, c4, handlers, b, env)
+          ),
+          ck_fresh(c3)
+        ),
+        inference_budget_pop(j, c2, answers)
+      ),
+      ck_infer_in(j, c1, body, env),
+      inference_use_ck_infer_in(j, c1, body, env, o_c1, ih),
+      b => c2 => o_c2 => run_frame_bind(
+        Unit,
+        Ty,
+        c2,
+        (popped: Unit, c3: Checker) => frame_bind(
+          Ty,
+          Ty,
+          (result: Ty, c4: Checker) => frame_bind(
+            Ty,
+            Ty,
+            (first: Ty, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
+            ),
+            ck_handle_first_in(j, c4, handlers, b, env)
+          ),
+          ck_fresh(c3)
+        ),
+        inference_budget_pop(j, c2, answers),
+        inference_budget_pop_frame(j, c2, answers, ih, o_c2),
+        popped => c3 => o_c3 => run_frame_bind(
+          Ty,
+          Ty,
+          c3,
+          (result: Ty, c4: Checker) => frame_bind(
+            Ty,
+            Ty,
+            (first: Ty, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
+            ),
+            ck_handle_first_in(j, c4, handlers, b, env)
+          ),
+          ck_fresh(c3),
+          run_frame_read(c3, ck_fresh(c3), ck_fresh_frame(c3), o_c3),
+          result => c4 => o_c4 => run_frame_bind(
+            Ty,
+            Ty,
+            c4,
+            (first: Ty, c5: Checker) => frame_bind(
+              Unit,
+              Ty,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty)
+            ),
+            ck_handle_first_in(j, c4, handlers, b, env),
+            inference_use_ck_handle_first_in(j, c4, handlers, b, env, o_c4, ih),
+            first => c5 => o_c5 => run_frame_bind(
+              Unit,
+              Ty,
+              c5,
+              (finished: Unit, c6: Checker) => mut1(result, c6),
+              ck_handle_result_in(j, c5, handlers, env, result, first, budget_ty),
+              inference_use_ck_handle_result_in(
+                j,
+                c5,
+                handlers,
+                env,
+                result,
+                first,
+                budget_ty,
+                o_c5,
+                ih
+              ),
+              finished => c6 => o_c6 => run_frame_return(c6, result, o_c6)
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+pub fn inference_handle_after(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  answers: Bool
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (budget_ty: Ty, c1: Checker) => inference_handle_budget(
+      j,
+      c1,
+      body,
+      handlers,
+      env,
+      budget_ty,
+      answers
+    ),
+    ck_fresh(c)
+  )
+}
+
+pub fn inference_handle_original(
+  j: Nat,
+  &mut c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  answers: Bool
+): Ty {
+  let budget_ty := ck_fresh(&mut c)
+  if answers { set_to(&mut c.exceeded, Cons(budget_ty, c.exceeded)) }
+  let b := ck_infer_in(j, &mut c, body, env)
+  if answers { set_to(&mut c.exceeded, List::tail(c.exceeded)) }
+  let result := ck_fresh(&mut c)
+  let first := ck_handle_first_in(j, &mut c, handlers, b, env)
+  ck_handle_result_in(j, &mut c, handlers, env, result, first, budget_ty)
+  result
+}
+
+pub theorem inference_handle_boolean(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  answers: Bool
+): inference_handle_original(j, c, body, handlers, env, answers) = inference_handle_after(j, c, body, handlers, env, answers) { match answers: inference_handle_original(j, c, body, handlers, env, answers) = inference_handle_after(j, c, body, handlers, env, answers) { true => Refl
+    false => Refl } }
+
+pub fn inference_step_ck_handle_in(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local)
+): Mut1(Ty, Checker) {
+  frame_bind(
+    Ty,
+    Ty,
+    (budget_ty: Ty, c1: Checker) => inference_handle_budget(
+      j,
+      c1,
+      body,
+      handlers,
+      env,
+      budget_ty,
+      handlers_answer_exceeded(handlers)
+    ),
+    ck_fresh(c)
+  )
+}
+
+pub theorem inference_step_ck_handle_in_frame(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local),
+  ih: InferenceFrames(j),
+  ordered: CkOrdered(c)
+): CkRunFrame(c, inference_step_ck_handle_in(j, c, body, handlers, env)) {
+  run_frame_bind(
+    Ty,
+    Ty,
+    c,
+    (budget_ty: Ty, c1: Checker) => inference_handle_budget(
+      j,
+      c1,
+      body,
+      handlers,
+      env,
+      budget_ty,
+      handlers_answer_exceeded(handlers)
+    ),
+    ck_fresh(c),
+    run_frame_read(c, ck_fresh(c), ck_fresh_frame(c), ordered),
+    budget_ty => c1 => o_c1 => inference_handle_budget_frame(
+      j,
+      c1,
+      body,
+      handlers,
+      env,
+      budget_ty,
+      handlers_answer_exceeded(handlers),
+      ih,
+      o_c1
+    )
+  )
+}
+
+pub theorem inference_unf_ck_handle_in(
+  j: Nat,
+  c: Checker,
+  body: SurfaceTerm,
+  handlers: List(SurfaceHandler),
+  env: List(Local)
+): ck_handle_in(Succ(j), c, body, handlers, env) = inference_step_ck_handle_in(j, c, body, handlers, env) { inference_handle_boolean(j, c, body, handlers, env, handlers_answer_exceeded(handlers)) }

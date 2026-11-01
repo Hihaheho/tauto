@@ -1,0 +1,136 @@
+import "written_binder_sound.taut"
+import "written_leaf_sound.taut"
+
+// Successful elaboration's value is determined by syntax and generic bindings;
+// declaration lookups add obligations but do not choose a different type.
+pub theorem written_name_determined<generics: Ordmap(
+  Text,
+  Ty
+), name: Text, t: Ty>(
+  meaning: WrittenTypeName(generics, name, t)
+): ck_written_name(name, generics) = t {
+  match meaning: ck_written_name(name, generics) = t {
+    WrittenNamePrimitive(value, builtin) => Eq::trans(
+      written_name_primitive_unf(name, generics),
+      Eq::congr((o: Option(Ty)) => written_name_primitive_lookup(name, generics, o), builtin)
+    )
+    WrittenNameParameter(value, ordinary, bound) => Eq::trans(
+      written_name_primitive_unf(name, generics),
+      Eq::trans(
+        Eq::congr((o: Option(Ty)) => written_name_primitive_lookup(name, generics, o), ordinary),
+        Eq::congr((o: Option(Ty)) => written_name_lookup(name, o), bound)
+      )
+    )
+    WrittenNameNominal(ordinary, unbound) => written_name_nominal_value(
+      name,
+      generics,
+      ordinary,
+      unbound
+    )
+  }
+}
+pub theorem written_atomic_name<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), name: Text, t: Ty>(
+  meaning: WrittenAtomicType(env, generics, name, t)
+): WrittenTypeName(generics, name, t) {
+  match meaning: WrittenTypeName(generics, name, t) {
+    AtomicPrimitive(value, builtin) => WrittenNamePrimitive(value, builtin)
+    AtomicParameter(value, ordinary, bound) => WrittenNameParameter(value, ordinary, bound)
+    AtomicNominal(ordinary, unbound, arity) => WrittenNameNominal(ordinary, unbound)
+  }
+}
+pub theorem written_name_mode_value<env: Datas, generics: Ordmap(
+  Text,
+  Ty
+), name: Text, partial: Bool, t: Ty>(
+  meaning: WrittenNameType(env, generics, name, partial, t)
+): ck_written_name(name, generics) = t {
+  match meaning: ck_written_name(name, generics) = t {
+    WrittenNameValue(value, atomic) => written_name_determined(written_atomic_name(atomic))
+    WrittenNameConstructor(value, named) => written_name_determined(named)
+  }
+}
+pub theorem written_binder_map_value<binders: List(
+  Pair(Text, Kind)
+), initial: Ordmap(
+  Text,
+  Ty
+), final: Ordmap(
+  Text,
+  Ty
+)>(
+  meaning: WrittenBinderMap(binders, initial, final)
+): binders_map(binders, initial) = final {
+  match meaning: binders_map(binders, initial) = final {
+    WrittenBinderMapNil(map) => Refl
+    WrittenBinderMapCons(name, kind, rest, before, after, tail) => written_binder_map_value(tail)
+  }
+}
+pub theorem written_poly_value<binders: List(
+  Pair(Text, Kind)
+), body: Ty, result: Ty>(
+  meaning: WrittenPolymorphicType(binders, body, result)
+): ty_poly_of(binders, body) = result {
+  match meaning: ty_poly_of(binders, body) = result {
+    WrittenMonomorphic(value) => Refl
+    WrittenPolymorphic(first, rest, value) => Refl
+  }
+}
+pub theorem written_function_kind_determined<spelling: Text, kind: Kind>(
+  meaning: WrittenFunctionKind(spelling, kind)
+): written_function_kind_value(kind_parse(spelling)) = kind {
+  match meaning: written_function_kind_value(kind_parse(spelling)) = kind {
+    MkWrittenFunctionKind(value, parsed) => Eq::congr(written_function_kind_value, parsed)
+    WrittenFunctionKindDefault(absent) => Eq::congr(written_function_kind_value, absent)
+  }
+}
+
+pub theorem written_binder_missing(
+  p: SurfaceParam,
+  o: Option(Pair(Text, Kind)),
+  found: pi_binder(p) = o,
+  ordinary: ∀ b: Pair(Text, Kind). (WrittenKindBinder(p, b)) -> False
+): o = None {
+  match o: o = None {
+    None => Refl
+    Some(b) => False::elim(ordinary(b, pi_binder_sound(p, b, found)))
+  }
+}
+pub theorem written_prefix_determined<params: List(
+  SurfaceParam
+), binders: List(
+  Pair(Text, Kind)
+), suffix: List(
+  SurfaceParam
+)>(
+  meaning: WrittenBindersPrefix(params, binders, suffix)
+): pi_binders(params) = (Pair { fst: binders, snd: suffix }) {
+  match meaning: pi_binders(params) = (Pair { fst: binders, snd: suffix }) {
+    WrittenBindersNil => Refl
+    WrittenBindersStop(first, rest, ordinary) => Eq::trans(
+      written_binders_unf(first, rest),
+      Eq::congr(
+        (o: Option(Pair(Text, Kind))) => written_binders_choice(first, rest, o),
+        written_binder_missing(first, pi_binder(first), Refl, ordinary)
+      )
+    )
+    WrittenBindersCons(first, rest, binder, remaining, after, head, tail) => Eq::trans(
+      written_binders_unf(first, rest),
+      Eq::trans(
+        Eq::congr(
+          (o: Option(Pair(Text, Kind))) => written_binders_choice(first, rest, o),
+          written_binder_complete(head)
+        ),
+        Eq::congr(
+          (r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))) => written_binders_cons_result(
+            binder,
+            r
+          ),
+          written_prefix_determined(tail)
+        )
+      )
+    )
+  }
+}

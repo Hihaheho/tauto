@@ -1,19 +1,21 @@
 // Each input file is a fresh kernel. Each line is one replay command.
-fn kernel_main_lines(&mut c: KernelCore, lines: List(Text)) -> () {
+import std::Text
+import std::Base
+pub fn kernel_main_lines(&mut c: KernelCore, lines: List(Text)): Unit {
   match lines {
-    Nil => ()
+    Nil => #()
     Cons(line, rest) => {
-      if text_len(line) != 0 {
-        var input: KernelInput = KernelInput { tokens: text_split(line, " "), valid: true }
-        let command = kernel_read_command(2000, &mut input)
-        if input.valid && list_length(input.tokens) == 0 {
+      if std::prelude::Text::len(line) != 0 {
+        var input: KernelInput := KernelInput { tokens: text_split(line, " "), valid: true }
+        let command := kernel_read_command(2000, &mut input)
+        if input.valid && List::length(input.tokens) == 0 {
           match kernel_execute(2000, &mut c, command) {
-            KernelAccepted => os_print(text_concat("accepted", text_newline()))
-            KernelRejected => os_print(text_concat("rejected", text_newline()))
-            KernelExhausted => os_print(text_concat("exhausted", text_newline()))
+            KernelAccepted => print(Text::concat("accepted", text_newline()))
+            KernelRejected => print(Text::concat("rejected", text_newline()))
+            KernelExhausted => print(Text::concat("exhausted", text_newline()))
           }
         } else {
-          os_print(text_concat("malformed", text_newline()))
+          print(Text::concat("malformed", text_newline()))
         }
       }
       kernel_main_lines(&mut c, rest)
@@ -21,14 +23,14 @@ fn kernel_main_lines(&mut c: KernelCore, lines: List(Text)) -> () {
   }
 }
 
-fn kernel_main_files(paths: List(Text)) -> () {
+pub fn kernel_main_files(paths: List(Text)): Unit {
   match paths {
-    Nil => ()
+    Nil => #()
     Cons(path, rest) => {
-      match os_read_file(path) {
-        Err(e) => os_print(text_concat("unreadable", text_newline()))
+      match read_file(path) {
+        Err(e) => print(Text::concat("unreadable", text_newline()))
         Ok(source) => {
-          var c: KernelCore = kernel_new()
+          var c: KernelCore := kernel_new()
           kernel_main_lines(&mut c, text_split(source, text_newline()))
         }
       }
@@ -37,4 +39,4 @@ fn kernel_main_files(paths: List(Text)) -> () {
   }
 }
 
-kernel_main_files(os_args())
+kernel_main_files(perform argv())

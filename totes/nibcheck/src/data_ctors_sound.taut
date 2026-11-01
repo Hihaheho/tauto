@@ -1,0 +1,235 @@
+import "data_fields_sound.taut"
+
+pub theorem data_ctors_state(
+  c: Checker,
+  next: Checker,
+  generics: Ordmap(Text, Ty),
+  ctors: List(SurfaceDataCtor),
+  types: List(DataCtor),
+  env: ck_datas_of(next) = ck_datas_of(c),
+  position: frame_constructor_position(next) = frame_constructor_position(c),
+  meaning: WrittenDataCtors(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    ctors,
+    types
+  )
+): WrittenDataCtors(ck_datas_of(c), generics, frame_constructor_position(c), ctors, types) {
+  Eq::subst(
+    (partial: Bool) => WrittenDataCtors(ck_datas_of(c), generics, partial, ctors, types),
+    position,
+    Eq::subst(
+      (datas: Datas) => WrittenDataCtors(
+        datas,
+        generics,
+        frame_constructor_position(next),
+        ctors,
+        types
+      ),
+      env,
+      meaning
+    )
+  )
+}
+pub fn data_ctors_after(
+  name: Text,
+  rest: List(SurfaceDataCtor),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(List(DataField), Checker)
+): Mut1(List(DataCtor), Checker) {
+  frame_bind(
+    List(DataField),
+    List(DataCtor),
+    (fields: List(DataField), next: Checker) => written_map(
+      List(DataCtor),
+      List(DataCtor),
+      (types: List(DataCtor)) => Cons(DataCtorMk(name, fields), types),
+      ck_data_ctors(rest, next, generics)
+    ),
+    m
+  )
+}
+pub theorem data_ctors_after_sound(
+  c: Checker,
+  name: Text,
+  fields: List(SurfaceDataField),
+  rest: List(SurfaceDataCtor),
+  generics: Ordmap(Text, Ty),
+  m: Mut1(List(DataField), Checker),
+  read: CkReadFrame(c, m),
+  context: written_context(ck_st(m)) = written_context(c),
+  ordinary: frame_under_borrow(c) = false,
+  ihhead: ∀ clean: DiagnosticClean(
+    ck_st(m)
+  ). WrittenDataFields(ck_datas_of(c), generics, frame_constructor_position(c), fields, ck_val(m)),
+  ihtail: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_data_ctors(rest, next, generics))
+  ). WrittenDataCtors(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_data_ctors(rest, next, generics))
+  ),
+  clean: DiagnosticClean(ck_st(data_ctors_after(name, rest, generics, m)))
+): WrittenDataCtors(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(surface_data_ctor_mk(name, fields), rest),
+  ck_val(data_ctors_after(name, rest, generics, m))
+) {
+  match m: WrittenDataCtors(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(surface_data_ctor_mk(name, fields), rest),
+    ck_val(data_ctors_after(name, rest, generics, m))
+  ) {
+    mut1(types, next) => {
+      let tail_clean: DiagnosticClean(
+        ck_st(ck_data_ctors(rest, next, generics))
+      ) := written_map_clean(
+        List(DataCtor),
+        List(DataCtor),
+        (ctors: List(DataCtor)) => Cons(DataCtorMk(name, types), ctors),
+        ck_data_ctors(rest, next, generics),
+        clean
+      )
+      Eq::subst(
+        (ctors: List(DataCtor)) => WrittenDataCtors(
+          ck_datas_of(c),
+          generics,
+          frame_constructor_position(c),
+          Cons(surface_data_ctor_mk(name, fields), rest),
+          ctors
+        ),
+        Eq::sym(
+          written_map_value(
+            List(DataCtor),
+            List(DataCtor),
+            (ctors: List(DataCtor)) => Cons(DataCtorMk(name, types), ctors),
+            ck_data_ctors(rest, next, generics)
+          )
+        ),
+        WrittenDataCtorsCons(
+          name,
+          fields,
+          rest,
+          types,
+          ck_val(ck_data_ctors(rest, next, generics)),
+          ihhead(ck_data_ctors_frame_errors(rest, next, generics, tail_clean)),
+          data_ctors_state(
+            c,
+            next,
+            generics,
+            rest,
+            ck_val(ck_data_ctors(rest, next, generics)),
+            Eq::congr(frame_read_datas, read),
+            Eq::congr(written_context_position, context),
+            ihtail(next, Eq::trans(Eq::congr(written_context_borrow, context), ordinary), tail_clean)
+          )
+        )
+      )
+    }
+  }
+}
+pub theorem data_ctors_cons_elaborates(
+  ctor: SurfaceDataCtor,
+  rest: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ordinary: frame_under_borrow(c) = false,
+  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_data_ctors(rest, next, generics))
+  ). WrittenDataCtors(
+    ck_datas_of(next),
+    generics,
+    frame_constructor_position(next),
+    rest,
+    ck_val(ck_data_ctors(rest, next, generics))
+  ),
+  clean: DiagnosticClean(ck_st(registration_ctors_cons(ctor, rest, c, generics)))
+): WrittenDataCtors(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  Cons(ctor, rest),
+  ck_val(registration_ctors_cons(ctor, rest, c, generics))
+) {
+  match ctor: WrittenDataCtors(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    Cons(ctor, rest),
+    ck_val(registration_ctors_cons(ctor, rest, c, generics))
+  ) {
+    surface_data_ctor_mk(name, fields) => data_ctors_after_sound(
+      c,
+      name,
+      fields,
+      rest,
+      generics,
+      ck_data_fields(fields, c, generics),
+      ck_data_fields_frame(fields, c, generics),
+      ck_data_fields_frame_context(fields, c, generics, ordinary),
+      ordinary,
+      inner_clean => ck_data_fields_sound(fields, c, generics, ordinary, inner_clean),
+      ih,
+      clean
+    )
+  }
+}
+pub theorem ck_data_ctors_sound(
+  ctors: List(SurfaceDataCtor),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  ordinary: frame_under_borrow(c) = false,
+  clean: DiagnosticClean(ck_st(ck_data_ctors(ctors, c, generics)))
+): WrittenDataCtors(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  ctors,
+  ck_val(ck_data_ctors(ctors, c, generics))
+) {
+  match ctors: WrittenDataCtors(
+    ck_datas_of(c),
+    generics,
+    frame_constructor_position(c),
+    ctors,
+    ck_val(ck_data_ctors(ctors, c, generics))
+  ) {
+    Nil => WrittenDataCtorsNil
+    Cons(ctor, rest) => written_transfer(
+      List(DataCtor),
+      (types: List(DataCtor)) => WrittenDataCtors(
+        ck_datas_of(c),
+        generics,
+        frame_constructor_position(c),
+        Cons(ctor, rest),
+        types
+      ),
+      ck_data_ctors(Cons(ctor, rest), c, generics),
+      registration_ctors_cons(ctor, rest, c, generics),
+      registration_ctors_unf(ctor, rest, c, generics),
+      branch_clean => data_ctors_cons_elaborates(
+        ctor,
+        rest,
+        c,
+        generics,
+        ordinary,
+        next => ordinary_next => inner_clean => ck_data_ctors_sound(
+          rest,
+          next,
+          generics,
+          ordinary_next,
+          inner_clean
+        ),
+        branch_clean
+      ),
+      clean
+    )
+  }
+}

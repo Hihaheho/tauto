@@ -1,0 +1,43 @@
+import "checker.taut"
+
+pub fn expr_local_name(local: Local): Text { local.name }
+pub fn expr_local_ty(local: Local): Ty { local.ty }
+
+// The first matching local is the binding in scope. An older binding cannot
+// be selected through a newer binding of the same name.
+pub(open) inductive LocalBinding: (List(Local), Text, Local) -> Prop {
+  LocalBindingHere(
+    local: Local,
+    rest: List(Local)
+  ): LocalBinding(Cons(local, rest), expr_local_name(local), local)
+  LocalBindingLater<rest: List(
+    Local
+  ), name: Text, local: Local>(
+    head: Local,
+    different: (expr_local_name(head) = name) -> False,
+    tail: LocalBinding(rest, name, local)
+  ): LocalBinding(Cons(head, rest), name, local)
+}
+
+// The value/type fragment for text, booleans, and names of locals. This is
+// independent of lookup and inference; the other expression forms use further
+// typing rules, and effects and uses are separate judgments.
+pub(open) inductive AtomicTyping(env: List(Local)): (SurfaceTerm, Ty) -> Prop {
+  AtomicText(
+    value: Text,
+    start: Nat,
+    end: Nat
+  ): AtomicTyping(env, surface_term_mk(SkText(value), start, end), TyText)
+  AtomicBool(
+    value: Bool,
+    start: Nat,
+    end: Nat
+  ): AtomicTyping(env, surface_term_mk(SkBool(value), start, end), TyBool)
+  AtomicLocal(
+    name: Text,
+    local: Local,
+    start: Nat,
+    end: Nat,
+    binding: LocalBinding(env, name, local)
+  ): AtomicTyping(env, surface_term_mk(SkVar(name), start, end), expr_local_ty(local))
+}

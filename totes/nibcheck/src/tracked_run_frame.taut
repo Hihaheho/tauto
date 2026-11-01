@@ -1,0 +1,99 @@
+import "tracked_read_frame.taut"
+
+pub def TrackedRunFrame<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker)
+): Prop := And(CkOrdered(ck_st(m)), TrackedFrame(c, m))
+pub def TrackedScopeFrame<A: Type>(
+  c: Checker,
+  m: Mut2(A, Checker, Scope)
+): Prop := TrackedRunFrame(c, pattern_checker(m))
+pub theorem tracked_run_return<A: Type>(
+  c: Checker,
+  value: A,
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, mut1(value, c)) { AndIntro(ordered, tracked_state_refl(c)) }
+pub theorem tracked_run_rewrap<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  h: TrackedRunFrame(c, m)
+): TrackedRunFrame(c, ck_rewrap1(m)) {
+  Eq::subst((result: Mut1(A, Checker)) => TrackedRunFrame(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+}
+pub theorem tracked_run_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker) -> Mut1(B, Checker),
+  m: Mut1(A, Checker),
+  first: TrackedRunFrame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ ordered: CkOrdered(
+    next
+  ). TrackedRunFrame(next, k(value, next))
+): TrackedRunFrame(c, frame_bind(A, B, k, m)) {
+  match m: TrackedRunFrame(c, frame_bind(A, B, k, m)) {
+    mut1(value, next) => {
+      let h: TrackedRunFrame(next, k(value, next)) := tail(value, next, And::left(first))
+      AndIntro(
+        And::left(h),
+        tracked_state_trans(c, next, ck_st(k(value, next)), And::right(first), And::right(h))
+      )
+    }
+  }
+}
+pub theorem tracked_run_grows<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  grows: Grows(c, ck_st(m))
+): TrackedRunFrame(c, m) {
+  AndIntro(
+    And::left(grows),
+    tracked_frame_stable(
+      c,
+      m,
+      stable_frame_grows(c, m, grows),
+      grows_obligations(c, ck_st(m), grows)
+    )
+  )
+}
+pub theorem tracked_run_read<A: Type>(
+  c: Checker,
+  m: Mut1(A, Checker),
+  read: CkReadFrame(c, m),
+  retained: TrackedFrame(c, m),
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, m) {
+  AndIntro(frame_subst_ordered(c, m, read, ordered), retained)
+}
+pub theorem tracked_run_changed<A: Type>(
+  c: Checker,
+  next: Checker,
+  m: Mut1(A, Checker),
+  same: TrackedState(c, next),
+  h: TrackedRunFrame(next, m)
+): TrackedRunFrame(c, m) {
+  AndIntro(And::left(h), tracked_state_trans(c, next, ck_st(m), same, And::right(h)))
+}
+pub theorem tracked_pattern_bind<A: Type, B: Type>(
+  c: Checker,
+  k: (A, Checker, Scope) -> Mut2(B, Checker, Scope),
+  m: Mut2(A, Checker, Scope),
+  first: TrackedScopeFrame(c, m),
+  tail: ∀ value: A. ∀ next: Checker. ∀ env: Scope. ∀ ordered: CkOrdered(
+    next
+  ). TrackedScopeFrame(next, k(value, next, env))
+): TrackedScopeFrame(c, pattern_bind(A, B, k, m)) {
+  match m: TrackedScopeFrame(c, pattern_bind(A, B, k, m)) {
+    mut2(value, next, env) => {
+      let h: TrackedScopeFrame(next, k(value, next, env)) := tail(value, next, env, And::left(first))
+      AndIntro(
+        And::left(h),
+        tracked_state_trans(
+          c,
+          next,
+          ck_st(pattern_checker(k(value, next, env))),
+          And::right(first),
+          And::right(h)
+        )
+      )
+    }
+  }
+}

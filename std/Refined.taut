@@ -1,0 +1,35 @@
+// A value of `A` together with a proof that it satisfies `P`. The proof is
+// in `Prop`, so it is erased: a program holds `val` only. Two values with the
+// same `val` are the same (`Refined::ext`), whatever their proofs.
+//
+// A program that the kernel does not check (Nib) cannot make one: it gets one
+// from a function the kernel checked, such as `refine_by`, which tests the
+// value when the program runs.
+
+pub(open) inductive Refined(A: Type, P: (A) -> Prop): Type {
+  Mk(val: A, ok: P(val)): Refined(A, P)
+}
+
+module Refined {
+  pub theorem ext<A: Type, P: (
+    A
+  ) -> Prop>(s: Refined(A, P), t: Refined(A, P), e: s.val = t.val): s = t {
+    match s: s = t {
+      Mk(a, p) => match t: Refined::Mk(a, p) = t {
+        Mk(b, q) => match e: Refined::Mk(a, p) = Refined::Mk(b, q) {
+          Refl => Refl
+        }
+      }
+    }
+  }
+}
+
+// `x` with the proof that `p(x)` is `true`, when it is. The proof of a value
+// written in the program is `Refl`: `refined(4, Refl)` when `p(4)` computes
+// to `true`.
+pub fn refine_by<A>(p: (A) -> Bool, x: A): Option(Refined(A, y => p(y) = true)) {
+  match p(x) eqn h: Option(Refined(A, y => p(y) = true)) {
+    true => ⊢ Option(Refined(A, y => p(y) = true)) from Some(Refined::Mk(x, h))
+    false => ⊢ Option(Refined(A, y => p(y) = true)) from None
+  }
+}

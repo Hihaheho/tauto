@@ -1,0 +1,280 @@
+import "Base.taut"
+
+// What a proof asks of the real numbers: an ordered field, given as the
+// operations and their laws. Nothing here builds the real numbers or
+// assumes they exist, so a theorem stated for every `OrderedField(R)`
+// holds for each `R` a proof supplies, and adds no axiom.
+//
+// A theorem about the mathematics (a derivative, a sum) takes
+// `F: OrderedField(R)` and is proved from the laws; `std/FloatReal.taut`
+// says how far a `Float` is from such a number.
+
+pub(open) inductive OrderedField(R: Type): Type {
+  Mk(
+    zero: R,
+    one: R,
+    add: (R, R) -> R,
+    mul: (R, R) -> R,
+    neg: (R) -> R,
+    // `1 / x`; its value at 0 is any, and no law speaks of it.
+    MkInv: (R) -> R,
+    le: (R, R) -> Prop,
+    add_assoc: ∀ a: R, b: R, c: R. add(add(a, b), c) = add(a, add(b, c)),
+    add_comm: ∀ a: R, b: R. add(a, b) = add(b, a),
+    add_zero: ∀ a: R. add(a, zero) = a,
+    add_neg: ∀ a: R. add(a, neg(a)) = zero,
+    mul_assoc: ∀ a: R, b: R, c: R. mul(mul(a, b), c) = mul(a, mul(b, c)),
+    mul_comm: ∀ a: R, b: R. mul(a, b) = mul(b, a),
+    mul_one: ∀ a: R. mul(a, one) = a,
+    mul_inv: ∀ a: R. (¬(a = zero)) -> (mul(a, MkInv(a)) = one),
+    distrib: ∀ a: R, b: R, c: R. mul(a, add(b, c)) = add(mul(a, b), mul(a, c)),
+    zero_ne_one: ¬(zero = one),
+    le_refl: ∀ a: R. le(a, a),
+    le_trans: ∀ a: R, b: R, c: R. (le(a, b)) -> (le(b, c)) -> le(a, c),
+    le_antisymm: ∀ a: R, b: R. (le(a, b)) -> (le(b, a)) -> (a = b),
+    le_total: ∀ a: R, b: R. le(a, b) ∨ le(b, a),
+    add_le: ∀ a: R, b: R, c: R. (le(a, b)) -> le(add(a, c), add(b, c)),
+    mul_nonneg: ∀ a: R, b: R. (le(zero, a)) -> (le(zero, b)) -> le(zero, mul(a, b))
+  ): OrderedField(R)
+}
+
+pub fn field_zero<R: Type>(F: OrderedField(R)): R {
+  match F: R {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => z
+  }
+}
+
+pub fn field_one<R: Type>(F: OrderedField(R)): R {
+  match F: R {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => o
+  }
+}
+
+pub fn field_add<R: Type>(F: OrderedField(R)): (R, R) -> R {
+  match F: (R, R) -> R {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => add
+  }
+}
+
+pub fn field_mul<R: Type>(F: OrderedField(R)): (R, R) -> R {
+  match F: (R, R) -> R {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => mul
+  }
+}
+
+pub fn field_neg<R: Type>(F: OrderedField(R)): (R) -> R {
+  match F: (R) -> R {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => Neg
+  }
+}
+
+pub fn field_inv<R: Type>(F: OrderedField(R)): (R) -> R {
+  match F: (R) -> R {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => MkInv
+  }
+}
+
+pub fn field_le<R: Type>(F: OrderedField(R)): (R, R) -> Prop {
+  match F: (R, R) -> Prop {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => MkLe
+  }
+}
+
+// `0 + a = a`, from the laws: an example of a theorem every ordered field has.
+pub theorem field_zero_add<R: Type>(F: OrderedField(R), a: R): field_add(F, field_zero(F), a) = a {
+  match F: field_add(F, field_zero(F), a) = a {
+    Mk(
+      z,
+      o,
+      add,
+      mul,
+      Neg,
+      MkInv,
+      MkLe,
+      a1,
+      a2,
+      a3,
+      a4,
+      m1,
+      m2,
+      m3,
+      m4,
+      d,
+      zo,
+      l1,
+      l2,
+      l3,
+      l4,
+      l5,
+      l6
+    ) => Eq::trans(R, add(z, a), add(a, z), a, a2(z, a), a3(a))
+  }
+}

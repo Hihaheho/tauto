@@ -1,0 +1,142 @@
+import "written_function_sound.taut"
+
+pub fn written_drop_parameters(params: List(SurfaceParam), skip: Nat): List(SurfaceParam) {
+  match params: List(SurfaceParam) {
+    Nil => Nil
+    Cons(first, rest) => match skip: List(SurfaceParam) {
+      Zero => Cons(first, rest)
+      Succ(count) => written_drop_parameters(rest, count)
+    }
+  }
+}
+pub theorem written_drop_zero(
+  params: List(SurfaceParam)
+): written_drop_parameters(params, 0) = params {
+  match params: written_drop_parameters(params, 0) = params {
+    Nil => Refl
+    Cons(first, rest) => Refl
+  }
+}
+pub theorem written_prefix_drop<params: List(
+  SurfaceParam
+), binders: List(
+  Pair(Text, Kind)
+), suffix: List(
+  SurfaceParam
+)>(
+  split: WrittenBindersPrefix(params, binders, suffix)
+): written_drop_parameters(params, list_len(binders)) = suffix {
+  match split: written_drop_parameters(params, list_len(binders)) = suffix {
+    WrittenBindersNil => Refl
+    WrittenBindersStop(first, rest, ordinary) => Refl
+    WrittenBindersCons(
+      first,
+      rest,
+      binder,
+      binders_tail,
+      remaining,
+      head,
+      tail
+    ) => written_prefix_drop(tail)
+  }
+}
+
+pub theorem written_function_drop_sound(
+  params: List(SurfaceParam),
+  result: SurfaceTerm,
+  effects: Option(List(Text)),
+  c: Checker,
+  generics: Ordmap(Text, Ty),
+  under_borrow: Bool,
+  ordinary: frame_under_borrow(c) = false,
+  ihparams: ∀ clean: DiagnosticClean(
+    ck_st(
+      ck_written_params(
+        params,
+        c,
+        frame_pi_generics(params, generics),
+        list_len(frame_pi_binders(params))
+      )
+    )
+  ). WrittenParameters(
+    ck_datas_of(c),
+    frame_pi_generics(params, generics),
+    frame_constructor_position(c),
+    written_drop_parameters(params, list_len(frame_pi_binders(params))),
+    ck_val(
+      ck_written_params(
+        params,
+        c,
+        frame_pi_generics(params, generics),
+        list_len(frame_pi_binders(params))
+      )
+    )
+  ),
+  ihresult: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+    ck_st(ck_written_in(result, next, frame_pi_generics(params, generics)))
+  ). WrittenTerm(
+    ck_datas_of(next),
+    frame_pi_generics(params, generics),
+    frame_constructor_position(next),
+    false,
+    result,
+    ck_val(ck_written_in(result, next, frame_pi_generics(params, generics)))
+  ),
+  clean: DiagnosticClean(ck_st(frame_written_pi(params, result, c, generics)))
+): WrittenKind(
+  ck_datas_of(c),
+  generics,
+  frame_constructor_position(c),
+  under_borrow,
+  SkPi(params, result, effects),
+  ck_val(frame_written_pi(params, result, c, generics))
+) {
+  written_function_after_sound(
+    params,
+    result,
+    effects,
+    c,
+    generics,
+    under_borrow,
+    ck_written_params(
+      params,
+      c,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params))
+    ),
+    ck_written_params_frame(
+      params,
+      c,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params))
+    ),
+    ck_written_params_frame_context(
+      params,
+      c,
+      frame_pi_generics(params, generics),
+      list_len(frame_pi_binders(params)),
+      ordinary
+    ),
+    ordinary,
+    params_clean => Eq::subst(
+      (remaining: List(SurfaceParam)) => WrittenParameters(
+        ck_datas_of(c),
+        frame_pi_generics(params, generics),
+        frame_constructor_position(c),
+        remaining,
+        ck_val(
+          ck_written_params(
+            params,
+            c,
+            frame_pi_generics(params, generics),
+            list_len(frame_pi_binders(params))
+          )
+        )
+      ),
+      written_prefix_drop(pi_binders_sound(params)),
+      ihparams(params_clean)
+    ),
+    ihresult,
+    clean
+  )
+}

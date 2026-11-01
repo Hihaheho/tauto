@@ -1,0 +1,131 @@
+import "effect_allocation_sound.taut"
+
+pub theorem argument_expected_allocation(
+  c: Checker,
+  t: Ty,
+  a: SurfaceTerm,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), t),
+  expected: Option(Ty),
+  hint: OptionTypeAllocated(ck_next_of(c), expected)
+): AllocationAdvance(c, argument_expected(c, t, a, expected)) {
+  match expected: AllocationAdvance(c, argument_expected(c, t, a, expected)) {
+    None => allocation_advance_return(c, Star, state)
+    Some(p) => allocation_advance_rewrap(
+      c,
+      ck_expect(c, t, p, span_of(a), "an argument"),
+      ck_expect_allocation(c, t, p, span_of(a), "an argument", ordered, state, bounded, hint)
+    ) }
+}
+pub theorem ck_expect_opt_allocation(
+  c: Checker,
+  t: Ty,
+  expected: Option(Ty),
+  a: SurfaceTerm,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), t),
+  hint: OptionTypeAllocated(ck_next_of(c), expected)
+): AllocationAdvance(c, ck_expect_opt(c, t, expected, a)) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(argument_expected_unf(c, t, expected, a)),
+    argument_expected_allocation(c, t, a, ordered, state, bounded, expected, hint)
+  )
+}
+pub theorem argument_return_allocation(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), t),
+  returns: List(Ty),
+  targets: TypeListAllocated(ck_next_of(c), returns)
+): AllocationAdvance(c, argument_return(c, t, span, returns)) {
+  match returns: AllocationAdvance(c, argument_return(c, t, span, returns)) {
+    Nil => allocation_advance_rewrap(
+      c,
+      ck_error(c, "`return` outside a function", span),
+      AndIntro(Nat::le_refl(ck_next_of(c)), state)
+    )
+    Cons(r, rest) => allocation_advance_rewrap(
+      c,
+      ck_expect(c, t, r, span, "the returned value"),
+      ck_expect_allocation(
+        c,
+        t,
+        r,
+        span,
+        "the returned value",
+        ordered,
+        state,
+        bounded,
+        And::left(targets)
+      )
+    ) }
+}
+pub theorem ck_return_check_allocation(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), t),
+  targets: TypeListAllocated(ck_next_of(c), argument_returns(c))
+): AllocationAdvance(c, ck_return_check(c, t, span)) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(argument_return_unf(c, t, span)),
+    argument_return_allocation(c, t, span, ordered, state, bounded, argument_returns(c), targets)
+  )
+}
+pub theorem argument_budget_allocation(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), t),
+  exceeded: List(Ty),
+  targets: TypeListAllocated(ck_next_of(c), exceeded)
+): AllocationAdvance(c, argument_budget(c, t, span, exceeded)) {
+  match exceeded: AllocationAdvance(c, argument_budget(c, t, span, exceeded)) {
+    Nil => allocation_advance_return(c, Star, state)
+    Cons(x, rest) => allocation_advance_bind(
+      Bool,
+      Unit,
+      c,
+      (same: Bool, next: Checker) => argument_budget_after(next, t, span, same),
+      ck_unify(c, x, t),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, x, t),
+        ck_unify_allocation(c, x, t, ordered, state, And::left(targets), bounded)
+      ),
+      And::left(ck_unify_run_frame(c, x, t, ordered)),
+      same => next => advanced => current => order => allocation_error_if(
+        next,
+        "budgets answered by one `exceeded` arm give different types",
+        span,
+        current,
+        not(same)
+      )
+    ) }
+}
+pub theorem ck_budget_answer_allocation(
+  c: Checker,
+  t: Ty,
+  span: TySpan,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bounded: TypeAllocated(ck_next_of(c), t),
+  targets: TypeListAllocated(ck_next_of(c), argument_exceeded(c))
+): AllocationAdvance(c, ck_budget_answer(c, t, span)) {
+  Eq::subst(
+    (result: Mut1(Unit, Checker)) => AllocationAdvance(c, result),
+    Eq::sym(argument_budget_unf(c, t, span)),
+    argument_budget_allocation(c, t, span, ordered, state, bounded, argument_exceeded(c), targets)
+  )
+}

@@ -1,0 +1,140 @@
+import "where_order_sound.taut"
+import "instantiation_domain_sound.taut"
+
+pub def WherePredicatesDeclared(
+  gs: List(Pair(Text, Kind)),
+  ps: List(Pair(Text, Text))
+): Prop := ∀ p: Pair(
+  Text,
+  Text
+). ∀ present: Mem(Pair(Text, Text), p, ps). WhereGeneric(gs, instantiation_parameter(p))
+pub theorem where_generic_term_declared<gs: List(
+  Pair(Text, Kind)
+), term: SurfaceTerm, name: Text>(h: WhereGenericTerm(gs, term, name)): WhereGeneric(gs, name) {
+  match h: WhereGeneric(
+    gs,
+    name
+  ) { Mk(ctor_ast_occurrence, spelling, start, end, declared) => declared }
+}
+pub theorem where_declared_cons(
+  gs: List(Pair(Text, Kind)),
+  r#class: Text,
+  name: Text,
+  previous: List(Pair(Text, Text)),
+  declared: WhereGeneric(gs, name),
+  before: WherePredicatesDeclared(gs, previous),
+  p: Pair(Text, Text),
+  present: Mem(Pair(Text, Text), p, Cons(Pair {fst: r#class, snd: name}, previous))
+): WhereGeneric(gs, instantiation_parameter(p)) {
+  match present: WhereGeneric(gs, instantiation_parameter(p)) {
+    MemHere(rest) => declared
+    MemThere(head, rest, inside) => before(p, inside)
+  }
+}
+pub theorem where_constraint_declares<classes: Ordmap(
+  Text,
+  ClassInfo
+), gs: List(
+  Pair(Text, Kind)
+), source: SurfaceConstraint, previous: List(
+  Pair(Text, Text)
+), final: List(
+  Pair(Text, Text)
+)>(
+  h: WhereConstraint(classes, gs, source, previous, final),
+  before: WherePredicatesDeclared(gs, previous)
+): WherePredicatesDeclared(gs, final) {
+  match h: WherePredicatesDeclared(gs, final) {
+    Mk(name, r#class, Generic, Fresh) => p => present => where_declared_cons(
+      gs,
+      where_source_class(source),
+      name,
+      previous,
+      where_generic_term_declared(Generic),
+      before,
+      p,
+      present
+    )
+  }
+}
+pub theorem where_constraints_declare<classes: Ordmap(
+  Text,
+  ClassInfo
+), gs: List(
+  Pair(Text, Kind)
+), sources: List(
+  SurfaceConstraint
+), previous: List(
+  Pair(Text, Text)
+), final: List(
+  Pair(Text, Text)
+)>(
+  h: WhereConstraints(classes, gs, sources, previous, final),
+  before: WherePredicatesDeclared(gs, previous)
+): WherePredicatesDeclared(gs, final) {
+  match h: WherePredicatesDeclared(gs, final) {
+    WhereConstraintsNil(start) => before
+    WhereConstraintsCons(source, rest, start, next, last, head, tail) => where_constraints_declare(
+      tail,
+      where_constraint_declares(head, before)
+    )
+  }
+}
+pub theorem where_predicates_nil(gs: List(Pair(Text, Kind))): WherePredicatesDeclared(gs, Nil) {
+  p => present => match present: WhereGeneric(gs, instantiation_parameter(p)) {
+  }
+}
+pub theorem where_predicates_unreverse<gs: List(
+  Pair(Text, Kind)
+), ps: List(
+  Pair(Text, Text)
+)>(
+  h: WherePredicatesDeclared(gs, ps),
+  p: Pair(Text, Text),
+  present: Mem(Pair(Text, Text), p, List::reverse(ps))
+): WhereGeneric(gs, instantiation_parameter(p)) {
+  h(
+    p,
+    Eq::subst(
+      (items: List(Pair(Text, Text))) => Mem(Pair(Text, Text), p, items),
+      List::reverse_reverse(ps),
+      where_reverse_member(present)
+    )
+  )
+}
+pub theorem where_clauses_declare<classes: Ordmap(
+  Text,
+  ClassInfo
+), gs: List(
+  Pair(Text, Kind)
+), sources: List(
+  SurfaceConstraint
+), ps: List(
+  Pair(Text, Text)
+)>(h: WhereClauses(classes, gs, sources, ps)): WherePredicatesDeclared(gs, ps) {
+  match h: WherePredicatesDeclared(gs, ps) {
+    Mk(Reversed, derived, ordered) => Eq::subst(
+      (items: List(Pair(Text, Text))) => WherePredicatesDeclared(gs, items),
+      Eq::sym(ordered),
+      (
+        p: Pair(Text, Text),
+        present: Mem(Pair(Text, Text), p, List::reverse(Reversed))
+      ) => where_predicates_unreverse(
+        where_constraints_declare(derived, where_predicates_nil(gs)),
+        p,
+        present
+      )
+    )
+  }
+}
+pub theorem where_generic_in_instance<gs: List(
+  Pair(Text, Kind)
+), name: Text>(
+  declared: WhereGeneric(gs, name),
+  map: Ordmap(Text, Ty),
+  covered: GenericNamesPresent(gs, map)
+): InstanceNamePresent(map, name) {
+  match declared: InstanceNamePresent(map, name) {
+    Mk(kind, present) => covered(Pair {fst: name, snd: kind}, present)
+  }
+}

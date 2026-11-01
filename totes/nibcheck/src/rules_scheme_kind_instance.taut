@@ -1,0 +1,17 @@
+import "rules_kind_bindings.taut"
+
+// The kind component of a scheme use: all bindings fit their declared kind,
+// and the same environment substitutes the scheme's type.
+pub(open) inductive SchemeKindInstance(
+  s: Ordmap(Nat, Ty),
+  d: Datas,
+  gs: List(Pair(Text, Kind)),
+  body: Ty,
+  result: Ty
+): Prop {
+  Mk(
+    map: Ordmap(Text, Ty),
+    bindings: InstanceKindBindings(s, d, gs, Ordmap::empty(), map),
+    substituted: result = ty_substitute(body, map)
+  ): SchemeKindInstance(s, d, gs, body, result)
+}

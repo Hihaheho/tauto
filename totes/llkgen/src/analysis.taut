@@ -1,33 +1,35 @@
 // The lookahead analysis: the grammar it reads and FIRST(k). FOLLOW(k) and
 // the deciding of k are in `follow.taut`.
+//
+// Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
 
-enum LgSym {
+pub(open) enum LgSym {
   LgN(u64)
   LgT(u64)
 }
 
-struct LgProd { lhs: u64, rhs: List(LgSym) }
+pub(open) struct LgProd { lhs: u64, rhs: List(LgSym) }
 
 // The grammar the analysis reads: its productions (after the EBNF is gone),
 // for each non-terminal the numbers of its productions, the start symbol.
-struct LgGrammar { prods: Array(LgProd), nt_prods: Array(List(u64)), start: u64 }
+pub(open) struct LgGrammar { prods: Array(LgProd), nt_prods: Array(List(u64)), start: u64 }
 
 // A production's right side in parts: a string of terminals, or one
 // non-terminal, with the position (from 1) of its first symbol.
-enum LgRaw {
+pub(open) enum LgRaw {
   LgRawT(List(u64))
   LgRawN(u64)
 }
 
-struct LgRawAt { at: u64, raw: LgRaw }
+pub(open) struct LgRawAt { at: u64, raw: LgRaw }
 
-fn lg_raw_parts(rhs: List(LgSym)) -> List(LgRawAt) {
-  var parts: List(LgRawAt) = Nil
-  var run: List(u64) = Nil
-  var run_at: u64 = 0
-  var rest = rhs
-  var i: u64 = 0
-  var running = true
+pub fn lg_raw_parts(rhs: List(LgSym)): List(LgRawAt) {
+  var parts: List(LgRawAt) := Nil
+  var run: List(u64) := Nil
+  var run_at: u64 := 0
+  var rest := rhs
+  var i: u64 := 0
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -37,7 +39,7 @@ fn lg_raw_parts(rhs: List(LgSym)) -> List(LgRawAt) {
         match s {
           LgN(n) => {
             match run {
-              Nil => ()
+              Nil => #()
               Cons(t, before) => {
                 parts := Cons(LgRawAt { at: run_at, raw: LgRawT(lg_rev(run)) }, parts)
                 run := Nil
@@ -50,7 +52,7 @@ fn lg_raw_parts(rhs: List(LgSym)) -> List(LgRawAt) {
               Nil => {
                 run_at := i + 1
               }
-              Cons(u, before) => ()
+              Cons(u, before) => #()
             }
             run := Cons(t, run)
           }
@@ -61,7 +63,7 @@ fn lg_raw_parts(rhs: List(LgSym)) -> List(LgRawAt) {
     }
   }
   match run {
-    Nil => ()
+    Nil => #()
     Cons(t, before) => {
       parts := Cons(LgRawAt { at: run_at, raw: LgRawT(lg_rev(run)) }, parts)
     }
@@ -69,10 +71,10 @@ fn lg_raw_parts(rhs: List(LgSym)) -> List(LgRawAt) {
   lg_rev_parts(parts)
 }
 
-fn lg_rev_parts(xs: List(LgRawAt)) -> List(LgRawAt) {
-  var out: List(LgRawAt) = Nil
-  var rest = xs
-  var running = true
+pub fn lg_rev_parts(xs: List(LgRawAt)): List(LgRawAt) {
+  var out: List(LgRawAt) := Nil
+  var rest := xs
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -87,22 +89,22 @@ fn lg_rev_parts(xs: List(LgRawAt)) -> List(LgRawAt) {
   out
 }
 
-fn lg_aget(a: Array(LgSet), i: u64) -> LgSet {
-  match array_get(a, i) {
+pub fn lg_aget(a: Array(LgSet), i: u64): LgSet {
+  match Array::get(a, i) {
     Some(x) => x
     None => lg_set_empty(0)
   }
 }
 
-fn lg_prod_at(g: LgGrammar, p: u64) -> LgProd {
-  match array_get(g.prods, p) {
+pub fn lg_prod_at(g: LgGrammar, p: u64): LgProd {
+  match Array::get(g.prods, p) {
     Some(x) => x
     None => LgProd { lhs: 0, rhs: Nil }
   }
 }
 
-fn lg_nt_prods_at(g: LgGrammar, n: u64) -> List(u64) {
-  match array_get(g.nt_prods, n) {
+pub fn lg_nt_prods_at(g: LgGrammar, n: u64): List(u64) {
+  match Array::get(g.nt_prods, n) {
     Some(x) => x
     None => Nil
   }
@@ -110,17 +112,17 @@ fn lg_nt_prods_at(g: LgGrammar, n: u64) -> List(u64) {
 
 // ---------------------------------------------------------------- FIRST
 
-enum LgPart {
+pub(open) enum LgPart {
   LgTerms(LgSet)
   LgNt(u64)
 }
 
-struct LgFirst { prods: List(LgSet), nts: List(LgSet) }
+pub(open) struct LgFirst { prods: List(LgSet), nts: List(LgSet) }
 
-fn lg_first_parts(raw: List(LgRawAt), k: u64) -> List(LgPart) {
-  var out: List(LgPart) = Nil
-  var rest = raw
-  var running = true
+pub fn lg_first_parts(raw: List(LgRawAt), k: u64): List(LgPart) {
+  var out: List(LgPart) := Nil
+  var rest := raw
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -138,10 +140,10 @@ fn lg_first_parts(raw: List(LgRawAt), k: u64) -> List(LgPart) {
   lg_rev_part(out)
 }
 
-fn lg_rev_part(xs: List(LgPart)) -> List(LgPart) {
-  var out: List(LgPart) = Nil
-  var rest = xs
-  var running = true
+pub fn lg_rev_part(xs: List(LgPart)): List(LgPart) {
+  var out: List(LgPart) := Nil
+  var rest := xs
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -156,19 +158,19 @@ fn lg_rev_part(xs: List(LgPart)) -> List(LgPart) {
   out
 }
 
-fn lg_n_prods(g: LgGrammar) -> u64 {
-  array_len(g.prods)
+pub fn lg_n_prods(g: LgGrammar): u64 {
+  Array::len(g.prods)
 }
 
-fn lg_n_nts(g: LgGrammar) -> u64 {
-  array_len(g.nt_prods)
+pub fn lg_n_nts(g: LgGrammar): u64 {
+  Array::len(g.nt_prods)
 }
 
-fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)) -> Bool {
-  var x = a
-  var y = b
-  var same = true
-  var running = true
+pub fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)): Bool {
+  var x := a
+  var y := b
+  var same := true
+  var running := true
   while running {
     match x {
       Nil => {
@@ -196,10 +198,10 @@ fn lg_set_eq_list(a: List(LgSet), b: List(LgSet)) -> Bool {
   same
 }
 
-fn lg_rev_set(xs: List(LgSet)) -> List(LgSet) {
-  var out: List(LgSet) = Nil
-  var rest = xs
-  var running = true
+pub fn lg_rev_set(xs: List(LgSet)): List(LgSet) {
+  var out: List(LgSet) := Nil
+  var rest := xs
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -214,10 +216,10 @@ fn lg_rev_set(xs: List(LgSet)) -> List(LgSet) {
   out
 }
 
-fn lg_set_k_all(xs: List(LgSet), k: u64) -> List(LgSet) {
-  var out: List(LgSet) = Nil
-  var rest = xs
-  var running = true
+pub fn lg_set_k_all(xs: List(LgSet), k: u64): List(LgSet) {
+  var out: List(LgSet) := Nil
+  var rest := xs
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -233,38 +235,38 @@ fn lg_set_k_all(xs: List(LgSet), k: u64) -> List(LgSet) {
 }
 
 // FIRST(k): the fixpoint, from what FIRST(k - 1) gave (or from nothing).
-fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)) -> LgFirst {
-  let n_prods = lg_n_prods(g)
-  let n_nts = lg_n_nts(g)
-  var eqs: List(List(LgPart)) = Nil
-  var p: u64 = 0
+pub fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)): LgFirst {
+  let n_prods := lg_n_prods(g)
+  let n_nts := lg_n_nts(g)
+  var eqs: List(List(LgPart)) := Nil
+  var p: u64 := 0
   while p < n_prods {
     eqs := Cons(lg_first_parts(lg_raw_parts(lg_prod_at(g, p).rhs), k), eqs)
     p := p + 1
   }
-  let equations = lg_rev_eqs(eqs)
-  var cur: LgFirst = match prev {
-    None => LgFirst { prods: lg_repeat_set(
-      lg_set_empty(k),
-      n_prods
-    ), nts: lg_repeat_set(lg_set_eps(k), n_nts) }
+  let equations := lg_rev_eqs(eqs)
+  var cur: LgFirst := match prev {
+    None => LgFirst {
+      prods: lg_repeat_set(lg_set_empty(k), n_prods),
+      nts: lg_repeat_set(lg_set_eps(k), n_nts)
+    }
     Some(f) => LgFirst { prods: lg_set_k_all(f.prods, k), nts: lg_set_k_all(f.nts, k) }
   }
-  var running = true
+  var running := true
   while running {
-    let old_nts = array_of_list(cur.nts)
-    var made: List(LgSet) = Nil
-    var rest = equations
-    var inner = true
+    let old_nts := Array::of_list(cur.nts)
+    var made: List(LgSet) := Nil
+    var rest := equations
+    var inner := true
     while inner {
       match rest {
         Nil => {
           inner := false
         }
         Cons(eq, more) => {
-          var r = lg_set_eps(k)
-          var parts = eq
-          var walking = true
+          var r := lg_set_eps(k)
+          var parts := eq
+          var walking := true
           while walking {
             match parts {
               Nil => {
@@ -284,14 +286,14 @@ fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)) -> LgFirst {
         }
       }
     }
-    let new_prods = lg_rev_set(made)
-    let by_prod = array_of_list(new_prods)
-    var nts: List(LgSet) = Nil
-    var n: u64 = 0
+    let new_prods := lg_rev_set(made)
+    let by_prod := Array::of_list(new_prods)
+    var nts: List(LgSet) := Nil
+    var n: u64 := 0
     while n < n_nts {
-      var acc = lg_set_empty(k)
-      var ps = lg_nt_prods_at(g, n)
-      var walking = true
+      var acc := lg_set_empty(k)
+      var ps := lg_nt_prods_at(g, n)
+      var walking := true
       while walking {
         match ps {
           Nil => {
@@ -306,7 +308,7 @@ fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)) -> LgFirst {
       nts := Cons(acc, nts)
       n := n + 1
     }
-    let next = LgFirst { prods: new_prods, nts: lg_rev_set(nts) }
+    let next := LgFirst { prods: new_prods, nts: lg_rev_set(nts) }
     if lg_set_eq_list(next.prods, cur.prods) && lg_set_eq_list(next.nts, cur.nts) {
       running := false
     } else {
@@ -316,10 +318,10 @@ fn lg_first(g: LgGrammar, k: u64, prev: Option(LgFirst)) -> LgFirst {
   cur
 }
 
-fn lg_rev_eqs(xs: List(List(LgPart))) -> List(List(LgPart)) {
-  var out: List(List(LgPart)) = Nil
-  var rest = xs
-  var running = true
+pub fn lg_rev_eqs(xs: List(List(LgPart))): List(List(LgPart)) {
+  var out: List(List(LgPart)) := Nil
+  var rest := xs
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -334,9 +336,9 @@ fn lg_rev_eqs(xs: List(List(LgPart))) -> List(List(LgPart)) {
   out
 }
 
-fn lg_repeat_set(s: LgSet, n: u64) -> List(LgSet) {
-  var out: List(LgSet) = Nil
-  var i: u64 = 0
+pub fn lg_repeat_set(s: LgSet, n: u64): List(LgSet) {
+  var out: List(LgSet) := Nil
+  var i: u64 := 0
   while i < n {
     out := Cons(s, out)
     i := i + 1

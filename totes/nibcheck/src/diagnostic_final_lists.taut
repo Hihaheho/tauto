@@ -1,0 +1,124 @@
+import "diagnostic_leaves.taut"
+pub theorem diagnostic_literals_unf(
+  l: TyLiteral,
+  rest: List(TyLiteral),
+  c: Checker
+): ck_check_literals(Cons(l, rest), c) = diagnostic_after((next: Checker) => ck_check_literals(rest, next), ck_check_literal(c, l)) { Refl }
+pub theorem ck_check_literals_accepts(
+  xs: List(TyLiteral),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_literals(xs, c)))
+): DiagnosticItemsResult(DiagnosticLiteral, xs, c, ck_check_literals(xs, c)) {
+  match xs: DiagnosticItemsResult(DiagnosticLiteral, xs, c, ck_check_literals(xs, c)) {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(l, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticLiteral, Cons(l, rest), c, z),
+      Eq::sym(diagnostic_literals_unf(l, rest, c)),
+      diagnostic_items_cons_accepts(
+        DiagnosticLiteral,
+        l,
+        rest,
+        c,
+        ck_check_literal(c, l),
+        (next: Checker) => ck_check_literals(rest, next),
+        h => ck_check_literal_accepts(c, l, h),
+        next => h => ck_check_literals_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_literals_unf(l, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem ck_check_literals_identity(
+  xs: List(TyLiteral),
+  c: Checker
+): DiagnosticIdentity(
+  c,
+  ck_check_literals(xs, c)
+) { clean => And::right(ck_check_literals_accepts(xs, c, clean)) }
+pub theorem diagnostic_ctor_bounds_unf(
+  b: TyCtorBound,
+  rest: List(TyCtorBound),
+  c: Checker
+): ck_check_ctor_bounds(Cons(b, rest), c) = diagnostic_after((next: Checker) => ck_check_ctor_bounds(rest, next), ck_check_ctor_bound(c, b)) { Refl }
+pub theorem ck_check_ctor_bounds_accepts(
+  xs: List(TyCtorBound),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_ctor_bounds(xs, c)))
+): DiagnosticItemsResult(DiagnosticConstructor, xs, c, ck_check_ctor_bounds(xs, c)) {
+  match xs: DiagnosticItemsResult(DiagnosticConstructor, xs, c, ck_check_ctor_bounds(xs, c)) {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(b, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticConstructor, Cons(b, rest), c, z),
+      Eq::sym(diagnostic_ctor_bounds_unf(b, rest, c)),
+      diagnostic_items_cons_accepts(
+        DiagnosticConstructor,
+        b,
+        rest,
+        c,
+        ck_check_ctor_bound(c, b),
+        (next: Checker) => ck_check_ctor_bounds(rest, next),
+        h => ck_check_ctor_bound_accepts(c, b, h),
+        next => h => ck_check_ctor_bounds_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_ctor_bounds_unf(b, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem ck_check_ctor_bounds_identity(
+  xs: List(TyCtorBound),
+  c: Checker
+): DiagnosticIdentity(
+  c,
+  ck_check_ctor_bounds(xs, c)
+) { clean => And::right(ck_check_ctor_bounds_accepts(xs, c, clean)) }
+pub theorem diagnostic_pending_unf(
+  p: TyPending,
+  rest: List(TyPending),
+  c: Checker
+): ck_check_pending(Cons(p, rest), c) = diagnostic_after(
+    (next: Checker) => ck_check_pending(rest, next),
+    finish_pending(c, p, not(class_is_structural(finish_pending_class(p))))
+  ) { Refl }
+pub theorem ck_check_pending_accepts(
+  xs: List(TyPending),
+  c: Checker,
+  clean: DiagnosticClean(ck_st(ck_check_pending(xs, c)))
+): DiagnosticItemsResult(DiagnosticPending, xs, c, ck_check_pending(xs, c)) {
+  match xs: DiagnosticItemsResult(DiagnosticPending, xs, c, ck_check_pending(xs, c)) {
+    Nil => AndIntro(DiagnosticItemsNil, Refl)
+    Cons(p, rest) => Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticPending, Cons(p, rest), c, z),
+      Eq::sym(diagnostic_pending_unf(p, rest, c)),
+      diagnostic_items_cons_accepts(
+        DiagnosticPending,
+        p,
+        rest,
+        c,
+        finish_pending(c, p, not(class_is_structural(finish_pending_class(p)))),
+        (next: Checker) => ck_check_pending(rest, next),
+        h => diagnostic_pending_step(c, p, not(class_is_structural(finish_pending_class(p))), h),
+        next => h => ck_check_pending_accepts(rest, next, h),
+        Eq::subst(
+          (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+          diagnostic_pending_unf(p, rest, c),
+          clean
+        )
+      )
+    )
+  }
+}
+pub theorem ck_check_pending_identity(
+  xs: List(TyPending),
+  c: Checker
+): DiagnosticIdentity(
+  c,
+  ck_check_pending(xs, c)
+) { clean => And::right(ck_check_pending_accepts(xs, c, clean)) }

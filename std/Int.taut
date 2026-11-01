@@ -1,0 +1,217 @@
+import "Nat.taut"
+import "UInt.taut"
+
+// Integers as the proofs see them: a natural number, or the negative of
+// one more than a natural number, so that each integer is written one way.
+// Extraction writes `Int` as an `enum` of Nib on `nat`. Once this file is
+// read, a numeral where an `Int` is expected is one (`-3` is `IntNegSucc(2)`),
+// and a `match` on an `Int` with numerals for patterns is the branches on `==`
+// it stands for (`check/implicit.rs`, `check/sugar.rs`).
+
+pub(open) inductive Int: Type =>
+  fn Int::beq, theorem Int::beq_refl, theorem Int::beq_sound, theorem Int::deq {
+  IntOfNat(n: Nat): Int
+  // `-(n + 1)`.
+  IntNegSucc(n: Nat): Int
+}
+
+module Int {
+  pub fn neg(x: Int): Int {
+    match x: Int {
+      IntOfNat(n) => match n: Int {
+        Zero => IntOfNat(Zero)
+        Succ(k) => IntNegSucc(k)
+      }
+      IntNegSucc(n) => IntOfNat(Succ(n))
+    }
+  }
+
+  // `a - b` of two natural numbers.
+  pub fn sub_nat(a: Nat, b: Nat): Int {
+    match a < b: Int {
+      false => IntOfNat(a - b)
+      true => IntNegSucc((b - a) - Succ(Zero))
+    }
+  }
+
+  pub fn add(x: Int, y: Int): Int {
+    match x: Int {
+      IntOfNat(a) => match y: Int {
+        IntOfNat(b) => IntOfNat(Nat::add(a, b))
+        IntNegSucc(b) => sub_nat(a, Succ(b))
+      }
+      IntNegSucc(a) => match y: Int {
+        IntOfNat(b) => sub_nat(b, Succ(a))
+        IntNegSucc(b) => IntNegSucc(Succ(Nat::add(a, b)))
+      }
+    }
+  }
+
+  pub fn sub(x: Int, y: Int): Int {
+    add(x, neg(y))
+  }
+
+  pub fn mul(x: Int, y: Int): Int {
+    match x: Int {
+      IntOfNat(a) => match y: Int {
+        IntOfNat(b) => IntOfNat(Nat::mul(a, b))
+        IntNegSucc(b) => neg(IntOfNat(Nat::mul(a, Succ(b))))
+      }
+      IntNegSucc(a) => match y: Int {
+        IntOfNat(b) => neg(IntOfNat(Nat::mul(Succ(a), b)))
+        IntNegSucc(b) => IntOfNat(Nat::mul(Succ(a), Succ(b)))
+      }
+    }
+  }
+
+  // `¬(IntOfNat(b) = 0)` gives `¬(b = 0)`.
+  pub theorem of_nat_ne_zero(b: Nat, h: ¬(IntOfNat(b) = 0)): ¬(b = 0) {
+    (e: b = 0) => h(Eq::congr(⟦IntOfNat(□)⟧, e))
+  }
+
+  // `x / y` rounded toward zero, for a `y` that `h` says is not 0.
+  pub fn tdiv_nz(x: Int, y: Int, h: ¬(y = 0)): Int {
+    match x: Int {
+      IntOfNat(a) => match y: Int {
+        IntOfNat(b) => IntOfNat(Nat::div_nz(a, b, of_nat_ne_zero(b, h)))
+        IntNegSucc(b) => neg(IntOfNat(Nat::div_nz(a, Succ(b), Nat::succ_ne_zero(b))))
+      }
+      IntNegSucc(a) => match y: Int {
+        IntOfNat(b) => neg(IntOfNat(Nat::div_nz(Succ(a), b, of_nat_ne_zero(b, h))))
+        IntNegSucc(b) => IntOfNat(Nat::div_nz(Succ(a), Succ(b), Nat::succ_ne_zero(b)))
+      }
+    }
+  }
+
+  // The remainder of `tdiv_nz`, with the sign of `x`.
+  pub fn tmod_nz(x: Int, y: Int, h: ¬(y = 0)): Int {
+    sub(x, mul(y, tdiv_nz(x, y, h)))
+  }
+
+  // `x / y` rounded down, for a `y` that `h` says is not 0.
+  pub fn fdiv_nz(x: Int, y: Int, h: ¬(y = 0)): Int {
+    match x: Int {
+      IntOfNat(a) => match y: Int {
+        IntOfNat(b) => IntOfNat(Nat::div_nz(a, b, of_nat_ne_zero(b, h)))
+        IntNegSucc(b) => neg(IntOfNat(Nat::div_nz(Nat::add(a, b), Succ(b), Nat::succ_ne_zero(b))))
+      }
+      IntNegSucc(a) => match y: Int {
+        IntOfNat(b) => neg(IntOfNat(Nat::div_nz(Nat::add(a, b), b, of_nat_ne_zero(b, h))))
+        IntNegSucc(b) => IntOfNat(Nat::div_nz(Succ(a), Succ(b), Nat::succ_ne_zero(b)))
+      }
+    }
+  }
+
+  // The remainder of `fdiv_nz`, with the sign of `y`.
+  pub fn fmod_nz(x: Int, y: Int, h: ¬(y = 0)): Int {
+    sub(x, mul(y, fdiv_nz(x, y, h)))
+  }
+
+  pub fn eq(x: Int, y: Int): Bool {
+    match x: Bool {
+      IntOfNat(a) => match y: Bool {
+        IntOfNat(b) => a == b
+        IntNegSucc(b) => false
+      }
+      IntNegSucc(a) => match y: Bool {
+        IntOfNat(b) => false
+        IntNegSucc(b) => a == b
+      }
+    }
+  }
+
+  // `y` is not 0 when `Int::eq` says so.
+  pub theorem ne_zero(y: Int, h: Int::eq(y, 0) = false): ¬(y = 0) {
+    (e: y = 0) => true_ne_false(Eq::trans(Eq::sym(Eq::congr(⟦Int::eq(□, 0)⟧, e)), h))
+  }
+
+  // `tdiv`, or `None` when `y` is 0.
+  pub fn checked_tdiv(x: Int, y: Int): Option(Int) {
+    match Int::eq(y, 0) eqn h: Option(Int) {
+      false => Some(tdiv_nz(x, y, ne_zero(y, h)))
+      true => None
+    }
+  }
+
+  // `x / y` rounded toward zero, or `DivZero` when `y` is 0.
+  pub fn tdiv(x: Int, y: Int): Int ! {DivZero} {
+    or_div_zero(checked_tdiv(x, y))
+  }
+
+  // `tmod`, or `None` when `y` is 0.
+  pub fn checked_tmod(x: Int, y: Int): Option(Int) {
+    match Int::eq(y, 0) eqn h: Option(Int) {
+      false => Some(tmod_nz(x, y, ne_zero(y, h)))
+      true => None
+    }
+  }
+
+  // The remainder of `tdiv`, with the sign of `x`, or `DivZero` when `y` is 0.
+  pub fn tmod(x: Int, y: Int): Int ! {DivZero} {
+    or_div_zero(checked_tmod(x, y))
+  }
+
+  // `fdiv`, or `None` when `y` is 0.
+  pub fn checked_fdiv(x: Int, y: Int): Option(Int) {
+    match Int::eq(y, 0) eqn h: Option(Int) {
+      false => Some(fdiv_nz(x, y, ne_zero(y, h)))
+      true => None
+    }
+  }
+
+  // `x / y` rounded down, or `DivZero` when `y` is 0.
+  pub fn fdiv(x: Int, y: Int): Int ! {DivZero} {
+    or_div_zero(checked_fdiv(x, y))
+  }
+
+  // `fmod`, or `None` when `y` is 0.
+  pub fn checked_fmod(x: Int, y: Int): Option(Int) {
+    match Int::eq(y, 0) eqn h: Option(Int) {
+      false => Some(fmod_nz(x, y, ne_zero(y, h)))
+      true => None
+    }
+  }
+
+  // The remainder of `fdiv`, with the sign of `y`, or `DivZero` when `y` is 0.
+  pub fn fmod(x: Int, y: Int): Int ! {DivZero} {
+    or_div_zero(checked_fmod(x, y))
+  }
+
+  pub fn lt(x: Int, y: Int): Bool {
+    match x: Bool {
+      IntOfNat(a) => match y: Bool {
+        IntOfNat(b) => a < b
+        IntNegSucc(b) => false
+      }
+      IntNegSucc(a) => match y: Bool {
+        IntOfNat(b) => true
+        IntNegSucc(b) => b < a
+      }
+    }
+  }
+
+  pub fn le(x: Int, y: Int): Bool {
+    lt(x, y) || eq(x, y)
+  }
+
+  pub theorem neg_neg(x: Int): neg(neg(x)) = x {
+    match x: neg(neg(x)) = x {
+      IntOfNat(n) => match n: neg(neg(IntOfNat(n))) = IntOfNat(n) {
+        Zero => Refl
+        Succ(k) => Refl
+      }
+      IntNegSucc(n) => Refl
+    }
+  }
+
+  pub theorem add_zero(x: Int): add(x, IntOfNat(Zero)) = x {
+    match x: add(x, IntOfNat(Zero)) = x {
+      IntOfNat(n) => Refl
+      IntNegSucc(n) => Refl
+    }
+  }
+
+  pub theorem examples(): sub(3, 5) = -2 {
+    Refl
+  }
+}

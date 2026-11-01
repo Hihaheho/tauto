@@ -1,0 +1,30 @@
+import std::Text
+import "../src/types.taut"
+import "../src/bindings.taut"
+import "../src/record_core.taut"
+
+pub fn rg_record_fields(): List(RustgenRecordField) {
+  Cons(
+    RustgenRecordField::Mk("snd", RustgenValue::Mk(RustgenNat, "2"), "b"),
+    Cons(RustgenRecordField::Mk("fst", RustgenValue::Mk(RustgenText, "x"), "a"), Nil)
+  )
+}
+pub fn rg_record_lookup(): Bool {
+  match rustgen_record_value("fst", rg_record_fields()): Bool {
+    RustgenErr(message) => false
+    RustgenOk(value) => rustgen_same(value.ty, RustgenText) && value.code == "a"
+  }
+}
+pub fn rg_record_missing(): Bool {
+  match rustgen_record_value("other", rg_record_fields()): Bool {
+    RustgenErr(message) => true
+    RustgenOk(value) => false
+  }
+}
+pub theorem rg_record_unique(): rustgen_record_unique(rg_record_fields()) = true { Refl }
+pub theorem rg_record_duplicate(): rustgen_record_unique(
+    Cons(RustgenRecordField::Mk("fst", RustgenValue::Mk(RustgenNat, "3"), "c"), rg_record_fields())
+  ) = false { Refl }
+pub theorem rg_record_lookup_preserves_type(): rg_record_lookup() = true { Refl }
+pub theorem rg_record_missing_rejects(): rg_record_missing() = true { Refl }
+pub theorem rg_record_written_order(): rustgen_record_bindings(rg_record_fields()) = "let b = 2; let a = x; " { Refl }
