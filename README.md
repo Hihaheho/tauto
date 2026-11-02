@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo.svg">
-  <img alt="Tauto" src="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo.svg" height="100px">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-tauto-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-tauto.svg">
+  <img alt="Tauto" src="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-tauto.svg" height="100px">
 </picture>
 
 # Tauto
@@ -181,7 +181,7 @@ Keep the checkout for the examples and library sources. See
   `crates/tauto-build`: the Rust backend. `crates/tauto-jsgen` is the
   JavaScript backend. `crates/tauto-bind` is `tauto bind`.
 - `cases/`: Eure case files that specify what the implementation answers, for
-  tauto and for Nib alike; `crates/tauto-test-suite` runs them. The
+  tauto and for Nib alike; `tools/tauto-test-suite` runs them. The
   [case format](docs/design/test-suite.md) covers inputs and assertions.
 - `tools/selfhost-harness`: tools to build, run and verify compiler components
   written in Tauto, including differential tests against their Rust counterparts.
@@ -245,7 +245,7 @@ tauto fmt [--check] FILE…                 # formatter
 tauto lint [--json] PATH…                 # files, or the .taut files under a directory; rejects holes and other things std/ and meta/ avoid; --json: [{file, line, col, message, kind}]
 tauto extract FILE…                       # the Nib that `run` makes of the programs, for reading
 tauto goals | try | fill | suggest | expand | library FILE …  # proofs a step at a time
-tauto test [PATH] [--filter TEXT] [--json] # source tests and Eure assertions
+tauto test [PATH] [--filter TEXT] [--json] # the perform test statements in the sources
 tauto bench PATH [OPTIONS]                # release binary whole-process wall time
 tauto doc PATH [-o DIR]                    # checked proof status and local API HTML
 tauto build [--release] [-o DIR] FILE     # compile to Rust (also a tote directory)
@@ -302,7 +302,7 @@ to `crates/tauto-kernel/src/check/core.rs`, and whatever uses it is incomplete t
 `sorry`; `tauto lint` rejects a hole, so `std/` and `meta/` have none.
 
 ```sh
-tauto check FILE [--json] [--verbose] # FAILED / INCOMPLETE in FILE, then a summary; --verbose: a line per declaration, imports too; exit 0, 3 (only holes left), 1
+tauto check [FILE|DIR] [--json] [--verbose] [--summary] # each problem as an annotated snippet, then `ok` when all checked; no path: the tote of the working directory; --summary: the counts and the axioms; --verbose: a line per declaration; exit 0, 3 (only holes left), 1
 tauto goals FILE [--hole NAME] [--json] # the variables in scope and the goal `⊢ T` of each hole
 tauto try   FILE --hole NAME --with EXPR [--json]  # the file with EXPR for ?NAME, checked, not written
 tauto fill  FILE --hole NAME --with EXPR [--json]  # the same, written back when the declaration is not rejected
@@ -357,7 +357,7 @@ compared with the place's goal and with the ones the tactic left, up to
 computation, and the step becomes `the(G0, …the(G, p)…)`, so the kernel checks
 every goal written and trusts nothing the tactic made. A step that is the whole
 proof of an arm leaves out `: G0`, the arm's goal being it. `std/Rewrite.taut`
-has `rewrite!(e)` (`std/Tactic.taut` adds `nat_norm!` and imports `Base`), for `e: Eq(A, l, r)`, whose arm's goal is the goal with
+has `rewrite!(e)` (`std/Tactic.taut` adds `nat_norm!` and `nat_le!` and imports `Base`), for `e: Eq(A, l, r)`, whose arm's goal is the goal with
 `r` for `l`. The step of `Nat::add_comm` in `std/Nat.taut`, as written in
 [`docs/design/macro-steps.md`](docs/design/macro-steps.md):
 
@@ -373,6 +373,10 @@ Succ(k) => by rewrite!(Nat::add_comm(a, k)): Succ(Nat::add(a, k)) = Nat::add(Suc
 numerals, whatever else is a variable (`std/NatNorm.taut`): it reads the two
 sides as expressions, and the kernel checks that they have the same normal form
 by a normaliser proved sound in Tauto; it leaves no goal, so its arm list is empty.
+`nat_le!()` proves `l <= r = true` and `l < r = true` for such expressions when every term
+of the normal form of `l` is matched by a term of `r` with the same monomial and a
+coefficient that is not smaller (hypotheses are not used); the kernel checks that by
+computation, again against a theorem proved in Tauto.
 
 A tactic is a macro whose function takes a `ProofStep` (below); `std/` and
 `meta/` call only std's (`tauto lint`). The design is in
@@ -637,8 +641,9 @@ syntax restrictions; see [universe specialization](docs/design/universes.md).
   once, cycles and duplicates rejected). `import std.List` reads
   `std/List.taut` from the standard library that comes with `tauto`, from a
   file anywhere; a tote does not list it in its dependencies. `import text.utf8`
-  reads `utf8.taut` (`totes/text/src/utf8.taut`) from a source root of `text`, a dependency of the importing
-  file's tote. A directory with a `Tauto.eure` is a
+  reads `utf8.taut` (`totes/text/src/utf8.taut`) from `src` of `text`, a dependency of the importing
+  file's tote; a file of an additional source is named with the directory first
+  (`import text::proof::utf8` reads `totes/text/proof/utf8.taut`). A directory with a `Tauto.eure` is a
   *tote*, the unit of a package; see [Totes](#totes).
 
 ## Parser generation
@@ -822,13 +827,23 @@ A directory with a `Tauto.eure` is a tote:
 package {
   name = "fmt"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 dependencies {
   text { path = "../text" }
 }
 ```
+
+A tote always has the source directory `src`, which `Tauto.eure` does not
+list. A file under `src` is named by its path from `src`: a dependent reads
+`src/compiler.taut` of `compiler` as `import compiler::compiler`. Other
+directories are listed in `package.additional-sources`, and a file
+under one is named with that path first: `proof/compiler.taut` is
+`import compiler::proof::compiler`. A directory of `src` may not share the
+name of an additional source (`src/proof` and the source `proof` would both
+name `compiler::proof::…`). `package.sources` is not accepted. A file of the
+same tote is imported by its path (`import "Setoid.taut"`); a tote that has
+no `src` can be built from additional sources alone.
 
 `tauto dev` takes the arguments of `tauto run` and runs the program on the
 machine written in Tauto (or the evaluator with `--backend eval`) again from the start whenever a source file under the tote (or the
@@ -837,7 +852,7 @@ program prints is written as it happens, and on the evaluator a server's listene
 across reloads. See [`docs/design/dev.md`](docs/design/dev.md).
 
 A tote can give `tauto` commands: a `commands` section in its `Tauto.eure`
-names a program (`main`, outside `sources`) and says what it does (`about`),
+names a program (`main`, outside the sources) and says what it does (`about`),
 and `tauto NAME ARGS…` runs it in a project that depends on the tote directly.
 It is checked as `tauto run` checks a program, and the host denies it
 everything but what the project's own `Tauto.eure` grants it under
@@ -846,7 +861,7 @@ commands. See [`docs/design/commands.md`](docs/design/commands.md).
 
 `tauto run --tote DIR` and `tauto build DIR` load the tote and the totes it
 depends on. `tauto check --tote DIR` checks them, and every other `.taut` and `.tauto`
-file in the tote outside its `sources` (proofs, examples, tests; a directory
+file in the tote outside its sources (proofs, examples, tests; a directory
 with its own `Tauto.eure` is another tote): it lists the tote's own
 declarations, and of its dependencies and imports only those that did not
 check (`--verbose` lists every one), then a line that counts them. A proof checked
@@ -958,13 +973,18 @@ in `std/` and `meta/` and is not read by a tool.
 - Messages are written in FTL (`crates/tauto-messages/locales`).
 - The grammar notation, LL(k) table generation, scanner generation, table
   format and runtime design of `crates/tauto-syntax`, `totes/pargen`,
-  `totes/llkgen`, `totes/llk`, `totes/scan` and `totes/syntax` come from
+  `totes/llkgen`, `totes/llk`, `totes/scan`, `totes/syntax` and `totes/lr` come from
   [parol](https://github.com/jsinger67/parol) and
   [scnr2](https://github.com/jsinger67/scnr2) by Jörg Singer
   (MIT OR Apache-2.0).
 - The Unicode tables in `totes/unicode` and `totes/pargen` are derived from
   the Unicode Character Database (Unicode License v3), through the Rust
   standard library and the `regex-syntax` crate.
+- `totes/lalrgen` reproduces the LALR(1) table construction of the
+  [lalry](https://github.com/jsinger67/lalry) crate 0.1.0 by Jörg Singer and
+  Geoffry Song (MIT OR Apache-2.0), which parol uses.
+- The plural rules in `totes/fluent/src/plural.taut` come from Unicode CLDR
+  (Unicode License v3).
 - `crates/tauto-rt/src/float_math.rs` is derived from the `libm` crate,
   version 0.2.11 (MIT OR Apache-2.0), with its notices kept;
   `crates/tauto-jsgen/src/float.js` ports the same functions to JavaScript.

@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo.svg">
-  <img alt="Tauto" src="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo.svg" height="100px">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-tauto-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-tauto.svg">
+  <img alt="Tauto" src="https://raw.githubusercontent.com/Hihaheho/tauto/main/assets/logo-tauto.svg" height="100px">
 </picture>
 
 # Tauto
@@ -140,9 +140,10 @@ pub theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
 
 等式の連鎖は `calc a { = b from p … }` で書けます（[`docs/design/syntax.md`](docs/design/syntax.md)）。
 
-標準ライブラリのタクティクは二つです（`std/Tactic.taut`）。`rewrite!(e)` は等式で
+標準ライブラリのタクティクは三つです（`std/Tactic.taut`）。`rewrite!(e)` は等式で
 書き換えます。`nat_norm!()` は自然数の半環の等式を、Tauto で健全性を証明した
-正規化で証明します。
+正規化で証明します。`nat_le!()` は `l <= r = true` と `l < r = true` を、両辺の正規形の
+項ごとの大小で証明します（仮定は使いません）。
 
 ## 設計の指針
 
@@ -176,7 +177,7 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
   で書きます。タクティクは信用されないマクロで、書かれたゴールと作られた項は
   カーネルが検査します。ゴールを書かないタクティクはありません。
 - `std/` と `meta/` は公理を使わず（例外は商の公理 `Quot::sound` で、関数外延性を置く
-  `std/Quot.taut` だけが使います）、標準のタクティク（`rewrite!`、`nat_norm!`）だけを
+  `std/Quot.taut` だけが使います）、標準のタクティク（`rewrite!`、`nat_norm!`、`nat_le!`）だけを
   呼び、既定腕 `_ =>` を使わず（言語としては許しますが、`match` がどの構成子を
   覆うかが見えなくなります）、整形済みに保ちます。標準ライブラリに置くタクティクは、
   項では短く言えないことをするものだけです。
@@ -287,8 +288,10 @@ ELAN='' LAKE_OVERRIDE_LEAN=false "$LEAN_DIR/bin/lake" --keep-toolchain --no-cach
 - [Lean 4](https://lean-lang.org/)：`lean/` の形式化。
 - `query-flow`、`proc-macro2`、`quote`、`serde_json`、`rustdoc-types`、`tauto-rt` の feature の後ろの `tokio`・`reqwest`・`rustls` など。すべては `Cargo.lock` にあります。
 - メッセージは FTL で書きます（`crates/tauto-messages/locales`）。
-- `crates/tauto-syntax`、`totes/pargen`、`totes/llkgen`、`totes/llk`、`totes/scan`、`totes/syntax` の文法の記法、LL(k) の表の生成、スキャナーの生成、表の形式、ランタイムの設計は、Jörg Singer による [parol](https://github.com/jsinger67/parol) と [scnr2](https://github.com/jsinger67/scnr2)（MIT OR Apache-2.0）に由来します。
+- `crates/tauto-syntax`、`totes/pargen`、`totes/llkgen`、`totes/llk`、`totes/scan`、`totes/syntax`、`totes/lr` の文法の記法、LL(k) の表の生成、スキャナーの生成、表の形式、ランタイムの設計は、Jörg Singer による [parol](https://github.com/jsinger67/parol) と [scnr2](https://github.com/jsinger67/scnr2)（MIT OR Apache-2.0）に由来します。
 - `totes/unicode` と `totes/pargen` の Unicode の表は、Rust の標準ライブラリと `regex-syntax` クレートを通して、Unicode Character Database（Unicode License v3）に由来します。
+- `totes/lalrgen` は、parol が使う [lalry](https://github.com/jsinger67/lalry) クレート 0.1.0（Jörg Singer、Geoffry Song、MIT OR Apache-2.0）の LALR(1) の表の構築を再現したものです。
+- `totes/fluent/src/plural.taut` の複数形の規則は Unicode CLDR（Unicode License v3）に由来します。
 - `crates/tauto-rt/src/float_math.rs` は `libm` クレート 0.2.11（MIT OR Apache-2.0）に由来し、元の告知を残しています。`crates/tauto-jsgen/src/float.js` は同じ関数を JavaScript に移したものです。
 - 告知とライセンスの全文は [NOTICE](NOTICE) にあります。
 
