@@ -3,9 +3,19 @@
 // (the differential test's input, `tools/selfhost-harness/tests/macros.rs`), or
 // `error` when the file is not a program.
 import std::Text
+import std::prelude::Os
+import std::prelude::Affine
 
-// The names that a declaration of the program makes a constructor.
 import "../../surface/src/surface.taut"
+import "lift.taut"
+import "lower.taut"
+import "node.taut"
+import "scope.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import surface::dump
 
 pub fn mc_ctors(xs: List(SurfaceStmt)): List(Text) ! {Div} {
   match xs {
@@ -116,7 +126,6 @@ pub fn mc_lift_stmts(xs: List(SurfaceStmt), lower: Bool, atoms: List(LfAtom), ta
       } else if lit {
         print("skip\n")
       } else if lower {
-        // The value written as the surface syntax again, the scope 5 flipped.
         var lw := lw_new()
         let out := lw_stmt(LwCtx { scope: 5, atoms: Nil }, &mut lw, node)
         if Vec::len(&lw.errs) > 0 {
@@ -163,7 +172,6 @@ pub fn mc_lift_each(
   }
 }
 
-// The term a `quote` of the program makes (`stmts` for a `quote stmts`).
 pub fn mc_quote_each(
   &t: SyntaxTables,
   classes: UnicodeClasses,
@@ -268,7 +276,6 @@ pub fn mc_reflip_each(&t: SyntaxTables, classes: UnicodeClasses, paths: List(Tex
   }
 }
 
-// The variables the test makes atoms of.
 pub fn mc_atoms(): List(LfAtom) {
   Cons(
     LfAtom { name: "x", id: 11 },

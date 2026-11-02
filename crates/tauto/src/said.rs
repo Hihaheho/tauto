@@ -2,7 +2,6 @@
 
 use tauto_message::{Message, Value};
 
-/// Whether `m`, or a message nested in it, has one of `ids`.
 pub(crate) fn says(m: &Message, ids: &[&str]) -> bool {
     ids.contains(&m.id.as_ref())
         || m.args
@@ -22,7 +21,6 @@ pub(crate) fn ends_with<'a>(m: &'a Message, ids: &[&str]) -> Option<&'a Message>
     }
 }
 
-/// The text of `$name` of `m`.
 pub(crate) fn text_arg<'a>(m: &'a Message, name: &str) -> Option<&'a str> {
     match m.get(name) {
         Some(Value::Text(t)) => Some(t),
@@ -30,5 +28,4 @@ pub(crate) fn text_arg<'a>(m: &'a Message, name: &str) -> Option<&'a str> {
     }
 }
 
-/// The messages that say a name used did not check.
 pub(crate) const USES_FAILED: &[&str] = &["kernel-uses-failed", "kernel-uses-failed-then"];

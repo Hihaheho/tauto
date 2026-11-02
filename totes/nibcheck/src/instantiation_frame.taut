@@ -1,7 +1,14 @@
 import "checker_frame.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
 
-pub fn instantiation_name(g: Pair(Text, Kind)): Text { (g: Text) }
-pub fn instantiation_kind(g: Pair(Text, Kind)): Kind { (g: Kind) }
+pub fn instantiation_name(g: Pair(Text, Kind)): Text { g.fst }
+pub fn instantiation_kind(g: Pair(Text, Kind)): Kind { g.snd }
 pub fn instantiation_constraint(p: Pair(Text, Text)): Text { p.fst }
 pub fn instantiation_parameter(p: Pair(Text, Text)): Text { p.snd }
 pub fn instantiation_bound(
@@ -16,13 +23,13 @@ pub fn instantiation_bound(
     Some(k) => set_to(
       &mut c.ctor_bounds,
       Cons(
-        TyCtorBound { ty: v, arg: k, result: (g: Kind), what: name, start: span.start, end: span.end },
+        TyCtorBound { ty: v, arg: k, result: g.snd, what: name, start: span.start, end: span.end },
         c.ctor_bounds
       )
     )
     None => set_to(
       &mut c.bounds,
-      Cons(TyBound { ty: v, kind: (g: Kind), start: span.start, end: span.end }, c.bounds)
+      Cons(TyBound { ty: v, kind: g.snd, start: span.start, end: span.end }, c.bounds)
     )
   }
 }

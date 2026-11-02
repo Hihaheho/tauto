@@ -18,12 +18,10 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
-/// The permissions of the kinds that need one.
 pub const KINDS: [&str; 6] = ["read", "write", "env", "net", "run", "clipboard"];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Grant {
-    /// Not given: the default.
     #[default]
     Denied,
     /// `--allow-net`: everything of the kind.
@@ -58,7 +56,6 @@ pub struct Permissions {
 /// A path the user picked in the host's file dialog: the powerbox.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chosen {
-    /// `read` or `write`.
     pub kind: &'static str,
     /// The path resolved when it was picked.
     pub path: PathBuf,
@@ -68,7 +65,6 @@ pub struct Chosen {
 }
 
 impl Permissions {
-    /// Everything allowed: `--allow-all`.
     pub fn all() -> Permissions {
         Permissions {
             read: Grant::All,
@@ -336,7 +332,6 @@ impl Permissions {
     }
 }
 
-/// The message of a run that needs permissions it was not given.
 pub fn missing_message<'n>(missing: &[&'n str]) -> String {
     let flags: Vec<String> = missing.iter().map(|k| format!("--allow-{k}")).collect();
     format!(

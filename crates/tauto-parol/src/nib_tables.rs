@@ -26,7 +26,6 @@ pub(crate) struct Inputs<'a> {
     pub start: usize,
 }
 
-/// One table: its name, what it holds, and its text.
 pub struct Table {
     pub name: &'static str,
     pub what: &'static str,

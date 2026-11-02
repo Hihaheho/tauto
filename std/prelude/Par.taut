@@ -2,6 +2,17 @@
 // is taken by `Task::join`;
 // where its body runs is up to the handler of `spawn`.
 
+// A flag the host raises once and never lowers: the end of a task, or a
+// mutex's content handed to the one that asked for it. Only this file names
+// the type, so a program's own `Signal` never meets it, and only the externs
+// below make one.
+shared struct Signal {}
+// Waits until the signal is raised. Every wait between tasks is this one
+// effect, so a host may run many tasks on one thread and go on with the
+// others while one waits. It appears in a row, but the host alone answers
+// it: no program's `handle` has an arm for it.
+pub effect wait(s: Signal): Unit resume 1
+
 // What a task will return: the value, or the task still running. The host
 // that runs the bodies in parallel makes it the second.
 pub affine struct Pending(A: Type) { holds: () -> A }
@@ -11,9 +22,7 @@ module Pending {
     fn ready<A>(v: A): Pending(A)
     // The result, once the signal of `Pending::signal` is raised.
     fn take<A>(p: Pending(A)): A
-    // Whether the result is there, without waiting.
     fn is_ready<A>(&p: Pending(A)): Bool
-    // Raised when the result is there.
     fn signal<A>(&p: Pending(A)): Signal
   }
 }
@@ -28,6 +37,8 @@ effect Host {
   Div,
   stdout,
   stderr,
+  stdin_bytes,
+  stdout_flush,
   argv,
   wall_clock,
   monotonic_clock,
@@ -41,7 +52,17 @@ effect Host {
   fs_create_dir,
   fs_list_dir,
   fs_remove,
+  fs_stat,
+  fs_rename,
+  fs_copy,
+  fs_canonicalize,
   fs_temp_dir,
+  proc_spawn,
+  proc_read,
+  proc_write,
+  proc_close_stdin,
+  proc_wait,
+  proc_close,
   proc_run,
   env,
   permission,
@@ -74,7 +95,6 @@ effect Host {
 pub(open) effect spawn<A>(f: () -> A ! {Host}): Task(A) resume 1
 
 module Pending {
-  // Waits for the result and gives it.
   pub fn join<A>(p: Pending(A)): A ! {wait} {
     perform wait(signal(&p))
     take(p)
@@ -82,7 +102,6 @@ module Pending {
 }
 
 module Task {
-  // Waits for the task to end and gives its result.
   pub fn join<A>(t: Task(A)): A ! {wait} {
     match t {
       Task { result } => Pending::join(result)
@@ -202,7 +221,6 @@ module Mutex {
     // once the content is handed to this place: at once if the mutex is full
     // and no one is ahead, or at the `Mutex::put` that comes to its turn.
     fn claim<A>(m: Mutex(A)): Signal
-    // The content handed to the place `s` of the line, once `s` is raised.
     fn take_claimed<A>(m: Mutex(A), s: Signal): A
     // Hands `v` to the first place in the line, or keeps it if there is none.
     fn put<A>(m: Mutex(A), v: A): Unit
@@ -216,13 +234,28 @@ module Mutex {
     take_claimed(m, s)
   }
 
-  // Runs `f` on the mutex's value; no other task sees it in between, as `f`
-  // performs no effect.
-  pub fn lock<A, R>(m: Mutex(A), &f: (&mut x: A) -> R): R ! {wait} {
-    var v := take(m)
-    let r := f(&mut v)
-    put(m, v)
-    r
+  // Takes the mutex's content, waiting while another task has it, and holds
+  // it in a guard: the content goes back to the mutex when the guard is
+  // dropped, at the end of the block that binds it.
+  pub fn lock<A>(m: Mutex(A)): MutexGuard(A) ! {wait} {
+    let s := claim(m)
+    perform wait(s)
+    MutexGuard::claimed(m, s)
+  }
+}
+
+// The content of a locked mutex. The host gives the content back to the
+// mutex when the guard is dropped, so the lock is released with the block
+// that binds the guard; there is no unlock to call. The content is reached by
+// borrowing the guard, and the borrow keeps the guard from being dropped.
+pub affine struct MutexGuard(A: Type) { holds: () -> A }
+
+module MutexGuard {
+  extern {
+    // The content handed to the place `s` in the mutex's line.
+    fn claimed<A>(m: Mutex(A), s: Signal): MutexGuard(A)
+    fn get<A>(&g: MutexGuard(A)): &A
+    fn get_mut<A>(&mut g: MutexGuard(A)): &mut A
   }
 }
 

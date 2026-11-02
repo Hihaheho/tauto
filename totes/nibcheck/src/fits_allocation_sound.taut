@@ -1,4 +1,14 @@
 import "fits_allocation_steps.taut"
+import std::Nat
+import "allocation_advance.taut"
+import "allocation_state.taut"
+import "checker.taut"
+import "fits_allocation_defs.taut"
+import "fits_allocation_product.taut"
+import "fits_sound.taut"
+import "ty.taut"
+import "type_allocation.taut"
+import "unify_sound.taut"
 
 pub theorem fits_allocation_at(fuel: Nat): FitsAllocationAt(fuel) {
   match fuel: FitsAllocationAt(fuel) {
@@ -321,5 +331,21 @@ pub theorem ck_attempt_fits_allocation(
     c,
     ck_attempt_fits_in(ck_steps_of(c), c, a, b),
     And::left(And::right(fits_allocation_at(ck_steps_of(c))))(c, a, b, ordered, state, left, right)
+  )
+}
+pub theorem ck_fits_wide_allocation(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  left: TypeAllocated(ck_next_of(c), a),
+  right: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_wide(c, a, b)) {
+  allocation_advance_unwiden_on(
+    c,
+    ck_widen_of(c),
+    ck_fits(ck_on(c), a, b),
+    ck_fits_allocation(ck_on(c), a, b, ordered, state, left, right)
   )
 }

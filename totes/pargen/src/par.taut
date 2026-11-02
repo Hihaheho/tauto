@@ -2,9 +2,14 @@
 // describes): its directives and its productions, EBNF still in.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "bytes.taut"
+import "list.taut"
+import "../../parlex/src/lex.taut"
+import "../../text/src/text.taut"
 import std::Text
-
-// ---------------------------------------------------------------- the tree
+import std::UInt
+import std::prelude::Shared
+import std::prelude::Affine
 
 // A terminal: its text without the delimiters, how it is read (0 `"…"`,
 // 1 `/…/`, 2 `'…'`), the scanner modes it is read in, whether the tree
@@ -86,8 +91,6 @@ pub(open) struct PGrammar {
   prods: List(PProd)
 }
 
-// ---------------------------------------------------------------- the tokens
-
 // kind: 0 a name, 1 a directive (`%start`, `%%`), 2 `"…"`, 3 `'…'`, 4 `/…/`,
 // 5 a mark, 6 `?=`, 7 `?!`, 8 the end, 9 a number.
 pub(open) struct PTok { kind: u64, text: Text }
@@ -96,133 +99,36 @@ pub fn par_die(why: Text): Never {
   perform fail(Text::concat_all(Cons("the grammar: ", Cons(why, Nil))))
 }
 
-pub fn par_is_name_start(b: u64): Bool {
-  (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
-}
-
-pub fn par_is_name(b: u64): Bool {
-  par_is_name_start(b) || (b >= 48 && b <= 57)
-}
-
-pub fn par_name_end(t: Text, at: u64): u64 {
-  if par_is_name(lk_byte(t, at)) && at < std::prelude::Text::len(t) {
-    par_name_end(t, at + 1)
-  } else {
-    at
-  }
-}
-
-// The end of a name that may be a path of a user type: `a::b::C`.
-pub fn par_path_end(t: Text, at: u64): u64 {
-  let end := par_name_end(t, at)
-  if lk_byte(
-    t,
-    end
-  ) == 58 && lk_byte(
-    t,
-    end + 1
-  ) == 58 && end + 2 < std::prelude::Text::len(t) && par_is_name_start(lk_byte(t, end + 2)) {
-    par_path_end(t, end + 2)
-  } else {
-    end
-  }
-}
-
-// The end of a literal that starts at `at` with the delimiter `d`: the place
-// after the closing one.
-pub fn par_literal_end(t: Text, at: u64, d: u64): u64 {
-  if at >= std::prelude::Text::len(t) {
-    par_die("a literal is not closed")
-  } else {
-    let b := lk_byte(t, at)
-    if b == d {
-      at + 1
-    } else if b == 92 {
-      par_literal_end(t, at + 2, d)
-    } else {
-      par_literal_end(t, at + 1, d)
-    }
-  }
-}
-
-pub fn par_block_end(t: Text, at: u64): u64 {
-  if at + 1 >= std::prelude::Text::len(t) {
-    par_die("a comment is not closed")
-  } else if lk_byte(t, at) == 42 && lk_byte(t, at + 1) == 47 {
-    at + 2
-  } else {
-    par_block_end(t, at + 1)
-  }
-}
-
-pub fn par_line_end(t: Text, at: u64): u64 {
-  if at >= std::prelude::Text::len(t) || lk_byte(t, at) == 10 {
-    at
-  } else {
-    par_line_end(t, at + 1)
-  }
-}
-
+// The words of the grammar without its comments, each with its text (a
+// literal's without its delimiters). A place that does not read stops the
+// reading.
 pub fn par_tokens(t: Text): Vec(PTok) {
   var out: Vec(PTok) := Vec::new()
-  var at: u64 := 0
-  let n := std::prelude::Text::len(t)
-  while at < n {
-    let b := lk_byte(t, at)
-    let next := lk_byte(t, at + 1)
-    if b == 32 || b == 9 || b == 10 || b == 13 {
-      at := at + 1
-    } else if b == 47 && next == 47 {
-      at := par_line_end(t, at)
-    } else if b == 47 && next == 42 {
-      at := par_block_end(t, at + 2)
-    } else if par_is_name_start(b) {
-      let end := par_path_end(t, at)
-      Vec::push(&mut out, PTok { kind: 0, text: lk_slice(t, at, end) })
-      at := end
-    } else if b == 37 {
-      let end := if next == 37 { at + 2 } else { par_name_end(t, at + 1) }
-      Vec::push(&mut out, PTok { kind: 1, text: lk_slice(t, at, end) })
-      at := end
-    } else if b == 34 || b == 39 || b == 47 {
-      let end := par_literal_end(t, at + 1, b)
-      Vec::push(&mut out, PTok { kind: if b == 34 {
-        2
-      } else if b == 39 {
-        3
-      } else {
-        4
-      }, text: lk_slice(t, at + 1, end - 1) })
-      at := end
-    } else if b >= 48 && b <= 57 {
-      var end := at + 1
-      while end < n && lk_byte(t, end) >= 48 && lk_byte(t, end) <= 57 {
-        end := end + 1
+  var rest := Vec::into_list(par_spans(t))
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
       }
-      Vec::push(&mut out, PTok { kind: 9, text: lk_slice(t, at, end) })
-      at := end
-    } else if b == 46 && next == 46 {
-      let wide := lk_byte(t, at + 2) == 61
-      Vec::push(&mut out, PTok { kind: 5, text: if wide { "..=" } else { ".." } })
-      at := at + if wide { 3 } else { 2 }
-    } else if b == 63 && next == 61 {
-      Vec::push(&mut out, PTok { kind: 6, text: "?=" })
-      at := at + 2
-    } else if b == 63 && next == 33 {
-      Vec::push(&mut out, PTok { kind: 7, text: "?!" })
-      at := at + 2
-    } else if b == 58 || b == 59 || b == 124 || b == 40 || b == 41 || b == 91 || b == 93 || b == 123 || b == 125 || b == 60 || b == 62 || b == 44 || b == 94 || b == 64 || b == 61 || b == 43 || b == 45 {
-      Vec::push(&mut out, PTok { kind: 5, text: lk_slice(t, at, at + 1) })
-      at := at + 1
-    } else {
-      par_die("a character that has no place in a grammar")
+      Cons(s, more) => {
+        if s.kind == 12 {
+          par_die("a character that has no place in a grammar")
+        } else if s.kind == 13 {
+          par_die("a literal is not closed")
+        } else if s.kind == 14 {
+          par_die("a comment is not closed")
+        } else if s.kind == 2 || s.kind == 3 || s.kind == 4 {
+          Vec::push(&mut out, PTok { kind: s.kind, text: lk_slice(t, s.start + 1, s.end - 1) })
+        } else if s.kind != 10 && s.kind != 11 {
+          Vec::push(&mut out, PTok { kind: s.kind, text: lk_slice(t, s.start, s.end) })
+        }
+        rest := more
+      }
     }
   }
-  Vec::push(&mut out, PTok { kind: 8, text: "" })
   out
 }
-
-// ---------------------------------------------------------------- the parser
 
 pub fn par_tok(a: Array(PTok), i: u64): PTok {
   match Array::get(a, i) {
@@ -278,7 +184,6 @@ pub fn par_expect_literal(a: Array(PTok), i: u64): PTok {
   }
 }
 
-// `name, name, …`.
 pub fn par_names(a: Array(PTok), i: u64): Pair(List(Text), u64) {
   let first := par_expect_name(a, i)
   var out: List(Text) := Cons(first.fst, Nil)
@@ -406,7 +311,6 @@ pub fn par_range(a: Array(PTok), i: u64, st: PState): Pair(Option(Pair(PExpr, PE
   }
 }
 
-// The regular expression a literal of a terminal is read as.
 pub fn par_regex_of(lit: PTok): Text {
   md_expand(
     PTerm {
@@ -572,8 +476,6 @@ pub fn par_terminal(a: Array(PTok), i: u64, states: List(u64), cx: PCx): Pair(PF
   Pair { fst: PTermF(term), snd: at }
 }
 
-// What reading a production needs: the names of the scanner modes and the
-// states of the scanner.
 pub(open) struct PCx { scanners: List(Text), dyn_states: List(PState) }
 
 // After a symbol: `^`, `@member`, `: UserType` or `@member: UserType`. They
@@ -908,7 +810,6 @@ pub fn par_is_scanner_directive(d: Text): Bool {
   d == "%line_comment" || d == "%block_comment" || d == "%auto_newline_off" || d == "%auto_ws_off" || d == "%skip" || d == "%on" || d == "%allow_unmatched"
 }
 
-// The grammar from its text.
 pub fn par_read(source: Text): PGrammar {
   let toks := par_tokens(source)
   let a := Array::of_list(Vec::into_list(toks))
@@ -1087,5 +988,61 @@ pub fn par_state_decl(a: Array(PTok), i: u64): Pair(PState, u64) {
     }
   } else {
     par_die("a state is a count or a str")
+  }
+}
+
+pub fn md_is_meta(c: u64): Bool {
+  c == 92 || c == 46 || c == 43 || c == 42 || c == 63 || c == 40 || c == 41 || c == 124 || c == 91 || c == 93 || c == 123 || c == 125 || c == 94 || c == 36 || c == 35 || c == 38 || c == 45 || c == 126
+}
+
+pub fn md_unicode_escape_end(t: Text, at: u64): Option(u64) {
+  if lk_byte(t, at) == 92 && lk_byte(t, at + 1) == 117 && lk_byte(t, at + 2) == 123 {
+    var i := at + 3
+    while md_is_hex(lk_byte(t, i)) && i < std::prelude::Text::len(t) {
+      i := i + 1
+    }
+    if i > at + 3 && lk_byte(
+      t,
+      i
+    ) == 125 && i < std::prelude::Text::len(t) { Some(i + 1) } else { None }
+  } else {
+    None
+  }
+}
+
+pub fn md_is_hex(b: u64): Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 70) || (b >= 97 && b <= 102)
+}
+
+// The text of a terminal as a regular expression: a text written with `'…'` has its meta characters escaped.
+pub fn md_expand(t: PTerm): Text {
+  if t.kind != 2 {
+    t.text
+  } else {
+    var b := Buf::new()
+    var at: u64 := 0
+    while at < std::prelude::Text::len(t.text) {
+      match md_unicode_escape_end(t.text, at) {
+        Some(end) => {
+          Buf::push(&mut b, &lk_slice(t.text, at, end))
+          at := end
+        }
+        None => {
+          match lk_decode(t.text, at) {
+            Some(#(@code code, @len len)) => {
+              if code < 128 && md_is_meta(code) {
+                Buf::push(&mut b, &"\\")
+              }
+              Buf::push(&mut b, &lk_slice(t.text, at, at + len))
+              at := at + len
+            }
+            None => {
+              at := at + 1
+            }
+          }
+        }
+      }
+    }
+    Text::of(b)
   }
 }

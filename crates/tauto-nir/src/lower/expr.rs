@@ -1,5 +1,3 @@
-//! Statements and expressions.
-
 use std::collections::{BTreeMap, HashMap};
 
 use tauto::surface::{DataDecl, FnDecl, Stmt, SurfaceTerm, TermId, TermKind};
@@ -106,8 +104,6 @@ fn keep_block_capture_clones(b: &mut Block, borrowed: &[u32]) {
 }
 
 impl<'a> Lowerer<'a> {
-    // ---- scopes --------------------------------------------------------
-
     pub fn find(&self, cx: &Cx, name: &str) -> Option<usize> {
         cx.bindings
             .iter()
@@ -141,8 +137,6 @@ impl<'a> Lowerer<'a> {
             .or_else(|| fallback.cloned())
             .unwrap_or(TTy::Var(0))
     }
-
-    // ---- blocks and statements ----------------------------------------
 
     pub fn block_of(
         &mut self,
@@ -260,7 +254,6 @@ impl<'a> Lowerer<'a> {
         Ok(Block { stmts: out, tail })
     }
 
-    /// A loop body or a branch: a block term as a block.
     pub fn body_block(&mut self, cx: &mut Cx, body: &SurfaceTerm) -> R<Block> {
         match &*body.kind {
             TermKind::Block(stmts) => {
@@ -684,7 +677,6 @@ impl<'a> Lowerer<'a> {
         Ok(storage)
     }
 
-    /// What a call of a local function passes for what it captured.
     fn capture_args(&mut self, cx: &mut Cx, name: &str, span: Span) -> R<Vec<Expr>> {
         let Some(caps) = self.local_caps.get(name).cloned() else {
             if self.nested_fns.contains(name) {
@@ -784,7 +776,6 @@ impl<'a> Lowerer<'a> {
         Ok(out)
     }
 
-    /// The row of a function-typed value written as `value`.
     pub(crate) fn value_row(&self, cx: &Cx, value: &SurfaceTerm) -> Option<Row> {
         match &*value.kind {
             TermKind::Lam { body, .. } => Some(self.term_row(body)),
@@ -982,9 +973,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    // ---- expressions ---------------------------------------------------
-
-    /// A term, made to fit the type expected where it stands.
     pub fn expr_expect(&mut self, cx: &mut Cx, t: &SurfaceTerm, expected: &TTy) -> R<Expr> {
         // A field where its borrow is wanted: the result of a function
         // that returns one (`fn f(&mut s: S): &mut u64 { s.n }`) lends it.
@@ -1209,7 +1197,6 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// A branch of an `if` or a `match`, made to fit the whole's type.
     pub fn branch(&mut self, cx: &mut Cx, t: &SurfaceTerm, want: &TTy) -> R<Expr> {
         self.expr_expect(cx, t, want)
     }
@@ -1583,7 +1570,6 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    /// A name, or a field of one, as a place.
     pub fn place(&mut self, cx: &mut Cx, t: &SurfaceTerm) -> R<Option<Place>> {
         match &*t.kind {
             TermKind::Var(n) => {
@@ -1747,17 +1733,15 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// `a × b × …`: the members in the order written, put in the order of
-    /// the product's type; a member that is a product gives its members.
+    /// `#(a, b, …)`: the members in the order written; a member that is a
+    /// product gives its members and one of type `Unit` none.
     fn product_expr(&mut self, cx: &mut Cx, t: &SurfaceTerm, members: &[SurfaceTerm]) -> R<Expr> {
         let span = t.span;
         let whole = self.types.term(t).cloned().unwrap_or(TTy::Var(0));
         let TTy::Product(order) = whole.unborrowed().clone() else {
             return unsupported(msg!("nir-a-product-with-fewer-than-two"), span);
         };
-        let keys: Vec<String> = order.iter().map(|t| t.to_string()).collect();
-        let at = |t: &TTy| keys.iter().position(|k| *k == t.to_string());
-        let mut picks: Vec<Option<(usize, Option<usize>)>> = vec![None; keys.len()];
+        let mut picks: Vec<(usize, Option<usize>)> = Vec::new();
         let mut exprs = Vec::new();
         for (i, m) in members.iter().enumerate() {
             let mt = self
@@ -1767,25 +1751,15 @@ impl<'a> Lowerer<'a> {
                 .unwrap_or(TTy::Var(0));
             let e = self.expr_expect(cx, m, &mt)?;
             match &mt {
-                TTy::Product(inner) => {
-                    for (j, x) in inner.iter().enumerate() {
-                        if let Some(k) = at(x) {
-                            picks[k] = Some((i, Some(j)));
-                        }
-                    }
-                }
+                TTy::Product(inner) => picks.extend((0..inner.len()).map(|j| (i, Some(j)))),
                 TTy::Unit => {}
-                x => {
-                    if let Some(k) = at(x) {
-                        picks[k] = Some((i, None));
-                    }
-                }
+                _ => picks.push((i, None)),
             }
             exprs.push(e);
         }
-        let Some(picks) = picks.into_iter().collect::<Option<Vec<_>>>() else {
+        if picks.len() != order.len() {
             return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
-        };
+        }
         let ty = self.conv(&whole);
         Ok(expr_of(
             ExprKind::Product {
@@ -1936,8 +1910,6 @@ impl<'a> Lowerer<'a> {
         Ok(expr_of(ExprKind::Ctor { ctor, fields: out }, ty, span))
     }
 
-    // ---- calls ---------------------------------------------------------
-
     fn app(
         &mut self,
         cx: &mut Cx,
@@ -1992,7 +1964,6 @@ impl<'a> Lowerer<'a> {
                 span,
             );
         }
-        // A computed function value, called.
         self.detached_direct(cx, t, msg!("nir-direct-function-value"));
         let callee = self.expr(cx, function)?;
         let (ps, ret) = match self.types.term(function).map(|t| t.unborrowed().clone()) {
@@ -2280,7 +2251,6 @@ impl<'a> Lowerer<'a> {
         Ok(self.coerce(e, &to))
     }
 
-    /// The tiers a call gives the callee's row variables.
     fn call_rowvars(
         &self,
         cx: &Cx,
@@ -2486,8 +2456,6 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// Whether a field of the data type `name` holds a function whose row
-    /// has a row variable.
     fn holds_row_function(&self, name: &str) -> bool {
         self.program.stmts.iter().any(|s| match s {
             Stmt::Struct(d) | Stmt::Enum(d) if d.name == name => d.constructors.iter().any(|c| {
@@ -2519,7 +2487,6 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// What calling the function value `arg` performs.
     fn arg_row(&self, cx: &Cx, arg: &SurfaceTerm) -> Row {
         match &*arg.kind {
             TermKind::Lam { body, .. } => self.term_row(body),
@@ -2593,6 +2560,21 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
         let mut explicit = self.call_args(cx, arguments, &ps, Some(decl), &rv_map)?;
+        if let (Some(scheme), Some(own)) = (
+            self.types.scheme(name),
+            self.types.instantiations.get(&function.id()),
+        ) && let TTy::Fn(generic, _, _) = scheme.ty.clone()
+        {
+            let own = own.clone();
+            explicit = explicit
+                .into_iter()
+                .enumerate()
+                .map(|(i, e)| match generic.get(i) {
+                    Some(g) => self.regroup_arg(e, g, &own),
+                    None => Ok(e),
+                })
+                .collect::<R<Vec<_>>>()?;
+        }
         if !borrowed.is_empty() {
             for arg in &mut explicit {
                 keep_capture_clones(arg, &borrowed);
@@ -2606,7 +2588,17 @@ impl<'a> Lowerer<'a> {
             (true, true) => Tick::Budget,
             (true, false) => Tick::Host,
         };
-        Ok(expr_of(
+        let widths = match (
+            self.types.scheme(name).map(|s| s.ty.clone()),
+            self.types.instantiations.get(&function.id()),
+        ) {
+            (Some(TTy::Fn(_, result, _)), Some(own)) => product_widths(&result, own),
+            _ => None,
+        };
+        // The callee returns the members a generic stands for as one member: the caller
+        // reads them flat.
+        let nested = widths.as_ref().and_then(|w| nest_product(&ty, w));
+        let call = expr_of(
             ExprKind::Call(Box::new(CallNode {
                 callee: Callee::Inst(inst),
                 args,
@@ -2616,9 +2608,167 @@ impl<'a> Lowerer<'a> {
                 recur: false,
                 span,
             })),
+            nested.clone().unwrap_or_else(|| ty.clone()),
+            span,
+        );
+        let (Some(widths), Some(_)) = (widths, nested) else {
+            return Ok(call);
+        };
+        let tmp = self.fresh_local("nested", Repr::Plain);
+        let mut members = Vec::new();
+        let mut picks = Vec::new();
+        let Ty::Product(fms) = &ty else {
+            return Ok(call);
+        };
+        let mut at = 0;
+        for (i, w) in widths.iter().enumerate() {
+            let n = w.unwrap_or(1);
+            let mty = if w.is_some() {
+                Ty::Product(fms[at..at + n].to_vec())
+            } else {
+                fms[at].1.clone()
+            };
+            members.push(expr_of(
+                ExprKind::Member {
+                    value: Box::new(expr_of(
+                        ExprKind::Read {
+                            local: tmp.clone(),
+                            how: Use::Place,
+                        },
+                        call.ty.clone(),
+                        span,
+                    )),
+                    index: i,
+                    how: Use::Move,
+                },
+                mty,
+                span,
+            ));
+            match w {
+                Some(n) => picks.extend((0..*n).map(|j| (i, Some(j)))),
+                None => picks.push((i, None)),
+            }
+            at += n;
+        }
+        let call_ty = call.ty.clone();
+        Ok(expr_of(
+            ExprKind::Block(Block {
+                stmts: vec![crate::Stmt::Let {
+                    local: tmp,
+                    ty: call_ty,
+                    init: call,
+                    span,
+                }],
+                tail: Some(Box::new(expr_of(
+                    ExprKind::Product { members, picks },
+                    ty.clone(),
+                    span,
+                ))),
+            }),
             ty,
             span,
         ))
+    }
+
+    /// An argument for a parameter of the product `generic` (`A × B`, or a borrow of it) in
+    /// which a generic stands for a product: the checker reads the product flat (`i64 × i64 ×
+    /// i64` for `A × B` at `B := i64 × i64`), and the callee holds that generic's members as
+    /// one member (`i64 × (i64 × i64)`), so the argument is put together that way. A borrowed
+    /// argument is put together from copies of its members.
+    fn regroup_arg(
+        &mut self,
+        e: Expr,
+        generic: &TTy,
+        own: &HashMap<tauto::types::ParamId, TTy>,
+    ) -> R<Expr> {
+        let Some(widths) = product_widths(generic, own) else {
+            return Ok(e);
+        };
+        let borrow = match generic {
+            TTy::Borrow(_, m) => Some(*m),
+            _ => None,
+        };
+        let span = e.span;
+        let flat = match &e.ty {
+            Ty::Ref(t) | Ty::RefMut(t) => (**t).clone(),
+            t => t.clone(),
+        };
+        let (Ty::Product(fms), Some(Ty::Product(tys))) = (&flat, nest_product(&flat, &widths))
+        else {
+            return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
+        };
+        let how = match borrow {
+            None => Use::Move,
+            Some(true) => return unsupported(msg!("nir-a-product-regrouped-under-mut"), span),
+            Some(false) => match self.dup_use(&flat) {
+                Some(how) => how,
+                None => return unsupported(msg!("nir-a-product-regrouped-under-mut"), span),
+            },
+        };
+        let tmp = self.fresh_local("regroup", Repr::Plain);
+        let member = |i: usize| {
+            expr_of(
+                ExprKind::Member {
+                    value: Box::new(expr_of(
+                        ExprKind::Read {
+                            local: tmp.clone(),
+                            how: Use::Place,
+                        },
+                        e.ty.clone(),
+                        span,
+                    )),
+                    index: i,
+                    how,
+                },
+                fms[i].1.clone(),
+                span,
+            )
+        };
+        let product = |members: Vec<Expr>, ty: Ty| {
+            let picks = (0..members.len()).map(|j| (j, None)).collect();
+            expr_of(ExprKind::Product { members, picks }, ty, span)
+        };
+        let mut members = Vec::new();
+        let mut at = 0;
+        for (w, (_, ty)) in widths.iter().zip(&tys) {
+            match w {
+                Some(n) => {
+                    members.push(product((at..at + n).map(&member).collect(), ty.clone()));
+                    at += n;
+                }
+                None => {
+                    members.push(member(at));
+                    at += 1;
+                }
+            }
+        }
+        let nested_ty = Ty::Product(tys);
+        let nested = product(members, nested_ty.clone());
+        let init_ty = e.ty.clone();
+        // The value is put together where the borrow is taken, so that it lives as long as
+        // the call it is lent to.
+        let block = expr_of(
+            ExprKind::Block(Block {
+                stmts: vec![crate::Stmt::Let {
+                    local: tmp.clone(),
+                    ty: init_ty,
+                    init: e,
+                    span,
+                }],
+                tail: Some(Box::new(nested)),
+            }),
+            nested_ty.clone(),
+            span,
+        );
+        Ok(if borrow.is_some() {
+            expr_of(
+                ExprKind::TempRef(Box::new(block)),
+                Ty::Ref(Box::new(nested_ty)),
+                span,
+            )
+        } else {
+            block
+        })
     }
 
     /// The checked type arguments of this exact function occurrence, and
@@ -2985,8 +3135,6 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    // ---- closures ------------------------------------------------------
-
     /// The references a borrowing closure of the O tier holds to what it
     /// uses (its future may not borrow the closure): those names are
     /// borrowed parameters inside.
@@ -3025,23 +3173,10 @@ impl<'a> Lowerer<'a> {
             if b.celled
                 || !matches!(
                     b.local.repr,
-                    Repr::Plain
-                        | Repr::Ref
-                        | Repr::RefMut
-                        | Repr::FnRef
-                        | Repr::BorrowClosure
+                    Repr::Plain | Repr::Ref | Repr::RefMut | Repr::FnRef | Repr::BorrowClosure
                 )
                 || matches!(b.mode, Mode::Cont | Mode::ContBudget)
                 || (fn_ref && fn_kind.is_none())
-                // An owned function that suspends is a future of the
-                // lifetime it was made for, which the future of this
-                // closure (borrowing what it holds) is shorter than.
-                || (fn_kind.is_some()
-                    && !fn_ref
-                    && !matches!(b.ty, TTy::Borrow(..))
-                    && b.fn_row
-                        .as_ref()
-                        .is_some_and(|r| self.row_tier_in(r, cx) >= Tier::O))
             {
                 return unsupported(
                     msg!(
@@ -3320,7 +3455,6 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// A closure body lowered in its frame, to be made into a closure node.
 struct ClosureParts<'t> {
     params: Vec<(Local, Ty)>,
     ret: &'t TTy,
@@ -3364,7 +3498,6 @@ pub(crate) fn unify_shape(scheme: &TTy, at: &TTy, map: &mut HashMap<ParamId, TTy
     }
 }
 
-/// Whether a type holds a borrow in a constructor (`Option(&A)`).
 fn holds_ref(t: &Ty) -> bool {
     match t {
         Ty::Option(a) => matches!(**a, Ty::Ref(_) | Ty::RefMut(_)) || holds_ref(a),
@@ -3398,4 +3531,59 @@ fn consumes(body: &SurfaceTerm, name: &str) -> bool {
         _ => {}
     });
     named > lent
+}
+
+/// For a product `generic` (`A × B`, or a borrow of it) in which a generic stands for a
+/// product at `own`, how many members of the flat product each of its members stands for:
+/// `Some(n)` for a generic that stands for a product of `n`, `None` for one member. `None`
+/// when no generic of it stands for a product.
+fn product_widths(
+    generic: &TTy,
+    own: &HashMap<tauto::types::ParamId, TTy>,
+) -> Option<Vec<Option<usize>>> {
+    let TTy::Product(gms) = generic.unborrowed() else {
+        return None;
+    };
+    let widths: Vec<Option<usize>> = gms
+        .iter()
+        .map(|g| match g {
+            TTy::Param(p, _) => match own.get(p.id()) {
+                Some(TTy::Product(ms)) => Some(ms.len()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    widths.iter().any(Option::is_some).then_some(widths)
+}
+
+/// The flat product `flat` with the members `widths` groups put together as one.
+fn nest_product(flat: &Ty, widths: &[Option<usize>]) -> Option<Ty> {
+    let Ty::Product(fms) = flat else {
+        return None;
+    };
+    if widths.iter().map(|w| w.unwrap_or(1)).sum::<usize>() != fms.len() {
+        return None;
+    }
+    let mut at = 0;
+    let mut out = Vec::new();
+    for w in widths {
+        match w {
+            Some(n) => {
+                let group = fms[at..at + n].to_vec();
+                let key = group
+                    .iter()
+                    .map(|(k, _)| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" × ");
+                out.push((key, Ty::Product(group)));
+                at += n;
+            }
+            None => {
+                out.push(fms[at].clone());
+                at += 1;
+            }
+        }
+    }
+    Some(Ty::Product(out))
 }

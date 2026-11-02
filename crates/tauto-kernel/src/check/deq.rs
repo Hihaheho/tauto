@@ -160,7 +160,6 @@ impl Gen<'_> {
         }
     }
 
-    /// The comparison of `x` and `y`, values of type `ty`.
     fn call_eq(&self, ty: &T, x: &str, y: &str) -> String {
         match self.applied(ty) {
             Some((n, args)) => {
@@ -198,7 +197,6 @@ impl Gen<'_> {
 }
 
 impl Kernel {
-    /// The generated types, with their number of parameters.
     fn decidable_families(&self) -> HashMap<String, usize> {
         self.inds
             .iter()
@@ -246,7 +244,6 @@ impl Kernel {
         }
     }
 
-    /// Whether the family `name` is a proposition.
     fn is_proposition(&self, name: &str) -> bool {
         let mut ty = match self.globals.get(name) {
             Some(g) => &g.ty,
@@ -515,7 +512,6 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
     let call_beq = |a: &str, b: &str| format!("{beq}({})", with(&[&e_names], &[a, b]));
 
     let mut out = String::new();
-    // I.beq
     let _ = writeln!(
         out,
         "fn beq{generics}({}): Bool {{",
@@ -538,7 +534,6 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
         let _ = writeln!(out, "    }}");
     }
     let _ = writeln!(out, "  }}\n}}\n");
-    // I.beq_refl
     let _ = writeln!(
         out,
         "theorem beq_refl{typed_generics}({}): Eq(Bool, {}, true) {{",
@@ -555,7 +550,6 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
         );
     }
     let _ = writeln!(out, "  }}\n}}\n");
-    // I.beq_sound
     let _ = writeln!(
         out,
         "theorem beq_sound{typed_generics}({}): (a = b) {{",
@@ -587,7 +581,6 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
         let _ = writeln!(out, "    }}");
     }
     let _ = writeln!(out, "  }}\n}}\n");
-    // I.deq
     let _ = writeln!(
         out,
         "theorem deq{typed_generics}({}): Iff(Eq(Bool, {}, true), a = b) {{\n  IffIntro(\n    (h: Eq(Bool, {}, true)) => {beq}_sound({}),\n    (e: a = b) => Eq::subst({this}, a, b, (z: {this}) => Eq(Bool, {}, true), e, {beq}_refl({}))\n  )\n}}",

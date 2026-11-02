@@ -1,4 +1,9 @@
 import "../src/eval.taut"
+import "../src/value.taut"
+import "../../vm/src/cps.taut"
+import "../../vm/src/mval.taut"
+import std::Base
+import std::Nat
 
 // More fuel may resolve exhaustion, but cannot change a completed outcome.
 pub fn e_refines<A>(before: EResult(A), after: EResult(A)): Prop {
@@ -39,6 +44,44 @@ pub theorem e_bind_refines<A, B>(
     )
     ErError(message) => Eq::congr((r: EResult(A)) => e_bind(r, g), input)
     ErUnsupported(construct) => Eq::congr((r: EResult(A)) => e_bind(r, g), input)
+  }
+}
+
+pub theorem e_branch_more_step(
+  f: Nat,
+  ctors: List(MCtor),
+  env: List(Pair(Nat, EBinding)),
+  value: MVal,
+  then: Cps,
+  otherwise: Cps,
+  cx: MCx,
+  more: (
+    go: Bool
+  ) -> e_refines(
+    e_eval(f, ctors, env, e_choose(go, then, otherwise), cx),
+    e_eval(Succ(f), ctors, env, e_choose(go, then, otherwise), cx)
+  )
+): e_refines(
+  e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
+  e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
+) {
+  match m_get(
+    ctors,
+    cx,
+    value
+  ) eqn got: e_refines(
+    e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
+    e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
+  ) {
+    MvBool(go) => ⊢ e_refines(
+      e_eval(f, ctors, env, e_choose(go, then, otherwise), cx),
+      e_eval(Succ(f), ctors, env, e_choose(go, then, otherwise), cx)
+    ) from more(go)
+    _ => ⊢ Eq(
+      EResult(MVal),
+      ErError("internal: a branch condition is not a boolean"),
+      ErError("internal: a branch condition is not a boolean")
+    ) from Refl
   }
 }
 
@@ -128,24 +171,16 @@ mutual {
   ) {
     match fuel {
       Zero => Trivial
-      Succ(f) => match m_get(
+      Succ(f) => e_branch_more_step(
+        f,
         ctors,
+        env,
+        value,
+        then,
+        otherwise,
         cx,
-        value
-      ) eqn got: e_refines(
-        e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
-        e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
-      ) {
-        MvBool(go) => ⊢ e_refines(
-          e_eval(f, ctors, env, e_choose(go, then, otherwise), cx),
-          e_eval(Succ(f), ctors, env, e_choose(go, then, otherwise), cx)
-        ) from e_eval_more(f, ctors, env, e_choose(go, then, otherwise), cx)
-        _ => ⊢ Eq(
-          EResult(MVal),
-          ErError("internal: a branch condition is not a boolean"),
-          ErError("internal: a branch condition is not a boolean")
-        ) from Refl
-      }
+        (go: Bool) => e_eval_more(f, ctors, env, e_choose(go, then, otherwise), cx)
+      )
     }
   }
 

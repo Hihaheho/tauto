@@ -1,6 +1,10 @@
 import "Rat.taut"
 import "IntOrder.taut"
 import "NatDiv.taut"
+import "Base.taut"
+import "Int.taut"
+import "IntLaws.taut"
+import "IntNorm.taut"
 
 module Rat {
   // The laws of `Rat`'s arithmetic (`std/Rat::taut`). A number has many
@@ -14,8 +18,6 @@ module Rat {
     y: Rat
   ): Prop := Int::mul(num(x), IntOfNat(den(y))) = Int::mul(num(y), IntOfNat(den(x)))
 
-  // ---- the same number ------------------------------------------------------------
-
   pub theorem equiv_refl(x: Rat): equiv(x, x) {
     Refl
   }
@@ -24,28 +26,12 @@ module Rat {
     Eq::sym(h)
   }
 
-  pub theorem equiv_trans(
-    x: Rat,
-    y: Rat,
-    z: Rat,
-    h1: equiv(x, y),
-    h2: equiv(y, z)
-  ): equiv(x, z) {
+  pub theorem equiv_trans(x: Rat, y: Rat, z: Rat, h1: equiv(x, y), h2: equiv(y, z)): equiv(x, z) {
     match y: equiv(x, z) {
-      Mk(b, q) => equiv_trans_at(
-        num(x),
-        IntOfNat(den(x)),
-        b,
-        q,
-        num(z),
-        IntOfNat(den(z)),
-        h1,
-        h2
-      )
+      Mk(b, q) => equiv_trans_at(num(x), IntOfNat(den(x)), b, q, num(z), IntOfNat(den(z)), h1, h2)
     }
   }
 
-  // `X / P = b / (q + 1) = Z / R` gives `X R = Z P`.
   pub theorem equiv_trans_at(
     X: Int,
     P: Int,
@@ -108,7 +94,6 @@ module Rat {
 }
 
 module Int {
-  // ---- reduced fractions --------------------------------------------------------------
 
   pub theorem eq_sound(x: Int, y: Int, h: eq(x, y) = true): x = y {
     match x: x = y {
@@ -126,14 +111,9 @@ module Int {
 
 module Rat {
   pub theorem eq_sound(x: Rat, y: Rat, h: eq(x, y) = true): equiv(x, y) {
-    Int::eq_sound(
-      Int::mul(num(x), IntOfNat(den(y))),
-      Int::mul(num(y), IntOfNat(den(x))),
-      h
-    )
+    Int::eq_sound(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))), h)
   }
 
-  // `k / j = a / s` when `a = g k` and `s = g j`.
   pub theorem div_cross(
     a: Nat,
     s: Nat,
@@ -157,7 +137,10 @@ module Rat {
       (z: Nat) => Int::mul(IntOfNat(k), IntOfNat(s)) = Int::mul(IntOfNat(z), IntOfNat(j)),
       Eq::sym(ha),
       Eq::subst(
-        (z: Nat) => Int::mul(IntOfNat(k), IntOfNat(z)) = Int::mul(IntOfNat(Nat::mul(g, k)), IntOfNat(j)),
+        (z: Nat) => Int::mul(
+          IntOfNat(k),
+          IntOfNat(z)
+        ) = Int::mul(IntOfNat(Nat::mul(g, k)), IntOfNat(j)),
         Eq::sym(hs),
         e
       )
@@ -203,7 +186,6 @@ module Rat {
 }
 
 module Nat {
-  // `n` divided by `g` as `Nat::div_nz` divides: `d = g q` when `g` leaves no remainder.
   pub theorem div_exact(
     d: Nat,
     g: Nat,
@@ -219,13 +201,7 @@ module Nat {
     )
   }
 
-  // A factor of `m + 1` is `j' + 1`.
-  pub theorem factor_succ(
-    m: Nat,
-    g: Nat,
-    j: Nat,
-    h: Succ(m) = mul(g, j)
-  ): j = Succ(j - 1) {
+  pub theorem factor_succ(m: Nat, g: Nat, j: Nat, h: Succ(m) = mul(g, j)): j = Succ(j - 1) {
     match j: j = Succ(j - 1) {
       Zero => False::elim(zero_ne_succ(m, Eq::sym(h)))
       Succ(k) => Refl
@@ -234,7 +210,6 @@ module Nat {
 }
 
 module Rat {
-  // A fraction divided through by a common factor is the same number.
   pub theorem divided_equiv(
     n: Int,
     m: Nat,
@@ -242,8 +217,21 @@ module Rat {
     hg: ¬(g = 0),
     e: divides(n, Succ(m), g, hg) = true
   ): equiv(Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1), Rat::Mk(n, m)) {
-    let both: Nat::eq(Nat::rem_nz(Succ(m), g, hg), 0) = true ∧ Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0) = true := Bool::and_split(Nat::eq(Nat::rem_nz(Succ(m), g, hg), 0), Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0), e)
-    match both: equiv(Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1), Rat::Mk(n, m)) {
+    let both: Nat::eq(
+      Nat::rem_nz(Succ(m), g, hg),
+      0
+    ) = true ∧ Nat::eq(
+      Nat::rem_nz(Int::abs_nat(n), g, hg),
+      0
+    ) = true := Bool::and_split(
+      Nat::eq(Nat::rem_nz(Succ(m), g, hg), 0),
+      Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0),
+      e
+    )
+    match both: equiv(
+      Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1),
+      Rat::Mk(n, m)
+    ) {
       AndIntro(hd, hn) => divided_equiv_at(
         n,
         m,
@@ -302,18 +290,28 @@ module Rat {
     }
   }
 
-  // `Rat::reduce(n, m + 1)` is `n / (m + 1)`.
   pub theorem reduce_equiv(n: Int, m: Nat): equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
-    match Nat::eq(gcd(400, Succ(m), Int::abs_nat(n)), 0) eqn hg: equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
+    match Nat::eq(
+      gcd(400, Succ(m), Int::abs_nat(n)),
+      0
+    ) eqn hg: equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
       true => ⊢ equiv(Rat::Mk(n, Succ(m) - 1), Rat::Mk(n, m)) from equiv_refl(Rat::Mk(n, m))
       false => ⊢ equiv(
-        reduce_by(n, Succ(m), gcd(400, Succ(m), Int::abs_nat(n)), Nat::ne_zero(gcd(400, Succ(m), Int::abs_nat(n)), hg)),
+        reduce_by(
+          n,
+          Succ(m),
+          gcd(400, Succ(m), Int::abs_nat(n)),
+          Nat::ne_zero(gcd(400, Succ(m), Int::abs_nat(n)), hg)
+        ),
         Rat::Mk(n, m)
-      ) from reduce_by_equiv(n, m, gcd(400, Succ(m), Int::abs_nat(n)), Nat::ne_zero(gcd(400, Succ(m), Int::abs_nat(n)), hg))
+      ) from reduce_by_equiv(
+        n,
+        m,
+        gcd(400, Succ(m), Int::abs_nat(n)),
+        Nat::ne_zero(gcd(400, Succ(m), Int::abs_nat(n)), hg)
+      )
     }
   }
-
-  // ---- the operations without reducing ------------------------------------------
 
   pub fn zero(): Rat {
     Rat::Mk(0, 0)
@@ -517,10 +515,7 @@ module Rat {
     y: Rat,
     z: Rat
   ): equiv(mul_raw(x, add_raw(y, z)), add_raw(mul_raw(x, y), mul_raw(x, z))) {
-    match x: equiv(
-      mul_raw(x, add_raw(y, z)),
-      add_raw(mul_raw(x, y), mul_raw(x, z))
-    ) {
+    match x: equiv(mul_raw(x, add_raw(y, z)), add_raw(mul_raw(x, y), mul_raw(x, z))) {
       Mk(a, p) => {
         match y: equiv(
           mul_raw(Rat::Mk(a, p), add_raw(y, z)),
@@ -533,7 +528,10 @@ module Rat {
             ) {
               Mk(c, r) => {
                 let e: Int::mul(
-                  Int::mul(a, Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))),
+                  Int::mul(
+                    a,
+                    Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))
+                  ),
                   Int::mul(
                     Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
                     Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
@@ -545,7 +543,10 @@ module Rat {
                   ),
                   Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
                 ) := by int_norm!(): Int::mul(
-                  Int::mul(a, Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))),
+                  Int::mul(
+                    a,
+                    Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))
+                  ),
                   Int::mul(
                     Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
                     Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
@@ -771,11 +772,7 @@ module Rat {
     }
   }
 
-  pub theorem neg_congr(
-    x: Rat,
-    x2: Rat,
-    h: equiv(x, x2)
-  ): equiv(neg(x), neg(x2)) {
+  pub theorem neg_congr(x: Rat, x2: Rat, h: equiv(x, x2)): equiv(neg(x), neg(x2)) {
     match x: equiv(neg(x), neg(x2)) {
       Mk(a, p) => {
         match x2: equiv(neg(Rat::Mk(a, p)), neg(x2)) {
@@ -811,8 +808,6 @@ module Rat {
     }
   }
 
-  // ---- the laws ------------------------------------------------------------------
-
   pub theorem add_raw_congr(
     x: Rat,
     y: Rat,
@@ -834,12 +829,7 @@ module Rat {
     )
   }
 
-  pub theorem add_congl(
-    x: Rat,
-    x2: Rat,
-    y: Rat,
-    h: equiv(x, x2)
-  ): equiv(add(x, y), add(x2, y)) {
+  pub theorem add_congl(x: Rat, x2: Rat, y: Rat, h: equiv(x, x2)): equiv(add(x, y), add(x2, y)) {
     equiv_trans(
       add(x, y),
       add_raw(x, y),
@@ -855,12 +845,7 @@ module Rat {
     )
   }
 
-  pub theorem add_congr(
-    x: Rat,
-    y: Rat,
-    y2: Rat,
-    h: equiv(y, y2)
-  ): equiv(add(x, y), add(x, y2)) {
+  pub theorem add_congr(x: Rat, y: Rat, y2: Rat, h: equiv(y, y2)): equiv(add(x, y), add(x, y2)) {
     equiv_trans(
       add(x, y),
       add_raw(x, y),
@@ -892,11 +877,7 @@ module Rat {
     )
   }
 
-  pub theorem add_assoc(
-    x: Rat,
-    y: Rat,
-    z: Rat
-  ): equiv(add(add(x, y), z), add(x, add(y, z))) {
+  pub theorem add_assoc(x: Rat, y: Rat, z: Rat): equiv(add(add(x, y), z), add(x, add(y, z))) {
     equiv_trans(
       add(add(x, y), z),
       add_raw(add(x, y), z),
@@ -922,11 +903,7 @@ module Rat {
               add(y, z),
               equiv_symm(add(y, z), add_raw(y, z), add_val(y, z))
             ),
-            equiv_symm(
-              add(x, add(y, z)),
-              add_raw(x, add(y, z)),
-              add_val(x, add(y, z))
-            )
+            equiv_symm(add(x, add(y, z)), add_raw(x, add(y, z)), add_val(x, add(y, z)))
           )
         )
       )
@@ -954,12 +931,7 @@ module Rat {
     )
   }
 
-  pub theorem mul_congl(
-    x: Rat,
-    x2: Rat,
-    y: Rat,
-    h: equiv(x, x2)
-  ): equiv(mul(x, y), mul(x2, y)) {
+  pub theorem mul_congl(x: Rat, x2: Rat, y: Rat, h: equiv(x, x2)): equiv(mul(x, y), mul(x2, y)) {
     equiv_trans(
       mul(x, y),
       mul_raw(x, y),
@@ -975,12 +947,7 @@ module Rat {
     )
   }
 
-  pub theorem mul_congr(
-    x: Rat,
-    y: Rat,
-    y2: Rat,
-    h: equiv(y, y2)
-  ): equiv(mul(x, y), mul(x, y2)) {
+  pub theorem mul_congr(x: Rat, y: Rat, y2: Rat, h: equiv(y, y2)): equiv(mul(x, y), mul(x, y2)) {
     equiv_trans(
       mul(x, y),
       mul_raw(x, y),
@@ -1012,11 +979,7 @@ module Rat {
     )
   }
 
-  pub theorem mul_assoc(
-    x: Rat,
-    y: Rat,
-    z: Rat
-  ): equiv(mul(mul(x, y), z), mul(x, mul(y, z))) {
+  pub theorem mul_assoc(x: Rat, y: Rat, z: Rat): equiv(mul(mul(x, y), z), mul(x, mul(y, z))) {
     equiv_trans(
       mul(mul(x, y), z),
       mul_raw(mul(x, y), z),
@@ -1042,11 +1005,7 @@ module Rat {
               mul(y, z),
               equiv_symm(mul(y, z), mul_raw(y, z), mul_val(y, z))
             ),
-            equiv_symm(
-              mul(x, mul(y, z)),
-              mul_raw(x, mul(y, z)),
-              mul_val(x, mul(y, z))
-            )
+            equiv_symm(mul(x, mul(y, z)), mul_raw(x, mul(y, z)), mul_val(x, mul(y, z)))
           )
         )
       )
@@ -1054,40 +1013,18 @@ module Rat {
   }
 
   pub theorem add_zero(x: Rat): equiv(add(x, zero()), x) {
-    equiv_trans(
-      add(x, zero()),
-      add_raw(x, zero()),
-      x,
-      add_val(x, zero()),
-      add_raw_zero(x)
-    )
+    equiv_trans(add(x, zero()), add_raw(x, zero()), x, add_val(x, zero()), add_raw_zero(x))
   }
 
   pub theorem add_neg(x: Rat): equiv(add(x, neg(x)), zero()) {
-    equiv_trans(
-      add(x, neg(x)),
-      add_raw(x, neg(x)),
-      zero(),
-      add_val(x, neg(x)),
-      add_raw_neg(x)
-    )
+    equiv_trans(add(x, neg(x)), add_raw(x, neg(x)), zero(), add_val(x, neg(x)), add_raw_neg(x))
   }
 
   pub theorem mul_one(x: Rat): equiv(mul(x, one()), x) {
-    equiv_trans(
-      mul(x, one()),
-      mul_raw(x, one()),
-      x,
-      mul_val(x, one()),
-      mul_raw_one(x)
-    )
+    equiv_trans(mul(x, one()), mul_raw(x, one()), x, mul_val(x, one()), mul_raw_one(x))
   }
 
-  pub theorem mul_add(
-    x: Rat,
-    y: Rat,
-    z: Rat
-  ): equiv(mul(x, add(y, z)), add(mul(x, y), mul(x, z))) {
+  pub theorem mul_add(x: Rat, y: Rat, z: Rat): equiv(mul(x, add(y, z)), add(mul(x, y), mul(x, z))) {
     equiv_trans(
       mul(x, add(y, z)),
       mul_raw(x, add(y, z)),
@@ -1136,9 +1073,6 @@ module Rat {
   }
 }
 
-// ---- the order ------------------------------------------------------------------
-
-// `x <= y`, as `Rat::le` decides it.
 pub def RatLe(
   x: Rat,
   y: Rat
@@ -1153,24 +1087,14 @@ module Rat {
   }
 
   pub theorem le_antisymm(x: Rat, y: Rat, l1: RatLe(x, y), l2: RatLe(y, x)): equiv(x, y) {
-    Int::le_antisymm(
-      Int::mul(num(x), IntOfNat(den(y))),
-      Int::mul(num(y), IntOfNat(den(x))),
-      l1,
-      l2
-    )
+    Int::le_antisymm(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))), l1, l2)
   }
 
   pub theorem le_total(x: Rat, y: Rat): RatLe(x, y) ∨ RatLe(y, x) {
     Int::le_total(Int::mul(num(x), IntOfNat(den(y))), Int::mul(num(y), IntOfNat(den(x))))
   }
 
-  pub theorem add_le(
-    x: Rat,
-    y: Rat,
-    z: Rat,
-    l: RatLe(x, y)
-  ): RatLe(add(x, z), add(y, z)) {
+  pub theorem add_le(x: Rat, y: Rat, z: Rat, l: RatLe(x, y)): RatLe(add(x, z), add(y, z)) {
     le_congr(
       add(x, z),
       add_raw(y, z),
@@ -1203,7 +1127,6 @@ module Rat {
 }
 
 module Bool {
-  // Two decisions that hold together are the same.
   pub theorem eq_of_iff(
     a: Bool,
     b: Bool,
@@ -1221,13 +1144,7 @@ module Bool {
 }
 
 module Rat {
-  // `Rat::le` gives the same answer for the same numbers.
-  pub theorem le_resp_l(
-    x: Rat,
-    x2: Rat,
-    y: Rat,
-    h: equiv(x, x2)
-  ): le(x, y) = le(x2, y) {
+  pub theorem le_resp_l(x: Rat, x2: Rat, y: Rat, h: equiv(x, x2)): le(x, y) = le(x2, y) {
     Bool::eq_of_iff(
       le(x, y),
       le(x2, y),
@@ -1236,12 +1153,7 @@ module Rat {
     )
   }
 
-  pub theorem le_resp_r(
-    x: Rat,
-    y: Rat,
-    y2: Rat,
-    h: equiv(y, y2)
-  ): le(x, y) = le(x, y2) {
+  pub theorem le_resp_r(x: Rat, y: Rat, y2: Rat, h: equiv(y, y2)): le(x, y) = le(x, y2) {
     Bool::eq_of_iff(
       le(x, y),
       le(x, y2),
@@ -1250,14 +1162,7 @@ module Rat {
     )
   }
 
-  // `x <= y` holds of any `x2` that is the same number as `x`.
-  pub theorem le_congl(
-    x: Rat,
-    x2: Rat,
-    y: Rat,
-    h: equiv(x, x2),
-    l: RatLe(x, y)
-  ): RatLe(x2, y) {
+  pub theorem le_congl(x: Rat, x2: Rat, y: Rat, h: equiv(x, x2), l: RatLe(x, y)): RatLe(x2, y) {
     match x: RatLe(x2, y) {
       Mk(a, p) => {
         match x2: RatLe(x2, y) {
@@ -1332,13 +1237,7 @@ module Rat {
     }
   }
 
-  pub theorem le_congr(
-    x: Rat,
-    y: Rat,
-    y2: Rat,
-    h: equiv(y, y2),
-    l: RatLe(x, y)
-  ): RatLe(x, y2) {
+  pub theorem le_congr(x: Rat, y: Rat, y2: Rat, h: equiv(y, y2), l: RatLe(x, y)): RatLe(x, y2) {
     match x: RatLe(x, y2) {
       Mk(a, p) => {
         match y: RatLe(Rat::Mk(a, p), y2) {
@@ -1685,27 +1584,11 @@ module Rat {
             let ha: IntLe(
               0,
               a
-            ) := Int::le_rw(
-              Int::mul(0, IntOfNat(Succ(p))),
-              0,
-              Int::mul(a, 1),
-              a,
-              z1,
-              o1,
-              l1
-            )
+            ) := Int::le_rw(Int::mul(0, IntOfNat(Succ(p))), 0, Int::mul(a, 1), a, z1, o1, l1)
             let hb: IntLe(
               0,
               b
-            ) := Int::le_rw(
-              Int::mul(0, IntOfNat(Succ(q))),
-              0,
-              Int::mul(b, 1),
-              b,
-              z2,
-              o2,
-              l2
-            )
+            ) := Int::le_rw(Int::mul(0, IntOfNat(Succ(q))), 0, Int::mul(b, 1), b, z2, o2, l2)
             let z3: 0 = Int::mul(
               0,
               Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))

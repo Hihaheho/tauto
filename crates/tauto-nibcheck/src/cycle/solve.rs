@@ -9,12 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::captures::{CaptureRow, RowVar};
 use super::levels::LevelVar;
 
-/// What the checker generates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Constraint {
     /// The two levels are the same storage's.
     Eq(LevelVar, LevelVar),
-    /// `a` is strictly below `b`.
     Lt(LevelVar, LevelVar),
     /// `a ≺ row`: `a` is strictly below every level of `row`.
     Precedes(LevelVar, CaptureRow),
@@ -29,7 +27,6 @@ pub struct Problem {
     pub constraints: Vec<Constraint>,
 }
 
-/// Why there is no solution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CycleError {
     /// A level would be strictly below itself, through these levels in order
@@ -37,9 +34,7 @@ pub enum CycleError {
     LevelCycle(Vec<LevelVar>),
     /// A level must precede a row nothing is known about.
     UnknownCapture(LevelVar),
-    /// A row variable holds a level its bound does not allow.
     NotBounded(RowVar, LevelVar),
-    /// A row variable holds `Unknown` but its bound does not allow it.
     NotBoundedUnknown(RowVar),
 }
 
@@ -51,7 +46,6 @@ pub struct Certificate {
 }
 
 impl Certificate {
-    /// Whether this assignment satisfies every constraint of `problem`.
     pub fn check(&self, problem: &Problem) -> bool {
         let lv = |l: &LevelVar| self.level.get(l).copied();
         let expand = |r: &CaptureRow| -> Option<CaptureRow> {
@@ -88,7 +82,6 @@ impl Certificate {
     }
 }
 
-/// Find a solution, or say why there is none.
 pub fn solve(problem: &Problem) -> Result<Certificate, CycleError> {
     let rows = solve_rows(problem)?;
     let expand = |r: &CaptureRow| {
@@ -124,7 +117,6 @@ pub fn solve(problem: &Problem) -> Result<Certificate, CycleError> {
         }
     }
 
-    // Strict edges between representatives.
     let mut edges: Vec<(LevelVar, LevelVar)> = Vec::new();
     for c in &problem.constraints {
         match c {

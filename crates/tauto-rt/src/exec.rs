@@ -16,7 +16,6 @@ use crate::ev::Ev;
 #[cfg(feature = "sync")]
 use crate::o::Fut;
 
-/// Runs a job, now or later, on this thread or another.
 pub trait Executor: Send + Sync {
     fn execute(&self, job: Box<dyn FnOnce() + Send + 'static>);
 }
@@ -80,7 +79,6 @@ impl<A> Slot<A> {
         })
     }
 
-    /// Leaves what ends the task and raises the signal.
     pub fn end(&self, outcome: Outcome<A>) {
         *self.outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
         self.done.raise();
@@ -183,7 +181,6 @@ pub fn os_sleep_pending(ms: u64) -> Pending<()> {
     Pending::Ready(())
 }
 
-/// Whether the result is there, without waiting.
 pub fn pending_is_ready<A>(p: &Pending<A>) -> bool {
     match p {
         Pending::Ready(_) => true,
@@ -191,7 +188,6 @@ pub fn pending_is_ready<A>(p: &Pending<A>) -> bool {
     }
 }
 
-/// Raised when the result is there.
 pub fn pending_signal<A>(p: &Pending<A>) -> Signal {
     match p {
         Pending::Ready(_) => Signal::raised(),

@@ -50,7 +50,6 @@ pub(crate) struct Lookahead {
     pub transitions: Vec<(u32, u32, u32, i64)>,
 }
 
-/// A state of an LALR(1) parse (`lr`).
 #[derive(Debug, Clone)]
 pub(crate) struct LrState {
     /// (terminal, kind, argument), sorted by terminal: kind 0 shifts to the state, 1 reduces by
@@ -129,11 +128,9 @@ pub(crate) struct Mode {
     pub states: Vec<State>,
 }
 
-/// The type of a field of a generated struct or constructor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldTy {
     Token,
-    /// A tauto expression written in the text (`TautoExpr`).
     Expr,
     Named(String),
     List(Box<FieldTy>),
@@ -185,19 +182,14 @@ pub struct Tables {
     pub(crate) productions: Vec<Production>,
     /// (type, constructor) per production; the type is -1 when the production builds none.
     pub(crate) prod_types: Vec<(i64, u32)>,
-    /// Indexed by non-terminal.
     pub(crate) lookahead: Vec<Option<Lookahead>>,
-    /// The states of an LALR(1) grammar's parse, in place of `lookahead`.
     pub(crate) lr: Option<Vec<LrState>>,
-    /// Per mode.
     pub(crate) skip: Vec<Vec<u32>>,
     /// (first, last, class) over code points, sorted.
     pub(crate) classes: Vec<(u32, u32, u32)>,
     pub(crate) modes: Vec<Mode>,
     pub(crate) lookahead_dfas: Vec<Vec<State>>,
-    /// The states of the scanner; empty when the grammar declares none.
     pub(crate) dyn_states: Vec<DynState>,
-    /// Indexed by terminal.
     pub(crate) dynamic: Vec<Option<Dynamic>>,
     pub(crate) dynamic_dfas: Vec<Vec<State>>,
     pub(crate) schema: Schema,

@@ -18,7 +18,6 @@ use crate::expr::{Fx, PatOut, clone_each, clone_each_mut, lid};
 use crate::tok::{Rs, comma, id, is_simple, is_unit, mentioned, num, tuple};
 use crate::{Gen, Pred};
 
-/// What the code being written knows about the function around it.
 pub(crate) struct Mx {
     /// The locals in scope that a continuation must own a copy of.
     pub scope: Vec<Ident>,
@@ -58,8 +57,6 @@ impl<'a> Kc<'a> {
         }
     }
 }
-
-// ---- which code suspends -------------------------------------------------
 
 /// The arms of a handler of the M tier: the `direct` ones too, where the
 /// code holds no `direct` handler (`HandleNode::detached`).
@@ -226,7 +223,6 @@ impl<'a> Gen<'a> {
         })
     }
 
-    /// Hands `v` to the continuation.
     fn deliver(&mut self, mx: &mut Mx, k: Kc<'a>, v: Rs) -> Rs {
         match k {
             Kc::Var(n) => self.call_kont(mx, &n, &v, false),
@@ -303,8 +299,6 @@ impl<'a> Gen<'a> {
             }
         }
     }
-
-    // ---- expressions ---------------------------------------------------
 
     /// `e` written so that the continuation `k` is given its value.
     pub(crate) fn cps(&mut self, e: &Expr, mx: &mut Mx, k: Kc<'a>) -> Rs {
@@ -512,7 +506,6 @@ impl<'a> Gen<'a> {
         )
     }
 
-    /// The node, once its operands are values.
     fn finish_node(&mut self, e: Expr, mx: &mut Mx, k: Kc<'a>) -> Rs {
         match &e.kind {
             ExprKind::Perform(p) => self.cps_perform(p, &e, mx, k),
@@ -629,8 +622,6 @@ impl<'a> Gen<'a> {
             ),
         }
     }
-
-    // ---- blocks --------------------------------------------------------
 
     fn cps_block(&mut self, b: Block, i: usize, mx: &mut Mx, k: Kc<'a>) -> Rs {
         if i == b.stmts.len() {
@@ -872,8 +863,6 @@ impl<'a> Gen<'a> {
         )
     }
 
-    // ---- budget --------------------------------------------------------
-
     /// A `budget` in code of the M tier: a frame among the handlers in place
     /// that the steps are counted in, left where the body ends.
     fn cps_budget(&mut self, b: &BudgetNode, ty: &Ty, mx: &mut Mx, k: Kc<'a>) -> Rs {
@@ -928,8 +917,6 @@ impl<'a> Gen<'a> {
             Kc::new(move |_, _, v| quote!(let #name = #v; #rest)),
         )
     }
-
-    // ---- handle --------------------------------------------------------
 
     /// A `handle` whose body may resume more than once.
     fn cps_handle(&mut self, h: &HandleNode, ty: &Ty, mx: &mut Mx, k: Kc<'a>) -> Rs {
@@ -1188,7 +1175,6 @@ impl<'a> Gen<'a> {
         }
     }
 
-    /// A function of the M tier.
     pub(crate) fn fn_def_m(&mut self, f: &FnInst, gens: &Rs, params: &[Rs], ret: &Rs) -> Rs {
         let mut mx = Mx::new(Some(id("fk")));
         mx.scope.push(id("fk"));

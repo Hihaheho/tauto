@@ -1,11 +1,12 @@
 import std::Nat
 import "vm.taut"
+import "../src/vm.taut"
+import std::Base
+import std::prelude::Ord
 
 // The other direction: when the machine running the compiled program answers `w`, the
 // reference semantics gives `w`. With `compile_correct` and `compile_answer`, the machine
 // answers exactly when the semantics has a value, and with that value. No axiom is used.
-
-// ---- runs counted in instructions -------------------------------------------
 
 pub(open) inductive StarN(prog: List(Bytecode)): (Nat, State, State) -> Prop {
   StarnRefl(s: State): StarN(prog, Zero, s, s)
@@ -170,8 +171,6 @@ pub theorem le_of_lt(
 ): (Nat::le(m, b) = true) {
   Nat::le_trans(m, Succ(m), b, Nat::le_succ(m), Nat::le_trans(Succ(m), n, b, lt, hb))
 }
-
-// ---- what an instruction that stepped found ---------------------------------
 
 pub(open) inductive LoadInv(
   o: Option(Val),
@@ -444,8 +443,6 @@ pub theorem nth_compile_inv(
     }(e0)
   }(e)
 }
-
-// ---- the machine's run goes through the value of each expression -----------
 
 // The run from the code of `e` followed by `k` reaches `k` with a value of `e` pushed, in
 // fewer instructions.
@@ -1284,8 +1281,6 @@ pub theorem back(prog: List(Expr), B: Nat): BackUpTo(prog, B) {
     )
   }
 }
-
-// ---- the machine answers only values of the semantics -----------------------
 
 pub theorem final_inv(s: State, w: Val, e: final_answer(s) = Some(w)): IsFinal(s) {
   match s: (final_answer(s) = Some(w)) -> IsFinal(s) {

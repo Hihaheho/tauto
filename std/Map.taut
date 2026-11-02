@@ -1,3 +1,4 @@
+import "Base.taut"
 import "Text.taut"
 
 // An ordered map: an AVL tree, persistent (`docs/design/self-host.md`), in
@@ -6,7 +7,6 @@ import "Text.taut"
 
 pub(open) inductive OrdmapTree(K: Type, V: Type): Type {
   OrdmapLeaf: OrdmapTree(K, V)
-  // The left tree, the key, the value, the right tree and the height.
   OrdmapNode(l: OrdmapTree(K, V), k: K, v: V, r: OrdmapTree(K, V), h: Nat): OrdmapTree(K, V)
 }
 
@@ -67,12 +67,7 @@ module Ordmap {
   }
 
   // A node whose right tree is the taller by two: the right child comes up.
-  pub fn rotate_left<K, V>(
-    l: OrdmapTree(K, V),
-    k: K,
-    v: V,
-    r: OrdmapTree(K, V)
-  ): OrdmapTree(K, V) {
+  pub fn rotate_left<K, V>(l: OrdmapTree(K, V), k: K, v: V, r: OrdmapTree(K, V)): OrdmapTree(K, V) {
     match r: OrdmapTree(K, V) {
       OrdmapLeaf => node(l, k, v, r)
       OrdmapNode(rl, rk, rv, rr, rh) => node(node(l, k, v, rl), rk, rv, rr)
@@ -112,12 +107,7 @@ module Ordmap {
     }
   }
 
-  pub fn fix_left<K, V>(
-    l: OrdmapTree(K, V),
-    k: K,
-    v: V,
-    r: OrdmapTree(K, V)
-  ): OrdmapTree(K, V) {
+  pub fn fix_left<K, V>(l: OrdmapTree(K, V), k: K, v: V, r: OrdmapTree(K, V)): OrdmapTree(K, V) {
     match l: OrdmapTree(K, V) {
       OrdmapLeaf => node(l, k, v, r)
       OrdmapNode(ll, lk, lv, lr, lh) => fix_left_by(
@@ -152,12 +142,7 @@ module Ordmap {
     }
   }
 
-  pub fn fix_right<K, V>(
-    l: OrdmapTree(K, V),
-    k: K,
-    v: V,
-    r: OrdmapTree(K, V)
-  ): OrdmapTree(K, V) {
+  pub fn fix_right<K, V>(l: OrdmapTree(K, V), k: K, v: V, r: OrdmapTree(K, V)): OrdmapTree(K, V) {
     match r: OrdmapTree(K, V) {
       OrdmapLeaf => node(l, k, v, r)
       OrdmapNode(rl, rk, rv, rr, rh) => fix_right_by(
@@ -193,12 +178,7 @@ module Ordmap {
   }
 
   // The node of `l`, `k`, `v` and `r` when their heights differ by at most two.
-  pub fn balance<K, V>(
-    l: OrdmapTree(K, V),
-    k: K,
-    v: V,
-    r: OrdmapTree(K, V)
-  ): OrdmapTree(K, V) {
+  pub fn balance<K, V>(l: OrdmapTree(K, V), k: K, v: V, r: OrdmapTree(K, V)): OrdmapTree(K, V) {
     balance_by(
       Succ(tree_height(r)) < tree_height(l),
       Succ(tree_height(l)) < tree_height(r),
@@ -258,7 +238,6 @@ module Ordmap {
     )
   }
 
-  // The least entry of a tree that is not empty.
   pub fn tree_min<K, V>(t: OrdmapTree(K, V)): Option(K × V) {
     match t: Option(K × V) {
       OrdmapLeaf => None
@@ -289,11 +268,7 @@ module Ordmap {
     }
   }
 
-  pub fn tree_remove<K, V>(
-    t: OrdmapTree(K, V),
-    k: K,
-    cmp: (K, K) -> Ordering
-  ): OrdmapTree(K, V) {
+  pub fn tree_remove<K, V>(t: OrdmapTree(K, V), k: K, cmp: (K, K) -> Ordering): OrdmapTree(K, V) {
     match t: OrdmapTree(K, V) {
       OrdmapLeaf => OrdmapLeaf
       OrdmapNode(l, nk, nv, r, h) => match cmp(k, nk): OrdmapTree(K, V) {
@@ -304,7 +279,6 @@ module Ordmap {
     }
   }
 
-  // `m` without `k`.
   pub fn remove<K, V>(m: Ordmap(K, V), k: K, cmp: (K, K) -> Ordering): Ordmap(K, V) {
     match contains(m, k, cmp): Ordmap(K, V) {
       true => Ordmap::Mk(tree_remove(tree(m), k, cmp), Nat::pred(size(m)))
@@ -315,10 +289,7 @@ module Ordmap {
   pub fn tree_entries<K, V>(t: OrdmapTree(K, V), done: List(K × V)): List(K × V) {
     match t: List(K × V) {
       OrdmapLeaf => done
-      OrdmapNode(l, k, v, r, h) => tree_entries(
-        l,
-        Cons(#(k, v), tree_entries(r, done))
-      )
+      OrdmapNode(l, k, v, r, h) => tree_entries(l, Cons(#(k, v), tree_entries(r, done)))
     }
   }
 
@@ -357,10 +328,7 @@ module Ordmap {
     v: V,
     r: OrdmapTree(K, V),
     d: List(K × V)
-  ): tree_entries(
-    rotate_left(l, k, v, r),
-    d
-  ) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
+  ): tree_entries(rotate_left(l, k, v, r), d) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
     match r: tree_entries(
       rotate_left(l, k, v, r),
       d
@@ -376,10 +344,7 @@ module Ordmap {
     v: V,
     r: OrdmapTree(K, V),
     d: List(K × V)
-  ): tree_entries(
-    rotate_right(l, k, v, r),
-    d
-  ) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
+  ): tree_entries(rotate_right(l, k, v, r), d) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
     match l: tree_entries(
       rotate_right(l, k, v, r),
       d
@@ -403,27 +368,15 @@ module Ordmap {
   ): tree_entries(
     fix_left_by(c, ll, lk, lv, lr, lh, k, v, r),
     d
-  ) = tree_entries(
-    OrdmapNode(ll, lk, lv, lr, lh),
-    Cons(#(k, v), tree_entries(r, d))
-  ) {
+  ) = tree_entries(OrdmapNode(ll, lk, lv, lr, lh), Cons(#(k, v), tree_entries(r, d))) {
     match c: tree_entries(
       fix_left_by(c, ll, lk, lv, lr, lh, k, v, r),
       d
-    ) = tree_entries(
-      OrdmapNode(ll, lk, lv, lr, lh),
-      Cons(#(k, v), tree_entries(r, d))
-    ) {
+    ) = tree_entries(OrdmapNode(ll, lk, lv, lr, lh), Cons(#(k, v), tree_entries(r, d))) {
       true => Refl
       false => Eq::trans(
         rotate_right_entries(rotate_left(ll, lk, lv, lr), k, v, r, d),
-        rotate_left_entries(
-          ll,
-          lk,
-          lv,
-          lr,
-          Cons(#(k, v), tree_entries(r, d))
-        )
+        rotate_left_entries(ll, lk, lv, lr, Cons(#(k, v), tree_entries(r, d)))
       )
     }
   }
@@ -442,24 +395,15 @@ module Ordmap {
   ): tree_entries(
     fix_right_by(c, l, k, v, rl, rk, rv, rr, rh),
     d
-  ) = tree_entries(
-    l,
-    Cons(#(k, v), tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))
-  ) {
+  ) = tree_entries(l, Cons(#(k, v), tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))) {
     match c: tree_entries(
       fix_right_by(c, l, k, v, rl, rk, rv, rr, rh),
       d
-    ) = tree_entries(
-      l,
-      Cons(#(k, v), tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))
-    ) {
+    ) = tree_entries(l, Cons(#(k, v), tree_entries(OrdmapNode(rl, rk, rv, rr, rh), d))) {
       true => Refl
       false => Eq::trans(
         rotate_left_entries(l, k, v, rotate_right(rl, rk, rv, rr), d),
-        Eq::congr(
-          ⟦tree_entries(l, Cons(#(k, v), □))⟧,
-          rotate_right_entries(rl, rk, rv, rr, d)
-        )
+        Eq::congr(⟦tree_entries(l, Cons(#(k, v), □))⟧, rotate_right_entries(rl, rk, rv, rr, d))
       )
     }
   }
@@ -470,10 +414,7 @@ module Ordmap {
     v: V,
     r: OrdmapTree(K, V),
     d: List(K × V)
-  ): tree_entries(
-    fix_left(l, k, v, r),
-    d
-  ) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
+  ): tree_entries(fix_left(l, k, v, r), d) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
     match l: tree_entries(
       fix_left(l, k, v, r),
       d
@@ -500,10 +441,7 @@ module Ordmap {
     v: V,
     r: OrdmapTree(K, V),
     d: List(K × V)
-  ): tree_entries(
-    fix_right(l, k, v, r),
-    d
-  ) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
+  ): tree_entries(fix_right(l, k, v, r), d) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
     match r: tree_entries(
       fix_right(l, k, v, r),
       d
@@ -571,10 +509,7 @@ module Ordmap {
     v: V,
     r: OrdmapTree(K, V),
     d: List(K × V)
-  ): tree_entries(
-    balance(l, k, v, r),
-    d
-  ) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
+  ): tree_entries(balance(l, k, v, r), d) = tree_entries(l, Cons(#(k, v), tree_entries(r, d))) {
     balance_by_entries(
       Succ(tree_height(r)) < tree_height(l),
       Succ(tree_height(l)) < tree_height(r),

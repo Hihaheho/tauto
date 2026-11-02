@@ -1,4 +1,8 @@
 import "rows.taut"
+import std::Base
+import std::Map
+import std::Text
+import "../../text/src/text.taut"
 
 // The value types of `crates/tauto-nibcheck/src/types.rs`: `Width`, `Kind`, `Ty`, with
 // the order the derived `Ord` gives them, the text `Display` gives them, and
@@ -57,8 +61,6 @@ pub(open) inductive Ty: Type {
   // `TyNamed` once the constructor is.
   TyApp(head: Ty, arg: Ty): Ty
 }
-
-// ----- widths and kinds -----
 
 pub fn width_rank(w: Width): Nat {
   match w: Nat {
@@ -200,8 +202,6 @@ pub fn quant_continuation_kind(q: Quant): Kind {
   }
 }
 
-// ----- the order -----
-
 pub fn ty_variant(t: Ty): Nat {
   match t: Nat {
     TyInt(w) => 0
@@ -225,7 +225,6 @@ pub fn ty_variant(t: Ty): Nat {
   }
 }
 
-// `first`, or `then` when `first` is `equal`.
 pub fn ty_then(first: Ordering, then: Ordering): Ordering {
   match first: Ordering {
     Equal => then
@@ -358,8 +357,6 @@ mutual {
   }
 }
 
-// ----- the text of a type (`Display`) -----
-
 pub fn ty_cat(parts: List(Text)): Text {
   Text::concat_all(parts)
 }
@@ -456,8 +453,6 @@ pub fn ty_show_list(ts: List(Ty), sep: Text): Text {
   text_join(ty_show_each(ts), sep)
 }
 
-// ----- the dump of a type, with everything in it (the differential test's) -----
-
 mutual {
   pub fn ty_dump_each(ts: List(Ty)): List(Text) {
     match ts: List(Text) {
@@ -539,8 +534,6 @@ pub fn ty_dump_list(ts: List(Ty)): Text {
   ty_cat(Cons("[", Cons(text_join(ty_dump_each(ts), ","), Cons("]", Nil))))
 }
 
-// ----- sets of tags, and unions -----
-
 // `tags` (sorted, without repeats) with `tag` in it.
 pub fn tags_insert(tags: List(Text), tag: Text): List(Text) {
   match tags: List(Text) {
@@ -571,7 +564,6 @@ pub fn tags_has(tags: List(Text), tag: Text): Bool {
   }
 }
 
-// Whether every tag of `sub` is in `tags`.
 pub fn tags_subset(sub: List(Text), tags: List(Text)): Bool {
   match sub: Bool {
     Nil => true
@@ -638,13 +630,13 @@ mutual {
     match t: List(Ty) {
       TyProduct(inner) => product_members_add(inner, members)
       TyUnit => members
-      _ => members_insert(members, whole)
+      _ => List::append(members, Cons(whole, Nil))
     }
   }
 }
 
-// The product of `ts`: associative, commutative, idempotent; `()` is its
-// unit.
+// The product of `ts`: its members in the order written; a member that is a
+// product gives its members and `()` none.
 pub fn ty_product_of(members: List(Ty)): Ty {
   match members: Ty {
     Nil => TyUnit
@@ -659,7 +651,6 @@ pub fn ty_product(ts: List(Ty)): Ty {
   ty_product_of(product_members_add(ts, Nil))
 }
 
-// Tags on a type, merged with the type's own; no tags is the type itself.
 pub fn ty_tagged_with(tags: List(Text), t: Ty): Ty {
   match tags: Ty {
     Nil => t
@@ -674,9 +665,6 @@ pub fn ty_tagged(tags: List(Text), t: Ty): Ty {
   }
 }
 
-// ----- the shape of a type -----
-
-// The type under a borrow.
 pub fn ty_unborrowed(t: Ty): Ty {
   match t: Ty {
     TyBorrow(x, m) => ty_unborrowed(x)
@@ -705,8 +693,6 @@ pub fn ty_is_never(t: Ty): Bool {
   }
 }
 
-// ----- substitution -----
-
 pub fn ty_substitute_name(n: Text, map: Ordmap(Text, Ty), t: Ty): Ty {
   match Ordmap::get(map, n, Ordmap::compare_text): Ty {
     Some(x) => x
@@ -714,8 +700,6 @@ pub fn ty_substitute_name(n: Text, map: Ordmap(Text, Ty), t: Ty): Ty {
   }
 }
 
-// `h(x)`: a `TyNamed` constructor takes `x` as its next argument; any other
-// head stays an application.
 pub fn ty_apply(h: Ty, x: Ty): Ty {
   match h: Ty {
     TyNamed(n, args) => TyNamed(n, List::append(args, Cons(x, Nil)))
@@ -723,7 +707,6 @@ pub fn ty_apply(h: Ty, x: Ty): Ty {
   }
 }
 
-// `map` without the generics a `TyPoly` binds.
 pub fn ty_map_without(gs: List(Pair(Text, Kind)), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
   match gs: Ordmap(Text, Ty) {
     Nil => map
@@ -746,7 +729,6 @@ mutual {
     }
   }
 
-  // Type parameters and names without arguments replaced by what `map` has.
   pub fn ty_substitute(t: Ty, map: Ordmap(Text, Ty)): Ty {
     match t: Ty {
       TyNamed(n, args) => match ty_no_args(args): Ty {
@@ -782,7 +764,6 @@ mutual {
     }
   }
 
-  // Whether `Ty::Param(generic)` is in the type.
   pub fn ty_param_in(t: Ty, generic: Text): Bool {
     match t: Bool {
       TyParam(n, k) => n == generic
@@ -806,7 +787,6 @@ mutual {
     }
   }
 
-  // Whether a type parameter is in the type.
   pub fn ty_has_param(t: Ty): Bool {
     match t: Bool {
       TyParam(n, k) => true
@@ -832,7 +812,6 @@ mutual {
     }
   }
 
-  // The declarations a type names, in order.
   pub fn ty_named_in(t: Ty, out: List(Text)): List(Text) {
     match t: List(Text) {
       TyNamed(n, args) => ty_named_each(args, Cons(n, out))

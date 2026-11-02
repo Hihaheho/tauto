@@ -94,7 +94,7 @@ impl World {
         git(&w.lib(), &["init", "--quiet"]);
         write(
             &w.lib().join("Tauto.eure"),
-            "package {\n  name = \"word\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+            "package {\n  name = \"word\"\n  version = \"0.1.0\"\n}\n",
         );
         w.word(41);
         fs::create_dir_all(w.index()).unwrap();
@@ -103,11 +103,11 @@ impl World {
         w.publish(0, "events = []\n");
         write(
             &w.app().join("Tauto.eure"),
-            "package {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+            "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\n",
         );
         write(
             &w.app().join("src/main.taut"),
-            "perform show(\"answer\", word())\n",
+            "import word::word\n\nperform show(\"answer\", word())\n",
         );
         w.user_trust("@ require {\n  min_age_seconds = 0\n}\n");
         w

@@ -37,12 +37,17 @@ fn mutable_cell_updates_match_checked_runner_and_expected_balances() {
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(
         dir.join("Tauto.eure"),
-        "package {\nname = \"certified-state\"\nversion = \"0.1.0\"\nsources = [\"src\"]\n}\n",
+        "package {\nname = \"certified-state\"\nversion = \"0.1.0\"\n}\n",
     )
     .unwrap();
     let main = fs::read_to_string(example.join("src/main.taut")).unwrap();
     // Use the actual mutable adapter, not a second implementation in this test.
-    let adapter = main.split("\nvar cell :=").next().unwrap();
+    let adapter = main
+        .split("\nvar cell :=")
+        .next()
+        .unwrap()
+        .strip_prefix("import \"state.taut\"\n\n")
+        .unwrap();
     assert!(adapter.contains("fn gate_commit("));
     let mut source = format!("import {:?}\n{adapter}\n", example.join("src/state.taut"));
     let mut expected = String::new();

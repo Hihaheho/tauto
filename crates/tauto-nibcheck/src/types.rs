@@ -55,7 +55,6 @@ pub enum Width {
     U8,
     U32,
     U64,
-    /// `nat`: a natural number of any size.
     Nat,
 }
 
@@ -200,7 +199,6 @@ pub enum Ty {
     Tagged(BTreeSet<String>, Box<Ty>),
     /// A declared type, or a type nothing declares.
     Named(String, Vec<Ty>),
-    /// A type parameter inside its declaration, with its bound.
     Param(Param, Kind),
     /// What an `exceeded` arm receives; `more` and `unbounded` give the type.
     Info(Box<Ty>),
@@ -219,7 +217,6 @@ pub enum Ty {
 }
 
 impl Ty {
-    /// The type under a borrow.
     pub fn unborrowed(&self) -> &Ty {
         match self {
             Ty::Borrow(t, _) => t.unborrowed(),
@@ -340,7 +337,6 @@ pub struct DataCtor {
     pub fields: Vec<(Option<String>, Ty)>,
 }
 
-/// The declared `struct`s and `enum`s, and the kinds of types over them.
 #[derive(Debug, Clone, Default)]
 pub struct Datas {
     pub decls: HashMap<String, Data>,
@@ -549,7 +545,6 @@ impl Datas {
             | Ty::Float
             | Ty::Float32 => Kind::Copy,
             Ty::Fn(_, _, k) => *k,
-            // A dictionary is shared.
             Ty::Poly(..) => Kind::Shared,
             // What `F` makes is bounded by the kind `F` is declared with.
             Ty::App(h, _) => match &**h {
@@ -767,7 +762,6 @@ impl Datas {
             .collect()
     }
 
-    /// The field types of constructor `c` of `d` at the type arguments.
     pub fn fields(&self, d: &str, c: usize, args: &[Ty]) -> Vec<(Option<String>, Ty)> {
         let Some(data) = self.decls.get(d) else {
             return Vec::new();
@@ -782,7 +776,6 @@ impl Datas {
 }
 
 impl Data {
-    /// The identity of a parameter of this data declaration.
     pub fn parameter(&self, index: usize) -> Param {
         Param::data(&self.name, index, &self.generics[index])
     }
@@ -819,12 +812,10 @@ impl Data {
 pub struct TypeReport {
     pub errors: Vec<TypeError>,
     pub widths: HashMap<TermId, Width>,
-    /// The type of each top-level `let`, in order.
     pub lets: Vec<(String, String)>,
     /// The type of each name a program binds, keyed by the name and where it
     /// is bound (see [`site`]).
     pub locals: HashMap<(String, TermId), Ty>,
-    /// The type of each expression, by occurrence identity.
     pub terms: HashMap<TermId, Ty>,
     /// The declaration's own type arguments at each named function use.
     /// Captured outer parameters are not instantiated by that use.
@@ -836,20 +827,17 @@ pub struct TypeReport {
     /// value to (the `E` of `catch`): what a caller performs fixes them.
     pub effect_generics: HashSet<ParamId>,
     pub datas: Datas,
-    /// Each operation's resume quantity.
     pub quants: HashMap<String, Quant>,
     /// Every function's type (the prelude's, the `extern`s', the program's).
     pub schemes: HashMap<String, Scheme>,
     /// The functions written inside a body whose name no other function
     /// has (not scoped: for a backend that lifts them to the top).
     pub local_schemes: HashMap<String, Scheme>,
-    /// Every operation's signature.
     pub effects: HashMap<String, EffectSig>,
     /// For each use of a function that has class constraints, the evidence
     /// for each of them in the order of the function's `preds`, by the identity
     /// of the use.
     pub evidence: HashMap<TermId, Vec<Ev>>,
-    /// The classes, as declared, by name.
     pub classes: HashMap<String, crate::surface::ClassDecl>,
     /// The terms, by their spans, whose product value is taken to fewer
     /// members (`A × B <: A`), with the type it is taken to. Taking one twice
@@ -889,7 +877,6 @@ fn value_occurrences(program: &Program) -> Vec<TermId> {
     ids
 }
 
-/// What satisfies a constraint `C(T)`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ev {
     /// The `where` of the function the use is in: the class and the generic.
@@ -977,7 +964,6 @@ impl TypeReport {
             .or_else(|| self.local_schemes.get(name))
     }
 
-    /// Adds what the prelude's report knows of its own functions.
     pub fn with_prelude(mut self) -> Self {
         let lib = prelude_report();
         self.terms
@@ -990,7 +976,6 @@ impl TypeReport {
         self
     }
 
-    /// The type of the name `name` bound at `site`.
     pub fn local(&self, name: &str, site: TermId) -> Option<&Ty> {
         self.locals.get(&(name.to_string(), site))
     }
@@ -1419,7 +1404,6 @@ pub struct Scheme {
     /// A [`Ty::Fn`]: the parameters (a borrowed one a [`Ty::Borrow`]), the
     /// result.
     pub ty: Ty,
-    /// The `where` constraints: the class and the generic it constrains.
     pub preds: Vec<(String, Param)>,
     /// The generics that are type constructors, with the kind each takes;
     /// the kind in `generics` is the one it makes.
@@ -1448,7 +1432,6 @@ struct Pending {
     slot: Option<(TermId, usize, usize)>,
 }
 
-/// An operation's signature.
 #[derive(Debug, Clone)]
 pub struct EffectSig {
     pub generics: Vec<Param>,
@@ -1494,8 +1477,10 @@ struct Checker {
     /// How many rigid generics `fits` has made, for their names.
     rigids: usize,
     fns: HashMap<String, Scheme>,
-    /// The prelude's functions that only its own code calls: how the host
-    /// answers the standard effects (`std/prelude/Os.taut`).
+    /// The prelude's functions that only its own code calls: the externs
+    /// that answer the standard effects, each marked by the effect in its
+    /// row, and the functions of `module Host` that wrap them
+    /// (`std/prelude/Os.taut`).
     host_only: HashSet<String>,
     local_fns: Vec<(String, Scheme)>,
     effects: HashMap<String, EffectSig>,
@@ -1557,7 +1542,6 @@ struct Checker {
     /// Owned captures and the function kind fixed at their declaration.
     /// Inference may not later grant the function weaker ownership.
     capture_kinds: Vec<(Vec<(String, Ty)>, Kind, Span)>,
-    /// The expected type of the lambda being checked.
     hint: Option<Ty>,
     /// The type the next term is checked against, when it is in a result
     /// position: a function's body, a `return`, and their tails. A call
@@ -1571,11 +1555,9 @@ struct Checker {
     widen_products: bool,
     /// Where a product forgot members, and the type it was fitted to.
     product_fits: Vec<(Span, Ty)>,
-    /// [`TypeReport::pair_members`].
     pair_members: HashMap<TermId, (Vec<usize>, usize)>,
-    /// Products whose members are told apart once the types are known.
-    product_checks: Vec<(Vec<Ty>, Span)>,
-    /// [`TypeReport::redundant_arms`].
+    /// Why a product did not fit by the types of its members, for the next error.
+    product_note: Option<ProductNote>,
     redundant_arms: Vec<(TermId, Span)>,
 }
 
@@ -1600,7 +1582,6 @@ impl Checker {
         v
     }
 
-    /// The type with every bound variable replaced.
     fn resolve(&self, t: &Ty) -> Ty {
         match t {
             Ty::Var(i) => match &self.subst[*i] {
@@ -1715,21 +1696,31 @@ impl Checker {
             (Ty::Info(x), Ty::Info(y)) => self.unify(x, y),
             (Ty::Borrow(x, ma), Ty::Borrow(y, mb)) if ma == mb => self.unify(x, y),
             (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if ta == tb => self.unify(x, y),
-            // Members are a set: each is matched to an equal one first.
+            // Members stand in the order written.
             (Ty::Product(xa), Ty::Product(xb)) if xa.len() == xb.len() => {
-                let mut left: Vec<Ty> = xb.clone();
-                for x in xa {
-                    let at = match left.iter().position(|y| y == x) {
-                        Some(i) => i,
-                        None => left
-                            .iter()
-                            .position(|y| self.probe(|c| c.unify(x, y)))
-                            .ok_or(())?,
-                    };
-                    let y = left.remove(at);
-                    self.unify(x, &y)?;
+                for (x, y) in xa.iter().zip(xb) {
+                    self.unify(x, y)?;
                 }
                 Ok(())
+            }
+            // `A × B × C` is `A × (B × C)`: a product whose last member is unknown takes
+            // the members of a longer product in order, and that last member stands for
+            // the product of the rest (`_ × _` is `i64 × (i64 × i64)` for `i64 × i64 × i64`).
+            (Ty::Product(xa), Ty::Product(xb)) if xa.len() != xb.len() => {
+                let (short, long) = if xa.len() < xb.len() {
+                    (xa, xb)
+                } else {
+                    (xb, xa)
+                };
+                let n = short.len() - 1;
+                let last = self.resolve(&short[n]);
+                if !matches!(last, Ty::Var(v) if !self.ints.contains(&v)) {
+                    return Err(());
+                }
+                for (x, y) in short[..n].iter().zip(long) {
+                    self.unify(x, y)?;
+                }
+                self.unify(&last, &product(long[n..].to_vec()))
             }
             (Ty::Union(xa), Ty::Union(xb)) if xa.len() == xb.len() => {
                 for (x, y) in xa.iter().zip(xb) {
@@ -1776,11 +1767,9 @@ impl Checker {
             Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => {
                 let mut out = Vec::new();
                 members(self, t.clone(), &mut out);
-                // Members of one type are told apart by their place only.
-                let n = out.len();
-                match product(out) {
-                    Ty::Product(ms) if ms.len() == n => Some(Ty::Product(ms)),
-                    _ => None,
+                match out.len() {
+                    0 | 1 => None,
+                    _ => Some(Ty::Product(out)),
                 }
             }
             _ => None,
@@ -1832,7 +1821,6 @@ impl Checker {
         if escaped { Err(()) } else { Ok(()) }
     }
 
-    /// Whether a parameter named in `names` is in `t` resolved.
     fn mentions(&self, names: &[&ParamId], t: &Ty) -> bool {
         match self.resolve(t) {
             Ty::Param(n, _) => names.contains(&n.id()),
@@ -1849,7 +1837,6 @@ impl Checker {
         }
     }
 
-    /// The generics of a `Poly` as fresh variables, at a use.
     fn instance_of(&mut self, gs: &[(Param, Kind)]) -> HashMap<ParamId, Ty> {
         gs.iter()
             .map(|(n, k)| {
@@ -1860,7 +1847,6 @@ impl Checker {
             .collect()
     }
 
-    /// Whether `t` has a variable that is not in `except`.
     fn has_open_vars(&self, t: &Ty, except: &HashSet<usize>) -> bool {
         match self.resolve(t) {
             Ty::Var(v) => !except.contains(&v),
@@ -1973,27 +1959,18 @@ impl Checker {
             // Tags are forgotten, never added.
             (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if tb.is_subset(ta) => self.fits(x, y),
             (Ty::Tagged(_, x), _) if !matches!(b, Ty::Tagged(..)) => self.fits(x, &b),
-            // A product forgets members (`A × B <: A`), never gains them.
-            (Ty::Product(xs), Ty::Product(ys)) if self.widen_products => {
-                if has_param(&a) {
-                    return self.unify(&a, &b);
-                }
-                for y in ys {
-                    if !xs.iter().any(|x| self.attempt(|c| c.unify(x, y)).is_ok()) {
-                        return Err(());
-                    }
-                }
-                Ok(())
-            }
+            // A product is written by position. Where a type is expected, its members are
+            // matched to that type's by their types (`A × B <: A`, `A × B <: B × A`), but only
+            // where both sides are closed and the members of each side differ.
             (Ty::Product(xs), _) if self.widen_products && !matches!(b, Ty::Union(_)) => {
-                if has_param(&a) {
-                    return Err(());
+                if self.attempt(|c| c.unify(&a, &b)).is_ok() {
+                    return Ok(());
                 }
-                if xs.iter().any(|x| self.attempt(|c| c.unify(x, &b)).is_ok()) {
-                    Ok(())
-                } else {
-                    Err(())
-                }
+                let ys = match &b {
+                    Ty::Product(ys) => ys.clone(),
+                    other => vec![other.clone()],
+                };
+                self.fit_by_types(xs, &ys)
             }
             (Ty::Fn(pa, ra, ka), Ty::Fn(pb, rb, kb)) if pa.len() == pb.len() && ka.fits(*kb) => {
                 // Inside a function type a product keeps its members: nothing
@@ -2011,39 +1988,68 @@ impl Checker {
         }
     }
 
-    /// The members of a product are told apart by their types: none may be
-    /// written twice, and none may be a type that a type parameter or an
-    /// unknown type could make equal to another (`T × i64`).
-    fn product_members_apart(&mut self, members: &[Ty], span: Span, at_end: bool) {
-        if members.len() < 2 {
-            return;
-        }
-        let members: Vec<Ty> = members.iter().map(|m| self.resolve(m)).collect();
-        if !at_end && members.iter().any(|m| self.has_vars(m)) {
-            // An integer literal's width is known at the end.
-            self.product_checks.push((members, span));
-            return;
-        }
-        for (i, a) in members.iter().enumerate() {
-            if members[..i].contains(a) {
-                let a = self.shown(a);
-                self.error(
-                    format!("{a} is twice in a product; tell them apart with tags"),
-                    span,
-                );
-                return;
+    /// The members `xs` of a product fitted to `ys` by their types: each of `ys` is exactly one
+    /// of `xs`. Only closed members that differ within each side are matched this way; a
+    /// side that is not closed or repeats a type is noted for [`Checker::expect`] to report.
+    /// An integer literal of unknown width is closed: it stands for some integer type, so it
+    /// is matched to the one integer member on the other side, and two integer members
+    /// of which one is a literal are not told apart.
+    fn fit_by_types(&mut self, xs: &[Ty], ys: &[Ty]) -> Result<(), ()> {
+        let xs: Vec<Ty> = xs.iter().map(|t| self.resolve(t)).collect();
+        let ys: Vec<Ty> = ys.iter().map(|t| self.resolve(t)).collect();
+        // A label does not change what its member is made of.
+        fn bare(t: &Ty) -> &Ty {
+            match t {
+                Ty::Tagged(_, under) => bare(under),
+                t => t,
             }
         }
-        for m in &members {
-            if self.has_vars(m) || has_param(m) {
-                let m = self.shown(m);
-                self.error(
-                    format!("a product's member {m} has a type parameter or an unknown type: it may be equal to another member"),
-                    span,
-                );
-                return;
+        fn labels(t: &Ty) -> BTreeSet<String> {
+            match t {
+                Ty::Tagged(tags, under) => tags.iter().cloned().chain(labels(under)).collect(),
+                _ => BTreeSet::new(),
             }
         }
+        let literal = |c: &Self, t: &Ty| matches!(bare(t), Ty::Var(v) if c.ints.contains(v));
+        let integer = |c: &Self, t: &Ty| matches!(bare(t), Ty::Int(_)) || literal(c, t);
+        let same = |c: &Self, x: &Ty, y: &Ty| {
+            x == y
+                || (integer(c, x)
+                    && integer(c, y)
+                    && (literal(c, x) || literal(c, y))
+                    && labels(x) == labels(y))
+        };
+        if xs
+            .iter()
+            .chain(&ys)
+            .any(|t| !literal(&*self, t) && (self.has_vars(t) || has_param(t)))
+        {
+            self.product_note = Some(ProductNote::Open);
+            return Err(());
+        }
+        for side in [&xs, &ys] {
+            for (i, t) in side.iter().enumerate() {
+                if side[..i].iter().any(|u| same(&*self, u, t)) {
+                    self.product_note = Some(ProductNote::Clash(t.clone()));
+                    return Err(());
+                }
+            }
+        }
+        let mut taken = Vec::new();
+        let mut found = Vec::new();
+        for y in &ys {
+            match xs.iter().position(|x| same(&*self, x, y)) {
+                Some(i) if !taken.contains(&i) => {
+                    taken.push(i);
+                    found.push((xs[i].clone(), y.clone()));
+                }
+                _ => return Err(()),
+            }
+        }
+        for (x, y) in found {
+            self.unify(&x, &y)?;
+        }
+        Ok(())
     }
 
     /// The members of the `Pair` `have` that `want` takes, when `want` is
@@ -2092,6 +2098,7 @@ impl Checker {
     }
 
     fn expect(&mut self, a: &Ty, b: &Ty, span: Span, what: &str) {
+        self.product_note = None;
         let widen = std::mem::replace(&mut self.widen_products, true);
         let mut fitted = self.fits(a, b);
         // `T` where `@a T` is expected: the value is wrapped (`T` written as `@a T`), which a
@@ -2123,13 +2130,25 @@ impl Checker {
             }
             self.product_fits.push((span, b.clone()));
         }
+        let note = self.product_note.take();
         if fitted.is_err() {
             let (a, b) = (self.shown(a), self.shown(b));
             let message = match (a.unborrowed(), b.unborrowed()) {
+                (Ty::Product(_), _) if matches!(note, Some(ProductNote::Open)) => format!(
+                    "{what}: {a} and {b} are matched by the types of their members only where neither mentions a type parameter or an unknown type; write the members in the same order, or tell them apart with tags"
+                ),
+                (Ty::Product(_), _) if matches!(note, Some(ProductNote::Clash(_))) => {
+                    let Some(ProductNote::Clash(m)) = &note else {
+                        unreachable!()
+                    };
+                    let m = self.shown(m);
+                    format!(
+                        "{what}: two members of a product have the type {m}, so the members cannot be matched by their types; write the members by position, or tell them apart with tags"
+                    )
+                }
                 (Ty::Fn(pa, _, ka), Ty::Fn(pb, _, kb)) if pa.len() == pb.len() && !ka.fits(*kb) => {
                     format!("{what}: an {ka} closure where {kb} is expected")
                 }
-                // `F(X)` against a type that is not an application.
                 (Ty::App(..), other) | (other, Ty::App(..))
                     if !matches!(other, Ty::App(..) | Ty::Var(_) | Ty::Named(..)) =>
                 {
@@ -2252,10 +2271,6 @@ impl Checker {
                 self.subst[w] = Some(Ty::Int(Width::W64));
             }
         }
-        for (members, span) in std::mem::take(&mut self.product_checks) {
-            let members: Vec<Ty> = members.iter().map(|m| self.resolve(m)).collect();
-            self.product_members_apart(&members, span, true);
-        }
         let mut report = TypeReport::default();
         for (span, ty) in std::mem::take(&mut self.ops) {
             if let Ty::Int(w) = self.resolve(&ty) {
@@ -2312,7 +2327,6 @@ impl Checker {
                 break;
             }
         }
-        // A type parameter's instance fits its bound.
         for (t, bound, span) in std::mem::take(&mut self.bounds) {
             if self.is_view(&t) {
                 self.error("a view cannot be a type argument", span);
@@ -2327,7 +2341,6 @@ impl Checker {
                 );
             }
         }
-        // A type constructor's instance takes and makes what its bound says.
         for (t, arg, result, what, span) in std::mem::take(&mut self.ctor_bounds) {
             let t = self.resolve(&t);
             let made = match &t {
@@ -2344,7 +2357,6 @@ impl Checker {
                 );
             }
         }
-        // A use's constraints hold of the types it was given.
         let mut evidence: HashMap<TermId, Vec<Ev>> = HashMap::new();
         for p in std::mem::take(&mut self.pending) {
             let t = self.resolve(&p.ty);
@@ -2505,9 +2517,6 @@ impl Checker {
         report
     }
 
-    // ---------------------------------------------------------------------
-    // Written types
-
     /// A declared type is written with all its arguments, except where a
     /// type constructor is wanted.
     fn arity(&mut self, name: &str, given: usize, span: Span) {
@@ -2555,7 +2564,6 @@ impl Checker {
                 TermKind::Var(n) if n == "Info" && arguments.len() == 1 => {
                     Ty::Info(Box::new(self.written(&arguments[0], generics)))
                 }
-                // `F(X)` of a type constructor variable.
                 TermKind::Var(n) if generics.contains_key(n) => {
                     if arguments.len() != 1 {
                         self.error(
@@ -2683,9 +2691,6 @@ impl Checker {
             }
         }
     }
-
-    // ---------------------------------------------------------------------
-    // Declarations
 
     fn effect_owner(&self, name: &str, span: Span) -> EffectOwner {
         EffectOwner {
@@ -3080,7 +3085,6 @@ impl Checker {
         }
     }
 
-    /// Whether a `&mut` is in the view.
     fn has_mut_borrow(&self, t: &Ty) -> bool {
         match self.resolve(t) {
             Ty::Borrow(_, true) => true,
@@ -3235,15 +3239,22 @@ impl Checker {
             })
             .collect();
         for s in &prelude.stmts {
-            let names: Vec<&str> = match s {
-                Stmt::Fn(f) => vec![f.name.as_str()],
-                Stmt::Extern { fns, .. } => fns.iter().map(|f| f.name.as_str()).collect(),
-                _ => Vec::new(),
-            };
-            for name in names {
-                if (name.starts_with("Os::") || name.starts_with("Host::")) && !own.contains(name) {
-                    self.host_only.insert(name.to_string());
+            match s {
+                // An extern whose row names a standard effect is how the host
+                // answers that effect (`HOST_EFFECTS`).
+                Stmt::Extern { fns, .. } => {
+                    for f in fns {
+                        if crate::host::is_host_primitive(f) && !own.contains(f.name.as_str()) {
+                            self.host_only.insert(f.name.clone());
+                        }
+                    }
                 }
+                // `module Host` wraps those externs with the permission
+                // check and the waiting.
+                Stmt::Fn(f) if f.name.starts_with("Host::") && !own.contains(f.name.as_str()) => {
+                    self.host_only.insert(f.name.clone());
+                }
+                _ => {}
             }
         }
         for s in &prelude.stmts {
@@ -3389,9 +3400,6 @@ impl Checker {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Statements and expressions
-
     /// Checks a statement, adding what it binds to `env`; its type is the
     /// block's value when it is the last one.
     fn stmt(&mut self, s: &Stmt, env: &mut Vec<Local>) -> Ty {
@@ -3403,10 +3411,14 @@ impl Checker {
                 borrow,
                 borrow_mut,
             } => {
+                // The written type is what the value is checked against (`let n: Nat := 1`).
+                let written = ty
+                    .as_ref()
+                    .map(|ty| self.written(ty, &self.type_params.clone()));
+                self.result_hint = written.clone();
                 let v = self.infer(value, env);
-                let mut t = match ty {
-                    Some(ty) => {
-                        let t = self.written(ty, &self.type_params.clone());
+                let mut t = match written {
+                    Some(t) => {
                         self.expect(&v, &t, value.span, &format!("`{name}`"));
                         t
                     }
@@ -3867,7 +3879,6 @@ impl Checker {
                 }
             }
             TermKind::Field { base, name } => {
-                // `C::m`: a method of the class `C`.
                 if let TermKind::Var(c) = &*base.kind
                     && !env.iter().any(|l| &l.name == c)
                     && self.classes.contains_key(c)
@@ -3921,11 +3932,17 @@ impl Checker {
             }
             // `#(a, b)`: the product of its members' types. A member that is a product
             // gives its members and one of type `Unit` none: `#(#(a, b), c)` is an
-            // `A × B × C`, `#(a, #())` an `A`. The members are told apart once their
-            // types are known.
+            // `A × B × C`, `#(a, #())` an `A`.
             TermKind::Tuple(members) => {
+                // Where a product of as many members is expected, each member is checked
+                // against the member in its place (`#(1, 2)` where `Nat × Nat` is expected).
+                let hints = match hint.as_ref().map(|h| self.resolve(h)) {
+                    Some(Ty::Product(hs)) if hs.len() == members.len() => Some(hs),
+                    _ => None,
+                };
                 let mut types = Vec::new();
-                for m in members {
+                for (i, m) in members.iter().enumerate() {
+                    self.result_hint = hints.as_ref().map(|hs| hs[i].clone());
                     let t = self.infer(m, env);
                     match self.resolve(&t) {
                         Ty::Product(inner) => types.extend(inner),
@@ -3933,7 +3950,6 @@ impl Checker {
                         t => types.push(t),
                     }
                 }
-                self.product_members_apart(&types, span, false);
                 match types.len() {
                     0 => Ty::Unit,
                     1 => types.pop().expect("one"),
@@ -3945,7 +3961,10 @@ impl Checker {
                 for m in members {
                     self.infer(m, env);
                 }
-                self.error("`×` builds a type, not a value: write the product as `#(…)`", span);
+                self.error(
+                    "`×` builds a type, not a value: write the product as `#(…)`",
+                    span,
+                );
                 self.fresh()
             }
             // `(e: T)`: `e` fits `T`, which may take fewer members of a
@@ -4123,7 +4142,9 @@ impl Checker {
     fn lambda(&mut self, lam: &SurfaceTerm, borrows: &[Option<bool>], env: &[Local]) -> Ty {
         let hint = self.hint.take();
         let TermKind::Lam {
-            params, body, types,
+            params,
+            body,
+            types,
         } = &*lam.kind
         else {
             return self.fresh();
@@ -4195,7 +4216,6 @@ impl Checker {
         kind
     }
 
-    /// `&mut p` is allowed: `p` is a `var`, a `&mut` borrow, or a field of one.
     fn mutable_place(&self, p: &SurfaceTerm, env: &[Local]) -> bool {
         match &*p.kind {
             TermKind::Var(n) => {
@@ -4208,7 +4228,6 @@ impl Checker {
         }
     }
 
-    /// `clone(&x)`: a copy of a value whose type has one.
     fn clone_of(&mut self, arguments: &[SurfaceTerm], env: &mut Vec<Local>, span: Span) -> Ty {
         let [arg] = arguments else {
             self.error("`clone` takes one borrow, `clone(&x)`", span);
@@ -4237,16 +4256,17 @@ impl Checker {
     ) -> Ty {
         // `Pair { fst: a, snd: b }` written by its name is a value of the inductive `Pair`,
         // not the product `#(a, b)`: a member that is a `Pair` or `Unit` stays one member.
-        if is_pair_name(name)
-            && fields.len() == 2
-            && fields[0].0 == "fst"
-            && fields[1].0 == "snd"
-        {
+        if is_pair_name(name) && fields.len() == 2 && fields[0].0 == "fst" && fields[1].0 == "snd" {
             let a = self.infer(&fields[0].1, env);
             let b = self.infer(&fields[1].1, env);
             let (a, b) = (self.resolve(&a), self.resolve(&b));
             let args = vec![a, b];
-            let d = match self.datas.ctors.get(name).or_else(|| self.datas.ctors.get("Pair")) {
+            let d = match self
+                .datas
+                .ctors
+                .get(name)
+                .or_else(|| self.datas.ctors.get("Pair"))
+            {
                 Some((d, _)) => d.clone(),
                 None => "Pair".to_string(),
             };
@@ -4477,11 +4497,10 @@ impl Checker {
                 self.ctor_pattern(name, args, t, borrowed, env, span, at);
                 return;
             }
-            // `#(p, q)` on a product: each member by its label, or else in the
-            // product's one order.
+            // `#(p, q)` on a product: each member by its label, or else by
+            // position.
             Pattern::Record { name, .. }
-                if is_pair_name(name)
-                    && !matches!(resolved.unborrowed(), Ty::Named(..)) =>
+                if is_pair_name(name) && !matches!(resolved.unborrowed(), Ty::Named(..)) =>
             {
                 self.pair_pattern(p, t, borrowed, env, span, at);
                 return;
@@ -4554,9 +4573,10 @@ impl Checker {
             Some(tags) => {
                 let mut order = Vec::new();
                 for tag in &tags {
-                    match members.iter().position(
-                        |m| matches!(m, Ty::Tagged(ts, _) if ts.contains(*tag)),
-                    ) {
+                    match members
+                        .iter()
+                        .position(|m| matches!(m, Ty::Tagged(ts, _) if ts.contains(*tag)))
+                    {
                         Some(i) if !order.contains(&i) => order.push(i),
                         _ => {
                             let shown = self.shown(&target);
@@ -4682,7 +4702,6 @@ impl Checker {
         self.match_arms(scrutinee, arms, env, span, hint).0
     }
 
-    /// `match_expr`, with the type of each arm's body.
     fn match_arms(
         &mut self,
         scrutinee: &SurfaceTerm,
@@ -4828,7 +4847,6 @@ impl Checker {
             q[0] = strip(&q[0]);
             return self.covers_within(&tys, &rows, &q);
         }
-        // A product column: one column per member, in the product's order.
         if let Ty::Product(ms) = t {
             let tys = [ms.clone(), rest.to_vec()].concat();
             let spread = |r: &[Pattern]| {
@@ -4850,7 +4868,6 @@ impl Checker {
             matches!(p, Pattern::Wild)
                 || matches!(p, Pattern::Bind(n) if !self.datas.nullary(n, Some(t)))
         };
-        // The rows whose first pattern takes `p`'s values, the column dropped.
         let taking = |p: &Pattern| -> Vec<Vec<Pattern>> {
             rows.iter()
                 .filter(|r| wild(&r[0]) || &r[0] == p)
@@ -4861,7 +4878,6 @@ impl Checker {
             Ty::Named(d, args) => self.datas.decls.get(d).map(|data| (d, args, data)),
             _ => None,
         };
-        // The rows for constructor `c` of the data, its fields in place of the column.
         let specialize = |d: &String, args: &[Ty], c: usize| -> (Vec<Ty>, Vec<Vec<Pattern>>) {
             let fields = self.datas.fields(d, c, args);
             let this = |n: &str| {
@@ -4962,7 +4978,7 @@ impl Checker {
     }
 
     /// The patterns, one per member of the product `ms`, that `p` puts on
-    /// them: `#(…)` by labels or in the product's order, any other that takes
+    /// them: `#(…)` by labels or by position, any other that takes
     /// every value on each.
     fn product_columns(&self, ms: &[Ty], p: &Pattern) -> Option<Vec<Pattern>> {
         match p {
@@ -4977,7 +4993,6 @@ impl Checker {
         }
     }
 
-    /// [`Self::product_columns`] of the members `pats` of `#(…)`.
     fn tuple_columns(&self, ms: &[Ty], pats: Vec<Pattern>) -> Option<Vec<Pattern>> {
         if pats.len() != ms.len() {
             return None;
@@ -5049,8 +5064,6 @@ impl Checker {
             matches!(p, Pattern::Wild)
                 || matches!(p, Pattern::Bind(n) if !self.datas.nullary(n, Some(t)))
         };
-        // The rows whose first pattern takes every value, with that
-        // column dropped.
         let defaults = |rows: &[Vec<Pattern>]| -> Vec<Vec<Pattern>> {
             rows.iter()
                 .filter(|r| wild(&r[0]))
@@ -5440,7 +5453,6 @@ impl Checker {
     }
 }
 
-/// Whether declaration `from` holds `target` through its fields.
 fn reaches(datas: &Datas, from: &str, target: &str, seen: &mut HashSet<String>) -> bool {
     let Some(d) = datas.decls.get(from) else {
         return false;
@@ -5472,7 +5484,6 @@ fn named_in(t: &Ty, out: &mut Vec<String>) {
     }
 }
 
-/// Whether `t` holds a type parameter.
 fn has_param(t: &Ty) -> bool {
     match t {
         Ty::Param(..) => true,
@@ -5668,42 +5679,34 @@ fn tuple_head_as_pair(r: &[Pattern]) -> Vec<Pattern> {
     r
 }
 
-/// Whether `n` names the prelude's `Pair`.
 fn is_pair_name(n: &str) -> bool {
     n == "Pair" || n.ends_with("::Pair")
 }
 
-/// The product of `ts`: associative, commutative, idempotent; `()` is its
-/// unit.
+/// Why [`Checker::fit_by_types`] did not match the members of two products.
+#[derive(Debug, Clone)]
+enum ProductNote {
+    /// A side mentions a type parameter or an unknown type.
+    Open,
+    /// A side has two members of one type.
+    Clash(Ty),
+}
+
+/// The product of `ts`: its members in the order written; a member that is a product
+/// gives its members and `()` none.
 fn product(ts: Vec<Ty>) -> Ty {
-    let mut members = BTreeSet::new();
+    let mut members = Vec::new();
     for t in ts {
         match t {
             Ty::Product(inner) => members.extend(inner),
             Ty::Unit => {}
-            t => {
-                members.insert(t);
-            }
+            t => members.push(t),
         }
     }
-    let mut members: Vec<Ty> = members.into_iter().collect();
-    members.sort_by_cached_key(|m| (member_key(m), stable_type_key(m)));
     match members.len() {
         0 => Ty::Unit,
         1 => members.pop().unwrap(),
         _ => Ty::Product(members),
-    }
-}
-
-/// Where a member of a product stands, in the one order the kernel keeps the
-/// members in (`Pair` nested to the right).
-fn member_key(t: &Ty) -> (u8, String) {
-    match t {
-        Ty::Tagged(tags, _) => {
-            let label = tags.iter().cloned().collect::<Vec<_>>().join(" ");
-            crate::surface::print::product_member_key(Some(&label), "")
-        }
-        t => crate::surface::print::product_member_key(None, &t.to_string()),
     }
 }
 
@@ -5916,10 +5919,6 @@ mod tests {
         assert!(c.unify(&poly("a", param("a")), &linear).is_err());
     }
 
-
-
-
-
     #[test]
     fn local_self_uses_record_declaration_arguments_and_evidence() {
         let source = r#"fn outer<A: Shared>(value: A): A where DecEq(A) {
@@ -5931,7 +5930,8 @@ mod tests {
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))"#.to_string();
+perform show("answer", outer("text"))"#
+            .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         let own = &report.local_schemes["repeat"].generics[0].0;
@@ -5960,7 +5960,8 @@ fn outer<A: Shared>(value: A): Text where Render(A) {
   }
   repeat(value, false)
 }
-perform show("answer", outer("text"))"#.to_string();
+perform show("answer", outer("text"))"#
+            .to_string();
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -5987,7 +5988,8 @@ perform show("answer", outer("text"))"#.to_string();
     fn nominal_owners_are_sealed_to_successful_exact_source() {
         let source = r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
-let value: Reader := Read("original")"#.to_string();
+let value: Reader := Read("original")"#
+            .to_string();
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let mut report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -6020,7 +6022,8 @@ let value: Reader := Read("original")"#.to_string();
   fn inner<A: Shared>(other: A): Unit {
     let local: A := value
   }
-}"#.to_string();
+}"#
+        .to_string();
         let failed = crate::surface::parse_program_as_written(&source).unwrap();
         let mut report = check_program(&failed);
         assert!(!report.errors.is_empty());
@@ -6033,7 +6036,8 @@ let value: Reader := Read("original")"#.to_string();
         let source = r#"enum Reader { Read(Text) }
 enum Other { Read(Text) }
 let first: Reader := Read("original")
-let second: Other := Read("original")"#.to_string();
+let second: Other := Read("original")"#
+            .to_string();
         let mut program = crate::surface::parse_program_as_written(&source).unwrap();
         let Stmt::Let { value, .. } = &program.stmts[2] else {
             panic!("first constructor")
@@ -6064,7 +6068,8 @@ fn outer(): Reader ! {} {
   let value := make("ok")
   value
 }
-"#.to_string();
+"#
+        .to_string();
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -6096,7 +6101,8 @@ fn outer(): Reader ! {} {
   perform show("number", inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#.to_string();
+perform show("answer", outer("text"))"#
+            .to_string();
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let Stmt::Fn(outer) = &program.stmts[0] else {
             panic!("outer function")
@@ -6139,7 +6145,8 @@ perform show("answer", outer("text"))"#.to_string();
   perform show("number", inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#.to_string();
+perform show("answer", outer("text"))"#
+            .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         let outer = &report.schemes["outer"].generics[0].0;
@@ -6165,7 +6172,8 @@ perform show("answer", outer("text"))"#.to_string();
   let local: A := value
   local
 }
-perform show("answer", keep("text"))"#.to_string();
+perform show("answer", keep("text"))"#
+            .to_string();
         let report = check_types(&source).unwrap();
         for (name, scheme) in &prelude_report().schemes {
             if let Some(ordinary) = report.schemes.get(name) {
@@ -6180,7 +6188,8 @@ perform show("answer", keep("text"))"#.to_string();
 let result := handle { perform identity(7) } with {
   ∀ A. identity<A>(value), k => k(value)
 }
-perform show("answer", result)"#.to_string();
+perform show("answer", result)"#
+            .to_string();
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let Stmt::Effect(effect) = &program.stmts[0] else {
             panic!("effect declaration")
@@ -6207,7 +6216,8 @@ perform show("answer", result)"#.to_string();
         // Nothing fixes the element of `vec_new()` either, which is its own error.
         let name = "unresolved-owned-capture-kind-needs-annotation";
         let source = crate::types::case_inputs::source("types/scoped-generics.eure", name);
-        let expected = crate::types::case_inputs::expected("types/scoped-generics.eure", name, "types");
+        let expected =
+            crate::types::case_inputs::expected("types/scoped-generics.eure", name, "types");
         assert_eq!(
             errors(&source),
             [
@@ -6217,7 +6227,7 @@ perform show("answer", result)"#.to_string();
         );
     }
 
-    const VEC_NEW_UNDETERMINED: &str = "the type `A` of `vec_new` is not determined here: give the value a type, as in `let x: T = ...`";
+    const VEC_NEW_UNDETERMINED: &str = "the type `A` of `Vec::new` is not determined here: give the value a type, as in `let x: T = ...`";
 
     #[test]
     fn fixed_capture_kinds_keep_shared_and_annotated_affine_uses() {
@@ -6240,7 +6250,8 @@ perform show("answer", result)"#.to_string();
     #[test]
     fn capture_kind_ranges_only_follow_ownership_dependencies() {
         let source = r#"struct Phantom(A: Type) { callback: (A) -> i64 }
-linear struct LinearBox(A: Type) { item: A }"#.to_string();
+linear struct LinearBox(A: Type) { item: A }"#
+            .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         assert!(report.datas.decls["Phantom"].holds.is_empty());
@@ -6261,7 +6272,8 @@ fn outer(token: Token): Unit {
   let value := Vec::new()
   fn consume() { Pair { fst: token, snd: value } }
   let result := consume()
-}"#.to_string();
+}"#
+        .to_string();
         // The linear capture fixes the kind: no capture is reported, only
         // the element that nothing determines.
         assert_eq!(errors(&source), [VEC_NEW_UNDETERMINED]);
@@ -6312,7 +6324,8 @@ fn outer(token: Token): Unit {
                 .into_iter()
                 .map(|e| e.message)
                 .collect::<Vec<_>>();
-            let expected = crate::types::case_inputs::expected("types/scoped-generics.eure", name, "lin");
+            let expected =
+                crate::types::case_inputs::expected("types/scoped-generics.eure", name, "lin");
             if expected == "ok" {
                 assert!(found.is_empty(), "{name}: {found:?}");
             } else {
@@ -6320,7 +6333,6 @@ fn outer(token: Token): Unit {
             }
         }
     }
-
 
     #[test]
     fn type_fact_output_does_not_depend_on_occurrence_allocation() {
@@ -6333,7 +6345,8 @@ fn outer(token: Token): Unit {
   perform show("number", inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#.to_string();
+perform show("answer", outer("text"))"#
+            .to_string();
         let first = check_types(&source).unwrap();
         assert!(first.errors.is_empty(), "{:?}", first.errors);
         let noise = r#"class Render(A: Shared) { fn render(value: A): Text }
@@ -6347,7 +6360,8 @@ fn outer<A: Shared>(value: A): Text where Render(A) {
   inner(value)
 }
 perform show("first", outer(7))
-perform show("second", outer("text"))"#.to_string();
+perform show("second", outer("text"))"#
+            .to_string();
         let _ = check_types(&noise).unwrap();
         let second = check_types(&source).unwrap();
         assert!(second.errors.is_empty(), "{:?}", second.errors);
@@ -6362,7 +6376,6 @@ perform show("second", outer("text"))"#.to_string();
         };
         assert_eq!(ordered(&first), ordered(&second));
     }
-
 
     #[test]
     fn literal_finalization_rejects_unresolved_and_non_integer_types() {
@@ -6380,16 +6393,6 @@ perform show("second", outer("text"))"#.to_string();
         }
     }
 
-
-
-
-
-
-
-
-
-
-
     #[test]
     fn the_prelude_checks() {
         let e: Vec<String> = check_program(prelude())
@@ -6402,11 +6405,13 @@ perform show("second", outer("text"))"#.to_string();
 
     #[test]
     fn kinds_follow_the_fields() {
-        let report = check_types(r#"affine struct F {}
+        let report = check_types(
+            r#"affine struct F {}
 struct W { f: F }
 struct Q { t: Text }
 enum L { Nil, Cons(i64, L) }
-struct P { x: i64 }"#)
+struct P { x: i64 }"#,
+        )
         .unwrap();
         let k = |n: &str| report.kind(&Ty::Named(n.into(), vec![]));
         assert_eq!(k("F"), Kind::Affine);
@@ -6422,7 +6427,6 @@ struct P { x: i64 }"#)
     }
 }
 
-/// Whether a written type mentions a borrow.
 fn term_has_borrow(t: &SurfaceTerm) -> bool {
     match &*t.kind {
         TermKind::Borrow { .. } => true,
@@ -6442,29 +6446,33 @@ fn term_has_borrow(t: &SurfaceTerm) -> bool {
 }
 
 #[cfg(test)]
-
 #[cfg(test)]
 /// The inputs these tests read, copied from the shared case files.
 #[allow(dead_code)]
 mod case_inputs {
     pub fn source_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once") => r#"fn outer(): Unit {
+            ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once") => {
+                r#"fn outer(): Unit {
   let text := "text"
   let value := Buf::of(&text)
   fn consume(marker: i64): Text { Text::of(value) }
   perform show("first", consume(1))
   perform show("second", consume(2))
 }
-outer()"#,
-        ("types/scoped-generics.eure", "named-owned-affine-capture-single-use") => r#"fn outer(): Text {
+outer()"#
+            }
+            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use") => {
+                r#"fn outer(): Text {
   let text := "text"
   let value := Buf::of(&text)
   fn consume(marker: i64): Text { Text::of(value) }
   consume(1)
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-is-used-once") => r#"fn outer(): Unit {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "generic-named-owned-affine-capture-is-used-once") => {
+                r#"fn outer(): Unit {
   let text := "text"
   let value := Buf::of(&text)
   fn consume<A: Shared>(marker: A): Text {
@@ -6474,8 +6482,10 @@ perform show("answer", outer())"#,
   perform show("first", consume(1))
   perform show("second", consume("again"))
 }
-outer()"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use") => r#"fn outer(): Text {
+outer()"#
+            }
+            ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use") => {
+                r#"fn outer(): Text {
   let text := "text"
   let value := Buf::of(&text)
   fn consume<A: Shared>(marker: A): Text {
@@ -6484,12 +6494,15 @@ outer()"#,
   }
   consume(1)
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "unresolved-owned-capture-kind-needs-annotation") => r#"fn outer(): Unit {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "unresolved-owned-capture-kind-needs-annotation") => {
+                r#"fn outer(): Unit {
   let value := Vec::new()
   fn consume() { value }
-}"#,
-        _ => panic!("no copied input {file}/{name}"),
+}"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]
@@ -6498,16 +6511,46 @@ perform show("answer", outer())"#,
     }
     pub fn expected_static(file: &str, name: &str, input: &str) -> &'static str {
         match (file, name, input) {
-        ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once", "types") => r#"ok"#,
-        ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once", "lin") => r#"error: consume is used after move"#,
-        ("types/scoped-generics.eure", "named-owned-affine-capture-single-use", "types") => r#"ok"#,
-        ("types/scoped-generics.eure", "named-owned-affine-capture-single-use", "lin") => r#"ok"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-is-used-once", "types") => r#"ok"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-is-used-once", "lin") => r#"error: consume is used after move"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use", "types") => r#"ok"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use", "lin") => r#"ok"#,
-        ("types/scoped-generics.eure", "unresolved-owned-capture-kind-needs-annotation", "types") => r#"error: the kind of capture `value` is not determined; add a type annotation to the captured binding"#,
-        _ => panic!("no copied input {file}/{name}"),
+            ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once", "types") => {
+                r#"ok"#
+            }
+            ("types/scoped-generics.eure", "named-owned-affine-capture-is-used-once", "lin") => {
+                r#"error: consume is used after move"#
+            }
+            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use", "types") => {
+                r#"ok"#
+            }
+            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use", "lin") => {
+                r#"ok"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "generic-named-owned-affine-capture-is-used-once",
+                "types",
+            ) => r#"ok"#,
+            (
+                "types/scoped-generics.eure",
+                "generic-named-owned-affine-capture-is-used-once",
+                "lin",
+            ) => r#"error: consume is used after move"#,
+            (
+                "types/scoped-generics.eure",
+                "generic-named-owned-affine-capture-single-use",
+                "types",
+            ) => r#"ok"#,
+            (
+                "types/scoped-generics.eure",
+                "generic-named-owned-affine-capture-single-use",
+                "lin",
+            ) => r#"ok"#,
+            (
+                "types/scoped-generics.eure",
+                "unresolved-owned-capture-kind-needs-annotation",
+                "types",
+            ) => {
+                r#"error: the kind of capture `value` is not determined; add a type annotation to the captured binding"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

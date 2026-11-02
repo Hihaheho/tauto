@@ -8,7 +8,10 @@
 // its name, and a local of the caller with that name is renamed so that it
 // does not take it. The order in which numbers are handed out is the order of
 // the Rust walk, step for step.
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::prelude::Affine
 
 pub(open) struct RsBinder { plain: Text, marks: Text, unique: Text, id: u64 }
 
@@ -19,7 +22,6 @@ pub(open) struct RsState {
   globals: Vec(RsGlobal)
   // The numbers of the binders a name of an expansion would have taken.
   captured: Vec(u64)
-  // The numbers of the binders to rename.
   rename: Vec(u64)
   // The number of binders met, the number of names given.
   nums: Vec(u64)
@@ -27,11 +29,8 @@ pub(open) struct RsState {
   sep: Text
 }
 
-// ---------------------------------------------------------------- names
-
 pub(open) struct RsSplit { plain: Text, marks: Text }
 
-// The name and the scopes of a marked name.
 pub fn rs_split(sep: Text, name: Text): RsSplit {
   match text_find(name, sep, 0) {
     Some(i) => RsSplit {
@@ -78,7 +77,6 @@ pub fn rs_has_text(xs: List(Text), x: Text): Bool {
   }
 }
 
-// A binder: the name to write for it.
 pub fn rs_bind(&mut st: RsState, name: Text): Text {
   let s := rs_split(st.sep, name)
   let id := rs_next(&mut st, 0)
@@ -161,7 +159,6 @@ pub fn rs_reference_one(&mut st: RsState, plain: Text, marks: Text): Text {
   }
 }
 
-// What a name written in the walk stands for.
 pub fn rs_reference(&mut st: RsState, name: Text): Text {
   let s := rs_split(st.sep, name)
   match text_find(s.plain, ".", 0) {
@@ -180,8 +177,6 @@ pub fn rs_mark(&st: RsState): u64 {
 pub fn rs_pop(&mut st: RsState, mark: u64): Unit {
   Vec::truncate(&mut st.env, mark)
 }
-
-// ---------------------------------------------------------------- globals
 
 // A declaration an expansion made takes a name of its own.
 pub fn rs_declare(&mut st: RsState, name: Text): Text {
@@ -296,8 +291,6 @@ pub fn rs_declare_theorem(&mut st: RsState, d: SurfaceTheorem): SurfaceTheorem {
   }
 }
 
-// ---------------------------------------------------------------- walk
-
 pub fn rs_top(&mut st: RsState, xs: List(SurfaceStmt)): List(SurfaceStmt) {
   let declared := rs_collect(&mut st, xs)
   rs_stmt_list(&mut st, declared)
@@ -403,10 +396,10 @@ pub fn rs_params(
       let bound := rs_bind(&mut st, n)
       let tail := rs_params(&mut st, rest, more)
       Pair {
-        fst: Cons(bound, (tail: List(Text))),
+        fst: Cons(bound, tail.fst),
         snd: match ty {
-          None => (tail: List(Option(SurfaceTerm)))
-          Some(t) => Cons(t, (tail: List(Option(SurfaceTerm))))
+          None => tail.snd
+          Some(t) => Cons(t, tail.snd)
         }
       }
     }
@@ -424,9 +417,9 @@ pub fn rs_fn(&mut st: RsState, f: SurfaceFn): SurfaceFn {
     name: name,
     generics: f.generics,
     bounds: f.bounds,
-    params: (ps: List(Text)),
+    params: ps.fst,
     borrows: f.borrows,
-    param_types: (ps: List(Option(SurfaceTerm))),
+    param_types: ps.snd,
     result: result,
     effects: f.effects,
     wheres: f.wheres,
@@ -559,8 +552,6 @@ pub fn rs_inductive(&mut st: RsState, d: SurfaceInductive): SurfaceInductive {
     end: d.end
   }
 }
-
-// ---------------------------------------------------------------- patterns
 
 pub fn rs_patterns(&mut st: RsState, xs: List(SurfacePattern)): List(SurfacePattern) {
   match xs {
@@ -698,8 +689,6 @@ pub fn rs_handlers(&mut st: RsState, xs: List(SurfaceHandler)): List(SurfaceHand
   }
 }
 
-// ---------------------------------------------------------------- terms
-
 pub fn rs_pi_params(&mut st: RsState, xs: List(SurfaceParam)): List(SurfaceParam) {
   match xs {
     Nil => Nil
@@ -820,8 +809,6 @@ pub fn rs_kind(&mut st: RsState, k: SurfaceKind): SurfaceKind {
     other => other
   }
 }
-
-// ---------------------------------------------------------------- entry
 
 pub fn rs_state(ctors: List(Text), sep: Text, rename: Vec(u64)): RsState {
   var nums: Vec(u64) := Vec::new()

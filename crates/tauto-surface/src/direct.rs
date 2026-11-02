@@ -51,7 +51,6 @@ pub fn is_tail_form(body: &SurfaceTerm, k: &str) -> bool {
     }
 }
 
-/// Whether the name `name` occurs in `t`.
 pub fn mentions(t: &SurfaceTerm, name: &str) -> bool {
     let mut found = false;
     values(t, &mut |n| {

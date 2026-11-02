@@ -1,5 +1,8 @@
 import "../../unicode/src/unicode.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::Base
+import std::TextOps
 
 // `tauto fmt` in the proof language (`docs/design/self-host.md`): lays a file out
 // again without changing a single token. It follows
@@ -14,12 +17,10 @@ import std::Text
 // per line, and so on inward. A line that holds a comment inside brackets, or
 // a block whose newlines matter inside brackets, is left as written.
 
-// The widest a line is laid out flat.
 pub fn fmt_width(): Nat {
   100
 }
 
-// A value, or what went wrong.
 pub(open) inductive FmtOr(A: Type): Type {
   FmtOk(value: A): FmtOr(A)
   FmtErr(message: Text): FmtOr(A)
@@ -61,8 +62,6 @@ pub(open) inductive FmtToken: Type {
 pub fn fmt_is(t: FmtToken, k: FmtKind): Bool {
   fmt_kind_number(t.kind) == fmt_kind_number(k)
 }
-
-// ---- the tokens ----------------------------------------------------------------
 
 pub fn fmt_is_word(classes: UnicodeClasses, c: Nat): Bool {
   c == 95 || unicode_is_alphanumeric(classes, c)
@@ -115,9 +114,9 @@ pub fn fmt_string_end(source: Text, at: Nat): Option(Nat) {
 // The end of a `plaintext` string whose contents start at byte `at`: just
 // after the backtick, if one comes before the end of the line.
 pub fn fmt_plaintext_end(source: Text, at: Nat): Option(Nat) {
-  match Text::find(source, "`", at): Option(Nat) {
+  match text_find(source, "`", at): Option(Nat) {
     None => None
-    Some(tick) => match Text::find(source, text_newline(), at): Option(Nat) {
+    Some(tick) => match text_find(source, text_newline(), at): Option(Nat) {
       None => Some(tick + 1)
       Some(newline) => match tick < newline: Option(Nat) {
         true => Some(tick + 1)
@@ -171,7 +170,7 @@ pub fn fmt_inline_end_in(k: Nat, source: Text, at: Nat): Option(Nat) {
 }
 
 pub fn fmt_literal_close(source: Text, r#from: Nat, close: Text): Option(Nat) {
-  match Text::find(source, close, r#from): Option(Nat) {
+  match text_find(source, close, r#from): Option(Nat) {
     None => None
     Some(at) => Some(at + Text::len(close))
   }
@@ -368,7 +367,7 @@ pub fn fmt_text_in(name: Text, words: List(Text)): Bool {
 // A raw name that is not needed is written without its `r#`: one whose word is not reserved. A reserved
 // word is a name only with `r#`, wherever it stands.
 pub fn fmt_unraw_token(t: FmtToken): FmtToken {
-  match Text::starts_with(t.lexeme, "r#", 0) && Text::len(t.lexeme) > 2: FmtToken {
+  match text_starts_with(t.lexeme, "r#", 0) && Text::len(t.lexeme) > 2: FmtToken {
     false => t
     true => match fmt_unraw_needed(t): FmtToken {
       true => t
@@ -395,7 +394,6 @@ pub fn fmt_unraw_in(tokens: List(FmtToken)): List(FmtToken) {
   }
 }
 
-// The step at byte `at`, where the character `c` is `length` bytes long.
 pub fn fmt_step(
   source: Text,
   classes: UnicodeClasses,
@@ -412,26 +410,26 @@ pub fn fmt_step(
       false => match c == 47 && fmt_byte_is(source, at + 1, 47): FmtStep {
         true => FmtCut(
           FmtComment,
-          match Text::find(source, text_newline(), at): Nat {
+          match text_find(source, text_newline(), at): Nat {
             None => Text::len(source)
             Some(newline) => newline
           }
         )
         false => match c == 47 && fmt_byte_is(source, at + 1, 42): FmtStep {
-          true => match Text::find(source, "*/", at + 2): FmtStep {
+          true => match text_find(source, "*/", at + 2): FmtStep {
             None => FmtStop("an unclosed block comment")
             Some(close) => FmtCut(FmtComment, close + 2)
           }
           false => match c == 34: FmtStep {
             true => fmt_cut_at(FmtWord, fmt_string_end(source, at + 1), "an unclosed string")
             false => match c == 39: FmtStep {
-              true => match Text::find(source, "'", at + 1): FmtStep {
+              true => match text_find(source, "'", at + 1): FmtStep {
                 None => FmtStop("an unclosed string")
                 Some(close) => FmtCut(FmtWord, close + 1)
               }
               false => match fmt_literal_end(source, classes, at, c): FmtStep {
                 Some(end) => FmtCut(FmtWord, end)
-                None => match Text::starts_with(source, "plaintext`", at): FmtStep {
+                None => match text_starts_with(source, "plaintext`", at): FmtStep {
                   true => fmt_cut_at(
                     FmtWord,
                     fmt_plaintext_end(source, at + 10),
@@ -546,8 +544,6 @@ pub fn fmt_lex(source: Text, classes: UnicodeClasses): FmtOr(List(FmtToken)) {
   }
 }
 
-// ---- the tree of a line --------------------------------------------------------
-
 // A line as a tree: tokens and bracketed groups of comma-separated items.
 mutual {
   pub(open) inductive FmtNode: Type {
@@ -617,12 +613,10 @@ pub fn fmt_frame_add(f: FmtFrame, node: FmtNode, braces: Nat): FmtFrame {
   FmtFrame { open: f.open, done: f.done, nodes: FmtNodesOf(node, f.nodes), braces: braces }
 }
 
-// What a line's tree is, and the tokens after it.
 pub(open) inductive FmtParsed: Type {
   Mk(nodes: FmtNodes, rest: List(FmtToken)): FmtParsed
 }
 
-// A node read: into the innermost open group, or the line.
 pub fn fmt_frames_add(frames: List(FmtFrame), node: FmtNode): List(FmtFrame) {
   match frames: List(FmtFrame) {
     Nil => Nil
@@ -658,7 +652,6 @@ pub fn fmt_close_all(frames: List(FmtFrame), pending: Option(FmtNode), top: FmtN
   }
 }
 
-// The braces after the token `t` in a group with `braces` open.
 pub fn fmt_braces_after(t: FmtToken, braces: Nat): Nat {
   match t.lexeme == "{": Nat {
     true => braces + 1
@@ -784,9 +777,6 @@ pub fn fmt_tree(tokens: List(FmtToken)): FmtParsed {
   fmt_tree_in(tokens, FmtNoNodes, Nil)
 }
 
-// ---- one line, flat ------------------------------------------------------------
-
-// The text between two tokens laid out on one line.
 pub fn fmt_gap(prev: Option(Text), t: FmtToken): Text {
   match prev: Text {
     None => ""
@@ -809,7 +799,6 @@ pub fn fmt_gap(prev: Option(Text), t: FmtToken): Text {
   }
 }
 
-// Text written so far (last first), and the last token's text.
 pub(open) inductive FmtFlat: Type {
   Mk(prev: Option(Text), parts: List(Text)): FmtFlat
 }
@@ -865,8 +854,6 @@ pub fn fmt_node_text(node: FmtNode): Text {
   fmt_parts_text(fmt_flat_node(node, FmtFlat { prev: None, parts: Nil }).parts)
 }
 
-// ---- one line, broken where it does not fit ------------------------------------
-
 pub fn fmt_last_line(lines: List(Text)): Text {
   match lines: Text {
     Nil => ""
@@ -879,7 +866,7 @@ pub fn fmt_last_line(lines: List(Text)): Text {
 
 // The column after `text` is written at column `col`.
 pub fn fmt_advance(col: Nat, text: Text): Nat {
-  match Text::find(text, text_newline(), 0): Nat {
+  match text_find(text, text_newline(), 0): Nat {
     None => col + text_char_count(text)
     Some(at) => text_char_count(fmt_last_line(text_lines(text)))
   }
@@ -896,7 +883,6 @@ pub fn fmt_first_token(node: FmtNode): FmtToken {
   }
 }
 
-// The width of the flat text of the nodes after this one in the line.
 pub fn fmt_rest_width(rest: FmtNodes): Nat {
   text_char_count(fmt_flat_text(rest))
 }
@@ -916,7 +902,6 @@ pub fn fmt_least_width(nodes: FmtNodes, f: FmtFlat, tail: Nat): Nat {
   }
 }
 
-// Whether `t` is the `>` of a `=>` (two tokens, `=` and `>`).
 pub fn fmt_is_arrow_end(t: FmtToken, prev: Option(Text)): Bool {
   match prev: Bool {
     None => false
@@ -966,8 +951,6 @@ pub fn fmt_after_width(node: FmtNode, rest: FmtNodes, tail: Nat): Nat {
   }
 }
 
-// The layout so far: the column, the last token's text and the text (last
-// first).
 pub(open) inductive FmtOut: Type {
   Mk(col: Nat, prev: Option(Text), parts: List(Text)): FmtOut
 }
@@ -1011,7 +994,6 @@ pub fn fmt_arrow_follows(nodes: FmtNodes, prev: Option(Text)): Bool {
   }
 }
 
-// A group written flat where the layout is.
 pub fn fmt_place_flat(open: FmtToken, node: FmtNode, close: FmtToken, out: FmtOut): FmtOut {
   FmtOut {
     col: fmt_advance(out.col, Text::concat_all(Cons(fmt_gap(out.prev, open), Cons(fmt_node_text(node), Nil)))),
@@ -1118,8 +1100,6 @@ mutual {
   }
 }
 
-// ---- the lines of a file -------------------------------------------------------
-
 // A line cut from the tokens: its tokens, the tokens after it, the brackets
 // still open after it (the last opened first) and whether it is left as
 // written.
@@ -1155,7 +1135,6 @@ pub fn fmt_last_is_brace(stack: List(Text)): Bool {
   }
 }
 
-// The stack after the token `t`.
 pub fn fmt_stacked(t: FmtToken, stack: List(Text)): FmtOr(List(Text)) {
   match fmt_is(t, FmtOpen): FmtOr(List(Text)) {
     true => FmtOk(Cons(t.lexeme, stack))
@@ -1179,7 +1158,6 @@ pub fn fmt_is_kind_word(t: FmtToken): Bool {
   )
 }
 
-// Whether the line, written backwards, ends in `=>` (two tokens, `=` and `>`).
 pub fn fmt_ends_arrow(rev: List(FmtToken)): Bool {
   match rev: Bool {
     Nil => false
@@ -1190,7 +1168,6 @@ pub fn fmt_ends_arrow(rev: List(FmtToken)): Bool {
   }
 }
 
-// Whether the line, written backwards, holds `=> kind name`.
 pub fn fmt_has_list(rev: List(FmtToken)): Bool {
   match rev: Bool {
     Nil => false
@@ -1403,7 +1380,6 @@ pub fn fmt_write_line(
   }
 }
 
-// What the lines give: the text (last first) and the brackets still open.
 pub(open) inductive FmtWritten: Type {
   Mk(parts: List(Text), stack: List(Text)): FmtWritten
 }
@@ -1462,7 +1438,6 @@ pub fn fmt_same_texts(a: List(FmtToken), b: List(FmtToken)): Bool {
   }
 }
 
-// `formatted` when its tokens read the same, else an error.
 pub fn fmt_kept(same: Bool, formatted: Text): FmtOr(Text) {
   match same: FmtOr(Text) {
     true => FmtOk(formatted)
@@ -1470,7 +1445,6 @@ pub fn fmt_kept(same: Bool, formatted: Text): FmtOr(Text) {
   }
 }
 
-// `formatted`, lexed again as `again`, checked against `tokens`.
 pub fn fmt_checked_from(
   again: FmtOr(List(FmtToken)),
   tokens: List(FmtToken),
@@ -1482,7 +1456,6 @@ pub fn fmt_checked_from(
   }
 }
 
-// The text laid out, checked against the tokens it came from.
 pub fn fmt_checked(classes: UnicodeClasses, tokens: List(FmtToken), formatted: Text): FmtOr(Text) {
   fmt_checked_from(fmt_lex(formatted, classes), tokens, formatted)
 }

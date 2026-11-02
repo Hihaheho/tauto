@@ -1,5 +1,3 @@
-//! `match` and patterns.
-
 use tauto::surface::{MatchArm as SurfaceArm, Pattern, SurfaceTerm, TermKind};
 use tauto::types::Ty as TTy;
 
@@ -99,7 +97,6 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// Whether the constructors listed are all of the type's.
     fn covers_all(&self, ty: &TTy, covered: &[String]) -> bool {
         let TTy::Named(n, _) = ty else {
             return false;
@@ -209,7 +206,6 @@ impl<'a> Lowerer<'a> {
         if let Some(flat) = tauto::surface::qualify::flatten_pair_pattern(p) {
             return self.pattern_written(cx, &flat, ty, at, by_ref, written);
         }
-        // `#(p, q)` on a product: its members.
         if let Some(pat) = self.product_pattern(cx, p, ty, at, by_ref)? {
             return Ok(pat);
         }
@@ -334,7 +330,7 @@ impl<'a> Lowerer<'a> {
     /// (or the type argument it takes) writes a row for is called at the
     /// tier of that row.
     /// `#(p, q, …)` on a value of a product type, as the checker reads it:
-    /// each member by its label, or else in the product's one order. `None`
+    /// each member by its label, or else by position. `None`
     /// for another pattern or type, which is matched as it is written.
     fn product_pattern(
         &mut self,

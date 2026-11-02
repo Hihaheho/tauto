@@ -34,7 +34,6 @@ pub fn set_search_dirs(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     SEARCH.with(|s| std::mem::replace(&mut *s.borrow_mut(), dirs))
 }
 
-/// Runs `f` with these search directories.
 pub fn with_search_dirs<T>(dirs: Vec<PathBuf>, f: impl FnOnce() -> T) -> T {
     struct Restore(Vec<PathBuf>);
 
@@ -50,7 +49,6 @@ pub fn with_search_dirs<T>(dirs: Vec<PathBuf>, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// The table path for this grammar hash directly under `dir`.
 pub fn table_path(dir: &Path, sha: &str) -> PathBuf {
     dir.join(".tauto-syntax").join(format!("{sha}.tables"))
 }
@@ -66,7 +64,6 @@ fn find_tables(sha: &str) -> Option<PathBuf> {
     })
 }
 
-/// The grammar of a syntax declaration, as the tables' key hashes it.
 pub fn grammar_sha(grammar: &str) -> String {
     sha256_hex(grammar.as_bytes())
 }
@@ -75,14 +72,20 @@ thread_local! {
     /// Tables already read, by the hash of their grammar: what a run's
     /// `syn_parse` reads its grammar's tables from.
     static READ: RefCell<HashMap<String, Rc<Tables>>> = RefCell::new(HashMap::new());
+    /// How many times tables were looked for and not found.
+    static MISSED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// The tables of a grammar, or why they cannot be had.
+/// How many times this thread looked for tables and did not find them. Tables once found are
+/// kept for the thread (by the hash of their grammar); tables not found are looked for again.
+pub fn tables_missed() -> u64 {
+    MISSED.with(std::cell::Cell::get)
+}
+
 pub fn load_tables(grammar: &str) -> Result<Rc<Tables>, String> {
     tables_of(&grammar_sha(grammar))
 }
 
-/// The tables of the grammar with this hash.
 pub fn tables_of(sha: &str) -> Result<Rc<Tables>, String> {
     tables_or_why(sha).map_err(|m| m.to_string())
 }
@@ -91,7 +94,7 @@ fn tables_or_why(sha: &str) -> Result<Rc<Tables>, Message> {
     if let Some(t) = READ.with(|r| r.borrow().get(sha).cloned()) {
         return Ok(t);
     }
-    let tables = Rc::new(read_tables(sha)?);
+    let tables = Rc::new(read_tables(sha).inspect_err(|_| MISSED.with(|m| m.set(m.get() + 1)))?);
     READ.with(|r| r.borrow_mut().insert(sha.to_string(), tables.clone()));
     Ok(tables)
 }
@@ -142,17 +145,18 @@ fn listed_names(name: &str, stmts: &[Stmt]) -> Vec<(String, String)> {
     made
 }
 
-/// A declared syntax: its tables.
+#[derive(Clone)]
 pub struct Syntax {
     pub tables: Rc<Tables>,
+    /// The file that declares the syntax: the names its literals' values are
+    /// built with are read as that file reads them.
+    pub file: Option<usize>,
 }
 
 /// What a function registered with `syntax s … with fmt f, tokens g` is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// Lays out the text of a literal of the syntax.
     Fmt,
-    /// Says what an editor colours each part of the text as.
     Tokens,
 }
 
@@ -175,7 +179,6 @@ pub struct Registration {
 }
 
 impl Syntax {
-    /// The name of the type the start symbol makes, for a syntax called `name`.
     pub fn start_type(&self, name: &str) -> Option<String> {
         let ty = self
             .tables
@@ -210,16 +213,15 @@ pub struct LiteralUse {
     pub lit: SyntaxLit,
 }
 
-/// The syntaxes declared so far, and what went wrong reading them.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Syntaxes {
     pub map: HashMap<String, Syntax>,
     pub errors: Vec<(String, Span)>,
-    /// Edits that answer an error, by where the error is.
     pub fixes: Vec<(Span, crate::surface::Fix)>,
-    /// Every literal read, in the order they were.
     pub uses: RefCell<Vec<LiteralUse>>,
-    /// The functions registered with `with`, in the order they were written.
+    /// The file whose statements are being read, when the files are known: a syntax it
+    /// declares keeps it ([`Syntax::file`]).
+    pub file: Option<usize>,
     pub registrations: Vec<Registration>,
 }
 
@@ -246,7 +248,6 @@ impl Syntaxes {
         out
     }
 
-    /// Replaces the syntax literals of a statement by the values they are.
     pub fn literals(&mut self, s: &mut Stmt) {
         crate::surface::walk::stmt(s, &mut |t| self.term(t));
     }
@@ -309,7 +310,13 @@ impl Syntaxes {
                 .push((span, crate::generated::fix(generates, &made)));
         }
         self.register(name, uses);
-        self.map.insert(name.to_string(), Syntax { tables });
+        self.map.insert(
+            name.to_string(),
+            Syntax {
+                tables,
+                file: self.file,
+            },
+        );
     }
 
     fn register(&mut self, name: &str, uses: &[crate::surface::SyntaxUse]) {
@@ -354,7 +361,32 @@ impl Syntaxes {
         };
         let lit = (**lit).clone();
         match self.literal(&lit, t.span) {
-            Ok(new) => t.kind = Arc::new(new),
+            Ok(new) => {
+                t.kind = Arc::new(new);
+                // Every name the value is built with (`SynToken`, `SynSpan`, the syntax's
+                // types) is written by the expansion, and read as the file of the syntax
+                // reads it: the file the literal stands in need not import their declarations.
+                let origin = lit
+                    .name
+                    .as_deref()
+                    .and_then(|n| self.map.get(n))
+                    .and_then(|s| s.file);
+                if origin.is_some() {
+                    let at = t.span;
+                    crate::surface::walk::term(t, &mut |n| {
+                        if n.span == at
+                            && matches!(
+                                &*n.kind,
+                                TermKind::Var(_)
+                                    | TermKind::Record { .. }
+                                    | TermKind::Perform { .. }
+                            )
+                        {
+                            n.set_origin(origin);
+                        }
+                    });
+                }
+            }
             // The literal stays, so the checkers go on without a second error.
             Err((message, at)) => self.errors.push((message, at)),
         }
@@ -447,7 +479,6 @@ fn describe(tables: &Tables, syntax: &str, lit: &SyntaxLit, e: &ParseError) -> (
     }
 }
 
-/// What `syn_parse` made of a text.
 pub enum SynOutcome {
     Parsed(Rc<Tables>, Ast),
     Failed {
@@ -457,7 +488,6 @@ pub enum SynOutcome {
     },
 }
 
-/// Reads `text` with the tables of the grammar `sha`.
 pub fn parse_text(name: &str, sha: &str, text: &str) -> SynOutcome {
     let failed = |message: String, at: u32, expected: Vec<String>| SynOutcome::Failed {
         message,
@@ -660,7 +690,6 @@ fn parse_fn(syntax: &str, tables: &Tables, span: Span) -> Option<Stmt> {
     }))
 }
 
-/// The `struct` and `enum` declarations a syntax makes.
 fn type_decls(syntax: &str, tables: &Tables, span: Span) -> Vec<Stmt> {
     let ty = |t: &FieldTy| field_ty(syntax, t, span);
     let span_field = (Some("span".to_string()), SurfaceTerm::var("SynSpan", span));
@@ -780,7 +809,6 @@ fn field_ty(syntax: &str, t: &FieldTy, span: Span) -> SurfaceTerm {
     }
 }
 
-/// The name of the `inductive` a syntax's type is made into.
 fn inductive_name(syntax: &str, ty: &str) -> String {
     format!("{syntax}::{ty}__I")
 }
@@ -798,7 +826,6 @@ fn inductive_field_ty(syntax: &str, t: &FieldTy) -> Result<String, Message> {
     })
 }
 
-/// The converter of a field's value to the field's inductive form.
 fn inductive_convert(syntax: &str, t: &FieldTy, value: &str) -> String {
     match t {
         FieldTy::Token => format!("{value}.text"),
@@ -951,7 +978,6 @@ fn inductive_decls(syntax: &str, tables: &Tables, span: Span) -> Result<Vec<Stmt
     Ok(stmts)
 }
 
-/// `source` with each name `syntax.Name` written `syntax__Name`.
 fn underscore_module(source: &str, syntax: &str) -> String {
     let prefix = format!("{syntax}::");
     let mut out = String::new();
@@ -970,7 +996,6 @@ fn underscore_module(source: &str, syntax: &str) -> String {
     out
 }
 
-/// The names `syntax__Name` of `s` as the `syntax.Name` they stand for.
 fn under_module(s: &mut Stmt, syntax: &str) {
     let flat = format!("{syntax}__");
     let rename = |n: &mut String| {

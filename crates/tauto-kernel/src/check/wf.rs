@@ -99,7 +99,6 @@ impl Kernel {
         out
     }
 
-    /// `f@step`, `f` and `f::eq` for `f`.
     fn wf_expand(&mut self, f: &FnDecl) -> Result<Vec<Stmt>, Diagnostic> {
         let sp = f.span;
         let fail = |m: Message| Err(Diagnostic::new(m, Some(sp)));
@@ -177,7 +176,6 @@ impl Kernel {
         };
 
         let y = primed(&x);
-        // The values at the predecessors, as `f@step` takes them.
         let hypothesis = lt(&var(&y, sp), &var(&x, sp));
         let ih_ty = pi(Some(&y), a.clone(), pi(None, hypothesis, tail(self, &y)));
 
@@ -244,7 +242,6 @@ impl Kernel {
             body,
         };
 
-        // `f` itself.
         let motive = lam(&[primed(&x)], tail(self, &primed(&x)));
         let relation = app(var("wf_rel_lt", sp), vec![a.clone(), w.clone()]);
         let proof_wf = app(var("wf_rel_wf", sp), vec![a.clone(), w.clone()]);
@@ -282,7 +279,6 @@ impl Kernel {
             body: value,
         };
 
-        // The unfolding equation.
         let qs: Vec<String> = rest.iter().map(|(p, _)| primed(p)).collect();
         let recur = |ys: &str| -> T {
             let mut args = generics.clone();

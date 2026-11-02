@@ -24,14 +24,12 @@ pub fn set_writer(write: fn(&Message) -> String) {
     let _ = WRITER.set(write);
 }
 
-/// A message: the id of its text and the values of its variables.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Message {
     pub id: Cow<'static, str>,
     pub args: Vec<(Cow<'static, str>, Value)>,
 }
 
-/// The value of a variable `$name` of a message.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Value {
     Text(String),
@@ -48,18 +46,15 @@ impl Message {
         }
     }
 
-    /// This message with `$name` set to `value`.
     pub fn arg(mut self, name: impl Into<Cow<'static, str>>, value: impl Into<Value>) -> Message {
         self.args.push((name.into(), value.into()));
         self
     }
 
-    /// A message that is already text, shown as it is.
     pub fn text(text: impl Into<String>) -> Message {
         Message::new(TEXT).arg("text", Value::Text(text.into()))
     }
 
-    /// The text of a message made by [`Message::text`].
     pub fn as_text(&self) -> Option<&str> {
         match (self.id.as_ref(), self.args.as_slice()) {
             (TEXT, [(_, Value::Text(t))]) => Some(t),
@@ -67,7 +62,6 @@ impl Message {
         }
     }
 
-    /// The value of `$name`.
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.args.iter().find(|(n, _)| n == name).map(|(_, v)| v)
     }

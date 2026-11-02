@@ -68,7 +68,6 @@ pub fn dump_lin(errors: &[LinError]) -> String {
     out
 }
 
-/// The use check of a program whose types check.
 pub fn check(program: &Program, types: &TypeReport, rows: &RowReport) -> Vec<LinError> {
     let mut c = Checker {
         closure_consumes: false,
@@ -133,7 +132,6 @@ impl Class {
 enum Mode {
     /// A `let`, a parameter, a pattern's name, `k`.
     Owned,
-    /// A `var`'s cell.
     Var,
     /// A `var` a closure captured: it may be borrowed and assigned, not
     /// moved out of.
@@ -192,32 +190,24 @@ struct HandleCtx {
     return_uses: Vec<usize>,
 }
 
-/// A function's body (or a closure's) being walked.
 #[derive(Debug, Clone, Default)]
 struct Frame {
     base: usize,
     handles: Vec<HandleCtx>,
-    /// `budget` bodies around the walk.
     budgets: usize,
     loops: usize,
-    /// Row variables bounded `<=1`.
     bounded: Vec<String>,
-    /// Row variables bounded `direct`.
     direct_bounded: Vec<String>,
-    /// The function returns a borrow (`-> &A`).
     returns_borrow: bool,
 }
 
-/// How a term's value is taken.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Pos {
     /// Moved: an argument, a field, an effect's argument, a `:=`.
     Move,
     /// Bound by `let` or called in place: a closure that borrows may be.
     Let,
-    /// A function's result.
     Result,
-    /// The value is dropped (a statement's).
     Drop,
 }
 
@@ -244,7 +234,6 @@ struct Checker<'a> {
     bindings: Vec<Binding>,
     frames: Vec<Frame>,
     errors: Vec<LinError>,
-    /// The current path has returned.
     dead: bool,
     /// Inside a handler arm: the bindings below this index are outside the
     /// handle, and the arm may capture only duplicable ones.
@@ -281,7 +270,6 @@ impl<'a> Checker<'a> {
             .rposition(|b| b.name == name && !b.held)
     }
 
-    /// The class and mode a name of type `ty` gets.
     fn class_of(&self, ty: Option<&Ty>) -> (Class, Option<bool>) {
         match ty {
             None => (Class::Dup, None),
@@ -380,7 +368,6 @@ impl<'a> Checker<'a> {
             .map(|(by, _)| self.bindings[*by].name.clone())
     }
 
-    /// Moves binding `i`.
     fn take(&mut self, i: usize, span: Span) {
         if let Some((floor, op)) = self.arm_direct.clone()
             && i < floor
@@ -446,9 +433,6 @@ impl<'a> Checker<'a> {
             self.error(message, span);
         }
     }
-
-    // ---------------------------------------------------------------------
-    // Control-flow linearity
 
     /// `row` may be performed here: the bindings live across it must suit
     /// its quantities.
@@ -527,9 +511,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Functions and blocks
-
     fn function(&mut self, f: &FnDecl) {
         let bounded = f
             .generics
@@ -571,7 +552,6 @@ impl<'a> Checker<'a> {
         self.arm_direct = outer_direct;
     }
 
-    /// The statements of a block, in a scope of their own.
     fn block(&mut self, stmts: &[Stmt], root: bool) {
         let mark = self.bindings.len();
         let last = stmts.len().saturating_sub(1);
@@ -596,8 +576,11 @@ impl<'a> Checker<'a> {
                 if *borrow {
                     let lent = self.call_lending(value);
                     let i = self.push(name, site(value), false);
-                    if self.bindings[i].class != Class::Dup {
-                        for (root, m) in lent {
+                    // A copy of what a shared borrow points at is no borrow, but
+                    // a `&mut` writes through to its owner whatever it points at.
+                    let copy = self.bindings[i].class == Class::Dup;
+                    for (root, m) in lent {
+                        if !copy || m {
                             self.bindings[root].frozen.push((i, m));
                         }
                     }
@@ -693,9 +676,6 @@ impl<'a> Checker<'a> {
         self.dead = true;
     }
 
-    // ---------------------------------------------------------------------
-    // Paths
-
     fn snapshot(&self) -> Option<Vec<State>> {
         if self.dead {
             None
@@ -744,9 +724,6 @@ impl<'a> Checker<'a> {
             self.bindings[i].state = state;
         }
     }
-
-    // ---------------------------------------------------------------------
-    // Expressions
 
     /// Walks `t`, whose value is taken as `pos` says. A closure that
     /// borrows returns what it borrows, for a `let` to record.
@@ -940,14 +917,12 @@ impl<'a> Checker<'a> {
         arguments: &[SurfaceTerm],
         mut lent: Option<&mut Vec<(usize, bool)>>,
     ) {
-        // Which parameters borrow.
         let mut borrows: Vec<Option<bool>> = vec![None; arguments.len()];
         let mut local_callee = None;
         if let TermKind::Var(name) = &*function.kind {
             match self.find(name) {
                 Some(i) => local_callee = Some(i),
                 None if name == "clone" => borrows = vec![Some(false); arguments.len()],
-                // `==` reads its operands.
                 None if matches!(name.as_str(), "==" | "!=") => {
                     borrows = vec![Some(false); arguments.len()]
                 }
@@ -1839,7 +1814,6 @@ fn frozen_text(name: &str, by: &str) -> String {
     }
 }
 
-/// `x`, `x.f.g`: the root name and the fields.
 fn place(t: &SurfaceTerm) -> Option<(String, Vec<String>)> {
     match &*t.kind {
         TermKind::Var(n) => Some((n.clone(), vec![n.clone()])),

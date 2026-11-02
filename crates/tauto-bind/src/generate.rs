@@ -106,8 +106,6 @@ pub fn generate(krate: &Crate, cfg: &Config, config_file: &str) -> Output {
 }
 
 impl<'a> Gen<'a> {
-    // ---- the public paths of the crate -------------------------------------
-
     fn index_public(&mut self) {
         let root = self.krate.root;
         let name = self
@@ -170,8 +168,6 @@ impl<'a> Gen<'a> {
             }
         }
     }
-
-    // ---- the run -------------------------------------------------------------
 
     fn run(mut self, config_file: &str) -> Output {
         let mut root = Module::default();
@@ -256,8 +252,6 @@ impl<'a> Gen<'a> {
             lifetimes,
         });
     }
-
-    // ---- functions -----------------------------------------------------------
 
     fn free_function(&mut self, path: &str, f: &Function, root: &mut Module) {
         let segments: Vec<&str> = path.split("::").collect();
@@ -711,8 +705,6 @@ impl<'a> Gen<'a> {
             _ => Err("a type that has no tauto form".into()),
         }
     }
-
-    // ---- the files -----------------------------------------------------------
 
     fn render(
         &self,

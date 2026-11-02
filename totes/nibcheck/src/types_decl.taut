@@ -1,5 +1,12 @@
 import "checker.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::Text
+import "datas.taut"
+import "rows.taut"
+import "ty.taut"
 
 // Written types and declarations (`written`, `declare_effect`, `declare_data`,
 // `finish_datas`, `signature`, `instantiate` of `types.rs`), in the proof
@@ -44,17 +51,14 @@ pub fn ck_written_bad(&mut c: Checker, span: TySpan): Ty {
   ck_fresh(&mut c)
 }
 
-// What an application written as a type is.
 pub(open) inductive WrittenApp: Type {
   WrittenUnit: WrittenApp
   WrittenInfo: WrittenApp
   WrittenNamed(name: Text): WrittenApp
-  // `F(X)` of a type constructor variable.
   WrittenGeneric(name: Text): WrittenApp
   WrittenBad: WrittenApp
 }
 
-// `Result(E)(A)`: an application of an application.
 pub fn written_nested(function: SurfaceTerm): Bool {
   match function.kind: Bool {
     SkApp(inner, first) => true
@@ -131,7 +135,7 @@ pub fn pi_binders(ps: List(SurfaceParam)): Pair(List(Pair(Text, Kind)), List(Sur
       None => Pair { fst: Nil, snd: ps }
       Some(b) => {
         let more := pi_binders(rest)
-        Pair { fst: Cons(b, (more: List(Pair(Text, Kind)))), snd: (more: List(SurfaceParam)) }
+        Pair { fst: Cons(b, more.fst), snd: more.snd }
       }
     }
   }
@@ -154,7 +158,6 @@ pub fn ty_poly_of(bs: List(Pair(Text, Kind)), fun: Ty): Ty {
   }
 }
 
-// The kind written on a function type.
 pub fn ck_written_fn_kind(w: Ty, &mut c: Checker, fk: Text, span: TySpan): Ty {
   match w: Ty {
     TyFn(ps, r, k) => TyFn(ps, r, match kind_parse(fk): Kind {
@@ -233,10 +236,10 @@ mutual {
       }
       SkPi(params, result, effects) => {
         let split := pi_binders(params)
-        let inner := binders_map((split: List(Pair(Text, Kind))), generics)
-        let ps := ck_written_params(params, &mut c, inner, list_len((split: List(Pair(Text, Kind)))))
+        let inner := binders_map(split.fst, generics)
+        let ps := ck_written_params(params, &mut c, inner, list_len(split.fst))
         let r := ck_written_in(result, &mut c, inner)
-        ty_poly_of((split: List(Pair(Text, Kind))), TyFn(ps, r, KindShared))
+        ty_poly_of(split.fst, TyFn(ps, r, KindShared))
       }
       SkFnKind(fk, ty) => ck_written_fn_kind(ck_written_in(ty, &mut c, generics), &mut c, fk, span)
       SkBorrow(mutable, x) => {
@@ -308,8 +311,6 @@ mutual {
 pub fn ck_written(&mut c: Checker, t: SurfaceTerm, generics: Ordmap(Text, Ty)): Ty {
   ck_written_in(t, &mut c, generics)
 }
-
-// ----- declarations -----
 
 pub fn ck_named_generics(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
   match gs: Ordmap(Text, Ty) {
@@ -408,7 +409,6 @@ pub fn ck_param_generics(gs: List(Text), kind: Kind, map: Ordmap(Text, Ty)): Ord
   }
 }
 
-// Whether a written type mentions a borrow.
 mutual {
   pub fn term_has_borrow(t: SurfaceTerm): Bool {
     match t: Bool {
@@ -616,7 +616,7 @@ pub fn ck_declared_fields(
   match fs: Option(Text) {
     Nil => None
     Cons(f, rest) => {
-      let k := datas_kind(MkDatas, ty_substitute(f.ty, least))
+      let k := datas_kind(datas, ty_substitute(f.ty, least))
       if not(kind_fits(k, declared)) || (kind_eq(declared, KindCopy) && not(kind_eq(k, KindCopy))) {
         let field := match f.name: Text {
           Some(n) => n
@@ -626,7 +626,7 @@ pub fn ck_declared_fields(
           cat5("declared ", kind_name(declared), " but field ", field, cat2(" is ", kind_name(k)))
         )
       } else {
-        ck_declared_fields(rest, MkDatas, cname, least, declared, i + 1)
+        ck_declared_fields(rest, datas, cname, least, declared, i + 1)
       }
     }
   }
@@ -642,19 +642,18 @@ pub fn ck_declared_ctors(
     Nil => None
     Cons(k, rest) => match ck_declared_fields(
       k.fields,
-      MkDatas,
+      datas,
       k.name,
       least,
       declared,
       0
     ): Option(Text) {
       Some(m) => Some(m)
-      None => ck_declared_ctors(rest, MkDatas, least, declared)
+      None => ck_declared_ctors(rest, datas, least, declared)
     }
   }
 }
 
-// The message for a declaration whose written kind is looser than it is.
 pub fn ck_declared_message(d: SurfaceData, data: Data, declared: Kind): Option(Text) {
   if data.recursive && kind_rank(declared) < kind_rank(KindShared) {
     Some(
@@ -716,8 +715,6 @@ pub fn ck_finish_datas(&mut c: Checker, program: List(SurfaceStmt)): Unit {
   ck_finish_stmts(program, &mut c)
 }
 
-// ----- views -----
-
 // `Option`, `Result` and `Pair` hold what they are given: a view if one of
 // the arguments is.
 pub fn ck_view_container(n: Text): Bool {
@@ -763,7 +760,6 @@ pub fn ck_is_view(&c: Checker, t: Ty): Bool {
   ck_is_view_in(c.steps, &c, t)
 }
 
-// Whether a `&mut` is in the view.
 mutual {
   pub fn ck_any_mut_borrow_in(k: Nat, &c: Checker, ts: List(Ty)): Bool {
     match k: Bool {
@@ -839,8 +835,6 @@ mutual {
 pub fn ck_view_value(&c: Checker, t: Ty): Option(Ty) {
   ck_view_value_in(c.steps, &c, t)
 }
-
-// ----- signatures -----
 
 pub fn ck_bound_of(bounds: List(Option(Text)), i: Nat): Option(Kind) {
   match nth_item(bounds, i): Option(Kind) {
@@ -1029,7 +1023,6 @@ pub fn preds_have(ps: List(Pair(Text, Text)), r#class: Text, g: Text): Bool {
   }
 }
 
-// The generic a constraint names, when it is one of the function's.
 pub fn constraint_generic(t: SurfaceTerm, gs: List(Pair(Text, Kind))): Option(Text) {
   match t.kind: Option(Text) {
     SkVar(g) => if generics_have(gs, g) { Some(g) } else { None }
@@ -1066,7 +1059,6 @@ pub fn ck_where_pred(
   }
 }
 
-// The `where` of a function: its constraints, newest first.
 pub fn ck_where_preds(
   ws: List(SurfaceConstraint),
   &mut c: Checker,

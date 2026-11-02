@@ -34,10 +34,10 @@ Rust 側が計算した正値性、再帰引数、除去子の型などは入力
 `totes/kernel` はそれらを自分で検査・生成する。Rust 側の期待する判定は別の出力で比較する。
 
 ```sh
-cargo run --locked -p selfhost-harness --bin export-kernel -- meta/KernelSafe.taut > target/kernel-input.txt
+cargo run --locked --manifest-path tools/selfhost-harness/Cargo.toml --bin export-kernel -- meta/KernelSafe.taut > target/kernel-input.txt
 cargo run --locked -p tauto-cli -- build --release totes/kernel
 target/tauto/target/release/kernel target/kernel-input.txt
-cargo test --locked -p selfhost-harness --test kernel
+cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test kernel
 ```
 
 各ファイルは空の宣言環境で始まり、1行につき1操作を再生する。書き出しには前提となる

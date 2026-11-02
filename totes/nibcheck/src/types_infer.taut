@@ -1,5 +1,15 @@
 import "types_match.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "freevars.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "../../text/src/text.taut"
 
 // Statements and expressions (`stmt`, `infer`, `lambda`, `record`, `operator`,
 // `match_expr`, `handle` of `types.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
@@ -250,7 +260,6 @@ pub fn ck_top_level_only(&mut c: Checker, message: Text, start: Nat, end: Nat): 
   TyUnit
 }
 
-// The statements that check no expression.
 pub fn ck_stmt_other(&mut c: Checker, s: SurfaceStmt): Ty {
   match s: Ty {
     StStruct(d) => ck_top_level_only(&mut c, "declare a type at the top level", d.start, d.end)
@@ -301,8 +310,6 @@ pub fn block_value(s: SurfaceStmt, rest: List(SurfaceStmt), t: Ty): Ty {
     Cons(r, more) => TyUnit
   }
 }
-
-// ----- names -----
 
 pub fn field_tys(fs: List(DataField)): List(Ty) {
   match fs: List(Ty) {
@@ -367,7 +374,7 @@ pub fn ck_lookup(&mut c: Checker, name: Text, env: List(Local), span: TySpan): T
         TyFn(Cons(i, Cons(i, Nil)), i, KindShared)
       } else {
         match datas_ctor(c.datas, name): Ty {
-          Some(dc) => ck_constructor(&mut c, (dc: Text), (dc: Nat), span, name)
+          Some(dc) => ck_constructor(&mut c, dc.fst, dc.snd, span, name)
           None => {
             ck_error(&mut c, cat2(name, " is not defined"), span)
             ck_fresh(&mut c)
@@ -377,8 +384,6 @@ pub fn ck_lookup(&mut c: Checker, name: Text, env: List(Local), span: TySpan): T
     }
   }
 }
-
-// ----- expressions that check no other -----
 
 pub fn ck_nat_literal(&mut c: Checker, n: Text, span: TySpan): Ty {
   let t := ck_fresh_int(&mut c)
@@ -460,7 +465,6 @@ pub fn ck_field_find(fs: List(DataField), name: Text): Option(Ty) {
   }
 }
 
-// The field `name` of a value of type `b`.
 pub fn ck_field_of(&mut c: Checker, term: SurfaceTerm, b: Ty, name: Text): Ty {
   let resolved := ck_resolve(&c, b)
   let borrowed := ty_is_borrow(resolved)
@@ -496,7 +500,6 @@ pub fn ck_budget_answer(&mut c: Checker, t: Ty, span: TySpan): Unit {
   }
 }
 
-// Each argument's type against its parameter's.
 pub fn ck_expect_args(tys: List(Ty), &mut c: Checker, ps: List(Ty), args: List(SurfaceTerm)): Unit {
   match tys: Unit {
     Nil => #()
@@ -513,9 +516,6 @@ pub fn ck_expect_args(tys: List(Ty), &mut c: Checker, ps: List(Ty), args: List(S
   }
 }
 
-// ----- products -----
-
-// What a borrow borrows.
 pub fn ty_borrowed_of(t: Ty): Option(Ty) {
   match t: Option(Ty) {
     TyBorrow(x, mutable) => Some(x)
@@ -537,7 +537,6 @@ pub fn ck_product_member(&mut c: Checker, t: Ty, m: SurfaceTerm): Ty {
   }
 }
 
-// The members so far with `t` added: a product's members, none for `()`.
 pub fn ck_product_add(t: Ty, tys: List(Ty)): List(Ty) {
   match t: List(Ty) {
     TyProduct(inner) => List::append(tys, inner)
@@ -571,94 +570,6 @@ pub fn ty_list_has(ts: List(Ty), t: Ty): Bool {
   }
 }
 
-// The first member that an earlier one equals.
-pub fn ty_first_twice(ts: List(Ty), seen: List(Ty)): Option(Ty) {
-  match ts: Option(Ty) {
-    Nil => None
-    Cons(x, rest) => match ty_list_has(seen, x): Option(Ty) {
-      true => Some(x)
-      false => ty_first_twice(rest, Cons(x, seen))
-    }
-  }
-}
-
-pub fn ty_two_or_more(ts: List(Ty)): Bool {
-  match ts: Bool {
-    Nil => false
-    Cons(x, rest) => match rest: Bool {
-      Nil => false
-      Cons(y, more) => true
-    }
-  }
-}
-
-pub fn ck_any_vars(&c: Checker, ts: List(Ty)): Bool {
-  match ts: Bool {
-    Nil => false
-    Cons(x, rest) => ck_has_vars(&c, x) || ck_any_vars(&c, rest)
-  }
-}
-
-// The first member a type parameter or an unknown type could make equal to
-// another.
-pub fn ck_first_open(&c: Checker, ts: List(Ty)): Option(Ty) {
-  match ts: Option(Ty) {
-    Nil => None
-    Cons(x, rest) => match ck_has_vars(&c, x) || ty_has_param(x): Option(Ty) {
-      true => Some(x)
-      false => ck_first_open(&c, rest)
-    }
-  }
-}
-
-pub fn ck_product_open(&mut c: Checker, ms: List(Ty), span: TySpan): Unit {
-  match ck_first_open(&c, ms): Unit {
-    Some(m) => ck_error(
-      &mut c,
-      cat3(
-        "a product's member ",
-        ty_show(ck_shown(&c, m)),
-        " has a type parameter or an unknown type: it may be equal to another member"
-      ),
-      span
-    )
-    None => #()
-  }
-}
-
-pub fn ck_product_known(&mut c: Checker, ms: List(Ty), span: TySpan): Unit {
-  match ty_first_twice(ms, Nil): Unit {
-    Some(a) => ck_error(
-      &mut c,
-      cat2(ty_show(ck_shown(&c, a)), " is twice in a product; tell them apart with tags"),
-      span
-    )
-    None => ck_product_open(&mut c, ms, span)
-  }
-}
-
-// The members of a product are told apart by their types: none may be
-// written twice, and none may be a type that a type parameter or an unknown
-// type could make equal to another (`T × i64`). An integer literal's width is
-// known at the end, so a product with unknown types waits for it.
-pub fn ck_record_product_check(&mut c: Checker, ms: List(Ty), span: TySpan): Unit {
-  set_to(
-    &mut c.product_checks,
-    Cons(TyProductCheck { members: ms, start: span.start, end: span.end }, c.product_checks)
-  )
-}
-
-pub fn ck_product_apart(&mut c: Checker, members: List(Ty), span: TySpan, at_end: Bool): Unit {
-  if ty_two_or_more(members) {
-    if not(at_end) && ck_any_vars(&c, ty_resolve_list_in(c.steps, c.subst, members)) {
-      ck_record_product_check(&mut c, ty_resolve_list_in(c.steps, c.subst, members), span)
-    } else {
-      ck_product_known(&mut c, ty_resolve_list_in(c.steps, c.subst, members), span)
-    }
-  }
-}
-
-// `a × b × …`, given the types of the members.
 pub fn ck_product_of(
   &mut c: Checker,
   types: List(Ty),
@@ -666,7 +577,6 @@ pub fn ck_product_of(
   span: TySpan
 ): Ty {
   let tys := ck_product_members(types, members, &mut c, Nil)
-  ck_product_apart(&mut c, tys, span, false)
   ty_product(tys)
 }
 
@@ -676,7 +586,6 @@ pub fn ck_probe_unify(c: Checker, a: Ty, b: Ty): Bool {
   ck_unify(&mut d, a, b)
 }
 
-// The members that `want` unifies with.
 pub fn ck_project_fits(c: Checker, members: List(Ty), want: Ty): List(Ty) {
   match members: List(Ty) {
     Nil => Nil
@@ -711,7 +620,6 @@ pub fn ck_project_find(&mut c: Checker, members: List(Ty), want: Ty): Option(Ty)
   }
 }
 
-// The members of a type read as a product.
 pub fn ty_product_members(t: Ty): List(Ty) {
   match t: List(Ty) {
     TyProduct(xs) => xs
@@ -724,7 +632,6 @@ pub fn ty_product_members(t: Ty): List(Ty) {
 pub fn ck_project_of(&mut c: Checker, b: Ty, want: Ty, span: TySpan): Ty {
   let resolved := ck_resolve(&c, b)
   let members := ty_product_members(ty_unborrowed(resolved))
-  ck_product_apart(&mut c, members, span, false)
   match ck_project_find(&mut c, members, want): Ty {
     Some(t) => if ty_is_borrow(resolved) && not(kind_dup(ck_kind(&c, t))) {
       TyBorrow(t, false)
@@ -815,7 +722,6 @@ pub fn ck_expect_opt(&mut c: Checker, t: Ty, expected: Option(Ty), a: SurfaceTer
   }
 }
 
-// The name of a callee that is not a local.
 pub fn ck_direct_name(function: SurfaceTerm, env: List(Local)): Option(Text) {
   match function.kind: Option(Text) {
     SkVar(name) => if env_has(env, name) { None } else { Some(name) }
@@ -1009,8 +915,6 @@ pub fn ck_record_missing(
   }
 }
 
-// ----- operators -----
-
 // Operands are duplicable: a borrow of one is the value.
 pub fn ty_operand(t: Ty): Ty {
   match t: Ty {
@@ -1200,8 +1104,6 @@ pub fn ck_check_covers(&mut c: Checker, s: Ty, arms: List(SurfaceArm), span: TyS
   }
 }
 
-// ----- expressions -----
-
 // A callee that takes its type parameters at each call: what the call sees of
 // it is an instance.
 pub fn ck_poly_instance(&mut c: Checker, function: SurfaceTerm, f: Ty): Ty {
@@ -1254,7 +1156,6 @@ mutual {
           SkRecord(name, fields) => ck_record_in(j, &mut c, name, fields, env, span)
           SkApp(function, arguments) => ck_app_in(j, &mut c, term, function, arguments, env)
           SkField(base, name) => match class_of_base(c, base, env): Ty {
-            // `C.m`: a method of the class `C`.
             Some(cn) => {
               let full := cat3(cn, ".", name)
               if Ordmap::contains(c.fns, full, Ordmap::compare_text) {
@@ -1428,7 +1329,7 @@ mutual {
         }
         StReturn(e) => {
           let returned := ck_returned_in(j, &mut c, e, env.items)
-          ck_return_check(&mut c, (returned: Ty), (returned: TySpan))
+          ck_return_check(&mut c, returned.fst, returned.snd)
           TyNever
         }
         StExpr(e) => ck_infer_in(j, &mut c, e, env.items)
@@ -1511,8 +1412,6 @@ mutual {
       }
     }
   }
-
-  // ----- applications -----
 
   pub fn ck_app_args_in(
     k: Nat,
@@ -1685,8 +1584,6 @@ mutual {
     }
   }
 
-  // ----- records -----
-
   pub fn ck_record_fields_in(
     k: Nat,
     &mut c: Checker,
@@ -1731,9 +1628,9 @@ mutual {
           ck_fresh(&mut c)
         }
         Some(dc) => {
-          let d := (dc: Text)
+          let d := dc.fst
           let args := ck_fresh_each(data_generics_of(c.datas, d), &mut c)
-          let declared := datas_fields(c.datas, d, (dc: Nat), args)
+          let declared := datas_fields(c.datas, d, dc.snd, args)
           let seen := ck_record_fields_in(j, &mut c, name, fields, declared, env, Nil)
           ck_record_missing(declared, &mut c, name, seen, span)
           TyNamed(d, args)
@@ -1796,8 +1693,6 @@ mutual {
     }
   }
 
-  // ----- handle -----
-
   pub fn ck_handle_in(
     k: Nat,
     &mut c: Checker,
@@ -1845,8 +1740,8 @@ mutual {
       Succ(j) => match handlers_return(handlers): Ty {
         Some(r) => {
           var inner: Scope := Scope { items: env }
-          ck_pattern(&mut c, (r: SurfacePattern), b, &mut inner, span_of((r: SurfaceTerm)), (r: SurfaceTerm).start)
-          ck_infer_in(j, &mut c, (r: SurfaceTerm), inner.items)
+          ck_pattern(&mut c, r.fst, b, &mut inner, span_of(r.snd), r.snd.start)
+          ck_infer_in(j, &mut c, r.snd, inner.items)
         }
         None => b
       }

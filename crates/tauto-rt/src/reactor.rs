@@ -138,7 +138,6 @@ mod imp {
         }
     }
 
-    /// Ends `done` once `ms` milliseconds have passed.
     pub fn sleep(ms: u64, done: Arc<Slot<()>>) {
         let wake = async move {
             tokio::time::sleep(Duration::from_millis(ms)).await;

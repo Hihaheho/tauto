@@ -116,7 +116,6 @@ impl Cst {
         self.children_iter(id).collect()
     }
 
-    /// Flattened children in source order, without collecting the result.
     pub fn children_iter(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
         let mut current = self.nodes[id].children.iter();
         let mut parents = Vec::new();
@@ -153,7 +152,6 @@ impl Cst {
         }
     }
 
-    /// Every terminal in source order.
     pub fn terminals(&self) -> Vec<(TerminalKind, Span)> {
         let mut out = Vec::new();
         if let Some(root) = self.root {
@@ -195,7 +193,6 @@ impl Cst {
         out
     }
 
-    /// The innermost node of `kind` whose span holds `offset`.
     pub fn innermost(&self, offset: u32, kind: NonTerminalKind) -> Option<NodeId> {
         let mut found = None;
         let mut stack: Vec<NodeId> = self.root.into_iter().collect();

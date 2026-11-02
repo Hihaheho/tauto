@@ -49,6 +49,7 @@ eval-cell-get-takes-a-cell = cell_get takes a cell
 eval-cell-set-takes-a-cell = cell_set takes a cell
 eval-mutex-claim-takes-a-mutex = Mutex.claim takes a Mutex
 eval-mutex-take-claimed-takes-a-mutex = Mutex.take_claimed takes a Mutex
+eval-mutex-guard-get-takes-a-guard = MutexGuard.get takes a MutexGuard
 eval-mutex-take-claimed-of-an-empty = Mutex.take_claimed of an empty Mutex: its signal was not raised
 eval-atomic-fetch-add-takes-an-atomic = Atomic.fetch_add takes an Atomic
 eval-buf-push-takes-a-buf = Buf.push takes a Buf

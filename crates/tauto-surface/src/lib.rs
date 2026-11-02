@@ -1,7 +1,6 @@
-//! Shared syntax and source representations for Tauto.
-
 pub mod direct;
 pub mod generated;
+pub mod identity;
 pub mod inductive_data;
 pub mod macros;
 pub mod nibstd;

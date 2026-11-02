@@ -1,3 +1,7 @@
+import "list.taut"
+import "rx.taut"
+import std::prelude::Affine
+
 // The disjoint character classes of a scanner: the leaves of all the
 // expressions (a character or a class) cut the code points into elementary
 // intervals, and the intervals that the same leaves hold are one class. The
@@ -6,7 +10,6 @@
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
 
-// The ranges that a leaf holds.
 pub fn cc_ranges(h: RHir): List(RRange) {
   match h {
     RhLit(cs) => match cs {
@@ -160,7 +163,6 @@ pub fn cc_key(ms: List(u64)): Text {
   Text::of(b)
 }
 
-// The disjoint classes of the leaves.
 pub fn cc_make(leaves: List(RHir)): CcOut {
   let cuts := cc_cut(cc_unique(cc_boundaries_of(leaves)))
   var intervals: Vec(RRange) := Vec::new()
@@ -259,7 +261,6 @@ pub fn cc_make(leaves: List(RHir)): CcOut {
     }
     i := i + 1
   }
-  // For each leaf, the groups it is in.
   let ng := Vec::len(&groups)
   var ids_rev: List(List(u64)) := Nil
   var c2: u64 := 0

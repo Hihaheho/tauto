@@ -32,7 +32,6 @@ fn split_on<'a>(name: &'a str, sep: &str) -> (&'a str, &'a str) {
     name.split_once(sep).unwrap_or((name, ""))
 }
 
-/// The scopes of a marked name.
 pub fn scopes_of(name: &str) -> Vec<u64> {
     split(name)
         .1
@@ -50,9 +49,6 @@ pub fn flip(scopes: &[u64], s: u64) -> Vec<u64> {
     out.sort_unstable();
     out
 }
-
-// ---------------------------------------------------------------------------
-// Resolution
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -72,10 +68,10 @@ pub fn resolve(stmts: Vec<Stmt>, ctors: &HashSet<String>) -> Vec<Stmt> {
     resolve_with(stmts, ctors, SEP.encode_utf8(&mut [0; 4]))
 }
 
-/// What a global a macro wrote means, by the scopes it carries and its
-/// name: the declaration the macro's own file means by that name, when
-/// that is not the name itself.
-pub type Seeing<'s> = &'s dyn Fn(&[u64], &str) -> Option<String>;
+/// Where a global a macro wrote comes from, by the scopes it carries and its
+/// name: the file of the macro whose expansion wrote it, and the declaration
+/// that file means by the name when that is not the name itself.
+pub type Seeing<'s> = &'s dyn Fn(&[u64], &str) -> Option<(usize, Option<String>)>;
 
 /// [`resolve`], with each global a macro wrote read as its file reads it:
 /// a name means what it means where the macro is written, not what the
@@ -119,6 +115,8 @@ struct Binder {
 struct Resolver<'c> {
     ctors: &'c HashSet<String>,
     seeing: Option<Seeing<'c>>,
+    /// The file of the macro that wrote the global just resolved.
+    origin: Option<usize>,
     sep: &'c str,
     env: Vec<Binder>,
     /// Declarations made by an expansion, by name and marks.
@@ -136,6 +134,7 @@ impl<'c> Resolver<'c> {
         Resolver {
             ctors,
             seeing: None,
+            origin: None,
             sep,
             env: Vec::new(),
             globals: HashMap::new(),
@@ -146,7 +145,6 @@ impl<'c> Resolver<'c> {
         }
     }
 
-    /// A binder: the name to write for it.
     fn bind(&mut self, name: &str) -> String {
         let (plain, marks) = split_on(name, self.sep);
         let id = self.counter;
@@ -169,7 +167,6 @@ impl<'c> Resolver<'c> {
         unique
     }
 
-    /// What a name written in the walk stands for.
     fn reference(&mut self, name: &str) -> String {
         let (plain, marks) = split_on(name, self.sep);
         if let Some((head, rest)) = plain.split_once("::") {
@@ -177,12 +174,15 @@ impl<'c> Resolver<'c> {
             // what the macro's file means by it: the prelude's builtin
             // where the file reads it so, whatever the caller imports.
             if !marks.is_empty() && !self.env.iter().any(|b| b.plain == head) {
-                if let Some(to) = self.seeing.and_then(|f| {
+                if let Some((file, to)) = self.seeing.and_then(|f| {
                     let scopes: Vec<u64> =
                         marks.split(',').filter_map(|s| s.parse().ok()).collect();
                     f(&scopes, plain)
                 }) {
-                    return to;
+                    self.origin = Some(file);
+                    if let Some(to) = to {
+                        return to;
+                    }
                 }
             }
             let head = self.reference_one(head, marks);
@@ -204,13 +204,17 @@ impl<'c> Resolver<'c> {
             if let Some(u) = self.globals.get(&(plain.to_string(), marks.to_string())) {
                 return u.clone();
             }
-            // A global, as the macro's file means it: a full name no local
-            // of the caller has.
-            if let Some(to) = self.seeing.and_then(|f| {
+            // A global, read as the macro's file reads it: the file goes with
+            // the name (`SurfaceTerm::origin`), and a name the file means by
+            // another name is written so, a full name no local of the caller has.
+            if let Some((file, to)) = self.seeing.and_then(|f| {
                 let scopes: Vec<u64> = marks.split(',').filter_map(|s| s.parse().ok()).collect();
                 f(&scopes, plain)
             }) {
-                return to;
+                self.origin = Some(file);
+                if let Some(to) = to.filter(|to| to != plain) {
+                    return to;
+                }
             }
             // A global; a local of the caller with this name must not take it.
             for b in &self.env {
@@ -477,9 +481,25 @@ impl<'c> Resolver<'c> {
         self.pop(mark);
     }
 
+    /// A term, with the file of the macro that wrote the global it names
+    /// (a variable, a record's type, an effect performed) kept on it.
     fn term(&mut self, t: &mut SurfaceTerm) {
+        self.origin = None;
+        let origin = self.names(t);
+        if origin.is_some() {
+            t.set_origin(origin);
+        }
+    }
+
+    /// The names of `t` resolved; the file of the macro that wrote the one
+    /// `t` itself names, if a macro wrote it.
+    fn names(&mut self, t: &mut SurfaceTerm) -> Option<usize> {
+        let mut origin = None;
         match Arc::make_mut(&mut t.kind) {
-            TermKind::Var(n) => *n = self.reference(n),
+            TermKind::Var(n) => {
+                *n = self.reference(n);
+                origin = self.origin.take();
+            }
             TermKind::Nat(_)
             | TermKind::Float(_)
             | TermKind::Text(_)
@@ -563,7 +583,9 @@ impl<'c> Resolver<'c> {
             }
             TermKind::Block(stmts) => self.stmts(stmts),
             TermKind::Perform { effect, args } => {
+                self.origin = None;
                 *effect = self.reference(effect);
+                origin = self.origin.take();
                 for a in args {
                     self.term(a);
                 }
@@ -599,7 +621,9 @@ impl<'c> Resolver<'c> {
                 self.pop(mark);
             }
             TermKind::Record { name, fields, base } => {
+                self.origin = None;
                 *name = self.reference(name);
+                origin = self.origin.take();
                 for (_, v) in fields {
                     self.term(v);
                 }
@@ -625,6 +649,7 @@ impl<'c> Resolver<'c> {
                 }
             }
         }
+        origin
     }
 }
 

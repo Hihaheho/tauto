@@ -17,7 +17,6 @@ pub(open) inductive Added: Type {
   Mk(b: Bundle, errors: List(ResourceError)): Added
 }
 
-// A formatted message and what went wrong while formatting it.
 pub(open) inductive Formatted: Type {
   Mk(text: Text, errors: List(FluentError)): Formatted
 }
@@ -27,7 +26,6 @@ pub fn bundle_new(locale: Text): Bundle {
   Bundle::Mk(Text::bytes(locale), true, Nil)
 }
 
-// The same bundle, with placeables isolated or not.
 pub fn bundle_isolating(b: Bundle, on: Bool): Bundle {
   match b: Bundle {
     Mk(l, iso, es) => Bundle::Mk(l, on, es)
@@ -102,12 +100,10 @@ pub fn add_parsed(b: Bundle, r: Resource): Added {
   }
 }
 
-// The bundle with the messages and terms of the FTL text `ftl` added.
 pub fn add_resource(b: Bundle, ftl: Text): Added {
   add_parsed(b, parse_bytes(Text::bytes(ftl)))
 }
 
-// `add_resource` keeping only the bundle.
 pub fn with_resource(b: Bundle, ftl: Text): Bundle {
   match add_resource(b, ftl): Bundle {
     Added::Mk(b2, errs) => b2
@@ -127,24 +123,20 @@ pub fn formatted_of(x: Ev): Formatted {
   }
 }
 
-// The message `id` formatted with `args`.
 pub fn format(b: Bundle, id: Text, args: List(Arg)): Formatted {
   formatted_of(r_expr(depth(), b, args, ExMsg(Text::bytes(id), None)))
 }
 
-// The attribute `name` of the message `id` formatted with `args`.
 pub fn format_attr(b: Bundle, id: Text, name: Text, args: List(Arg)): Formatted {
   formatted_of(r_expr(depth(), b, args, ExMsg(Text::bytes(id), Some(Text::bytes(name)))))
 }
 
-// Only the text of `format`.
 pub fn format_text(b: Bundle, id: Text, args: List(Arg)): Text {
   match format(b, id, args): Text {
     Formatted::Mk(t, es) => t
   }
 }
 
-// An error as a sentence.
 pub fn error_text(e: FluentError): Text {
   match e: Text {
     UnknownMessage(i) => Text::concat("unknown message: ", Text::Mk(i))

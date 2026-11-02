@@ -34,7 +34,6 @@ pub enum Step<'a> {
         k: Kont<'a, Payload>,
         m: M<'a>,
     },
-    /// An `Abort` that no handler in the computation catches.
     Fail(Abort),
     /// An arm's answer when none of its patterns fit: the arguments go back
     /// and the search goes outward.
@@ -91,7 +90,6 @@ impl<'a> M<'a> {
         M(None)
     }
 
-    /// A chain with one more handler.
     pub fn push(
         &self,
         ops: &'static [OpId],
@@ -113,7 +111,6 @@ impl<'a> M<'a> {
         self.push_budget_of::<T>(id, steps, false, target)
     }
 
-    /// A chain with a `budget(memory: cells)` inside, as [`M::push_budget`].
     pub fn push_budget_memory<T: 'static>(
         &self,
         id: u32,
@@ -214,7 +211,6 @@ pub fn kont<'a, T, F: Fn(&M<'a>, T) -> Step<'a> + 'a>(f: F) -> Kont<'a, T> {
     Rc::new(f)
 }
 
-/// The arm of a handler, from a closure.
 pub fn arm<'a, F>(f: F) -> Rc<ArmFn<'a>>
 where
     F: Fn(&M<'a>, Kont<'a, Payload>, Op, Payload, Loc, Resume<'a>) -> Step<'a> + 'a,
@@ -229,7 +225,6 @@ pub fn ret<'a, T: 'a>(k: &Kont<'a, T>, m: &M<'a>, v: T) -> Step<'a> {
     Step::More(Box::new(move || k(&m, v)))
 }
 
-/// A computation that goes on with `f`, with the stack unwound.
 pub fn more<'a>(f: impl FnOnce() -> Step<'a> + 'a) -> Step<'a> {
     Step::More(Box::new(f))
 }
@@ -421,8 +416,6 @@ fn b_info<'a>(m: &M<'a>, id: u32) -> fn() -> Payload {
     unreachable!("tauto: the budget is not in place")
 }
 
-// ---- borrowed callbacks of the O tier ---------------------------------
-
 /// A borrowed function of the O tier (`&f`, which may diverge under a
 /// budget) held in code of the M tier. A continuation is called any number
 /// of times, so it holds a shared handle rather than the `&mut` the O tier
@@ -571,8 +564,6 @@ fn find_budget(m: &M<'_>, id: u32) -> Option<BudgetFrame> {
     None
 }
 
-// ---- drivers -----------------------------------------------------------
-
 type Slot<T> = Rc<RefCell<Option<T>>>;
 
 fn start<'a, T: 'static>(
@@ -638,7 +629,6 @@ pub fn run_in<'a, T: 'static>(ev: &Ev<'_>, f: impl FnOnce(&M<'a>, Kont<'a, T>) -
     }
 }
 
-/// [`run_a`] with the `direct` handlers of [`run_in`].
 pub fn run_a_in<'a, T: 'static>(
     ev: &Ev<'_>,
     f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>,
@@ -647,7 +637,6 @@ pub fn run_a_in<'a, T: 'static>(
     drive_a(ev, step, &slot)
 }
 
-/// [`run_o`] with the `direct` handlers of [`run_in`].
 pub async fn run_o_in<'a, T: 'static>(
     ev: &Ev<'_>,
     f: impl FnOnce(&M<'a>, Kont<'a, T>) -> Step<'a>,
@@ -671,21 +660,18 @@ pub fn run_r<'a, T: 'static, R: 'static>(
     run_r_in(&Ev::empty(), f)
 }
 
-/// [`run_a`] for a computation that may `return`.
 pub fn run_ar<'a, T: 'static, R: 'static>(
     f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Result<Flow<T, R>, Abort> {
     run_ar_in(&Ev::empty(), f)
 }
 
-/// [`run_o`] for a computation that may `return`.
 pub async fn run_or<'a, T: 'static, R: 'static>(
     f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
 ) -> Flow<T, R> {
     run_or_in(&Ev::empty(), f).await
 }
 
-/// [`run_r`] with the `direct` handlers of [`run_in`].
 pub fn run_r_in<'a, T: 'static, R: 'static>(
     ev: &Ev<'_>,
     f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
@@ -696,7 +682,6 @@ pub fn run_r_in<'a, T: 'static, R: 'static>(
     }
 }
 
-/// [`run_ar`] with the `direct` handlers of [`run_in`].
 pub fn run_ar_in<'a, T: 'static, R: 'static>(
     ev: &Ev<'_>,
     f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
@@ -705,7 +690,6 @@ pub fn run_ar_in<'a, T: 'static, R: 'static>(
     drive_a(ev, step, &slot)
 }
 
-/// [`run_or`] with the `direct` handlers of [`run_in`].
 pub async fn run_or_in<'a, T: 'static, R: 'static>(
     ev: &Ev<'_>,
     f: impl FnOnce(&M<'a>, Kont<'a, T>, Kont<'a, R>) -> Step<'a>,
@@ -754,20 +738,16 @@ async fn drive_o<'a, T>(ev: &Ev<'_>, mut step: Step<'a>, slot: &Slot<T>) -> T {
     }
 }
 
-// ---- kept continuations ------------------------------------------------
-
 /// `k(a)` called outside its arm, in code of the S tier: the body goes on
 /// from the operation, under the handler, to the end of the `handle`.
 pub fn resume<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a: A) -> R {
     run_in(ev, |m, fin| k.call(m, Box::new(a), erase(fin)))
 }
 
-/// [`resume`] in code of the A tier.
 pub fn resume_a<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a: A) -> Result<R, Abort> {
     run_a_in(ev, |m, fin| k.call(m, Box::new(a), erase(fin)))
 }
 
-/// [`resume`] in code of the O tier.
 pub async fn resume_o<'a, A: 'static, R: 'static>(ev: &Ev<'_>, k: &Resume<'a>, a: A) -> R {
     run_o_in(ev, |m, fin| k.call(m, Box::new(a), erase(fin))).await
 }

@@ -23,9 +23,7 @@ pub enum Event {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxError {
-    /// `None` is the end of the input.
     pub at: Option<Token>,
-    /// Terminal numbers, ascending.
     pub expected: Vec<u32>,
 }
 
@@ -68,7 +66,6 @@ pub fn parse(
         return Err(ParseError::Limit("the input is longer than the limit"));
     }
     let tokens = scan(tables, text, base).map_err(ParseError::Lex)?;
-    // The indices of the tokens the parser sees.
     let seen: Vec<usize> = (0..tokens.len())
         .filter(|&i| !tables.is_skipped(tokens[i].terminal))
         .collect();

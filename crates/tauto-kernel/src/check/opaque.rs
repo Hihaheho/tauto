@@ -57,7 +57,6 @@ impl Kernel {
         out
     }
 
-    /// `f@body`, `f` and `f::eq` for `f`.
     fn opaque_expand(&mut self, f: &FnDecl) -> Result<Vec<Stmt>, Diagnostic> {
         let sp = f.span;
         let fail = |m: Message| Err(Diagnostic::new(m, Some(sp)));

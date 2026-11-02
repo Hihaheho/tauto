@@ -45,7 +45,6 @@ impl History {
         self.checkpoints[0].digest
     }
 
-    /// The SHA-256 of `Index.eure`.
     pub fn config_id(&self) -> Sha256 {
         hex_bytes(&tauto_syntax::sha256_hex(&self.config_bytes))
     }
@@ -232,7 +231,6 @@ mod tests {
             digest(None, &rev, b"c", b"io", b""),
             digest(None, &rev, b"c", b"i", b"o")
         );
-        // The spelled form, by hand.
         let mut spelled = b"tauto-index-checkpoint-v1\0".to_vec();
         spelled.push(0);
         for part in [rev.to_string().as_bytes(), b"c", b"i", b"o"] {

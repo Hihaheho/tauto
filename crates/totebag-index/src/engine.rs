@@ -34,7 +34,6 @@ pub enum Synced {
     Frozen { prefix: Point, why: String },
 }
 
-/// The current time, for syncing and evaluating.
 pub fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -56,7 +56,6 @@ pub fn mark(pkg: &mut Package) {
     }
 }
 
-/// Whether the body has a call marked `recur`.
 pub fn recurs(body: &Expr) -> bool {
     let mut found = false;
     body.walk(&mut |e| {
@@ -67,7 +66,6 @@ pub fn recurs(body: &Expr) -> bool {
     found
 }
 
-/// What a self call is checked against.
 struct Shape {
     id: usize,
     generics: Vec<String>,
@@ -174,7 +172,6 @@ impl Shape {
     }
 }
 
-/// Turns the moves of `kept` in `e` back into clones.
 fn clone_reads(e: &mut Expr, kept: &BTreeSet<u32>) {
     match &mut e.kind {
         ExprKind::Read { local, how } => {
@@ -350,8 +347,6 @@ fn has_fn(t: &Ty) -> bool {
     }
 }
 
-/// Whether a parameter or a value the body computes holds a value of an
-/// `extern` type.
 fn holds_host_value(pkg: &Package, f: &FnInst) -> bool {
     let mut seen = BTreeSet::new();
     let mut found = f.params.iter().any(|p| holds_host(pkg, &p.ty, &mut seen));
@@ -361,9 +356,9 @@ fn holds_host_value(pkg: &Package, f: &FnInst) -> bool {
     found
 }
 
-/// Whether a type holds a value of an `extern` type. `seen` holds the data
+/// Whether a type holds a value of an `extern` type, or a `MutexGuard`. `seen` holds the data
 /// types already found to hold none, or being looked into.
-fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+pub(crate) fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
     match t {
         Ty::Vec(a)
         | Ty::Array(a)
@@ -378,7 +373,8 @@ fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
             holds_host(pkg, a, seen) || holds_host(pkg, b, seen)
         }
         Ty::Product(ms) => ms.iter().any(|(_, m)| holds_host(pkg, m, seen)),
-        Ty::Std(_, args) => args.iter().any(|a| holds_host(pkg, a, seen)),
+        // A mutex guard gives its lock back when it is dropped.
+        Ty::Std(n, args) => n == "MutexGuard" || args.iter().any(|a| holds_host(pkg, a, seen)),
         Ty::Union(id) => pkg
             .unions
             .iter()

@@ -1,0 +1,223 @@
+// The words of the grammar of a `syntax` (the language `docs/design/macro.md`
+// describes), each with where it is written. The table generators read a
+// grammar from these words (`totes/pargen`), and an editor colours a grammar
+// by them, comments and the places that do not read included.
+//
+// Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import std::Text
+import std::TextOps
+import std::UInt
+import std::prelude::Affine
+
+// A word: its kind and the range `start..end` of the bytes of the grammar it
+// covers (a literal's delimiters included).
+//
+// kind: 0 a name, 1 a directive (`%start`, `%%`), 2 `"…"`, 3 `'…'`, 4 `/…/`,
+// 5 a mark, 6 `?=`, 7 `?!`, 8 the end, 9 a number, 10 a line comment,
+// 11 a block comment, 12 a character that has no place in a grammar, 13 a
+// literal that is not closed, 14 a comment that is not closed.
+pub(open) struct PSpan { kind: u64, start: u64, end: u64 }
+
+pub fn par_byte(t: Text, i: u64): u64 {
+  U64::of_nat(Text::byte_value(t, Nat::of_u64(i)))
+}
+
+pub fn par_is_name_start(b: u64): Bool {
+  (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+pub fn par_is_name(b: u64): Bool {
+  par_is_name_start(b) || (b >= 48 && b <= 57)
+}
+
+pub fn par_name_end(t: Text, at: u64): u64 {
+  if par_is_name(par_byte(t, at)) && at < std::prelude::Text::len(t) {
+    par_name_end(t, at + 1)
+  } else {
+    at
+  }
+}
+
+// The end of a name that may be a path of a user type: `a::b::C`.
+pub fn par_path_end(t: Text, at: u64): u64 {
+  let end := par_name_end(t, at)
+  if par_byte(
+    t,
+    end
+  ) == 58 && par_byte(
+    t,
+    end + 1
+  ) == 58 && end + 2 < std::prelude::Text::len(t) && par_is_name_start(par_byte(t, end + 2)) {
+    par_path_end(t, end + 2)
+  } else {
+    end
+  }
+}
+
+// The end of a literal that starts at `at` with the delimiter `d`: the place
+// after the closing one, or none when the text ends first.
+pub fn par_literal_end(t: Text, at: u64, d: u64): Option(u64) {
+  if at >= std::prelude::Text::len(t) {
+    None
+  } else {
+    let b := par_byte(t, at)
+    if b == d {
+      Some(at + 1)
+    } else if b == 92 {
+      par_literal_end(t, at + 2, d)
+    } else {
+      par_literal_end(t, at + 1, d)
+    }
+  }
+}
+
+// The end of a block comment whose body starts at `at`: the place after `*/`,
+// or none when the text ends first.
+pub fn par_block_end(t: Text, at: u64): Option(u64) {
+  if at + 1 >= std::prelude::Text::len(t) {
+    None
+  } else if par_byte(t, at) == 42 && par_byte(t, at + 1) == 47 {
+    Some(at + 2)
+  } else {
+    par_block_end(t, at + 1)
+  }
+}
+
+pub fn par_line_end(t: Text, at: u64): u64 {
+  if at >= std::prelude::Text::len(t) || par_byte(t, at) == 10 {
+    at
+  } else {
+    par_line_end(t, at + 1)
+  }
+}
+
+// The end of a character that starts at `at`: past the bytes that continue it
+// in UTF-8.
+pub fn par_char_end(t: Text, at: u64): u64 {
+  var end := at + 1
+  let n := std::prelude::Text::len(t)
+  while end < n && par_byte(t, end) >= 128 && par_byte(t, end) < 192 {
+    end := end + 1
+  }
+  end
+}
+
+// The words of the grammar `t`, in order, the comments included, ending with
+// the end (kind 8). A place that does not read is a word of its own (kind 12,
+// 13 or 14) and the words go on after it.
+pub fn par_spans(t: Text): Vec(PSpan) {
+  var out: Vec(PSpan) := Vec::new()
+  var at: u64 := 0
+  let n := std::prelude::Text::len(t)
+  while at < n {
+    let b := par_byte(t, at)
+    let next := par_byte(t, at + 1)
+    if b == 32 || b == 9 || b == 10 || b == 13 {
+      at := at + 1
+    } else if b == 47 && next == 47 {
+      let end := par_line_end(t, at)
+      Vec::push(&mut out, PSpan { kind: 10, start: at, end: end })
+      at := end
+    } else if b == 47 && next == 42 {
+      match par_block_end(t, at + 2) {
+        Some(end) => {
+          Vec::push(&mut out, PSpan { kind: 11, start: at, end: end })
+          at := end
+        }
+        None => {
+          Vec::push(&mut out, PSpan { kind: 14, start: at, end: n })
+          at := n
+        }
+      }
+    } else if par_is_name_start(b) {
+      let end := par_path_end(t, at)
+      Vec::push(&mut out, PSpan { kind: 0, start: at, end: end })
+      at := end
+    } else if b == 37 {
+      let end := if next == 37 { at + 2 } else { par_name_end(t, at + 1) }
+      Vec::push(&mut out, PSpan { kind: 1, start: at, end: end })
+      at := end
+    } else if b == 34 || b == 39 || b == 47 {
+      match par_literal_end(t, at + 1, b) {
+        Some(end) => {
+          Vec::push(&mut out, PSpan { kind: if b == 34 {
+            2
+          } else if b == 39 {
+            3
+          } else {
+            4
+          }, start: at, end: end })
+          at := end
+        }
+        None => {
+          Vec::push(&mut out, PSpan { kind: 13, start: at, end: n })
+          at := n
+        }
+      }
+    } else if b >= 48 && b <= 57 {
+      var end := at + 1
+      while end < n && par_byte(t, end) >= 48 && par_byte(t, end) <= 57 {
+        end := end + 1
+      }
+      Vec::push(&mut out, PSpan { kind: 9, start: at, end: end })
+      at := end
+    } else if b == 46 && next == 46 {
+      let wide := par_byte(t, at + 2) == 61
+      let end := at + if wide { 3 } else { 2 }
+      Vec::push(&mut out, PSpan { kind: 5, start: at, end: end })
+      at := end
+    } else if b == 63 && next == 61 {
+      Vec::push(&mut out, PSpan { kind: 6, start: at, end: at + 2 })
+      at := at + 2
+    } else if b == 63 && next == 33 {
+      Vec::push(&mut out, PSpan { kind: 7, start: at, end: at + 2 })
+      at := at + 2
+    } else if b == 58 || b == 59 || b == 124 || b == 40 || b == 41 || b == 91 || b == 93 || b == 123 || b == 125 || b == 60 || b == 62 || b == 44 || b == 94 || b == 64 || b == 61 || b == 43 || b == 45 {
+      Vec::push(&mut out, PSpan { kind: 5, start: at, end: at + 1 })
+      at := at + 1
+    } else {
+      let end := par_char_end(t, at)
+      Vec::push(&mut out, PSpan { kind: 12, start: at, end: end })
+      at := end
+    }
+  }
+  Vec::push(&mut out, PSpan { kind: 8, start: n, end: n })
+  out
+}
+
+// The words of `t` as a text of numbers separated by single spaces, three for
+// each word: its kind, its start and its end (the entry point of the Rust
+// side, `crates/tauto-analyzer`).
+fn spans_text(t: Text): Text ! {Div} {
+  var words: List(Text) := Nil
+  var rest := Vec::into_list(par_spans(t))
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(s, more) => {
+        words := Cons(
+          Text::of_u64(s.end),
+          Cons(Text::of_u64(s.start), Cons(Text::of_u64(s.kind), words))
+        )
+        rest := more
+      }
+    }
+  }
+  Text::join(" ", par_reverse_words(words, Nil))
+}
+
+pub fn par_reverse_words(xs: List(Text), acc: List(Text)): List(Text) {
+  match xs {
+    Nil => acc
+    Cons(x, rest) => par_reverse_words(rest, Cons(x, acc))
+  }
+}
+
+// `spans_text` with its loops bounded: a text the lexer does not finish within
+// the steps gives no tokens, and is then left without highlighting.
+pub fn par_spans_text(t: Text): Text {
+  handle { budget(steps: 100000000) { spans_text(t) } } with { exceeded(info), k => "" }
+}

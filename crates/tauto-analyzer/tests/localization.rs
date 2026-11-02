@@ -95,10 +95,12 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { not_declared } }
-"#.to_string();
+"#
+    .to_string();
     let original = r#"import "math.nib"
 theorem t(): Nat { math!(`1 = 1`) }
-"#.to_string();
+"#
+    .to_string();
     let lib_path = dir.write("math.nib", &library);
     let path = dir.write("main.nib", &original);
 

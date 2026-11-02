@@ -1,7 +1,10 @@
+import std::TextOps
 import "../../surface/src/surface.taut"
 import "../../ordmap/src/ordmap.taut"
 import "../../text/src/text.taut"
 import std::Text
+import std::Base
+import std::Map
 
 // Effect rows of executable code: which effects a function may perform
 // (`crates/tauto-nibcheck/src/rows.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
@@ -18,9 +21,7 @@ pub(open) inductive Quant: Type {
   QuantZero: Quant
   // `resume <=1`, the default.
   QuantAtMostOne: Quant
-  // `resume 1`.
   QuantOne: Quant
-  // `resume ω`.
   QuantMany: Quant
   // `direct`: the arm continues with `k(e)` at the end of every path.
   QuantDirect: Quant
@@ -69,8 +70,6 @@ pub fn quant_name(q: Quant): Text {
   }
 }
 
-// ---- rows ------------------------------------------------------------------------
-
 pub(open) inductive RowSet: Type {
   Mk(names: Ordmap(Text, Bool)): RowSet
 }
@@ -102,7 +101,6 @@ pub fn rowset_keys(entries: List(Pair(Text, Bool))): List(Text) {
   }
 }
 
-// The names, in order.
 pub fn rowset_list(r: RowSet): List(Text) {
   rowset_keys(Ordmap::entries(r.names))
 }
@@ -122,7 +120,6 @@ pub fn rowset_of(names: List(Text)): RowSet {
   rowset_add_all(names, rowset_empty())
 }
 
-// What calling a local name performs.
 pub(open) inductive RowLatent: Type {
   LatentKnown(row: RowSet): RowLatent
   LatentUnknown: RowLatent
@@ -131,7 +128,6 @@ pub(open) inductive RowLatent: Type {
   LatentInfo: RowLatent
 }
 
-// A local, the newest first.
 pub(open) inductive RowLocal: Type {
   Mk(name: Text, latent: RowLatent): RowLocal
 }
@@ -200,18 +196,14 @@ pub fn rows_set_found(s: RowState, found: List(RowDiagnostic)): RowState {
   RowState::Mk(s.memo, s.in_progress, s.calls, s.direct_vars, found)
 }
 
-// A row, and the state after it was found.
 pub(open) inductive RowsOut: Type {
   Mk(row: RowSet, s: RowState): RowsOut
 }
 
-// What a call performs, and the state after it was found.
 pub(open) inductive LatentOut: Type {
   Mk(latent: RowLatent, s: RowState): LatentOut
 }
 
-// The row a row variable stands for, whether a parameter mentions it, and
-// the state.
 pub(open) inductive FoundOut: Type {
   Mk(row: RowSet, found: Bool, s: RowState): FoundOut
 }
@@ -232,7 +224,7 @@ pub fn rows_quoted(name: Text): Text {
 }
 
 pub fn rows_has_prefix(t: Text, p: Text): Bool {
-  Text::starts_with(t, p, 0)
+  Text::starts_with(t, p)
 }
 
 pub fn rows_after_first(t: Text): Text {
@@ -248,8 +240,6 @@ pub fn rows_has_text(xs: List(Text), x: Text): Bool {
     }
   }
 }
-
-// ---- the environment -------------------------------------------------------------
 
 pub fn rows_env_fn(env: RowEnv, name: Text): Option(SurfaceFn) {
   Ordmap::get(env.fns, name, Ordmap::compare_text)
@@ -284,7 +274,6 @@ pub fn rows_extern_names(fns: List(SurfaceFn), out: Ordmap(Text, Bool)): Ordmap(
   }
 }
 
-// The extern functions a program declares.
 pub fn rows_user_externs(stmts: List(SurfaceStmt), out: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
   match stmts: Ordmap(Text, Bool) {
     Nil => out
@@ -337,8 +326,6 @@ pub fn rows_env_of(stmts: List(SurfaceStmt), env: RowEnv): RowEnv {
     Cons(s, rest) => rows_env_of(rest, rows_env_stmt(s, env))
   }
 }
-
-// ---- locals ----------------------------------------------------------------------
 
 pub fn rows_local_find(locals: List(RowLocal), name: Text): Option(RowLocal) {
   match locals: Option(RowLocal) {
@@ -411,9 +398,6 @@ pub fn rows_all_irrefutable(ps: List(SurfacePattern)): Bool {
   }
 }
 
-// ---- types -----------------------------------------------------------------------
-
-// The kind of a function type under the kind or borrow written on it.
 mutual {
   pub fn rows_function_kind(t: SurfaceTerm): SurfaceKind {
     match t: SurfaceKind {
@@ -546,7 +530,6 @@ pub fn rows_answered(handlers: List(SurfaceHandler), inner: RowSet): RowSet {
   }
 }
 
-// The effects of a row but its variables (`|…`).
 pub fn rows_not_bars(es: List(Text)): List(Text) {
   match es: List(Text) {
     Nil => Nil
@@ -582,8 +565,6 @@ pub fn rows_without(names: List(Text), r: RowSet): RowSet {
     Cons(n, rest) => rows_without(rest, rowset_drop(r, n))
   }
 }
-
-// ---- reports ---------------------------------------------------------------------
 
 pub fn rows_found_at(found: List(RowDiagnostic), message: Text, start: Nat, end: Nat): Bool {
   match found: Bool {
@@ -623,7 +604,6 @@ pub fn rows_first_is_direct(bounds: List(Option(Text))): Bool {
   }
 }
 
-// The generics bounded `direct`.
 pub fn rows_direct_generics(generics: List(Text), bounds: List(Option(Text))): List(Text) {
   match generics: List(Text) {
     Nil => Nil
@@ -812,7 +792,6 @@ pub fn rows_bounded_effects(
   }
 }
 
-// The position of the name among the generics.
 pub fn rows_position(xs: List(Text), x: Text, at: Nat): Option(Nat) {
   match xs: Option(Nat) {
     Nil => None
@@ -963,8 +942,6 @@ pub fn rows_set_add_div(row: RowSet, calls: Bool): RowSet {
   }
 }
 
-// ---- direct recursion ------------------------------------------------------------
-
 pub fn rows_is_var(t: SurfaceTerm, name: Text): Bool {
   match t.kind: Bool {
     SkVar(n) => n == name
@@ -972,7 +949,6 @@ pub fn rows_is_var(t: SurfaceTerm, name: Text): Bool {
   }
 }
 
-// Whether `t` or a subterm, statements included, is a call of `name`.
 mutual {
   pub fn rows_term_calls(t: SurfaceTerm, name: Text): Bool {
     match t: Bool {
@@ -1077,7 +1053,6 @@ mutual {
   }
 }
 
-// A row found, as what a call of it performs.
 pub fn rows_known(r: RowsOut): LatentOut {
   LatentOut::Mk(LatentKnown(r.row), r.s)
 }
@@ -1151,7 +1126,6 @@ mutual {
     }
   }
 
-  // The body of `f`, followed with `name` in progress.
   pub fn rows_follow(k: Nat, env: RowEnv, s: RowState, name: Text, f: SurfaceFn): RowsOut {
     match k: RowsOut {
       Zero => RowsOut::Mk(rowset_empty(), s)
@@ -1187,7 +1161,6 @@ mutual {
         SkLam(params, body) => rows_known(
           rows_term_row(j, env, s, body, rows_unknown_all(params, locals))
         )
-        // `(&v) => …`, and `&f` lent to a borrowed parameter.
         SkBorrowLam(borrows, lam) => rows_latent_of(j, env, s, lam, locals)
         SkBorrow(mutable, term) => rows_latent_of(j, env, s, term, locals)
         SkVar(n) => match rows_local_find(locals, n): LatentOut {
@@ -1473,7 +1446,6 @@ mutual {
     }
   }
 
-  // What calling a name bound to `value` performs: a function's row.
   pub fn rows_bound_latent(
     k: Nat,
     env: RowEnv,
@@ -1701,7 +1673,6 @@ pub(open) inductive RowReport: Type {
   ): RowReport
 }
 
-// The names of the program's own functions.
 pub fn rows_program_names(stmts: List(SurfaceStmt), done: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
   match stmts: Ordmap(Text, Bool) {
     Nil => done
@@ -1898,7 +1869,6 @@ pub fn rows_top_prepend(errors: List(RowDiagnostic), r: RowTop): RowTop {
   RowTop::Mk(List::append(errors, r.errors), r.s)
 }
 
-// The errors of the top-level statements' rows.
 pub fn rows_top_errors(stmts: List(SurfaceStmt), k: Nat, env: RowEnv, s: RowState): RowTop {
   match stmts: RowTop {
     Nil => RowTop::Mk(Nil, s)
@@ -2003,8 +1973,6 @@ pub fn rows_check(prelude: List(SurfaceStmt), program: List(SurfaceStmt)): RowRe
     program
   )
 }
-
-// ---- the dump --------------------------------------------------------------------
 
 pub fn rows_dump_row(r: RowSet): Text {
   Text::concat_all(Cons("{", Cons(rows_show(rowset_list(r)), Cons("}", Nil))))

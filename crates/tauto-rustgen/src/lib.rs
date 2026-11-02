@@ -316,7 +316,6 @@ pub(crate) struct Gen<'a> {
     pub pkg: &'a Package,
     pub sources: &'a Sources<'a>,
     pub bindings: &'a Bindings,
-    /// The spelling of each union, with its type parameters.
     pub union_names: Vec<Rs>,
     pub union_params: Vec<Vec<String>>,
     pub data_index: HashMap<&'a str, usize>,
@@ -537,8 +536,6 @@ impl<'a> Gen<'a> {
         }
     }
 
-    // ---- places in the source -------------------------------------------
-
     /// The source file, line and column of a span, following macro origins.
     pub fn span_place(&self, span: Span) -> (String, u32, u32) {
         if let Some((file, line, col)) = self
@@ -623,7 +620,6 @@ pub fn type_name(pkg: &Package, bindings: &Bindings, ty: &Ty) -> String {
     g.ty(ty).to_string()
 }
 
-/// Identifier used for a generated field or extern wrapper.
 pub fn field_name(name: &str) -> String {
     expr::field_ident(name).to_string()
 }

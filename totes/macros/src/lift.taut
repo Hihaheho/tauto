@@ -12,8 +12,12 @@
 // walk's.
 import std::Text
 
-// A variable of a typed macro's context, written as its atom.
 import "../../surface/src/surface.taut"
+import "lower.taut"
+import "node.taut"
+import "scope.taut"
+import "../../text/src/text.taut"
+import std::prelude::Affine
 
 pub(open) struct LfAtom { name: Text, id: i64 }
 
@@ -27,10 +31,8 @@ pub(open) struct LfCtx {
   reflip: Option(i64)
 }
 
-// A span given out: its number, where it starts and where it ends.
 pub(open) struct LfIss { id: u64, start: Nat, end: Nat }
 
-// The errors, and the spans given out.
 pub(open) struct LfSt { errs: Vec(Text), tabled: Bool, issued: Vec(LfIss) }
 
 pub fn lf_st_new(tabled: Bool): LfSt {
@@ -48,7 +50,6 @@ pub fn lf_atom(xs: List(LfAtom), name: Text): Option(i64) {
   }
 }
 
-// A span: where it starts and where it ends.
 pub(open) struct LfSp { start: Nat, end: Nat }
 
 pub fn lf_ints(xs: List(i64)): List(Node) {
@@ -58,7 +59,6 @@ pub fn lf_ints(xs: List(i64)): List(Node) {
   }
 }
 
-// How many of the spans given out start at `start`.
 pub fn lf_issued_at(&xs: Vec(LfIss), start: Nat): u64 {
   var n: u64 := 0
   var i: u64 := 0
@@ -87,7 +87,6 @@ pub fn lf_span(&mut errs: LfSt, at: LfSp): Node {
   }
 }
 
-// The name after a leading `$`, in a quote.
 pub fn lf_dollar(c: LfCtx, name: Text): Option(Text) {
   if c.in_quote {
     match std::prelude::Text::byte(name, 0) {
@@ -99,7 +98,6 @@ pub fn lf_dollar(c: LfCtx, name: Text): Option(Text) {
   }
 }
 
-// A name and the scopes it carries.
 pub(open) struct LfNamed { name: Text, scopes: List(i64) }
 
 pub fn lf_scope_cons(s: Text, rest: List(i64)): List(i64) {
@@ -254,7 +252,7 @@ pub fn lf_fields(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceField), at: LfSp): L
     Nil => Nil
     Cons(f, rest) => {
       let v := lf_expr(c, &mut errs, f.value)
-      Cons(nd_product2("Text", NText(f.name), "SynExpr", v), lf_fields(c, &mut errs, rest, at))
+      Cons(nd_product2("SynExpr", v, "Text", NText(f.name)), lf_fields(c, &mut errs, rest, at))
     }
   }
 }
@@ -406,8 +404,6 @@ pub fn lf_expr(c: LfCtx, &mut errs: LfSt, t: SurfaceTerm): Node {
     SkOther(n) => lf_err(&mut errs, "cannot be written in a quote yet")
   }
 }
-
-// ---------------------------------------------------------------- statements
 
 pub fn lf_stmts(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceStmt)): List(Node) {
   match xs {
@@ -582,7 +578,7 @@ pub fn lf_named(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceNamed), at: LfSp): Li
     Cons(p, rest) => {
       let id := lf_ident(c, &mut errs, p.name, at)
       let t := lf_expr(c, &mut errs, p.ty)
-      Cons(nd_product2("SynIdent", id, "SynExpr", t), lf_named(c, &mut errs, rest, at))
+      Cons(nd_product2("SynExpr", t, "SynIdent", id), lf_named(c, &mut errs, rest, at))
     }
   }
 }
@@ -761,8 +757,6 @@ pub fn lf_effect(c: LfCtx, &mut errs: LfSt, e: SurfaceEffect): Node {
   )
 }
 
-// ---------------------------------------------------------------- patterns
-
 pub fn lf_patterns(c: LfCtx, &mut errs: LfSt, xs: List(SurfacePattern), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
@@ -783,7 +777,7 @@ pub fn lf_pattern_fields(
     Nil => Nil
     Cons(f, rest) => {
       let n := lf_pattern(c, &mut errs, f.pattern, at)
-      Cons(nd_product2("Text", NText(f.name), "SynPattern", n), lf_pattern_fields(c, &mut errs, rest, at))
+      Cons(nd_product2("SynPattern", n, "Text", NText(f.name)), lf_pattern_fields(c, &mut errs, rest, at))
     }
   }
 }
@@ -850,26 +844,34 @@ pub fn lf_pattern_checked(c: LfCtx, &mut errs: LfSt, p: SurfacePattern, at: LfSp
   lf_pattern(c, &mut errs, p, at)
 }
 
-pub fn lf_has_other(p: SurfacePattern): Bool {
-  match p {
-    PtOther(n) => true
-    PtCtor(name, args) => lf_any_other(args)
-    PtRecord(name, fields) => lf_any_other_field(fields)
-    other => false
+mutual {
+  pub fn lf_has_other(p: SurfacePattern): Bool {
+    match p {
+      PtOther(n) => true
+      PtCtor(name, args) => lf_any_other(args)
+      PtRecord(name, fields) => lf_any_other_field(fields)
+      other => false
+    }
   }
-}
 
-pub fn lf_any_other(xs: List(SurfacePattern)): Bool {
-  match xs {
-    Nil => false
-    Cons(p, rest) => lf_has_other(p) || lf_any_other(rest)
+  pub fn lf_any_other(xs: List(SurfacePattern)): Bool {
+    match xs {
+      Nil => false
+      Cons(p, rest) => lf_has_other(p) || lf_any_other(rest)
+    }
   }
-}
 
-pub fn lf_any_other_field(xs: List(SurfacePatternField)): Bool {
-  match xs {
-    Nil => false
-    Cons(f, rest) => lf_has_other(f.pattern) || lf_any_other_field(rest)
+  pub fn lf_any_other_field(xs: List(SurfacePatternField)): Bool {
+    match xs {
+      Nil => false
+      Cons(f, rest) => lf_has_other_field(f) || lf_any_other_field(rest)
+    }
+  }
+
+  pub fn lf_has_other_field(f: SurfacePatternField): Bool {
+    match f {
+      SurfacePatternFieldMk(label, inner) => lf_has_other(inner)
+    }
   }
 }
 
@@ -923,9 +925,6 @@ pub fn lf_handler(c: LfCtx, &mut errs: LfSt, h: SurfaceHandler, at: LfSp): Node 
   }
 }
 
-// ---------------------------------------------------------------- quote
-
-// `quote::desugar`: the term that makes the syntax of `body`, all at `sp`.
 pub fn lf_desugar(&mut errs: LfSt, stmts: Bool, body: List(SurfaceStmt), sp: LfSp): SurfaceTerm {
   let c := LfCtx { scopes: Nil, in_quote: true, atoms: Nil, reflip: None }
   let node := if stmts {

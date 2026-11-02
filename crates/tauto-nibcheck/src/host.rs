@@ -10,6 +10,8 @@ use std::collections::BTreeSet;
 pub const HOST_EFFECTS: &[&str] = &[
     "stdout",
     "stderr",
+    "stdin_bytes",
+    "stdout_flush",
     "stdin",
     "argv",
     "exit",
@@ -27,7 +29,17 @@ pub const HOST_EFFECTS: &[&str] = &[
     "fs_create_dir",
     "fs_list_dir",
     "fs_remove",
+    "fs_stat",
+    "fs_rename",
+    "fs_copy",
+    "fs_canonicalize",
     "fs_temp_dir",
+    "proc_spawn",
+    "proc_read",
+    "proc_write",
+    "proc_close_stdin",
+    "proc_wait",
+    "proc_close",
     "proc_run",
     "env",
     "permission",
@@ -50,12 +62,26 @@ pub const HOST_EFFECTS: &[&str] = &[
     "tls_close",
 ];
 
+/// Whether `f`, declared in an `extern` block of the prelude, is how the host answers
+/// a standard effect: its row names one. Its row says what a call asks of the
+/// host; the call itself is made by the host's own code (the handler in
+/// `Os.taut`), which has already checked the permission, so no backend treats
+/// it as performing the effect, and a program may not call it.
+pub fn is_host_primitive(f: &crate::surface::FnDecl) -> bool {
+    f.span.start >= crate::surface::PRELUDE_BASE
+        && f.effects
+            .as_ref()
+            .is_some_and(|row| row.iter().any(|e| HOST_EFFECTS.contains(&e.as_str())))
+}
+
 /// The permission (`--allow-<name>`) an effect needs, if any.
 pub fn permission(effect: &str) -> Option<&'static str> {
     match effect {
-        "fs_read" | "fs_read_bytes" | "fs_list_dir" => Some("read"),
-        "fs_write" | "fs_write_bytes" | "fs_create_dir" | "fs_remove" => Some("write"),
-        "proc_run" => Some("run"),
+        "fs_read" | "fs_read_bytes" | "fs_list_dir" | "fs_stat" | "fs_canonicalize" => Some("read"),
+        "fs_write" | "fs_write_bytes" | "fs_create_dir" | "fs_remove" | "fs_rename" => {
+            Some("write")
+        }
+        "proc_run" | "proc_spawn" => Some("run"),
         "env" => Some("env"),
         "net" | "net_addr" | "net_resolve" => Some("net"),
         "tcp_listen" | "tcp_accept" | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_shutdown"
@@ -76,7 +102,14 @@ pub fn permissions<'e>(effects: impl IntoIterator<Item = &'e String>) -> BTreeSe
     let temp = effects.iter().any(|e| e.as_str() == "fs_temp_dir");
     effects
         .into_iter()
-        .filter_map(|e| permission(e))
+        .flat_map(|e| {
+            // A copy reads one path and writes another.
+            if e.as_str() == "fs_copy" {
+                vec!["read", "write"]
+            } else {
+                permission(e).into_iter().collect()
+            }
+        })
         .filter(|k| !(temp && matches!(*k, "read" | "write")))
         .collect()
 }
@@ -116,9 +149,11 @@ pub fn wrap(program: &Program) -> Option<Program> {
     }
     // The result is written as `()`: a program that stops (`perform exit(3)`)
     // gives its body the type `Never`, which leaves `host_run`'s `A` open.
-    let mut wrapper =
-        crate::surface::parse_program_unresolved_at("let _: () := Host::run(() => ())", WRAPPER_BASE)
-            .expect("the wrapper parses");
+    let mut wrapper = crate::surface::parse_program_unresolved_at(
+        "let _: () := Host::run(() => ())",
+        WRAPPER_BASE,
+    )
+    .expect("the wrapper parses");
     let Some(Stmt::Let { value: call, .. }) = wrapper.stmts.first_mut() else {
         panic!("the wrapper has the shape it is written with");
     };
@@ -131,7 +166,6 @@ pub fn wrap(program: &Program) -> Option<Program> {
     Some(out)
 }
 
-/// Makes the lambda of the wrapper `{ body; () }`, its `()` the one written.
 fn fill(t: &mut crate::surface::SurfaceTerm, body: Vec<Stmt>) {
     let mut kind = (*t.kind).clone();
     match &mut kind {
@@ -246,7 +280,6 @@ fn tasks_in(t: &mut SurfaceTerm) {
     }
 }
 
-/// Makes the argument of the task's `host_run` the body `f`.
 fn put_task(t: &mut SurfaceTerm, f: SurfaceTerm) {
     let mut kind = (*t.kind).clone();
     match &mut kind {

@@ -46,7 +46,7 @@ fn named_and_lambda_captures_keep_their_value_and_drop_scope() {
         write(
             &root,
             "Tauto.eure",
-            r#"package { name = "scoped-capture" sources = ["main.taut"] }
+            r#"package { name = "scoped-capture" }
 rust {
   bridge = "bridge"
   types { Probe = "scoped_capture_bridge::Probe" }
@@ -56,7 +56,7 @@ rust {
         );
         write(
             &root,
-            "main.taut",
+            "src/main.taut",
             &case_inputs::fixture("scoped-capture-fixtures.eure", case),
         );
         write(
@@ -103,7 +103,7 @@ fn javascript_capture_resources_drop_at_scope_exit_and_abort() {
     write(
         &root,
         "Tauto.eure",
-        r#"package { name = "scoped-capture" sources = ["main.taut"] }
+        r#"package { name = "scoped-capture" }
 rust { bridge = "bridge" types { Probe = "scoped_capture_bridge::Probe" } }
 "#,
     );
@@ -131,7 +131,7 @@ pub fn dropped() -> i64 { DROPS.load(Ordering::SeqCst) }
     );
     write(
         &root,
-        "main.taut",
+        "src/main.taut",
         &r#"affine struct Probe {}
 extern { fn make(n: i64): Probe
   fn dropped(): i64 }

@@ -1,6 +1,12 @@
 import "../../surface/src/surface.taut"
 import "../../kernel/src/kernel.taut"
+import "../../kernel/src/check.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/level.taut"
+import "../../kernel/src/term.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::Base
 
 pub(open) inductive ElabResult(A: Type): Type {
   ElabOk(value: A): ElabResult(A)
@@ -41,7 +47,7 @@ pub fn elab_sort_number(name: Text): Option(Nat) {
 pub fn elab_sort(name: Text): Option(KernelTerm) {
   if name == "Prop" { Some(KernelSortTerm(KernelProp)) } else {
     if name == "Type" { Some(KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil)))) } else {
-      if Text::starts_with(name, "Type", 0) {
+      if text_starts_with(name, "Type", 0) {
         match elab_sort_number(name): Option(KernelTerm) {
           None => None
           Some(n) => if n <= 1000 { Some(KernelSortTerm(KernelType(KernelLevel::Mk(n, Nil)))) } else {

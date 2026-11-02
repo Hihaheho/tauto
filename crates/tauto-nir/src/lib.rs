@@ -54,7 +54,6 @@ pub enum Tier {
     M,
 }
 
-/// A form the generator does not write.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unsupported {
     pub what: String,
@@ -68,7 +67,6 @@ impl std::fmt::Display for Unsupported {
     }
 }
 
-/// The Rust shape of a tauto type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ty {
     Int(Width),
@@ -98,16 +96,12 @@ pub enum Ty {
     /// A struct or enum the generator writes (the program's and the
     /// library's: `List`, `Map`).
     Data(String, Vec<Ty>),
-    /// A union's enum.
     Union(UnionId),
-    /// A product: a tuple of its members in `types.rs`'s order, each with
-    /// its type as `types.rs` writes it, by which the members are told apart
-    /// (tags are not in the Rust type).
+    /// A product: a tuple of its members in the order written, each with
+    /// its type as `types.rs` writes it (tags are not in the Rust type).
     Product(Vec<(String, Ty)>),
-    /// A type parameter.
     Param(String),
     Fn(Box<FnTy>),
-    /// `&A` and `&mut A`.
     Ref(Box<Ty>),
     RefMut(Box<Ty>),
     /// A `var` shared with a closure that may outlive it, as a lifted
@@ -134,7 +128,6 @@ pub struct FnTy {
 }
 
 impl Ty {
-    /// The content of a `var` shared with closures.
     pub fn shared_var(&self) -> Option<&Ty> {
         match self {
             Ty::SharedVar(_, a) => Some(a),
@@ -146,7 +139,6 @@ impl Ty {
         matches!(self, Ty::Unit)
     }
 
-    /// Whether the type mentions a type that Rust cannot infer.
     pub fn has_infer(&self) -> bool {
         match self {
             Ty::Infer => true,
@@ -166,7 +158,6 @@ impl Ty {
         }
     }
 
-    /// The type parameters it mentions.
     pub fn params(&self, out: &mut BTreeSet<String>) {
         match self {
             Ty::Param(p) => {
@@ -208,7 +199,6 @@ pub enum Indirect {
 }
 
 impl Indirect {
-    /// Whether the field is stored behind an indirection.
     pub fn is_indirect(self) -> bool {
         self != Indirect::None
     }
@@ -236,7 +226,6 @@ pub struct DataDef {
     pub ctors: Vec<CtorDef>,
     /// `#[derive(Clone)]`: every kind but `linear` and the opaque affine ones.
     pub clone: bool,
-    /// `#[derive(Clone, Copy)]`.
     pub copy: bool,
     /// A `bomb` field in each constructor.
     pub linear: bool,
@@ -280,7 +269,6 @@ pub enum Bound {
 #[derive(Debug, Clone)]
 pub struct FnInst {
     pub id: InstId,
-    /// The name in the tauto source.
     pub source: String,
     pub rust_name: String,
     pub tier: Tier,
@@ -308,7 +296,6 @@ pub enum Repr {
     SharedVar(bool),
     /// A parameter or `let &x`: a shared borrow (Rust: `&T`).
     Ref,
-    /// A mutable borrow (Rust: `&mut T`).
     RefMut,
     /// A closure that holds borrows, so it does not outlive them (Rust: a
     /// concrete closure, passed as `&mut f`).
@@ -322,14 +309,11 @@ pub enum Repr {
 /// `Local::storage`, not `Repr`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Storage {
-    /// The value itself, owned by the local.
     Owned,
     /// A `var` captured by a closure that may outlive it: one place shared
     /// by the function and its closures.
     SharedVar,
-    /// A shared borrow of a value the local does not own.
     Borrow,
-    /// A mutable borrow.
     BorrowMut,
     /// A borrowed function (`&f` of function type).
     BorrowedFn,
@@ -338,7 +322,6 @@ pub enum Storage {
 }
 
 impl Storage {
-    /// Whether the local refers to a value it does not own.
     pub fn is_borrow(self) -> bool {
         matches!(
             self,
@@ -377,7 +360,6 @@ impl Local {
     }
 }
 
-/// How a name is used as a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Use {
     Move,
@@ -483,7 +465,6 @@ pub enum Cmp {
 pub enum ExprKind {
     Unit,
     Int(i128),
-    /// A `Float` literal's value.
     Float(f64),
     Bool(bool),
     Text(String),
@@ -491,7 +472,6 @@ pub enum ExprKind {
         local: Local,
         how: Use,
     },
-    /// A named function used as a value.
     FnValue {
         inst: InstId,
         /// The checked arguments in the declaration's generic order.
@@ -561,7 +541,6 @@ pub enum ExprKind {
         to: Ty,
         value: Box<Expr>,
     },
-    /// `&place` and `&mut place`.
     Ref(Place),
     RefMut(Place),
     /// A borrow of a value that is not a place: `&(e)`.
@@ -571,11 +550,8 @@ pub enum ExprKind {
         value: Box<Expr>,
         how: Use,
     },
-    /// A shown value (`Shown`) made of `value`.
     Shown(Box<Expr>),
-    /// `budget(steps: n) { body }`.
     Budget(Box<BudgetNode>),
-    /// A value of type `Never`.
     Unreachable(Box<Expr>),
     /// A function that may be called any number of times, as one that is
     /// called once.
@@ -598,7 +574,6 @@ pub struct BudgetNode {
 #[derive(Debug, Clone)]
 pub struct CtorRef {
     pub data: DataRef,
-    /// The constructor's name.
     pub name: String,
     pub index: usize,
     /// The constructor's fields, which are stored boxed.
@@ -611,12 +586,11 @@ pub struct CtorRef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataRef {
-    /// A generated type, by name.
     Gen(String),
     Option,
     Result,
     Pair,
-    /// A product, matched by `#(…)`: its members in the product's order.
+    /// A product, matched by `#(…)`: its members by position.
     Product,
 }
 
@@ -641,7 +615,6 @@ pub struct CallNode {
 #[derive(Debug, Clone)]
 pub enum Callee {
     Inst(InstId),
-    /// A function of `tauto_rt::stdlib`, by name.
     Builtin(String),
     /// An `extern` of the program: its wrapper in `externs`, by name.
     Extern(String),
@@ -798,7 +771,6 @@ pub struct OpArm {
     pub span: Span,
 }
 
-/// How an extern's parameter is passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pass {
     Value,
@@ -829,7 +801,6 @@ pub struct Package {
     pub top: Option<InstId>,
     /// The functions a Rust crate may call (`compile_with` `lib`).
     pub exports: Vec<Export>,
-    /// The `extern` functions the program declares, in the order written.
     pub externs: Vec<ExternDef>,
     /// The program starts tasks (`perform spawn`): what a task body holds
     /// may cross threads, so shared values are `Arc`s and function values
@@ -856,12 +827,10 @@ pub struct SyntaxParser {
     pub result: Ty,
 }
 
-/// A function of a tote that Rust may call.
 #[derive(Debug, Clone)]
 pub struct Export {
     pub inst: InstId,
     pub name: String,
-    /// The effects the function performs.
     pub row: Vec<String>,
     /// Parameters declared as shared borrows of functions with an empty row.
     /// Recorded before representation optimizations can introduce borrows.

@@ -1,0 +1,115 @@
+import "../../../std/Base.taut"
+import "../../../std/Mode.taut"
+
+// 型付き式言語の核。木ではなく、型検査と評価が読む形。
+
+pub(open) inductive Ty: Type {
+  TNat: Ty
+  TBool: Ty
+}
+
+pub(open) inductive Term: Type {
+  TmNum(n: Nat): Term
+  TmBool(b: Bool): Term
+  TmAdd(a: Term, b: Term): Term
+  TmEq(a: Term, b: Term): Term
+  TmIf(c: Term, t: Term, e: Term): Term
+}
+
+pub(open) inductive TyDecision(a: Ty, b: Ty): Type {
+  TySame(e: a = b): TyDecision(a, b)
+  TyDifferent(refute: (a = b) -> False): TyDecision(a, b)
+}
+
+pub fn ty_dec(a: Ty, b: Ty): TyDecision(a, b) {
+  match a: TyDecision(a, b) {
+    TNat => match b: TyDecision(TNat, b) {
+      TNat => TySame(Refl)
+      TBool => TyDifferent(e => match e: False {})
+    }
+    TBool => match b: TyDecision(TBool, b) {
+      TNat => TyDifferent(e => match e: False {})
+      TBool => TySame(Refl)
+    }
+  }
+}
+
+// 人間が読む仕様はこの関係だけ。検査器は、この規則から `mode!` が作る。
+@mode!(
+  ```
+check(rec term, out ty) -> Check { Accepted | Rejected }
+  eq Ty: ty_dec { TySame | TyDifferent }
+```
+) => inductive Check, fn check
+pub(open) inductive HasTy: (Term, Ty) -> Prop {
+  TyNum<n: Nat>: HasTy(TmNum(n), TNat)
+  TyBool<b: Bool>: HasTy(TmBool(b), TBool)
+  TyAdd<a: Term, b: Term>(ha: HasTy(a, TNat), hb: HasTy(b, TNat)): HasTy(TmAdd(a, b), TNat)
+  TyEq<a: Term, b: Term>(ha: HasTy(a, TNat), hb: HasTy(b, TNat)): HasTy(TmEq(a, b), TBool)
+  TyIf<c: Term, t: Term, e: Term, ty: Ty>(
+    hc: HasTy(c, TBool),
+    ht: HasTy(t, ty),
+    he: HasTy(e, ty)
+  ): HasTy(TmIf(c, t, e), ty)
+}
+
+pub(open) inductive Val: Type {
+  VNat(n: Nat): Val
+  VBool(b: Bool): Val
+}
+
+// 評価器。型の合わない演算は `None`（実行時の型エラー）。
+pub fn add_val(x: Option(Val), y: Option(Val)): Option(Val) {
+  match x: Option(Val) {
+    None => None
+    Some(vx) => match vx: Option(Val) {
+      VBool(xb) => None
+      VNat(nx) => match y: Option(Val) {
+        None => None
+        Some(vy) => match vy: Option(Val) {
+          VBool(yb) => None
+          VNat(ny) => Some(VNat(Nat::add(nx, ny)))
+        }
+      }
+    }
+  }
+}
+
+pub fn eq_val(x: Option(Val), y: Option(Val)): Option(Val) {
+  match x: Option(Val) {
+    None => None
+    Some(vx) => match vx: Option(Val) {
+      VBool(xb) => None
+      VNat(nx) => match y: Option(Val) {
+        None => None
+        Some(vy) => match vy: Option(Val) {
+          VBool(yb) => None
+          VNat(ny) => Some(VBool(Nat::eq(nx, ny)))
+        }
+      }
+    }
+  }
+}
+
+pub fn if_val(c: Option(Val), t: Option(Val), e: Option(Val)): Option(Val) {
+  match c: Option(Val) {
+    None => None
+    Some(vc) => match vc: Option(Val) {
+      VNat(n) => None
+      VBool(b) => match b: Option(Val) {
+        true => t
+        false => e
+      }
+    }
+  }
+}
+
+pub fn eval(t: Term): Option(Val) {
+  match t: Option(Val) {
+    TmNum(n) => Some(VNat(n))
+    TmBool(b) => Some(VBool(b))
+    TmAdd(a, b) => add_val(eval(a), eval(b))
+    TmEq(a, b) => eq_val(eval(a), eval(b))
+    TmIf(c, t1, e) => if_val(eval(c), eval(t1), eval(e))
+  }
+}

@@ -1,0 +1,148 @@
+import "../src/core.taut"
+import "../src/pipeline.taut"
+import "../src/lower.taut"
+import "../src/syntax.taut"
+
+// 値が型を持つ、という関係。
+pub(open) inductive ValHas: (Val, Ty) -> Prop {
+  HNat<n: Nat>: ValHas(VNat(n), TNat)
+  HBool<b: Bool>: ValHas(VBool(b), TBool)
+}
+
+// 評価が成功して、約束した型の値を返した、という証拠。`None` にはこの証拠が作れない。
+pub(open) inductive ResultHas: (Option(Val), Ty) -> Prop {
+  Returned<v: Val, ty: Ty>(h: ValHas(v, ty)): ResultHas(Some(v), ty)
+}
+
+pub theorem add_safe<x: Option(
+  Val
+), y: Option(Val)>(hx: ResultHas(x, TNat), hy: ResultHas(y, TNat)): ResultHas(add_val(x, y), TNat) {
+  match hx: ResultHas(add_val(x, y), TNat) {
+    Returned(vx, tx, hvx) => match hvx: ResultHas(add_val(Some(vx), y), TNat) {
+      HNat(nx) => match hy: ResultHas(add_val(Some(VNat(nx)), y), TNat) {
+        Returned(vy, ty, hvy) => match hvy: ResultHas(add_val(Some(VNat(nx)), Some(vy)), TNat) {
+          HNat(ny) => Returned(HNat)
+        }
+      }
+    }
+  }
+}
+
+pub theorem eq_safe<x: Option(
+  Val
+), y: Option(Val)>(hx: ResultHas(x, TNat), hy: ResultHas(y, TNat)): ResultHas(eq_val(x, y), TBool) {
+  match hx: ResultHas(eq_val(x, y), TBool) {
+    Returned(vx, tx, hvx) => match hvx: ResultHas(eq_val(Some(vx), y), TBool) {
+      HNat(nx) => match hy: ResultHas(eq_val(Some(VNat(nx)), y), TBool) {
+        Returned(vy, ty, hvy) => match hvy: ResultHas(eq_val(Some(VNat(nx)), Some(vy)), TBool) {
+          HNat(ny) => Returned(HBool)
+        }
+      }
+    }
+  }
+}
+
+pub theorem if_safe<c: Option(
+  Val
+), t: Option(
+  Val
+), e: Option(
+  Val
+), ty: Ty>(
+  hc: ResultHas(c, TBool),
+  ht: ResultHas(t, ty),
+  he: ResultHas(e, ty)
+): ResultHas(if_val(c, t, e), ty) {
+  match hc: ResultHas(if_val(c, t, e), ty) {
+    Returned(vc, tc, hvc) => match hvc: ResultHas(if_val(Some(vc), t, e), ty) {
+      HBool(b) => match b: ResultHas(if_val(Some(VBool(b)), t, e), ty) {
+        true => ht
+        false => he
+      }
+    }
+  }
+}
+
+// 型安全性: 型が付いた式を評価すると、必ず値が返り、その値は付いた型を持つ。
+pub theorem eval_safe<t: Term, ty: Ty>(h: HasTy(t, ty)): ResultHas(eval(t), ty) {
+  match h: ResultHas(eval(t), ty) {
+    TyNum(n) => Returned(HNat)
+    TyBool(b) => Returned(HBool)
+    TyAdd(a, b, ha, hb) => add_safe(eval_safe(ha), eval_safe(hb))
+    TyEq(a, b, ha, hb) => eq_safe(eval_safe(ha), eval_safe(hb))
+    TyIf(c, t1, e, ty1, hc, ht, he) => if_safe(eval_safe(hc), eval_safe(ht), eval_safe(he))
+  }
+}
+
+pub theorem eval_never_stuck<t: Term, ty: Ty>(
+  h: HasTy(t, ty),
+  stuck: Eq(Option(Val), eval(t), None)
+): False {
+  match Eq::subst((r: Option(Val)) => ResultHas(r, ty), stuck, eval_safe(h)): False {}
+}
+
+// 検査器の健全性: 検査器が `Some(ty)` と答えたなら、`t : ty` が成り立つ。
+pub theorem decision_sound<t: Term, ty: Ty>(
+  d: Check(t),
+  said: Eq(Option(Ty), decision_ty(t, d), Some(ty))
+): HasTy(t, ty) {
+  match d: HasTy(t, ty) {
+    Accepted(out, derivation, unique) => match said: HasTy(t, ty) {
+      Refl => derivation
+    }
+    Rejected(refute) => match said: HasTy(t, ty) {}
+  }
+}
+
+pub theorem check_sound<t: Term, ty: Ty>(
+  said: Eq(Option(Ty), check_ty(t), Some(ty))
+): HasTy(t, ty) {
+  decision_sound(check(t), said)
+}
+
+// 検査器の完全性: `t : ty` が成り立つなら、検査器は `Some(ty)` と答える。
+pub theorem decision_complete<t: Term, ty: Ty>(
+  d: Check(t),
+  h: HasTy(t, ty)
+): Eq(Option(Ty), decision_ty(t, d), Some(ty)) {
+  match d: Eq(Option(Ty), decision_ty(t, d), Some(ty)) {
+    Accepted(out, derivation, unique) => Eq::congr(Some, Eq::sym(unique(ty, h)))
+    Rejected(refute) => False::elim(refute(ty, h))
+  }
+}
+
+pub theorem check_complete<t: Term, ty: Ty>(
+  h: HasTy(t, ty)
+): Eq(Option(Ty), check_ty(t), Some(ty)) {
+  decision_complete(check(t), h)
+}
+
+// 型付けは一意。`mode!` が作った一意性から取り出す。
+pub theorem typing_unique<t: Term, a: Ty, b: Ty>(ha: HasTy(t, a), hb: HasTy(t, b)): Eq(Ty, a, b) {
+  match check(t): Eq(Ty, a, b) {
+    Accepted(out, derivation, unique) => Eq::trans(unique(a, ha), Eq::sym(unique(b, hb)))
+    Rejected(refute) => False::elim(refute(a, ha))
+  }
+}
+
+// 検査を通した実行は、型の合った値を返す。
+pub theorem run_term_safe<t: Term, ty: Ty>(h: HasTy(t, ty)): ResultHas(run_term(t), ty) {
+  Eq::subst(
+    (r: Option(Ty)) => ResultHas(run_if_typed(r, t), ty),
+    Eq::sym(check_complete(h)),
+    eval_safe(h)
+  )
+}
+
+// 木について: `tl::Expr::I` はどの文字列から読まれた木でもよい。型が付くなら、実行は成功して型の合う値を返す。
+pub theorem run_tree_safe<e: tl::Expr::I, ty: Ty>(
+  h: HasTy(lower_expr(e), ty)
+): ResultHas(run_tree(e), ty) {
+  run_term_safe(h)
+}
+
+pub theorem tree_check_complete<e: tl::Expr::I, ty: Ty>(
+  h: HasTy(lower_expr(e), ty)
+): Eq(Option(Ty), check_ty(lower_expr(e)), Some(ty)) {
+  check_complete(h)
+}

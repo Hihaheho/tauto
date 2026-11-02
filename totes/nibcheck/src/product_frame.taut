@@ -1,5 +1,4 @@
 import "types_infer.taut"
-import "product_read_frame.taut"
 import "datas_frame.taut"
 import "checker_frame.taut"
 import "checked_frame.taut"
@@ -9,6 +8,16 @@ import "tracked_run_frame.taut"
 import "tracked_read_frame.taut"
 import "expr_leaf_frame.taut"
 import "expr_leaf_error_sound.taut"
+import std::Text
+import "checker.taut"
+import "finish_frame.taut"
+import "obligation_state_frame.taut"
+import "tracked_state_frame.taut"
+import "ty.taut"
+import "types_run.taut"
+import "unify_sound.taut"
+import "written_error_sound.taut"
+import "../../surface/src/surface.taut"
 
 // The steps of the checker on a product (`ck_product_of`, `types_infer.taut`)
 // keep the declarations and the substitution, drop no error, and keep what is
@@ -75,20 +84,6 @@ pub theorem product_step_fresh(c: Checker): ProductStep(c, ck_fresh(c)) {
   AndIntro(ck_fresh_frame(c), AndIntro(ck_fresh_frame_errors(c), ck_fresh_frame_tracked(c)))
 }
 
-pub theorem product_step_record(
-  c: Checker,
-  ms: List(Ty),
-  span: TySpan
-): ProductStep(c, ck_record_product_check(c, ms, span)) {
-  AndIntro(
-    Refl,
-    AndIntro(
-      clean => clean,
-      AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-    )
-  )
-}
-
 pub theorem product_step_run<A: Type>(
   c: Checker,
   m: Mut1(A, Checker),
@@ -115,8 +110,6 @@ pub theorem product_step_tracked<A: Type>(
 ): TrackedRunFrame(c, m) {
   tracked_run_read(c, m, And::left(h), And::right(And::right(h)), ordered)
 }
-
-// ----- a member -----
 
 pub fn pm_dup(c: Checker, x: Ty, m: SurfaceTerm, d: Bool): Mut1(Ty, Checker) {
   match d: Mut1(Ty, Checker) {
@@ -185,8 +178,6 @@ pub theorem ck_product_member_step(
   )
 }
 
-// ----- the members -----
-
 pub theorem ck_product_members_step(
   types: List(Ty),
   members: List(SurfaceTerm),
@@ -217,137 +208,6 @@ pub theorem ck_product_members_step(
   }
 }
 
-// ----- telling the members apart -----
-
-pub theorem po_step_step(
-  c: Checker,
-  ms: List(Ty),
-  span: TySpan,
-  o: Option(Ty)
-): ProductStep(c, po_step(c, ms, span, o)) {
-  match o: ProductStep(c, po_step(c, ms, span, o)) {
-    Some(m) => product_step_rewrap(
-      c,
-      ck_error(
-        c,
-        cat3(
-          "a product's member ",
-          ty_show(ck_shown(c, m)),
-          " has a type parameter or an unknown type: it may be equal to another member"
-        ),
-        span
-      ),
-      product_step_error(
-        c,
-        cat3(
-          "a product's member ",
-          ty_show(ck_shown(c, m)),
-          " has a type parameter or an unknown type: it may be equal to another member"
-        ),
-        span
-      )
-    )
-    None => product_step_return(c, Star)
-  }
-}
-
-pub theorem pk_step_step(
-  c: Checker,
-  ms: List(Ty),
-  span: TySpan,
-  o: Option(Ty)
-): ProductStep(c, pk_step(c, ms, span, o)) {
-  match o: ProductStep(c, pk_step(c, ms, span, o)) {
-    Some(a) => product_step_rewrap(
-      c,
-      ck_error(
-        c,
-        cat2(ty_show(ck_shown(c, a)), " is twice in a product; tell them apart with tags"),
-        span
-      ),
-      product_step_error(
-        c,
-        cat2(ty_show(ck_shown(c, a)), " is twice in a product; tell them apart with tags"),
-        span
-      )
-    )
-    None => product_step_rewrap(
-      c,
-      ck_product_open(c, ms, span),
-      Eq::subst(
-        (z: Mut1(Unit, Checker)) => ProductStep(c, z),
-        Eq::sym(ck_product_open_unf(c, ms, span)),
-        po_step_step(c, ms, span, ck_first_open(c, ms))
-      )
-    )
-  }
-}
-
-pub theorem ck_product_known_step(
-  c: Checker,
-  ms: List(Ty),
-  span: TySpan
-): ProductStep(c, ck_product_known(c, ms, span)) {
-  Eq::subst(
-    (z: Mut1(Unit, Checker)) => ProductStep(c, z),
-    Eq::sym(ck_product_known_unf(c, ms, span)),
-    pk_step_step(c, ms, span, ty_first_twice(ms, Nil))
-  )
-}
-
-pub theorem pa_wait_step(
-  c: Checker,
-  members: List(Ty),
-  span: TySpan,
-  wait: Bool
-): ProductStep(c, pa_wait(c, members, span, wait)) {
-  match wait: ProductStep(c, pa_wait(c, members, span, wait)) {
-    true => product_step_rewrap(
-      c,
-      ck_record_product_check(c, ty_resolve_list_in(c.steps, c.subst, members), span),
-      product_step_record(c, ty_resolve_list_in(c.steps, c.subst, members), span)
-    )
-    false => product_step_rewrap(
-      c,
-      ck_product_known(c, ty_resolve_list_in(c.steps, c.subst, members), span),
-      ck_product_known_step(c, ty_resolve_list_in(c.steps, c.subst, members), span)
-    )
-  }
-}
-
-pub theorem pa_step_step(
-  c: Checker,
-  members: List(Ty),
-  span: TySpan,
-  at_end: Bool,
-  two: Bool
-): ProductStep(c, pa_step(c, members, span, at_end, two)) {
-  match two: ProductStep(c, pa_step(c, members, span, at_end, two)) {
-    true => pa_wait_step(
-      c,
-      members,
-      span,
-      bool_not(at_end) && ck_any_vars(c, ty_resolve_list_in(c.steps, c.subst, members))
-    )
-    false => product_step_return(c, Star)
-  }
-}
-
-pub theorem ck_product_apart_step(
-  c: Checker,
-  members: List(Ty),
-  span: TySpan,
-  at_end: Bool
-): ProductStep(c, ck_product_apart(c, members, span, at_end)) {
-  Eq::subst(
-    (z: Mut1(Unit, Checker)) => ProductStep(c, z),
-    Eq::sym(ck_product_apart_unf(c, members, span, at_end)),
-    pa_step_step(c, members, span, at_end, ty_two_or_more(members))
-  )
-}
-
-// ----- a product -----
-
 pub fn product_of_step(
   c: Checker,
   types: List(Ty),
@@ -357,12 +217,7 @@ pub fn product_of_step(
   frame_bind(
     List(Ty),
     Ty,
-    (tys: List(Ty), c1: Checker) => frame_bind(
-      Unit,
-      Ty,
-      (ignored: Unit, c2: Checker) => mut1(ty_product(tys), c2),
-      ck_product_apart(c1, tys, span, false)
-    ),
+    (tys: List(Ty), c1: Checker) => mut1(ty_product(tys), c1),
     ck_product_members(types, members, c, Nil)
   )
 }
@@ -387,21 +242,10 @@ pub theorem ck_product_of_step(
     Eq::sym(ck_product_of_unf(c, types, members, span)),
     product_step_bind(
       c,
-      (tys: List(Ty), c1: Checker) => frame_bind(
-        Unit,
-        Ty,
-        (ignored: Unit, c2: Checker) => mut1(ty_product(tys), c2),
-        ck_product_apart(c1, tys, span, false)
-      ),
+      (tys: List(Ty), c1: Checker) => mut1(ty_product(tys), c1),
       ck_product_members(types, members, c, Nil),
       ck_product_members_step(types, members, c, Nil),
-      tys => c1 => product_step_bind(
-        c1,
-        (ignored: Unit, c2: Checker) => mut1(ty_product(tys), c2),
-        ck_product_apart(c1, tys, span, false),
-        ck_product_apart_step(c1, tys, span, false),
-        ignored => c2 => product_step_return(c2, ty_product(tys))
-      )
+      tys => c1 => product_step_return(c1, ty_product(tys))
     )
   )
 }
@@ -450,8 +294,6 @@ pub theorem ck_product_of_run_frame_tracked(
     ordered
   )
 }
-
-// ----- a member at a type -----
 
 // The three frames of an inference step, from an ordered checker.
 pub def ProjectStep<A: Type>(
@@ -634,7 +476,7 @@ pub fn pj_found(
   found: Option(Ty)
 ): Mut1(Ty, Checker) {
   match found: Mut1(Ty, Checker) {
-    Some(t) => pj_some(c, t, ty_is_borrow(resolved) && bool_not(kind_dup(ck_kind(c, t))))
+    Some(t) => pj_some(c, t, ty_is_borrow(resolved) && not(kind_dup(ck_kind(c, t))))
     None => frame_bind(
       Unit,
       Ty,
@@ -646,15 +488,10 @@ pub fn pj_found(
 
 pub fn project_of_step(c: Checker, b: Ty, want: Ty, span: TySpan): Mut1(Ty, Checker) {
   frame_bind(
-    Unit,
+    Option(Ty),
     Ty,
-    (ignored: Unit, c1: Checker) => frame_bind(
-      Option(Ty),
-      Ty,
-      (found: Option(Ty), c2: Checker) => pj_found(c2, ck_resolve(c, b), want, span, found),
-      ck_project_find(c1, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want)
-    ),
-    ck_product_apart(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), span, false)
+    (found: Option(Ty), c2: Checker) => pj_found(c2, ck_resolve(c, b), want, span, found),
+    ck_project_find(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want)
   )
 }
 
@@ -682,7 +519,7 @@ pub theorem pj_found_step(
   found: Option(Ty)
 ): ProductStep(c, pj_found(c, resolved, want, span, found)) {
   match found: ProductStep(c, pj_found(c, resolved, want, span, found)) {
-    Some(t) => pj_some_step(c, t, ty_is_borrow(resolved) && bool_not(kind_dup(ck_kind(c, t))))
+    Some(t) => pj_some_step(c, t, ty_is_borrow(resolved) && not(kind_dup(ck_kind(c, t))))
     None => product_step_bind(
       c,
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_fresh(c1)),
@@ -706,30 +543,14 @@ pub theorem ck_project_of_step(
 ): ProjectStep(c, ck_project_of(c, b, want, span)) {
   project_step_bind(
     c,
-    (ignored: Unit, c1: Checker) => frame_bind(
-      Option(Ty),
-      Ty,
-      (found: Option(Ty), c2: Checker) => pj_found(c2, ck_resolve(c, b), want, span, found),
-      ck_project_find(c1, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want)
-    ),
-    ck_product_apart(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), span, false),
-    project_step_of_product(
-      c,
-      ck_product_apart(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), span, false),
-      ck_product_apart_step(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), span, false),
-      ordered
-    ),
-    ignored => c1 => o1 => project_step_bind(
-      c1,
-      (found: Option(Ty), c2: Checker) => pj_found(c2, ck_resolve(c, b), want, span, found),
-      ck_project_find(c1, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want),
-      ck_project_find_step(c1, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want, o1),
-      found => c2 => o2 => project_step_of_product(
-        c2,
-        pj_found(c2, ck_resolve(c, b), want, span, found),
-        pj_found_step(c2, ck_resolve(c, b), want, span, found),
-        o2
-      )
+    (found: Option(Ty), c2: Checker) => pj_found(c2, ck_resolve(c, b), want, span, found),
+    ck_project_find(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want),
+    ck_project_find_step(c, ty_product_members(ty_unborrowed(ck_resolve(c, b))), want, ordered),
+    found => c2 => o2 => project_step_of_product(
+      c2,
+      pj_found(c2, ck_resolve(c, b), want, span, found),
+      pj_found_step(c2, ck_resolve(c, b), want, span, found),
+      o2
     )
   )
 }
@@ -796,28 +617,4 @@ pub theorem ck_written_here_run_frame_tracked(
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, ck_written_here(c, t)) {
   product_step_tracked(c, ck_written_here(c, t), ck_written_here_step(c, t), ordered)
-}
-
-pub theorem ck_check_products_step(
-  ps: List(TyProductCheck),
-  c: Checker
-): ProductStep(c, ck_check_products(ps, c)) {
-  match ps: ProductStep(c, ck_check_products(ps, c)) {
-    Nil => product_step_return(c, Star)
-    Cons(p, rest) => Eq::subst(
-      (z: Mut1(Unit, Checker)) => ProductStep(c, z),
-      Eq::sym(finish_products_unf(p, rest, c)),
-      product_step_bind(
-        c,
-        (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_products(rest, c1)),
-        ck_product_apart(c, finish_product_members(p), finish_product_span(p), true),
-        ck_product_apart_step(c, finish_product_members(p), finish_product_span(p), true),
-        ignored => c1 => product_step_rewrap(
-          c1,
-          ck_check_products(rest, c1),
-          ck_check_products_step(rest, c1)
-        )
-      )
-    )
-  }
 }

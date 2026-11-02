@@ -1,4 +1,9 @@
 import "checker.taut"
+import std::Base
+import std::Map
+import std::Text
+import "datas.taut"
+import "ty.taut"
 
 // The rules (`docs/design/self-host.md`「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」): when two types are the same type
 // under a substitution `s` of type variables. These rules define the contracts
@@ -54,7 +59,6 @@ mutual {
   }
 }
 
-// None of the parameters named `ns` is in `t`.
 pub def RigidAbsent(
   s: Ordmap(Nat, Ty),
   ns: List(Text),
@@ -215,6 +219,33 @@ pub def TyEqIn(
 // * Tags are forgotten, never added.
 // * Functions: contravariant in the parameters, covariant in the result, and
 //   a function of a kind may stand for one of a kind it fits (`kind_fits`).
+// * A product fits a type that wants some of its members (`A × B <: A`,
+//   `A × B <: B × A`): each member wanted (`ty_wanted_members`) is the same
+//   type as a member of the product.
+
+// `t` is one of the types in the list.
+pub(open) inductive TyIn: (List(Ty), Ty) -> Prop {
+  InHere(t: Ty, rest: List(Ty)): TyIn(Cons(t, rest), t)
+  InThere<ts: List(Ty), t: Ty>(u: Ty, h: TyIn(ts, t)): TyIn(Cons(u, ts), t)
+}
+
+// Each of `ys` is the same type as a member of `xs`.
+pub(open) inductive ProdFit(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  xs: List(Ty)
+): (List(Ty)) -> Prop {
+  ProdNil: ProdFit(s, ok, xs, Nil)
+  ProdCons<y: Ty, ys: List(
+    Ty
+  )>(
+    x: Ty,
+    hx: TyIn(xs, x),
+    he: TyEq(s, ok, x, y),
+    hs: ProdFit(s, ok, xs, ys)
+  ): ProdFit(s, ok, xs, Cons(y, ys))
+}
+
 mutual {
   pub(open) inductive TySub(
     s: Ordmap(Nat, Ty),
@@ -286,9 +317,11 @@ mutual {
       hp: TySubList(s, ok, inst, dup, pb, pa),
       hr: TySub(s, ok, inst, dup, ra, rb)
     ): TySub(s, ok, inst, dup, TyFn(pa, ra, ka), TyFn(pb, rb, kb))
+    TysubProduct<xs: List(Ty), b: Ty>(
+      h: ProdFit(s, ok, xs, ty_wanted_members(b))
+    ): TySub(s, ok, inst, dup, TyProduct(xs), b)
   }
 
-  // Each of the first list fits the one of the second at its place.
   pub(open) inductive TySubList(
     s: Ordmap(Nat, Ty),
     ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
@@ -306,7 +339,6 @@ mutual {
     ): TySubList(s, ok, inst, dup, Cons(x, xs), Cons(y, ys))
   }
 
-  // Each of the list fits `b`.
   pub(open) inductive TySubEach(
     s: Ordmap(Nat, Ty),
     ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
@@ -322,7 +354,6 @@ mutual {
     ): TySubEach(s, ok, inst, dup, b, Cons(x, xs))
   }
 
-  // `a` fits one of the list.
   pub(open) inductive TySubAny(
     s: Ordmap(Nat, Ty),
     ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,

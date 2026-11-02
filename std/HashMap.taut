@@ -1,4 +1,8 @@
+import "Base.taut"
+import "Map.taut"
+import "MapLaws.taut"
 import "MapRemoveFloor.taut"
+import std::prelude::Ord
 
 // A hash map, persistent: the entries are kept in buckets, one for each hash
 // of a key, and the buckets in an `Ordmap` keyed by the hash. A bucket is a
@@ -10,7 +14,8 @@ import "MapRemoveFloor.taut"
 pub(open) inductive HashEq(K: Type, eq: (K, K) -> Bool): Prop {
   Mk(
     refl: ∀ a: K. eq(a, a) = true,
-    sound: ∀ a: K, b: K. (eq(a, b) = true) -> (a = b)
+    sound: ∀ a: K,
+    b: K. (eq(a, b) = true) -> (a = b)
   ): HashEq(K, eq)
 }
 
@@ -31,8 +36,6 @@ pub theorem hash_eq_sound<K: Type>(
     Mk(r, s) => s(a, b, e)
   }
 }
-
-// ---- buckets ------------------------------------------------------------------
 
 pub fn bucket_get<K, V>(b: List(K × V), k: K, eq: (K, K) -> Bool): Option(V) {
   match b: Option(V) {
@@ -72,7 +75,6 @@ pub fn bucket_remove<K, V>(b: List(K × V), k: K, eq: (K, K) -> Bool): List(K ×
   }
 }
 
-// `a` when `c` is `true`, `b` when it is `false`.
 pub fn bucket_choose<T>(a: T, b: T, c: Bool): T {
   match c: T {
     true => a
@@ -114,16 +116,17 @@ pub theorem bucket_get_insert_same<K: Type, V: Type>(
   match b: bucket_get(bucket_insert(b, k, v, eq), k, eq) = Some(v) {
     Nil => bucket_choose_true(eq(k, k), Some(v), None(V), hash_eq_refl(eq, w, k))
     Cons(e, rest) => match e: bucket_get(bucket_insert(Cons(e, rest), k, v, eq), k, eq) = Some(v) {
-      #(ek, ev) => match eq(k, ek) eqn h: bucket_get(bucket_insert(Cons(#(ek, ev), rest), k, v, eq), k, eq) = Some(v) {
+      #(ek, ev) => match eq(
+        k,
+        ek
+      ) eqn h: bucket_get(bucket_insert(Cons(#(ek, ev), rest), k, v, eq), k, eq) = Some(v) {
         false => ⊢ bucket_get(
-          bucket_choose(
-            Cons(#(k, v), rest),
-            Cons(#(ek, ev), bucket_insert(rest, k, v, eq)),
-            false
-          ),
+          bucket_choose(Cons(#(k, v), rest), Cons(#(ek, ev), bucket_insert(rest, k, v, eq)), false),
           k,
           eq
-        ) = Some(v) from Eq::trans(
+        ) = Some(
+          v
+        ) from Eq::trans(
           bucket_choose_false(
             eq(k, ek),
             Some(ev),
@@ -133,14 +136,12 @@ pub theorem bucket_get_insert_same<K: Type, V: Type>(
           bucket_get_insert_same(eq, w, rest, k, v)
         )
         true => ⊢ bucket_get(
-          bucket_choose(
-            Cons(#(k, v), rest),
-            Cons(#(ek, ev), bucket_insert(rest, k, v, eq)),
-            true
-          ),
+          bucket_choose(Cons(#(k, v), rest), Cons(#(ek, ev), bucket_insert(rest, k, v, eq)), true),
           k,
           eq
-        ) = Some(v) from bucket_choose_true(
+        ) = Some(
+          v
+        ) from bucket_choose_true(
           eq(k, k),
           Some(v),
           bucket_get(rest, k, eq),
@@ -180,28 +181,35 @@ pub theorem bucket_get_insert_other<K: Type, V: Type>(
       j,
       eq
     ) = bucket_get(Cons(e, rest), j, eq) {
-      #(ek, ev) => match eq(k, ek) eqn h: bucket_get(bucket_insert(Cons(#(ek, ev), rest), k, v, eq), j, eq) = bucket_get(Cons(#(ek, ev), rest), j, eq) {
+      #(ek, ev) => match eq(
+        k,
+        ek
+      ) eqn h: bucket_get(
+        bucket_insert(Cons(#(ek, ev), rest), k, v, eq),
+        j,
+        eq
+      ) = bucket_get(Cons(#(ek, ev), rest), j, eq) {
         false => ⊢ bucket_get(
-          bucket_choose(
-            Cons(#(k, v), rest),
-            Cons(#(ek, ev), bucket_insert(rest, k, v, eq)),
-            false
-          ),
+          bucket_choose(Cons(#(k, v), rest), Cons(#(ek, ev), bucket_insert(rest, k, v, eq)), false),
           j,
           eq
-        ) = bucket_get(Cons(#(ek, ev), rest), j, eq) from Eq::congr(
+        ) = bucket_get(
+          Cons(#(ek, ev), rest),
+          j,
+          eq
+        ) from Eq::congr(
           ⟦bucket_choose(Some(ev), □, eq(j, ek))⟧,
           bucket_get_insert_other(eq, w, rest, k, v, j, ne)
         )
         true => ⊢ bucket_get(
-          bucket_choose(
-            Cons(#(k, v), rest),
-            Cons(#(ek, ev), bucket_insert(rest, k, v, eq)),
-            true
-          ),
+          bucket_choose(Cons(#(k, v), rest), Cons(#(ek, ev), bucket_insert(rest, k, v, eq)), true),
           j,
           eq
-        ) = bucket_get(Cons(#(ek, ev), rest), j, eq) from Eq::trans(
+        ) = bucket_get(
+          Cons(#(ek, ev), rest),
+          j,
+          eq
+        ) from Eq::trans(
           bucket_choose_false(eq(j, k), Some(v), bucket_get(rest, j, eq), ne),
           Eq::sym(
             bucket_choose_false(
@@ -225,7 +233,10 @@ pub theorem bucket_get_remove_same<K: Type, V: Type>(
   match b: bucket_get(bucket_remove(b, k, eq), k, eq) = None {
     Nil => Refl
     Cons(e, rest) => match e: bucket_get(bucket_remove(Cons(e, rest), k, eq), k, eq) = None {
-      #(ek, ev) => match eq(k, ek) eqn h: bucket_get(bucket_remove(Cons(#(ek, ev), rest), k, eq), k, eq) = None {
+      #(ek, ev) => match eq(
+        k,
+        ek
+      ) eqn h: bucket_get(bucket_remove(Cons(#(ek, ev), rest), k, eq), k, eq) = None {
         false => ⊢ bucket_get(
           bucket_choose(
             bucket_remove(rest, k, eq),
@@ -272,7 +283,14 @@ pub theorem bucket_get_remove_other<K: Type, V: Type>(
       j,
       eq
     ) = bucket_get(Cons(e, rest), j, eq) {
-      #(ek, ev) => match eq(k, ek) eqn h: bucket_get(bucket_remove(Cons(#(ek, ev), rest), k, eq), j, eq) = bucket_get(Cons(#(ek, ev), rest), j, eq) {
+      #(ek, ev) => match eq(
+        k,
+        ek
+      ) eqn h: bucket_get(
+        bucket_remove(Cons(#(ek, ev), rest), k, eq),
+        j,
+        eq
+      ) = bucket_get(Cons(#(ek, ev), rest), j, eq) {
         false => ⊢ bucket_get(
           bucket_choose(
             bucket_remove(rest, k, eq),
@@ -281,7 +299,11 @@ pub theorem bucket_get_remove_other<K: Type, V: Type>(
           ),
           j,
           eq
-        ) = bucket_get(Cons(#(ek, ev), rest), j, eq) from Eq::congr(
+        ) = bucket_get(
+          Cons(#(ek, ev), rest),
+          j,
+          eq
+        ) from Eq::congr(
           ⟦bucket_choose(Some(ev), □, eq(j, ek))⟧,
           bucket_get_remove_other(eq, w, rest, k, j, ne)
         )
@@ -293,7 +315,11 @@ pub theorem bucket_get_remove_other<K: Type, V: Type>(
           ),
           j,
           eq
-        ) = bucket_get(Cons(#(ek, ev), rest), j, eq) from Eq::trans(
+        ) = bucket_get(
+          Cons(#(ek, ev), rest),
+          j,
+          eq
+        ) from Eq::trans(
           bucket_get_remove_other(eq, w, rest, k, j, ne),
           Eq::sym(
             bucket_choose_false(
@@ -309,8 +335,6 @@ pub theorem bucket_get_remove_other<K: Type, V: Type>(
   }
 }
 
-// ---- the map ------------------------------------------------------------------
-
 pub(open) inductive Hmap(K: Type, V: Type): Type {
   Mk(buckets: Ordmap(Nat, List(K × V)), size: Nat): Hmap(K, V)
 }
@@ -322,7 +346,6 @@ module Hmap {
     }
   }
 
-  // The number of keys.
   pub fn size<K, V>(m: Hmap(K, V)): Nat {
     match m: Nat {
       Mk(bs, n) => n
@@ -354,13 +377,7 @@ module Hmap {
   }
 
   // `k` with the value `v`, in place of any value it had.
-  pub fn insert<K, V>(
-    m: Hmap(K, V),
-    k: K,
-    v: V,
-    hash: (K) -> Nat,
-    eq: (K, K) -> Bool
-  ): Hmap(K, V) {
+  pub fn insert<K, V>(m: Hmap(K, V), k: K, v: V, hash: (K) -> Nat, eq: (K, K) -> Bool): Hmap(K, V) {
     Hmap::Mk(
       Ordmap::insert(
         buckets(m),
@@ -412,10 +429,10 @@ module Hmap {
     remove_cases(m, k, hash, eq, contains(m, k, hash, eq))
   }
 
-  pub fn concat<K, V>(bs: List(List(K × V) × Nat)): List(K × V) {
+  pub fn concat<K, V>(bs: List(Nat × List(K × V))): List(K × V) {
     match bs: List(K × V) {
       Nil => Nil
-      Cons(e, rest) => List::append((e: List(K × V)), concat(rest))
+      Cons(#(h, e), rest) => List::append(e, concat(rest))
     }
   }
 
@@ -439,8 +456,6 @@ module Hmap {
   pub fn of_list<K, V>(l: List(K × V), hash: (K) -> Nat, eq: (K, K) -> Bool): Hmap(K, V) {
     insert_all(empty(), l, hash, eq)
   }
-
-  // ---- laws ---------------------------------------------------------------------
 
   // The buckets are ordered by their hashes: what the theorems below assume.
   pub fn ordered<K, V>(m: Hmap(K, V)): Prop {
@@ -595,12 +610,7 @@ module Hmap {
     ord: ordered(m)
   ): get(insert(m, k, v, hash, eq), j, hash, eq) = get(m, j, hash, eq) {
     Ordering::cases(
-      (c: Ordering) => get(
-        insert(m, k, v, hash, eq),
-        j,
-        hash,
-        eq
-      ) = get(m, j, hash, eq),
+      (c: Ordering) => get(insert(m, k, v, hash, eq), j, hash, eq) = get(m, j, hash, eq),
       Ordmap::compare_nat(hash(j), hash(k)),
       (e: Ordmap::compare_nat(hash(j), hash(k)) = Less) => Eq::congr(
         ⟦bucket_get(option_bucket(□), j, eq)⟧,
@@ -677,12 +687,9 @@ module Hmap {
   ): ordered(remove(m, k, hash, eq)) {
     match contains(m, k, hash, eq): ordered(remove(m, k, hash, eq)) {
       false => ⊢ ordered(remove_cases(m, k, hash, eq, false)) from ord
-      true => ⊢ ordered(remove_cases(m, k, hash, eq, true)) from put_bucket_ordered(
-        buckets(m),
-        hash(k),
-        bucket_remove(bucket(m, hash(k)), k, eq),
-        ord
-      )
+      true => ⊢ ordered(
+        remove_cases(m, k, hash, eq, true)
+      ) from put_bucket_ordered(buckets(m), hash(k), bucket_remove(bucket(m, hash(k)), k, eq), ord)
     }
   }
 
@@ -694,16 +701,21 @@ module Hmap {
     ord: ordered(m)
   ): get(remove(m, k, hash, eq), k, hash, eq) = None {
     match contains(m, k, hash, eq) eqn h: get(remove(m, k, hash, eq), k, hash, eq) = None {
-      false => ⊢ get(remove_cases(m, k, hash, eq, false), k, hash, eq) = None from Ordmap::is_some_false(get(m, k, hash, eq), h)
-      true => ⊢ get(remove_cases(m, k, hash, eq, true), k, hash, eq) = None from Eq::trans(
+      false => ⊢ get(
+        remove_cases(m, k, hash, eq, false),
+        k,
+        hash,
+        eq
+      ) = None from Ordmap::is_some_false(get(m, k, hash, eq), h)
+      true => ⊢ get(
+        remove_cases(m, k, hash, eq, true),
+        k,
+        hash,
+        eq
+      ) = None from Eq::trans(
         Eq::congr(
           ⟦bucket_get(□, k, eq)⟧,
-          put_bucket_same(
-            buckets(m),
-            hash(k),
-            bucket_remove(bucket(m, hash(k)), k, eq),
-            ord
-          )
+          put_bucket_same(buckets(m), hash(k), bucket_remove(bucket(m, hash(k)), k, eq), ord)
         ),
         bucket_get_remove_same(eq, bucket(m, hash(k)), k)
       )
@@ -761,11 +773,7 @@ module Hmap {
         (g: Nat) => bucket_get(
           option_bucket(
             Ordmap::get(
-              put_bucket(
-                buckets(m),
-                hash(k),
-                bucket_remove(bucket(m, hash(k)), k, eq)
-              ),
+              put_bucket(buckets(m), hash(k), bucket_remove(bucket(m, hash(k)), k, eq)),
               g,
               Ordmap::compare_nat
             )
@@ -777,12 +785,7 @@ module Hmap {
         Eq::trans(
           Eq::congr(
             ⟦bucket_get(□, j, eq)⟧,
-            put_bucket_same(
-              buckets(m),
-              hash(k),
-              bucket_remove(bucket(m, hash(k)), k, eq),
-              ord
-            )
+            put_bucket_same(buckets(m), hash(k), bucket_remove(bucket(m, hash(k)), k, eq), ord)
           ),
           bucket_get_remove_other(eq, w, bucket(m, hash(k)), k, j, ne)
         )
@@ -825,21 +828,10 @@ module Hmap {
         j,
         hash,
         eq
-      ) = get(m, j, hash, eq) from get_put_remove_other(
-        eq,
-        w,
-        hash,
-        m,
-        k,
-        j,
-        ne,
-        ord
-      )
+      ) = get(m, j, hash, eq) from get_put_remove_other(eq, w, hash, m, k, j, ne, ord)
     }
   }
 }
-
-// ---- sets ---------------------------------------------------------------------
 
 pub(open) inductive Hset(K: Type): Type {
   Mk(map: Hmap(K, Bool)): Hset(K)
@@ -872,10 +864,10 @@ module Hset {
     Hset::Mk(Hmap::remove(map(s), k, hash, eq))
   }
 
-  pub fn keys_of<K>(es: List(Bool × K)): List(K) {
+  pub fn keys_of<K>(es: List(K × Bool)): List(K) {
     match es: List(K) {
       Nil => Nil
-      Cons(e, rest) => Cons((e: K), keys_of(rest))
+      Cons(#(k, b), rest) => Cons(k, keys_of(rest))
     }
   }
 
@@ -896,10 +888,7 @@ module Hset {
     k: K,
     ord: ordered(s)
   ): contains(insert(s, k, hash, eq), k, hash, eq) = true {
-    Eq::congr(
-      ⟦Ordmap::is_some(□)⟧,
-      Hmap::get_insert_same(eq, w, hash, map(s), k, true, ord)
-    )
+    Eq::congr(⟦Ordmap::is_some(□)⟧, Hmap::get_insert_same(eq, w, hash, map(s), k, true, ord))
   }
 
   pub theorem contains_insert_other<K: Type>(
@@ -925,10 +914,7 @@ module Hset {
     k: K,
     ord: ordered(s)
   ): contains(remove(s, k, hash, eq), k, hash, eq) = false {
-    Eq::congr(
-      ⟦Ordmap::is_some(□)⟧,
-      Hmap::get_remove_same(eq, hash, map(s), k, ord)
-    )
+    Eq::congr(⟦Ordmap::is_some(□)⟧, Hmap::get_remove_same(eq, hash, map(s), k, ord))
   }
 
   pub theorem contains_remove_other<K: Type>(
@@ -941,10 +927,7 @@ module Hset {
     ne: eq(j, k) = false,
     ord: ordered(s)
   ): contains(remove(s, k, hash, eq), j, hash, eq) = contains(s, j, hash, eq) {
-    Eq::congr(
-      ⟦Ordmap::is_some(□)⟧,
-      Hmap::get_remove_other(eq, w, hash, map(s), k, j, ne, ord)
-    )
+    Eq::congr(⟦Ordmap::is_some(□)⟧, Hmap::get_remove_other(eq, w, hash, map(s), k, j, ne, ord))
   }
 
   pub theorem insert_ordered<K: Type>(

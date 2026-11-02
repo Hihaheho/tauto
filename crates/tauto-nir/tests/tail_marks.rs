@@ -137,8 +137,7 @@ fn drain(n: i64, acc: i64): i64 {
 
 #[test]
 fn a_function_of_the_m_tier_is_not_marked() {
-    let source =
-        r#"effect choose(): Bool resume ω
+    let source = r#"effect choose(): Bool resume ω
 fn pick(n: u64, acc: u64): u64 ! {choose} {
     if n == 0 {
         acc

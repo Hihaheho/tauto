@@ -1,3 +1,4 @@
+import "Base.taut"
 import "Nat.taut"
 
 // Natural numbers in binary, as inductive types: a number of `n` bits is a term
@@ -14,13 +15,11 @@ pub(open) inductive Pos: Type {
   Bit1(p: Pos): Pos
 }
 
-// A natural number: zero, or a positive number.
 pub(open) inductive BinNat: Type {
   BinZero: BinNat
   BinPos(p: Pos): BinNat
 }
 
-// The difference `p - q` of two positive numbers, with its sign.
 pub(open) inductive PosDiff: Type {
   DiffNeg(r: Pos): PosDiff
   DiffZero: PosDiff
@@ -73,7 +72,6 @@ module Pos {
     }
   }
 
-  // `2p - 1`.
   pub fn pred_double(p: Pos): Pos {
     match p: Pos {
       One => One
@@ -82,7 +80,6 @@ module Pos {
     }
   }
 
-  // `p - 1` as a natural number.
   pub fn pred(p: Pos): BinNat {
     match p: BinNat {
       One => BinZero
@@ -91,7 +88,6 @@ module Pos {
     }
   }
 
-  // `2d`.
   pub fn diff_double(d: PosDiff): PosDiff {
     match d: PosDiff {
       DiffNeg(r) => DiffNeg(Bit0(r))
@@ -100,7 +96,6 @@ module Pos {
     }
   }
 
-  // `2d + 1`.
   pub fn diff_succ_double(d: PosDiff): PosDiff {
     match d: PosDiff {
       DiffNeg(r) => DiffNeg(pred_double(r))
@@ -109,7 +104,6 @@ module Pos {
     }
   }
 
-  // `2d - 1`.
   pub fn diff_pred_double(d: PosDiff): PosDiff {
     match d: PosDiff {
       DiffNeg(r) => DiffNeg(Bit1(r))
@@ -152,7 +146,6 @@ module Pos {
     }
   }
 
-  // The sign of a difference.
   pub fn diff_sign(d: PosDiff): Ordering {
     match d: Ordering {
       DiffNeg(_) => Less
@@ -194,8 +187,6 @@ module Pos {
     }
   }
 
-  // ---- arithmetic on `Nat` that the proofs use ----------------------------------
-
   pub theorem double_congr<a: Nat, b: Nat>(h: a = b): a + a = b + b {
     calc a + a {
       = b + a from Eq::congr(⟦Nat::add(□, a)⟧, h)
@@ -214,10 +205,7 @@ module Pos {
     }
   }
 
-  pub theorem double_add(
-    a: Nat,
-    b: Nat
-  ): a + b + (a + b) = a + a + (b + b) {
+  pub theorem double_add(a: Nat, b: Nat): a + b + (a + b) = a + a + (b + b) {
     Nat::add_shuffle(a, b, a, b)
   }
 
@@ -248,8 +236,12 @@ module Pos {
       Bit0(p2) => match q: to_nat(add(Bit0(p2), q)) = to_nat(Bit0(p2)) + to_nat(q) {
         One => Refl
         Bit0(q2) => calc to_nat(add(p2, q2)) + to_nat(add(p2, q2)) {
-          = to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2)) from double_congr(add_to_nat(p2, q2))
-          = to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2)) from double_add(to_nat(p2), to_nat(q2))
+          = to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2)) from double_congr(
+            add_to_nat(p2, q2)
+          )
+          = to_nat(
+            p2
+          ) + to_nat(p2) + (to_nat(q2) + to_nat(q2)) from double_add(to_nat(p2), to_nat(q2))
         }
         Bit1(q2) => Eq::congr(
           Succ,
@@ -262,16 +254,32 @@ module Pos {
           = Succ(Succ(to_nat(p2) + to_nat(p2))) from double_succ(to_nat(p2))
         }
         Bit0(q2) => calc Succ(to_nat(add(p2, q2)) + to_nat(add(p2, q2))) {
-          = Succ(to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2))) from Eq::congr(Succ, double_congr(add_to_nat(p2, q2)))
-          = Succ(to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2))) from Eq::congr(Succ, double_add(to_nat(p2), to_nat(q2)))
-          = Succ(to_nat(Bit0(p2))) + to_nat(Bit0(q2)) from Eq::sym(Nat::add_succ_left(to_nat(Bit0(p2)), to_nat(Bit0(q2))))
+          = Succ(
+            to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2))
+          ) from Eq::congr(Succ, double_congr(add_to_nat(p2, q2)))
+          = Succ(
+            to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2))
+          ) from Eq::congr(Succ, double_add(to_nat(p2), to_nat(q2)))
+          = Succ(
+            to_nat(Bit0(p2))
+          ) + to_nat(Bit0(q2)) from Eq::sym(Nat::add_succ_left(to_nat(Bit0(p2)), to_nat(Bit0(q2))))
         }
         Bit1(q2) => calc to_nat(succ(add(p2, q2))) + to_nat(succ(add(p2, q2))) {
-          = Succ(to_nat(add(p2, q2))) + Succ(to_nat(add(p2, q2))) from double_congr(succ_to_nat(add(p2, q2)))
-          = Succ(Succ(to_nat(add(p2, q2)) + to_nat(add(p2, q2)))) from double_succ(to_nat(add(p2, q2)))
-          = Succ(Succ(to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2)))) from Eq::congr(⟦Succ(Succ(□))⟧, double_congr(add_to_nat(p2, q2)))
-          = Succ(Succ(to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2)))) from Eq::congr(⟦Succ(Succ(□))⟧, double_add(to_nat(p2), to_nat(q2)))
-          = Succ(Succ(to_nat(Bit0(p2))) + to_nat(Bit0(q2))) from Eq::sym(Eq::congr(Succ, Nat::add_succ_left(to_nat(Bit0(p2)), to_nat(Bit0(q2)))))
+          = Succ(
+            to_nat(add(p2, q2))
+          ) + Succ(to_nat(add(p2, q2))) from double_congr(succ_to_nat(add(p2, q2)))
+          = Succ(
+            Succ(to_nat(add(p2, q2)) + to_nat(add(p2, q2)))
+          ) from double_succ(to_nat(add(p2, q2)))
+          = Succ(
+            Succ(to_nat(p2) + to_nat(q2) + (to_nat(p2) + to_nat(q2)))
+          ) from Eq::congr(⟦Succ(Succ(□))⟧, double_congr(add_to_nat(p2, q2)))
+          = Succ(
+            Succ(to_nat(p2) + to_nat(p2) + (to_nat(q2) + to_nat(q2)))
+          ) from Eq::congr(⟦Succ(Succ(□))⟧, double_add(to_nat(p2), to_nat(q2)))
+          = Succ(
+            Succ(to_nat(Bit0(p2))) + to_nat(Bit0(q2))
+          ) from Eq::sym(Eq::congr(Succ, Nat::add_succ_left(to_nat(Bit0(p2)), to_nat(Bit0(q2)))))
         }
       }
     }
@@ -282,21 +290,37 @@ module Pos {
       One => Eq::sym(Nat::mul_one_left(to_nat(q)))
       Bit0(p2) => calc to_nat(mul(p2, q)) + to_nat(mul(p2, q)) {
         = to_nat(p2) * to_nat(q) + to_nat(p2) * to_nat(q) from double_congr(mul_to_nat(p2, q))
-        = (to_nat(p2) + to_nat(p2)) * to_nat(q) from Eq::sym(Nat::mul_add_distrib_right(to_nat(p2), to_nat(p2), to_nat(q)))
+        = (
+          to_nat(p2) + to_nat(p2)
+        ) * to_nat(q) from Eq::sym(Nat::mul_add_distrib_right(to_nat(p2), to_nat(p2), to_nat(q)))
       }
       Bit1(p2) => calc to_nat(add(Bit0(mul(p2, q)), q)) {
         = to_nat(Bit0(mul(p2, q))) + to_nat(q) from add_to_nat(Bit0(mul(p2, q)), q)
-        = to_nat(p2) * to_nat(q) + to_nat(p2) * to_nat(q) + to_nat(q) from Eq::congr(⟦Nat::add(□, to_nat(q))⟧, double_congr(mul_to_nat(p2, q)))
-        = (to_nat(p2) + to_nat(p2)) * to_nat(q) + to_nat(q) from Eq::congr(
-            ⟦Nat::add(□, to_nat(q))⟧,
-            Eq::sym(Nat::mul_add_distrib_right(to_nat(p2), to_nat(p2), to_nat(q)))
-          )
-        = Succ(to_nat(Bit0(p2))) * to_nat(q) from Eq::sym(Nat::mul_succ_left(to_nat(Bit0(p2)), to_nat(q)))
+        = to_nat(
+          p2
+        ) * to_nat(
+          q
+        ) + to_nat(
+          p2
+        ) * to_nat(
+          q
+        ) + to_nat(q) from Eq::congr(⟦Nat::add(□, to_nat(q))⟧, double_congr(mul_to_nat(p2, q)))
+        = (
+          to_nat(p2) + to_nat(p2)
+        ) * to_nat(
+          q
+        ) + to_nat(
+          q
+        ) from Eq::congr(
+          ⟦Nat::add(□, to_nat(q))⟧,
+          Eq::sym(Nat::mul_add_distrib_right(to_nat(p2), to_nat(p2), to_nat(q)))
+        )
+        = Succ(
+          to_nat(Bit0(p2))
+        ) * to_nat(q) from Eq::sym(Nat::mul_succ_left(to_nat(Bit0(p2)), to_nat(q)))
       }
     }
   }
-
-  // ---- equality -------------------------------------------------------------------
 
   pub theorem eq_refl(p: Pos): eq(p, p) = true {
     match p: eq(p, p) = true {
@@ -381,7 +405,6 @@ module BinNat {
     }
   }
 
-  // `a - b`, or zero when `b` is larger.
   pub fn sub(a: BinNat, b: BinNat): BinNat {
     match a: BinNat {
       BinZero => BinZero
@@ -453,8 +476,6 @@ module BinNat {
       }
     }
   }
-
-  // ---- comparison and equality ------------------------------------------------------
 
   pub theorem compare_refl(a: BinNat): compare(a, a) = Equal {
     match a: compare(a, a) = Equal {

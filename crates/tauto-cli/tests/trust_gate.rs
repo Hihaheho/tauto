@@ -17,9 +17,7 @@ fn temp(name: &str) -> PathBuf {
 fn manifest(root: &Path, trust: &str) {
     fs::write(
         root.join("app/Tauto.eure"),
-        format!(
-            "package {{\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}}\n{trust}"
-        ),
+        format!("package {{\n  name = \"app\"\n  version = \"0.1.0\"\n}}\n{trust}"),
     )
     .unwrap();
 }

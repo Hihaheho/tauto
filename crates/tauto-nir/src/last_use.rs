@@ -213,7 +213,6 @@ fn live_in(e: &mut Expr, live: &mut Live, mutate: bool) {
     }
 }
 
-/// The locals a pattern binds, with their types.
 fn binds(p: &Pat, out: &mut Vec<(u32, Ty)>) {
     match p {
         Pat::Bind(l, t) => out.push((l.id, t.clone())),

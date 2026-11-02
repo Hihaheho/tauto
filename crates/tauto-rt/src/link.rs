@@ -20,7 +20,6 @@ pub trait Unlink: Sized {
     fn unlink(&mut self, cells: &mut Cells<Self>);
 }
 
-/// The cells a drop has still to let go of.
 pub struct Cells<T> {
     shared: Vec<Rc<T>>,
     owned: Vec<Box<T>>,
@@ -74,7 +73,6 @@ impl<T: Unlink> Shared<T> {
         Shared(Some(Rc::new(v)))
     }
 
-    /// The `Rc` the link holds.
     pub fn as_rc(&self) -> &Rc<T> {
         self.0
             .as_ref()

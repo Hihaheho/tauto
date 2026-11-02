@@ -1,5 +1,8 @@
+import "Base.taut"
+import "Int.taut"
 import "SInt.taut"
 import "Text.taut"
+import "UInt.taut"
 
 // `Float` (IEEE 754 binary64) as the proofs see it: its 64 bits. Extraction
 // maps `Float` onto Nib's `Float` and the functions marked "Mapped" onto its
@@ -32,22 +35,23 @@ module Float {
     Float::Mk(U64::of_nat_mod(n))
   }
 
-  // ---- the parts of the bits --------------------------------------------------
-
   // 1 for a negative sign, 0 otherwise.
   pub fn sign_of(n: Nat): Nat {
     Nat::div_nz(n, 9223372036854775808, Nat::ne_zero(9223372036854775808, Refl))
   }
 
   pub fn expo_of(n: Nat): Nat {
-    Nat::rem_nz(Nat::div_nz(n, 4503599627370496, Nat::ne_zero(4503599627370496, Refl)), 2048, Nat::ne_zero(2048, Refl))
+    Nat::rem_nz(
+      Nat::div_nz(n, 4503599627370496, Nat::ne_zero(4503599627370496, Refl)),
+      2048,
+      Nat::ne_zero(2048, Refl)
+    )
   }
 
   pub fn frac_of(n: Nat): Nat {
     Nat::rem_nz(n, 4503599627370496, Nat::ne_zero(4503599627370496, Refl))
   }
 
-  // The bits without the sign.
   pub fn mag_of(n: Nat): Nat {
     Nat::rem_nz(n, 9223372036854775808, Nat::ne_zero(9223372036854775808, Refl))
   }
@@ -77,7 +81,6 @@ module Float {
     }
   }
 
-  // The bits of NaN, of an infinity, and of a zero, with sign `s`.
   pub fn nan_raw(): Nat {
     9221120237041090560
   }
@@ -117,8 +120,6 @@ module Float {
     }
   }
 
-  // ---- rounding ---------------------------------------------------------------
-
   // The bits of `m * 2^(t - 4000)` with sign `s`, for `m <= 2^53` and
   // `t >= 2926`, or an infinity when it is too large. `t - 2926` is the
   // exponent field less one, and `m` adds the hidden bit, so one sum writes
@@ -135,14 +136,27 @@ module Float {
   pub fn round_shift(s: Nat, m: Nat, t: Nat, k: Nat): Nat {
     match k < 125: Nat {
       false => zero_raw(s)
-      true => round_at(s, Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::pow2(k), t)
+      true => round_at(
+        s,
+        Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)),
+        Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)),
+        Nat::pow2(k),
+        t
+      )
     }
   }
 
   pub fn round_at(s: Nat, q: Nat, r: Nat, p: Nat, t: Nat): Nat {
     encode(
       s,
-      q + round_up( Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r, r == Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1 ),
+      q + round_up(
+        Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r,
+        r == Nat::div_nz(
+          p,
+          2,
+          Nat::ne_zero(2, Refl)
+        ) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1
+      ),
       t
     )
   }
@@ -176,21 +190,13 @@ module Float {
     }
   }
 
-  // ---- arithmetic on bits ----------------------------------------------------
-
   // `a + b` of two finite ones, `a` the one with the larger exponent. When
   // the other is far below, it only decides which way to round: it is replaced
   // by 1 (or 0 for a zero) in the place 62 digits below `a`'s.
   pub fn add_ordered(sa: Nat, ma: Nat, ea: Nat, sb: Nat, mb: Nat, eb: Nat): Nat {
     match ea - eb <= 60: Nat {
       true => combine(sa, ma * Nat::pow2(ea - eb), sb, mb, eb)
-      false => combine(
-        sa,
-        ma * 4611686018427387904,
-        sb,
-        Nat::min(mb, 1),
-        ea - 62
-      )
+      false => combine(sa, ma * 4611686018427387904, sb, Nat::min(mb, 1), ea - 62)
     }
   }
 
@@ -220,22 +226,8 @@ module Float {
         false => match inf_of(b): Nat {
           true => b
           false => match e_of(b) <= e_of(a): Nat {
-            true => add_ordered(
-              sign_of(a),
-              m_of(a),
-              e_of(a),
-              sign_of(b),
-              m_of(b),
-              e_of(b)
-            )
-            false => add_ordered(
-              sign_of(b),
-              m_of(b),
-              e_of(b),
-              sign_of(a),
-              m_of(a),
-              e_of(a)
-            )
+            true => add_ordered(sign_of(a), m_of(a), e_of(a), sign_of(b), m_of(b), e_of(b))
+            false => add_ordered(sign_of(b), m_of(b), e_of(b), sign_of(a), m_of(a), e_of(a))
           }
         }
       }
@@ -268,11 +260,7 @@ module Float {
           true => nan_raw()
           false => inf_raw(xor(a, b))
         }
-        false => pack(
-          xor(a, b),
-          m_of(a) * m_of(b),
-          e_of(a) + e_of(b) - 4000
-        )
+        false => pack(xor(a, b), m_of(a) * m_of(b), e_of(a) + e_of(b) - 4000)
       }
     }
   }
@@ -378,8 +366,6 @@ module Float {
     }
   }
 
-  // ---- comparisons -------------------------------------------------------------
-
   // Where a `Float` that is not NaN lies on the line: `2^63` for both zeros,
   // above for positive ones, below for negative ones.
   pub fn place(a: Nat): Nat {
@@ -388,8 +374,6 @@ module Float {
       false => 9223372036854775808 - mag_of(a)
     }
   }
-
-  // ---- integral parts --------------------------------------------------------
 
   // How a fraction is dropped: 0 towards zero, 1 down, 2 up, 3 to the nearest
   // with halves away from zero.
@@ -439,8 +423,6 @@ module Float {
       }
     }
   }
-
-  // ---- the functions -----------------------------------------------------------
 
   // Mapped: the bits of `x`; every NaN has the bits `0x7FF8000000000000`.
   pub fn bits(x: Float): U64 {
@@ -587,8 +569,6 @@ module Float {
       false => Int::neg(IntOfNat(k))
     }
   }
-
-  // ---- the functions a proof knows nothing of --------------------------------
 
   // Mapped. Their results are the runtime's (`crates/tauto-rt/src/float_math.rs`),
   // the same on every backend; a proof that uses one depends on its axiom.

@@ -1,5 +1,13 @@
+import "builtins.taut"
+import "machine.taut"
+import "mval.taut"
+import "wire.taut"
 import std::Int
 import std::Text
+import std::prelude::Os
+import std::Base
+import std::prelude::Secret
+import std::Secret
 
 // The shell of the machine of `machine.taut`. It reads the program that
 // `tauto run --backend vm` wrote to the file (`wire.taut`), compiles it (`compile.taut`),
@@ -16,8 +24,6 @@ pub fn vm_fail(message: Text): Unit {
   eprint(Text::concat(message, "\n"))
   perform exit(1)
 }
-
-// ---- the host's values as the machine's -----------------------------------------------
 
 pub fn vm_int(n: i64): Int {
   if n < 0 {
@@ -58,6 +64,14 @@ pub fn vm_arg(args: List(MVal), i: Nat): MVal {
 // The clock the machine's timers read: milliseconds of the monotonic clock.
 pub fn vm_now(): Int {
   vm_int(div(perform monotonic_clock(), 1000000))
+}
+
+pub fn vm_kind_name(k: FileKind): Text {
+  match k {
+    IsFile => "file"
+    IsDir => "dir"
+    IsOther => "other"
+  }
 }
 
 pub fn vm_io_unit(r: Result(Unit, IoError)): MVal {
@@ -109,6 +123,23 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
     }
   } else if Text::eq(name, "Os::remove") {
     Some(vm_io_unit(perform fs_remove(m_as_text(a))))
+  } else if Text::eq(name, "Os::stat") {
+    match perform fs_stat(m_as_text(a)) {
+      Ok(None) => Some(m_ok(m_list(Nil)))
+      Ok(Some(st)) => Some(
+        m_ok(m_list(Cons(MvText(vm_kind_name(st.kind)), Cons(MvText(Text::of_u64(st.size)), Cons(MvText(Text::of_u64(st.modified_ms)), Nil)))))
+      )
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::move_path") {
+    Some(vm_io_unit(perform fs_rename(m_as_text(a), m_as_text(b))))
+  } else if Text::eq(name, "Os::copy_file") {
+    Some(vm_io_unit(perform fs_copy(m_as_text(a), m_as_text(b))))
+  } else if Text::eq(name, "Os::canonicalize") {
+    match perform fs_canonicalize(m_as_text(a)) {
+      Ok(t) => Some(m_ok(MvText(t)))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
   } else if Text::eq(name, "Os::temp_dir") {
     match perform fs_temp_dir() {
       Ok(t) => Some(m_ok(MvText(t)))
@@ -116,6 +147,11 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
     }
   } else if Text::eq(name, "Os::read_line") {
     Some(vm_text_option(perform stdin()))
+  } else if Text::eq(name, "Os::read_stdin") {
+    Some(MvBytes(perform stdin_bytes(U64::of_nat(m_as_nat(a)))))
+  } else if Text::eq(name, "Os::flush") {
+    perform stdout_flush()
+    Some(MvUnit)
   } else if Text::eq(name, "Os::env") {
     match perform env(m_as_text(a)) {
       Ok(o) => Some(vm_text_option(o))
@@ -144,9 +180,6 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
   }
 }
 
-// ---- the shell ------------------------------------------------------------------------
-
-// Where shows go, and what was shown so far when they go to a file.
 pub fn vm_show(shows: Option(Text), so_far: Text, line: Text): Text {
   match shows {
     None => {

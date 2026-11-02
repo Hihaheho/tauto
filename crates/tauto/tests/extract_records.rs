@@ -115,7 +115,7 @@ fn names_a_macro_made_hygienic_are_extracted_as_names_that_read_back() {
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("twice.taut"),
-        "import std::Base\nmacro fn twice(c: Judgement): SynExpr {\n  quote {\n    let t := $c\n    Nat::add(t, t)\n  }\n}\n",
+        "import std::Base\nimport std::prelude::Macro\nmacro fn twice(c: Judgement): SynExpr {\n  quote {\n    let t := $c\n    Nat::add(t, t)\n  }\n}\n",
     )
     .unwrap();
     let path = root.join("program.taut");
@@ -146,7 +146,8 @@ fn an_import_is_extracted_only_as_far_as_it_is_used() {
     let path = root.join("main.taut");
     fs::write(
         &path,
-        r#"import std::TextOps
+        r#"import std::Base
+import std::TextOps
 fn next(c: Nat): Nat { Nat::add(c, 1) }
 "#,
     )
@@ -188,7 +189,7 @@ fn a_mapped_std_function_runs_as_the_proofs_read_it() {
     // as the proofs read it; the prelude's `U64::of_nat` stops there instead.
     fs::write(
         &path,
-        "import std::UInt\n\
+        "import std::Base\nimport std::UInt\n\
          fn fits(n: Nat): Bool {\n  match U64::of_nat_checked(n) {\n    Some(_) => true,\n    None => false,\n  }\n}\n\
          perform show(\"small\", fits(3))\n\
          perform show(\"big\", fits(Nat::mul(4294967296, 4294967296)))\n\
@@ -241,7 +242,12 @@ fn a_division_in_code_the_kernel_does_not_check_runs_through_std() {
         .collect();
     assert_eq!(
         shown,
-        [("q", "Some(3)"), ("r", "Some(1)"), ("d", "Some(3)"), ("z", "None")],
+        [
+            ("q", "Some(3)"),
+            ("r", "Some(1)"),
+            ("d", "Some(3)"),
+            ("z", "None")
+        ],
         "{shown:?}"
     );
     fs::remove_dir_all(root).unwrap();
@@ -261,7 +267,7 @@ fn a_parameter_with_effects_is_checked_against_a_written_row() {
         fs::write(
             &path,
             format!(
-                "fn call(f: () -> Nat ! {{stdout}}): Nat{row} {{\n  f()\n}}\n\
+                "import std::prelude::Os\nfn call(f: () -> Nat ! {{stdout}}): Nat{row} {{\n  f()\n}}\n\
                  call(() => {{ print(\"x\"); 0 }})\n"
             ),
         )
@@ -315,7 +321,7 @@ fn a_macro_beside_a_function_that_runs_as_written_makes_its_declarations_once() 
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("gen.taut"),
-        "macro fn gen_k(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {\n  \
+        "import std::prelude::Macro\nmacro fn gen_k(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {\n  \
          match s: List(SynStmt) {\n    StInductive(d) => {\n      \
          let k := Syn::decl_name(d.name, \"K\")\n      let a := Syn::decl_name(d.name, \"ka\")\n      \
          let f := Syn::decl_name(d.name, \"kf\")\n      quote stmts {\n        \
@@ -357,7 +363,7 @@ fn variants_of_a_type_named_like_a_prelude_type_are_named_by_its_path() {
     let path = root.join("main.taut");
     fs::write(
         &path,
-        "pub(open) inductive Pending: Type {\n  Empty: Pending\n  One(a: Nat): Pending\n  Two(a: Nat, b: Nat): Pending\n}\n\
+        "import std::prelude::Os\npub(open) inductive Pending: Type {\n  Empty: Pending\n  One(a: Nat): Pending\n  Two(a: Nat, b: Nat): Pending\n}\n\
          fn size(p: Pending): Nat {\n  match p: Nat {\n    Empty => 0\n    One(a) => a\n    Two(a, b) => a + b\n  }\n}\n\
          fn show(p: Pending) {\n  match p {\n    Empty => print(\"empty\")\n    One(_) => print(\"one\")\n    Two(_, _) => print(\"two\")\n  }\n}\n\
          show(Two(1, 2))\n",

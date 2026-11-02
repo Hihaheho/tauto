@@ -7,15 +7,26 @@
 // and the network only with the matching `--allow-*` permission. A request the permission does
 // not cover is the answer `Err(Denied(..))`.
 
-// Why a request of the host failed.
 pub(open) enum IoError {
   // No permission covers the request; the text names what was asked.
   Denied(Text)
   // The host tried and failed; the text is the host's message.
   Failed(Text)
-  // The deadline the request was given passed before it was done.
   TimedOut
 }
+
+// What a path is (`fs_stat`).
+pub(open) enum FileKind {
+  // A regular file.
+  IsFile
+  IsDir
+  // A socket, a device, a pipe or the like.
+  IsOther
+}
+// What `fs_stat` knows of a path: its kind, its size in bytes, and when it
+// was last changed in milliseconds since the Unix epoch (0 when the host
+// does not know, or it is before the epoch).
+pub(open) struct FileStat { kind: FileKind, size: u64, modified_ms: u64 }
 
 // A program `proc_run` starts: its name (looked up on `PATH`) or path,
 // its arguments, the directory it runs in (empty: the run's own), the
@@ -32,6 +43,21 @@ pub(open) struct Process {
 // become U+FFFD).
 pub(open) struct ProcessOutput { status: Option(u64), stdout: Bytes, stderr: Text }
 
+// A program `proc_spawn` started and the run goes on with.
+pub(open) struct Child { id: u64 }
+// What a standard stream of a started program is.
+pub(open) enum Stdio {
+  // A pipe to this run: `proc_write` fills the input, `proc_read` takes the
+  // output and the error.
+  StdioPiped
+  // This run's own stream, such as the terminal it was started from.
+  StdioInherit
+}
+// The three standard streams of a started program.
+pub(open) struct ProcessIo { stdin: Stdio, stdout: Stdio, stderr: Stdio }
+// Which output of a started program `proc_read` takes.
+pub(open) enum ChildStream { ChildStdout, ChildStderr }
+
 // An HTTP request and its response. Header names and values are as sent,
 // and the body is its bytes as sent. A header value that is not UTF-8 is
 // not given to the program changed: the host refuses that response instead.
@@ -40,9 +66,7 @@ pub(open) struct Response { status: u64, headers: List(Pair(Text, Text)), body: 
 
 // A byte stream's listener and the address the host bound (`tcp_listen`).
 pub(open) struct TcpListener { id: u64, address: Text }
-// A connected byte stream: its own address and its peer's.
 pub(open) struct TcpStream { id: u64, local: Text, peer: Text }
-// Which side of a stream `tcp_shutdown` ends.
 pub(open) enum Shutdown {
   // No more reading: a read, waiting or not, sees the end of the stream.
   ShutdownRead
@@ -64,14 +88,11 @@ pub(open) struct TlsCert { names: List(Text), chain: Bytes, key: Secret(Bytes) }
 pub(open) struct TlsServer { certs: List(TlsCert), alpn: List(Text), client_roots: Option(Bytes) }
 // The roots a client trusts. There is no way not to verify the server.
 pub(open) enum TlsRoots {
-  // The system's.
   SystemRoots
-  // The system's and these.
   SystemRootsAnd(Bytes)
   // These alone, such as the CA of a server inside one's own network.
   OnlyRoots(Bytes)
 }
-// A certificate a client presents: its chain and its key.
 pub(open) struct TlsClientCert { chain: Bytes, key: Secret(Bytes) }
 // A client's side: the name of the server, sent as SNI and checked against
 // its certificate (an IP address is checked, not sent), the roots, the
@@ -96,6 +117,13 @@ pub(open) effect stdout(t: Text): Unit direct
 pub(open) effect stderr(t: Text): Unit direct
 // A line of standard input without its line break; `None` at its end.
 pub(open) effect stdin(): Option(Text) direct
+// Up to `max` bytes of standard input, as soon as any arrive and without
+// regard to line breaks; none at its end. Mixes with `stdin`: both take
+// what comes next.
+pub(open) effect stdin_bytes(max: u64): Bytes direct
+// Writes out what `stdout` and `stderr` have given so far, so a peer that
+// waits for it (a program that speaks a protocol over the pipes) sees it.
+pub(open) effect stdout_flush(): Unit direct
 // The program's arguments, after `--`.
 pub(open) effect argv(): List(Text) direct
 // Ends the run with an exit code in 0..=255.
@@ -112,13 +140,6 @@ pub(open) effect wall_clock(): i64 direct
 pub(open) effect monotonic_clock(): i64 direct
 // Waits at least `ms` milliseconds.
 pub(open) effect sleep(ms: u64): Unit resume 1
-// A flag the host raises once and never lowers: the end of a task, or a
-// mutex's content handed to the one that asked for it (`std/prelude/Par::taut`).
-pub shared struct Signal {}
-// Waits until the signal is raised. Every wait between tasks is this one
-// effect, so a host may run many tasks on one thread and go on with the
-// others while one waits.
-pub(open) effect wait(s: Signal): Unit resume 1
 // 63 random bits, below 2^63. Not for secrets.
 pub(open) effect random(): u64 direct
 // `n` bytes from the system's cryptographically secure random source, for
@@ -141,6 +162,18 @@ pub(open) effect fs_create_dir(path: Text): Result(Unit, IoError) direct
 pub(open) effect fs_list_dir(path: Text): Result(List(Text), IoError) direct
 // `--allow-write`: removes a file, or a directory and all it holds.
 pub(open) effect fs_remove(path: Text): Result(Unit, IoError) direct
+// `--allow-read`: what a path is; `Ok(None)` when nothing is there. A link
+// is followed, as for every path a permission covers.
+pub(open) effect fs_stat(path: Text): Result(Option(FileStat), IoError) direct
+// `--allow-write`: moves a file or a directory to a path that is not there
+// yet, or replaces a file there. Both paths need the permission.
+pub(open) effect fs_rename(src: Text, dst: Text): Result(Unit, IoError) direct
+// `--allow-read` for `src`, `--allow-write` for `dst`: copies a file's
+// contents, replacing a file at `dst`. A directory is not copied.
+pub(open) effect fs_copy(src: Text, dst: Text): Result(Unit, IoError) direct
+// `--allow-read`: the absolute path of what exists, with links followed and
+// no `.` or `..` left. A path that is not there is `Err(Failed(..))`.
+pub(open) effect fs_canonicalize(path: Text): Result(Text, IoError) direct
 // Makes a new empty directory of the system's temporary files and gives
 // its path. Always allowed: the host picked the path, not the program, and
 // the run may read and write under it from then on (as with a path the user
@@ -153,6 +186,31 @@ pub(open) effect fs_temp_dir(): Result(Text, IoError) direct
 // allowing a program is allowing all it does. The program named `tauto` is
 // this run's own `tauto`.
 pub(open) effect proc_run(p: Process): Result(ProcessOutput, IoError) direct
+// `--allow-run`: starts a program and goes on while it runs; the same
+// permission and the same `Process` as `proc_run` (the bytes of `stdin` are
+// written first to a piped input, which then stays open). The program is
+// the run's to end: `proc_close` ends one that still runs.
+pub(open) effect proc_spawn(p: Process, io: ProcessIo): Result(Child, IoError) resume 1
+// Up to `max` bytes of a piped output, as soon as any arrive; none at its
+// end, and for a stream that is not a pipe. `Err(TimedOut)` once the
+// deadline, a value of `monotonic_clock`, passes; `None` waits as long as
+// it takes. No permission beyond the one that started the program.
+pub(open) effect proc_read(
+  c: Child,
+  which: ChildStream,
+  max: u64,
+  deadline: Option(i64)
+): Result(Bytes, IoError) resume 1
+// Writes all of the bytes to a piped input.
+pub(open) effect proc_write(c: Child, bytes: Bytes): Result(Unit, IoError) resume 1
+// Closes a piped input, so the program reads an end.
+pub(open) effect proc_close_stdin(c: Child): Result(Unit, IoError) resume 1
+// Waits for the program to end: its exit status (`None` when a signal ended
+// it). `Err(TimedOut)` once the deadline passes.
+pub(open) effect proc_wait(c: Child, deadline: Option(i64)): Result(Option(u64), IoError) resume 1
+// Ends a program that still runs and lets go of it: a read or wait on it in
+// another task ends.
+pub(open) effect proc_close(c: Child): Unit resume 1
 // `--allow-env`: an environment variable, `None` when it is not set.
 pub(open) effect env(name: Text): Result(Option(Text), IoError) direct
 // The host's permission check: what the run's permissions say about
@@ -192,7 +250,6 @@ pub(open) effect net_resolve(host: Text): Result(List(Text), IoError) resume 1
 // `--allow-net`: listens on an address; with port 0 the system picks the
 // port, and the listener's address names it.
 pub(open) effect tcp_listen(address: Text): Result(TcpListener, IoError) resume 1
-// The next connection to a listener.
 pub(open) effect tcp_accept(
   listener: TcpListener,
   deadline: Option(i64)
@@ -249,7 +306,6 @@ pub(open) effect tls_read(
   max: u64,
   deadline: Option(i64)
 ): Result(Bytes, IoError) resume 1
-// Writes all of the bytes.
 pub(open) effect tls_write(
   stream: TlsStream,
   bytes: Bytes,
@@ -277,7 +333,6 @@ pub fn io_message(e: IoError): Text {
   }
 }
 
-// `fs_read` with the error as text.
 pub fn read_file(path: Text): Result(Text, Text) ! {fs_read} {
   match perform fs_read(path) {
     Ok(t) => Ok(t)
@@ -285,7 +340,6 @@ pub fn read_file(path: Text): Result(Text, Text) ! {fs_read} {
   }
 }
 
-// `fs_write` with the error as text.
 pub fn write_file(path: Text, contents: Text): Result(Unit, Text) ! {fs_write} {
   match perform fs_write(path, contents) {
     Ok(u) => Ok(u)
@@ -298,19 +352,29 @@ pub fn http_get(url: Text): Result(Response, IoError) ! {net} {
 }
 
 module Os {
-  // How the host answers the standard effects. Only the host's own code calls
-  // these; a program performs the effects instead.
+  // How the host answers the standard effects. Each one's row is the effect
+  // it answers (`offload` starts what `Pending::join` waits for). Only the
+  // host's own code, the handlers of `Host::run` below, calls these, and a
+  // call there is the answer, not a request for the effect. A program that
+  // calls one is a type error: it performs the effect, so that its own
+  // handlers answer first and the permission is checked.
   extern {
-    fn args(): List(Text)
-    fn read_file(path: Text): Result(Text, Text)
-    fn write_file(path: Text, contents: Text): Result(Unit, Text)
-    fn read_bytes(path: Text): Result(Bytes, Text)
-    fn write_bytes(path: Text, contents: Bytes): Result(Unit, Text)
-    fn create_dir(path: Text): Result(Unit, Text)
-    fn list_dir(path: Text): Result(List(Text), Text)
-    fn remove(path: Text): Result(Unit, Text)
+    fn args(): List(Text) ! {argv}
+    fn read_file(path: Text): Result(Text, Text) ! {fs_read}
+    fn write_file(path: Text, contents: Text): Result(Unit, Text) ! {fs_write}
+    fn read_bytes(path: Text): Result(Bytes, Text) ! {fs_read_bytes}
+    fn write_bytes(path: Text, contents: Bytes): Result(Unit, Text) ! {fs_write_bytes}
+    fn create_dir(path: Text): Result(Unit, Text) ! {fs_create_dir}
+    fn list_dir(path: Text): Result(List(Text), Text) ! {fs_list_dir}
+    fn remove(path: Text): Result(Unit, Text) ! {fs_remove}
+    // Empty when nothing is there; else the kind (`file`, `dir` or
+    // `other`), the size and the time of the last change in milliseconds.
+    fn stat(path: Text): Result(List(Text), Text) ! {fs_stat}
+    fn move_path(src: Text, dst: Text): Result(Unit, Text) ! {fs_rename}
+    fn copy_file(src: Text, dst: Text): Result(Unit, Text) ! {fs_copy}
+    fn canonicalize(path: Text): Result(Text, Text) ! {fs_canonicalize}
     // Makes the directory and lets the run read and write under it.
-    fn temp_dir(): Result(Text, Text)
+    fn temp_dir(): Result(Text, Text) ! {fs_temp_dir}
     // The exit status (empty when a signal ended it) and standard error; and
     // standard output. `env` is each variable's name and value; `dir` empty
     // for the run's own.
@@ -320,22 +384,45 @@ module Os {
       dir: Text,
       env: List(Text),
       stdin: Bytes
-    ): Result(Bytes × List(Text), Text)
-    fn print(t: Text): Unit
-    fn eprint(t: Text): Unit
-    fn exit(code: i32): Never
-    fn stop(message: Text): Never
-    fn read_line(): Option(Text)
-    fn env(name: Text): Option(Text)
-    fn wall_ms(): i64
-    fn monotonic_ns(): i64
+    ): Result(Bytes × List(Text), Text) ! {proc_run}
+    // The program's number. `modes` are the standard input's, output's and
+    // error's: 0 a pipe, 1 this run's own.
+    fn child_spawn(
+      program: Text,
+      args: List(Text),
+      dir: Text,
+      env: List(Text),
+      stdin: Bytes,
+      modes: List(Text)
+    ): Result(List(Text), Text) ! {proc_spawn}
+    // `which` is 1 for the output, 2 for the error. `None` when the
+    // deadline passed first; empty bytes at the end.
+    fn child_read(id: u64, which: u64, max: u64, deadline: Option(i64)): Result(Option(Bytes), Text) ! {proc_read}
+    fn child_write(id: u64, bytes: Bytes): Result(Unit, Text) ! {proc_write}
+    fn child_close_stdin(id: u64): Result(Unit, Text) ! {proc_close_stdin}
+    // The exit status as text (empty when a signal ended it); `None` when the
+    // deadline passed first.
+    fn child_wait(id: u64, deadline: Option(i64)): Result(Option(List(Text)), Text) ! {proc_wait}
+    fn child_close(id: u64): Unit ! {proc_close}
+    fn print(t: Text): Unit ! {stdout}
+    fn eprint(t: Text): Unit ! {stderr}
+    fn exit(code: i32): Never ! {exit}
+    fn stop(message: Text): Never ! {stop}
+    fn read_line(): Option(Text) ! {stdin}
+    // Up to `max` bytes of standard input, as soon as any arrive; none at
+    // its end.
+    fn read_stdin(max: u64): Bytes ! {stdin_bytes}
+    fn flush(): Unit ! {stdout_flush}
+    fn env(name: Text): Option(Text) ! {env}
+    fn wall_ms(): i64 ! {wall_clock}
+    fn monotonic_ns(): i64 ! {monotonic_clock}
     // There once `ms` milliseconds have passed.
-    fn sleep_pending(ms: u64): Pending(Unit)
+    fn sleep_pending(ms: u64): Pending(Unit) ! {sleep}
     // Runs `f` where its blocking holds up no task, on a host that runs many
     // tasks on one thread; there once `f` has returned.
-    fn offload<A>(f: () -> A): Pending(A)
-    fn random(): u64
-    fn secure_random(n: u64): Result(Bytes, Text)
+    fn offload<A>(f: () -> A): Pending(A) ! {wait}
+    fn random(): u64 ! {random}
+    fn secure_random(n: u64): Result(Bytes, Text) ! {secure_random}
     // The status, then each header's name and value; and the body. With an
     // address (not empty), the connection goes there and the URL's host is not
     // resolved again.
@@ -345,24 +432,37 @@ module Os {
       address: Text,
       headers: List(Text),
       body: Bytes
-    ): Result(Bytes × List(Text), Text)
-    // The status code `Os::fetch` gave as text.
+    ): Result(Bytes × List(Text), Text) ! {net}
     fn status(t: Text): u64
     // The addresses the host of a URL `Os::check` gave resolves to.
-    fn resolve(url: Text): Result(List(Text), Text)
+    fn resolve(url: Text): Result(List(Text), Text) ! {net_resolve}
     // A stream listener on an address `Os::check` gave: its number, then the
     // address bound.
-    fn tcp_listen(address: Text): Result(List(Text), Text)
+    fn tcp_listen(address: Text): Result(List(Text), Text) ! {tcp_listen}
     // A stream: its number, its address and its peer's; `None` when the
     // deadline passed first.
-    fn tcp_accept(listener: u64, deadline: Option(i64)): Result(Option(List(Text)), Text)
-    fn tcp_connect(address: Text, deadline: Option(i64)): Result(Option(List(Text)), Text)
-    fn tcp_read(stream: u64, max: u64, deadline: Option(i64)): Result(Option(Bytes), Text)
-    fn tcp_write(stream: u64, bytes: Bytes, deadline: Option(i64)): Result(Option(Unit), Text)
+    fn tcp_accept(
+      listener: u64,
+      deadline: Option(i64)
+    ): Result(Option(List(Text)), Text) ! {tcp_accept}
+    fn tcp_connect(
+      address: Text,
+      deadline: Option(i64)
+    ): Result(Option(List(Text)), Text) ! {tcp_connect}
+    fn tcp_read(
+      stream: u64,
+      max: u64,
+      deadline: Option(i64)
+    ): Result(Option(Bytes), Text) ! {tcp_read}
+    fn tcp_write(
+      stream: u64,
+      bytes: Bytes,
+      deadline: Option(i64)
+    ): Result(Option(Unit), Text) ! {tcp_write}
     // 0 reading, 1 writing, 2 both.
-    fn tcp_shutdown(stream: u64, how: u64): Result(Unit, Text)
-    fn tcp_close(stream: u64): Unit
-    fn tcp_unlisten(listener: u64): Unit
+    fn tcp_shutdown(stream: u64, how: u64): Result(Unit, Text) ! {tcp_shutdown}
+    fn tcp_close(stream: u64): Unit ! {tcp_close}
+    fn tcp_unlisten(listener: u64): Unit ! {tcp_unlisten}
     // A session over a stream: its number, the ALPN protocol and the SNI name
     // (empty for none); and the peer's certificate (empty for none). `None`
     // when the deadline passed first. A server's `names` are each
@@ -377,7 +477,7 @@ module Os {
       alpn: List(Text),
       client_roots: Bytes,
       deadline: Option(i64)
-    ): Result(Option(Bytes × List(Text)), Text)
+    ): Result(Option(Bytes × List(Text)), Text) ! {tls_accept}
     fn tls_connect(
       stream: u64,
       server_name: Text,
@@ -385,18 +485,26 @@ module Os {
       pems: List(Bytes),
       alpn: List(Text),
       deadline: Option(i64)
-    ): Result(Option(Bytes × List(Text)), Text)
-    fn tls_read(stream: u64, max: u64, deadline: Option(i64)): Result(Option(Bytes), Text)
-    fn tls_write(stream: u64, bytes: Bytes, deadline: Option(i64)): Result(Option(Unit), Text)
+    ): Result(Option(Bytes × List(Text)), Text) ! {tls_connect}
+    fn tls_read(
+      stream: u64,
+      max: u64,
+      deadline: Option(i64)
+    ): Result(Option(Bytes), Text) ! {tls_read}
+    fn tls_write(
+      stream: u64,
+      bytes: Bytes,
+      deadline: Option(i64)
+    ): Result(Option(Unit), Text) ! {tls_write}
     // 0 reading, 1 writing, 2 both.
-    fn tls_shutdown(stream: u64, how: u64): Result(Unit, Text)
-    fn tls_close(stream: u64): Unit
+    fn tls_shutdown(stream: u64, how: u64): Result(Unit, Text) ! {tls_shutdown}
+    fn tls_close(stream: u64): Unit ! {tls_close}
     // What the host acts on when the run's permissions cover `kind` ("read",
     // "write", "env", "net", "socket" or "run") for `target` (a path, a
     // variable's name, a URL, a socket's address or a program): the path with
     // its links followed, the URL as the HTTP client reads it. `None` when
     // they do not.
-    fn check(kind: Text, target: Text): Option(Text)
+    fn check(kind: Text, target: Text): Option(Text) ! {permission}
   }
 }
 
@@ -427,6 +535,21 @@ module Host {
     }
   }
 
+  pub fn stat(r: Result(List(Text), Text)): Result(Option(FileStat), IoError) {
+    match r {
+      Ok(Cons(kind, Cons(size, Cons(modified, _)))) => {
+        let k := match Text::byte(kind, 0) {
+          Some(100) => IsDir
+          Some(102) => IsFile
+          _ => IsOther
+        }
+        Ok(Some(FileStat { kind: k, size: Os::status(size), modified_ms: Os::status(modified) }))
+      }
+      Ok(_) => Ok(None)
+      Err(why) => Err(Failed(why))
+    }
+  }
+
   pub fn process(r: Result(Bytes × List(Text), Text)): Result(ProcessOutput, IoError) {
     match r {
       Ok(got) => match (got: List(Text)) {
@@ -439,6 +562,67 @@ module Host {
       }
       Err(why) => Err(Failed(why))
     }
+  }
+
+  pub fn mode(s: Stdio): Text {
+    match s {
+      StdioPiped => "0"
+      StdioInherit => "1"
+    }
+  }
+
+  pub fn child(r: Result(List(Text), Text)): Result(Child, IoError) {
+    match r {
+      Ok(Cons(id, _)) => Ok(Child { id: Os::status(id) })
+      Ok(Nil) => Err(Failed("the host gave no program"))
+      Err(why) => Err(Failed(why))
+    }
+  }
+
+  pub fn child_status(r: Result(Option(List(Text)), Text)): Result(Option(u64), IoError) {
+    match Host::timed(r) {
+      Ok(Cons(code, _)) => Ok(Some(Os::status(code)))
+      Ok(Nil) => Ok(None)
+      Err(e) => Err(e)
+    }
+  }
+
+  pub fn spawn(p: Process, io: ProcessIo): Result(Child, IoError) ! {wait} {
+    match Os::check("run", p.program) {
+      Some(program) => {
+        let args := p.args
+        let dir := p.dir
+        let env := Host::flat_headers(p.env)
+        let stdin := p.stdin
+        let modes := Cons(Host::mode(io.stdin), Cons(Host::mode(io.stdout), Cons(Host::mode(io.stderr), Nil)))
+        Host::child(Pending::join(Os::offload(() => Os::child_spawn(program, args, dir, env, stdin, modes))))
+      }
+      None => Err(Host::denied("run", p.program))
+    }
+  }
+
+  pub fn child_read(
+    c: Child,
+    which: ChildStream,
+    max: u64,
+    deadline: Option(i64)
+  ): Result(Bytes, IoError) ! {wait} {
+    let id := c.id
+    let w := match which {
+      ChildStdout => 1
+      ChildStderr => 2
+    }
+    Host::timed(Pending::join(Os::offload(() => Os::child_read(id, w, max, deadline))))
+  }
+
+  pub fn child_write(c: Child, bytes: Bytes): Result(Unit, IoError) ! {wait} {
+    let id := c.id
+    Host::failed(Pending::join(Os::offload(() => Os::child_write(id, bytes))))
+  }
+
+  pub fn child_wait(c: Child, deadline: Option(i64)): Result(Option(u64), IoError) ! {wait} {
+    let id := c.id
+    Host::child_status(Pending::join(Os::offload(() => Os::child_wait(id, deadline))))
   }
 
   pub fn response(r: Result(Bytes × List(Text), Text)): Result(Response, IoError) {
@@ -697,12 +881,14 @@ module Host {
   // may take a while is a `Pending` the answer waits for: `wait` is left to
   // the host that runs the tasks, which goes on with the others meanwhile.
   pub fn run<A, !e>(
-    &body: () -> A ! {stdout, stderr, stdin, argv, exit, stop, wall_clock, monotonic_clock, sleep, random, secure_random, fs_read, fs_write, fs_read_bytes, fs_write_bytes, fs_create_dir, fs_list_dir, fs_remove, fs_temp_dir, proc_run, env, permission, net, net_addr, net_resolve, tcp_listen, tcp_accept, tcp_connect, tcp_read, tcp_write, tcp_shutdown, tcp_close, tcp_unlisten, tls_accept, tls_connect, tls_read, tls_write, tls_shutdown, tls_close} ∪ e
+    &body: () -> A ! {stdout, stderr, stdin, stdin_bytes, stdout_flush, argv, exit, stop, wall_clock, monotonic_clock, sleep, random, secure_random, fs_read, fs_write, fs_read_bytes, fs_write_bytes, fs_create_dir, fs_list_dir, fs_remove, fs_stat, fs_rename, fs_copy, fs_canonicalize, fs_temp_dir, proc_spawn, proc_read, proc_write, proc_close_stdin, proc_wait, proc_close, proc_run, env, permission, net, net_addr, net_resolve, tcp_listen, tcp_accept, tcp_connect, tcp_read, tcp_write, tcp_shutdown, tcp_close, tcp_unlisten, tls_accept, tls_connect, tls_read, tls_write, tls_shutdown, tls_close} ∪ e
   ): A ! {wait} ∪ e {
     handle { body() } with {
       stdout(t), k => k(Os::print(t))
       stderr(t), k => k(Os::eprint(t))
       stdin(), k => k(Os::read_line())
+      stdin_bytes(max), k => k(Os::read_stdin(max))
+      stdout_flush(), k => k(Os::flush())
       argv(), k => k(Os::args())
       exit(code) => Os::exit(code)
       stop(message) => Os::stop(message)
@@ -742,7 +928,35 @@ module Host {
         Some(real) => Host::failed(Os::remove(real))
         None => Err(Host::denied("write", path))
       })
+      fs_stat(path), k => k(match Os::check("read", path) {
+        Some(real) => Host::stat(Os::stat(real))
+        None => Err(Host::denied("read", path))
+      })
+      fs_rename(src, dst), k => k(match Os::check("write", src) {
+        Some(from_real) => match Os::check("write", dst) {
+          Some(to_real) => Host::failed(Os::move_path(from_real, to_real))
+          None => Err(Host::denied("write", dst))
+        }
+        None => Err(Host::denied("write", src))
+      })
+      fs_copy(src, dst), k => k(match Os::check("read", src) {
+        Some(from_real) => match Os::check("write", dst) {
+          Some(to_real) => Host::failed(Os::copy_file(from_real, to_real))
+          None => Err(Host::denied("write", dst))
+        }
+        None => Err(Host::denied("read", src))
+      })
+      fs_canonicalize(path), k => k(match Os::check("read", path) {
+        Some(real) => Host::failed(Os::canonicalize(real))
+        None => Err(Host::denied("read", path))
+      })
       fs_temp_dir(), k => k(Host::failed(Os::temp_dir()))
+      proc_spawn(p, io), k => k(Host::spawn(p, io))
+      proc_read(c, which, max, deadline), k => k(Host::child_read(c, which, max, deadline))
+      proc_write(c, bytes), k => k(Host::child_write(c, bytes))
+      proc_close_stdin(c), k => k(Host::failed(Os::child_close_stdin(c.id)))
+      proc_wait(c, deadline), k => k(Host::child_wait(c, deadline))
+      proc_close(c), k => k(Os::child_close(c.id))
       proc_run(p), k => k(match Os::check("run", p.program) {
         Some(program) => Host::process(Os::run(program, p.args, p.dir, Host::flat_headers(p.env), p.stdin))
         None => Err(Host::denied("run", p.program))

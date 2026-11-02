@@ -35,7 +35,6 @@ use std::collections::{HashMap, HashSet};
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
-/// What is known of the effects and of the functions with effects.
 #[derive(Clone, Default)]
 pub(super) struct Effects {
     /// An effect read in proofs: how many parameters its operation takes.
@@ -47,7 +46,6 @@ pub(super) struct Effects {
     poly: HashMap<String, (String, Vec<usize>)>,
     /// A function with effects, or one whose `handle`s, not read in proofs, and why.
     pub(super) skipped: HashMap<String, Message>,
-    /// The declarations made for the effects.
     pub(super) generated: HashSet<String>,
     /// The type of the answer to each effect, and the result type of each
     /// function with effects that has no generics.
@@ -184,7 +182,6 @@ fn var_res(e: &str) -> String {
     format!("{e}@rowres")
 }
 
-/// The row variables of a row, in the order written.
 fn row_vars(row: &[String]) -> Vec<String> {
     row.iter()
         .filter_map(|e| row_var(e))
@@ -207,7 +204,6 @@ fn comp_value(t: &T) -> Option<T> {
     }
 }
 
-/// The operations of `row`.
 fn op_ty(row: &[String], sp: Span) -> T {
     match row.split_first() {
         None => var("OpNone", sp),
@@ -216,7 +212,6 @@ fn op_ty(row: &[String], sp: Span) -> T {
     }
 }
 
-/// The answers to the operations of `row`.
 fn res_fn(row: &[String], sp: Span) -> T {
     match row.split_first() {
         None => var("res_none", sp),
@@ -264,7 +259,6 @@ fn inject(row: &[String], e: &str, x: T, sp: Span) -> T {
     t
 }
 
-/// What can go wrong reading a function with effects.
 type Read<X> = Result<X, Message>;
 
 /// Where a computation is read: its row, and the local functions whose calls
@@ -273,11 +267,9 @@ type Read<X> = Result<X, Message>;
 struct Cx {
     row: Vec<String>,
     locals: HashMap<String, Vec<String>>,
-    /// The variables whose types are known.
     types: HashMap<String, T>,
     /// The `var`s in scope: the effects that read and write each.
     vars: HashMap<String, (String, String)>,
-    /// The type of the value of the computation, when known.
     expect: Option<T>,
 }
 
@@ -444,7 +436,6 @@ impl Kernel {
         Some(self.make_effect(&e.name, params, result, e.span))
     }
 
-    /// The declarations of an effect named `name`.
     fn make_effect(&mut self, name: &str, params: Vec<T>, result: T, sp: Span) -> Vec<Stmt> {
         let result_ty = result.clone();
         let names: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
@@ -534,7 +525,6 @@ impl Kernel {
         vec![family, Stmt::Fn(answers), Stmt::Fn(arm_decl)]
     }
 
-    /// `f` read as a function to `Comp`.
     fn effect_fn(&mut self, f: &FnDecl) -> Read<FnDecl> {
         let sp = f.span;
         let Some(result) = &f.result else {
@@ -781,7 +771,6 @@ impl Kernel {
             .collect()
     }
 
-    /// `perform effect(args)` in `cx`.
     fn perform(&mut self, effect: &str, args: &[T], cx: &Cx, sp: Span) -> Read<T> {
         if !cx.row.iter().any(|e| e == effect) {
             return Err(msg!("kernel-effect-not-in-row", name = effect));
@@ -1172,7 +1161,6 @@ impl Kernel {
         }
     }
 
-    /// `handle { body } with { handlers }`, a computation in `cx`.
     fn handle(&mut self, body: &T, handlers: &[Handler], cx: &Cx, sp: Span) -> Read<T> {
         let mut ops: HashMap<String, (Vec<String>, String, T)> = HashMap::new();
         let mut ret: Option<(String, T)> = None;

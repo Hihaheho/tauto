@@ -1,6 +1,16 @@
 import "program_function_table_ordered.taut"
 import "function_name_absence.taut"
 import "../../surface/src/surface.taut"
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "effect_function_table_frame.taut"
+import "function_table_registration.taut"
+import "program_signature_sound.taut"
+import "signature_frame.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 pub fn fnt_extern_after(rest: List(SurfaceFn), m: Mut1(Scheme, Checker)): Mut1(Unit, Checker) {
   frame_bind(
@@ -69,7 +79,7 @@ pub theorem fnt_preserved_none(
     c,
     (ignored: Unit, next: Checker) => mut1(None, next),
     m,
-    Kept,
+    kept,
     ignored => next => fnt_preserved_return(name, next, None)
   )
 }
@@ -87,7 +97,7 @@ pub theorem fnt_preserved_some(
     c,
     (scheme: Scheme, next: Checker) => mut1(Some(Pair {fst: source, snd: scheme}), next),
     m,
-    Kept,
+    kept,
     scheme => next => fnt_preserved_return(name, next, Some(Pair {fst: source, snd: scheme}))
   )
 }
@@ -97,8 +107,8 @@ pub theorem ck_program_decl_preserved(
   c: Checker,
   query: Text,
   absent: FunctionNameAbsent(query, types_stmt_functions(stmt))
-): CkFnPreserved(query, c, ck_program_decl(c, Stmt)) {
-  match Stmt: CkFnPreserved(query, c, ck_program_decl(c, Stmt)) {
+): CkFnPreserved(query, c, ck_program_decl(c, stmt)) {
+  match stmt: CkFnPreserved(query, c, ck_program_decl(c, stmt)) {
     StLet(name, ty, value, borrow, mutable) => fnt_preserved_return(query, c, None)
     StVar(name, ty, value, borrow) => fnt_preserved_return(query, c, None)
     StModule(name, stmts, start, end) => fnt_preserved_return(query, c, None)
@@ -165,7 +175,7 @@ pub theorem signature_program_decls_cons_preserved(
   name: Text,
   head: CkFnPreserved(name, c, ck_program_decl(c, stmt)),
   ih: ∀ next: Checker. CkFnPreserved(name, next, ck_program_decls(rest, next))
-): CkFnPreserved(name, c, signature_program_decls_cons(Stmt, rest, c)) {
+): CkFnPreserved(name, c, signature_program_decls_cons(stmt, rest, c)) {
   fnt_preserved_bind(
     Option(Pair(SurfaceFn, Scheme)),
     List(Pair(SurfaceFn, Scheme)),
@@ -177,7 +187,7 @@ pub theorem signature_program_decls_cons_preserved(
       (tail: List(Pair(SurfaceFn, Scheme)), last: Checker) => mut1(opt_cons(first, tail), last),
       ck_program_decls(rest, next)
     ),
-    ck_program_decl(c, Stmt),
+    ck_program_decl(c, stmt),
     head,
     first => next => fnt_preserved_bind(
       List(Pair(SurfaceFn, Scheme)),

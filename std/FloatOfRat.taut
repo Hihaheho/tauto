@@ -5,8 +5,15 @@ import "FloatBoundsB.taut"
 import "FloatBoundsC.taut"
 import "FloatRound.taut"
 import "FloatPack.taut"
-
-// ---- the rounding error of `float_of_rat` ------------------------------------------
+import "Float.taut"
+import "FloatEncode.taut"
+import "FloatError.taut"
+import "FloatReal.taut"
+import "Int.taut"
+import "IntOrder.taut"
+import "Rat.taut"
+import "RatLaws.taut"
+import "UInt.taut"
 
 // `y` is within `2^-52 |r| + 2^-A` of `r`, or it is not a number.
 pub fn float_err_ok(y: Float, r: Rat, A: Nat): Bool {
@@ -37,13 +44,7 @@ pub theorem fin_pos(
   p: Nat,
   q0: Nat
 ): FinK(0, p, Succ(q0), (bits: Nat) => ErrBits(Rat::Mk(IntOfNat(p), q0), bits)) {
-  (c: Nat) => (t: Nat) => (hd: DecodeOk(0, c, t)) => (
-    he: ErrOk(
-      c * Nat::pow2(t) * Succ(q0),
-      p * Nat::pow2(4000),
-      Succ(q0) * Nat::pow2(2926)
-    )
-  ) => err_bits_of(
+  (c: Nat) => (t: Nat) => (hd: DecodeOk(0, c, t)) => (he: ErrOk(c * Nat::pow2(t) * Succ(q0), p * Nat::pow2(4000), Succ(q0) * Nat::pow2(2926))) => err_bits_of(
     Rat::Mk(IntOfNat(p), q0),
     Float::encode(0, c, t),
     Float::val_of(Float::encode(0, c, t)),
@@ -68,13 +69,7 @@ pub theorem fin_neg(
   p0: Nat,
   q0: Nat
 ): FinK(1, Succ(p0), Succ(q0), (bits: Nat) => ErrBits(Rat::Mk(IntNegSucc(p0), q0), bits)) {
-  (c: Nat) => (t: Nat) => (hd: DecodeOk(1, c, t)) => (
-    he: ErrOk(
-      c * Nat::pow2(t) * Succ(q0),
-      Succ(p0) * Nat::pow2(4000),
-      Succ(q0) * Nat::pow2(2926)
-    )
-  ) => err_bits_of(
+  (c: Nat) => (t: Nat) => (hd: DecodeOk(1, c, t)) => (he: ErrOk(c * Nat::pow2(t) * Succ(q0), Succ(p0) * Nat::pow2(4000), Succ(q0) * Nat::pow2(2926))) => err_bits_of(
     Rat::Mk(IntNegSucc(p0), q0),
     Float::encode(1, c, t),
     Float::val_of(Float::encode(1, c, t)),
@@ -106,12 +101,13 @@ pub theorem inf_ok(r: Rat, s: Nat, hs: s < 2 = true): ErrBits(r, Float::inf_raw(
   }
 }
 
-// `0 / q` is `+0` exactly.
 pub theorem zero_ok(q0: Nat): ErrBits(Rat::Mk(IntOfNat(0), q0), Float::of_frac(0, 0, Succ(q0))) {
-  let fk: FinK(0, 0, Succ(q0), (bits: Nat) => ErrBits(Rat::Mk(IntOfNat(0), q0), bits)) := fin_pos(
+  let fk: FinK(
     0,
-    q0
-  )
+    0,
+    Succ(q0),
+    (bits: Nat) => ErrBits(Rat::Mk(IntOfNat(0), q0), bits)
+  ) := fin_pos(0, q0)
   Eq::subst(
     (w: Nat) => ErrBits(Rat::Mk(IntOfNat(0), q0), w),
     enc_zero(0),
@@ -127,9 +123,7 @@ pub theorem zero_ok(q0: Nat): ErrBits(Rat::Mk(IntOfNat(0), q0), Float::of_frac(0
   )
 }
 
-pub theorem zero_le_qb(
-  q0: Nat
-): NatLe(0 * Nat::pow2(4000), Succ(q0) * Nat::pow2(2926)) {
+pub theorem zero_le_qb(q0: Nat): NatLe(0 * Nat::pow2(4000), Succ(q0) * Nat::pow2(2926)) {
   zero_le_qb_at(Nat::pow2(4000), Succ(q0), Nat::pow2(2926))
 }
 
@@ -137,8 +131,16 @@ pub theorem zero_le_qb(
 // `v`, `|v - r| <= 2^-52 |r| + 2^-1074`.
 pub theorem float_of_rat_err(r: Rat): float_err_ok(Float::of_rat(r), r, 1074) = true {
   match r: float_err_ok(Float::of_rat(r), r, 1074) = true {
-    Rat::Mk(n, q0) => match n: float_err_ok(Float::of_rat(Rat::Mk(n, q0)), Rat::Mk(n, q0), 1074) = true {
-      IntOfNat(p) => match p: float_err_ok(Float::of_rat(Rat::Mk(IntOfNat(p), q0)), Rat::Mk(IntOfNat(p), q0), 1074) = true {
+    Rat::Mk(n, q0) => match n: float_err_ok(
+      Float::of_rat(Rat::Mk(n, q0)),
+      Rat::Mk(n, q0),
+      1074
+    ) = true {
+      IntOfNat(p) => match p: float_err_ok(
+        Float::of_rat(Rat::Mk(IntOfNat(p), q0)),
+        Rat::Mk(IntOfNat(p), q0),
+        1074
+      ) = true {
         Zero => zero_ok(q0)
         Succ(p0) => frac_ok(
           0,
@@ -183,9 +185,6 @@ pub fn float_near_by(o: Option(Rat), r: Rat, eps: Rat): Bool {
   }
 }
 
-// ---- `Refines` by rounding ----------------------------------------------------------
-
-// `o` is a number.
 pub fn float_some_by(o: Option(Rat)): Bool {
   match o: Bool {
     None => false
@@ -207,13 +206,16 @@ pub theorem float_near_of_err(
     float_some_by(o) = true
   ) -> (float_err_ok_by(o, r, a) = true) -> float_near_by(o, r, eps) = true {
     None => (s: false = true) => (e: true = true) => False::elim(false_ne_true(s))
-    Some(v) => (s: true = true) => (
-      e: RatLe(Rat::dist(v, r), float_round_err(r, a))
-    ) => Rat::le_trans(Rat::dist(v, r), float_round_err(r, a), eps, e, hb)
+    Some(v) => (s: true = true) => (e: RatLe(Rat::dist(v, r), float_round_err(r, a))) => Rat::le_trans(
+      Rat::dist(v, r),
+      float_round_err(r, a),
+      eps,
+      e,
+      hb
+    )
   }(hs, he)
 }
 
-// The same for a float `y`.
 pub theorem float_near_of_err_at(
   y: Float,
   r: Rat,
@@ -232,9 +234,7 @@ pub theorem refines_of_round(
   g: (Float) -> Float,
   f: (Rat) -> Rat,
   eps: Rat,
-  hg: ∀ x: Float. ∀ r: Rat. (
-    Eq(Option(Rat), Float::val(x), Some(r))
-  ) -> g(x) = Float::of_rat(f(r)),
+  hg: ∀ x: Float. ∀ r: Rat. (Eq(Option(Rat), Float::val(x), Some(r))) -> g(x) = Float::of_rat(f(r)),
   hfin: ∀ s: Rat. float_some_by(Float::val(Float::of_rat(f(s)))) = true,
   hb: ∀ s: Rat. RatLe(float_round_err(f(s), 1074), eps)
 ): Refines(g, f, eps) {

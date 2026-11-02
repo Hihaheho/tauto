@@ -1,4 +1,14 @@
 import "instantiation_scheme_records.taut"
+import std::Map
+import std::Row
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "finish_frame.taut"
+import "instantiation_frame.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
 
 pub def RequirementState(
   c: Checker,
@@ -64,7 +74,7 @@ pub fn instance_scalar_bound(
   g: Pair(Text, Kind),
   value: Ty,
   span: TySpan
-): TyBound { TyBound {ty: value, kind: (g: Kind), start: span.start, end: span.end} }
+): TyBound { TyBound {ty: value, kind: g.snd, start: span.start, end: span.end} }
 pub fn instance_constructor_bound(
   g: Pair(Text, Kind),
   value: Ty,
@@ -72,7 +82,7 @@ pub fn instance_constructor_bound(
   span: TySpan,
   arg: Kind
 ): TyCtorBound {
-  TyCtorBound {ty: value, arg: arg, result: (g: Kind), what: name, start: span.start, end: span.end}
+  TyCtorBound {ty: value, arg: arg, result: g.snd, what: name, start: span.start, end: span.end}
 }
 pub theorem instantiation_bound_frame_requirements(
   c: Checker,

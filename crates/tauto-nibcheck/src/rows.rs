@@ -80,23 +80,17 @@ impl fmt::Display for RowDiagnostic {
 
 #[derive(Debug, Default, Clone)]
 pub struct RowReport {
-    /// Every function's inferred row.
     pub functions: Vec<(String, Row)>,
     pub errors: Vec<RowDiagnostic>,
     /// What each call and `perform` performs itself (a call: its callee's
     /// row, instantiated; not what its arguments perform), by the term's
     /// occurrence identity. `lin.rs` checks control-flow linearity against it.
     pub calls: HashMap<TermId, Row>,
-    /// Each operation's resume quantity.
     pub quants: HashMap<String, Quant>,
     pub declarations: Vec<DeclarationRows>,
     /// The standard effects (`std/prelude/Os.taut`) that reach the top level
     /// unanswered: what the host answers, and so the permissions a run needs.
     pub host_effects: BTreeSet<String>,
-    /// The standard effects a spawned task or a test body performs. The host
-    /// answers them whatever handles them around the `spawn` or `test`, so a
-    /// run needs their permissions too.
-    pub task_effects: BTreeSet<String>,
     pub call_owners: HashMap<TermId, Option<RowOwner>>,
     pub row_variables: HashMap<String, RowVariable>,
     // Addresses are lookup keys for the borrowed immutable AST only. They
@@ -376,7 +370,6 @@ pub fn dump_rows(report: &RowReport) -> String {
     out
 }
 
-/// What calling a local name performs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Latent {
     Known(Callable),
@@ -455,8 +448,6 @@ struct Analysis<'a> {
     /// the class expansion made is reported there: its own span is in no
     /// source.
     written: Option<Span>,
-    /// The row variables of the function being followed that are bounded
-    /// `direct`.
     direct_vars: Vec<String>,
     /// The row variables of the calls whose arguments are being read, which
     /// a row the context gives may name before they are solved.
@@ -473,7 +464,6 @@ struct Analysis<'a> {
     scope: Vec<(String, String)>,
     owner: Option<RowOwner>,
     row_variables: HashMap<String, RowVariable>,
-    task_effects: BTreeSet<String>,
     call_owners: HashMap<TermId, Option<RowOwner>>,
     ambiguous_owners: HashSet<RowOwner>,
     ambiguous_calls: HashSet<TermId>,
@@ -524,7 +514,12 @@ fn unfollowed_in(what: &str, owner: &str) -> String {
 /// The kernel's own definitions, which a proof sees but extraction maps
 /// only inside the functions of the proof language.
 const KERNEL_NAMES: &[&str] = &[
-    "Nat::eq", "Nat::lt", "Nat::pred", "Nat::sub", "Nat::div_nz", "Nat::rem_nz",
+    "Nat::eq",
+    "Nat::lt",
+    "Nat::pred",
+    "Nat::sub",
+    "Nat::div_nz",
+    "Nat::rem_nz",
 ];
 
 fn display_row(row: &Row, variables: &HashMap<String, RowVariable>) -> Row {
@@ -802,7 +797,6 @@ impl<'a> Analysis<'a> {
             scope: Vec::new(),
             owner: None,
             row_variables: HashMap::new(),
-            task_effects: BTreeSet::new(),
             call_owners: HashMap::new(),
             ambiguous_owners,
             ambiguous_calls,
@@ -1031,7 +1025,6 @@ impl<'a> Analysis<'a> {
         report.quants = self.quants;
         report.call_owners = self.call_owners;
         report.row_variables = self.row_variables;
-        report.task_effects = self.task_effects;
         report.owner_sources = self.owner_sources;
         report.ambiguous_owners = self.ambiguous_owners;
         report.ambiguous_calls = self.ambiguous_calls;
@@ -1228,6 +1221,11 @@ impl<'a> Analysis<'a> {
         let f = self.fns[name];
         let scope = self.prepare_scope(f, &[]);
         match &f.effects {
+            // The host's own code calls these to answer the effect in the
+            // row; the call is the answer, not a request for it.
+            Some(_) if self.externs.contains(name) && crate::host::is_host_primitive(f) => {
+                Row::new()
+            }
             Some(written) => self.scope_row(written, &scope),
             None if self.externs.contains(name) => {
                 self.record_declaration(f, Row::new());
@@ -1371,7 +1369,6 @@ impl<'a> Analysis<'a> {
                         }
                         if crate::host::HOST_EFFECTS.contains(&e.as_str()) {
                             row.insert(e.clone());
-                            self.task_effects.insert(e.clone());
                         } else if self.set_bound(e).is_some() {
                             // `<h: Host>`: some of the host's effects, which
                             // the function's row names, so that a call
@@ -1505,7 +1502,6 @@ impl<'a> Analysis<'a> {
                     }
                 }
                 row.extend(returned.iter().cloned());
-                // `k` gives what the handle gives.
                 let value = self.handled_value(t, body, handlers, locals);
                 // A first reading of each arm, with `k` performing nothing,
                 // gives what the arm performs besides resuming.
@@ -1552,7 +1548,6 @@ impl<'a> Analysis<'a> {
                         self.continuations.insert((t.id(), i), resumed);
                     }
                 }
-                // With the continuations' rows known, what the handle gives.
                 let value = self.handled_value(t, body, handlers, locals);
                 for (i, h) in handlers.iter().enumerate() {
                     if let Handler::Operation {
@@ -1636,7 +1631,6 @@ impl<'a> Analysis<'a> {
         row
     }
 
-    /// What an operation arm performs, its continuation performing `resumed`.
     #[allow(clippy::too_many_arguments)]
     fn arm_row(
         &mut self,
@@ -2006,7 +2000,6 @@ fn bind_pattern(p: &Pattern, locals: &mut Locals) {
     }
 }
 
-/// `a.b.c` written as fields over a name, as written.
 fn dotted(t: &SurfaceTerm) -> Option<String> {
     match &*t.kind {
         TermKind::Var(n) => Some(n.clone()),
@@ -2015,7 +2008,6 @@ fn dotted(t: &SurfaceTerm) -> Option<String> {
     }
 }
 
-/// Whether `span` is one the class expansion gave a term it made.
 fn generated(span: Span) -> bool {
     (crate::surface::GENERATED_BASE..crate::surface::PRELUDE_BASE).contains(&span.start)
 }

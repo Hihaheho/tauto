@@ -38,6 +38,7 @@ nir-the-local-function-that-may-resume = the local function `{ $name }` that may
 nir-info-field = `info.{ $name }`
 nir-a-product-with-fewer-than-two = a product with fewer than two members
 nir-a-product-whose-members-do-not = a product whose members do not match its type
+nir-a-product-regrouped-under-mut = a product whose members are put together for a generic that stands for a product, where they cannot be copied or are borrowed with `&mut`
 nir-the-member-of-a-product = the member { $key } of a product
 nir-is-not-a-struct = `{ $name }` is not a struct
 nir-has-no-field = `{ $name }` has no field `{ $f }`

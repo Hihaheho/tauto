@@ -26,7 +26,9 @@ fn build(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-const PROGRAM: &str = r#"print("hello\n")
+const PROGRAM: &str = r#"import std::prelude::Os
+
+print("hello\n")
 let c := read_file("data.txt")
 perform show("c", c)
 perform show("a", perform argv())
@@ -132,7 +134,7 @@ fn what_wasm32_lacks_is_refused_before_cargo_runs() {
     let d = temp("refused");
     fs::write(
         d.join("main.taut"),
-        "perform show(\"r\", http_get(\"https://example.com/\"))\n",
+        "import std::prelude::Os\n\nperform show(\"r\", http_get(\"https://example.com/\"))\n",
     )
     .unwrap();
     let out = build(

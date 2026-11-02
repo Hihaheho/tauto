@@ -39,7 +39,6 @@ fn ctor_of<'a>(
     ))
 }
 
-/// The machine's number of the constructor.
 fn id(w: &mut Writer, pkg: &Package, data: &str, ctor: &str, default: &[&str]) -> Rs<u32> {
     let (name, names, is_struct) = ctor_of(pkg, data, ctor, default)?;
     let names: Vec<Option<&str>> = names.iter().map(Option::as_deref).collect();

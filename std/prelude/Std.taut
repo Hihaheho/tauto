@@ -33,7 +33,6 @@ pub fn not(b: Bool): Bool {
 // `fail(E)` is an effect for each `E`: a row says which (`! {fail(Text)}`).
 pub(open) effect fail<E>(e: E): Never resume 0
 
-// A Result as an effect: an `Err` performs `fail(E)` and does not return.
 pub fn raise<T, E>(r: Result(T, E)): T ! {fail(E)} {
   match r {
     Ok(v) => v
@@ -54,12 +53,10 @@ pub fn run_test<!e>(name: Text, &body: () -> Unit ! {fail(Text)} ∪ e): Unit ! 
   }
 }
 
-// Fails the test (or the program) with `why` unless `ok`.
 pub fn expect(ok: Bool, why: Text): Unit ! {fail(Text)} {
   if ok { #() } else { perform fail(why) }
 }
 
-// The effect as a Result again: catches the `fail(E)` of `body`.
 pub fn catch<T, E, !e>(&body: () -> T ! {fail(E)} ∪ e): Result(T, E) ! e {
   handle { Ok(body()) } with {
     fail<E>(x) => Err(x)

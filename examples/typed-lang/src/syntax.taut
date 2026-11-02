@@ -1,0 +1,32 @@
+import "../../../std/Text.taut"
+import "../../../std/Base.taut"
+import std::prelude::Macro
+
+// 文法を一つ書くと、読む関数 `tl::parse` と、証明から見える木 `tl::Expr::I` が生える。
+inductive_syntax!(tl, ```par
+%start Expr
+%title "typed-lang"
+%%
+Expr: IfExpr | Cmp;
+IfExpr: KwIf Expr KwThen Expr KwElse Expr;
+Cmp: Sum [ EqEq Sum ];
+Sum: Atom { Plus Atom };
+Atom: Num | KwTrue | KwFalse | Paren;
+Paren: LParen Expr RParen;
+Num: /[0-9]+/;
+Plus: '+';
+EqEq: '==';
+KwIf: 'if';
+KwThen: 'then';
+KwElse: 'else';
+KwTrue: 'true';
+KwFalse: 'false';
+LParen: '(';
+RParen: ')';
+```) =>
+  enum Atom, struct Cmp, struct Cmp_Opt1, enum Expr, struct IfExpr, struct Paren, struct Sum,
+  struct Sum_Rep1, fn parse, inductive Atom::I, inductive Cmp::I, inductive Cmp_Opt1::I,
+  inductive Expr::I, inductive IfExpr::I, inductive Paren::I, inductive Sum::I,
+  inductive Sum_Rep1::I, fn Atom::to_i, fn Cmp::to_i, fn Cmp_Opt1::to_i, fn Expr::to_i,
+  fn IfExpr::to_i, fn Paren::to_i, fn Sum::to_i, fn Sum_Rep1::to_i, fn Cmp_Opt1_opt::to_i,
+  fn Sum_Rep1_list::to_i

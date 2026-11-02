@@ -1,5 +1,17 @@
 import "classes_frame.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "signature_frame.taut"
+import "ty.taut"
+import "types_classes.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "../../text/src/text.taut"
 
 // Instance declaration checks preserve the data environment.
 
@@ -1010,7 +1022,7 @@ pub fn inf_preds_kind(
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
       ck_error(c, "where constrains only generics of the instance", signature_constraint_span(w))
     )
-    SkStep(tactic, arg, call_start, CallEnd, before, arms) => frame_bind(
+    SkStep(tactic, arg, call_start, call_end, before, arms) => frame_bind(
       Unit,
       List(Pair(Text, Text)),
       (ignored: Unit, c1: Checker) => ck_rewrap1(ck_instance_preds(rest, c1, gs, preds)),
@@ -1422,7 +1434,7 @@ pub theorem inf_preds_kind_frame(
       ),
       ignored => c1 => frame_rewrap(c1, ck_instance_preds(rest, c1, gs, preds), ih(c1, preds))
     )
-    SkStep(tactic, arg, call_start, CallEnd, before, arms) => frame_bind_ok(
+    SkStep(tactic, arg, call_start, call_end, before, arms) => frame_bind_ok(
       Unit,
       List(Pair(Text, Text)),
       c,
@@ -1924,8 +1936,8 @@ pub fn inf_gens(i: SurfaceInstance): SigGenerics {
     SigGenerics { generics: Nil, map: Ordmap::empty(), ctors: Nil }
   )
 }
-pub fn inf_message_text(m: Pair(Text, TySpan)): Text { (m: Text) }
-pub fn inf_message_span(m: Pair(Text, TySpan)): TySpan { (m: TySpan) }
+pub fn inf_message_text(m: Pair(Text, TySpan)): Text { m.fst }
+pub fn inf_message_span(m: Pair(Text, TySpan)): TySpan { m.snd }
 
 pub fn inf_head_message(
   c: Checker,

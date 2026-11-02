@@ -308,6 +308,9 @@ function builtin(name,args) {
             case 'Mutex::claim':{const s=signal();if(a.full&&!a.waiting.length){a.full=false;s.handed=a.value;a.value=undefined;raise(s);}else a.waiting.push(s);return done(s);}
             case 'Mutex::take_claimed':{const v=b.handed;b.handed=undefined;return done(v);}
             case 'Mutex::put':if(a.waiting.length){const s=a.waiting.shift();s.handed=b;raise(s);}else{a.value=b;a.full=true;}return done(null);
+            // The lock is held by the guard until it is dropped, which gives the content back.
+            case 'MutexGuard::claimed':{const v=b.handed;b.handed=undefined;let held=true;const g={kind:'MutexGuard',resource:true,value:v,release(){if(!held)return;held=false;const x=g.value;g.value=undefined;if(a.waiting.length){const s=a.waiting.shift();s.handed=x;raise(s);}else{a.value=x;a.full=true;}}};return done(g);}
+            case 'MutexGuard::get':case 'MutexGuard::get_mut':return done(reference(()=>a.value,x=>{a.value=x;}));
             case 'Pending::ready':return done({kind:'Pending',resource:true,value:a});
             // What may take a while runs as a task of its own, whose result the caller waits for.
             case 'Os::offload':
@@ -338,7 +341,7 @@ function builtin(name,args) {
                     return done(ok(back(value)));
                 }catch(e){return done(err(e.message??String(e)));}
             }
-            case 'Os::list_dir':case 'Os::remove':case 'Os::temp_dir':case 'Os::run':{
+            case 'Os::list_dir':case 'Os::remove':case 'Os::stat':case 'Os::move_path':case 'Os::copy_file':case 'Os::canonicalize':case 'Os::temp_dir':case 'Os::run':{
                 const f=c.host.options['os_'+name.slice(4)];if(!f)return done(err('host does not provide os_'+name.slice(4)));
                 let call;
                 if(name==='Os::run'){const flat=listItems(vs[3]).map(String);const env=[];for(let i=0;i+1<flat.length;i+=2)env.push([flat[i],flat[i+1]]);call=()=>f(unref(vs[0]),listItems(vs[1]).map(String),unref(vs[2]),env,unref(vs[4]).bytes.slice());}
@@ -346,8 +349,10 @@ function builtin(name,args) {
                 // The exit status (`null` when a signal ended it), standard output and standard error.
                 const back=r=>{
                     if(name==='Os::list_dir')return list([...r].map(String).sort((x,y)=>x<y?-1:x>y?1:0));
+                    if(name==='Os::stat')return list(r===null||r===undefined?[]:[String(r.kind),String(r.size??0),String(r.modified_ms??0)]);
+                    if(name==='Os::canonicalize')return String(r);
                     if(name==='Os::temp_dir'){const dir=String(r);permissionGrantDir(c.host.options,dir);return dir;}
-                    if(name==='Os::run')return pair(list([r.status===null||r.status===undefined?'':String(r.status),String(r.stderr??'')]),bytesValue(new Uint8Array(r.stdout??[])));
+                    if(name==='Os::run')return pair(bytesValue(new Uint8Array(r.stdout??[])),list([r.status===null||r.status===undefined?'':String(r.status),String(r.stderr??'')]));
                     return null;
                 };
                 try{
@@ -359,6 +364,11 @@ function builtin(name,args) {
                     return done(ok(back(value)));
                 }catch(e){return done(err(e.message??String(e)));}
             }
+            case 'Os::read_stdin':{
+                const f=c.host.options.os_read_stdin;if(!f)throw new Error('host does not provide os_read_stdin');
+                return done(bytesValue(new Uint8Array(f(Number(unref(vs[0])))??[])));
+            }
+            case 'Os::flush':{const f=c.host.options.os_flush;if(f)f();return done(null);}
             case 'Os::read_line':{
                 const f=c.host.options.os_read_line;if(!f)throw new Error('host does not provide os_read_line');
                 const line=f();return done(line===null||line===undefined?none():some(String(line)));
@@ -388,7 +398,7 @@ function builtin(name,args) {
                 if(address!==''){
                     const g=c.host.options.os_fetch_at;if(!g)return done(err('host does not provide os_fetch_at'));
                     return Promise.resolve().then(()=>g(b,init,address)).then(
-                        ([items,got])=>more(()=>k(c,ok(pair(list(items.map(String)),bytesValue(got))))),
+                        ([items,got])=>more(()=>k(c,ok(pair(bytesValue(got),list(items.map(String)))))),
                         e=>more(()=>k(c,err(e.message??String(e)))));
                 }
                 const f=c.host.options.fetch??globalThis.fetch;if(!f)return done(err('host does not provide fetch'));
@@ -397,7 +407,7 @@ function builtin(name,args) {
                     r.headers.forEach((v,n)=>{const t=headerText(v);if(t===null)bad??=n;else out.push(n,t);});
                     if(bad!==null)return more(()=>k(c,err('the value of the response header '+bad+' is not UTF-8')));
                     const got=new Uint8Array(await r.arrayBuffer());
-                    return more(()=>k(c,ok(pair(list(out),bytesValue(got)))));
+                    return more(()=>k(c,ok(pair(bytesValue(got),list(out)))));
                 },e=>more(()=>k(c,err(e.message??String(e)))));
             }
             // The host gives `options.os_resolve(host)`: the addresses, a list or a Promise of one.
@@ -430,6 +440,35 @@ function builtin(name,args) {
                 else if(name==='Os::tcp_read'){call=()=>f(Number(a),Number(b),deadline(vs[2]));back=timed(r=>bytesValue(new Uint8Array(r)));}
                 else if(name==='Os::tcp_write'){call=()=>f(Number(a),unref(vs[1]).bytes.slice(),deadline(vs[2]));back=timed(()=>null);}
                 else{call=()=>f(Number(a),Number(b));back=()=>null;}
+                return Promise.resolve().then(call).then(
+                    r=>more(()=>k(c,ok(back(r)))),
+                    e=>more(()=>k(c,err(e.message??String(e)))));
+            }
+            // Programs that run on: the host gives `options.os_child_spawn(program, args, dir, env,
+            // stdin, modes)` (`[number]`; `env` is [name, value] pairs, `modes` 0 a pipe and 1 the
+            // run's own), `os_child_read(child, which, max, deadline)` (a Uint8Array, empty at the
+            // end), `os_child_write(child, bytes)`, `os_child_close_stdin(child)`,
+            // `os_child_wait(child, deadline)` (the exit status as `[code]`, `[]` when a signal
+            // ended it) and `os_child_close(child)`, each a value or a Promise. A wait whose
+            // deadline passed answers null.
+            case 'Os::child_close':{
+                const f=c.host.options.os_child_close;if(!f)return done(null);
+                return Promise.resolve().then(()=>f(Number(a))).then(()=>more(()=>k(c,null)),()=>more(()=>k(c,null)));
+            }
+            case 'Os::child_spawn':case 'Os::child_read':case 'Os::child_write':case 'Os::child_close_stdin':case 'Os::child_wait':{
+                const f=c.host.options['os_'+name.slice(4)];if(!f)return done(err('host does not provide os_'+name.slice(4)));
+                const deadline=v=>{v=unref(v);return v.tag==='Some'?v.fields[0]:null;};
+                const timed=g=>r=>r===null||r===undefined?none():some(g(r));
+                let call,back;
+                if(name==='Os::child_spawn'){
+                    call=()=>{const flat=listItems(vs[3]).map(String);const env=[];for(let i=0;i+1<flat.length;i+=2)env.push([flat[i],flat[i+1]]);
+                        return f(String(a),listItems(vs[1]).map(String),String(unref(vs[2])),env,unref(vs[4]).bytes.slice(),listItems(vs[5]).map(x=>Number(String(x))));};
+                    back=r=>list(r.map(String));
+                }
+                else if(name==='Os::child_read'){call=()=>f(Number(a),Number(b),Number(unref(vs[2])),deadline(vs[3]));back=timed(r=>bytesValue(new Uint8Array(r)));}
+                else if(name==='Os::child_write'){call=()=>f(Number(a),unref(vs[1]).bytes.slice());back=()=>null;}
+                else if(name==='Os::child_wait'){call=()=>f(Number(a),deadline(vs[1]));back=timed(r=>list(r.map(String)));}
+                else{call=()=>f(Number(a));back=()=>null;}
                 return Promise.resolve().then(call).then(
                     r=>more(()=>k(c,ok(back(r)))),
                     e=>more(()=>k(c,err(e.message??String(e)))));
@@ -472,4 +511,4 @@ function tickBudget(c,k) {
     },empty);
 }
 
-function temporaryRef(v,immutable=false){const ref=reference(()=>v,x=>{v=x;});let owners=1;ref.temporary=true;ref.retain=()=>{owners++;};ref.release=()=>{if(--owners!==0)return;const value=v;v=undefined;dropValue(value);};if(immutable&&stableAggregate(v)){const value=v;trackStableReference(ref,stableState(()=>v===value&&stableAggregate(value)));}return ref;}
+function temporaryRef(v,immutable=false){if(v?.ref)return v;const ref=reference(()=>v,x=>{v=x;});let owners=1;ref.temporary=true;ref.retain=()=>{owners++;};ref.release=()=>{if(--owners!==0)return;const value=v;v=undefined;dropValue(value);};if(immutable&&stableAggregate(v)){const value=v;trackStableReference(ref,stableState(()=>v===value&&stableAggregate(value)));}return ref;}

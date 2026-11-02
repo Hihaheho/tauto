@@ -186,7 +186,6 @@ let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(va
 }
 
 #[cfg(test)]
-/// The inputs these tests read, copied from the shared case files.
 #[allow(dead_code)]
 mod case_inputs {
     pub fn source_static(file: &str, name: &str) -> &'static str {

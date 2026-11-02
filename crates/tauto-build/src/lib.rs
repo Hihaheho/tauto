@@ -118,8 +118,8 @@ pub fn generate(
                     u.to_string()
                 }
             };
-            // TODO(messages): read the offset from the error, not its text,
-            // once `tauto-nir` gives it as a message.
+            // The offset is read from the text of the error, because `tauto-nir`
+            // does not give it as a message.
             match message
                 .rsplit_once(" (byte ")
                 .and_then(|(message, offset)| {

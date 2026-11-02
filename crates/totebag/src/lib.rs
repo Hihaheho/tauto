@@ -39,7 +39,6 @@ use cache::Cache;
 use lock::Locked;
 use spec::{GitSource, Rev, SourceId};
 
-/// A list of the core.
 pub(crate) fn list<A>(items: impl IntoIterator<Item = A>) -> core::generated::List<A> {
     let items: Vec<A> = items.into_iter().collect();
     items
@@ -50,7 +49,6 @@ pub(crate) fn list<A>(items: impl IntoIterator<Item = A>) -> core::generated::Li
         })
 }
 
-/// The items of a list of the core.
 pub(crate) fn of_list<A: Clone>(mut list: &core::generated::List<A>) -> Vec<A> {
     let mut out = Vec::new();
     while let core::generated::List::Cons(a, rest) = list {
@@ -70,11 +68,9 @@ pub fn valid_name(name: &str) -> bool {
 pub struct Fetched {
     pub rev: Rev,
     pub id: SourceId,
-    /// The tote's directory in the cache.
     pub dir: PathBuf,
 }
 
-/// Fetches the commit `source.reference` names now.
 pub fn fetch_head(cache: &Cache, source: &GitSource) -> Result<Fetched, String> {
     source.check()?;
     let mirror = git::Mirror::open(cache.mirror_dir(&source.url), "sha1")?;

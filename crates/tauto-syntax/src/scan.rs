@@ -10,7 +10,6 @@
 
 use crate::tables::{DynState, Dynamic, State, Tables};
 
-/// A value a state of the scanner holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DynValue {
     Count(usize),

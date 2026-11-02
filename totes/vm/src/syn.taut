@@ -1,4 +1,13 @@
 import "builtins.taut"
+import "../../scan/src/scan.taut"
+import "../../text/src/text.taut"
+import "mval.taut"
+import "syntab.taut"
+import std::Int
+import std::prelude::Shared
+import std::Base
+import std::Text
+import std::Array
 
 // `syn_run`: a text read with the parser of a `syntax` (`syntab.taut`) into the values
 // of the syntax's types, or why it is not of the syntax. It gives what the other backends
@@ -6,15 +15,12 @@ import "builtins.taut"
 // tree, spans and diagnostics. The scanner is `totes/scan`; the parse builds the values
 // as each node closes, as the production's shape says.
 
-// What ends a parse that does not succeed.
 pub(open) inductive SynFail: Type {
-  // No token starts at the byte.
   SfLex(at: Nat): SynFail
   // The token the parser could not use (none at the end of the text), and the terminals
   // it would have taken.
   SfSyntax(token: Option(ScanToken), expected: List(Nat)): SynFail
   SfLimit(message: Text): SynFail
-  // The tables do not fit the schema.
   SfSchema(message: Text): SynFail
 }
 
@@ -85,8 +91,6 @@ pub fn syn_nat_max(a: Nat, b: Nat): Nat {
   if a < b { b } else { a }
 }
 
-// ---- the values ---------------------------------------------------------------------------
-
 pub fn syn_span(p: SynParser, at: Nat): MVal {
   MvData(p.span, Cons(MvInt(IntOfNat(at)), Nil))
 }
@@ -105,7 +109,6 @@ pub fn syn_token(p: SynParser, text: Text, t: ScanToken): SynV {
   )
 }
 
-// The first start of a value with text, if one has.
 pub fn syn_first_start(values: List(SynV)): Option(Nat) {
   match values {
     Nil => None
@@ -120,7 +123,6 @@ pub fn syn_last_end(values: List(SynV), end: Nat): Nat {
   }
 }
 
-// The fields of the values whose `keep` is true.
 pub fn syn_fields(lr: Bool, values: List(SynV), keep: List(Bool)): List(MVal) {
   match values {
     Nil => Nil
@@ -153,7 +155,6 @@ pub fn syn_element(p: SynParser, e: SynElem, values: List(SynV), start: Nat): Re
   }
 }
 
-// All the values but the last, and the last.
 pub fn syn_split_last(values: List(SynV)): Option(Pair(List(SynV), SynV)) {
   match values {
     Nil => None
@@ -222,8 +223,6 @@ pub fn syn_close(p: SynParser, production: Nat, values: List(SynV), open_end: Na
   }
 }
 
-// ---- the tokens ---------------------------------------------------------------------------
-
 // Where the first byte no token covers is, if there is one before `n`.
 pub fn syn_gap(tokens: List(ScanToken), pos: Nat, n: Nat): Option(Nat) {
   match tokens {
@@ -250,7 +249,6 @@ pub fn syn_term_at(seen: Array(ScanToken), i: Nat): Nat {
   }
 }
 
-// The terminals in order, each once.
 pub fn syn_dedup(ts: List(Nat)): List(Nat) {
   match ts {
     Nil => Nil
@@ -269,8 +267,6 @@ pub fn syn_max_input(): Nat {
 pub fn syn_max_stack(): Nat {
   65536
 }
-
-// ---- LL(k) ----------------------------------------------------------------------------------
 
 pub fn syn_find_transition(ts: List(SynTrans), state: Nat, term: Nat): Option(SynTrans) {
   match ts {
@@ -433,8 +429,6 @@ pub fn syn_ll(
   }
 }
 
-// ---- LALR(1) --------------------------------------------------------------------------------
-
 pub fn syn_find_action(actions: List(SynAction), term: Nat): Option(SynAction) {
   match actions {
     Nil => None
@@ -552,8 +546,6 @@ pub fn syn_lr(
   }
 }
 
-// ---- the result -----------------------------------------------------------------------------
-
 pub fn syn_name(p: SynParser, t: Nat): Text {
   match Array::get(p.terminals, t) {
     None => ""
@@ -627,7 +619,6 @@ pub fn syn_rhs_total(prods: List(SynProd)): Nat {
   }
 }
 
-// `Ok` of the values of the text, or `Err` of the diagnostic.
 pub fn syn_run(p: SynParser, text: Text): MVal {
   if syn_max_input() < Text::len(text) {
     syn_failed(p, text, SfLimit("the input is longer than the limit"))

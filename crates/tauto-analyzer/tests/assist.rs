@@ -250,19 +250,20 @@ fn std_file(name: &str) -> String {
 
 #[test]
 fn expand_writes_the_arms_the_tactic_leaves() {
-    // expand_step reads the step's messages in English (TODO(messages)).
+    // expand_step reads the step's messages in English.
     tauto_messages::install();
+    let base = std_file("Base.taut");
     let nat = std_file("Nat.taut");
     let tactic = std_file("Tactic.taut");
     let dir = scratch("expand");
     let path = dir.join("main.taut");
     let head = format!(
-r#"import "{}"
+        r#"import "{}"
+import "{}"
 import "{}"
 "#,
-nat,
-tactic
-);
+        base, nat, tactic
+    );
     std::fs::write(
         &path,
         format!(
@@ -280,7 +281,7 @@ tactic
     assert!(a.accepted);
     assert_eq!(
         e.text,
-        "by rewrite!(Nat::add_succ_left(k, a)): Eq(Nat, Nat::add(Succ(k), a), Succ(Nat::add(k, a))) {\n  ⊢ Eq(Nat, Succ(Nat::add(k, a)), Succ(Nat::add(k, a))) from ?h_1\n}"
+        "by rewrite!(Nat::add_succ_left(k, a)): Nat::add(Succ(k), a) = Succ(Nat::add(k, a)) {\n  ⊢ Succ(Nat::add(k, a)) = Succ(Nat::add(k, a)) from ?h_1\n}"
     );
     assert_eq!(e.pieces.len(), 1);
     // A step's arm: its goal is the arm's, and `-> G` is left out.
@@ -288,4 +289,36 @@ tactic
     let (e, a) = tauto_analyzer::assist::expand_step(&path, "g", "exact", "Refl").unwrap();
     assert!(!a.accepted, "there is no tactic exact here");
     assert!(e.text.starts_with("by exact!(Refl) {}"), "{}", e.text);
+}
+
+#[test]
+fn expand_by_rewrite_reads_the_goal_written_with_operators() {
+    // expand_step reads the step's messages in English.
+    tauto_messages::install();
+    // The equation is about `Nat::add(b, a)`, the goal is written `b + a`: they are the same term.
+    let dir = scratch("expand-operators");
+    let path = dir.join("main.taut");
+    std::fs::write(
+        &path,
+        format!(
+            r#"import "{}"
+import "{}"
+import "{}"
+theorem t(a: Nat, b: Nat, c: Nat, h: a + b = c): b + a = c {{
+  ?g
+}}
+"#,
+            std_file("Base.taut"),
+            std_file("Nat.taut"),
+            std_file("Tactic.taut")
+        ),
+    )
+    .unwrap();
+    let (e, a) =
+        tauto_analyzer::assist::expand_step(&path, "g", "rewrite", "Nat::add_comm(b, a)").unwrap();
+    assert!(a.accepted);
+    assert_eq!(
+        e.text,
+        "by rewrite!(Nat::add_comm(b, a)): b + a = c {\n  ⊢ Nat::add(a, b) = c from ?g_1\n}"
+    );
 }

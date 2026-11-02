@@ -1,8 +1,6 @@
 //! `tauto fmt`: lays a file out again without changing a single token, except that an ASCII
-//! escape (`\times`, `\forall`, …) is written as its sign (`×`, `∀`, …), and the members of a
-//! product type (`A × B`) and of a tuple pattern (`#(@a x, y)`) are put in their one order: the
-//! labelled ones by their labels, then the others by their types as written. A tuple value is
-//! evaluated in the order it is written, so it is left as it is.
+//! escape (`\times`, `\forall`, …) is written as its sign (`×`, `∀`, …). The members of a
+//! product are in the order they are written, which is part of the type, so they are left as they are.
 //!
 //! A line is a run of tokens up to a newline that ends a statement (one
 //! outside `( )` and `[ ]`). It is indented two spaces for each enclosing
@@ -11,93 +9,36 @@
 //! longer than [`WIDTH`] is broken at its outermost bracket that does not
 //! fit (a `{ }` closed on the line, such as a record literal, counts), one argument per line, and so on inward. A line that holds a comment
 //! inside brackets, or a block whose newlines matter inside brackets, is left
-//! as written. The tokens of the result are checked against the source's.
+//! as written. The tokens are those of the syntax tree of the source (`tauto_parol::parse`), so a source that does not
+//! parse is not laid out. The tokens of the result are checked against the source's.
 
 use tauto_message::msg;
+use tauto_parol::{Cst, NodeId, NodeKind, NonTerminalKind, Span, SyntaxError, TerminalKind};
 
-/// The widest a line is laid out flat.
 pub const WIDTH: usize = 100;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
-    Word,
     Open,
     Close,
     Comma,
     Comment,
-    Punct,
+    Other,
 }
 
 #[derive(Debug, Clone)]
 struct Token {
     text: String,
     kind: Kind,
-    /// Whitespace came before it.
+    /// The terminal of the syntax tree it was read from (a token cut in two, such as `#(`, gives
+    /// both halves the terminal of its brackets or of the whole).
+    term: TerminalKind,
     spaced: bool,
-    /// How many newlines came before it.
     newlines: usize,
-    /// Where it is in the source, in bytes.
     start: usize,
     end: usize,
     /// It is an ASCII escape (`\times`), whose text here is the sign.
     escaped: bool,
-}
-
-/// Where a syntax literal starting at `i` ends: `` name`text` ``,
-/// `` name<`text`> `` (one to three `<`), or a block of three to six
-/// backticks, each with its name before (or, for a block, after) the opener.
-/// Its text is a language of its own, so it is one token, kept as written.
-fn literal_end(chars: &[char], i: usize, word: impl Fn(char) -> bool) -> Option<usize> {
-    let at = |k: usize| chars.get(k).copied();
-    let mut j = i;
-    if at(j).is_some_and(|c| word(c) && !c.is_ascii_digit()) {
-        while at(j).is_some_and(&word) {
-            j += 1;
-        }
-    }
-    let ticks = chars[j.min(chars.len())..]
-        .iter()
-        .take_while(|c| **c == '`')
-        .count();
-    if (3..=6).contains(&ticks) {
-        let mut k = j + ticks;
-        while at(k).is_some_and(&word) {
-            k += 1;
-        }
-        while matches!(at(k), Some(' ' | '\t')) {
-            k += 1;
-        }
-        if at(k) == Some('\r') {
-            k += 1;
-        }
-        if at(k) == Some('\n') {
-            let close = vec!['`'; ticks];
-            let rest = chars.get(k + 1..)?;
-            let found = rest.windows(ticks).position(|w| w == close.as_slice())?;
-            return Some(k + 1 + found + ticks);
-        }
-        return None;
-    }
-    let angles = chars[j.min(chars.len())..]
-        .iter()
-        .take_while(|c| **c == '<')
-        .count();
-    if (1..=3).contains(&angles) && at(j + angles) == Some('`') {
-        let close: Vec<char> = std::iter::once('`')
-            .chain(std::iter::repeat_n('>', angles))
-            .collect();
-        let rest = chars.get(j + angles + 1..)?;
-        let found = rest
-            .windows(close.len())
-            .position(|w| w == close.as_slice())?;
-        return Some(j + angles + 1 + found + close.len());
-    }
-    if ticks == 1 {
-        let rest = chars.get(j + 1..)?;
-        let found = rest.iter().position(|c| matches!(c, '`' | '\n' | '\r'))?;
-        return (rest[found] == '`').then_some(j + 1 + found + 1);
-    }
-    None
 }
 
 /// The ASCII escapes of signs, `\times` for `×`, and the sign each stands for.
@@ -117,140 +58,94 @@ const ESCAPES: [(&str, &str); 13] = [
     ("square", "□"),
 ];
 
-/// The escape that starts at `i` (a `\` and a whole word), the sign it stands for and where it ends.
-fn escape(chars: &[char], i: usize, word: impl Fn(char) -> bool) -> Option<(&'static str, usize)> {
-    if chars[i] != '\\' {
-        return None;
+/// The terminals of the syntax tree in the order they are written, comments among them. A
+/// syntax literal (name, opening, pieces and closing) is one, kept as written; the line breaks
+/// and white space between the others are left out, for the gaps between the rest tell them.
+fn leaves(cst: &Cst) -> Vec<(TerminalKind, Span)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<(NodeId, Option<Span>)> =
+        cst.root().into_iter().map(|r| (r, None)).collect();
+    while let Some((id, literal)) = stack.pop() {
+        match cst.kind(id) {
+            NodeKind::Terminal(kind) => {
+                let span = cst.span(id);
+                let within = literal.is_some_and(|l| l.start <= span.start && span.end <= l.end);
+                if !within
+                    && !matches!(
+                        kind,
+                        TerminalKind::Nl | TerminalKind::NewLine | TerminalKind::Whitespace
+                    )
+                {
+                    out.push((kind, span));
+                }
+            }
+            NodeKind::NonTerminal(kind) => {
+                let mut literal = literal;
+                if kind == NonTerminalKind::SyntaxLit && literal.is_none() {
+                    let span = cst.span(id);
+                    out.push((TerminalKind::MacroText, span));
+                    literal = Some(span);
+                }
+                stack.extend(cst.node(id).children.iter().rev().map(|&c| (c, literal)));
+            }
+        }
     }
-    let mut end = i + 1;
-    while end < chars.len() && word(chars[end]) {
-        end += 1;
-    }
-    let name: String = chars[i + 1..end].iter().collect();
-    ESCAPES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, sign)| (*sign, end))
+    out.sort_by_key(|(_, span)| span.start);
+    out
 }
 
+fn kind_of(term: TerminalKind) -> Kind {
+    match term {
+        TerminalKind::LParen | TerminalKind::LBracket | TerminalKind::LBrace => Kind::Open,
+        TerminalKind::RParen | TerminalKind::RBracket | TerminalKind::RBrace => Kind::Close,
+        TerminalKind::Comma => Kind::Comma,
+        TerminalKind::LineComment | TerminalKind::BlockComment | TerminalKind::Comment => {
+            Kind::Comment
+        }
+        _ => Kind::Other,
+    }
+}
+
+/// The tokens of `source`, read from its syntax tree. A tuple or record opening (`#(`, `#{`) is
+/// the `#` and its bracket, and a macro's name (`m!`) is the name and the `!`, as the layout
+/// treats them apart. When the source does not parse, the tokens read up to the error, and the
+/// error.
 fn lex(source: &str) -> Result<Vec<Token>, String> {
-    let indexed: Vec<(usize, char)> = source.char_indices().collect();
-    let chars: Vec<char> = indexed.iter().map(|(_, c)| *c).collect();
-    let byte = |i: usize| indexed.get(i).map_or(source.len(), |(b, _)| *b);
-    let mut out = Vec::new();
-    let (mut i, mut spaced, mut newlines) = (0, false, 0);
-    let word = |c: char| c.is_alphanumeric() || c == '_';
-    let mut escaped: Option<&str> = None;
-    while i < chars.len() {
-        let c = chars[i];
-        let start = i;
-        let kind = if c == '\n' {
-            newlines += 1;
-            i += 1;
-            continue;
-        } else if c.is_whitespace() {
-            spaced = true;
-            i += 1;
-            continue;
-        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
-            while i < chars.len() && chars[i] != '\n' {
-                i += 1;
+    let parsed = tauto_parol::parse(source);
+    let mut out: Vec<Token> = Vec::new();
+    let mut prev_end = 0usize;
+    for (term, span) in leaves(&parsed.cst) {
+        let (start, end) = (span.start as usize, span.end as usize);
+        let gap = source.get(prev_end..start).unwrap_or_default();
+        let (mut spaced, mut newlines) = (!gap.is_empty(), gap.matches('\n').count());
+        let text = &source[start..end];
+        let escape = text
+            .strip_prefix('\\')
+            .and_then(|name| ESCAPES.iter().find(|(n, _)| *n == name));
+        let pieces: Vec<(&str, TerminalKind, usize)> = match text {
+            "#(" => vec![("#", term, start + 1), ("(", TerminalKind::LParen, end)],
+            "#{" => vec![("#", term, start + 1), ("{", TerminalKind::LBrace, end)],
+            _ if term == TerminalKind::MacroName => {
+                let name = text.len() - 1;
+                vec![(&text[..name], term, start + name), ("!", term, end)]
             }
-            Kind::Comment
-        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
-            i += 2;
-            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
-                i += 1;
-            }
-            if i >= chars.len() {
-                return Err(msg!("tauto-fmt-unclosed-comment").to_string());
-            }
-            i += 2;
-            Kind::Comment
-        } else if c == '"' {
-            i += 1;
-            while i < chars.len() && chars[i] != '"' {
-                i += if chars[i] == '\\' { 2 } else { 1 };
-            }
-            if i >= chars.len() {
-                return Err(msg!("tauto-fmt-unclosed-string").to_string());
-            }
-            i += 1;
-            Kind::Word
-        } else if c == '\'' {
-            i += 1;
-            while i < chars.len() && chars[i] != '\'' {
-                i += 1;
-            }
-            if i >= chars.len() {
-                return Err(msg!("tauto-fmt-unclosed-string").to_string());
-            }
-            i += 1;
-            Kind::Word
-        } else if let Some(end) = literal_end(&chars, i, word) {
-            i = end;
-            Kind::Word
-        } else if chars[i..].iter().take(10).collect::<String>() == "plaintext`" {
-            i += 10;
-            while i < chars.len() && chars[i] != '`' && chars[i] != '\n' {
-                i += 1;
-            }
-            if chars.get(i) != Some(&'`') {
-                return Err(msg!("tauto-fmt-unclosed-string").to_string());
-            }
-            i += 1;
-            Kind::Word
-        } else if let Some((sign, end)) = escape(&chars, i, word) {
-            // `\times` is written `×`.
-            i = end;
-            escaped = Some(sign);
-            if sign == "ω" {
-                Kind::Word
-            } else {
-                Kind::Punct
-            }
-        } else if word(c) {
-            // `r#name` is one word.
-            if c == 'r'
-                && chars.get(i + 1) == Some(&'#')
-                && chars
-                    .get(i + 2)
-                    .is_some_and(|n| n.is_alphabetic() || *n == '_')
-            {
-                i += 2;
-            }
-            while i < chars.len() && word(chars[i]) {
-                i += 1;
-            }
-            // `pub(open)` is one word, never broken across lines.
-            if chars[start..i].iter().collect::<String>() == "pub"
-                && chars[i..].iter().take(6).collect::<String>() == "(open)"
-            {
-                i += 6;
-            }
-            Kind::Word
-        } else {
-            i += 1;
-            match c {
-                '(' | '[' | '{' => Kind::Open,
-                ')' | ']' | '}' => Kind::Close,
-                ',' => Kind::Comma,
-                _ => Kind::Punct,
-            }
+            _ => vec![(text, term, end)],
         };
-        out.push(Token {
-            escaped: escaped.is_some(),
-            text: escaped
-                .take()
-                .map_or_else(|| chars[start..i].iter().collect(), String::from),
-            kind,
-            spaced: spaced || newlines > 0,
-            newlines,
-            start: byte(start),
-            end: byte(i),
-        });
-        spaced = false;
-        newlines = 0;
+        let mut at = start;
+        for (piece, term, to) in pieces {
+            out.push(Token {
+                escaped: escape.is_some(),
+                text: escape.map_or(piece, |e| e.1).to_string(),
+                kind: kind_of(term),
+                term,
+                spaced,
+                newlines,
+                start: at,
+                end: to,
+            });
+            (spaced, newlines, at) = (false, 0, to);
+        }
+        prev_end = end;
     }
     // A raw name that is not needed is written without its `r#`: one whose word is not reserved.
     // A reserved word is a name only with `r#`, wherever it stands.
@@ -262,7 +157,43 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
             t.text = name.to_string();
         }
     }
-    Ok(out)
+    match parsed.errors.first() {
+        Some(error) => Err(failure(source, &out, error)),
+        None => Ok(out),
+    }
+}
+
+/// Why the source does not parse: an unclosed comment or string where the tree stops, a bracket
+/// that closes nothing or is the wrong one, a bracket left open at the end, or else the error
+/// of the parser.
+fn failure(source: &str, tokens: &[Token], error: &SyntaxError) -> String {
+    let at = error.span.map_or(source.len(), |s| s.start as usize);
+    let rest = source.get(at..).unwrap_or_default();
+    if rest.starts_with("/*") {
+        return msg!("tauto-fmt-unclosed-comment").to_string();
+    }
+    if rest.starts_with(['"', '\'']) || rest.starts_with("plaintext`") {
+        return msg!("tauto-fmt-unclosed-string").to_string();
+    }
+    let mut seen = tokens.to_vec();
+    if let Some(closer) = rest.chars().next().filter(|c| matches!(c, ')' | ']' | '}')) {
+        seen.push(Token {
+            text: closer.to_string(),
+            kind: Kind::Close,
+            term: TerminalKind::RParen,
+            spaced: false,
+            newlines: 0,
+            start: at,
+            end: at + 1,
+            escaped: false,
+        });
+    }
+    if (rest.trim().is_empty() || seen.len() > tokens.len())
+        && let Err(why) = balanced(&seen)
+    {
+        return why;
+    }
+    error.message.clone()
 }
 
 /// A line, as a tree: tokens and bracketed groups of comma-separated items.
@@ -274,7 +205,6 @@ fn balanced(tokens: &[Token]) -> Result<(), String> {
     let mut stack: Vec<&str> = Vec::new();
     for t in tokens {
         match t.kind {
-            // `format` recurses into each group.
             Kind::Open if stack.len() >= MAX_BRACKETS => {
                 return Err(msg!("tauto-fmt-too-deep").to_string());
             }
@@ -383,7 +313,6 @@ fn closes_on_line(tokens: &[Token], i: usize) -> bool {
     false
 }
 
-/// The text between two tokens laid out on one line.
 fn gap(prev: Option<&str>, t: &Token) -> &'static str {
     match prev {
         None => "",
@@ -446,8 +375,7 @@ fn unbroken_width(nodes: &[Node], tail: usize) -> usize {
                 push(open, &mut prev, &mut s);
                 return width(&s);
             }
-            // `=>` is two tokens, `=` and `>`.
-            Node::Tok(t) if t.text == ">" && !t.spaced && prev.as_deref() == Some("=") => {
+            Node::Tok(t) if t.term == TerminalKind::FatArrow => {
                 arrow = true;
             }
             _ => {}
@@ -478,21 +406,10 @@ fn least_width(nodes: &[Node], tail: usize) -> usize {
     }
 }
 
-/// Whether a `=>` comes later in `nodes`, at this level.
 fn arrow_follows(nodes: &[Node]) -> bool {
-    let mut prev: Option<&str> = None;
-    for n in nodes {
-        match n {
-            Node::Tok(t) => {
-                if t.text == ">" && !t.spaced && prev == Some("=") {
-                    return true;
-                }
-                prev = Some(t.text.as_str());
-            }
-            Node::Group { close, .. } => prev = Some(close.text.as_str()),
-        }
-    }
-    false
+    nodes
+        .iter()
+        .any(|n| matches!(n, Node::Tok(t) if t.term == TerminalKind::FatArrow))
 }
 
 /// Lays out `nodes` starting at column `col` of a line indented `indent`,
@@ -546,7 +463,6 @@ fn layout(nodes: &[Node], indent: usize, tail: usize, out: &mut String) {
     }
 }
 
-/// The ASCII escapes written in `source` (`\times`, `\forall`, …), as byte ranges.
 pub fn escapes(source: &str) -> Vec<(usize, usize)> {
     lex(source)
         .unwrap_or_default()
@@ -564,9 +480,6 @@ pub fn escapes(source: &str) -> Vec<(usize, usize)> {
 /// An unclosed parenthesis or square bracket can exhaust the tokens while
 /// constructing a group, before the final bracket check.
 pub fn format(source: &str) -> Result<String, String> {
-    // The members of a product type and of a tuple pattern, in their one order.
-    let sorted = crate::order::sort_written(source);
-    let source = sorted.as_str();
     let tokens = lex(source)?;
     balanced(&tokens)?;
     let mut out = String::new();
@@ -643,20 +556,28 @@ pub fn format(source: &str) -> Result<String, String> {
 /// Whether a list of what a declaration makes (`=> fn a, theorem b`) goes on at `next`, on a new
 /// line: after its `=>` or after one of its commas.
 fn continues_list(line: &[Token], next: &Token) -> bool {
-    const KINDS: [&str; 6] = ["fn", "theorem", "def", "inductive", "struct", "enum"];
-    let is_kind = |t: &Token| t.kind == Kind::Word && KINDS.contains(&t.text.as_str());
-    // `=>` is two tokens, `=` and `>`.
-    let arrow = |w: &[Token]| w[0].text == "=" && w[1].text == ">" && !w[1].spaced;
-    let n = line.len();
-    if n >= 2 && arrow(&line[n - 2..]) {
-        return is_kind(next);
+    let is_kind = |t: &Token| {
+        matches!(
+            t.term,
+            TerminalKind::KwFn
+                | TerminalKind::KwTheorem
+                | TerminalKind::KwDef
+                | TerminalKind::KwInductive
+                | TerminalKind::KwStruct
+                | TerminalKind::KwEnum
+        )
+    };
+    let arrow = |t: &Token| t.term == TerminalKind::FatArrow;
+    match line.last() {
+        Some(last) if arrow(last) => is_kind(next),
+        Some(last) if last.kind == Kind::Comma => {
+            is_kind(next)
+                && line
+                    .windows(3)
+                    .any(|w| arrow(&w[0]) && is_kind(&w[1]) && w[2].term == TerminalKind::Ident)
+        }
+        _ => false,
     }
-    n >= 1
-        && line[n - 1].text == ","
-        && is_kind(next)
-        && line
-            .windows(4)
-            .any(|w| arrow(&w[..2]) && is_kind(&w[2]) && w[3].kind == Kind::Word)
 }
 
 /// The line as written, its first line indented anew and its other lines

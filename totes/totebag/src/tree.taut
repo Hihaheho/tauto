@@ -1,4 +1,8 @@
 import "spec.taut"
+import "text.taut"
+import "../../url/src/bytes.taut"
+import std::Base
+import std::Text
 
 // The paths of a source tree: relative, with `/` between plain components.
 
@@ -50,8 +54,6 @@ pub fn tb_check_path(t: Text): Option(TbPathProblem) {
   tb_path(Text::bytes(t))
 }
 
-// ---- the paths of one tree together ---------------------------------------------
-
 // A path of a tree and the same path in lower case, as the host folds it:
 // two paths are one file where names are compared without case.
 pub(open) inductive TbTreePath: Type {
@@ -59,11 +61,8 @@ pub(open) inductive TbTreePath: Type {
 }
 
 pub(open) inductive TbTreeProblem: Type {
-  // The same path twice.
   PathTwice(path: Text): TbTreeProblem
-  // Two paths that are one without case.
   PathCaseClash(other: Text, path: Text): TbTreeProblem
-  // A file that is also a directory of another path.
   FileAndDirectory(file: Text, path: Text): TbTreeProblem
 }
 
@@ -114,7 +113,6 @@ pub fn tb_dirs_of(l: List(Nat), at: List(Nat)): List(List(Nat)) {
   }
 }
 
-// The file of `all` that is the directory `d`.
 pub fn tb_file_at(d: List(Nat), all: List(TbTreePath)): Option(TbTreePath) {
   match all: Option(TbTreePath) {
     Nil => None

@@ -35,16 +35,16 @@ fn core_accepts_what_the_named_checker_elaborates() {
         .unwrap();
     let prefix = generator::prefix();
     let mut source = format!(
-r#"import "{}"
+        r#"import "{}"
 
 {}
 {}
 "#,
-library.display().to_string(),
-prefix,
-r#"fn id_nat(n: Nat): Nat { n }
+        library.display().to_string(),
+        prefix,
+        r#"fn id_nat(n: Nat): Nat { n }
 "#
-);
+    );
     let mut decls = Vec::new();
     for i in 0..cases {
         let decl = g.recursive(&format!("g{i}"));

@@ -1,4 +1,19 @@
 import "fits_allocation_choices.taut"
+import std::Base
+import std::Text
+import "allocation_advance.taut"
+import "allocation_resolution.taut"
+import "allocation_state.taut"
+import "checker.taut"
+import "datas.taut"
+import "fits_allocation_defs.taut"
+import "fits_allocation_poly.taut"
+import "fits_allocation_product.taut"
+import "fits_sound.taut"
+import "ty.taut"
+import "type_allocation.taut"
+import "unify_allocation_sound.taut"
+import "unify_sound.taut"
 
 pub theorem fits_alloc_step_U(
   fuel: Nat,
@@ -820,7 +835,10 @@ pub theorem fits_alloc_step_S(
     )
     TyUnion(members) => allocation_advance_rewrap(
       c,
-      ck_fits_each_in(fuel, c, members, b),
+      ck_fits_each_in(fuel, ck_off(c), members, b),
+      allocation_advance_off(
+      c,
+      ck_fits_each_in(fuel, ck_off(c), members, b),
       And::left(
         And::right(
           And::right(
@@ -833,7 +851,8 @@ pub theorem fits_alloc_step_S(
             )
           )
         )
-      )(c, members, b, ordered, state, a_bound, b_bound)
+      )(ck_off(c), members, b, ordered, state, a_bound, b_bound)
+      )
     )
     TyProduct(members) => allocation_advance_rewrap(
       c,
@@ -989,16 +1008,30 @@ pub theorem fits_alloc_step_I(
         )
       )(c, a, TyFn(params, result, kind), ordered, state, a_bound, b_bound)
     )
-    TyUnion(members) => allocation_advance_or(
+    TyUnion(members) => allocation_advance_off(
       c,
-      (next: Checker) => ck_fits_any_in(fuel, next, a, members),
-      ck_attempt_unify(c, a, TyUnion(members)),
-      allocation_advance_fixed(
-        c,
-        ck_attempt_unify(c, a, TyUnion(members)),
-        ck_attempt_unify_allocation(c, a, TyUnion(members), ordered, state, a_bound, b_bound)
+      ck_or(
+        (next: Checker) => ck_fits_any_in(fuel, next, a, members),
+        ck_attempt_unify(ck_off(c), a, TyUnion(members))
       ),
-      And::left(And::left(attempt_unify_sub(c, a, TyUnion(members))(ordered))),
+      allocation_advance_or(
+      ck_off(c),
+      (next: Checker) => ck_fits_any_in(fuel, next, a, members),
+      ck_attempt_unify(ck_off(c), a, TyUnion(members)),
+      allocation_advance_fixed(
+        ck_off(c),
+        ck_attempt_unify(ck_off(c), a, TyUnion(members)),
+        ck_attempt_unify_allocation(
+          ck_off(c),
+          a,
+          TyUnion(members),
+          ordered,
+          state,
+          a_bound,
+          b_bound
+        )
+      ),
+      And::left(And::left(attempt_unify_sub(ck_off(c), a, TyUnion(members))(ordered))),
       next => advanced => current => order => And::left(
         And::right(
           And::right(
@@ -1022,6 +1055,7 @@ pub theorem fits_alloc_step_I(
         type_allocated_weaken(a, ck_next_of(c), ck_next_of(next), advanced, a_bound),
         type_list_allocated_weaken(members, ck_next_of(c), ck_next_of(next), advanced, b_bound)
       )
+    )
     )
     TyProduct(members) => allocation_advance_rewrap(
       c,
@@ -1208,12 +1242,8 @@ pub theorem fits_alloc_step_T(
     )
     TyProduct(members) => allocation_advance_rewrap(
       c,
-      ck_unify(c, TyProduct(members), b),
-      allocation_advance_fixed(
-        c,
-        ck_unify(c, TyProduct(members), b),
-        ck_unify_allocation(c, TyProduct(members), b, ordered, state, a_bound, b_bound)
-      )
+      ck_fits_product(c, TyProduct(members), members, b),
+      product_allocation(c, members, b, ordered, state, a_bound, b_bound)
     )
     TyNamed(name, params) => allocation_advance_rewrap(
       c,
@@ -1577,9 +1607,15 @@ pub theorem fits_alloc_step_F(
       c,
       ck_and(
         (next: Checker) => ck_fits_in(fuel, next, ra, result),
-        ck_fits_params_in(fuel, c, pa, params)
+        ck_fits_params_in(fuel, ck_off(c), pa, params)
       ),
       ck_rewrap1(ck_unify(c, TyFn(pa, ra, ka), TyFn(params, result, kind))),
+      allocation_advance_off(
+        c,
+        ck_and(
+          (next: Checker) => ck_fits_in(fuel, next, ra, result),
+          ck_fits_params_in(fuel, ck_off(c), pa, params)
+        ),
       fits_alloc_fn_seq(
         fuel,
         And::left(ih),
@@ -1600,7 +1636,7 @@ pub theorem fits_alloc_step_F(
             )
           )
         ),
-        c,
+        ck_off(c),
         pa,
         ra,
         params,
@@ -1611,6 +1647,7 @@ pub theorem fits_alloc_step_F(
         ra_bound,
         And::left(b_bound),
         And::right(b_bound)
+      )
       ),
       allocation_advance_rewrap(
         c,

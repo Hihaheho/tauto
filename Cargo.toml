@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "tools/tauto-test-suite"]
+default-members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
@@ -18,9 +19,9 @@ eure-reader = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12
 eure-schema = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 eure-fmt = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 
-# The differential tests of selfhost-harness run the totes on the Rust backend;
-# only tests/evaluator.rs runs a few under the evaluator, which optimized takes
-# seconds instead of minutes.
+# The tests of tauto check and evaluate whole programs; optimized they take
+# seconds instead of minutes. tools/selfhost-harness is its own workspace (its
+# differential tests build the totes with `tauto build --release`).
 [profile.test.package.tauto]
 opt-level = 3
 
@@ -36,6 +37,18 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.tauto]
+opt-level = 3
+
+[profile.dev.package.tauto-surface]
+opt-level = 3
+
+# The build scripts of tauto-cli-totes and totebag-index check and build totes
+# with the compiler; it runs at the same speed as `tauto check`, so the
+# per-file time limits mean the same thing there.
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.release.build-override]
 opt-level = 3
 
 [profile.dev.package.tauto-parol]

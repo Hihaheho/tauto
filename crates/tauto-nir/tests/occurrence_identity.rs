@@ -4,7 +4,8 @@ use tauto_nir::{Callee, ExprKind, LowerInput};
 
 #[test]
 fn equal_display_spans_keep_types_widths_rows_and_binding_sites_separate() {
-    let mut program = tauto::surface::parse_program(r#"
+    let mut program = tauto::surface::parse_program(
+        r#"
 enum Item { Item(Text) }
 fn inspect(item: Item): u64 { match item { Item(text) => Text::len(text) } }
 fn forward(item: Item, read: () -> Text): u64 { inspect(item) + Text::len(read()) }
@@ -16,7 +17,8 @@ fn request(): u64 ! {ask} { perform ask() }
 fn pure(): u64 { 0 }
 fn choose(): u64 ! {ask} { pure() + request() }
 perform show("value", forward(Item("hello"), () => { let value := "hello"; generic(&value) }))
-"#)
+"#,
+    )
     .unwrap();
     for stmt in &mut program.stmts {
         walk::stmt(stmt, &mut |term| term.span = tauto_parol::Span::new(7, 8));
@@ -108,8 +110,10 @@ fn occurrence_identity_survives_clones_and_copy_on_write_not_fresh_copies() {
 
 #[test]
 fn class_signature_and_expression_generations_have_distinct_identities() {
-    let mut program = tauto::surface::parse_program_as_written(r#"class C(A: Shared) { fn read(value: A): Text }
-fn choose<A: Shared>(): (A) -> Text where C(A) { C.read }"#)
+    let mut program = tauto::surface::parse_program_as_written(
+        r#"class C(A: Shared) { fn read(value: A): Text }
+fn choose<A: Shared>(): (A) -> Text where C(A) { C.read }"#,
+    )
     .unwrap();
     let Stmt::Fn(function) = &mut program.stmts[1] else {
         panic!("function")

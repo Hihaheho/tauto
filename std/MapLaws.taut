@@ -1,4 +1,6 @@
+import "Base.taut"
 import "Map.taut"
+import std::prelude::Ord
 
 // What the ordered map does, proved (`docs/design/self-host.md`): a map's tree is
 // read through its entries in order (`Ordmap::tree_entries`), and for a
@@ -15,12 +17,15 @@ import "Map.taut"
 pub(open) inductive OrdmapLaw(K: Type, cmp: (K, K) -> Ordering): Prop {
   Mk(
     same: ∀ a: K. cmp(a, a) = Equal,
-    equal_is_eq: ∀ a: K, b: K. (cmp(a, b) = Equal) -> (a = b),
-    flip_less: ∀ a: K, b: K. (cmp(a, b) = Less) -> (cmp(b, a) = Greater),
-    flip_greater: ∀ a: K, b: K. (cmp(a, b) = Greater) -> (cmp(b, a) = Less),
-    less_trans: ∀ a: K, b: K, c: K. (
-      cmp(a, b) = Less
-    ) -> (cmp(b, c) = Less) -> (cmp(a, c) = Less)
+    equal_is_eq: ∀ a: K,
+    b: K. (cmp(a, b) = Equal) -> (a = b),
+    flip_less: ∀ a: K,
+    b: K. (cmp(a, b) = Less) -> (cmp(b, a) = Greater),
+    flip_greater: ∀ a: K,
+    b: K. (cmp(a, b) = Greater) -> (cmp(b, a) = Less),
+    less_trans: ∀ a: K,
+    b: K,
+    c: K. (cmp(a, b) = Less) -> (cmp(b, c) = Less) -> (cmp(a, c) = Less)
   ): OrdmapLaw(K, cmp)
 }
 
@@ -126,12 +131,7 @@ module Ordmap {
   }
 
   // `es` with `v` at `k`: before the first key after `k`, or in place of `k`.
-  pub fn list_insert<K, V>(
-    es: List(K × V),
-    k: K,
-    v: V,
-    cmp: (K, K) -> Ordering
-  ): List(K × V) {
+  pub fn list_insert<K, V>(es: List(K × V), k: K, v: V, cmp: (K, K) -> Ordering): List(K × V) {
     match es: List(K × V) {
       Nil => Cons(#(k, v), Nil)
       Cons(e, rest) => match e: List(K × V) {
@@ -219,12 +219,7 @@ module Ordmap {
     v: V,
     cmp: (K, K) -> Ordering,
     e: cmp(k, ek) = Less
-  ): list_insert(
-    Cons(#(ek, ev), rest),
-    k,
-    v,
-    cmp
-  ) = Cons(#(k, v), Cons(#(ek, ev), rest)) {
+  ): list_insert(Cons(#(ek, ev), rest), k, v, cmp) = Cons(#(k, v), Cons(#(ek, ev), rest)) {
     Ordering::cases(
       (x: Ordering) => match x: List(K × V) {
         Less => Cons(#(k, v), Cons(#(ek, ev), rest))
@@ -246,12 +241,7 @@ module Ordmap {
     v: V,
     cmp: (K, K) -> Ordering,
     e: cmp(k, ek) = Equal
-  ): list_insert(
-    Cons(#(ek, ev), rest),
-    k,
-    v,
-    cmp
-  ) = Cons(#(k, v), rest) {
+  ): list_insert(Cons(#(ek, ev), rest), k, v, cmp) = Cons(#(k, v), rest) {
     Ordering::cases(
       (x: Ordering) => match x: List(K × V) {
         Less => Cons(#(k, v), Cons(#(ek, ev), rest))
@@ -273,12 +263,7 @@ module Ordmap {
     v: V,
     cmp: (K, K) -> Ordering,
     e: cmp(k, ek) = Greater
-  ): list_insert(
-    Cons(#(ek, ev), rest),
-    k,
-    v,
-    cmp
-  ) = Cons(#(ek, ev), list_insert(rest, k, v, cmp)) {
+  ): list_insert(Cons(#(ek, ev), rest), k, v, cmp) = Cons(#(ek, ev), list_insert(rest, k, v, cmp)) {
     Ordering::cases(
       (x: Ordering) => match x: List(K × V) {
         Less => Cons(#(k, v), Cons(#(ek, ev), rest))
@@ -292,7 +277,6 @@ module Ordmap {
     )
   }
 
-  // The entries of a tree onto `d` are its entries, then `d`.
   pub theorem entries_append<K: Type, V: Type>(
     t: OrdmapTree(K, V),
     d: List(K × V)
@@ -302,25 +286,12 @@ module Ordmap {
       OrdmapNode(l, k, v, r, h) => Eq::trans(
         Eq::trans(
           entries_append(l, Cons(#(k, v), tree_entries(r, d))),
-          Eq::congr(
-            ⟦List::append(
-              tree_entries(l, Nil),
-              Cons(#(k, v), □)
-            )⟧,
-            entries_append(r, d)
-          )
+          Eq::congr(⟦List::append(tree_entries(l, Nil), Cons(#(k, v), □))⟧, entries_append(r, d))
         ),
         Eq::sym(
           Eq::trans(
-            Eq::congr(
-              ⟦List::append(□, d)⟧,
-              entries_append(l, Cons(#(k, v), tree_entries(r, Nil)))
-            ),
-            List::append_assoc(
-              tree_entries(l, Nil),
-              Cons(#(k, v), tree_entries(r, Nil)),
-              d
-            )
+            Eq::congr(⟦List::append(□, d)⟧, entries_append(l, Cons(#(k, v), tree_entries(r, Nil)))),
+            List::append_assoc(tree_entries(l, Nil), Cons(#(k, v), tree_entries(r, Nil)), d)
           )
         )
       )
@@ -338,10 +309,7 @@ module Ordmap {
     match a: keys(a, x, o, cmp) {
       Nil => Trivial
       Cons(e, rest) => match e {
-        #(ek, ev) => AndIntro(
-          And::left(h),
-          keys_append_left(rest, b, x, o, cmp, And::right(h))
-        )
+        #(ek, ev) => AndIntro(And::left(h), keys_append_left(rest, b, x, o, cmp, And::right(h)))
       }
     }
   }
@@ -425,7 +393,12 @@ module Ordmap {
     ys: List(K × V),
     h: sorted(List::append(xs, Cons(#(nk, nv), ys)), cmp)
   ): keys(xs, nk, Greater, cmp) ∧ sorted(xs, cmp) ∧ keys(ys, nk, Less, cmp) ∧ sorted(ys, cmp) {
-    match xs: keys(xs, nk, Greater, cmp) ∧ sorted(xs, cmp) ∧ keys(ys, nk, Less, cmp) ∧ sorted(ys, cmp) {
+    match xs: keys(
+      xs,
+      nk,
+      Greater,
+      cmp
+    ) ∧ sorted(xs, cmp) ∧ keys(ys, nk, Less, cmp) ∧ sorted(ys, cmp) {
       Nil => AndIntro(Trivial, AndIntro(Trivial, h))
       Cons(x, rest) => match x {
         #(xk, xv) => AndIntro(
@@ -435,29 +408,13 @@ module Ordmap {
               w,
               xk,
               nk,
-              And::left(
-                keys_append_right(
-                  rest,
-                  Cons(#(nk, nv), ys),
-                  xk,
-                  Less,
-                  cmp,
-                  And::left(h)
-                )
-              )
+              And::left(keys_append_right(rest, Cons(#(nk, nv), ys), xk, Less, cmp, And::left(h)))
             ),
             And::left(sorted_split(cmp, w, rest, nk, nv, ys, And::right(h)))
           ),
           AndIntro(
             AndIntro(
-              keys_append_left(
-                rest,
-                Cons(#(nk, nv), ys),
-                xk,
-                Less,
-                cmp,
-                And::left(h)
-              ),
+              keys_append_left(rest, Cons(#(nk, nv), ys), xk, Less, cmp, And::left(h)),
               And::left(And::right(sorted_split(cmp, w, rest, nk, nv, ys, And::right(h))))
             ),
             And::right(And::right(sorted_split(cmp, w, rest, nk, nv, ys, And::right(h))))
@@ -467,7 +424,6 @@ module Ordmap {
     }
   }
 
-  // A key that compares other than `equal` with every key is not found.
   pub theorem list_get_keys_none<K: Type, V: Type>(
     k: K,
     o: Ordering,
@@ -544,11 +500,7 @@ module Ordmap {
     j: K,
     cmp: (K, K) -> Ordering,
     e: list_get(a, j, cmp) = list_get(b, j, cmp)
-  ): list_get(
-    Cons(#(xk, xv), a),
-    j,
-    cmp
-  ) = list_get(Cons(#(xk, xv), b), j, cmp) {
+  ): list_get(Cons(#(xk, xv), a), j, cmp) = list_get(Cons(#(xk, xv), b), j, cmp) {
     Ordering::cases(
       (c: Ordering) => match c: Option(V) {
         Less => list_get(a, j, cmp)
@@ -566,8 +518,6 @@ module Ordmap {
     )
   }
 
-  // Inserting a key before `nk` into a list with `nk` in it inserts into the
-  // part before `nk`.
   pub theorem list_insert_append_less<K: Type, V: Type>(
     xs: List(K × V),
     nk: K,
@@ -616,7 +566,6 @@ module Ordmap {
     }
   }
 
-  // Inserting a key after every key of `xs` inserts after `xs`.
   pub theorem list_insert_append_skip<K: Type, V: Type>(
     xs: List(K × V),
     ys: List(K × V),
@@ -624,12 +573,7 @@ module Ordmap {
     v: V,
     cmp: (K, K) -> Ordering,
     h: keys(xs, k, Greater, cmp)
-  ): list_insert(
-    List::append(xs, ys),
-    k,
-    v,
-    cmp
-  ) = List::append(xs, list_insert(ys, k, v, cmp)) {
+  ): list_insert(List::append(xs, ys), k, v, cmp) = List::append(xs, list_insert(ys, k, v, cmp)) {
     match xs: list_insert(
       List::append(xs, ys),
       k,
@@ -680,7 +624,6 @@ module Ordmap {
     }
   }
 
-  // Inserting into a sorted list keeps it sorted.
   pub theorem list_insert_sorted<K: Type, V: Type>(
     cmp: (K, K) -> Ordering,
     w: OrdmapLaw(K, cmp),
@@ -725,7 +668,6 @@ module Ordmap {
     }
   }
 
-  // After inserting `v` at `k`, `k` has `v`.
   pub theorem list_get_insert_same<K: Type, V: Type>(
     cmp: (K, K) -> Ordering,
     w: OrdmapLaw(K, cmp),
@@ -770,7 +712,6 @@ module Ordmap {
     }
   }
 
-  // After inserting at `k`, a key `j` that is not `k` has what it had.
   pub theorem list_get_insert_other<K: Type, V: Type>(
     cmp: (K, K) -> Ordering,
     w: OrdmapLaw(K, cmp),
@@ -782,11 +723,7 @@ module Ordmap {
     ne: ¬(o = Equal),
     ej: cmp(j, k) = o
   ): list_get(list_insert(es, k, v, cmp), j, cmp) = list_get(es, j, cmp) {
-    match es: list_get(
-      list_insert(es, k, v, cmp),
-      j,
-      cmp
-    ) = list_get(es, j, cmp) {
+    match es: list_get(list_insert(es, k, v, cmp), j, cmp) = list_get(es, j, cmp) {
       Nil => list_get_skip(o, ne, k, v, Nil, j, cmp, ej)
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
@@ -826,8 +763,6 @@ module Ordmap {
     }
   }
 
-  // The entries of a node: those of its left tree, its own, those of its
-  // right tree.
   pub theorem node_entries<K: Type, V: Type>(
     l: OrdmapTree(K, V),
     nk: K,
@@ -837,10 +772,7 @@ module Ordmap {
   ): tree_entries(
     OrdmapNode(l, nk, nv, r, h),
     Nil
-  ) = List::append(
-    tree_entries(l, Nil),
-    Cons(#(nk, nv), tree_entries(r, Nil))
-  ) {
+  ) = List::append(tree_entries(l, Nil), Cons(#(nk, nv), tree_entries(r, Nil))) {
     entries_append(l, Cons(#(nk, nv), tree_entries(r, Nil)))
   }
 
@@ -854,9 +786,9 @@ module Ordmap {
     h: Nat,
     s: sorted(tree_entries(OrdmapNode(l, nk, nv, r, h), Nil), cmp)
   ): keys(tree_entries(l, Nil), nk, Greater, cmp) ∧
-    sorted(tree_entries(l, Nil), cmp) ∧
-    keys(tree_entries(r, Nil), nk, Less, cmp) ∧
-    sorted(tree_entries(r, Nil), cmp) {
+  sorted(tree_entries(l, Nil), cmp) ∧
+  keys(tree_entries(r, Nil), nk, Less, cmp) ∧
+  sorted(tree_entries(r, Nil), cmp) {
     sorted_split(
       cmp,
       w,
@@ -864,11 +796,7 @@ module Ordmap {
       nk,
       nv,
       tree_entries(r, Nil),
-      Eq::subst(
-        (z: List(K × V)) => sorted(z, cmp),
-        node_entries(l, nk, nv, r, h),
-        s
-      )
+      Eq::subst((z: List(K × V)) => sorted(z, cmp), node_entries(l, nk, nv, r, h), s)
     )
   }
 
@@ -991,10 +919,7 @@ module Ordmap {
     k: K,
     v: V,
     s: sorted(tree_entries(t, Nil), cmp)
-  ): tree_entries(
-    tree_insert(t, k, v, cmp),
-    Nil
-  ) = list_insert(tree_entries(t, Nil), k, v, cmp) {
+  ): tree_entries(tree_insert(t, k, v, cmp), Nil) = list_insert(tree_entries(t, Nil), k, v, cmp) {
     match t: tree_entries(
       tree_insert(t, k, v, cmp),
       Nil
@@ -1112,18 +1037,14 @@ module Ordmap {
     }
   }
 
-  // The entries of a map's tree are sorted.
   pub fn ordered<K, V>(m: Ordmap(K, V), cmp: (K, K) -> Ordering): Prop {
     sorted(tree_entries(tree(m), Nil), cmp)
   }
 
-  pub theorem empty_ordered<K: Type, V: Type>(
-    cmp: (K, K) -> Ordering
-  ): ordered(empty(K, V), cmp) {
+  pub theorem empty_ordered<K: Type, V: Type>(cmp: (K, K) -> Ordering): ordered(empty(K, V), cmp) {
     Trivial
   }
 
-  // `Ordmap::insert` keeps a map ordered.
   pub theorem insert_ordered<K: Type, V: Type>(
     cmp: (K, K) -> Ordering,
     w: OrdmapLaw(K, cmp),
@@ -1139,7 +1060,6 @@ module Ordmap {
     )
   }
 
-  // After `Ordmap::insert(m, k, v, cmp)`, `k` has `v`.
   pub theorem get_insert_same<K: Type, V: Type>(
     cmp: (K, K) -> Ordering,
     w: OrdmapLaw(K, cmp),
@@ -1157,17 +1077,12 @@ module Ordmap {
         insert_ordered(cmp, w, m, k, v, s)
       ),
       Eq::trans(
-        Eq::congr(
-          ⟦list_get(□, k, cmp)⟧,
-          tree_insert_entries(cmp, w, tree(m), k, v, s)
-        ),
+        Eq::congr(⟦list_get(□, k, cmp)⟧, tree_insert_entries(cmp, w, tree(m), k, v, s)),
         list_get_insert_same(cmp, w, tree_entries(tree(m), Nil), k, v)
       )
     )
   }
 
-  // After `Ordmap::insert(m, k, v, cmp)`, a key `j` that is not `k` has what
-  // it had.
   pub theorem get_insert_other<K: Type, V: Type>(
     cmp: (K, K) -> Ordering,
     w: OrdmapLaw(K, cmp),
@@ -1189,35 +1104,16 @@ module Ordmap {
         insert_ordered(cmp, w, m, k, v, s)
       ),
       Eq::trans(
-        Eq::congr(
-          ⟦list_get(□, j, cmp)⟧,
-          tree_insert_entries(cmp, w, tree(m), k, v, s)
-        ),
+        Eq::congr(⟦list_get(□, j, cmp)⟧, tree_insert_entries(cmp, w, tree(m), k, v, s)),
         Eq::trans(
-          list_get_insert_other(
-            cmp,
-            w,
-            tree_entries(tree(m), Nil),
-            k,
-            v,
-            j,
-            o,
-            ne,
-            ej
-          ),
+          list_get_insert_other(cmp, w, tree_entries(tree(m), Nil), k, v, j, o, ne, ej),
           Eq::sym(tree_get_entries(cmp, w, tree(m), j, s))
         )
       )
     )
   }
 
-  // The steps of `compare_nat_law`: `Ordmap::compare_nat` is a total order.
-
-  pub theorem select_equal(
-    x: Bool,
-    y: Bool,
-    e: select(x, y) = Equal
-  ): x = false ∧ y = false {
+  pub theorem select_equal(x: Bool, y: Bool, e: select(x, y) = Equal): x = false ∧ y = false {
     match x: x = false ∧ y = false {
       false => match y {
         false => AndIntro(Refl, Refl)
@@ -1237,11 +1133,7 @@ module Ordmap {
     }
   }
 
-  pub theorem select_greater(
-    x: Bool,
-    y: Bool,
-    e: select(x, y) = Greater
-  ): x = false ∧ y = true {
+  pub theorem select_greater(x: Bool, y: Bool, e: select(x, y) = Greater): x = false ∧ y = true {
     match x: x = false ∧ y = true {
       false => match y {
         false => False::elim(equal_ne_greater(e))
@@ -1304,11 +1196,7 @@ module Ordmap {
     b: Nat,
     e: compare_nat(a, b) = Greater
   ): compare_nat(b, a) = Less {
-    select_of_true(
-      b < a,
-      a < b,
-      And::right(select_greater(a < b, b < a, e))
-    )
+    select_of_true(b < a, a < b, And::right(select_greater(a < b, b < a, e)))
   }
 
   pub theorem compare_nat_less_trans(
@@ -1321,13 +1209,7 @@ module Ordmap {
     select_of_true(
       a < c,
       c < a,
-      Nat::lt_trans(
-        a,
-        b,
-        c,
-        select_less(a < b, b < a, e1),
-        select_less(b < c, c < b, e2)
-      )
+      Nat::lt_trans(a, b, c, select_less(a < b, b < a, e1), select_less(b < c, c < b, e2))
     )
   }
 

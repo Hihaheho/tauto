@@ -13,7 +13,6 @@ use std::fmt::Write;
 
 use tauto_syntax::{Ast, Tables, parse_ast};
 
-/// `len` bytes the host fills.
 #[unsafe(no_mangle)]
 pub extern "C" fn alloc(len: usize) -> *mut u8 {
     let mut buf = Vec::<u8>::with_capacity(len.max(1));
@@ -58,7 +57,6 @@ pub unsafe extern "C" fn parse(
     Box::into_raw(out.into_boxed_slice()).cast()
 }
 
-/// The JSON answer for parsing `text` with `tables`.
 pub fn answer(name: &str, tables: &str, text: &str) -> String {
     let mut out = String::new();
     let tables = match Tables::read(tables) {

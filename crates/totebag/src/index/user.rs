@@ -136,7 +136,6 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<UserPolicy, String> {
 }
 
 impl UserPolicy {
-    /// `project` with every rule strengthened by this policy.
     pub fn strengthen(&self, project: &Policy) -> Result<Policy, String> {
         let mut indexes = project.indexes.clone();
         for u in &self.indexes {

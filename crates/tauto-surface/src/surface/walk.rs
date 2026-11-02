@@ -256,7 +256,6 @@ pub fn children(t: &mut SurfaceTerm, f: &mut dyn FnMut(&mut SurfaceTerm)) {
     }
 }
 
-/// A term or a statement met by [`values`].
 pub enum Node<'a> {
     Term(&'a SurfaceTerm),
     Stmt(&'a Stmt),
@@ -330,7 +329,6 @@ pub fn values<'a>(t: &'a SurfaceTerm, f: &mut impl FnMut(Node<'a>)) {
     }
 }
 
-/// [`values`] from a statement.
 pub fn values_stmt<'a>(s: &'a Stmt, f: &mut impl FnMut(Node<'a>)) {
     f(Node::Stmt(s));
     match s {
@@ -347,7 +345,6 @@ pub fn values_stmt<'a>(s: &'a Stmt, f: &mut impl FnMut(Node<'a>)) {
     }
 }
 
-/// [`values`], on the terms only.
 pub fn value_terms<'a>(t: &'a SurfaceTerm, f: &mut impl FnMut(&'a SurfaceTerm)) {
     values(t, &mut |n| {
         if let Node::Term(u) = n {
@@ -377,7 +374,6 @@ pub fn strip_recursion_proofs(f: &mut super::program::FnDecl) {
     });
 }
 
-/// [`strip_recursion_proofs`] on each function of the statements.
 pub fn strip_proofs_in(stmts: &mut [Stmt]) {
     for s in stmts {
         match s {

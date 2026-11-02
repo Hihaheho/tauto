@@ -56,8 +56,8 @@ fn fixture() -> Fixture {
     let f = Fixture::new();
     f.write(
         "lib/proof.taut",
-        r#"axiom assumed(P: Prop): P
-theorem step(P: Prop): P { assumed(P) }
+        r#"pub axiom assumed(P: Prop): P
+pub theorem step(P: Prop): P { assumed(P) }
 "#,
     );
     f.write(
@@ -327,7 +327,7 @@ fn unicode_imports_and_relative_aliases_share_one_source() {
     let f = Fixture::new();
     f.write(
         "lib/証明.taut",
-        r#"theorem shared_proof(): True { Trivial }"#,
+        r#"pub theorem shared_proof(): True { Trivial }"#,
     );
     f.write(
         "src/main.taut",
@@ -430,7 +430,7 @@ fn std_imports_are_bundled_from_the_standard_library_that_comes_with_tauto() {
     let f = Fixture::new();
     f.write(
         "src/main.taut",
-        "import std.Nat\ntheorem t(): (Nat.max(Zero, Zero) = Zero) { Refl }\n",
+        "import std::Base\nimport std::Nat\ntheorem t(): (Nat::max(Zero, Zero) = Zero) { Refl }\n",
     );
     let bundle = f.bundle();
     let sources = bundle["sources"].as_object().unwrap();

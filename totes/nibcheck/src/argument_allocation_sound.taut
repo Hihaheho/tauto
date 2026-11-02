@@ -1,5 +1,19 @@
 import "field_allocation_sound.taut"
 import "allocation_bind.taut"
+import std::Text
+import "allocation_advance.taut"
+import "allocation_state.taut"
+import "argument_frame.taut"
+import "checker.taut"
+import "checker_frame.taut"
+import "constructor_allocation_sound.taut"
+import "fits_allocation_sound.taut"
+import "fits_sound.taut"
+import "ty.taut"
+import "type_allocation.taut"
+import "types_infer.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub theorem ck_expect_allocation(
   c: Checker,
@@ -20,9 +34,9 @@ pub theorem ck_expect_allocation(
       Unit,
       c,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
-      ck_fits(c, a, b),
-      ck_fits_allocation(c, a, b, ordered, state, left, right),
-      And::left(ck_fits_run_frame(c, a, b, ordered)),
+      ck_fits_wide(c, a, b),
+      ck_fits_wide_allocation(c, a, b, ordered, state, left, right),
+      And::left(ck_fits_wide_run_frame(c, a, b, ordered)),
       fits => next => advanced => current => order => allocation_error_if(
         next,
         ck_expect_message(ck_shown(next, a), ck_shown(next, b), what),

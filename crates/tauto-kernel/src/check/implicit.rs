@@ -545,7 +545,6 @@ impl Kernel {
         self.plain_app(ctx, whole, function, arguments, expected)
     }
 
-    /// `elab_app` past the implicit arguments.
     fn plain_app(
         &mut self,
         ctx: &Ctx,
@@ -1326,7 +1325,6 @@ impl Kernel {
         None
     }
 
-    /// `t` with every solved unknown replaced by its solution.
     pub(super) fn resolve(&self, t: &T) -> T {
         let sp = t.span;
         match &*t.kind {
@@ -1359,7 +1357,6 @@ impl Kernel {
         }
     }
 
-    /// Matches `pattern` (which may hold unknowns) against `actual`.
     pub(super) fn unify(&mut self, ctx: &Ctx, pattern: &T, actual: &T) -> bool {
         let p = self.resolve(pattern);
         if !has_meta(&p) {

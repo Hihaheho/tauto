@@ -1,0 +1,68 @@
+import "core.taut"
+import "pipeline.taut"
+import "lower.taut"
+import "syntax.taut"
+import std::prelude::Os
+import "../../../std/Text.taut"
+
+pub fn show_ty(ty: Ty): Text {
+  match ty: Text {
+    TNat => "Nat"
+    TBool => "Bool"
+  }
+}
+
+pub fn show_val(v: Option(Val)): Text {
+  match v: Text {
+    None => "stuck"
+    Some(x) => match x: Text {
+      VNat(n) => Text::of_nat(n)
+      VBool(b) => match b: Text {
+        true => "true"
+        false => "false"
+      }
+    }
+  }
+}
+
+pub fn run_text(src: Text): Unit ! {Div, stdout} {
+  match tl::parse(src) {
+    Err(d) => {
+      print("syntax error: ")
+      print(d.message)
+      print("\n")
+    }
+    Ok(tree) => {
+      let t := lower_expr(tl::Expr::to_i(tree))
+      match check_ty(t) {
+        None => print("rejected by the type checker\n")
+        Some(ty) => {
+          print(show_val(eval(t)))
+          print(" : ")
+          print(show_ty(ty))
+          print("\n")
+        }
+      }
+    }
+  }
+}
+
+// Read one expression per line; errors leave the next prompt available.
+pub fn repl(): Unit ! {Div, stdin, stdout, stdout_flush} {
+  print("> ")
+  perform stdout_flush()
+  match perform stdin() {
+    None => ()
+    Some(line) => {
+      if Text::eq(line, ":quit") {
+        ()
+      } else {
+        if Text::eq(line, "") { () } else { run_text(line) }
+        repl()
+      }
+    }
+  }
+}
+
+print("typed-lang REPL (:quit to exit)\n")
+repl()

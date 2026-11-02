@@ -46,11 +46,6 @@
 //! - **`explicit-implicit`.** A call of a theorem or a constructor this file
 //!   declares does not write out the implicit arguments when every one of
 //!   them is determined by first-order matching on the explicit ones.
-//! - **`product-order`.** The members of a product type, a tuple pattern and a tuple value
-//!   are written in their one order: the labelled ones by their labels, then the others by
-//!   their types. `tauto fmt` puts a type and a pattern in it; a value is evaluated as
-//!   written, so `tauto lint --fix` moves the members of one only when they are names and
-//!   literals, and a value with other members is built with `let` first.
 
 use tauto_message::msg;
 use tauto_parol::Span;
@@ -95,85 +90,11 @@ pub fn lint(source: &str) -> Result<Vec<Finding>, String> {
     for s in &program.stmts {
         raw_locals(s, source, &mut out);
     }
-    product_order(&program.stmts, source, &mut out);
     Ok(out)
 }
 
-/// `product-order`: the product types, tuple patterns and tuple values written out of their
-/// one order, with the file's modules resolved. The members of a tuple whose types are not
-/// written are kept after the labelled ones as they are.
-fn product_order(stmts: &[Stmt], source: &str, out: &mut Vec<Finding>) {
-    use crate::order;
-    for r in order::product_types(stmts, source, &crate::surface::print::product_member_key_of) {
-        out.push(Finding {
-            message: msg!("tauto-lint-product-order", written = &r.text).to_string(),
-            span: r.span,
-        });
-    }
-    for site in crate::surface::tuple_sites(source) {
-        let Some(r) = order::tuple(&site, source) else {
-            continue;
-        };
-        let written = format!("#({})", r.text);
-        let message = if site.pattern {
-            msg!("tauto-lint-product-order", written = &written)
-        } else if movable(&site, source) {
-            msg!("tauto-lint-product-order-value", written = &written)
-        } else {
-            msg!("tauto-lint-product-order-effect", written = &written)
-        };
-        out.push(Finding {
-            message: message.to_string(),
-            span: r.span,
-        });
-    }
-}
-
-/// Every member of the tuple value is a name or a literal, so moving one changes no effect.
-fn movable(site: &crate::surface::TupleSite, source: &str) -> bool {
-    site.members
-        .iter()
-        .all(|(s, _)| crate::order::pure_member(&source[s.start as usize..s.end as usize]))
-}
-
-/// The edits `tauto lint --fix` makes: a tuple value whose members are names and literals,
-/// written out of the order, put in it. A product type and a tuple pattern are put in it by
-/// `tauto fmt`.
-pub fn fixes(source: &str) -> Vec<crate::surface::Fix> {
-    crate::surface::tuple_sites(source)
-        .iter()
-        .filter(|site| !site.pattern && movable(site, source))
-        .filter_map(|site| crate::order::tuple(site, source))
-        .map(|r| crate::surface::Fix {
-            title: "product-order".into(),
-            span: r.span,
-            text: r.text,
-        })
-        .collect()
-}
-
-/// `source` with [`fixes`] made, the inner tuples first.
-pub fn fix(source: &str) -> String {
-    let mut text = source.to_string();
-    for _ in 0..16 {
-        let edits: Vec<crate::order::Reorder> = fixes(&text)
-            .into_iter()
-            .map(|f| crate::order::Reorder {
-                span: f.span,
-                text: f.text,
-            })
-            .collect();
-        let (next, changed) = crate::order::apply(&text, edits);
-        if !changed {
-            break;
-        }
-        text = next;
-    }
-    text
-}
-
 /// The tactics a step of `std/` and `meta/` calls: `std/Tactic.taut`.
-pub const STD_TACTICS: &[&str] = &["rewrite", "nat_norm"];
+pub const STD_TACTICS: &[&str] = &["rewrite", "nat_norm", "nat_le"];
 
 /// The constructors of the inductive types with indices the file declares:
 /// a type whose sort is a function type (`inductive Vec(A: Type): Nat -> Type`).
@@ -200,7 +121,6 @@ fn pattern_ctor(p: &Pattern) -> Option<&str> {
     }
 }
 
-/// `indexed-arm-goal`.
 fn indexed_arm_goals(s: &Stmt, indexed: &[String], out: &mut Vec<Finding>) {
     if indexed.is_empty() {
         return;
@@ -222,7 +142,6 @@ fn indexed_arm_goals(s: &Stmt, indexed: &[String], out: &mut Vec<Finding>) {
     });
 }
 
-/// `typed-macro-in-proof`, `macro-capture`, `step-tactic` and `braced-name`.
 fn macro_rules(s: &Stmt, out: &mut Vec<Finding>) {
     let mut s = s.clone();
     let proof = matches!(s, Stmt::Theorem(_) | Stmt::Def(_));
@@ -405,7 +324,6 @@ fn term(t: &SurfaceTerm, out: &mut Vec<Finding>) {
     }
 }
 
-/// `&&` or `||` when `f` is that operator.
 fn bool_op(f: &SurfaceTerm) -> Option<&'static str> {
     let TermKind::Var(n) = &*f.kind else {
         return None;
@@ -443,7 +361,6 @@ fn bool_mix(
     }
 }
 
-/// Whether the text at `span` is in parentheses of its own.
 fn parenthesized(span: Span, source: &str) -> bool {
     let text = span.text(source).trim();
     if let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
@@ -503,7 +420,6 @@ fn written_name(f: &SurfaceTerm, source: &str) -> Option<String> {
     (f.span.text(source) == n).then_some(n)
 }
 
-/// The names `t` mentions.
 fn names_in(t: &SurfaceTerm, out: &mut Vec<String>) {
     let mut t = t.clone();
     walk::term(&mut t, &mut |x| {
@@ -579,7 +495,10 @@ fn matchable(g: &str, t: &SurfaceTerm) -> bool {
             arguments,
         } => {
             dotted(function).is_some_and(|f| {
-                f == "=" || f.rsplit("::").next().is_some_and(|l| l.starts_with(char::is_uppercase))
+                f == "="
+                    || f.rsplit("::")
+                        .next()
+                        .is_some_and(|l| l.starts_with(char::is_uppercase))
             }) && arguments.iter().any(|a| matchable(g, a))
         }
         TermKind::Product(ts) | TermKind::Tuple(ts) => ts.iter().any(|a| matchable(g, a)),
@@ -635,8 +554,6 @@ fn ctor_rules(s: &Stmt, out: &mut Vec<Finding>) {
     }
 }
 
-/// `hand-generalize`, `bool-cases`, `mk-constructor`, `pair-projection`,
-/// `named-prop`, `unused-forall` and `explicit-implicit`.
 fn style_rules(
     s: &Stmt,
     source: &str,
@@ -663,7 +580,9 @@ fn style_rules(
                 span: t.span,
             })
         }
-        TermKind::Var(_) | TermKind::Field { .. } if dotted(t).as_deref() == Some("Bool::cases") => {
+        TermKind::Var(_) | TermKind::Field { .. }
+            if dotted(t).as_deref() == Some("Bool::cases") =>
+        {
             out.push(Finding {
                 message: msg!("tauto-lint-bool-cases").to_string(),
                 span: t.span,
@@ -679,7 +598,8 @@ fn style_rules(
             };
             match n.as_str() {
                 "Pair::fst" | "Pair::snd" => out.push(Finding {
-                    message: msg!("tauto-lint-pair-projection", name = &n, field = &n[6..]).to_string(),
+                    message: msg!("tauto-lint-pair-projection", name = &n, field = &n[6..])
+                        .to_string(),
                     span: t.span,
                 }),
                 "And" | "Or" | "Iff" | "Ex" | "Pair" => {
@@ -807,4 +727,3 @@ fn raw_locals(s: &Stmt, source: &str, out: &mut Vec<Finding>) {
         });
     }
 }
-

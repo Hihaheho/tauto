@@ -1,5 +1,3 @@
-//! Reading, expanding and checking source files.
-
 mod runtime;
 
 use crate::program::Loaded;
@@ -10,7 +8,6 @@ use tauto_kernel::check::{self, *};
 use tauto_message::msg;
 use tauto_parol::Span;
 
-/// Parses a whole program.
 pub fn parse_program(source: &str) -> Result<Program, String> {
     let program = parse_program_at(source, 0)?;
     Ok(crate::types::expand_classes(program, 1 << 30))
@@ -146,7 +143,6 @@ pub fn run_loaded_with(
     })
 }
 
-/// Checks and runs `source` and returns what it showed.
 pub fn run(source: &str) -> Result<Outcome, RunError> {
     run_with_budget(source, DEFAULT_BUDGET)
 }
@@ -240,6 +236,27 @@ pub fn check_file_timed(
     ),
     String,
 > {
+    let given = text.and_then(|t| Some((path.canonicalize().ok()?, t.to_string())));
+    check_file_sourced(path, &|p: &std::path::Path| match &given {
+        Some((own, text)) if own == p => Some(Ok(text.clone())),
+        _ => None,
+    })
+}
+
+/// [`check_file_timed`] with the text of some files given by `source`
+/// ([`crate::program::load_with_source`]).
+pub fn check_file_sourced(
+    path: &std::path::Path,
+    source: &crate::program::Source<'_>,
+) -> Result<
+    (
+        Vec<FileEntry>,
+        Vec<ExpansionInfo>,
+        Vec<LibEntry>,
+        Vec<Timing>,
+    ),
+    String,
+> {
     let mut kernel = Kernel::new();
     check::declare_prelude(&mut kernel)?;
     kernel.use_cache();
@@ -249,7 +266,7 @@ pub fn check_file_timed(
         .filter(|s| s.is_finite() && *s > 0.0)
         .map(std::time::Duration::from_secs_f64);
     kernel.set_timeout(timeout);
-    let mut loaded = crate::program::load_with_text(path, text)?;
+    let mut loaded = crate::program::load_with_source(path, source)?;
     let expansions = expansion_infos_of(&loaded);
     // A program's functions that only run, such as one calling the
     // prelude's `concat`, are taken out as `run` takes them out, so that
@@ -273,7 +290,7 @@ pub fn check_file_timed(
         runtime::families_only(&mut loaded);
         (HashSet::new(), HashMap::new())
     };
-    let mut out = declare_loaded(&mut kernel, &loaded);
+    let mut out = declare_loaded(&mut kernel, &loaded)?;
     runtime::explain_undefined(&mut out, &why);
     let seen: HashSet<String> = out.iter().map(|e| e.entry.name.clone()).collect();
     for (file, fns) in loaded.files.iter().zip(fns_of) {
@@ -314,19 +331,35 @@ pub fn elaborate_file(
     check::declare_prelude(&mut kernel)?;
     kernel.record_elaborated();
     let loaded = crate::program::load_with_text(path, None)?;
-    let out = declare_loaded(&mut kernel, &loaded);
+    let out = declare_loaded(&mut kernel, &loaded)?;
     Ok((out, kernel.elaborated().to_vec()))
 }
 
 /// Declares the files of `loaded` in order, with what went wrong reading
 /// their macros and syntaxes.
-fn declare_loaded(kernel: &mut Kernel, loaded: &crate::program::Loaded) -> Vec<FileEntry> {
+/// How long checking each file of `loaded` may take, as the `check` section
+/// of the `Tauto.eure` above it says.
+pub fn time_limits(loaded: &crate::program::Loaded) -> Result<Vec<std::time::Duration>, String> {
+    loaded
+        .files
+        .iter()
+        .map(|f| crate::manifest::time_limit(&f.path))
+        .collect()
+}
+
+fn declare_loaded(
+    kernel: &mut Kernel,
+    loaded: &crate::program::Loaded,
+) -> Result<Vec<FileEntry>, String> {
+    let limits = time_limits(loaded)?;
     let mut out = Vec::new();
     kernel.show_syntax(shown_syntax(loaded));
     // The file that first declared each name, so that a name declared again
     // in another file is reported with where it was first.
     let mut declared_in: HashMap<String, usize> = HashMap::new();
     for (index, (file, stmts)) in loaded.files.iter().zip(&loaded.kernel_files).enumerate() {
+        let shown = file.path.display().to_string();
+        kernel.set_file_limit(Some((&shown, limits[index])));
         let program = Program {
             stmts: stmts.clone(),
             errors: Vec::new(),
@@ -347,11 +380,11 @@ fn declare_loaded(kernel: &mut Kernel, loaded: &crate::program::Loaded) -> Vec<F
             });
         }
     }
+    kernel.set_file_limit(None);
     out.extend(macro_failures(loaded));
-    out
+    Ok(out)
 }
 
-/// The messages that say a name is already defined.
 pub(crate) const ALREADY_DEFINED: &[&str] = &[
     "kernel-core-already-defined",
     "kernel-core-ctor-already-defined",
@@ -642,7 +675,6 @@ pub fn check_files_cached(roots: &[PathBuf], cached: bool) -> Result<Checked, St
     check_files_mode(roots, cached, false)
 }
 
-/// Checks proofs in mixed implementation and proof modules.
 pub fn check_tote_files(roots: &[PathBuf], cached: bool) -> Result<Checked, String> {
     check_files_mode(roots, cached, true)
 }
@@ -656,7 +688,6 @@ fn check_files_mode(roots: &[PathBuf], cached: bool, mixed: bool) -> Result<Chec
 pub(crate) struct ExtractionInput {
     pub checked: Checked,
     pub sources: Vec<(crate::program::SourceFile, Vec<Stmt>)>,
-    /// The files each file imports, by their paths.
     pub imports: std::collections::HashMap<PathBuf, Vec<PathBuf>>,
 }
 
@@ -667,6 +698,7 @@ pub(crate) fn check_files_for_extraction(
 ) -> Result<ExtractionInput, String> {
     let mut kernel = Kernel::new();
     let prelude_names = check::declare_prelude(&mut kernel)?;
+    kernel.record_ctor_sites();
     if cached {
         kernel.use_cache();
     }
@@ -699,7 +731,7 @@ pub(crate) fn check_files_for_extraction(
     } else {
         (HashSet::new(), HashSet::new(), HashMap::new())
     };
-    let mut out = declare_loaded(&mut kernel, &loaded);
+    let mut out = declare_loaded(&mut kernel, &loaded)?;
     runtime::explain_undefined(&mut out, &why);
     let files = loaded
         .files
@@ -810,7 +842,6 @@ pub fn expansion_infos(loaded: &Loaded) -> Vec<ExpansionInfo> {
     expansion_infos_of(loaded)
 }
 
-/// A checker with adapters for loaded source files.
 #[derive(Clone)]
 pub struct Checker {
     inner: check::Checker,
@@ -852,7 +883,7 @@ pub fn eval_file(
     check::declare_prelude(&mut kernel)?;
     kernel.use_cache();
     let loaded = crate::program::load_with_text(path, None)?;
-    declare_loaded(&mut kernel, &loaded);
+    declare_loaded(&mut kernel, &loaded)?;
     let term = crate::surface::parse_expr_at(expr, 0)
         .map_err(|e| msg!("tauto-not-a-term", expr = expr, error = e).to_string())?;
     let (value, ty) = check::eval_term(&mut kernel, &term)?;

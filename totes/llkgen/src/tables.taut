@@ -4,9 +4,24 @@
 // gives a text, or why there is none.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "analysis.taut"
+import "dfa.taut"
+import "follow.taut"
+import "ktuple.taut"
+import "../../pargen/src/emit.taut"
+import "../../pargen/src/list.taut"
+import "../../pargen/src/model.taut"
+import "../../pargen/src/par.taut"
+import "../../pargen/src/rx.taut"
+import "../../pargen/src/sch.taut"
+import "../../pargen/src/scn.taut"
+import "../../pargen/src/sha.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::UInt
+import std::prelude::Affine
+import std::prelude::Shared
 
-// The words of the line that starts with `name`.
 pub fn lg_find_line(lines: List(Text), name: Text): List(Text) {
   match lines {
     Nil => Nil
@@ -237,7 +252,6 @@ pub fn lg_push_automaton(&mut b: Buf, nt: u64, nodes: List(LgNode), k: u64): Uni
   }
 }
 
-// Neighbours (`state * 65536 + terminal`) in the order of their terminals.
 pub fn lg_sort_by_term(nb: List(u64)): List(u64) {
   lg_unswap(lg_sort_keep(lg_swap(nb)))
 }
@@ -381,7 +395,6 @@ pub fn lg_conflict_text(
 
 pub(open) struct LgRun { text: Text, max_k: u64, failed: Option(Text) }
 
-// The lookahead automata of all non-terminals.
 pub fn lg_lookahead(g: LgGrammar, max_k: u64, nts: List(Text), terms: List(Text)): LgRun {
   var b := Buf::new()
   var cache := LgCache { firsts: Nil, follows: Nil }
@@ -557,7 +570,6 @@ pub fn lg_cat(a: List(Text), b: List(Text)): List(Text) {
 // What the tote gives, each from a text: a value, or why there is none (an
 // index past the end of a vector is a bug here, and says so).
 
-// The table file of a grammar.
 pub fn llkgen_tables(grammar: Text): Result(Text, Text) {
   handle { Ok(lg_tables(grammar)) } with {
     fail<Text>(why) => Err(why)
@@ -595,7 +607,6 @@ pub fn llkgen_scan_lines(grammar: Text): Result(Text, Text) {
   }
 }
 
-// The tree that each line of `lines` read as a regular expression is.
 pub fn llkgen_rx_trees(lines: Text): Result(Text, Text) {
   handle { Ok(lg_rx_trees(text_lines(lines))) } with {
     fail<Text>(why) => Err(why)

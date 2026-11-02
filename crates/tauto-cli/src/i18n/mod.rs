@@ -22,13 +22,11 @@ macro_rules! t {
 }
 pub(crate) use t;
 
-/// Chooses the language of the messages from the user's setting.
 pub fn init() {
     tauto_messages::install();
     tauto_messages::set_language(language().as_deref());
 }
 
-/// The language of the user's setting, if any.
 fn language() -> Option<String> {
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let setting = var("TAUTO_LANG")

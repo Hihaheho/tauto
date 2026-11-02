@@ -1,5 +1,8 @@
 import "llk.taut"
+import "../../scan/src/scan.taut"
 import std::Array
+import std::Base
+import std::Stack
 
 // A parse that succeeds is a derivation by the tables' productions
 // (`docs/design/self-host.md`「llk（`totes/llk/src/derives.taut`）」). `LlkDerives(t, stack, tokens)` reads the parser's
@@ -18,8 +21,6 @@ import std::Array
 // chooses does not matter here; that the parser only takes a production of
 // the non-terminal it expands does.
 
-// ---- the derivation ---------------------------------------------------------
-
 pub fn llk_type_of(token: LlkTok): Nat {
   token.token_type
 }
@@ -36,8 +37,6 @@ pub fn llk_productions_of(t: LlkTables): Array(LlkProduction) {
   t.productions
 }
 
-// `symbols` pushed onto a stack whose items are `items`, as
-// `llk_push_symbols` does.
 pub fn llk_onto(symbols: List(LlkSym), items: List(LlkSym)): List(LlkSym) {
   match symbols: List(LlkSym) {
     Nil => items
@@ -94,8 +93,6 @@ pub theorem llk_option_cases<A: Type>(
   }
 }
 
-// ---- results ----------------------------------------------------------------
-
 pub fn llk_value(m: Mut2(LlkResult, Stack(LlkSym), Stack(LlkEvent))): LlkResult {
   match m: LlkResult {
     mut2(v, a, b) => v
@@ -147,9 +144,6 @@ pub theorem llk_failure_ne_parsed(
   }
 }
 
-// ---- the end ----------------------------------------------------------------
-
-// The step of `llk_finish` on whether the token is the end of the input.
 pub fn llk_finish_at(
   tokens: List(LlkTok),
   token: LlkTok,
@@ -173,7 +167,6 @@ pub fn llk_at_end(tokens: List(LlkTok)): Prop {
   }
 }
 
-// `llk_finish` succeeds only at the end of the input.
 pub theorem llk_finish_sound(
   tokens: List(LlkTok),
   ev: Stack(LlkEvent),
@@ -238,8 +231,6 @@ pub theorem llk_end_of(
   }
 }
 
-// ---- pushing ----------------------------------------------------------------
-
 pub fn llk_events_push(ev: Stack(LlkEvent), x: LlkEvent): Stack(LlkEvent) {
   Stack::Mk(Cons(x, ev.items))
 }
@@ -257,7 +248,6 @@ pub theorem llk_rewrap1_id<A: Type, S: Type>(m: Mut1(A, S)): llk_rewrap1(m) = m 
   }
 }
 
-// The events after the trivia.
 pub fn llk_trivia_after(trivia: List(ScanToken), ev: Stack(LlkEvent)): Stack(LlkEvent) {
   match trivia: Stack(LlkEvent) {
     Nil => ev
@@ -301,8 +291,6 @@ pub theorem llk_push_symbols_is(
     )
   }
 }
-
-// ---- the steps of `llk_run_in` ----------------------------------------------
 
 // What the recursive call of `llk_run_in` on `f` steps gives.
 pub def LlkIh(
@@ -559,7 +547,6 @@ pub fn llk_lhs_at(
   }
 }
 
-// The rest of an expansion, once the symbols are pushed (`m`).
 pub fn llk_k_sym(
   f: Nat,
   t: LlkTables,
@@ -728,8 +715,6 @@ pub theorem llk_n_case(
     )
   )
 }
-
-// ---- the parse --------------------------------------------------------------
 
 // A run that says it parsed: what was on the stack derives the tokens.
 pub theorem llk_run_sound(

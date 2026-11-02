@@ -8,7 +8,6 @@
 //! call.
 
 use crate::a::Abort;
-// The secret words of `std/prelude/Secret.taut`.
 pub use crate::ct::*;
 use crate::{Loc, Op, Text, error, messages};
 
@@ -51,7 +50,6 @@ impl<K: Eq + std::hash::Hash, V> HashMap<K, V> {
         std::hash::BuildHasher::hash_one(&self.state, k)
     }
 
-    /// The entry of `k`, with `k`'s hash.
     fn find(&self, k: &K) -> (Option<usize>, u64) {
         let h = self.hash(k);
         let mut at = self.heads.get(&h).copied().unwrap_or(NONE);
@@ -338,8 +336,6 @@ pub fn hashmap_get_mut<'a, K: Eq + std::hash::Hash, V>(
     m.find(k).0.map(|i| &mut m.entries[i].1)
 }
 
-// Text, numbers and the host (`std/prelude/Text.taut`, `Num.taut`, `Os.taut`).
-
 pub fn text_len(t: Text) -> u64 {
     t.len() as u64
 }
@@ -483,6 +479,37 @@ pub fn os_remove(path: Text) -> Result<(), Text> {
     crate::host::get().remove(&path).map_err(Text::from)
 }
 
+/// What is at a path: empty when nothing is, else the kind (`file`, `dir`
+/// or `other`), the size and the time of the last change in milliseconds.
+pub fn os_stat_vec(path: Text) -> Result<Vec<Text>, Text> {
+    crate::host::get()
+        .stat(&path)
+        .map(|found| match found {
+            None => Vec::new(),
+            Some(s) => vec![
+                Text::from(s.kind),
+                Text::from(s.size.to_string()),
+                Text::from(s.modified_ms.to_string()),
+            ],
+        })
+        .map_err(Text::from)
+}
+
+pub fn os_move_path(from: Text, to: Text) -> Result<(), Text> {
+    crate::host::get().rename(&from, &to).map_err(Text::from)
+}
+
+pub fn os_copy_file(from: Text, to: Text) -> Result<(), Text> {
+    crate::host::get().copy(&from, &to).map_err(Text::from)
+}
+
+pub fn os_canonicalize(path: Text) -> Result<Text, Text> {
+    crate::host::get()
+        .canonicalize(&path)
+        .map(Text::from)
+        .map_err(Text::from)
+}
+
 /// A new temporary directory, which the run may read and write under from
 /// now on: the host picked it, as the user picks a path in the powerbox
 /// ([`crate::permissions::choose`]).
@@ -505,7 +532,6 @@ pub fn set_tauto_path(path: String) {
     });
 }
 
-/// The program [`os_run_vec`] starts for `program`.
 pub fn run_program(program: &str) -> String {
     match &*TAUTO_PATH.read().unwrap_or_else(|e| e.into_inner()) {
         Some(path) if program == "tauto" => path.clone(),
@@ -581,6 +607,15 @@ pub fn os_read_line() -> Option<Text> {
     crate::host::get().read_line().map(Text::from)
 }
 
+/// Up to `max` bytes of standard input, as soon as any arrive; none at its end.
+pub fn os_read_stdin(max: u64) -> Bytes {
+    Bytes::from(crate::host::get().read_stdin(max.min(1 << 24) as usize))
+}
+
+pub fn os_flush() {
+    crate::host::get().flush()
+}
+
 pub fn os_env(name: Text) -> Option<Text> {
     crate::host::get().env(&name).map(Text::from)
 }
@@ -603,7 +638,6 @@ pub fn os_random() -> u64 {
     crate::host::get().random() >> 1
 }
 
-/// `n` bytes from the host's cryptographically secure random source.
 pub fn os_secure_random(n: u64) -> Result<Bytes, Text> {
     let n = usize::try_from(n).map_err(|_| Text::from("too many random bytes asked for"))?;
     crate::host::get()
@@ -866,6 +900,41 @@ mod cells {
         m.0.borrow_mut().put(v);
     }
 
+    /// A locked mutex's content (`MutexGuard` of `Par.taut`): handed back to
+    /// the mutex when the guard is dropped.
+    pub struct MutexGuard<A> {
+        mutex: Mutex<A>,
+        content: Option<A>,
+    }
+
+    impl<A> Drop for MutexGuard<A> {
+        fn drop(&mut self) {
+            if let Some(v) = self.content.take() {
+                mutex_put(self.mutex.clone(), v);
+            }
+        }
+    }
+
+    pub fn mutexguard_claimed<A>(m: Mutex<A>, s: Signal) -> MutexGuard<A> {
+        let content = mutex_take_claimed(m.clone(), s);
+        MutexGuard {
+            mutex: m,
+            content: Some(content),
+        }
+    }
+
+    pub fn mutexguard_get<A>(g: &MutexGuard<A>) -> &A {
+        g.content
+            .as_ref()
+            .expect("tauto: a mutex guard holds its content")
+    }
+
+    pub fn mutexguard_get_mut<A>(g: &mut MutexGuard<A>) -> &mut A {
+        g.content
+            .as_mut()
+            .expect("tauto: a mutex guard holds its content")
+    }
+
     #[derive(Clone)]
     pub struct Atomic(Rc<Cell<u64>>);
 
@@ -893,11 +962,11 @@ mod cells {
     use super::Line;
     use crate::signal::Signal;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex as Lock, MutexGuard, PoisonError};
+    use std::sync::{Arc, Mutex as Lock, MutexGuard as LockGuard, PoisonError};
 
     /// A lock that a panic in another thread does not poison: the value is
     /// still there, as a language without poisoning would have it.
-    fn lock<T>(m: &Lock<T>) -> MutexGuard<'_, T> {
+    fn lock<T>(m: &Lock<T>) -> LockGuard<'_, T> {
         m.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -966,6 +1035,41 @@ mod cells {
         lock(&m.0).put(v);
     }
 
+    /// A locked mutex's content (`MutexGuard` of `Par.taut`): handed back to
+    /// the mutex when the guard is dropped.
+    pub struct MutexGuard<A> {
+        mutex: Mutex<A>,
+        content: Option<A>,
+    }
+
+    impl<A> Drop for MutexGuard<A> {
+        fn drop(&mut self) {
+            if let Some(v) = self.content.take() {
+                mutex_put(self.mutex.clone(), v);
+            }
+        }
+    }
+
+    pub fn mutexguard_claimed<A>(m: Mutex<A>, s: Signal) -> MutexGuard<A> {
+        let content = mutex_take_claimed(m.clone(), s);
+        MutexGuard {
+            mutex: m,
+            content: Some(content),
+        }
+    }
+
+    pub fn mutexguard_get<A>(g: &MutexGuard<A>) -> &A {
+        g.content
+            .as_ref()
+            .expect("tauto: a mutex guard holds its content")
+    }
+
+    pub fn mutexguard_get_mut<A>(g: &mut MutexGuard<A>) -> &mut A {
+        g.content
+            .as_mut()
+            .expect("tauto: a mutex guard holds its content")
+    }
+
     #[derive(Clone)]
     pub struct Atomic(Arc<AtomicU64>);
 
@@ -997,6 +1101,7 @@ pub use cells::*;
 
 /// The stream requests generated code calls by name (`std/prelude/Os.taut`);
 /// the others give a `List` and are wrapped by the generated crate.
+pub use crate::child::{os_child_close, os_child_close_stdin, os_child_read, os_child_write};
 pub use crate::tcp::{os_tcp_close, os_tcp_read, os_tcp_shutdown, os_tcp_unlisten, os_tcp_write};
 pub use crate::tls_host::{os_tls_close, os_tls_read, os_tls_shutdown, os_tls_write};
 

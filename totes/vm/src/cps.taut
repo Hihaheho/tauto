@@ -1,8 +1,9 @@
 import "mval.taut"
+import "syntab.taut"
+import std::Int
+import std::Float
 
 // The program representation consumed by the bytecode compiler and direct evaluator.
-
-// ---- the continuation-passing form ---------------------------------------------------
 
 pub(open) inductive CVal: Type {
   CvUnit: CVal
@@ -58,7 +59,8 @@ pub(open) inductive Cps: Type {
   CMap(value: Cps, op: CUnary): Cps
   CBranch(cond: Cps, then: Cps, otherwise: Cps): Cps
   CSeq(items: List(Cps)): Cps
-  CDefine(id: Nat, r#shared: Bool, init: Cps): Cps
+  // With `drop`, the local is dropped when its block ends (it may hold a `MutexGuard`).
+  CDefine(id: Nat, r#shared: Bool, drop: Bool, init: Cps): Cps
   CAssign(id: Nat, path: List(MPath), through: Bool, value: Cps): Cps
   CWhile(cond: Cps, body: Cps, ticked: Bool): Cps
   CReturn(value: Cps): Cps

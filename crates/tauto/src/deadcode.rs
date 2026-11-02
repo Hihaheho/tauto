@@ -74,7 +74,12 @@ pub fn analyze(path: &Path, source: &str, runs_alone: bool) -> Result<Vec<Warnin
     }
     // A library may import for its importers: only a program's imports are its own.
     for s in program.stmts.iter().filter(|_| runs_alone) {
-        let Stmt::Import { path: rel, module, span } = s else {
+        let Stmt::Import {
+            path: rel,
+            module,
+            span,
+        } = s
+        else {
             continue;
         };
         let Ok(target) = crate::stdlib::import_target(path, rel, *module) else {
@@ -114,7 +119,9 @@ fn imported_names(path: &Path, seen: &mut HashSet<std::path::PathBuf>) -> Option
     let mut names = Vec::new();
     for s in &program.stmts {
         match s {
-            Stmt::Import { path: rel, module, .. } => {
+            Stmt::Import {
+                path: rel, module, ..
+            } => {
                 let target = crate::stdlib::import_target(path, rel, *module).ok()?;
                 names.extend(imported_names(&target, seen)?);
             }
@@ -185,13 +192,11 @@ fn words(source: &str) -> impl Iterator<Item = (usize, &str)> {
     out.into_iter()
 }
 
-/// Whether `name` is a word of `source` outside `span`.
 fn mentioned_outside(source: &str, name: &str, span: Span) -> bool {
     let (from, to) = (span.start as usize, span.end as usize);
     words(source).any(|(at, w)| w == name && (at < from || at >= to))
 }
 
-/// A name in scope and whether it was read.
 struct Bound {
     name: String,
     /// Where the warning points, `None` for a name never reported (a
@@ -223,7 +228,6 @@ impl Scopes {
         }
     }
 
-    /// Leaves the names bound since `mark`, reporting those never read.
     fn pop(&mut self, mark: usize, out: &mut Vec<Warning>) {
         for b in self.names.drain(mark..) {
             if let (false, Some(span)) = (b.used, b.span) {
@@ -436,7 +440,6 @@ fn term(t: &SurfaceTerm, scopes: &mut Scopes, out: &mut Vec<Warning>) {
     }
 }
 
-/// The statements of a block in order, each name in scope after its own.
 fn block(stmts: &[Stmt], scopes: &mut Scopes, out: &mut Vec<Warning>) {
     let mark = scopes.names.len();
     for (i, s) in stmts.iter().enumerate() {
@@ -501,7 +504,6 @@ fn stmt(s: &Stmt, scopes: &mut Scopes, out: &mut Vec<Warning>) {
     }
 }
 
-/// Where a statement is, from its first term.
 fn stmt_span(s: &Stmt) -> Option<Span> {
     match s {
         Stmt::Let { value, .. } | Stmt::Var { value, .. } | Stmt::Assign { value, .. } => {

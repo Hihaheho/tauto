@@ -122,7 +122,8 @@ theorem uses_id(A: Prop, a: A): A {
 theorem last_one(A: Prop, a: A): A {
   id_proof(A, id_proof(A, a))
 }
-"#.to_string()
+"#
+    .to_string()
     .replace("// nothing here", middle)
 }
 
@@ -163,7 +164,7 @@ fn changing_a_proof_checks_that_declaration_only() {
     // Another proof of the same statement.
     let edited = text.replace(
         "  id_proof(A, a)\n",
-        "  And::left(A, A, and_intro(A, A, a, a))\n",
+        "  And::left(A, A, AndIntro(A, A, a, a))\n",
     );
     assert_ne!(edited, text);
     ws.set_text(&main, edited.clone());
@@ -225,9 +226,11 @@ fn an_edit_in_the_imported_file_reaches_what_imports_it() {
 fn a_statement_that_only_moved_is_not_checked_again_and_its_places_follow() {
     let dir = Dir::new();
     dir.write("lib.taut", lib_source());
-    let text = main_text(r#"theorem wrong(): 2 + 2 = 5 {
+    let text = main_text(
+        r#"theorem wrong(): 2 + 2 = 5 {
   Refl(Nat, 4)
-}"#);
+}"#,
+    );
     let main = dir.write("main.taut", &text);
     let mut ws = workspace();
     ws.report(&main).unwrap();
@@ -246,15 +249,19 @@ fn a_statement_that_only_moved_is_not_checked_again_and_its_places_follow() {
 fn parentheses_added_before_a_hole_move_it() {
     let dir = Dir::new();
     dir.write("lib.taut", lib_source());
-    let text = main_text(r#"theorem pick(A: Prop, a: A): A {
+    let text = main_text(
+        r#"theorem pick(A: Prop, a: A): A {
   id_proof(A, ?h)
-}"#);
+}"#,
+    );
     let main = dir.write("main.taut", &text);
     let mut ws = workspace();
     ws.report(&main).unwrap();
-    let edited = main_text(r#"theorem pick(A: Prop, a: A): A {
+    let edited = main_text(
+        r#"theorem pick(A: Prop, a: A): A {
   id_proof((A), ?h)
-}"#);
+}"#,
+    );
     ws.set_text(&main, edited.clone());
     let (report, holes) = ws.goals(&main, None).unwrap();
     let span = holes[0].goal.span;
@@ -288,7 +295,8 @@ theorem last_one(A: Prop, a: A): A {
 }
 
 theorem (((
-"#.to_string();
+"#
+    .to_string();
     ws.set_text(&main, broken.clone());
     same(&ws.report(&main), &batch(&main, Some(&broken)));
     // And back.
@@ -451,6 +459,7 @@ fn editing_the_last_theorem_of_a_long_file_checks_one_declaration() {
 
 #[test]
 fn universe_template_edits_invalidate_nonzero_instances() {
+    tauto_messages::install();
     let dir = Dir::new();
     let original = r#"theorem uid<u: Level, A: Type(u)>(x: A): A { x }
 theorem use_uid(): Type { uid(1, Type, Nat) }
@@ -474,6 +483,7 @@ theorem use_uid(): Type { uid(1, Type, Nat) }
 
 #[test]
 fn inductive_template_edits_invalidate_nonzero_instances() {
+    tauto_messages::install();
     let dir = Dir::new();
     let original = r#"inductive UBox(u: Level, A: Type(u)): Type(u) { Ub(value: A): UBox(u, A) }
 theorem use_box(A: Type1, x: UBox(1, A)): UBox(1, A) { x }

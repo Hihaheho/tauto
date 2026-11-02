@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use tauto_parol::Span;
 use tauto_syntax::sha256_hex;
 
-use super::{Kernel, T};
+use super::{CtorSite, Kernel, T};
 use crate::surface::{TermKind, TheoremDecl};
 
 /// The source of the checker: a change to it is a change to every key. Every
@@ -70,7 +70,6 @@ const CHECKER: &[&str] = &[
 pub(super) struct Cache {
     dir: PathBuf,
     checker: String,
-    /// Interfaces already hashed, by global.
     interfaces: HashMap<String, String>,
 }
 
@@ -137,6 +136,46 @@ impl Cache {
         self.write(key, text);
     }
 
+    /// The constructors the patterns of a previously checked declaration with
+    /// this key were read as, placed from `base` (`place_base`).
+    pub(super) fn get_sites(&self, key: &str, base: u32) -> Option<Vec<CtorSite>> {
+        let text = std::fs::read_to_string(self.dir.join(format!("{key}.sites"))).ok()?;
+        let mut lines = text.lines();
+        if lines.next() != Some("sites") {
+            return None;
+        }
+        lines
+            .map(|l| {
+                let mut f = l.split('\t');
+                let start = base.checked_add_signed(f.next()?.parse::<i32>().ok()?)?;
+                let end = base.checked_add_signed(f.next()?.parse::<i32>().ok()?)?;
+                let written = f.next()?.to_string();
+                let resolved = f.next()?.to_string();
+                Some(CtorSite {
+                    span: Span { start, end },
+                    written,
+                    resolved,
+                })
+            })
+            .collect()
+    }
+
+    /// Records the constructors the patterns of a declaration with this key
+    /// were read as, with places relative to `base` (`place_base`).
+    pub(super) fn put_sites(&self, key: &str, sites: &[CtorSite], base: u32) {
+        let mut text = String::from("sites\n");
+        for s in sites {
+            let (Some(start), Some(end)) = (
+                i64::from(s.span.start).checked_sub(i64::from(base)),
+                i64::from(s.span.end).checked_sub(i64::from(base)),
+            ) else {
+                return;
+            };
+            text.push_str(&format!("{start}\t{end}\t{}\t{}\n", s.written, s.resolved));
+        }
+        self.write(&format!("{key}.sites"), text);
+    }
+
     /// Records that the proof with this key passed checking, and the globals
     /// it names. If writing fails, the proof is checked again on the next run.
     pub(super) fn put(&self, key: &str, uses: &BTreeSet<String>) {
@@ -179,7 +218,14 @@ impl Kernel {
             return None;
         }
         let mut cache = self.cache.take()?;
-        let text = without_places(text);
+        // Noting the constructors of patterns (`Kernel::record_ctor_sites`) keeps where
+        // each arm stands in the declaration with its terms, so the key holds the
+        // places relative to the declaration's first.
+        let text = if self.record_sites {
+            relative_places(text)
+        } else {
+            without_places(text)
+        };
         let mut parts = vec![cache.checker.clone(), text.clone()];
         let mut ok = true;
         for name in quoted(&text) {
@@ -407,6 +453,59 @@ fn read_term(line: &str, at: Span) -> Option<T> {
     words.next().is_none().then_some(t)
 }
 
+/// The smallest place a `Debug` text of a declaration gives (0 when it has none).
+pub(super) fn place_base(text: &str) -> u32 {
+    places(text).map(|(_, s, _, _)| s).min().unwrap_or(0)
+}
+
+/// `text` with each `Span { start, end }` as the places relative to `place_base`: what
+/// the same declaration at another position in a file, with the same layout, gives.
+pub(super) fn relative_places(text: &str) -> String {
+    let base = place_base(text);
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for (from, start, end, to) in places(text) {
+        out.push_str(&text[at..from]);
+        out.push_str(&format!(
+            "Span {{ start: {}, end: {} }}",
+            i64::from(start) - i64::from(base),
+            i64::from(end) - i64::from(base)
+        ));
+        at = to;
+    }
+    out.push_str(&text[at..]);
+    fresh_in_order(&out)
+}
+
+/// The `Span { start: a, end: b }` of a `Debug` text: where each begins, `a`, `b`
+/// and where each ends.
+fn places(text: &str) -> impl Iterator<Item = (usize, u32, u32, usize)> + '_ {
+    const HEAD: &str = "Span { start: ";
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        loop {
+            let from = at + text[at..].find(HEAD)?;
+            at = from + HEAD.len();
+            let rest = &text[at..];
+            let digits = |s: &str| s.bytes().take_while(u8::is_ascii_digit).count();
+            let n = digits(rest);
+            let Some(mid) = rest[n..].strip_prefix(", end: ") else {
+                continue;
+            };
+            let m = digits(mid);
+            let Some(_) = mid[m..].strip_prefix(" }") else {
+                continue;
+            };
+            let (Ok(a), Ok(b)) = (rest[..n].parse(), mid[..m].parse()) else {
+                continue;
+            };
+            let to = at + n + ", end: ".len() + m + " }".len();
+            at = to;
+            return Some((from, a, b, to));
+        }
+    })
+}
+
 /// Every name that may be a global's: the quoted strings of a `Debug` text.
 fn quoted(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -500,7 +599,8 @@ mod tests {
   Succ(Succ(Zero))
 }
 theorem t(): two() = 2 { Refl }
-"#.to_string(),
+"#
+                .to_string(),
                 "t"
             ),
             Verdict::Checked { .. }
@@ -515,7 +615,8 @@ theorem t(): two() = 2 { Refl }
   Succ(Succ(Zero))
 }
 theorem t(): two() = 2 { Refl }
-"#.to_string(),
+"#
+                .to_string(),
                 "t"
             ),
             Verdict::Checked { .. }
@@ -529,7 +630,8 @@ theorem t(): two() = 2 { Refl }
   Succ(Succ(Succ(Zero)))
 }
 theorem t(): two() = 2 { Refl }
-"#.to_string(),
+"#
+                .to_string(),
                 "t"
             ),
             Verdict::Failed(_)
@@ -646,7 +748,8 @@ fn four(): Nat {
   Succ(Succ(two()))
 }
 theorem t(): four() = 4 { Refl(Nat, 4) }
-"#.to_string();
+"#
+        .to_string();
         assert!(matches!(
             verdict(&dir, &all, "four"),
             Verdict::Checked { .. }
@@ -669,7 +772,8 @@ fn four(): Nat {
   Succ(Succ(two()))
 }
 theorem t(): four() = 4 { Refl(Nat, 4) }
-"#.to_string(),
+"#
+                .to_string(),
                 "four"
             ),
             Verdict::Failed(_)
@@ -684,7 +788,8 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
         let src = &r#"fn two(): Nat {
   Succ(Succ(Zero))
 }
-"#.to_string();
+"#
+        .to_string();
         assert!(matches!(verdict(&dir, src, "two"), Verdict::Checked { .. }));
         // A cached term that does not have the type is refused, and the
         // function is elaborated again.
@@ -703,7 +808,7 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
     fn terms_are_written_and_read_back() {
         let at = Span { start: 0, end: 0 };
         let p = parse_program(&r#"theorem t(): Nat { (x: Nat) => f(x, 3, true) }"#.to_string())
-        .unwrap();
+            .unwrap();
         let crate::surface::Stmt::Theorem(t) = &p.stmts[0] else {
             panic!()
         };

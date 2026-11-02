@@ -1,4 +1,13 @@
+import std::prelude::Shared
 import "unify_sound.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "rules_ty.taut"
+import "ty.taut"
+import "unify.taut"
 
 // `ck_fits` is sound (`docs/design/self-host.md`
 // 「層 2：`ck_fits`（`src/fits_sound.taut`、規則は `src/rules_ty.taut` の `TySub`）」):
@@ -12,6 +21,28 @@ pub def InstExt(
 ): Prop := ∀ gs: List(Pair(Text, Kind)). ∀ map: Ordmap(Text, Ty). (inst(gs, map)) -> inst2(gs, map)
 
 pub def DupExt(dup: (Ty) -> Prop, dup2: (Ty) -> Prop): Prop := ∀ t: Ty. (dup(t)) -> dup2(t)
+
+pub theorem prodfit_move(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  s2: Ordmap(Nat, Ty),
+  ok2: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
+  hs: SubstExt(s, s2),
+  hk: OkExt(ok, ok2),
+  xs: List(Ty),
+  ys: List(Ty),
+  h: ProdFit(s, ok, xs, ys)
+): ProdFit(s2, ok2, xs, ys) {
+  match h: ProdFit(s2, ok2, xs, ys) {
+    ProdNil => ProdNil
+    ProdCons(y, ys1, x, hx, he, hr) => ProdCons(
+      x,
+      hx,
+      tyeq_move(s, ok, s2, ok2, hs, hk, x, y, he),
+      prodfit_move(s, ok, s2, ok2, hs, hk, xs, ys1, hr)
+    )
+  }
+}
 
 mutual {
   pub theorem tysub_list_move(
@@ -205,11 +236,12 @@ mutual {
         tysub_list_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, pb, pa, hp),
         tysub_move(s, ok, inst, dup, s2, ok2, inst2, dup2, hs, hk, hi, hd, ra, rb, hr)
       )
+      TysubProduct(xs, b1, h1) => TysubProduct(
+        prodfit_move(s, ok, s2, ok2, hs, hk, xs, ty_wanted_members(b1), h1)
+      )
     }
   }
 }
-
-// ----- at a state of the checker -----
 
 // `map` is an instance of the generics `gs` the checker made: each generic is
 // read as a type with a kind bound recorded for it.
@@ -338,8 +370,6 @@ pub theorem sub_at_move(
   )
 }
 
-// ----- the steps of fitting, unfolded -----
-
 pub fn ck_fits_c2(j: Nat, c: Checker, a: Ty, b: Ty, y: Bool): Mut1(Bool, Checker) {
   match y: Mut1(Bool, Checker) {
     true => ck_rewrap1(ck_unify(c, a, b))
@@ -423,6 +453,23 @@ pub fn ck_tag2_c(
   }
 }
 
+// Whether a product is fitted by the types of its members, the state with that off, as inside
+// a union and a function's type, and what a step run from a state leaves with the setting put
+// back (`ck_fits_wide`).
+pub fn ck_widen_of(c: Checker): Bool {
+  c.widen_products
+}
+
+pub fn ck_off(c: Checker): Checker {
+  ck_st(ck_widen_to(c, false))
+}
+
+pub fn ck_unwiden_k(w: Bool, m: Mut1(Bool, Checker)): Mut1(Bool, Checker) {
+  match m: Mut1(Bool, Checker) {
+    mut1(v, c2) => mut1(v, ck_st(ck_widen_to(c2, w)))
+  }
+}
+
 pub fn ck_fn2_c(
   j: Nat,
   c: Checker,
@@ -435,7 +482,10 @@ pub fn ck_fn2_c(
   e: Bool
 ): Mut1(Bool, Checker) {
   match e: Mut1(Bool, Checker) {
-    true => ck_and((c2: Checker) => ck_fits_in(j, c2, ra, rb), ck_fits_params_in(j, c, pa, pb))
+    true => ck_and(
+      (c2: Checker) => ck_fits_in(j, c2, ra, rb),
+      ck_fits_params_in(j, ck_off(c), pa, pb)
+    )
     false => ck_rewrap1(ck_unify(c, TyFn(pa, ra, ka), TyFn(pb, rb, kb)))
   }
 }
@@ -480,8 +530,6 @@ pub fn ck_inst_k(
   }
 }
 
-// ----- combining steps -----
-
 pub theorem post_false(c: Checker, q: (Checker) -> Prop): Post(c, mut1(false, c), q) {
   (o: CkOrdered(c)) => AndIntro(grows_refl(c, o), (y: false = true) => False::elim(false_ne_true(y)))
 }
@@ -520,7 +568,6 @@ pub theorem post_or_k(
   }
 }
 
-// `if m { true } else { k }`.
 pub theorem post_or(
   c: Checker,
   m: Mut1(Bool, Checker),
@@ -589,7 +636,6 @@ pub theorem post_attempt(
   }
 }
 
-// A fact about the state before a step, carried to the state after it.
 pub theorem post_with(
   c: Checker,
   m: Mut1(Bool, Checker),
@@ -611,7 +657,6 @@ pub theorem post_with(
   )
 }
 
-// A step from a state after `c`.
 pub theorem post_after(
   c: Checker,
   c2: Checker,
@@ -654,8 +699,6 @@ pub theorem post_sub_eqs<a: Ty, b: Ty>(
     Eq::subst((z: Ty) => Post(c, m, (c2: Checker) => SubAt(c2, z, b)), Eq::sym(ea), h)
   )
 }
-
-// ----- at a state, monotone -----
 
 pub def SubEachAt(
   c: Checker,
@@ -779,8 +822,6 @@ pub theorem mono_inst(
     h
   )
 }
-
-// ----- the rules at a state -----
 
 pub theorem sub_of_eq(c: Checker, a: Ty, b: Ty, h: TyEqAt(c, a, b)): SubAt(c, a, b) {
   TysubEq(h)
@@ -958,8 +999,6 @@ pub theorem post_sub_resolve(
     )
   )
 }
-
-// ----- what each step gives -----
 
 pub def FitsU(
   k: Nat
@@ -1331,8 +1370,6 @@ pub theorem fits_step(
     )
   )
 }
-
-// ----- the steps that look at the types -----
 
 // A step at types a wildcard arm cannot name: `x` and `y` are found from
 // `ex` and `ey`, and the step is unfolded at them by `e`.
@@ -1935,16 +1972,23 @@ pub theorem shape_cases(
       post_unf(
         c,
         ck_fits_shape_in(Succ(j), c, TyUnion(xs), b),
-        ck_rewrap1(ck_fits_each_in(j, c, xs, b)),
+        ck_rewrap1(ck_fits_each_in(j, ck_off(c), xs, b)),
         (c2: Checker) => SubAt(c2, TyUnion(xs), b),
         Refl,
-        post_map(
+        post_after(
           c,
-          ck_fits_each_in(j, c, xs, b),
-          (c2: Checker) => SubEachAt(c2, b, xs),
+          ck_off(c),
+          ck_rewrap1(ck_fits_each_in(j, ck_off(c), xs, b)),
           (c2: Checker) => SubAt(c2, TyUnion(xs), b),
-          (c2: Checker, h: SubEachAt(c2, b, xs)) => sub_union_l_at(c2, xs, b, h),
-          he(c, xs, b)
+          (o: CkOrdered(c)) => grows_refl(c, o),
+          post_map(
+            ck_off(c),
+            ck_fits_each_in(j, ck_off(c), xs, b),
+            (c2: Checker) => SubEachAt(c2, b, xs),
+            (c2: Checker) => SubAt(c2, TyUnion(xs), b),
+            (c2: Checker, h: SubEachAt(c2, b, xs)) => sub_union_l_at(c2, xs, b, h),
+            he(ck_off(c), xs, b)
+          )
         )
       )
     )
@@ -2020,20 +2064,33 @@ pub theorem into_cases(
       post_unf(
         c,
         ck_fits_into_in(Succ(j), c, a, TyUnion(ys)),
-        ck_or((c2: Checker) => ck_fits_any_in(j, c2, a, ys), ck_attempt_unify(c, a, TyUnion(ys))),
+        ck_or(
+          (c2: Checker) => ck_fits_any_in(j, c2, a, ys),
+          ck_attempt_unify(ck_off(c), a, TyUnion(ys))
+        ),
         (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
         Refl,
-        post_or(
+        post_after(
           c,
-          ck_attempt_unify(c, a, TyUnion(ys)),
+          ck_off(c),
+          ck_or(
+            (c2: Checker) => ck_fits_any_in(j, c2, a, ys),
+            ck_attempt_unify(ck_off(c), a, TyUnion(ys))
+          ),
           (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
-          (c2: Checker) => ck_fits_any_in(j, c2, a, ys),
-          (c2: Checker) => SubAnyAt(c2, a, ys),
-          (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
-          attempt_unify_sub(c, a, TyUnion(ys)),
-          (c2: Checker) => hy(c2, a, ys),
-          (c3: Checker, h: SubAt(c3, a, TyUnion(ys))) => h,
-          (c3: Checker, h: SubAnyAt(c3, a, ys)) => sub_union_r_at(c3, a, ys, h)
+          (o: CkOrdered(c)) => grows_refl(c, o),
+          post_or(
+            ck_off(c),
+            ck_attempt_unify(ck_off(c), a, TyUnion(ys)),
+            (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
+            (c2: Checker) => ck_fits_any_in(j, c2, a, ys),
+            (c2: Checker) => SubAnyAt(c2, a, ys),
+            (c2: Checker) => SubAt(c2, a, TyUnion(ys)),
+            attempt_unify_sub(ck_off(c), a, TyUnion(ys)),
+            (c2: Checker) => hy(c2, a, ys),
+            (c3: Checker, h: SubAt(c3, a, TyUnion(ys))) => h,
+            (c3: Checker, h: SubAnyAt(c3, a, ys)) => sub_union_r_at(c3, a, ys, h)
+          )
         )
       )
     )
@@ -2132,27 +2189,34 @@ pub theorem fn2_ok(
   match e: Fn2Ok(j, c, pa, ra, ka, pb, rb, kb, e) {
     true => (
       hk: Bool::and(Nat::eq(list_len(pa), list_len(pb)), kind_fits(ka, kb)) = true
-    ) => post_seq(
+    ) => post_after(
       c,
-      ck_fits_params_in(j, c, pa, pb),
-      (c2: Checker) => SubLenAt(c2, pa, pb),
-      (c2: Checker) => ck_fits_in(j, c2, ra, rb),
-      (c2: Checker) => SubAt(c2, ra, rb),
+      ck_off(c),
+      ck_and((c2: Checker) => ck_fits_in(j, c2, ra, rb), ck_fits_params_in(j, ck_off(c), pa, pb)),
       (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
-      mono_len_sub(pa, pb),
-      hp(c, pa, pb),
-      (c2: Checker) => hu(c2, ra, rb),
-      (c2: Checker, h1: SubLenAt(c2, pa, pb), h2: SubAt(c2, ra, rb)) => sub_fn_at(
-        c2,
-        pa,
-        pb,
-        ra,
-        rb,
-        ka,
-        kb,
-        ck_bool_and_right(Nat::eq(list_len(pa), list_len(pb)), kind_fits(ka, kb), hk),
-        h1(ck_bool_and_left(Nat::eq(list_len(pa), list_len(pb)), kind_fits(ka, kb), hk)),
-        h2
+      (o: CkOrdered(c)) => grows_refl(c, o),
+      post_seq(
+        ck_off(c),
+        ck_fits_params_in(j, ck_off(c), pa, pb),
+        (c2: Checker) => SubLenAt(c2, pa, pb),
+        (c2: Checker) => ck_fits_in(j, c2, ra, rb),
+        (c2: Checker) => SubAt(c2, ra, rb),
+        (c2: Checker) => SubAt(c2, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+        mono_len_sub(pa, pb),
+        hp(ck_off(c), pa, pb),
+        (c2: Checker) => hu(c2, ra, rb),
+        (c2: Checker, h1: SubLenAt(c2, pa, pb), h2: SubAt(c2, ra, rb)) => sub_fn_at(
+          c2,
+          pa,
+          pb,
+          ra,
+          rb,
+          ka,
+          kb,
+          ck_bool_and_right(Nat::eq(list_len(pa), list_len(pb)), kind_fits(ka, kb), hk),
+          h1(ck_bool_and_left(Nat::eq(list_len(pa), list_len(pb)), kind_fits(ka, kb), hk)),
+          h2
+        )
       )
     )
     false => (
@@ -2399,6 +2463,383 @@ pub theorem fn_cases(
   }
 }
 
+// ----- a product fitted by the types of its members -----
+
+pub def ProdFitAt(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty)
+): Prop := ProdFit(ck_subst_of(c), KeptOk(ck_kept_of(c)), xs, ys)
+
+pub fn pair_fst(p: Pair(Ty, Ty)): Ty {
+  match p: Ty {
+    Pair { fst: a, snd: b } => a
+  }
+}
+
+pub fn pair_snd(p: Pair(Ty, Ty)): Ty {
+  match p: Ty {
+    Pair { fst: a, snd: b } => b
+  }
+}
+
+// `found` pairs each of `ys` with a member of `xs`.
+pub(open) inductive FoundIn(xs: List(Ty)): (List(Ty), List(Pair(Ty, Ty))) -> Prop {
+  FoundNil: FoundIn(xs, Nil, Nil)
+  FoundCons<y: Ty, ys: List(
+    Ty
+  ), p: Pair(Ty, Ty), rest: List(Pair(Ty, Ty))>(
+    hin: TyIn(xs, pair_fst(p)),
+    hy: pair_snd(p) = y,
+    h: FoundIn(xs, ys, rest)
+  ): FoundIn(xs, Cons(y, ys), Cons(p, rest))
+}
+
+// Each pair is two types made the same.
+pub(open) inductive PairsEq(
+  s: Ordmap(Nat, Ty),
+  ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
+): (List(Pair(Ty, Ty))) -> Prop {
+  PairsNil: PairsEq(s, ok, Nil)
+  PairsCons<p: Pair(Ty, Ty), rest: List(Pair(Ty, Ty))>(
+    h: TyEq(s, ok, pair_fst(p), pair_snd(p)),
+    hs: PairsEq(s, ok, rest)
+  ): PairsEq(s, ok, Cons(p, rest))
+}
+
+pub def PairsEqAt(
+  c: Checker,
+  found: List(Pair(Ty, Ty))
+): Prop := PairsEq(ck_subst_of(c), KeptOk(ck_kept_of(c)), found)
+
+pub theorem mono_tyeq(a: Ty, b: Ty): Mono((c: Checker) => TyEqAt(c, a, b)) {
+  (c1: Checker, c2: Checker, g: Grows(c1, c2), h: TyEqAt(c1, a, b)) => tyeq_at_move(c1, c2, g, a, b, h)
+}
+
+pub theorem unify_found_ok(
+  c: Checker,
+  found: List(Pair(Ty, Ty))
+): Post(c, ck_unify_found(c, found), (c2: Checker) => PairsEqAt(c2, found)) {
+  match found: Post(c, ck_unify_found(c, found), (c2: Checker) => PairsEqAt(c2, found)) {
+    Nil => post_unf(
+      c,
+      ck_unify_found(c, Nil),
+      mut1(true, c),
+      (c2: Checker) => PairsEqAt(c2, Nil),
+      Refl,
+      post_true(c, (c2: Checker) => PairsEqAt(c2, Nil), PairsNil)
+    )
+    Cons(p, rest) => post_unf(
+      c,
+      ck_unify_found(c, Cons(p, rest)),
+      ck_and((c2: Checker) => ck_unify_found(c2, rest), ck_unify(c, p.fst, p.snd)),
+      (c2: Checker) => PairsEqAt(c2, Cons(p, rest)),
+      Refl,
+      post_seq(
+        c,
+        ck_unify(c, p.fst, p.snd),
+        (c2: Checker) => TyEqAt(c2, p.fst, p.snd),
+        (c2: Checker) => ck_unify_found(c2, rest),
+        (c2: Checker) => PairsEqAt(c2, rest),
+        (c2: Checker) => PairsEqAt(c2, Cons(p, rest)),
+        mono_tyeq(p.fst, p.snd),
+        ck_unify_ok(c, p.fst, p.snd),
+        (c2: Checker) => unify_found_ok(c2, rest),
+        (c2: Checker, h1: TyEqAt(c2, p.fst, p.snd), h2: PairsEqAt(c2, rest)) => PairsCons(h1, h2)
+      )
+    )
+  }
+}
+
+pub theorem found_fit(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  found: List(Pair(Ty, Ty)),
+  hf: FoundIn(xs, ys, found),
+  he: PairsEqAt(c, found)
+): ProdFitAt(c, xs, ys) {
+  match hf: ProdFitAt(c, xs, ys) {
+    FoundNil => ProdNil
+    FoundCons(y, ys1, p, rest, hin, hy, h) => match he: ProdFitAt(c, xs, Cons(y, ys1)) {
+      PairsCons(p1, rest1, h1, hs1) => ProdCons(
+        p.fst,
+        hin,
+        Eq::subst(
+          (z: Ty) => TyEqAt(c, p.fst, z),
+          hy,
+          h1
+        ),
+        found_fit(c, xs, ys1, rest, h, hs1)
+      )
+    }
+  }
+}
+
+pub fn FindSpec(xs: List(Ty), o: Option(Ty)): Prop {
+  match o: Prop {
+    None => True
+    Some(x) => TyIn(xs, x)
+  }
+}
+
+pub theorem find_cons_spec(
+  xs: List(Ty),
+  x: Ty,
+  same: Bool,
+  rest: Option(Ty),
+  hx: TyIn(xs, x),
+  hr: FindSpec(xs, rest)
+): FindSpec(xs, ck_find_cons(x, same, rest)) {
+  match same: FindSpec(xs, ck_find_cons(x, same, rest)) {
+    true => hx
+    false => hr
+  }
+}
+
+pub theorem find_spec(
+  c: Checker,
+  y: Ty,
+  xs0: List(Ty),
+  xs: List(Ty),
+  pre: ∀ z: Ty. (TyIn(xs, z)) -> TyIn(xs0, z)
+): FindSpec(xs0, ck_members_find(c, xs, y)) {
+  match xs: FindSpec(xs0, ck_members_find(c, xs, y)) {
+    Nil => Trivial
+    Cons(x, rest) => find_cons_spec(
+      xs0,
+      x,
+      ck_member_same(c, x, y),
+      ck_members_find(c, rest, y),
+      pre(x, InHere(x, rest)),
+      find_spec(c, y, xs0, rest, (z: Ty, hz: TyIn(rest, z)) => pre(z, InThere(x, hz)))
+    )
+  }
+}
+
+pub fn PairsSpec(xs: List(Ty), ys: List(Ty), o: Option(List(Pair(Ty, Ty)))): Prop {
+  match o: Prop {
+    None => True
+    Some(f) => FoundIn(xs, ys, f)
+  }
+}
+
+pub theorem pairs_cons_spec(
+  xs: List(Ty),
+  y: Ty,
+  yrest: List(Ty),
+  found: Option(Ty),
+  rest: Option(List(Pair(Ty, Ty))),
+  hf: FindSpec(xs, found),
+  hr: PairsSpec(xs, yrest, rest)
+): PairsSpec(xs, Cons(y, yrest), ck_pairs_cons(y, found, rest)) {
+  match found: PairsSpec(xs, Cons(y, yrest), ck_pairs_cons(y, found, rest)) {
+    None => Trivial
+    Some(x) => match rest: PairsSpec(xs, Cons(y, yrest), ck_pairs_cons(y, Some(x), rest)) {
+      None => Trivial
+      Some(pairs) => FoundCons(hf, Refl, hr)
+    }
+  }
+}
+
+pub theorem pairs_spec(
+  c: Checker,
+  xs0: List(Ty),
+  xs: List(Ty),
+  ys: List(Ty),
+  pre: ∀ z: Ty. (TyIn(xs, z)) -> TyIn(xs0, z)
+): PairsSpec(xs0, ys, ck_members_pairs(c, xs, ys)) {
+  match ys: PairsSpec(xs0, ys, ck_members_pairs(c, xs, ys)) {
+    Nil => FoundNil
+    Cons(y, yrest) => pairs_cons_spec(
+      xs0,
+      y,
+      yrest,
+      ck_members_find(c, xs, y),
+      ck_members_pairs(c, xs, yrest),
+      find_spec(c, y, xs0, xs, pre),
+      pairs_spec(c, xs0, xs, yrest, pre)
+    )
+  }
+}
+
+pub fn ck_fit_some(c: Checker, f: List(Pair(Ty, Ty)), e: Bool): Mut1(Bool, Checker) {
+  match e: Mut1(Bool, Checker) {
+    true => mut1(false, c)
+    false => ck_rewrap1(ck_unify_found(c, f))
+  }
+}
+
+pub theorem fit_some_ok(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  f: List(Pair(Ty, Ty)),
+  e: Bool,
+  hf: FoundIn(xs, ys, f)
+): Post(c, ck_fit_some(c, f, e), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+  match e: Post(c, ck_fit_some(c, f, e), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+    true => post_false(c, (c2: Checker) => ProdFitAt(c2, xs, ys))
+    false => post_map(
+      c,
+      ck_unify_found(c, f),
+      (c2: Checker) => PairsEqAt(c2, f),
+      (c2: Checker) => ProdFitAt(c2, xs, ys),
+      (c2: Checker, h: PairsEqAt(c2, f)) => found_fit(c2, xs, ys, f, hf, h),
+      unify_found_ok(c, f)
+    )
+  }
+}
+
+pub theorem fit_found_ok(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  found: Option(List(Pair(Ty, Ty))),
+  spec: PairsSpec(xs, ys, found)
+): Post(c, ck_fit_found(c, found), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+  match found: Post(c, ck_fit_found(c, found), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+    None => post_unf(
+      c,
+      ck_fit_found(c, None),
+      mut1(false, c),
+      (c2: Checker) => ProdFitAt(c2, xs, ys),
+      Refl,
+      post_false(c, (c2: Checker) => ProdFitAt(c2, xs, ys))
+    )
+    Some(f) => post_unf(
+      c,
+      ck_fit_found(c, Some(f)),
+      ck_fit_some(c, f, ck_members_repeat(c, ck_pairs_firsts(f))),
+      (c2: Checker) => ProdFitAt(c2, xs, ys),
+      Refl,
+      fit_some_ok(c, xs, ys, f, ck_members_repeat(c, ck_pairs_firsts(f)), spec)
+    )
+  }
+}
+
+pub fn ck_fit_c(c: Checker, xs: List(Ty), ys: List(Ty), e1: Bool, e2: Bool): Mut1(Bool, Checker) {
+  match e1: Mut1(Bool, Checker) {
+    true => mut1(false, c)
+    false => match e2: Mut1(Bool, Checker) {
+      true => mut1(false, c)
+      false => ck_rewrap1(ck_fit_found(c, ck_members_pairs(c, xs, ys)))
+    }
+  }
+}
+
+pub theorem fit_c_ok(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  e1: Bool,
+  e2: Bool
+): Post(c, ck_fit_c(c, xs, ys, e1, e2), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+  match e1: Post(c, ck_fit_c(c, xs, ys, e1, e2), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+    true => post_false(c, (c2: Checker) => ProdFitAt(c2, xs, ys))
+    false => match e2: Post(
+      c,
+      ck_fit_c(c, xs, ys, false, e2),
+      (c2: Checker) => ProdFitAt(c2, xs, ys)
+    ) {
+      true => post_false(c, (c2: Checker) => ProdFitAt(c2, xs, ys))
+      false => post_map(
+        c,
+        ck_fit_found(c, ck_members_pairs(c, xs, ys)),
+        (c2: Checker) => ProdFitAt(c2, xs, ys),
+        (c2: Checker) => ProdFitAt(c2, xs, ys),
+        (c2: Checker, h: ProdFitAt(c2, xs, ys)) => h,
+        fit_found_ok(
+          c,
+          xs,
+          ys,
+          ck_members_pairs(c, xs, ys),
+          pairs_spec(c, xs, xs, ys, (z: Ty, h: TyIn(xs, z)) => h)
+        )
+      )
+    }
+  }
+}
+
+pub theorem fit_by_types_ok(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty)
+): Post(c, ck_fit_by_types(c, xs, ys), (c2: Checker) => ProdFitAt(c2, xs, ys)) {
+  post_unf(
+    c,
+    ck_fit_by_types(c, xs, ys),
+    ck_fit_c(
+      c,
+      xs,
+      ys,
+      Bool::or(ck_members_open(c, xs), ck_members_open(c, ys)),
+      Bool::or(ck_members_repeat(c, xs), ck_members_repeat(c, ys))
+    ),
+    (c2: Checker) => ProdFitAt(c2, xs, ys),
+    Refl,
+    fit_c_ok(
+      c,
+      xs,
+      ys,
+      Bool::or(ck_members_open(c, xs), ck_members_open(c, ys)),
+      Bool::or(ck_members_repeat(c, xs), ck_members_repeat(c, ys))
+    )
+  )
+}
+
+pub fn ck_product_w(c: Checker, a: Ty, xs: List(Ty), b: Ty, w: Bool): Mut1(Bool, Checker) {
+  match w: Mut1(Bool, Checker) {
+    true => ck_or(
+      (c2: Checker) => ck_fit_by_types(c2, xs, ty_wanted_members(b)),
+      ck_attempt_unify(c, a, b)
+    )
+    false => ck_rewrap1(ck_unify(c, a, b))
+  }
+}
+
+pub theorem product_w_ok(
+  c: Checker,
+  xs: List(Ty),
+  b: Ty,
+  w: Bool
+): Post(c, ck_product_w(c, TyProduct(xs), xs, b, w), (c2: Checker) => SubAt(c2, TyProduct(xs), b)) {
+  match w: Post(
+    c,
+    ck_product_w(c, TyProduct(xs), xs, b, w),
+    (c2: Checker) => SubAt(c2, TyProduct(xs), b)
+  ) {
+    true => post_or(
+      c,
+      ck_attempt_unify(c, TyProduct(xs), b),
+      (c2: Checker) => SubAt(c2, TyProduct(xs), b),
+      (c2: Checker) => ck_fit_by_types(c2, xs, ty_wanted_members(b)),
+      (c2: Checker) => ProdFitAt(c2, xs, ty_wanted_members(b)),
+      (c2: Checker) => SubAt(c2, TyProduct(xs), b),
+      attempt_unify_sub(c, TyProduct(xs), b),
+      (c2: Checker) => fit_by_types_ok(c2, xs, ty_wanted_members(b)),
+      (c3: Checker, h: SubAt(c3, TyProduct(xs), b)) => h,
+      (c3: Checker, h: ProdFitAt(c3, xs, ty_wanted_members(b))) => TysubProduct(h)
+    )
+    false => unify_sub(c, TyProduct(xs), b)
+  }
+}
+
+pub theorem fits_product_ok(
+  c: Checker,
+  xs: List(Ty),
+  b: Ty
+): Post(c, ck_fits_product(c, TyProduct(xs), xs, b), (c2: Checker) => SubAt(c2, TyProduct(xs), b)) {
+  post_unf(
+    c,
+    ck_fits_product(c, TyProduct(xs), xs, b),
+    ck_product_w(c, TyProduct(xs), xs, b, ck_widen_of(c)),
+    (c2: Checker) => SubAt(c2, TyProduct(xs), b),
+    Refl,
+    product_w_ok(c, xs, b, ck_widen_of(c))
+  )
+}
+
 pub theorem tagged_cases(
   j: Nat,
   hut: FitsUt(j),
@@ -2432,6 +2873,29 @@ pub theorem tagged_cases(
           (c2: Checker) => SubAt(c2, TyTagged(ta, x), b),
           (c2: Checker, h: SubAt(c2, TyTagged(ta, x), b)) => h,
           hut(c, ta, x, b)
+        )
+      )
+    )
+    TyProduct(xs) => post_sub_eqs(
+      c,
+      ck_fits_tagged_in(Succ(j), c, TyProduct(xs), b),
+      a1,
+      b1,
+      ea,
+      eb,
+      post_unf(
+        c,
+        ck_fits_tagged_in(Succ(j), c, TyProduct(xs), b),
+        ck_rewrap1(ck_fits_product(c, TyProduct(xs), xs, b)),
+        (c2: Checker) => SubAt(c2, TyProduct(xs), b),
+        Refl,
+        post_map(
+          c,
+          ck_fits_product(c, TyProduct(xs), xs, b),
+          (c2: Checker) => SubAt(c2, TyProduct(xs), b),
+          (c2: Checker) => SubAt(c2, TyProduct(xs), b),
+          (c2: Checker, h: SubAt(c2, TyProduct(xs), b)) => h,
+          fits_product_ok(c, xs, b)
         )
       )
     )
@@ -2969,6 +3433,53 @@ pub theorem ck_attempt_fits_ok(
       (c2: Checker) => SubAt(c2, a, b),
       (c2: Checker, h: SubAt(c2, a, b)) => h,
       And::left(And::right(fits_all(ck_steps_of(c))))(c, a, b)
+    )
+  )
+}
+
+// The state with products fitted by the types of their members, as `ck_expect` fits.
+pub fn ck_on(c: Checker): Checker {
+  ck_st(ck_widen_to(c, true))
+}
+
+pub theorem post_unwiden_on(
+  c: Checker,
+  m: Mut1(Bool, Checker),
+  q: (Checker) -> Prop,
+  hq: ∀ c2: Checker. ∀ w: Bool. (q(c2)) -> q(ck_st(ck_widen_to(c2, w))),
+  h: Post(ck_on(c), m, q)
+): Post(c, ck_unwiden_k(ck_widen_of(c), m), q) {
+  match m: Post(c, ck_unwiden_k(ck_widen_of(c), m), q) {
+    mut1(v, c2) => (o: CkOrdered(c)) => AndIntro(
+      grows_trans(
+        c,
+        c2,
+        ck_st(ck_widen_to(c2, ck_widen_of(c))),
+        grows_trans(c, ck_on(c), c2, grows_refl(c, o), And::left(h(o))),
+        grows_refl(c2, And::left(And::left(h(o))))
+      ),
+      (y: v = true) => hq(c2, ck_widen_of(c), And::right(h(o))(y))
+    )
+  }
+}
+
+pub theorem ck_fits_wide_ok(
+  c: Checker,
+  a: Ty,
+  b: Ty
+): Post(c, ck_fits_wide(c, a, b), (c2: Checker) => SubAt(c2, a, b)) {
+  post_unf(
+    c,
+    ck_fits_wide(c, a, b),
+    ck_unwiden_k(ck_widen_of(c), ck_fits(ck_on(c), a, b)),
+    (c2: Checker) => SubAt(c2, a, b),
+    Refl,
+    post_unwiden_on(
+      c,
+      ck_fits(ck_on(c), a, b),
+      (c2: Checker) => SubAt(c2, a, b),
+      (c2: Checker, w: Bool, h: SubAt(c2, a, b)) => h,
+      ck_fits_ok(ck_on(c), a, b)
     )
   )
 }

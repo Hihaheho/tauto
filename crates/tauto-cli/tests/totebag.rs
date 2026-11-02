@@ -39,7 +39,7 @@ impl World {
         w.git(&["init", "--quiet"]);
         write(
             &libs.join("word/Tauto.eure"),
-            "package {\n  name = \"word\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+            "package {\n  name = \"word\"\n  version = \"0.1.0\"\n}\n",
         );
         write(
             &libs.join("word/src/word.taut"),
@@ -47,21 +47,21 @@ impl World {
         );
         write(
             &libs.join("greet/Tauto.eure"),
-            "package {\n  name = \"greet\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\ndependencies {\n  word { path = \"../word\" }\n}\n",
+            "package {\n  name = \"greet\"\n  version = \"0.1.0\"\n}\ndependencies {\n  word { path = \"../word\" }\n}\n",
         );
         write(
             &libs.join("greet/src/greet.taut"),
-            "pub fn greet(): i64 { word() + 1 }\n",
+            "import word::word\n\npub fn greet(): i64 { word() + 1 }\n",
         );
         w.commit("first");
         let app = w.app();
         write(
             &app.join("Tauto.eure"),
-            "// The app.\npackage {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+            "// The app.\npackage {\n  name = \"app\"\n  version = \"0.1.0\"\n}\n",
         );
         write(
             &app.join("src/main.taut"),
-            "perform show(\"answer\", greet())\n",
+            "import greet::greet\n\nperform show(\"answer\", greet())\n",
         );
         w
     }
@@ -273,7 +273,7 @@ fn remove_takes_out_the_entry_and_the_lock() {
     );
     assert_eq!(
         w.read("Tauto.eure"),
-        "// The app.\npackage {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n"
+        "// The app.\npackage {\n  name = \"app\"\n  version = \"0.1.0\"\n}\n"
     );
     assert!(!w.app().join("Tauto.lock").exists());
     let err = w.fails(&["remove", "greet"]);
@@ -287,7 +287,7 @@ fn a_project_has_one_tote_of_each_name() {
     // A local word besides the one greet brings.
     write(
         &w.temp.0.join("word/Tauto.eure"),
-        "package {\n  name = \"word\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"word\"\n  version = \"0.1.0\"\n}\n",
     );
     write(
         &w.temp.0.join("word/src/word.taut"),
@@ -308,7 +308,7 @@ fn a_fetched_tote_may_not_name_a_local_repository() {
     write(
         &w.libs().join("greet/Tauto.eure"),
         &format!(
-            "package {{\n  name = \"greet\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}}\ndependencies {{\n  word {{\n    git = \"{}\"\n    ref = \"refs/heads/main\"\n    dir = \"word\"\n  }}\n}}\n",
+            "package {{\n  name = \"greet\"\n  version = \"0.1.0\"\n}}\ndependencies {{\n  word {{\n    git = \"{}\"\n    ref = \"refs/heads/main\"\n    dir = \"word\"\n  }}\n}}\n",
             w.url()
         ),
     );

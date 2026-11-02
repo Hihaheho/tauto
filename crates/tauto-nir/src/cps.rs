@@ -13,7 +13,6 @@ use std::collections::{BTreeMap, BTreeSet};
 /// A computation: run it with a continuation, which receives its value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cps {
-    /// A value already computed.
     Pure(Value),
     /// The value of a local. `deref` reads through a borrow, `copy` makes a
     /// copy of the value, and `take` moves it out of the local.
@@ -36,12 +35,10 @@ pub enum Cps {
         inst: InstId,
         args: Vec<Cps>,
     },
-    /// A call of a host function.
     External {
         name: String,
         args: Vec<Cps>,
     },
-    /// A call of a builtin of the runtime library.
     Builtin {
         name: String,
         args: Vec<Cps>,
@@ -51,7 +48,6 @@ pub enum Cps {
         op: Prim,
         args: Vec<Cps>,
     },
-    /// Computes the value, then the operation of it.
     Map {
         value: Box<Cps>,
         op: Unary,
@@ -70,6 +66,10 @@ pub enum Cps {
         shared: bool,
         init: Box<Cps>,
         immutable: bool,
+        /// The value holds a host value that is dropped when the scope ends
+        /// (an `extern` type, or a `MutexGuard`): a backend that does not
+        /// drop values by itself clears the local there.
+        drop: bool,
     },
     /// Writes the value at the place; `through_borrow` when the local is a
     /// borrow of the place's owner.
@@ -84,7 +84,6 @@ pub enum Cps {
         body: Box<Cps>,
         ticked: bool,
     },
-    /// Returns from the function with the value.
     Return(Box<Cps>),
     Match {
         scrut: Box<Cps>,
@@ -101,7 +100,6 @@ pub enum Cps {
         arms: Vec<HandlerArm>,
         ret: Option<Box<MatchArm>>,
     },
-    /// A borrow of the place.
     BorrowPlace {
         id: u32,
         path: Vec<PathStep>,
@@ -123,18 +121,15 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     Text(String),
-    /// A function instance.
     Fn(InstId),
 }
 
-/// A step of a place's path: a named field, or a tuple index.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PathStep {
     Name(String),
     Index(usize),
 }
 
-/// An operation of computed values.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prim {
     /// Checked to the width's range.
@@ -165,7 +160,6 @@ pub enum Prim {
     /// The length of the text in UTF-8 bytes.
     TextLen,
     TextCompare,
-    /// `div` or `mod`, checked to the width's range.
     Divide {
         name: String,
         width: Width,
@@ -179,11 +173,9 @@ pub enum Prim {
     },
 }
 
-/// An operation of one computed value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Unary {
     Not,
-    /// A member of a product, by index.
     Member(usize),
     Field {
         name: String,
@@ -191,7 +183,6 @@ pub enum Unary {
     },
     /// The value as `show` writes it.
     Shown,
-    /// A borrow of a temporary; `shared` for a shared borrow.
     TempRef {
         shared: bool,
     },
@@ -225,7 +216,7 @@ pub enum CpsPat {
         fields: Vec<CpsPat>,
         data: String,
     },
-    /// `#(…)` on a product: a pattern for each member, in the product's order.
+    /// `#(…)` on a product: a pattern for each member, by position.
     Product(Vec<CpsPat>),
 }
 
@@ -241,7 +232,6 @@ pub struct MatchArm {
 pub struct HandlerArm {
     pub op: String,
     pub pats: Vec<CpsPat>,
-    /// The local the continuation is bound to.
     pub k: Option<u32>,
     pub guard: Cps,
     pub body: Cps,
@@ -258,9 +248,7 @@ pub struct Closure {
     pub ret: Ty,
     /// The references it is passed: its own name and the local it stands for.
     pub refs: Vec<(u32, u32)>,
-    /// Whether each parameter owns its value.
     pub owned: Vec<bool>,
-    /// The captures it takes over from the enclosing scope.
     pub moves: Vec<u32>,
     /// A call consumes it.
     pub once: bool,
@@ -705,6 +693,7 @@ impl Lower<'_> {
                     shared: local.storage() == Storage::SharedVar,
                     init: Box::new(self.expr(init)?),
                     immutable: matches!(s, Stmt::Let { .. }) && local.storage() == Storage::Owned,
+                    drop: crate::tail::holds_host(self.pkg, &init.ty, &mut Default::default()),
                 },
                 Stmt::Assign { target, value, .. } => Cps::Assign {
                     id: target.local.id,
@@ -772,7 +761,6 @@ fn path(fields: &[FieldRef]) -> Vec<PathStep> {
         .collect()
 }
 
-/// The name of a constructor's data type.
 pub fn data_owner(data: &DataRef) -> &str {
     match data {
         DataRef::Gen(n) => n,

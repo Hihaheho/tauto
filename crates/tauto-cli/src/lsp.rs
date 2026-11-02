@@ -15,6 +15,9 @@ use tauto_analyzer::editor::{offset_of, position_of};
 use tauto_analyzer::navigate::{Navigator, Place, TypeInfo};
 
 pub fn command() -> ExitCode {
+    // The program of the file an editor shows is read again at every edit: the files before it
+    // are expanded once (`docs/design/analysis-cache.md`).
+    tauto::program::keep_expansions(true);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     match serve(&mut stdin.lock(), &mut stdout.lock()) {
@@ -217,6 +220,21 @@ fn percent_decode(s: &str) -> String {
 }
 
 fn diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &str) -> Vec<Value> {
+    let mut out = check_diagnostics(workspace, uri, text);
+    // A syntax whose registered colours could not be used is a warning at its literal.
+    if let Ok((_, notes)) = tauto_analyzer::editor::dsl_tokens(&path_of(uri), text) {
+        for note in notes {
+            let (line, col) = position_of(text, note.start);
+            let (end_line, end_col) = position_of(text, note.end);
+            out.push(json!({"range": {"start": {"line": line, "character": col},
+                                      "end": {"line": end_line, "character": end_col}},
+                            "severity": 2, "source": "tauto", "message": note.message}));
+        }
+    }
+    out
+}
+
+fn check_diagnostics(workspace: &tauto_analyzer::Workspace, uri: &str, text: &str) -> Vec<Value> {
     let path = path_of(uri);
     let report = workspace.report(&path);
     let at = |line: usize, col: usize, message: &str| {
@@ -289,7 +307,7 @@ fn code_actions(uri: &str, params: &Value) -> Vec<Value> {
 
 fn semantic(uri: &str, text: &str) -> Vec<u32> {
     let path = path_of(uri);
-    let Ok(tokens) = tauto_analyzer::editor::dsl_tokens(&path, text) else {
+    let Ok((tokens, _)) = tauto_analyzer::editor::dsl_tokens(&path, text) else {
         return Vec::new();
     };
     let mut data = Vec::new();
@@ -297,7 +315,7 @@ fn semantic(uri: &str, text: &str) -> Vec<u32> {
     for t in tokens {
         let (line, col) = position_of(text, t.start);
         let (end_line, end_col) = position_of(text, t.end);
-        // A token over several lines is left uncoloured.
+        // `dsl_tokens` splits a token over several lines; one that is left is not coloured.
         if end_line != line {
             continue;
         }

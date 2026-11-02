@@ -52,6 +52,7 @@ kernel-gave-up-unfolded = gave up after { $seconds }s of checking (unfolded most
 kernel-unfolded-times = `{ $name }` { $count } times
 kernel-out-of-steps = gave up after { $steps } steps of reduction
 kernel-out-of-steps-in = gave up after { $steps } steps of reduction, unfolding `{ $name }` (unfolded most: { $top }); raise the limit of the declaration with `budget`
+kernel-file-time-limit = checking { $file } took more than { $seconds }s and was stopped; to allow it more, list it under check.slow in Tauto.eure with a larger limit
 kernel-ran-out-of-time = not checked: `{ $name }` ran out of time
 kernel-past-u128 =
     { $message }
@@ -187,8 +188,8 @@ kernel-field-depends = the type of `{ $name }` depends on another field
 kernel-ascribe-mismatch = `{ $have }` is not `{ $want }`, nor a product with its members
 kernel-product-not-pair = `{ $have }` does not fit `{ $want }`: a product `#(…)` or `A × B` is not a `Pair` written by its name, nor a `Pair` a product
 kernel-ascribe-no-member = `{ $product }` has no member of the type `{ $member }`
-kernel-ascribe-clash = more than one member has the type `{ $member }`; tell them apart with a label (`@x { $member }`)
-kernel-tuple-pattern-ambiguous = more than one member of `{ $product }` has the type `{ $member }`, so `#(…)` cannot take its members by position; write them with labels (`#(@a x, @b y)`) or with types
+kernel-ascribe-clash = two members of a product have the type `{ $member }`, so the members cannot be matched by their types; write the members by position, or tell them apart with a label (`@x { $member }`)
+kernel-ascribe-open = `{ $have }` and `{ $want }` are matched by the types of their members only where neither mentions a type variable; write the members in the same order, by position, or give each a label (`@x T`)
 kernel-eq-no-deq = `==` is on `Nat`, `Bool`, `Text` or a type with a decidable equality, not `{ $ty }`; an inductive has one when it lists `=> fn { $head }_beq, theorem { $head }_beq_refl, theorem { $head }_beq_sound, theorem { $head }_deq` after its sort
 kernel-eq-type-open = Neither side of `=` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write `Eq(T, a, b)`
 kernel-if-type-open = Neither branch of this `if` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write its type: `match c: T {"{"} true => a  false => b {"}"}`
@@ -197,8 +198,13 @@ kernel-eq-not-declared = `==` here is `{ $name }`, which is not declared
 kernel-match-arm-goal = the goal of this arm is `{ $computed }`, not `{ $written }`
 kernel-rec-without-call = `{ $name }` is used without a call; recursion must be a call on a field of the matched value
 kernel-rec-arity = `{ $name }` is not structural: a recursive call passes every argument ({ $given } here, { $expected } expected)
-kernel-rec-not-smaller = `{ $name }` is not structural: `{ $function }` matches on its parameter `{ $param }`, so the argument for `{ $param }` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `{ $argument }` is not; a recursion on another parameter names it with `decreasing_by`
-kernel-rec-not-smaller-group = `{ $name }` is not structural: `{ $function }` matches on its parameter `{ $param }`, so the argument for `{ $param }` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `{ $argument }` is not; a recursion on another parameter names it with `decreasing_by`; `{ $part }` is a part of another type of the group, and a recursion through its parts is a function that matches on that type, together with this one in one `mutual {"{"} … {"}"}` block
+kernel-rec-not-smaller = `{ $name }` is not structural: `{ $function }` matches on its parameter `{ $param }`, so the argument for `{ $param }` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `{ $argument }` is not. { $hint }
+kernel-rec-not-smaller-group = `{ $name }` is not structural: `{ $function }` matches on its parameter `{ $param }`, so the argument for `{ $param }` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `{ $argument }` is not. `{ $part }` is a part of another type of the group, and a recursion through its parts is a function that matches on that type, together with this one in one `mutual {"{"} … {"}"}` block. { $hint }
+kernel-rec-hint-swapped = `{ $part }` is a part of `{ $param }`, but this call passes it for `{ $other }`; pass it for `{ $param }`, as in `{ $suggestion }` (the arguments are in the order of the parameters)
+kernel-rec-hint-stuck = Every argument of this call is the parameter's own, so the call does not get smaller; give it an argument that is a part of `{ $param }`
+kernel-rec-hint-part = Pass a variable bound by a pattern of the `match` on `{ $param }` (a field of the value) for `{ $param }`
+kernel-rec-hint-by-one = If the recursion is on `{ $param }`, which this call changes, name it after the result type: `decreasing_by { $param }`, and match on it in the body (a well-founded measure is `decreasing_by measure(f)`, on the first parameter)
+kernel-rec-hint-by-many = If the recursion is on a parameter this call changes ({ $params }), name it after the result type: `decreasing_by { $first }`, and match on it in the body (a well-founded measure is `decreasing_by measure(f)`, on the first parameter)
 kernel-rec-changes-later = `{ $name }` changes a later parameter
 kernel-rec-changes-earlier = `{ $name }` changes an earlier parameter
 kernel-rec-fixed-one = `{ $name }` is not structural: the recursion is on `{ $param }`, the matched parameter, and the type of `{ $param }` depends on { $fixed }, so a recursive call passes it unchanged
@@ -218,7 +224,7 @@ kernel-class-skipped = not a class of the proof language: { $why }
 kernel-class-one-param = it has one parameter of kind `Type`
 kernel-class-defined = class `{ $name }` is already defined
 kernel-class-method-effects = `{ $name }` performs effects
-kernel-class-effects-laws = { $class }.{ $method } performs effects, so { $class } cannot have laws
+kernel-class-effects-laws = { $class }::{ $method } performs effects, so { $class } cannot have laws
 kernel-class-method-generics = `{ $name }` has generics
 kernel-class-method-untyped = `{ $name }` has an untyped parameter
 kernel-instance-not-class-skipped = `{ $name }` is not a class of the proof language

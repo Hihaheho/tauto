@@ -433,10 +433,10 @@ fn copy_source(base: &Path, rel: &str, out: &Path) -> Result<(), String> {
 /// are the run's permissions (`docs/design/host-effects.md`), the rest the
 /// program's arguments; the standard effects are answered with node's
 /// `process`, `fs` and `fetch`.
-const NODE_OPTIONS: &str = r#"import { readFileSync, writeFileSync, mkdirSync, readSync, realpathSync, lstatSync, readdirSync, rmSync, mkdtempSync } from 'node:fs';
+const NODE_OPTIONS: &str = r#"import { readFileSync, writeFileSync, mkdirSync, readSync, realpathSync, lstatSync, readdirSync, rmSync, mkdtempSync, statSync, renameSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP, createServer as createNetServer, createConnection } from 'node:net';
@@ -475,6 +475,17 @@ const realPath = p => {
   return at;
 };
 let stdinBuffer = Buffer.alloc(0), stdinDone = false;
+const readStdin = max => {
+  if (stdinBuffer.length === 0 && !stdinDone) {
+    const chunk = Buffer.alloc(65536); let n = 0;
+    for (;;) {
+      try { n = readSync(0, chunk, 0, chunk.length, null); break; } catch (e) { if (e.code === 'EAGAIN') continue; if (e.code !== 'EOF') stdinDone = true; break; }
+    }
+    if (n === 0) stdinDone = true; else stdinBuffer = Buffer.concat([stdinBuffer, chunk.subarray(0, n)]);
+  }
+  const out = stdinBuffer.subarray(0, Math.min(max, stdinBuffer.length)); stdinBuffer = stdinBuffer.subarray(out.length);
+  return new Uint8Array(out);
+};
 const readLine = () => {
   for (;;) {
     const i = stdinBuffer.indexOf(10);
@@ -541,6 +552,44 @@ const waitFor = (wakes, ready, deadline) => new Promise(resolve => {
   wakes.push(on);
   if (ms !== null) timer = setTimeout(() => resolve(ready()), ms);
 });
+const children = new Map(); let nextChild = 1;
+const childOf = id => { const s = children.get(id); if (!s) throw new Error('no such program'); return s; };
+const childSpawn = (program, args, dir, env, stdin, modes) => new Promise((resolve, reject) => {
+  const p = spawnChild(program, args, { cwd: dir === '' ? undefined : dir, env: { ...process.env, ...Object.fromEntries(env) }, stdio: modes.map(m => m === 1 ? 'inherit' : 'pipe'), detached: true });
+  const s = { p, done: false, code: null, wake: [], pipes: [null, null, null] };
+  const wake = () => { for (const f of s.wake.splice(0)) f(); };
+  const pipe = (stream, i) => { if (!stream) return; const q = { chunks: [], ended: false }; s.pipes[i] = q; stream.on('data', c => { q.chunks.push(c); wake(); }); stream.on('end', () => { q.ended = true; wake(); }); stream.on('close', () => { q.ended = true; wake(); }); stream.on('error', () => { q.ended = true; wake(); }); };
+  pipe(p.stdout, 1); pipe(p.stderr, 2);
+  p.stdin?.on('error', () => {});
+  p.once('error', reject);
+  p.once('close', code => { s.done = true; s.code = code; wake(); });
+  p.once('spawn', () => {
+    if (p.stdin && stdin.length > 0) p.stdin.write(stdin);
+    const id = nextChild++; children.set(id, s); resolve([String(id)]);
+  });
+});
+const childRead = async (id, which, max, deadline) => {
+  const s = childOf(id); const q = s.pipes[which === 2 ? 2 : 1];
+  if (!q || max === 0) return new Uint8Array(0);
+  if (!await waitFor(s.wake, () => q.chunks.length > 0 || q.ended, deadline)) return null;
+  if (q.chunks.length === 0) return new Uint8Array(0);
+  const c = q.chunks[0];
+  if (c.length <= max) { q.chunks.shift(); return new Uint8Array(c); }
+  q.chunks[0] = c.subarray(max);
+  return new Uint8Array(c.subarray(0, max));
+};
+const childWrite = (id, bytes) => new Promise((resolve, reject) => {
+  const s = childOf(id);
+  if (!s.p.stdin || s.p.stdin.destroyed || s.p.stdin.writableEnded) return reject(new Error('the standard input is closed'));
+  s.p.stdin.write(bytes, e => e ? reject(e) : resolve());
+});
+const childCloseStdin = id => { const s = childOf(id); if (s.p.stdin) s.p.stdin.end(); };
+const childWait = async (id, deadline) => {
+  const s = childOf(id);
+  if (!await waitFor(s.wake, () => s.done, deadline)) return null;
+  return s.code === null ? [] : [s.code];
+};
+const childClose = id => { const s = children.get(id); if (!s) return; children.delete(id); if (!s.done) { try { process.kill(-s.p.pid, 'SIGKILL'); } catch { s.p.kill('SIGKILL'); } } };
 const tcpListen = address => new Promise((resolve, reject) => {
   const a = parseAddress(address);
   if (!a) return reject(new Error(`cannot listen on ${address}`));
@@ -610,5 +659,5 @@ const tcpUnlisten = id => {
   l.closed = true; l.server.close(); const w = l.wake; l.wake = []; for (const f of w) f();
 };
 const closeServers = () => { for (const id of [...tcpStreams.keys()]) tcpClose(id); for (const id of [...tcpListeners.keys()]) tcpUnlisten(id); };
-const options = {args:rest,os_resolve:resolveHost,os_fetch_at:fetchAt,os_tcp_listen:tcpListen,os_tcp_accept:tcpAccept,os_tcp_connect:tcpConnect,os_tcp_read:tcpRead,os_tcp_write:tcpWrite,os_tcp_shutdown:tcpShutdown,os_tcp_close:tcpClose,os_tcp_unlisten:tcpUnlisten,permissions,env:process.env,cwd:process.cwd(),resolvePath:realPath,os_read_line:readLine,os_print:s=>process.stdout.write(s),os_eprint:s=>process.stderr.write(s),os_read_file:p=>readFileSync(p,'utf8'),os_write_file:(p,s)=>writeFileSync(p,s),os_read_bytes:p=>new Uint8Array(readFileSync(p)),os_write_bytes:(p,b)=>writeFileSync(p,b),os_create_dir:p=>{mkdirSync(p,{recursive:true});},os_list_dir:p=>readdirSync(p),os_remove:p=>{if(!lstatSync(p))return;rmSync(p,{recursive:true});},os_temp_dir:()=>mkdtempSync(join(tmpdir(),'tauto-')),os_run:(program,args,dir,env,stdin)=>{const r=spawnSync(program,args,{cwd:dir===''?undefined:dir,env:{...process.env,...Object.fromEntries(env)},input:stdin,maxBuffer:1<<30});if(r.error)throw r.error;return {status:r.status,stdout:new Uint8Array(r.stdout),stderr:r.stderr.toString('utf8')};}};
+const options = {args:rest,os_resolve:resolveHost,os_fetch_at:fetchAt,os_tcp_listen:tcpListen,os_tcp_accept:tcpAccept,os_tcp_connect:tcpConnect,os_tcp_read:tcpRead,os_tcp_write:tcpWrite,os_tcp_shutdown:tcpShutdown,os_tcp_close:tcpClose,os_tcp_unlisten:tcpUnlisten,permissions,env:process.env,cwd:process.cwd(),resolvePath:realPath,os_read_line:readLine,os_child_spawn:childSpawn,os_child_read:childRead,os_child_write:childWrite,os_child_close_stdin:childCloseStdin,os_child_wait:childWait,os_child_close:childClose,os_read_stdin:readStdin,os_flush:()=>{},os_print:s=>process.stdout.write(s),os_eprint:s=>process.stderr.write(s),os_read_file:p=>readFileSync(p,'utf8'),os_write_file:(p,s)=>writeFileSync(p,s),os_read_bytes:p=>new Uint8Array(readFileSync(p)),os_write_bytes:(p,b)=>writeFileSync(p,b),os_create_dir:p=>{mkdirSync(p,{recursive:true});},os_list_dir:p=>readdirSync(p),os_remove:p=>{if(!lstatSync(p))return;rmSync(p,{recursive:true});},os_stat:p=>{let st;try{st=statSync(p);}catch(e){if(e&&e.code==='ENOENT')return null;throw e;}return {kind:st.isDirectory()?'dir':st.isFile()?'file':'other',size:st.size,modified_ms:Math.max(0,Math.trunc(st.mtimeMs))};},os_move_path:(a,b)=>renameSync(a,b),os_copy_file:(a,b)=>copyFileSync(a,b),os_canonicalize:p=>realpathSync(p),os_temp_dir:()=>mkdtempSync(join(tmpdir(),'tauto-')),os_run:(program,args,dir,env,stdin)=>{const r=spawnSync(program,args,{cwd:dir===''?undefined:dir,env:{...process.env,...Object.fromEntries(env)},input:stdin,maxBuffer:1<<30});if(r.error)throw r.error;return {status:r.status,stdout:new Uint8Array(r.stdout),stderr:r.stderr.toString('utf8')};}};
 "#;

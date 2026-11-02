@@ -30,18 +30,6 @@ fn rejects(source: &str) {
     );
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 #[test]
 fn mutable_borrow_contracts_are_invariant_structurally() {
     let mut analysis = Analysis::new(crate::types::prelude());
@@ -56,33 +44,16 @@ fn mutable_borrow_contracts_are_invariant_structurally() {
     assert!(!analysis.found.is_empty());
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #[test]
 fn local_calls_have_checked_rows_and_lexical_quantities() {
     for (name, effect) in [
         ("direct-local-call-keeps-inferred-effects", "ask"),
         ("local-recursive-alias-keeps-div", "Div"),
     ] {
-        let r = report(&crate::rows::value_tests::case_inputs::source("check/local-function-rows.eure", name));
+        let r = report(&crate::rows::value_tests::case_inputs::source(
+            "check/local-function-rows.eure",
+            name,
+        ));
         assert!(
             r.functions
                 .iter()
@@ -91,11 +62,14 @@ fn local_calls_have_checked_rows_and_lexical_quantities() {
         assert!(r.calls.values().filter(|row| row.contains(effect)).count() >= 2);
         assert!(r.normalized_calls().is_ok());
     }
-    let r = report(&r#"fn outer<!e: direct>(captured: () -> Text ! e): Text ! e {
+    let r = report(
+        &r#"fn outer<!e: direct>(captured: () -> Text ! e): Text ! e {
   fn apply<!e: <=1>(callback: () -> Text ! e): Text ! e { callback() }
   apply(captured)
 }
-"#.to_string());
+"#
+        .to_string(),
+    );
     let outer = r.declarations.iter().find(|d| d.name == "outer").unwrap();
     let inner = r.declarations.iter().find(|d| d.name == "apply").unwrap();
     let captured = outer.row.iter().next().unwrap();
@@ -116,7 +90,8 @@ fn captured_rows_are_fixed_not_quantified_and_lowering_fails_closed() {
   let alias := inner
   alias(() => "ok")
 }
-"#.to_string();
+"#
+    .to_string();
     let r = report(&source);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     let inner = r.declarations.iter().find(|d| d.name == "inner").unwrap();
@@ -130,7 +105,8 @@ fn captured_rows_are_fixed_not_quantified_and_lowering_fails_closed() {
 fn distinct_declarations_can_share_a_body_without_sharing_row_binders() {
     let source = r#"fn first<!e>(callback: () -> Text ! e): Text ! e { "ok" }
 fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
-"#.to_string();
+"#
+    .to_string();
     let mut program = crate::surface::parse_program_as_written(&source).unwrap();
     let body = match &program.stmts[0] {
         Stmt::Fn(f) => f.body.clone(),
@@ -156,7 +132,8 @@ fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
 fn ambiguous_shared_call_occurrences_fail_closed() {
     let source = r#"fn first(callback: () -> Text ! {}): Text ! {} { callback() }
 fn second(callback: () -> Text ! {}): Text ! {} { callback() }
-"#.to_string();
+"#
+    .to_string();
     let mut program = crate::surface::parse_program_as_written(&source).unwrap();
     let body = match &program.stmts[0] {
         Stmt::Fn(f) => f.body.clone(),
@@ -181,7 +158,8 @@ fn repeated_shared_declaration_occurrences_fail_closed() {
   fn outer(): Text ! {} { "inner" }
   outer()
 }
-"#.to_string();
+"#
+    .to_string();
     let mut program = crate::surface::parse_program_as_written(&source).unwrap();
     let Stmt::Fn(mut copy) = program.stmts[0].clone() else {
         panic!()
@@ -205,7 +183,8 @@ fn repeated_shared_declaration_occurrences_fail_closed() {
 fn independent_reports_merge_only_matching_declaration_evidence() {
     let source = r#"fn first<!e>(callback: () -> Text ! e): Text ! e { "ok" }
 fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
-"#.to_string();
+"#
+    .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let mut a = check_program_rows(&program);
     let b = check_program_rows(&program);
@@ -236,7 +215,8 @@ fn local_recursion_does_not_inherit_a_same_named_total_certificate() {
   }
   inner(0)
 }
-"#.to_string();
+"#
+    .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let r = check_program_rows_trusted(&program, &HashSet::from(["inner".into()]), false);
     assert!(
@@ -251,11 +231,14 @@ fn local_recursion_does_not_inherit_a_same_named_total_certificate() {
 
 #[test]
 fn unbound_row_tokens_never_enter_lowering_as_empty_tiers() {
-    let r = report(&r#"fn outer(): Text {
+    let r = report(
+        &r#"fn outer(): Text {
   let callback: () -> Text ! e := () => "ok"
   callback()
 }
-"#.to_string());
+"#
+        .to_string(),
+    );
     assert!(!r.errors.is_empty());
     assert!(r.normalized_calls().is_err());
     assert!(
@@ -268,13 +251,6 @@ fn unbound_row_tokens_never_enter_lowering_as_empty_tiers() {
     );
 }
 
-
-
-
-
-
-
-
 #[test]
 fn deferred_constructor_owners_use_only_source_matched_nominal_facts() {
     for name in [
@@ -284,7 +260,8 @@ fn deferred_constructor_owners_use_only_source_matched_nominal_facts() {
         "constructor-owner-follows-handler-result",
         "constructor-alias-owner-follows-deferred-let-result",
     ] {
-        let source = crate::rows::value_tests::case_inputs::source("check/local-function-rows.eure", name);
+        let source =
+            crate::rows::value_tests::case_inputs::source("check/local-function-rows.eure", name);
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let types = crate::types::check_program(&program);
         assert!(types.errors.is_empty(), "{name}: {:?}", types.errors);
@@ -304,7 +281,8 @@ fn outer(): Reader ! {} {
   let value := Read(() => perform ask())
   value
 }
-"#.to_string();
+"#
+    .to_string();
     rejects(&source);
     assert!(report(&source).errors.iter().any(|error| {
         error.message == "a function value may perform ask but its type permits {}"
@@ -320,7 +298,8 @@ fn outer(): Reader ! {} {
   value
 }
 fn invalid(): i64 { "bad" }
-"#.to_string();
+"#
+    .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let types = crate::types::check_program(&program);
     assert!(!types.errors.is_empty());
@@ -333,14 +312,14 @@ fn invalid(): i64 { "bad" }
     );
     assert_eq!(dump_rows(&rows), dump_rows(&check_program_rows(&program)));
 
-    let source =
-        r#"enum Reader { Read(Text) }
+    let source = r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 fn outer(): Reader ! {} {
   let value := Read("ok")
   value
 }
-"#.to_string();
+"#
+    .to_string();
     let mut program = crate::surface::parse_program_as_written(&source).unwrap();
     let mut types = crate::types::check_program(&program);
     assert!(types.errors.is_empty());
@@ -371,20 +350,21 @@ fn outer(): Text {
   fn inner(): Text { perform ask() }
   inner()
 }
-"#.to_string();
+"#
+    .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let mut analysis = Analysis::new(&program);
     analysis.inferred_row("outer");
     assert!(!analysis.nominal_owners_checked);
 
-    let source =
-        r#"enum Reader { Read(Text) }
+    let source = r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 fn outer(): Reader ! {} {
   let value := Read("ok")
   value
 }
-"#.to_string();
+"#
+    .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let mut analysis = Analysis::new(&program);
     analysis.inferred_row("outer");
@@ -449,12 +429,12 @@ fn names_the_program_does_not_have_are_named() {
             .iter()
             .all(|e| !e.message.to_string().contains("cannot follow"))
     );
-    let r = report("perform show(\"a\", nat_lt(1, 2))");
+    let r = report("perform show(\"a\", Nat::lt(1, 2))");
     assert!(
         r.errors.iter().any(|e| e
             .message
             .to_string()
-            .starts_with("`nat_lt` is the kernel's own")),
+            .starts_with("`Nat::lt` is the kernel's own")),
         "{:?}",
         r.errors
     );
@@ -483,7 +463,7 @@ fn main(): () ! {∀ A. show(A)} {
         "add(r, () => perform show(\"y\", 1))",
         "Ref::set(r.cell, Cons(() => perform boom(), Nil))",
     ));
-    rejects(&source.replace("ref_new(Nil)", "Ref::new(Cons(() => perform boom(), Nil))"));
+    rejects(&source.replace("Ref::new(Nil)", "Ref::new(Cons(() => perform boom(), Nil))"));
 }
 
 #[test]
@@ -514,51 +494,68 @@ fn host_show_row_hints_agree() {
 mod case_inputs {
     pub fn source_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("check/local-function-rows.eure", "direct-local-call-keeps-inferred-effects") => r#"effect ask(): Text
+            ("check/local-function-rows.eure", "direct-local-call-keeps-inferred-effects") => {
+                r#"effect ask(): Text
 fn outer(): Text {
   fn inner(): Text { perform ask() }
   inner()
 }
-"#,
-        ("check/local-function-rows.eure", "constructor-owner-follows-deferred-let-result") => r#"enum Reader { Read(Text) }
+"#
+            }
+            ("check/local-function-rows.eure", "constructor-owner-follows-deferred-let-result") => {
+                r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 fn outer(): Reader ! {} {
   let value := Read("ok")
   value
 }
-"#,
-        ("check/local-function-rows.eure", "local-recursive-alias-keeps-div") => r#"fn outer(): i64 {
+"#
+            }
+            ("check/local-function-rows.eure", "local-recursive-alias-keeps-div") => {
+                r#"fn outer(): i64 {
   fn inner(n: i64): i64 {
     let again := inner
     again(n)
   }
   inner(0)
 }
-"#,
-        ("check/local-function-rows.eure", "constructor-owner-follows-budget-result") => r#"enum Reader { Read(Text) }
+"#
+            }
+            ("check/local-function-rows.eure", "constructor-owner-follows-budget-result") => {
+                r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 fn outer(): Reader ! {Exceeded} { budget(steps: 10) { Read("ok") } }
-"#,
-        ("check/local-function-rows.eure", "constructor-owner-follows-host-argument") => r#"enum Reader { Read(Text) }
+"#
+            }
+            ("check/local-function-rows.eure", "constructor-owner-follows-host-argument") => {
+                r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 extern { fn consume(value: Reader): Text }
 fn outer(): Text ! {} { consume(Read("ok")) }
-"#,
-        ("check/local-function-rows.eure", "constructor-alias-owner-follows-deferred-let-result") => r#"enum Reader { Read(Text) }
+"#
+            }
+            (
+                "check/local-function-rows.eure",
+                "constructor-alias-owner-follows-deferred-let-result",
+            ) => {
+                r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 fn outer(): Reader ! {} {
   let make := Read
   let value := make("ok")
   value
 }
-"#,
-        ("check/local-function-rows.eure", "constructor-owner-follows-handler-result") => r#"enum Reader { Read(Text) }
+"#
+            }
+            ("check/local-function-rows.eure", "constructor-owner-follows-handler-result") => {
+                r#"enum Reader { Read(Text) }
 enum Number { Read(i64) }
 fn outer(): Reader ! {} {
   handle { Read("ok") } with { return value => value }
 }
-"#,
-        _ => panic!("no copied input {file}/{name}"),
+"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

@@ -1,6 +1,12 @@
 import "rules_program_signature_sources.taut"
 import "program_signature_sound.taut"
 import "../../surface/src/surface.taut"
+import "checker.taut"
+import "signature_frame.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
+import "written_composite_sound.taut"
 
 pub theorem signature_none_source(
   m: Mut1(Unit, Checker)
@@ -20,8 +26,8 @@ pub theorem signature_some_source(
 pub theorem ck_program_decl_source(
   stmt: SurfaceStmt,
   c: Checker
-): signature_option_source(ck_val(ck_program_decl(c, Stmt))) = signature_statement_source(Stmt) {
-  match Stmt: signature_option_source(ck_val(ck_program_decl(c, Stmt))) = signature_statement_source(Stmt) {
+): signature_option_source(ck_val(ck_program_decl(c, stmt))) = signature_statement_source(stmt) {
+  match stmt: signature_option_source(ck_val(ck_program_decl(c, stmt))) = signature_statement_source(stmt) {
     StLet(name, ty, value, borrow, mutable) => Refl
     StVar(name, ty, value, borrow) => Refl
     StModule(name, stmts, start, end) => Refl
@@ -81,8 +87,8 @@ pub theorem signature_program_after_sources(
   m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
   head: signature_option_source(ck_val(m)) = signature_statement_source(stmt),
   ih: ∀ next: Checker. signature_list_sources(ck_val(ck_program_decls(rest, next))) = signature_program_sources(rest)
-): signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(Stmt, rest)) {
-  match m: signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(Stmt, rest)) {
+): signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(stmt, rest)) {
+  match m: signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(stmt, rest)) {
     mut1(item, next) => Eq::trans(
       Eq::congr(
         signature_list_sources,
@@ -104,7 +110,7 @@ pub theorem signature_program_after_sources(
             head
           ),
           Eq::congr(
-            (tail: List(SurfaceFn)) => opt_cons(signature_statement_source(Stmt), tail),
+            (tail: List(SurfaceFn)) => opt_cons(signature_statement_source(stmt), tail),
             ih(next)
           )
         )

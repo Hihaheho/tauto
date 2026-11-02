@@ -3,10 +3,16 @@
 //! a literal as an opening, pieces and a closing; here they become one
 //! [`SyntaxLit`] holding the text between them, with a block's indentation
 //! taken off like Eure's `Text::parse_indented_block`.
+//!
+//! [`lexical`] reads a source text alone and gives every literal it writes ([`LitSite`], with
+//! where its body is and its form) and every comment ([`Comment`], for [`super::fence`]), from
+//! the syntax tree. Tools that work on the text of a file (the formatter, the editor's colours)
+//! find literals and comments here and nowhere else.
 
 use tauto_message::msg;
-use tauto_parol::{NodeId, NonTerminalKind as Nt, Span};
+use tauto_parol::{NodeId, NodeKind, NonTerminalKind as Nt, Span, TerminalKind};
 
+use super::fence::Comment;
 use super::{Reader, SurfaceTerm, TermKind};
 
 /// What a literal holds, and where each byte of it was written.
@@ -39,7 +45,108 @@ impl SyntaxLit {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LitForm {
+    Text,
+    /// `` name<`text`> `` with this many `<` (and `>`).
+    Delim(usize),
+    Block(usize),
+}
+
+/// A literal of the source text, and where its body is written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LitSite {
+    pub lit: SyntaxLit,
+    pub form: LitForm,
+    /// The bytes written between the opening and the closing: for a block, from the line after
+    /// the opening to the start of the closing fence's indentation (the last newline included).
+    /// `lit.text` is this with a block's indentation taken off.
+    pub body: Span,
+    /// For a block: the white space before the closing fence, which `lit.text` lost from each line.
+    pub indent: String,
+    /// For a block: the closing fence starts its own line (a block whose last line holds text
+    /// before the fence has no indentation to take off).
+    pub own_line: bool,
+    /// It is the grammar of a `syntax!` declaration.
+    pub grammar: bool,
+}
+
+/// The literals and comments of a source text, in the order they are written.
+#[derive(Debug, Clone, Default)]
+pub struct Lexical {
+    pub literals: Vec<LitSite>,
+    pub comments: Vec<Comment>,
+    /// Why the text does not parse. The literals and comments are then those of the tree as far
+    /// as it was read.
+    pub error: Option<String>,
+}
+
+/// Reads `source` and collects its literals and comments from the syntax tree (strings,
+/// comments and literals are told apart by the scanner, not here).
+pub fn lexical(source: &str) -> Lexical {
+    let parsed = tauto_parol::parse(source);
+    let reader = Reader::new(&parsed, source);
+    let cst = &parsed.cst;
+    let mut out = Lexical {
+        error: parsed.errors.first().map(|e| {
+            e.span.map_or_else(
+                || e.message.clone(),
+                |s| format!("{} (byte {})", e.message, s.start),
+            )
+        }),
+        ..Lexical::default()
+    };
+    let mut stack: Vec<(NodeId, bool)> = cst.root().into_iter().map(|r| (r, false)).collect();
+    while let Some((id, grammar)) = stack.pop() {
+        match cst.kind(id) {
+            NodeKind::Terminal(
+                kind @ (TerminalKind::Comment
+                | TerminalKind::LineComment
+                | TerminalKind::BlockComment),
+            ) => out.comments.push(Comment {
+                span: cst.span(id),
+                block: kind == TerminalKind::BlockComment,
+            }),
+            NodeKind::Terminal(_) => {}
+            NodeKind::NonTerminal(Nt::SyntaxLit) => out.literals.push(reader.site(id, grammar)),
+            NodeKind::NonTerminal(kind) => {
+                let grammar = grammar || kind == Nt::SyntaxDecl;
+                stack.extend(cst.node(id).children.iter().rev().map(|&c| (c, grammar)));
+            }
+        }
+    }
+    out
+}
+
 impl Reader<'_> {
+    fn site(&self, id: NodeId, grammar: bool) -> LitSite {
+        let lit = self.lit(id);
+        let form = self.literal_kind(id);
+        let (end, indent, own_line) = match form {
+            // The text is the bytes between the opening and the closing.
+            LitForm::Text | LitForm::Delim(_) => {
+                (lit.start + lit.text.len() as u32, String::new(), true)
+            }
+            LitForm::Block(n) => {
+                let whole = self.cst.span(id).text(self.source);
+                let split = split_block(whole, n);
+                (
+                    lit.start + split.body.len() as u32,
+                    split.indent.to_string(),
+                    split.own_line,
+                )
+            }
+        };
+        LitSite {
+            body: Span::new(lit.start, end),
+            lit,
+            form,
+            indent,
+            own_line,
+            grammar,
+        }
+    }
+
     /// A `SyntaxLit` node: `MacroText`, `MacroDelim1…3` or `MacroBlock3…6`.
     pub(super) fn syntax_lit(&self, id: NodeId, span: Span) -> SurfaceTerm {
         SurfaceTerm::new(TermKind::SyntaxLit(Box::new(self.lit(id))), span)
@@ -55,7 +162,7 @@ impl Reader<'_> {
             (!name.is_empty()).then(|| name.to_string())
         };
         match kind {
-            Kind::Text => {
+            LitForm::Text => {
                 let tick = whole.find('`').unwrap_or(0);
                 let body = whole
                     .get(tick + 1..whole.len().saturating_sub(1))
@@ -69,7 +176,7 @@ impl Reader<'_> {
                     span: written,
                 }
             }
-            Kind::Delim(n) => {
+            LitForm::Delim(n) => {
                 let open = whole.find('<').unwrap_or(0);
                 let head = open + n + 1; // name, n of `<`, a backtick
                 let close = n + 1; // a backtick, n of `>`
@@ -85,22 +192,22 @@ impl Reader<'_> {
                     span: written,
                 }
             }
-            Kind::Block(n) => self.block_lit(whole, n, written),
+            LitForm::Block(n) => self.block_lit(whole, n, written),
         }
     }
 
-    fn literal_kind(&self, id: NodeId) -> Kind {
+    fn literal_kind(&self, id: NodeId) -> LitForm {
         let mut node = id;
         loop {
             match self.nt(node) {
-                Some(Nt::MacroText) => return Kind::Text,
-                Some(Nt::MacroDelim1) => return Kind::Delim(1),
-                Some(Nt::MacroDelim2) => return Kind::Delim(2),
-                Some(Nt::MacroDelim3) => return Kind::Delim(3),
-                Some(Nt::MacroBlock3) => return Kind::Block(3),
-                Some(Nt::MacroBlock4) => return Kind::Block(4),
-                Some(Nt::MacroBlock5) => return Kind::Block(5),
-                Some(Nt::MacroBlock6) => return Kind::Block(6),
+                Some(Nt::MacroText) => return LitForm::Text,
+                Some(Nt::MacroDelim1) => return LitForm::Delim(1),
+                Some(Nt::MacroDelim2) => return LitForm::Delim(2),
+                Some(Nt::MacroDelim3) => return LitForm::Delim(3),
+                Some(Nt::MacroBlock3) => return LitForm::Block(3),
+                Some(Nt::MacroBlock4) => return LitForm::Block(4),
+                Some(Nt::MacroBlock5) => return LitForm::Block(5),
+                Some(Nt::MacroBlock6) => return LitForm::Block(6),
                 _ => {}
             }
             match self.cst.children_iter(node).next() {
@@ -108,28 +215,14 @@ impl Reader<'_> {
                 None => break,
             }
         }
-        Kind::Text
+        LitForm::Text
     }
 
     /// ```` ```name ```` and a line end, the content, the closing fence.
     fn block_lit(&self, whole: &str, n: usize, written: Span) -> SyntaxLit {
-        let after_ticks = &whole[n.min(whole.len())..];
-        let name_len = after_ticks
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(after_ticks.len());
-        let name = &after_ticks[..name_len];
-        let line_end = whole.find('\n').map_or(whole.len(), |i| i + 1);
-        let inner_end = whole.len().saturating_sub(n).max(line_end);
-        let content = &whole[line_end..inner_end];
-        let start = written.start + line_end as u32;
-        // The closing fence's own line: whitespace before it is the indentation to take off.
-        let (body, indent) = match content.rfind('\n') {
-            Some(i) if content[i + 1..].chars().all(|c| c == ' ' || c == '\t') => {
-                (&content[..=i], content.len() - i - 1)
-            }
-            None if content.chars().all(|c| c == ' ' || c == '\t') => ("", content.len()),
-            _ => (content, 0),
-        };
+        let split = split_block(whole, n);
+        let (name, body, indent) = (split.name, split.body, split.indent.len());
+        let start = written.start + split.line_end as u32;
         let mut text = String::with_capacity(body.len());
         let mut shifts = Vec::new();
         let mut removed = 0u32;
@@ -168,8 +261,37 @@ impl Reader<'_> {
     }
 }
 
-enum Kind {
-    Text,
-    Delim(usize),
-    Block(usize),
+struct BlockSplit<'a> {
+    name: &'a str,
+    line_end: usize,
+    /// The lines of the content, up to the newline before the closing fence's line.
+    body: &'a str,
+    indent: &'a str,
+    own_line: bool,
+}
+
+/// ```` ```name ```` and a line end, the content, the closing fence of `n` backticks, cut apart.
+/// The white space before the closing fence is the indentation to take off.
+fn split_block(whole: &str, n: usize) -> BlockSplit<'_> {
+    let after_ticks = &whole[n.min(whole.len())..];
+    let name_len = after_ticks
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(after_ticks.len());
+    let name = &after_ticks[..name_len];
+    let line_end = whole.find('\n').map_or(whole.len(), |i| i + 1);
+    let inner_end = whole.len().saturating_sub(n).max(line_end);
+    let content = &whole[line_end..inner_end];
+    let blank = |s: &str| s.chars().all(|c| c == ' ' || c == '\t');
+    let (body, indent, own_line) = match content.rfind('\n') {
+        Some(i) if blank(&content[i + 1..]) => (&content[..=i], &content[i + 1..], true),
+        None if blank(content) => ("", content, true),
+        _ => (content, "", false),
+    };
+    BlockSplit {
+        name,
+        line_end,
+        body,
+        indent,
+        own_line,
+    }
 }

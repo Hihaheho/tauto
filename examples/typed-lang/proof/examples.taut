@@ -1,0 +1,33 @@
+import "../src/core.taut"
+import "../src/pipeline.taut"
+import "safety.taut"
+
+// 具体例は `Refl` で計算して確かめる。
+
+pub fn sum3(): Term {
+  TmAdd(TmAdd(TmNum(1), TmNum(2)), TmNum(3))
+}
+
+pub theorem sum3_checks(): check_ty(sum3()) = Some(TNat) { Refl }
+pub theorem sum3_runs(): run_term(sum3()) = Some(VNat(6)) { Refl }
+
+pub fn pick(): Term {
+  TmIf(TmEq(TmAdd(TmNum(1), TmNum(1)), TmNum(2)), TmNum(10), TmNum(20))
+}
+
+pub theorem pick_runs(): run_term(pick()) = Some(VNat(10)) { Refl }
+
+// 型の合わないものは検査で止まる。評価器に渡さない。
+pub theorem add_bool_rejected(): check_ty(TmAdd(TmNum(1), TmBool(true))) = None { Refl }
+pub theorem if_nat_cond_rejected(): check_ty(TmIf(TmNum(1), TmNum(2), TmNum(3))) = None { Refl }
+pub theorem if_branches_differ_rejected(): check_ty(
+  TmIf(TmBool(true), TmNum(1), TmBool(false))
+) = None { Refl }
+
+// 検査を通さずに評価すると、実行時の型エラー(`None`)になる。検査器はそれを手前で止める。
+pub theorem add_bool_gets_stuck(): eval(TmAdd(TmNum(1), TmBool(true))) = None { Refl }
+
+// 拒否は「型付けが存在しない」という証明になる。
+pub theorem add_bool_untypable(ty: Ty, h: HasTy(TmAdd(TmNum(1), TmBool(true)), ty)): False {
+  match Eq::trans(Eq::sym(check_complete(h)), add_bool_rejected): False {}
+}

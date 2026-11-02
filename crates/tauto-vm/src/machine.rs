@@ -27,7 +27,6 @@ pub struct Frame {
     code: u32,
     pc: u32,
     env: Env,
-    /// Where the frame's operands start on the stack.
     base: usize,
     kind: Kind,
 }
@@ -45,12 +44,16 @@ enum Kind {
     },
     /// A `direct` arm, running on top of the operation: the frames from it
     /// down to its handler's body (`dist` of them below it) answer nothing.
-    Direct { dist: usize },
-    /// An arm whose value is the `handle`'s.
+    Direct {
+        dist: usize,
+    },
     Arm,
     /// A `budget`'s body: `left` steps (or, for a memory budget, the count
     /// of cells past which it has run out); `None` is no limit.
-    Budget { memory: bool, left: Option<i128> },
+    Budget {
+        memory: bool,
+        left: Option<i128>,
+    },
 }
 
 /// A continuation: frames and their operands, with bases from the first.
@@ -71,7 +74,6 @@ struct Task {
     result: Option<Rc<Pending>>,
     /// It asked whether this is ready, and gave the others a turn.
     asked: Option<Rc<Pending>>,
-    /// It waits for the reply of this request of the host.
     job: Option<u64>,
 }
 
@@ -83,9 +85,7 @@ pub struct Machine<'a> {
     tasks: std::collections::VecDeque<Task>,
     /// Where the running task's result goes; none for the top level.
     result: Option<Rc<Pending>>,
-    /// The running task gave up its turn.
     switched: bool,
-    /// The sleeps that have not ended.
     pub timers: Vec<Rc<Pending>>,
     /// The requests of the host that have not answered, the replies that
     /// have, and where they come.
@@ -94,7 +94,6 @@ pub struct Machine<'a> {
     next_job: u64,
     channel: (Sender<(u64, Reply)>, Receiver<(u64, Reply)>),
     fuel: u64,
-    /// The cells made so far, for `budget(memory: n)`.
     cells: i128,
     pub host: &'a mut dyn Host,
     pub known: builtins::Known,
@@ -125,7 +124,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Runs the program's top level.
     pub fn run_top(&mut self) -> R<Value> {
         let Some(top) = self.p.top else {
             return Ok(Value::Unit);
@@ -344,7 +342,6 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
-    /// Ends the top frame with `v`.
     fn ret(&mut self, v: Value) {
         let f = self.frames.pop().expect("a frame");
         self.stack.truncate(f.base);
@@ -393,6 +390,13 @@ impl<'a> Machine<'a> {
                     };
                     let v = if deref { v.get()? } else { v };
                     self.stack.push(v);
+                }
+                Op::Clear { slot } => {
+                    let old = std::mem::replace(
+                        &mut self.frames[fi].env.borrow_mut()[slot as usize],
+                        Value::Moved,
+                    );
+                    drop(old);
                 }
                 Op::Define { slot, shared } => {
                     let v = self.pop();
@@ -878,7 +882,6 @@ impl<'a> Machine<'a> {
                 return Ok(());
             }
         }
-        // The host answers `show`.
         if &*op == "show" && args.len() == 2 {
             let name = args[0].as_text()?;
             let shown = match &args[1] {

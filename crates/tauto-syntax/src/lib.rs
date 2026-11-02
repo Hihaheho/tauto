@@ -28,7 +28,6 @@ pub use tables::{
     Ctor, FieldTy, NtKind, Payload, Production, Schema, Sym, TableError, Tables, TypeDef,
 };
 
-/// The terminal number of the end of the input.
 pub const END_OF_INPUT: u32 = 0;
 
 /// The name of a type a syntax declares, under the syntax's name: `calc::Expr` for the type

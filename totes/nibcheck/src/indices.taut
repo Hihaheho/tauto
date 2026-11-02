@@ -1,6 +1,13 @@
 import "types_run.taut"
 import std::Map
 import "types_classes.taut"
+import std::Base
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
 
 // Effects indexed by type (`types/indices.rs`): a row that writes an effect
 // with type arguments (`! {res(Pos), res(Vel)}`) names two effects,
@@ -10,8 +17,6 @@ import "types_classes.taut"
 // arguments it was checked with, and copies a function whose own generic is
 // such an argument for each type a call gives it. The checks after it see
 // ordinary effects, matched by name.
-
-// ----- text -----
 
 pub fn ix_text(bs: List(Nat)): Text {
   match Text::of_utf8(bs): Text {
@@ -27,7 +32,6 @@ pub fn ix_drop_spaces(bs: List(Nat)): List(Nat) {
   }
 }
 
-// `t` without the spaces around it.
 pub fn ix_trim(t: Text): Text {
   ix_text(List::reverse(ix_drop_spaces(List::reverse(ix_drop_spaces(Text::bytes(t))))))
 }
@@ -39,7 +43,6 @@ pub fn ix_has_byte(bs: List(Nat), b: Nat): Bool {
   }
 }
 
-// The bytes before the first `b` and after it.
 pub fn ix_split_at(bs: List(Nat), b: Nat, before: List(Nat)): Option(Pair(List(Nat), List(Nat))) {
   match bs: Option(Pair(List(Nat), List(Nat))) {
     Nil => None
@@ -58,7 +61,6 @@ pub fn ix_split_once(t: Text, b: Nat): Option(Pair(Text, Text)) {
   }
 }
 
-// `t` without a last `)`.
 pub fn ix_strip_close(t: Text): Option(Text) {
   match List::reverse(Text::bytes(t)): Option(Text) {
     Cons(b, rest) => if b == 41 { Some(ix_text(List::reverse(rest))) } else { None }
@@ -100,7 +102,6 @@ pub fn ix_trim_all(ts: List(Text)): List(Text) {
   }
 }
 
-// Whether `b` may be in an identifier of a written type argument.
 pub fn ix_ident_byte(b: Nat): Bool {
   (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 || b == 58 ||
     b >= 128
@@ -123,7 +124,6 @@ pub fn ix_idents_in(bs: List(Nat), current: List(Nat), out: List(Text)): List(Te
   }
 }
 
-// The identifiers of a written type argument.
 pub fn ix_idents(t: Text): List(Text) {
   ix_idents_in(Text::bytes(t), Nil, Nil)
 }
@@ -141,7 +141,6 @@ pub fn ix_starts_forall(bs: List(Nat)): Bool {
   }
 }
 
-// `∀ A. res(A)` without its `∀`.
 pub fn ix_after_forall(t: Text): Option(Text) {
   match Text::bytes(t): Option(Text) {
     Cons(a, r1) => match r1: Option(Text) {
@@ -160,7 +159,6 @@ pub fn ix_host(name: Text): Bool {
   name == "show" || name == "exceeded"
 }
 
-// The head of a row entry written with type arguments: `res(Pos)` → `res`.
 pub fn ix_head(entry: Text): Option(Text) {
   match Text::bytes(entry): Option(Text) {
     Nil => None
@@ -176,7 +174,6 @@ pub fn ix_head(entry: Text): Option(Text) {
   }
 }
 
-// The written type arguments of an entry with a head: `res(Pos, B)` → `Pos`, `B`.
 pub fn ix_entry_args(entry: Text, head: Text): List(Text) {
   match ix_split_once(entry, 40): List(Text) {
     None => Nil
@@ -187,21 +184,13 @@ pub fn ix_entry_args(entry: Text, head: Text): List(Text) {
   }
 }
 
-// ----- terms -----
-
 // What the expansion reads of a term.
 pub(open) inductive IxSite: Type {
-  // A name standing as a term.
   IxVarAt(name: Text, start: Nat, end: Nat, occ: Option(TermOccurrence)): IxSite
-  // A `perform`, at its span, with its arguments.
   IxPerformAt(op: Text, start: Nat, end: Nat, occ: Option(TermOccurrence), args: List(SurfaceTerm)): IxSite
-  // An arm of an operation, at its body's span, with the instance it writes.
   IxArmAt(op: Text, binds: List(Text), types: List(SurfaceTerm), start: Nat, end: Nat): IxSite
-  // A call: the function's span and the arguments.
   IxCallAt(start: Nat, end: Nat, args: List(SurfaceTerm)): IxSite
-  // A written row.
   IxRowAt(entries: List(Text)): IxSite
-  // A `handle`.
   IxHandleAt: IxSite
 }
 
@@ -373,7 +362,6 @@ mutual {
   }
 }
 
-// Whether `t` names `name` where it stands as a term.
 pub fn ix_names_in(sites: List(IxSite), name: Text): Bool {
   match sites: Bool {
     Nil => false
@@ -383,8 +371,6 @@ pub fn ix_names_in(sites: List(IxSite), name: Text): Bool {
     }
   }
 }
-
-// ----- the indexed effects -----
 
 pub fn ix_row_heads(row: List(Text), out: List(Text)): List(Text) {
   match row: List(Text) {
@@ -499,8 +485,6 @@ pub fn ix_texts_eq(xs: List(Text), ys: List(Text)): Bool {
     }
   }
 }
-
-// ----- the rows read as the checks after the expansion do -----
 
 // What a row entry reads as: `∀ A. res(A)`, every instance of `res`, is the
 // bare `res`; a bare entry of an operation with type arguments is an error.
@@ -639,8 +623,6 @@ pub fn ix_read_entry(entry: Text, typed: List(Pair(Text, List(Text)))): IxRead {
   }
 }
 
-// ----- type arguments as terms -----
-
 pub fn ix_var(name: Text): SurfaceTerm {
   surface_term_mk(SkVar(name), 0, 0)
 }
@@ -736,7 +718,6 @@ pub fn ix_parse_entry_args(entry: Text, head: Text): Option(List(SurfaceTerm)) {
 }
 
 mutual {
-  // A type argument as a term, the way it would be written.
   pub fn ix_surface_of(t: Ty): Option(SurfaceTerm) {
     match t: Option(SurfaceTerm) {
       TyInt(w) => Some(ix_var(ty_show(t)))
@@ -777,7 +758,6 @@ pub fn ix_lookup_term(xs: List(Pair(Text, SurfaceTerm)), name: Text): Option(Sur
 }
 
 mutual {
-  // A type argument with each name in `given` replaced.
   pub fn ix_replace(t: SurfaceTerm, given: List(Pair(Text, SurfaceTerm))): SurfaceTerm {
     match t: SurfaceTerm {
       SurfaceTermIndexedMk(k, start, end, occurrence) => ix_replace_kind(k, start, end, given)
@@ -803,7 +783,6 @@ mutual {
   }
 }
 
-// The generic names a type mentions.
 mutual {
   pub fn ix_params_in(t: Ty, out: List(Text)): List(Text) {
     match t: List(Text) {
@@ -827,8 +806,6 @@ mutual {
     }
   }
 }
-
-// ----- what the check found -----
 
 pub fn ix_term_type(terms: Ordmap(TermAt, Ty), start: Nat, end: Nat, occ: Option(TermOccurrence)): Option(Ty) {
   Ordmap::get(terms, TermAtMk(start, end, occ), term_at_compare)
@@ -956,9 +933,6 @@ pub fn ix_instantiation(f: SurfaceFn, called: Ty): List(Pair(Text, Ty)) {
   }
 }
 
-// ----- the renaming -----
-
-// A name given to what stands at a span.
 pub(open) inductive IxName: Type {
   IxNameMk(start: Nat, end: Nat, name: Text): IxName
 }
@@ -1223,8 +1197,6 @@ mutual {
   }
 }
 
-// ----- the expansion -----
-
 pub fn ix_find_fn(fs: List(SurfaceFn), name: Text): Option(SurfaceFn) {
   match fs: Option(SurfaceFn) {
     Nil => None
@@ -1372,7 +1344,6 @@ pub fn ix_argument(t: Ty, given: List(Pair(Text, SurfaceTerm))): IxArgs {
   }
 }
 
-// The type arguments as terms, with the generics in `given`.
 pub fn ix_arguments(ts: List(Ty), given: List(Pair(Text, SurfaceTerm))): IxArgs {
   match ts: IxArgs {
     Nil => IxArgsOk(Nil)
@@ -1433,12 +1404,10 @@ pub fn ix_arm_arguments(
   }
 }
 
-// An effect's instance: its name, the effect, and its declaration.
 pub(open) inductive IxLabel: Type {
   IxLabelMk(name: Text, source: Text, stmt: SurfaceStmt): IxLabel
 }
 
-// A copy to make: its name, the function, and the index generics' types.
 pub(open) inductive IxCopy: Type {
   IxCopyMk(name: Text, f: Text, args: List(SurfaceTerm)): IxCopy
 }
@@ -1450,7 +1419,6 @@ pub(open) inductive IxState: Type {
     copies: List(Pair(Text, Text)),
     queue: List(IxCopy),
     made: List(Pair(Text, SurfaceStmt)),
-    // Newest first.
     errors: List(TypeError)
   ): IxState
 }
@@ -1542,7 +1510,6 @@ pub fn ix_instance_label(st: IxState, cx: IxCx, eff: Text, args: List(SurfaceTer
   }
 }
 
-// The name of the copy of `f` at its index generics `args`.
 pub fn ix_copy_name(st: IxState, cx: IxCx, f: Text, args: List(SurfaceTerm)): Pair(Text, IxState) {
   let name := ix_label(f, args)
   if ix_has_key(st.copies, name) || text_list_has(cx.in_prelude, name) {
@@ -1568,7 +1535,6 @@ pub fn ix_relevant_of(cx: IxCx, name: Text): List(Text) {
   }
 }
 
-// What a rewrite has found: the names of the performs, arms and calls.
 pub(open) inductive IxFound: Type {
   IxFoundMk(performs: List(IxName), arms: List(IxName), calls: List(IxName), st: IxState): IxFound
 }
@@ -1631,12 +1597,12 @@ pub fn ix_find_sites(
 }
 
 pub fn ix_named(acc: IxFound, which: Nat, start: Nat, end: Nat, p: Pair(Text, IxState)): IxFound {
-  let n := IxName { start: start, end: end, name: (p: Text) }
+  let n := IxName { start: start, end: end, name: p.fst }
   IxFound {
     performs: if which == 0 { Cons(n, acc.performs) } else { acc.performs },
     arms: if which == 1 { Cons(n, acc.arms) } else { acc.arms },
     calls: if which == 2 { Cons(n, acc.calls) } else { acc.calls },
-    st: (p: IxState)
+    st: p.snd
   }
 }
 
@@ -1716,7 +1682,7 @@ pub fn ix_row_labels(row: List(Text), cx: IxCx, given: List(Pair(Text, SurfaceTe
             None => acc
             Some(args) => {
               let p := ix_instance_label(acc.st, cx, head, ix_replace_each(args, given))
-              IxFound { performs: acc.performs, arms: acc.arms, calls: acc.calls, st: (p: IxState) }
+              IxFound { performs: acc.performs, arms: acc.arms, calls: acc.calls, st: p.snd }
             }
           }
         } else {
@@ -1771,11 +1737,11 @@ pub fn ix_stmts(st: IxState, cx: IxCx, ss: List(SurfaceStmt)): Pair(List(Surface
     Nil => Pair { fst: Nil, snd: st }
     Cons(s, rest) => if ix_is_relevant_fn(cx, s) {
       let more := ix_stmts(st, cx, rest)
-      if cx.is_prelude { Pair { fst: Cons(s, (more: List(SurfaceStmt))), snd: (more: IxState) } } else { more }
+      if cx.is_prelude { Pair { fst: Cons(s, more.fst), snd: more.snd } } else { more }
     } else {
       let one := ix_rewrite(st, cx, s, ix_stmt_own(s), Nil)
-      let more := ix_stmts((one: IxState), cx, rest)
-      Pair { fst: Cons((one: SurfaceStmt), (more: List(SurfaceStmt))), snd: (more: IxState) }
+      let more := ix_stmts(one.snd, cx, rest)
+      Pair { fst: Cons(one.fst, more.fst), snd: more.snd }
     }
   }
 }
@@ -1799,31 +1765,30 @@ pub fn ix_keep_generics(gs: List(Text), bounds: List(Option(Text)), given: List(
       if ix_has_key(given, g) {
         tail
       } else {
-        Pair { fst: Cons(g, (tail: List(Text))), snd: match bounds: List(Option(Text)) {
-          Nil => (tail: List(Option(Text)))
-          Cons(x, more) => Cons(b, (tail: List(Option(Text))))
+        Pair { fst: Cons(g, tail.fst), snd: match bounds: List(Option(Text)) {
+          Nil => tail.snd
+          Cons(x, more) => Cons(b, tail.snd)
         } }
       }
     }
   }
 }
 
-// The copy of a function at its index generics.
 pub fn ix_instance(st: IxState, cx: IxCx, inst: IxCopy): Pair(SurfaceStmt, IxState) {
   match ix_find_fn(cx.fns, inst.f): Pair(SurfaceStmt, IxState) {
     None => Pair { fst: StOther("copy", 0, 0), snd: st }
     Some(f) => {
       let given := ix_zip_terms(ix_relevant_of(cx, inst.f), inst.args)
       let one := ix_rewrite(st, cx, StFn(f), f.generics, given)
-      match (one: SurfaceStmt): Pair(SurfaceStmt, IxState) {
+      match one.fst: Pair(SurfaceStmt, IxState) {
         StFn(g) => {
           let kept := ix_keep_generics(g.generics, g.bounds, given)
           Pair {
             fst: StFn(
               SurfaceFn {
                 name: inst.name,
-                generics: (kept: List(Text)),
-                bounds: (kept: List(Option(Text))),
+                generics: kept.fst,
+                bounds: kept.snd,
                 params: g.params,
                 borrows: g.borrows,
                 param_types: g.param_types,
@@ -1835,7 +1800,7 @@ pub fn ix_instance(st: IxState, cx: IxCx, inst: IxCopy): Pair(SurfaceStmt, IxSta
                 body: g.body
               }
             ),
-            snd: (one: IxState)
+            snd: one.snd
           }
         }
         _ => one
@@ -1844,7 +1809,6 @@ pub fn ix_instance(st: IxState, cx: IxCx, inst: IxCopy): Pair(SurfaceStmt, IxSta
   }
 }
 
-// The copies, made from the queue until it is empty.
 pub fn ix_drain(k: Nat, st: IxState, cx: IxCx): IxState {
   match k: IxState {
     Zero => ix_error(st, "the copies of the indexed functions did not settle", 0, 0)
@@ -1861,11 +1825,11 @@ pub fn ix_drain(k: Nat, st: IxState, cx: IxCx): IxState {
           ix_drain(
             j,
             IxState {
-              labels: (one: IxState).labels,
-              copies: (one: IxState).copies,
-              queue: (one: IxState).queue,
-              made: Cons(Pair { fst: inst.name, snd: (one: SurfaceStmt) }, (one: IxState).made),
-              errors: (one: IxState).errors
+              labels: one.snd.labels,
+              copies: one.snd.copies,
+              queue: one.snd.queue,
+              made: Cons(Pair { fst: inst.name, snd: one.fst }, one.snd.made),
+              errors: one.snd.errors
             },
             cx
           )
@@ -1874,8 +1838,6 @@ pub fn ix_drain(k: Nat, st: IxState, cx: IxCx): IxState {
     }
   }
 }
-
-// ----- which generics are indices -----
 
 pub fn ix_keep_own(xs: List(Text), own: List(Text), out: List(Text)): List(Text) {
   match xs: List(Text) {
@@ -2021,8 +1983,6 @@ pub fn ix_relevance(k: Nat, cx: IxCx): IxCx {
   }
 }
 
-// ----- placing what was made -----
-
 pub fn ix_stmt_name(s: SurfaceStmt): Text {
   match s: Text {
     StFn(f) => f.name
@@ -2034,7 +1994,7 @@ pub fn ix_stmt_name(s: SurfaceStmt): Text {
 pub fn ix_insert_sorted(x: Pair(Text, SurfaceStmt), xs: List(Pair(Text, SurfaceStmt))): List(Pair(Text, SurfaceStmt)) {
   match xs: List(Pair(Text, SurfaceStmt)) {
     Nil => Cons(x, Nil)
-    Cons(y, rest) => match Text::ordering(ix_stmt_name((x: SurfaceStmt)), ix_stmt_name((y: SurfaceStmt))): List(Pair(Text, SurfaceStmt)) {
+    Cons(y, rest) => match Text::ordering(ix_stmt_name(x.snd), ix_stmt_name(y.snd)): List(Pair(Text, SurfaceStmt)) {
       Greater => Cons(y, ix_insert_sorted(x, rest))
       _ => Cons(x, xs)
     }
@@ -2048,7 +2008,6 @@ pub fn ix_sort(xs: List(Pair(Text, SurfaceStmt)), out: List(Pair(Text, SurfaceSt
   }
 }
 
-// `ss` with `s` right after the declaration named `from`, if there is one.
 pub fn ix_insert_after(ss: List(SurfaceStmt), after_name: Text, s: SurfaceStmt): Option(List(SurfaceStmt)) {
   match ss: Option(List(SurfaceStmt)) {
     Nil => None
@@ -2085,26 +2044,26 @@ pub fn ix_place(ss: List(SurfaceStmt), sorted: List(Pair(Text, SurfaceStmt)), fi
   }
 }
 
+pub fn ix_lookup_text(xs: List(Pair(Text, Text)), name: Text): Option(Text) {
+  match xs: Option(Text) {
+    Nil => None
+    Cons(x, rest) => if x.fst == name { Some(x.snd) } else { ix_lookup_text(rest, name) }
+  }
+}
+
 pub fn ix_made_from(st: IxState, made: List(Pair(Text, SurfaceStmt))): List(Pair(Text, SurfaceStmt)) {
   match made: List(Pair(Text, SurfaceStmt)) {
     Nil => Nil
     Cons(m, rest) => Cons(
       Pair {
-        fst: match ix_lookup_text(st.copies, (m: Text)): Text {
+        fst: match ix_lookup_text(st.copies, m.fst): Text {
           Some(f) => f
-          None => (m: Text)
+          None => m.fst
         },
-        snd: (m: SurfaceStmt)
+        snd: m.snd
       },
       ix_made_from(st, rest)
     )
-  }
-}
-
-pub fn ix_lookup_text(xs: List(Pair(Text, Text)), name: Text): Option(Text) {
-  match xs: Option(Text) {
-    Nil => None
-    Cons(x, rest) => if x.fst == name { Some(x.snd) } else { ix_lookup_text(rest, name) }
   }
 }
 
@@ -2114,8 +2073,6 @@ pub fn ix_label_decls(ls: List(IxLabel)): List(Pair(Text, SurfaceStmt)) {
     Cons(l, rest) => Cons(Pair { fst: l.source, snd: l.stmt }, ix_label_decls(rest))
   }
 }
-
-// ----- the rows, read first -----
 
 pub fn ix_read_errors(row: List(Text), typed: List(Pair(Text, List(Text))), start: Nat, end: Nat): List(TypeError) {
   match row: List(TypeError) {
@@ -2167,8 +2124,6 @@ pub fn ix_every_instance(ss: List(SurfaceStmt), typed: List(Pair(Text, List(Text
   Pair { fst: ix_rw_stmts(ss, rw), snd: ix_every_errors(ss, typed) }
 }
 
-// ----- the expansion of a program -----
-
 pub fn ix_not_in(xs: List(Text), ys: List(Text)): List(Text) {
   match xs: List(Text) {
     Nil => Nil
@@ -2207,9 +2162,9 @@ pub fn ix_expand(
   }
   let cx := ix_relevance(list_len(base.fns) + 2, base)
   let done := ix_stmts(ix_state_empty(), cx, stmts)
-  let st := ix_drain(5000, (done: IxState), cx)
+  let st := ix_drain(5000, done.snd, cx)
   let sorted := ix_sort(List::append(ix_label_decls(st.labels), ix_made_from(st, st.made)), Nil)
-  Pair { fst: ix_place((done: List(SurfaceStmt)), sorted, true, Nil), snd: List::reverse(st.errors) }
+  Pair { fst: ix_place(done.fst, sorted, true, Nil), snd: List::reverse(st.errors) }
 }
 
 // The prelude, its rows read and its indexed effects expanded against
@@ -2223,11 +2178,11 @@ pub(open) inductive IxPrelude: Type {
 
 pub fn ix_prelude(prelude: List(SurfaceStmt)): IxPrelude {
   let read := ix_every_instance(prelude, ix_typed_generics(prelude))
-  match ix_indexed((read: List(SurfaceStmt))): IxPrelude {
-    Nil => IxPrelude { stmts: (read: List(SurfaceStmt)), terms: Ordmap::empty() }
+  match ix_indexed(read.fst): IxPrelude {
+    Nil => IxPrelude { stmts: read.fst, terms: Ordmap::empty() }
     Cons(e, more) => {
-      let report := types_check(Nil, (read: List(SurfaceStmt)), Nil)
-      IxPrelude { stmts: ix_expand((read: List(SurfaceStmt)), (read: List(SurfaceStmt)), report.terms, report.terms, true).fst, terms: report.terms }
+      let report := types_check(Nil, read.fst, Nil)
+      IxPrelude { stmts: ix_expand(read.fst, read.fst, report.terms, report.terms, true).fst, terms: report.terms }
     }
   }
 }

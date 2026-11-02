@@ -1,4 +1,14 @@
 import "diagnostic_final_lists.taut"
+import std::Base
+import std::List
+import std::Map
+import "checker.taut"
+import "decl_names_sound.taut"
+import "diagnostic_sound.taut"
+import "finish_frame.taut"
+import "ty.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 pub fn diagnostic_report_errors(r: TypeReport): List(TypeError) { r.errors }
 pub def DiagnosticReportClean(
   m: Mut1(TypeReport, Checker)
@@ -24,14 +34,14 @@ pub def DiagnosticReportResult(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   m: Mut1(TypeReport, Checker)
-): Prop := And(p(c), m = mut1(finish_report(c, Widths), c))
+): Prop := And(p(c), m = mut1(finish_report(c, widths), c))
 pub def DiagnosticReportTail(
   p: (Checker) -> Prop,
   widths: Ordmap(TermAt, Width),
   k: (Checker) -> Mut1(TypeReport, Checker)
 ): Prop := ∀ c: Checker. ∀ clean: DiagnosticReportClean(
   k(c)
-). DiagnosticReportResult(p, c, Widths, k(c))
+). DiagnosticReportResult(p, c, widths, k(c))
 pub theorem diagnostic_report_cons(
   c: Checker,
   widths: Ordmap(TermAt, Width),
@@ -44,19 +54,19 @@ pub theorem diagnostic_report_cons(
   clean: DiagnosticReportClean(diagnostic_report_after(k, m))
 ): And(
   And(p, q(c)),
-  diagnostic_report_after(k, m) = mut1(finish_report(c, Widths), c)
+  diagnostic_report_after(k, m) = mut1(finish_report(c, widths), c)
 ) {
   match m: And(
     And(p, q(c)),
-    diagnostic_report_after(k, m) = mut1(finish_report(c, Widths), c)
+    diagnostic_report_after(k, m) = mut1(finish_report(c, widths), c)
   ) {
     mut1(v, next) => {
-      let remaining: DiagnosticReportResult(q, next, Widths, k(next)) := tail(next, clean)
+      let remaining: DiagnosticReportResult(q, next, widths, k(next)) := tail(next, clean)
       let clean_next: DiagnosticClean(
         next
       ) := diagnostic_report_state_clean(
         next,
-        Widths,
+        widths,
         Eq::subst(DiagnosticReportClean, And::right(remaining), clean)
       )
       let head: And(p, mut1(v, next) = mut1(Star, c)) := first(clean_next)
@@ -65,7 +75,7 @@ pub theorem diagnostic_report_cons(
         AndIntro(And::left(head), Eq::subst(q, same, And::left(remaining))),
         Eq::trans(
           And::right(remaining),
-          Eq::congr((state: Checker) => mut1(finish_report(state, Widths), state), same)
+          Eq::congr((state: Checker) => mut1(finish_report(state, widths), state), same)
         )
       )
     }

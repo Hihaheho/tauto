@@ -40,7 +40,6 @@ thread_local! {
     static CELLS: Cell<u64> = const { Cell::new(0) };
 }
 
-/// `cells` allocated by code under a budget.
 pub fn charge(cells: u64) {
     CELLS.with(|c| c.set(c.get().saturating_add(cells)));
 }
@@ -50,7 +49,6 @@ pub fn cells() -> u64 {
     CELLS.with(Cell::get)
 }
 
-/// Whether a budget that keeps `left` has run out.
 pub(crate) fn ran_out(left: u64, memory: bool) -> bool {
     if memory {
         left != UNBOUNDED && cells() > left
@@ -93,7 +91,6 @@ impl Drop for ActiveBudget {
     }
 }
 
-/// What the arm of `exceeded(info)` answers with.
 pub enum BudgetAnswer<T> {
     /// `k(v)`: the budget's value is `v`.
     Value(T),
@@ -299,7 +296,6 @@ async fn drive<'a, T: 'static>(
     }
 }
 
-/// The `info` of an `exceeded` arm, as the payload of the operation.
 pub(crate) fn info_payload<T: 'static>() -> crate::Payload {
     let info: Info<T> = Info {
         _result: std::marker::PhantomData,

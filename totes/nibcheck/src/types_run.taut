@@ -1,5 +1,16 @@
 import "types_classes.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "rows.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_infer.taut"
+import "types_match.taut"
+import "../../text/src/text.taut"
 
 // The check of a program: declarations first, then the functions, then the
 // statements of the top level (`run` and `finish` of `types.rs`), and the
@@ -20,7 +31,6 @@ pub(open) inductive TypeReport: Type {
   ): TypeReport
 }
 
-// The name a statement declares, when it declares one.
 pub fn stmt_declares(s: SurfaceStmt): Option(Text) {
   match s: Option(Text) {
     StStruct(d) => Some(d.name)
@@ -31,7 +41,6 @@ pub fn stmt_declares(s: SurfaceStmt): Option(Text) {
   }
 }
 
-// The names a program declares itself.
 pub fn types_own(ss: List(SurfaceStmt), own: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
   match ss: Ordmap(Text, Bool) {
     Nil => own
@@ -456,8 +465,6 @@ pub fn ck_run(&mut c: Checker, prelude: List(SurfaceStmt), program: List(Surface
   ck_top_level(program, &mut c, &mut env)
 }
 
-// ----- finishing -----
-
 pub fn ck_default_int(&mut c: Checker, v: Nat): Unit {
   match ck_resolve(&c, TyVar(v)): Unit {
     TyVar(w) => ck_set_subst(&mut c, w, TyInt(Width64))
@@ -535,16 +542,6 @@ pub fn ck_no_view_value(c: Checker, t: Ty): Bool {
 // A closure returns a borrow only as a view of duplicable things, which stands
 // for their value (`ck_view_value`); a view whose type still has variables is
 // refused, since what they become might not be duplicable.
-pub fn ck_check_products(ps: List(TyProductCheck), &mut c: Checker): Unit {
-  match ps: Unit {
-    Nil => #()
-    Cons(p, rest) => {
-      ck_product_apart(&mut c, p.members, TySpan { start: p.start, end: p.end }, true)
-      ck_check_products(rest, &mut c)
-    }
-  }
-}
-
 pub fn ck_check_closures(rs: List(TyClosure), &mut c: Checker): Unit {
   match rs: Unit {
     Nil => #()
@@ -573,7 +570,6 @@ pub fn ck_check_kept(ks: List(TyKept), &mut c: Checker): Unit {
   }
 }
 
-// A type parameter's instance fits its bound.
 pub fn ck_check_bound(&mut c: Checker, b: TyBound): Unit {
   let k := ck_kind(&c, b.ty)
   if ck_is_view(&c, b.ty) {
@@ -604,7 +600,6 @@ pub fn ck_check_bounds(bs: List(TyBound), &mut c: Checker): Unit {
   }
 }
 
-// A type constructor's instance takes and makes what its bound says.
 pub fn ck_check_ctor_bound(&mut c: Checker, b: TyCtorBound): Unit {
   let t := ck_resolve(&c, b.ty)
   let made: Option(Ty) := match t: Option(Ty) {
@@ -650,7 +645,6 @@ pub fn pending_hint(t: Ty, r#class: Text, shown: Text): Text {
   }
 }
 
-// A use's constraints hold of the types it was given.
 pub fn ck_check_pending(ps: List(TyPending), &mut c: Checker): Unit {
   match ps: Unit {
     Nil => #()
@@ -726,7 +720,6 @@ pub fn ck_resolved_terms(
 pub fn ck_finish(&mut c: Checker): TypeReport {
   // An integer of unknown width is an `i64`.
   ck_default_ints(Ordmap::entries(c.ints), &mut c)
-  ck_check_products(List::reverse(c.product_checks), &mut c)
   let widths := ck_widths(List::reverse(c.ops), c, Ordmap::empty())
   ck_check_literals(List::reverse(c.literals), &mut c)
   ck_check_closures(List::reverse(c.closure_results), &mut c)
@@ -780,7 +773,7 @@ pub fn ck_constructor_pass(uses: List(TyConstructorUse), &mut c: Checker): List(
       None => Cons(use, ck_constructor_pass(rest, &mut c))
       Some(found) => {
         let span := constructor_use_span(use)
-        let actual := ck_constructor_known(&mut c, (found: Text), (found: Nat), span, use.name)
+        let actual := ck_constructor_known(&mut c, found.fst, found.snd, span, use.name)
         ck_expect(&mut c, actual, use.ty, span, "a constructor")
         ck_constructor_pass(rest, &mut c)
       }
@@ -859,7 +852,6 @@ pub fn program_extent(stmts: List(SurfaceStmt)): Nat {
   }
 }
 
-// The report of a program over the prelude's declarations.
 pub fn types_check(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
@@ -869,8 +861,6 @@ pub fn types_check(
   var c: Checker := checker_new(16 * (program_extent(prelude) + program_extent(program) + 1))
   ck_types_run(&mut c, prelude, program, module_errors)
 }
-
-// ----- the dump (the differential test's) -----
 
 pub fn dump_line(parts: List(Text)): Text {
   Text::concat_all(Cons(Text::concat_all(parts), Cons(text_newline(), Nil)))
@@ -941,9 +931,9 @@ pub fn dump_same_span(a: TermAt, b: TermAt): Bool {
 pub fn dump_insert_ranked(x: Pair(Nat, Text), xs: List(Pair(Nat, Text))): List(Pair(Nat, Text)) {
   match xs: List(Pair(Nat, Text)) {
     Nil => Cons(x, Nil)
-    Cons(y, ys) => match Ordmap::compare_nat((x: Nat), (y: Nat)): List(Pair(Nat, Text)) {
+    Cons(y, ys) => match Ordmap::compare_nat(x.fst, y.fst): List(Pair(Nat, Text)) {
       Greater => Cons(y, dump_insert_ranked(x, ys))
-      Equal => match Ordmap::compare_text((x: Text), (y: Text)): List(Pair(Nat, Text)) {
+      Equal => match Ordmap::compare_text(x.snd, y.snd): List(Pair(Nat, Text)) {
         Greater => Cons(y, dump_insert_ranked(x, ys))
         Equal => Cons(x, xs)
         Less => Cons(x, xs)

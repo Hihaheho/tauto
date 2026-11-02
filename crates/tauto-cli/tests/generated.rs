@@ -48,15 +48,16 @@ fn the_list_of_a_decreasing_by_is_written_and_then_the_file_checks() {
     let source = format!(
         r#"import "{}/Base.taut"
 import "{}/WellFounded.taut"
+import "{}/Nat.taut"
 {}"#,
-        STD, STD, wf
+        STD, STD, STD, wf
     );
     fs::write(&file, &source).unwrap();
     let path = file.to_str().unwrap();
 
     let (shown, ok) = tauto(&["check", path]);
     assert!(
-        !ok && shown.contains("made but not listed: theorem half.eq"),
+        !ok && shown.contains("made but not listed: theorem half::eq"),
         "{shown}"
     );
 
@@ -64,10 +65,10 @@ import "{}/WellFounded.taut"
     assert!(ok, "{shown}");
     let written = fs::read_to_string(&file).unwrap();
     assert!(
-        written.contains("decreasing_by measure(id_nat) => theorem half.eq {"),
+        written.contains("decreasing_by measure(id_nat) => theorem half::eq {"),
         "{written}"
     );
-    assert_eq!(written.replace(" => theorem half.eq", ""), source);
+    assert_eq!(written.replace(" => theorem half::eq", ""), source);
 
     let (shown, ok) = tauto(&["check", path]);
     assert!(ok, "{shown}");
@@ -83,7 +84,9 @@ fn a_wrong_list_is_replaced() {
     let source = format!(
         r#"import "{}/Base.taut"
 import "{}/WellFounded.taut"
+import "{}/Nat.taut"
 {}"#,
+        STD,
         STD,
         STD,
         wf_source().replace(
@@ -98,7 +101,7 @@ import "{}/WellFounded.taut"
     let (shown, ok) = tauto(&["fmt", "--fill-generated", path]);
     assert!(ok, "{shown}");
     let written = fs::read_to_string(&file).unwrap();
-    assert!(written.contains("=> theorem half.eq {"), "{written}");
+    assert!(written.contains("=> theorem half::eq {"), "{written}");
     assert!(!written.contains("other"), "{written}");
 }
 

@@ -11,7 +11,6 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// Incremental SHA-256 with one block of buffering.
 pub struct Sha256 {
     state: [u32; 8],
     block: [u8; 64],
@@ -69,7 +68,6 @@ impl Sha256 {
     }
 }
 
-/// The digest of `data` as 64 lowercase hex digits.
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut state = Sha256::new();
     state.update(data);
@@ -135,7 +133,6 @@ mod tests {
             sha256_hex(long.as_bytes()),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
-        // Many blocks.
         assert_eq!(
             sha256_hex(&[b'a'; 1000]),
             "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"

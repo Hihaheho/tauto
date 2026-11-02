@@ -1,6 +1,8 @@
 import "nat.taut"
 import "text.taut"
 import std::Text
+import std::Base
+import std::Nat
 
 // Decoding undoes encoding (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」): for every character `c`
 // (below 0x110000 and not a surrogate), `text_decode` reads `c` back from
@@ -14,7 +16,6 @@ pub fn text_is_char(c: Nat): Bool {
   Bool::and(Nat::lt(c, 1114112), not(Bool::and(Nat::le(55296, c), Nat::lt(c, 57344))))
 }
 
-// `t` decodes, from its first byte, to `c` and all of `t`.
 pub fn utf8_round(t: Text, c: Nat): Prop {
   text_decode(t, 0) = Some(#(@code c, @len Text::len(t)))
 }
@@ -95,8 +96,6 @@ pub theorem utf8_div_64_64(c: Nat): Nat::div_nz(Nat::div_nz(c, 64, Nat::ne_zero(
 pub theorem utf8_div_4096_64(c: Nat): Nat::div_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)) = Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)) {
   nat_div_div(c, 4096, 64, Refl, Refl, Refl)
 }
-
-// ---- one length at a time ---------------------------------------------------
 
 pub theorem utf8_round_1(
   c: Nat,
@@ -263,8 +262,6 @@ pub theorem utf8_round_4(
   )
 }
 
-// ---- the encoder's steps ----------------------------------------------------
-
 pub theorem utf8_round_from_65536(
   c: Nat,
   hmax: Nat::lt(c, 1114112) = true
@@ -374,8 +371,6 @@ pub theorem bool_not_true(a: Bool, h: not(a) = true): a = false {
     true => False::elim(false_ne_true(h))
   }
 }
-
-// ---- the theorem ------------------------------------------------------------
 
 // Every character's encoding decodes to it, and is read whole.
 pub theorem text_decode_of_code_point(

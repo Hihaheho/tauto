@@ -125,9 +125,9 @@ fn the_kernel_computes_what_the_hardware_does() {
     let dir = std::env::temp_dir().join(format!("tauto-float-model-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut src = String::from(
-        "import std.Float\n\n\
-         fn raw(n: Nat): Float {\n  Float.of_raw(n)\n}\n\n\
-         fn bits(x: Float): Nat {\n  U64.val(Float.bits(x))\n}\n\n",
+        "import std::Float\nimport std::UInt\n\n\
+         fn raw(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
+         fn bits(x: Float): Nat {\n  U64::val(Float::bits(x))\n}\n\n",
     );
     let mut r = Xorshift(0x2545_F491_4F6C_DD1D);
     for i in 0..60 {
@@ -142,20 +142,20 @@ fn the_kernel_computes_what_the_hardware_does() {
         }
         let (x, y) = (a.to_bits(), b.to_bits());
         let mut checks = vec![
-            (format!("Float.add(raw({x}), raw({y}))"), canonical(a + b)),
-            (format!("Float.sub(raw({x}), raw({y}))"), canonical(a - b)),
-            (format!("Float.mul(raw({x}), raw({y}))"), canonical(a * b)),
-            (format!("Float.neg(raw({x}))"), canonical(-a)),
-            (format!("Float.abs(raw({x}))"), canonical(a.abs())),
-            (format!("Float.sqrt(raw({x}))"), canonical(a.sqrt())),
-            (format!("Float.trunc(raw({x}))"), canonical(a.trunc())),
-            (format!("Float.floor(raw({x}))"), canonical(a.floor())),
-            (format!("Float.ceil(raw({x}))"), canonical(a.ceil())),
-            (format!("Float.round(raw({x}))"), canonical(a.round())),
+            (format!("Float::add(raw({x}), raw({y}))"), canonical(a + b)),
+            (format!("Float::sub(raw({x}), raw({y}))"), canonical(a - b)),
+            (format!("Float::mul(raw({x}), raw({y}))"), canonical(a * b)),
+            (format!("Float::neg(raw({x}))"), canonical(-a)),
+            (format!("Float::abs(raw({x}))"), canonical(a.abs())),
+            (format!("Float::sqrt(raw({x}))"), canonical(a.sqrt())),
+            (format!("Float::trunc(raw({x}))"), canonical(a.trunc())),
+            (format!("Float::floor(raw({x}))"), canonical(a.floor())),
+            (format!("Float::ceil(raw({x}))"), canonical(a.ceil())),
+            (format!("Float::round(raw({x}))"), canonical(a.round())),
         ];
         if b != 0.0 {
             checks.push((
-                format!("Float.div(raw({x}), raw({y}), Refl)"),
+                format!("Float::div(raw({x}), raw({y}), Refl)"),
                 canonical(a / b),
             ));
         }
@@ -167,9 +167,9 @@ fn the_kernel_computes_what_the_hardware_does() {
             .unwrap();
         }
         for (name, op, want) in [
-            ("lt", "Float.lt", a < b),
-            ("le", "Float.le", a <= b),
-            ("eq", "Float.eq", a == b),
+            ("lt", "Float::lt", a < b),
+            ("le", "Float::le", a <= b),
+            ("eq", "Float::eq", a == b),
         ] {
             let want = if want { "true" } else { "false" };
             writeln!(
@@ -204,21 +204,21 @@ fn operations_round_the_exact_result() {
     let dir = std::env::temp_dir().join(format!("tauto-float-real-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut src = String::from(
-        "import std.FloatReal\n\n\
-         fn raw(n: Nat): Float {\n  Float.of_raw(n)\n}\n\n\
-         fn val(n: Nat): Rat {\n  match Float.val(raw(n)): Rat {\n    None => Rat.of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
+        "import std::Float\nimport std::FloatReal\nimport std::Rat\n\n\
+         fn raw(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
+         fn val(n: Nat): Rat {\n  match Float::val(raw(n)): Rat {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
     );
     let mut r = Xorshift(0x9E37_79B9_7F4A_7C15);
     for i in 0..60 {
         let (a, b) = (pick_moderate(&mut r), pick_moderate(&mut r));
         let (x, y) = (a.to_bits(), b.to_bits());
         let mut checks = vec![
-            format!("Float.of_rat(val({x})) = raw({x})"),
-            format!("Float.of_rat(Rat.add(val({x}), val({y}))) = Float.add(raw({x}), raw({y}))"),
-            format!("Float.of_rat(Rat.sub(val({x}), val({y}))) = Float.sub(raw({x}), raw({y}))"),
-            format!("Float.of_rat(Rat.mul(val({x}), val({y}))) = Float.mul(raw({x}), raw({y}))"),
+            format!("Float::of_rat(val({x})) = raw({x})"),
+            format!("Float::of_rat(Rat::add(val({x}), val({y}))) = Float::add(raw({x}), raw({y}))"),
+            format!("Float::of_rat(Rat::sub(val({x}), val({y}))) = Float::sub(raw({x}), raw({y}))"),
+            format!("Float::of_rat(Rat::mul(val({x}), val({y}))) = Float::mul(raw({x}), raw({y}))"),
             format!(
-                "Float.of_rat(Rat.div(val({x}), val({y}), Refl)) = Float.div(raw({x}), raw({y}), Refl)"
+                "Float::of_rat(Rat::div(val({x}), val({y}), Refl)) = Float::div(raw({x}), raw({y}), Refl)"
             ),
         ];
         if a == b {
@@ -271,17 +271,17 @@ fn canonical32(x: f32) -> u32 {
 }
 
 /// `std/Float32.taut` computes what the hardware's `f32` does, and
-/// `Float32.of_rat` rounds a number as `f32` arithmetic rounds its exact
+/// `Float32::of_rat` rounds a number as `f32` arithmetic rounds its exact
 /// result.
 #[test]
 fn the_kernel_computes_what_the_hardware_does_in_float32() {
     let dir = std::env::temp_dir().join(format!("tauto-float32-model-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut src = String::from(
-        "import std.FloatReal\n\n\
-         fn raw(n: Nat): Float32 {\n  Float32.of_raw(n)\n}\n\n\
-         fn wide(n: Nat): Float {\n  Float.of_raw(n)\n}\n\n\
-         fn val(n: Nat): Rat {\n  match Float32.val(raw(n)): Rat {\n    None => Rat.of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
+        "import std::Float\nimport std::Float32\nimport std::FloatReal\nimport std::Rat\n\n\
+         fn raw(n: Nat): Float32 {\n  Float32::of_raw(n)\n}\n\n\
+         fn wide(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
+         fn val(n: Nat): Rat {\n  match Float32::val(raw(n)): Rat {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
     );
     let mut r = Xorshift(0x2545_F491_4F6C_DD1D);
     for i in 0..60 {
@@ -296,49 +296,49 @@ fn the_kernel_computes_what_the_hardware_does_in_float32() {
         let (x, y) = (a.to_bits(), b.to_bits());
         let mut checks = vec![
             (
-                format!("Float32.add(raw({x}), raw({y}))"),
+                format!("Float32::add(raw({x}), raw({y}))"),
                 canonical32(a + b),
             ),
             (
-                format!("Float32.sub(raw({x}), raw({y}))"),
+                format!("Float32::sub(raw({x}), raw({y}))"),
                 canonical32(a - b),
             ),
             (
-                format!("Float32.mul(raw({x}), raw({y}))"),
+                format!("Float32::mul(raw({x}), raw({y}))"),
                 canonical32(a * b),
             ),
-            (format!("Float32.neg(raw({x}))"), canonical32(-a)),
-            (format!("Float32.abs(raw({x}))"), canonical32(a.abs())),
-            (format!("Float32.sqrt(raw({x}))"), canonical32(a.sqrt())),
-            (format!("Float32.floor(raw({x}))"), canonical32(a.floor())),
-            (format!("Float32.round(raw({x}))"), canonical32(a.round())),
+            (format!("Float32::neg(raw({x}))"), canonical32(-a)),
+            (format!("Float32::abs(raw({x}))"), canonical32(a.abs())),
+            (format!("Float32::sqrt(raw({x}))"), canonical32(a.sqrt())),
+            (format!("Float32::floor(raw({x}))"), canonical32(a.floor())),
+            (format!("Float32::round(raw({x}))"), canonical32(a.round())),
             (
-                format!("Float32.of_float(wide({}))", w.to_bits()),
+                format!("Float32::of_float(wide({}))", w.to_bits()),
                 canonical32(w as f32),
             ),
         ];
         if b != 0.0 {
             checks.push((
-                format!("Float32.div(raw({x}), raw({y}), Refl)"),
+                format!("Float32::div(raw({x}), raw({y}), Refl)"),
                 canonical32(a / b),
             ));
         }
         for (j, (e, want)) in checks.iter().enumerate() {
             writeln!(
                 src,
-                "theorem v{i}_{j}(): Float32.raw({e}) = {want} {{\n  Refl\n}}\n"
+                "theorem v{i}_{j}(): Float32::raw({e}) = {want} {{\n  Refl\n}}\n"
             )
             .unwrap();
         }
         writeln!(
             src,
-            "theorem w{i}(): Float.raw(Float.of_float32(raw({x}))) = {} {{\n  Refl\n}}\n",
+            "theorem w{i}(): Float::raw(Float::of_float32(raw({x}))) = {} {{\n  Refl\n}}\n",
             canonical(f64::from(a))
         )
         .unwrap();
         writeln!(
             src,
-            "theorem lt{i}(): (Float32.lt(raw({x}), raw({y})) = {}) {{\n  Refl\n}}\n",
+            "theorem lt{i}(): (Float32::lt(raw({x}), raw({y})) = {}) {{\n  Refl\n}}\n",
             if a < b { "true" } else { "false" }
         )
         .unwrap();
@@ -346,8 +346,8 @@ fn the_kernel_computes_what_the_hardware_does_in_float32() {
         let (c, d) = (pick_moderate(&mut r) as f32, pick_moderate(&mut r) as f32);
         let (u, v) = (c.to_bits(), d.to_bits());
         for (k, (e, want)) in [
-            (format!("Rat.add(val({u}), val({v}))"), canonical32(c + d)),
-            (format!("Rat.mul(val({u}), val({v}))"), canonical32(c * d)),
+            (format!("Rat::add(val({u}), val({v}))"), canonical32(c + d)),
+            (format!("Rat::mul(val({u}), val({v}))"), canonical32(c * d)),
         ]
         .iter()
         .enumerate()
@@ -357,7 +357,7 @@ fn the_kernel_computes_what_the_hardware_does_in_float32() {
             }
             writeln!(
                 src,
-                "theorem q{i}_{k}(): Float32.raw(Float32.of_rat({e})) = {want} {{\n  Refl\n}}\n"
+                "theorem q{i}_{k}(): Float32::raw(Float32::of_rat({e})) = {want} {{\n  Refl\n}}\n"
             )
             .unwrap();
         }

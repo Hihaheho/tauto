@@ -26,7 +26,6 @@ use super::{Diagnostic, Entry, Kernel, Level, Verdict, level_of, level_term, sor
 use crate::surface::{InductiveDecl, Stmt, SurfaceTerm, TermKind, TheoremDecl, walk};
 use tauto_message::{Message, Value, msg};
 
-/// A declaration specialized at explicitly supplied universe levels.
 #[derive(Clone, Debug)]
 enum Body {
     Theorem(TheoremDecl, bool),
@@ -69,7 +68,6 @@ fn level_count(d: &TheoremDecl) -> usize {
         .count()
 }
 
-/// The names of a template's level parameters, in order.
 fn level_names(body: &Body, levels: usize) -> Vec<String> {
     let params = match body {
         Body::Theorem(d, _) => &d.params,
@@ -436,7 +434,6 @@ impl Kernel {
 }
 
 impl Kernel {
-    /// The template `stmt` declares, if it declares one.
     pub(super) fn template_of(&self, stmt: &Stmt) -> Option<String> {
         let name = match stmt {
             Stmt::Theorem(d) | Stmt::Def(d) => &d.name,
@@ -502,7 +499,6 @@ impl Kernel {
                     .iter()
                     .map(|c| (mangle(&c.name, &levels), c.name.clone())),
             );
-            // A message shows a constructor as the source writes it.
             let short = tauto_surface::surface::qualify::short;
             let written: Vec<(String, String)> = names
                 .iter()

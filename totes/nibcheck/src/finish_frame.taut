@@ -1,5 +1,18 @@
 import "checker_frame.taut"
-import "product_read_frame.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "kind_sound.taut"
+import "summary_state.taut"
+import "ty.taut"
+import "types_classes.taut"
+import "types_decl.taut"
+import "types_infer.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 // Final diagnostics preserve the declaration environment.
 
@@ -947,7 +960,7 @@ pub theorem ck_default_int_run_frame(
     finish_default_frame(c, ck_resolve(c, TyVar(v)), ordered)
   )
 }
-pub fn finish_int_key(p: Pair(Nat, Bool)): Nat { (p: Nat) }
+pub fn finish_int_key(p: Pair(Nat, Bool)): Nat { p.fst }
 
 pub fn finish_defaults_cons(
   p: Pair(Nat, Bool),
@@ -1005,87 +1018,6 @@ pub theorem ck_default_ints_run_frame(
       )
     )
   }
-}
-
-pub fn finish_product_checks(c: Checker): List(TyProductCheck) { c.product_checks }
-
-pub fn finish_product_members(p: TyProductCheck): List(Ty) { p.members }
-
-pub fn finish_product_span(p: TyProductCheck): TySpan { TySpan { start: p.start, end: p.end } }
-
-pub fn finish_products_cons(
-  p: TyProductCheck,
-  rest: List(TyProductCheck),
-  c: Checker
-): Mut1(Unit, Checker) {
-  frame_bind(
-    Unit,
-    Unit,
-    (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_products(rest, c1)),
-    ck_product_apart(c, finish_product_members(p), finish_product_span(p), true)
-  )
-}
-
-pub theorem finish_products_unf(
-  p: TyProductCheck,
-  rest: List(TyProductCheck),
-  c: Checker
-): ck_check_products(Cons(p, rest), c) = finish_products_cons(p, rest, c) { Refl }
-
-pub theorem ck_check_products_read(
-  ps: List(TyProductCheck),
-  c: Checker
-): CkReadFrame(c, ck_check_products(ps, c)) {
-  match ps: CkReadFrame(c, ck_check_products(ps, c)) {
-    Nil => read_return(c, Star)
-    Cons(p, rest) => Eq::subst(
-      (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
-      Eq::sym(finish_products_unf(p, rest, c)),
-      frame_bind_ok(
-        c,
-        (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_products(rest, c1)),
-        ck_product_apart(c, finish_product_members(p), finish_product_span(p), true),
-        ck_product_apart_step_read(c, finish_product_members(p), finish_product_span(p), true),
-        ignored => c1 => read_rewrap(
-          c1,
-          ck_check_products(rest, c1),
-          ck_check_products_read(rest, c1)
-        )
-      )
-    )
-  }
-}
-
-pub theorem ck_check_products_keep(
-  ps: List(TyProductCheck),
-  c: Checker
-): ProductKeep(c, ck_check_products(ps, c)) {
-  match ps: ProductKeep(c, ck_check_products(ps, c)) {
-    Nil => keep_return(c, Star)
-    Cons(p, rest) => Eq::subst(
-      (z: Mut1(Unit, Checker)) => ProductKeep(c, z),
-      Eq::sym(finish_products_unf(p, rest, c)),
-      keep_bind(
-        c,
-        (ignored: Unit, c1: Checker) => ck_rewrap1(ck_check_products(rest, c1)),
-        ck_product_apart(c, finish_product_members(p), finish_product_span(p), true),
-        ck_product_apart_step_keep(c, finish_product_members(p), finish_product_span(p), true),
-        ignored => c1 => keep_rewrap(
-          c1,
-          ck_check_products(rest, c1),
-          ck_check_products_keep(rest, c1)
-        )
-      )
-    )
-  }
-}
-
-pub theorem ck_check_products_run_frame(
-  ps: List(TyProductCheck),
-  c: Checker,
-  ordered: CkOrdered(c)
-): CkRunFrame(c, ck_check_products(ps, c)) {
-  run_frame_read(c, ck_check_products(ps, c), ck_check_products_read(ps, c), ordered)
 }
 
 pub fn finish_ints(c: Checker): Ordmap(Nat, Bool) { c.ints }
@@ -1175,7 +1107,7 @@ pub theorem finish_after_defaults_frame(
             (ignored4: Unit, c5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, Widths), c6),
+              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c4)), c4)
@@ -1209,7 +1141,7 @@ pub theorem finish_after_defaults_frame(
             (ignored4: Unit, c5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, Widths), c6),
+              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c4)), c4)
@@ -1238,7 +1170,7 @@ pub theorem finish_after_defaults_frame(
             (ignored4: Unit, c5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, Widths), c6),
+              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c4)), c4)
@@ -1262,7 +1194,7 @@ pub theorem finish_after_defaults_frame(
             (ignored4: Unit, c5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, Widths), c6),
+              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c4)), c4)
@@ -1281,7 +1213,7 @@ pub theorem finish_after_defaults_frame(
             (ignored4: Unit, c5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, Widths), c6),
+              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c4)), c4),
@@ -1295,7 +1227,7 @@ pub theorem finish_after_defaults_frame(
               Unit,
               TypeReport,
               c5,
-              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, Widths), c6),
+              (ignored5: Unit, c6: Checker) => mut1(finish_report(c6, widths), c6),
               ck_check_pending(List::reverse(finish_pending_items(c5)), c5),
               run_frame_read(
                 c5,
@@ -1303,7 +1235,7 @@ pub theorem finish_after_defaults_frame(
                 ck_check_pending_frame(List::reverse(finish_pending_items(c5)), c5),
                 o_c5
               ),
-              ignored5 => c6 => o_c6 => run_frame_return(c6, finish_report(c6, Widths), o_c6)
+              ignored5 => c6 => o_c6 => run_frame_return(c6, finish_report(c6, widths), o_c6)
             )
           )
         )
@@ -1312,46 +1244,27 @@ pub theorem finish_after_defaults_frame(
   )
 }
 
-pub fn finish_after_products(c: Checker): Mut1(TypeReport, Checker) {
-  frame_bind(
-    Unit,
-    TypeReport,
-    (ignored: Unit, c1: Checker) => finish_after_defaults(
-      c1,
-      ck_widths(List::reverse(finish_ops(c1)), c1, Ordmap::empty())
-    ),
-    ck_check_products(List::reverse(finish_product_checks(c)), c)
-  )
+pub fn finish_after_ints(c: Checker): Mut1(TypeReport, Checker) {
+  finish_after_defaults(c, ck_widths(List::reverse(finish_ops(c)), c, Ordmap::empty()))
 }
 
 pub fn finish_run(c: Checker): Mut1(TypeReport, Checker) {
   frame_bind(
     Unit,
     TypeReport,
-    (ignored: Unit, c1: Checker) => finish_after_products(c1),
+    (ignored: Unit, c1: Checker) => finish_after_ints(c1),
     ck_default_ints(Ordmap::entries(finish_ints(c)), c)
   )
 }
 
-pub theorem finish_after_products_frame(
+pub theorem finish_after_ints_frame(
   c: Checker,
   ordered: CkOrdered(c)
-): CkRunFrame(c, finish_after_products(c)) {
-  run_frame_bind(
-    Unit,
-    TypeReport,
+): CkRunFrame(c, finish_after_ints(c)) {
+  finish_after_defaults_frame(
     c,
-    (ignored: Unit, c1: Checker) => finish_after_defaults(
-      c1,
-      ck_widths(List::reverse(finish_ops(c1)), c1, Ordmap::empty())
-    ),
-    ck_check_products(List::reverse(finish_product_checks(c)), c),
-    ck_check_products_run_frame(List::reverse(finish_product_checks(c)), c, ordered),
-    ignored => c1 => o_c1 => finish_after_defaults_frame(
-      c1,
-      ck_widths(List::reverse(finish_ops(c1)), c1, Ordmap::empty()),
-      o_c1
-    )
+    ck_widths(List::reverse(finish_ops(c)), c, Ordmap::empty()),
+    ordered
   )
 }
 
@@ -1360,10 +1273,10 @@ pub theorem finish_run_frame(c: Checker, ordered: CkOrdered(c)): CkRunFrame(c, f
     Unit,
     TypeReport,
     c,
-    (ignored: Unit, c1: Checker) => finish_after_products(c1),
+    (ignored: Unit, c1: Checker) => finish_after_ints(c1),
     ck_default_ints(Ordmap::entries(finish_ints(c)), c),
     ck_default_ints_run_frame(Ordmap::entries(finish_ints(c)), c, ordered),
-    ignored => c1 => o_c1 => finish_after_products_frame(c1, o_c1)
+    ignored => c1 => o_c1 => finish_after_ints_frame(c1, o_c1)
   )
 }
 
@@ -1404,7 +1317,7 @@ pub theorem finish_report_bind<A: Type>(
 pub theorem finish_after_defaults_report(
   c: Checker,
   widths: Ordmap(TermAt, Width)
-): FinishReportAgrees(finish_after_defaults(c, Widths)) {
+): FinishReportAgrees(finish_after_defaults(c, widths)) {
   finish_report_bind(
     Unit,
     (unused0: Unit, r1: Checker) => frame_bind(
@@ -1422,7 +1335,7 @@ pub theorem finish_after_defaults_report(
             (unused4: Unit, r5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, Widths), r6),
+              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(r4)), r4)
@@ -1448,7 +1361,7 @@ pub theorem finish_after_defaults_report(
             (unused4: Unit, r5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, Widths), r6),
+              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(r4)), r4)
@@ -1469,7 +1382,7 @@ pub theorem finish_after_defaults_report(
             (unused4: Unit, r5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, Widths), r6),
+              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(r4)), r4)
@@ -1485,7 +1398,7 @@ pub theorem finish_after_defaults_report(
             (unused4: Unit, r5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, Widths), r6),
+              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(r4)), r4)
@@ -1496,13 +1409,13 @@ pub theorem finish_after_defaults_report(
             (unused4: Unit, r5: Checker) => frame_bind(
               Unit,
               TypeReport,
-              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, Widths), r6),
+              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5)
             ),
             ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(r4)), r4),
             unused4 => r5 => finish_report_bind(
               Unit,
-              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, Widths), r6),
+              (unused5: Unit, r6: Checker) => mut1(finish_report(r6, widths), r6),
               ck_check_pending(List::reverse(finish_pending_items(r5)), r5),
               unused5 => r6 => Refl
             )
@@ -1515,19 +1428,11 @@ pub theorem finish_after_defaults_report(
 pub theorem finish_run_report(c: Checker): FinishReportAgrees(finish_run(c)) {
   finish_report_bind(
     Unit,
-    (ignored: Unit, next: Checker) => finish_after_products(next),
+    (ignored: Unit, next: Checker) => finish_after_ints(next),
     ck_default_ints(Ordmap::entries(finish_ints(c)), c),
-    ignored => next => finish_report_bind(
-      Unit,
-      (ignored2: Unit, c2: Checker) => finish_after_defaults(
-        c2,
-        ck_widths(List::reverse(finish_ops(c2)), c2, Ordmap::empty())
-      ),
-      ck_check_products(List::reverse(finish_product_checks(next)), next),
-      ignored2 => c2 => finish_after_defaults_report(
-        c2,
-        ck_widths(List::reverse(finish_ops(c2)), c2, Ordmap::empty())
-      )
+    ignored => next => finish_after_defaults_report(
+      next,
+      ck_widths(List::reverse(finish_ops(next)), next, Ordmap::empty())
     )
   )
 }

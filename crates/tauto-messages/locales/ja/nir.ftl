@@ -38,6 +38,7 @@ nir-the-local-function-that-may-resume = 二度以上再開しうる、値とし
 nir-info-field = `info.{ $name }`
 nir-a-product-with-fewer-than-two = メンバーが二つ未満の積
 nir-a-product-whose-members-do-not = メンバーが型と合わない積
+nir-a-product-regrouped-under-mut = 積を表す総称のために組み直す積で、メンバーを複製できないか `&mut` で借用しているもの
 nir-the-member-of-a-product = 積のメンバー { $key }
 nir-is-not-a-struct = `{ $name }` は構造体ではない
 nir-has-no-field = `{ $name }` にフィールド `{ $f }` はない

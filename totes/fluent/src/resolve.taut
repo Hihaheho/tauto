@@ -12,7 +12,6 @@ pub(open) inductive Value: Type {
   VNum(n: Nat): Value
 }
 
-// A variable given to a message: `$name`.
 pub(open) inductive Arg: Type {
   Mk(name: List(Nat), value: Value): Arg
 }
@@ -43,8 +42,6 @@ pub(open) inductive Ev: Type {
   Mk(value: Value, errors: List(FluentError)): Ev
 }
 
-// ---- looking things up --------------------------------------------------------
-
 pub fn find_arg(args: List(Arg), name: List(Nat)): Option(Value) {
   match args: Option(Value) {
     Nil => None
@@ -57,7 +54,6 @@ pub fn find_arg(args: List(Arg), name: List(Nat)): Option(Value) {
   }
 }
 
-// The first message called `id`.
 pub fn find_message(es: List(Entry), id: List(Nat)): Option(Entry) {
   match es: Option(Entry) {
     Nil => None
@@ -71,7 +67,6 @@ pub fn find_message(es: List(Entry), id: List(Nat)): Option(Entry) {
   }
 }
 
-// The first term called `id` (written `-id`).
 pub fn find_term(es: List(Entry), id: List(Nat)): Option(Entry) {
   match es: Option(Entry) {
     Nil => None
@@ -103,8 +98,6 @@ pub fn entry_attrs(e: Entry): List(Attr) {
     Term(i, v, a) => a
   }
 }
-
-// ---- choosing a variant -------------------------------------------------------
 
 // A number matches a numeric key equal to it and the key naming its plural category; a string
 // matches the key with the same name.
@@ -140,7 +133,6 @@ pub fn find_step(o: Bool, y: Variant, later: Option(Variant)): Option(Variant) {
   }
 }
 
-// The first variant whose key matches.
 pub fn find_variant(locale: List(Nat), v: Value, vs: List(Variant)): Option(Variant) {
   match vs: Option(Variant) {
     Nil => None
@@ -164,8 +156,6 @@ pub fn pattern_of(dpat: List(Elem), o: Option(Variant)): List(Elem) {
 pub fn pick(locale: List(Nat), v: Value, vs: List(Variant), dpat: List(Elem)): List(Elem) {
   pattern_of(dpat, find_variant(locale, v, vs))
 }
-
-// ---- formatting ---------------------------------------------------------------
 
 pub fn value_bytes(v: Value): List(Nat) {
   match v: List(Nat) {

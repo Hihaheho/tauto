@@ -1,19 +1,23 @@
 // The program `tauto syntax gen` runs: it reads a grammar from a file and
 // writes its table file with `totes/llkgen`. `README.md` says how it is run.
 
+import "../../lalrgen/src/tables.taut"
+import "../../llkgen/src/tables.taut"
+import "../../pargen/src/par.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::prelude::Os
+import std::prelude::Affine
 
 fn sg_line(t: Text): Text {
   Text::concat_all(Cons(t, Cons(text_newline(), Nil)))
 }
 
-// Stops with `why` on standard error.
 fn sg_stop(why: Text): Unit {
   eprint(sg_line(why))
   perform exit(1)
 }
 
-// Prints the text, or stops with why there is none.
 fn sg_print(r: Result(Text, Text)): Unit {
   match r {
     Ok(t) => print(t)
@@ -21,7 +25,6 @@ fn sg_print(r: Result(Text, Text)): Unit {
   }
 }
 
-// `--gen FILE`: the table file of a grammar.
 fn sg_gen(path: Text): Unit {
   match read_file(path) {
     Err(e) => eprint(sg_line(Text::concat_all(Cons("cannot read: ", Cons(e, Nil)))))

@@ -16,7 +16,6 @@ use std::sync::OnceLock;
 
 use tauto_parol::{Cst, NodeId, NonTerminalKind as Nt, Span, parse};
 
-/// A declaration identified by its file index and declaration index in that file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DefId {
     pub file: usize,
@@ -171,6 +170,18 @@ pub struct World<'a> {
     files: Vec<FileIndex>,
     by_path: HashMap<PathBuf, usize>,
     building: HashSet<PathBuf>,
+    /// The expressions of a file's syntax literals (`${ e }`, `$n`): the file and where each is
+    /// written. They are read as tauto in the scope of the literal.
+    splices: Option<(PathBuf, Vec<(u32, u32)>)>,
+}
+
+/// An expression spliced into a syntax literal, read on its own; `start` is where it is
+/// written in the file.
+struct Splice {
+    start: u32,
+    end: u32,
+    src: String,
+    cst: Cst,
 }
 
 /// The declarations every program sees, indexed once.
@@ -186,7 +197,7 @@ fn preludes() -> &'static [FileIndex; 2] {
                 vec![0],
             ),
         ] {
-            let index = world.build(id, None, text, closure);
+            let index = world.build(id, None, text, &parse(text), closure);
             world.files.push(index);
         }
         let second = world.files.pop().unwrap_or_default();
@@ -207,11 +218,19 @@ impl<'a> World<'a> {
             files: Vec::new(),
             by_path: HashMap::new(),
             building: HashSet::new(),
+            splices: None,
         }
     }
 
     pub fn new(read: &'a dyn Fn(&Path) -> Option<String>) -> Self {
         Self::empty(read, 2)
+    }
+
+    /// Reads the expressions at `ranges` of `path` (the bytes of the file between the
+    /// delimiters of its `${ … }` and `$n`) as tauto in the scope of their literals.
+    pub fn with_splices(mut self, path: &Path, ranges: Vec<(u32, u32)>) -> Self {
+        self.splices = Some((canonical(path), ranges));
+        self
     }
 
     pub fn file(&self, id: usize) -> &FileIndex {
@@ -266,7 +285,7 @@ impl<'a> World<'a> {
                 }
             }
         }
-        let index = self.build(id, Some(path.clone()), &text, closure);
+        let index = self.build(id, Some(path.clone()), &text, &cst, closure);
         self.building.remove(&path);
         self.by_path.insert(path, id);
         self.files.push(index);
@@ -278,20 +297,37 @@ impl<'a> World<'a> {
         id: usize,
         path: Option<PathBuf>,
         text: &str,
+        parsed: &tauto_parol::Parsed,
         mut closure: Vec<usize>,
     ) -> FileIndex {
-        let parsed = parse(text);
         let mut globals = HashMap::new();
         for &f in &closure {
             for (name, def) in &self.file(f).toplevel {
                 globals.insert(name.clone(), *def);
             }
         }
+        let splices: Vec<Splice> = match (&self.splices, &path) {
+            (Some((own, ranges)), Some(path)) if own == path => ranges
+                .iter()
+                .filter_map(|&(start, end)| {
+                    let src = text.get(start as usize..end as usize)?.to_string();
+                    let parsed = parse(&src);
+                    parsed.errors.is_empty().then_some(Splice {
+                        start,
+                        end,
+                        src,
+                        cst: parsed.cst,
+                    })
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let mut w = Walk {
             world: self,
             file: id,
             cst: &parsed.cst,
             src: text,
+            splices: &splices,
             idx: FileIndex::default(),
             frames: Vec::new(),
             globals,
@@ -344,6 +380,7 @@ struct Walk<'w, 'a> {
     file: usize,
     cst: &'w Cst,
     src: &'w str,
+    splices: &'w [Splice],
     idx: FileIndex,
     frames: Vec<HashMap<String, DefId>>,
     globals: HashMap<String, DefId>,
@@ -389,8 +426,6 @@ pub fn is_keyword(word: &str) -> bool {
 }
 
 impl Walk<'_, '_> {
-    // --- the tree -------------------------------------------------------
-
     fn kids(&self, id: NodeId) -> Vec<NodeId> {
         self.cst.children(id)
     }
@@ -460,7 +495,6 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// The first name written below `id`.
     fn first_ident_below(&self, id: NodeId) -> Option<(String, Span)> {
         for c in self.kids(id) {
             if self.nt(c) == Some(Nt::Ident) {
@@ -574,8 +608,6 @@ impl Walk<'_, '_> {
         }
     }
 
-    // --- declarations ---------------------------------------------------
-
     fn def_of(&self, id: DefId) -> &Def {
         if id.file == self.file {
             &self.idx.defs[id.index]
@@ -633,7 +665,6 @@ impl Walk<'_, '_> {
         });
     }
 
-    /// A use of a name.
     fn reference(&mut self, span: Span, name: &str) -> Option<DefId> {
         if self.quoting > 0 {
             self.idx.opaque.push((span, name.to_string()));
@@ -719,8 +750,6 @@ impl Walk<'_, '_> {
             None
         }
     }
-
-    // --- walking --------------------------------------------------------
 
     fn run(&mut self, root: NodeId) {
         self.frames.push(HashMap::new());
@@ -859,9 +888,7 @@ impl Walk<'_, '_> {
         let (name, span) = self.name_of(n)?;
         let sig = self.header(n, stop);
         let d = self.def_once(n, &name, kind, span, sig);
-        let declared = self
-            .ty(n)
-            .map(|t| squeeze(self.text(self.cst.span(t))));
+        let declared = self.ty(n).map(|t| squeeze(self.text(self.cst.span(t))));
         self.idx.defs[d].declared = declared;
         self.declare(&name, d);
         Some(d)
@@ -885,9 +912,7 @@ impl Walk<'_, '_> {
             );
             let m = self.def_once(c, &name, Kind::Constructor, span, sig);
             self.idx.defs[m].parent = Some(d);
-            self.idx.defs[m].declared = self
-                .ty(c)
-                .map(|t| squeeze(self.text(self.cst.span(t))));
+            self.idx.defs[m].declared = self.ty(c).map(|t| squeeze(self.text(self.cst.span(t))));
             if !self.idx.defs[d].members.contains(&m) {
                 self.idx.defs[d].members.push(m);
             }
@@ -908,9 +933,7 @@ impl Walk<'_, '_> {
             );
             let m = self.def_once(f, &name, Kind::Field, span, sig);
             self.idx.defs[m].parent = Some(owner);
-            self.idx.defs[m].declared = self
-                .ty(f)
-                .map(|t| squeeze(self.text(self.cst.span(t))));
+            self.idx.defs[m].declared = self.ty(f).map(|t| squeeze(self.text(self.cst.span(t))));
             if !self.idx.defs[owner].members.contains(&m) {
                 self.idx.defs[owner].members.push(m);
             }
@@ -1043,16 +1066,12 @@ impl Walk<'_, '_> {
             let sig = format!("{}\n  // of {name}", self.header(item, &stop));
             let m = self.def_once(item, &mname, kind, mspan, sig);
             self.idx.defs[m].parent = Some(d);
-            self.idx.defs[m].declared = self
-                .ty(item)
-                .map(|t| squeeze(self.text(self.cst.span(t))));
+            self.idx.defs[m].declared = self.ty(item).map(|t| squeeze(self.text(self.cst.span(t))));
             if !self.idx.defs[d].members.contains(&m) {
                 self.idx.defs[d].members.push(m);
             }
         }
     }
-
-    // --- statements -----------------------------------------------------
 
     fn stmt(&mut self, n: NodeId) {
         let Some(kind) = self.nt(n) else { return };
@@ -1322,8 +1341,6 @@ impl Walk<'_, '_> {
         }
         self.frames.pop();
     }
-
-    // --- expressions, types, patterns -------------------------------------
 
     fn walk(&mut self, n: NodeId) {
         let Some(kind) = self.nt(n) else { return };
@@ -1603,15 +1620,13 @@ impl Walk<'_, '_> {
                     }
                     None => self.walk_kids(c),
                 },
-                Some(Nt::Postfix | Nt::CondPostfix) if before_arrow => {
-                    match self.peel_paren(c) {
-                        Some(paren) => {
-                            self.arrow_params(paren);
-                            open += 1;
-                        }
-                        None => self.walk(c),
+                Some(Nt::Postfix | Nt::CondPostfix) if before_arrow => match self.peel_paren(c) {
+                    Some(paren) => {
+                        self.arrow_params(paren);
+                        open += 1;
                     }
-                }
+                    None => self.walk(c),
+                },
                 _ => self.walk(c),
             }
         }
@@ -1899,6 +1914,7 @@ impl Walk<'_, '_> {
                 .opaque
                 .push((Span::new(start, start + w.len() as u32), w.to_string()));
         }
+        self.splices_in(span);
         // ``math`1 + 2` `` or `` ```math … ``` ``: the syntax's name leads.
         let lead = text.trim_start_matches('`');
         let skipped = (text.len() - lead.len()) as u32;
@@ -1911,6 +1927,46 @@ impl Walk<'_, '_> {
         {
             let start = span.start + skipped;
             self.add_ref(Span::new(start, start + name.len() as u32), d, false);
+        }
+    }
+
+    /// The expressions spliced into the literal at `lit`: tauto, read in the scope of the
+    /// literal. Each is a tree of its own, so its names are shifted to where it is written.
+    fn splices_in(&mut self, lit: Span) {
+        let splices = self.splices;
+        for sp in splices {
+            if sp.start < lit.start || sp.end > lit.end {
+                continue;
+            }
+            let Some(root) = sp.cst.root() else { continue };
+            let (cst, src) = (self.cst, self.src);
+            let saved = (std::mem::take(&mut self.node_def), self.quoting);
+            let (defs, refs, unresolved, opaque) = (
+                self.idx.defs.len(),
+                self.idx.refs.len(),
+                self.idx.unresolved.len(),
+                self.idx.opaque.len(),
+            );
+            self.cst = &sp.cst;
+            self.src = &sp.src;
+            self.quoting = 0;
+            self.walk(root);
+            self.cst = cst;
+            self.src = src;
+            (self.node_def, self.quoting) = saved;
+            let shift = |s: Span| Span::new(s.start + sp.start, s.end + sp.start);
+            for d in &mut self.idx.defs[defs..] {
+                d.spans.iter_mut().for_each(|s| *s = shift(*s));
+            }
+            for r in &mut self.idx.refs[refs..] {
+                r.span = shift(r.span);
+            }
+            for (s, _) in &mut self.idx.unresolved[unresolved..] {
+                *s = shift(*s);
+            }
+            for (s, _) in &mut self.idx.opaque[opaque..] {
+                *s = shift(*s);
+            }
         }
     }
 
@@ -1980,7 +2036,6 @@ fn words_at(text: &str) -> Vec<(usize, &str)> {
     out
 }
 
-/// White space folded to single spaces.
 pub fn squeeze(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

@@ -88,7 +88,7 @@ fn read(
         ..Tote::default()
     };
     let mut files = Vec::new();
-    for source in &manifest.package.sources {
+    for source in manifest.package.source_paths() {
         taut_files(&dir.join(source), &mut files);
     }
     // A command's program runs too, though no dependent reads it.

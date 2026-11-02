@@ -12,7 +12,6 @@ use tauto_message::{Message, msg};
 
 use crate::{Bindings, Gen, Sources};
 
-/// Why one helper call retains its owned arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BorrowReason {
     pub code: &'static str,

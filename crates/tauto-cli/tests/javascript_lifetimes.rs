@@ -37,17 +37,55 @@ fn generated(source: &str, host: &str) -> String {
 }
 
 fn generated_case(name: &str, host: &str) -> String {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cases");
-    let case = tauto_test_suite::rust_cases(&root)
-        .unwrap()
-        .into_iter()
-        .find(|case| case.name == name)
-        .expect("shared case exists");
-    // Keep the checked extraction evidence instead of treating proof source as
-    // an ordinary runtime function, which would charge divergent-call fuel.
-    let package = case.compile("javascript").unwrap();
+    let source = case_inputs::source(name);
+    // The tail-call programs keep the checked extraction evidence (a tote that
+    // imports the program) instead of treating proof source as an ordinary
+    // runtime function, which would charge divergent-call fuel.
+    let package = if name.starts_with("backend-tail-self-call/") {
+        compile_extracted(source)
+    } else {
+        tauto_nir::compile_javascript(source).unwrap()
+    };
     let module = tauto_jsgen::generate(&package).unwrap();
     execute(&format!("{module}\n{host}"))
+}
+
+/// The program, importing `std/Base.taut`, loaded through a tote as a build reads it.
+fn compile_extracted(source: &str) -> tauto_nir::Package {
+    let dir = std::env::temp_dir().join(format!(
+        "tauto-js-extracted-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../std/Base.taut")
+        .canonicalize()
+        .unwrap();
+    let import_base = format!("import {:?}\n", base.to_string_lossy());
+    let entry = dir.join("program.taut");
+    fs::write(&entry, format!("{source}\n{import_base}")).unwrap();
+    let entry = entry.canonicalize().unwrap();
+    let wrapper = dir.join("imports.taut");
+    fs::write(
+        &wrapper,
+        format!("{import_base}import {:?}\n", entry.to_string_lossy()),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/main.taut"),
+        format!("import {:?}\n", wrapper.to_string_lossy()),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Tauto.eure"),
+        "package { name = \"case\"\nversion = \"0.1.0\" }",
+    )
+    .unwrap();
+    let loaded = tauto::program::load_tote_for_build(&dir).unwrap();
+    let package = tauto_nir::compile_loaded_with_observer(&loaded, false, true, |_| {}).unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+    package
 }
 
 fn runtime(test: &str) {
@@ -659,8 +697,8 @@ fn stable_provenance_is_revoked_by_driver_and_io_handoffs() {
     runtime(
         r#"const before=pair(1n,2n);
 await drive((c,k)=>{assert(!stableAggregate(before));return k(c,null);},()=>{});
-await drive((c,k)=>builtin('Vec.into_array',[pure({kind:'Vec',items:[]})])(c,(d,value)=>{assert(!stableAggregate(value));return k(d,null);}),()=>{});
-await drive((c,k)=>builtin('Array.of_list',[pure(list([1n]))])(c,(d,value)=>{assert(!stableAggregate(value));return k(d,null);}),()=>{});
+await drive((c,k)=>builtin('Vec::into_array',[pure({kind:'Vec',items:[]})])(c,(d,value)=>{assert(!stableAggregate(value));return k(d,null);}),()=>{});
+await drive((c,k)=>builtin('Array::of_list',[pure(list([1n]))])(c,(d,value)=>{assert(!stableAggregate(value));return k(d,null);}),()=>{});
 let original,leaf;
 function create(){
     original=pair(pair(1n,2n),3n);
@@ -1096,6 +1134,371 @@ let result := consume(fail())
 "#
             }
             _ => panic!("no copied input {file}/{name}"),
+        }
+    }
+    /// The program of a shared case, by `file/case`.
+    pub fn source(name: &str) -> &'static str {
+        match name {
+            "backend-capture-bindings/borrowed-recursive-capture" => {
+                r####"fn pure_helper(): Unit { #() }
+fn plain(n: i64, &previous: () -> i64): i64 ! {Div} {
+  var x := n
+  if n == 0 { previous() } else { plain(n - 1, () => x) }
+}
+fn with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
+  var x := n
+  if n == 0 { previous() } else { with_helper(n - 1, () => { pure_helper(); x }) }
+}
+perform show("plain", plain(1, () => 99))
+perform show("with_helper", with_helper(1, () => 99))
+"####
+            }
+            "backend-capture-bindings/resumed-boundary-capture" => {
+                r####"effect pause(): Unit resume ω
+fn pure_helper(): Unit { #() }
+fn resumed_plain(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); x } with {
+      pause(), k => resumed_plain(n - 1, () => k(#()))
+    }
+  }
+}
+fn resumed_with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); pure_helper(); x } with {
+      pause(), k => resumed_with_helper(n - 1, () => k(#()))
+    }
+  }
+}
+perform show("resumed_plain", resumed_plain(1, () => 99))
+perform show("resumed_with_helper", resumed_with_helper(1, () => 99))
+"####
+            }
+            "backend-capture-bindings/resumed-operation-arm-capture" => {
+                r####"effect pause(): Unit resume ω
+effect read(): i64 resume 1
+fn pure_helper(): Unit { #() }
+fn resumed_arm(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); perform read() } with {
+      pause(), k => resumed_arm(n - 1, () => k(#()))
+      read(), k => { pure_helper(); k(x) }
+    }
+  }
+}
+perform show("arm", resumed_arm(1, () => 99))
+"####
+            }
+            "backend-capture-bindings/resumed-return-arm-capture" => {
+                r####"effect pause(): Unit resume ω
+fn pure_helper(): Unit { #() }
+fn resumed_return(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); 7 } with {
+      pause(), k => resumed_return(n - 1, () => k(#()))
+      return value => { pure_helper(); x }
+    }
+  }
+}
+perform show("return", resumed_return(1, () => 99))
+"####
+            }
+            "backend-closure-ownership/copy-captures-remain-readable" => {
+                r####"copy struct Stamp { value: i64 }
+let original := Stamp { value: 17 }
+let read := () => original.value
+perform show("first", read())
+perform show("original", original.value)
+perform show("second", read())
+"####
+            }
+            "backend-closure-ownership/shared-capture-last-use-remains-repeatable" => {
+                r####"fn make_read(): () -> Text {
+  let text := "kept"
+  () => text
+}
+let read := make_read()
+perform show("first", read())
+perform show("second", read())
+"####
+            }
+            "backend-closure-ownership/nested-affine-capture" => {
+                r####"affine struct Token { value: i64 }
+let original := Token { value: 23 }
+let outer: affine () -> affine () -> Token := () => () => original
+let inner := outer()
+let result := inner()
+perform show("nested", match result { Token { value } => value })
+"####
+            }
+            "backend-closure-ownership/linear-capture-is-consumed" => {
+                r####"linear struct Token { value: i64 }
+let original := Token { value: 31 }
+let consume: linear () -> Token := () => original
+let result := consume()
+perform show("linear", match result { Token { value } => value })
+"####
+            }
+            "backend-closure-ownership/borrowed-capture-is-not-consumed" => {
+                r####"fn twice(&read: () -> i64): i64 { read() + read() }
+var value := 7
+perform show("before", twice(() => value))
+value := 9
+perform show("after", twice(() => value))
+perform show("original", value)
+"####
+            }
+            "backend-direct-data/direct-generic-option-text-walk" => {
+                r####"fn spaces(t: Text, i: u64, found: List(Option(u64))): List(Option(u64)) ! {Div} {
+    match Text::byte(t, i) {
+        None => found,
+        Some(b) => spaces(t, i + 1, Cons(if b == 32 { Some(i) } else { None }, found))
+    }
+}
+fn count<A>(&l: List(A)): i64 ! {Div} {
+    match l { Nil => 0, Cons(h, rest) => 1 + count(&rest) }
+}
+var t := ""
+var n := 0
+while n < 500 { t := concat(t, "a b "); n := n + 1 }
+let found := spaces(t, 0, Nil)
+// A generic function runs in direct form under a caller that is in it.
+fn total(&l: List(Option(u64))): i64 ! {Div} { count(&l) }
+perform show("bytes", total(&found))"####
+            }
+            "backend-direct-data/direct-word-bits" => {
+                r####"fn mix(n: u64): u64 ! {Div} {
+    var a: u32 := 2166136261
+    var b: u64 := 1469598103934665603
+    var i: u64 := 0
+    while i < n {
+        let w := U32::of_u64(U64::and(b, 4294967295))
+        a := U32::xor(U32::rotl(a, 5), U32::or(U32::and(w, 65535), U32::shl(a, 3)))
+        a := U32::rotr(U32::xor(a, U32::shr(a, 7)), 11)
+        b := U64::xor(U64::rotl(b, 13), U64::of_u32(a))
+        b := U64::or(U64::and(b, U64::shl(b, 1)), U64::shr(U64::rotr(b, 17), 3))
+        i := i + 1
+    }
+    U64::xor(b, U64::of_u32(a))
+}
+perform show("mix", mix(300))"####
+            }
+            "backend-direct-data/direct-integer-range" => {
+                r####"fn grow(n: u64): u64 ! {Div} {
+    var x: u64 := 1
+    var i: u64 := 0
+    while i < n { x := x * 3 + 1; i := i + 1 }
+    x
+}
+fn shrink(x: u64): u64 ! {Div} {
+    var y := x
+    var k: u64 := 0
+    while y > 1 { y := div(y, 7); k := k + 1 }
+    k
+}
+fn signed(a: i64, b: i64): i64 ! {Div} {
+    div(a, b) * 1000 + mod(a, b)
+}
+fn big_i64(n: u64): i64 ! {Div} {
+    var x: i64 := -1
+    var i: u64 := 0
+    while i < n { x := x * 2; i := i + 1 }
+    x
+}
+fn neg(a: i64): i64 { 0 - a }
+fn nat_pow(n: nat): nat ! {Div} {
+    var x: nat := 1
+    var i: nat := 0
+    while i < n { x := x * 10; i := i + 1 }
+    x
+}
+fn classify(n: u64): u64 { match n { 0 => 10, 9007199254740993 => 20, other => 30 } }
+fn same(a: u64, b: u64): Bool { a == b }
+fn wrap(n: u64): Option(u64) ! {Div} { Some(n * 2) }
+fn unwrap(o: Option(u64)): u64 ! {Div} { match o { None => 0, Some(v) => v + 1 } }
+fn shifts(a: u32): u32 { U32::xor(U32::shl(a, 31), U32::shr(a, 33)) }
+perform show("grow40", grow(40))
+perform show("shrink", shrink(grow(40)))
+perform show("signed", signed(0 - 7, 2))
+perform show("signed2", signed(7, 0 - 2))
+perform show("i64min", big_i64(63))
+perform show("negsafe", neg(9007199254740991))
+perform show("nat", nat_pow(30))
+perform show("classify", classify(9007199254740992 + 1))
+perform show("classify0", classify(0))
+perform show("same", same(9007199254740992 + 1, 9007199254740993))
+perform show("opt", unwrap(wrap(4611686018427387904)))
+perform show("shifts", shifts(3))"####
+            }
+            "backend-direct-vectors/direct-vectors-in-place" => {
+                r####"struct Canvas { w: u64, h: u64 }
+
+fn blend(dst: u32, src: u32): u32 { U32::or(dst, src) }
+
+// A pixel through a cell: read, then written back.
+fn put(&mut px: Vec(u32), i: u64, src: u32): Unit {
+  let old := match Vec::get(&px, i) {
+    Some(x) => x
+    None => 0
+  }
+  match Vec::get_mut(&mut px, i) {
+    Some(at) => {
+      at := blend(old, src)
+    }
+    None => #()
+  }
+}
+
+fn fill(&mut px: Vec(u32), cv: Canvas, src: u32): Unit ! {Div} {
+  var y: u64 := 0
+  while y < cv.h {
+    var x: u64 := 0
+    while x < cv.w {
+      put(&mut px, y * cv.w + x, src)
+      x := x + 1
+    }
+    y := y + 1
+  }
+}
+
+fn sum(&px: Vec(u32)): u64 ! {Div} {
+  var s: u64 := 0
+  var i: u64 := 0
+  while i < Vec::len(&px) {
+    s := s + match Vec::get(&px, i) { Some(x) => U64::of_u32(x), None => 0 }
+    i := i + 1
+  }
+  s
+}
+
+fn bump(&mut n: u64, r#by: u64): Unit { n := n + r#by }
+
+fn swap_in(&mut v: Vec(u64)): Vec(u64) ! {Div} {
+  var w: Vec(u64) := Vec::new()
+  Vec::push(&mut w, 7)
+  Vec::push(&mut w, 8)
+  replace(&mut v, w)
+}
+
+fn words(&t: Text): Text ! {Div} {
+  var b := Buf::new()
+  Buf::push(&mut b, t)
+  let sp := " and "
+  Buf::push(&mut b, &sp)
+  Buf::push(&mut b, t)
+  Text::of(b)
+}
+
+fn trim(&mut v: Vec(u64)): u64 ! {Div} {
+  let popped := match Vec::pop(&mut v) { Some(x) => x, None => 0 }
+  Vec::truncate(&mut v, 1)
+  popped
+}
+
+fn last_twice(&mut v: Vec(u64)): Unit {
+  match Vec::last_mut(&mut v) { Some(at) => { at := at * 2 }, None => #() }
+}
+
+fn bytes_sum(b: Bytes): u64 ! {Div} {
+  var s: u64 := 0
+  var i: u64 := 0
+  while i < Bytes::len(b) {
+    s := s + match Bytes::get(b, i) { Some(x) => U64::of_u8(x), None => 0 }
+    i := i + 1
+  }
+  s
+}
+
+fn rows(&cv: Canvas): u64 { cv.h }
+
+var px: Vec(u32) := Vec::new()
+var i: u64 := 0
+while i < 12 { Vec::push(&mut px, U32::of_u64(i)); i := i + 1 }
+fill(&mut px, Canvas { w: 4, h: 3 }, 16)
+perform show("sum", sum(&px))
+var n: u64 := 5
+bump(&mut n, 9007199254740990)
+perform show("n", n)
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+Vec::push(&mut v, 3)
+let old := swap_in(&mut v)
+perform show("old", Vec::len(&old))
+perform show("new", Vec::len(&v))
+perform show("words", words("tea"))
+Vec::push(&mut v, 9)
+perform show("popped", trim(&mut v))
+last_twice(&mut v)
+perform show("trimmed", Vec::len(&v))
+perform show("first", match Vec::get(&v, 0) { Some(x) => x, None => 0 })
+var e: Vec(u64) := Vec::new()
+Vec::push(&mut e, 4)
+Vec::clear(&mut e)
+perform show("cleared", Vec::len(&e))
+perform show("bytes", bytes_sum(Bytes::of_list([1, 2, 250])))
+let cv := Canvas { w: 2, h: 9 }
+perform show("rows", rows(&cv))"####
+            }
+            "backend-direct-vectors/direct-changes-undone-on-restart" => {
+                r####"fn fill(&mut v: Vec(u64), n: u64): u64 ! {Div} {
+  if n == 0 {
+    0
+  } else {
+    Vec::push(&mut v, n)
+    match Vec::get_mut(&mut v, 0) { Some(at) => { at := at + 1 }, None => #() }
+    1 + fill(&mut v, n - 1)
+  }
+}
+
+fn count(&mut c: u64, n: u64): u64 ! {Div} {
+  if n == 0 { 0 } else { c := c + 1; 1 + count(&mut c, n - 1) }
+}
+
+fn churn(&mut v: Vec(u64), n: u64): u64 ! {Div} {
+  if n == 0 {
+    0
+  } else {
+    Vec::clear(&mut v)
+    Vec::push(&mut v, n)
+    Vec::push(&mut v, n)
+    Vec::truncate(&mut v, 1)
+    1 + churn(&mut v, n - 1)
+  }
+}
+
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 5)
+perform show("depth", fill(&mut v, 30000))
+perform show("len", Vec::len(&v))
+perform show("first", match Vec::get(&v, 0) { Some(x) => x, None => 0 })
+var c: u64 := 3
+perform show("count", count(&mut c, 30000))
+perform show("c", c)
+var w: Vec(u64) := Vec::new()
+Vec::push(&mut w, 1)
+Vec::push(&mut w, 2)
+perform show("churn", churn(&mut w, 30000))
+perform show("w", Vec::len(&w))
+perform show("w0", match Vec::get(&w, 0) { Some(x) => x, None => 0 })"####
+            }
+            "backend-tail-self-call/pure-tail-count" => {
+                r####"fn count(n: Nat, done: Nat): Nat {
+    match n: Nat { Zero => done, Succ(rest) => count(rest, done + 1) }
+}
+perform show("count", count(60000, 0))"####
+            }
+            "backend-tail-self-call/pure-non-tail-count" => {
+                r####"fn count(n: Nat): Nat {
+    match n: Nat { Zero => 0, Succ(rest) => 1 + count(rest) }
+}
+perform show("count", count(32))"####
+            }
+            _ => panic!("no copied input {name}"),
         }
     }
     #[allow(dead_code)]

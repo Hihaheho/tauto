@@ -92,7 +92,7 @@ fn a_tote_is_rejected_as_run_reads_it() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
         root.join("Tauto.eure"),
-        "package {\n  name = \"box-tote\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"box-tote\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     std::fs::write(root.join("src/main.taut"), NAT_IN_U64_FIELD).unwrap();
@@ -188,7 +188,7 @@ fn a_file_of_a_tote_is_checked_as_its_program() {
     std::fs::create_dir_all(tote.join("src")).unwrap();
     std::fs::write(
         tote.join("Tauto.eure"),
-        "package {\n  name = \"tote-file\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"tote-file\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     std::fs::write(tote.join("src/handler.taut"), NAT_FOR_U64).unwrap();
@@ -214,6 +214,7 @@ fn a_file_of_a_tote_is_checked_as_its_program() {
 /// name, and a keyword is not one, so `check` stops at reading it too.
 #[test]
 fn a_stray_pub_is_rejected() {
+    tauto_messages::install();
     let path = dir("stray-pub").join("main.taut");
     std::fs::write(&path, "pub // a comment\nfn main(): Unit {\n  ()\n}\n").unwrap();
     let Err(message) = check_report(&path, None) else {

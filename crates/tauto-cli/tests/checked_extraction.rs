@@ -17,12 +17,12 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join("lib/src")).unwrap();
         fs::create_dir_all(root.join("app/src")).unwrap();
+        fs::write(root.join("lib/Tauto.eure"), "package { name = \"lib\" }").unwrap();
         fs::write(
-            root.join("lib/Tauto.eure"),
-            "package { name = \"lib\" sources = [\"src\"] }",
+            root.join("app/Tauto.eure"),
+            "package { name = \"app\" }\ndependencies { lib { path = \"../lib\" } }",
         )
         .unwrap();
-        fs::write(root.join("app/Tauto.eure"), "package { name = \"app\" sources = [\"src\"] }\ndependencies { lib { path = \"../lib\" } }").unwrap();
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../std/Base.taut")
             .canonicalize()
@@ -45,7 +45,9 @@ pub fn mapped(xs: List(Nat)): List(Nat) { List::map(twice, xs) }
         .unwrap();
         fs::write(
             root.join("app/src/main.tauto"),
-            r#"perform show("value", mapped(Cons(2, Nil)))
+            r#"import lib::lib
+
+perform show("value", mapped(Cons(2, Nil)))
 "#,
         )
         .unwrap();
@@ -87,7 +89,9 @@ pub fn evens(xs: List(Nat)): List(Bool) { List::map(even, xs) }
         .unwrap();
         fs::write(
             root.join("app/src/main.tauto"),
-            r#"perform show("value", evens(Cons(2, Nil)))
+            r#"import lib::lib
+
+perform show("value", evens(Cons(2, Nil)))
 "#,
         )
         .unwrap();
@@ -285,7 +289,7 @@ fn single_file_imports_reach_every_backend() {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
         root.join("src/lib.taut"),
-        "fn twice(n: i64): i64 { n + n }\n",
+        "pub fn twice(n: i64): i64 { n + n }\n",
     )
     .unwrap();
     fs::write(

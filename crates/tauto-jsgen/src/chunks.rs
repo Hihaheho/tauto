@@ -136,7 +136,6 @@ pub(crate) fn owners(
     out
 }
 
-/// The names a module declares at its top level.
 pub(crate) fn declared(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in text.lines() {

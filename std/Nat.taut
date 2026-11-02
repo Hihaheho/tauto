@@ -4,8 +4,6 @@ module Nat {
   // The laws of the arithmetic of `Base.taut` (`Nat::add`, `Nat::mul`, `Nat::le`, …),
   // which recurses on its second argument.
 
-  // ---- addition ---------------------------------------------------------------
-
   pub theorem add_zero_left(n: Nat): add(Zero, n) = n {
     match n: add(Zero, n) = n {
       Zero => Refl
@@ -30,24 +28,14 @@ module Nat {
     }
   }
 
-  pub theorem add_assoc(
-    a: Nat,
-    b: Nat,
-    c: Nat
-  ): add(add(a, b), c) = add(a, add(b, c)) {
+  pub theorem add_assoc(a: Nat, b: Nat, c: Nat): add(add(a, b), c) = add(a, add(b, c)) {
     match c: add(add(a, b), c) = add(a, add(b, c)) {
       Zero => Refl
       Succ(k) => Eq::congr(Succ, add_assoc(a, b, k))
     }
   }
 
-  // ---- addition, continued ----------------------------------------------------
-
-  pub theorem add_swap(
-    a: Nat,
-    b: Nat,
-    c: Nat
-  ): add(add(a, b), c) = add(add(a, c), b) {
+  pub theorem add_swap(a: Nat, b: Nat, c: Nat): add(add(a, b), c) = add(add(a, c), b) {
     calc add(add(a, b), c) {
       = add(a, add(b, c)) from add_assoc(a, b, c)
       = add(a, add(c, b)) from Eq::congr(⟦add(a, □)⟧, add_comm(b, c))
@@ -61,8 +49,6 @@ module Nat {
       Succ(k) => mul_zero_left(k)
     }
   }
-
-  // ---- multiplication ---------------------------------------------------------
 
   pub theorem mul_succ_left(a: Nat, b: Nat): mul(Succ(a), b) = add(mul(a, b), b) {
     match b: mul(Succ(a), b) = add(mul(a, b), b) {
@@ -117,11 +103,7 @@ module Nat {
     }
   }
 
-  pub theorem add_swap_left(
-    a: Nat,
-    b: Nat,
-    c: Nat
-  ): add(a, add(b, c)) = add(b, add(a, c)) {
+  pub theorem add_swap_left(a: Nat, b: Nat, c: Nat): add(a, add(b, c)) = add(b, add(a, c)) {
     calc add(a, add(b, c)) {
       = add(add(a, b), c) from Eq::sym(add_assoc(a, b, c))
       = add(add(b, a), c) from Eq::congr(⟦add(□, c)⟧, add_comm(a, b))
@@ -129,7 +111,6 @@ module Nat {
     }
   }
 
-  // `(p + q) + (r + s) = (p + r) + (q + s)`
   pub theorem add_shuffle(
     p: Nat,
     q: Nat,
@@ -143,11 +124,7 @@ module Nat {
     }
   }
 
-  pub theorem mul_assoc(
-    a: Nat,
-    b: Nat,
-    c: Nat
-  ): mul(mul(a, b), c) = mul(a, mul(b, c)) {
+  pub theorem mul_assoc(a: Nat, b: Nat, c: Nat): mul(mul(a, b), c) = mul(a, mul(b, c)) {
     match c: mul(mul(a, b), c) = mul(a, mul(b, c)) {
       Zero => Refl
       Succ(k) => calc add(mul(mul(a, b), k), mul(a, b)) {
@@ -157,11 +134,7 @@ module Nat {
     }
   }
 
-  pub theorem mul_swap(
-    a: Nat,
-    b: Nat,
-    c: Nat
-  ): mul(a, mul(b, c)) = mul(b, mul(a, c)) {
+  pub theorem mul_swap(a: Nat, b: Nat, c: Nat): mul(a, mul(b, c)) = mul(b, mul(a, c)) {
     calc mul(a, mul(b, c)) {
       = mul(mul(a, b), c) from Eq::sym(mul_assoc(a, b, c))
       = mul(mul(b, a), c) from Eq::congr(⟦mul(□, c)⟧, mul_comm(a, b))
@@ -177,13 +150,14 @@ module Nat {
     match c: mul(add(a, b), c) = add(mul(a, c), mul(b, c)) {
       Zero => Refl
       Succ(k) => calc add(mul(add(a, b), k), add(a, b)) {
-        = add(add(mul(a, k), mul(b, k)), add(a, b)) from Eq::congr(⟦add(□, add(a, b))⟧, mul_add_distrib_right(a, b, k))
+        = add(
+          add(mul(a, k), mul(b, k)),
+          add(a, b)
+        ) from Eq::congr(⟦add(□, add(a, b))⟧, mul_add_distrib_right(a, b, k))
         = add(add(mul(a, k), a), add(mul(b, k), b)) from add_shuffle(mul(a, k), mul(b, k), a, b)
       }
     }
   }
-
-  // ---- order ------------------------------------------------------------------
 
   pub fn lt_zero_false(a: Nat): a < Zero = false {
     Refl
@@ -226,17 +200,11 @@ module Nat {
     }
   }
 
-  // `a < b` is `a + 1 <= b`.
   pub theorem lt_le_succ(a: Nat, b: Nat): a < b = Succ(a) <= b {
     Refl
   }
 
-  pub theorem le_antisym(
-    a: Nat,
-    b: Nat,
-    h1: a <= b = true,
-    h2: b <= a = true
-  ): a = b {
+  pub theorem le_antisym(a: Nat, b: Nat, h1: a <= b = true, h2: b <= a = true): a = b {
     match a: a = b {
       Zero => match b: Zero = b {
         Zero => Refl
@@ -249,8 +217,6 @@ module Nat {
     }
   }
 
-  // ---- subtraction ------------------------------------------------------------
-
   pub theorem sub_zero_left(n: Nat): Zero - n = Zero {
     match n: Zero - n = Zero {
       Zero => Refl
@@ -258,9 +224,6 @@ module Nat {
     }
   }
 
-  // ---- division -----------------------------------------------------------------
-
-  // Below `Succ(b)` and not `b`: below `b`.
   pub theorem lt_succ_ne(
     r: Nat,
     b: Nat,
@@ -279,7 +242,6 @@ module Nat {
     }
   }
 
-  // Below `b`, and one more is not `b`: one more is below `b` too.
   pub theorem lt_step(
     r: Nat,
     b: Nat,
@@ -292,7 +254,6 @@ module Nat {
     }
   }
 
-  // Something is below `b`: so is zero.
   pub theorem lt_zero_of(r: Nat, b: Nat, h: r < b = true): Zero < b = true {
     match b: Zero < b = true {
       Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(r)), h)))
@@ -300,14 +261,12 @@ module Nat {
     }
   }
 
-  // The remainder of a running division.
   pub fn divmod_rem(p: Pair(Nat, Nat)): Nat {
     match p: Nat {
       Pair { fst: q, snd: r } => r
     }
   }
 
-  // A running remainder below `b` stays below `b`.
   pub theorem divmod_rem_lt(
     a: Nat,
     b: Nat,
@@ -317,20 +276,20 @@ module Nat {
   ): divmod_rem(Nat::divmod(a, b, q, r)) < b = true {
     match a: divmod_rem(Nat::divmod(a, b, q, r)) < b = true {
       Zero => h
-      Succ(a2) => match Nat::eq(Succ(r), b) eqn e: divmod_rem(Nat::divmod(Succ(a2), b, q, r)) < b = true {
-        false => ⊢ divmod_rem(Nat::divmod(a2, b, q, Succ(r))) < b = true from divmod_rem_lt(a2, b, q, Succ(r), lt_step(r, b, h, e))
-        true => ⊢ divmod_rem(Nat::divmod(a2, b, Succ(q), Zero)) < b = true from divmod_rem_lt(
-          a2,
-          b,
-          Succ(q),
-          Zero,
-          lt_zero_of(r, b, h)
-        )
+      Succ(a2) => match Nat::eq(
+        Succ(r),
+        b
+      ) eqn e: divmod_rem(Nat::divmod(Succ(a2), b, q, r)) < b = true {
+        false => ⊢ divmod_rem(
+          Nat::divmod(a2, b, q, Succ(r))
+        ) < b = true from divmod_rem_lt(a2, b, q, Succ(r), lt_step(r, b, h, e))
+        true => ⊢ divmod_rem(
+          Nat::divmod(a2, b, Succ(q), Zero)
+        ) < b = true from divmod_rem_lt(a2, b, Succ(q), Zero, lt_zero_of(r, b, h))
       }
     }
   }
 
-  // `a mod b` is below `b` when `b` is not zero.
   pub theorem mod_lt(
     a: Nat,
     b: Nat,

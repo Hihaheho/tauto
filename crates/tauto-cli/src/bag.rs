@@ -778,7 +778,6 @@ fn resolve(project: &Path, update: &Update, seed: Option<Locked>) -> Result<Reso
 
 struct Resolver<'a> {
     cache: Cache,
-    /// The lock as it was.
     before: Lock,
     /// The lock as it was, with the commit `add` fetched.
     old: Lock,
@@ -1090,7 +1089,6 @@ mod edit {
         let inner = &text[open + 1..close];
         let line_start = text[..close].rfind('\n').map_or(0, |n| n + 1);
         if text[line_start..close].trim().is_empty() && inner.contains('\n') {
-            // `}` on its own line: the entry goes on the line before it.
             return Ok(format!(
                 "{}{}{}",
                 &text[..line_start],
@@ -1112,7 +1110,6 @@ mod edit {
         ))
     }
 
-    /// Each line two spaces in, and a line break after the last.
     fn indented(lines: &str) -> String {
         lines.lines().map(|l| format!("  {l}\n")).collect()
     }
@@ -1156,7 +1153,6 @@ mod edit {
         Err(crate::i18n::t!("bag-not-in-block", name = name))
     }
 
-    /// Without its last entry, the `dependencies` block goes too.
     fn drop_empty_block(text: String) -> String {
         let Some((key, open, close)) = top_blocks(&text)
             .into_iter()
@@ -1181,7 +1177,8 @@ mod edit {
     mod tests {
         use super::*;
 
-        const BASE: &str = "// A tote.\npackage {\n  name = \"app\" // the name\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n";
+        const BASE: &str =
+            "// A tote.\npackage {\n  name = \"app\" // the name\n  version = \"0.1.0\"\n}\n";
 
         #[test]
         fn a_block_is_made_when_there_is_none() {

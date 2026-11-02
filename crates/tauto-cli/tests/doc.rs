@@ -64,7 +64,7 @@ fn twice(n: i64): i64 { n + n }
     let html = fs::read_to_string(output.join("index.html")).unwrap();
     assert!(html.contains("axiom (assumption, not a proof)"), "{html}");
     assert!(html.contains("Axiom dependencies: assumed"), "{html}");
-    assert!(html.contains("fn twice(n: i64) -&gt; i64"), "{html}");
+    assert!(html.contains("fn twice(n: i64): i64"), "{html}");
     assert!(html.contains("not proof-checked"));
     assert!(html.contains("not type-checked or proof-checked"));
     assert!(
@@ -110,7 +110,7 @@ fn package_discovery_obeys_sources_and_never_executes_runtime() {
     let tmp = Temp::new();
     tmp.write(
         "Tauto.eure",
-        "package { name = \"doc-fixture\"\nversion = \"0.1.0\"\nsources = [\"src\"]\n}\n",
+        "package { name = \"doc-fixture\"\nversion = \"0.1.0\"\n}\n",
     );
     tmp.write(
         "src/main.taut",
@@ -133,7 +133,7 @@ fn imported_parent_paths_and_html_filenames_only_become_escaped_labels() {
     let tmp = Temp::new();
     tmp.write(
         "shared<&>.taut",
-        r#"theorem r#shared(): Zero = Zero { Refl(Nat, Zero) }
+        r#"pub theorem r#shared(): Zero = Zero { Refl(Nat, Zero) }
 "#,
     );
     let source = tmp.write(
@@ -229,9 +229,9 @@ module Calc { fn identity(n: i64): i64 { n } }
     assert_code(&doc(&source, &output), 0);
     let html = fs::read_to_string(output.join("index.html")).unwrap();
     assert!(html.contains("instance Twice(i64)"), "{html}");
-    assert!(html.contains("fn twice(x: i64) -&gt; i64"));
-    assert!(html.contains("fn Calc.identity(n: i64) -&gt; i64"));
-    assert_eq!(html.matches("<code>Calc.identity</code>").count(), 1);
+    assert!(html.contains("fn twice(x: i64): i64"));
+    assert!(html.contains("fn Calc::identity(n: i64): i64"));
+    assert_eq!(html.matches("<code>Calc::identity</code>").count(), 1);
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn inductive_constructor_generics_are_not_rendered_as_explicit_arguments() {
     assert_code(&out, 0);
     let html = fs::read_to_string(output.join("index.html")).unwrap();
     assert!(
-        html.contains("witness&lt;A: Type&gt;(value: A): Witness"),
+        html.contains("Mk&lt;A: Type&gt;(value: A): Witness"),
         "{html}"
     );
 }

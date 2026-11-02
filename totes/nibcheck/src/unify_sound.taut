@@ -1,14 +1,21 @@
+import std::prelude::Ord
 import "unify.taut"
 import "ty_eq.taut"
 import std::MapLaws
+import std::Base
+import std::Map
+import std::MapText
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "rules_ty.taut"
+import "ty.taut"
 
 // The unifier of `src/checker.taut` is sound
 // (`docs/design/self-host.md`「層 2：`ck_unify`（`src/unify_sound.taut`）」):
 // when it says two types are the same, they are, under the substitution it leaves
 // (`TyEq`, with the rigid types it recorded); and whatever it says,
 // it only binds variables that were not bound and only records more.
-
-// ----- the checker's state -----
 
 pub fn ck_val<A>(m: Mut1(A, Checker)): A {
   match m: A {
@@ -59,7 +66,6 @@ pub theorem ck_none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
   }
 }
 
-// A use of rigid types the checker recorded.
 pub(open) inductive KeptIn: (
   List(TyKept),
   List(Pair(Text, Kind)),
@@ -90,7 +96,6 @@ pub fn KeptOk(ks: List(TyKept)): (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, 
 
 pub def CkOrdered(c: Checker): Prop := Ordmap::ordered(ck_subst_of(c), Ordmap::compare_nat)
 
-// A kind bound the checker recorded.
 pub(open) inductive BoundIn: (List(TyBound), TyBound) -> Prop {
   BoundHere(b: TyBound, rest: List(TyBound)): BoundIn(Cons(b, rest), b)
   BoundThere<bs: List(TyBound), b: TyBound>(x: TyBound, h: BoundIn(bs, b)): BoundIn(Cons(x, bs), b)
@@ -120,13 +125,13 @@ pub fn ck_deferred_view(
 }
 pub fn ck_deferred_stable(
   r#view: Pair(Pair(List(TyLiteral), Ordmap(Text, Scheme)), Pair(List(TyPending), List(TyCtorBound)))
-): Pair(List(TyLiteral), Ordmap(Text, Scheme)) { (r#view: Pair(List(TyLiteral), Ordmap(Text, Scheme))) }
+): Pair(List(TyLiteral), Ordmap(Text, Scheme)) { r#view.fst }
 pub fn ck_deferred_pending(
   r#view: Pair(Pair(List(TyLiteral), Ordmap(Text, Scheme)), Pair(List(TyPending), List(TyCtorBound)))
-): List(TyPending) { (r#view: Pair(List(TyPending), List(TyCtorBound))).fst }
+): List(TyPending) { r#view.snd.fst }
 pub fn ck_deferred_ctors(
   r#view: Pair(Pair(List(TyLiteral), Ordmap(Text, Scheme)), Pair(List(TyPending), List(TyCtorBound)))
-): List(TyCtorBound) { (r#view: Pair(List(TyPending), List(TyCtorBound))).snd }
+): List(TyCtorBound) { r#view.snd.snd }
 
 pub def CkFixed(
   c: Checker,
@@ -412,8 +417,6 @@ pub theorem grows_of_same(
 ): Grows(c, c2) {
   grows_same(c, c2, o, h)
 }
-
-// ----- binding -----
 
 pub theorem subst_ext_insert(
   s: Ordmap(Nat, Ty),
@@ -846,8 +849,6 @@ pub theorem ck_bind_ok(c: Checker, v: Nat, t: Ty): UOk(c, ck_bind(c, v, t), TyVa
   )
 }
 
-// ----- rigid types -----
-
 pub fn tk_first(g: Pair(Text, Kind)): Text {
   match g: Text {
     Pair { fst: a, snd: b } => a
@@ -937,7 +938,6 @@ pub def KeepOk(
   (ck_val(m) = true) -> KeptIn(ck_kept_of(ck_st(m)), gs, rigid, a, b)
 )
 
-// Recording a use of rigid types.
 pub theorem ck_keep_ok(
   c: Checker,
   gs: List(Pair(Text, Kind)),
@@ -979,8 +979,6 @@ pub theorem ck_keep_ok(
   )
 }
 
-// ----- steps in sequence -----
-
 // What a step gives, for a property `q` of the state it leaves when it says
 // true.
 pub def Post(
@@ -1001,7 +999,6 @@ pub fn ck_and_k(k: (Checker) -> Mut1(Bool, Checker), c2: Checker, v: Bool): Mut1
   }
 }
 
-// `if m { k } else { false }`, `m` a step that changes the state.
 pub fn ck_and(k: (Checker) -> Mut1(Bool, Checker), m: Mut1(Bool, Checker)): Mut1(Bool, Checker) {
   match m: Mut1(Bool, Checker) {
     mut1(v, c2) => ck_and_k(k, c2, v)
@@ -1043,7 +1040,6 @@ pub theorem post_and_k(
   }
 }
 
-// One step and, when it says true, another.
 pub theorem post_and(
   c: Checker,
   m: Mut1(Bool, Checker),
@@ -1059,8 +1055,6 @@ pub theorem post_and(
     mut1(v, c2) => post_and_k(c, c2, v, q1, k, q2, mono1, And::left(h1(o)), And::right(h1(o)), h2(c2))
   }
 }
-
-// ----- unifying -----
 
 pub theorem uok_tyeq(c: Checker, a: Ty, b: Ty): UOk(c, mut1(ty_eq(a, b), c), a, b) {
   (o: CkOrdered(c)) => AndIntro(
@@ -1130,7 +1124,6 @@ pub theorem mono_len(xs: List(Ty), ys: List(Ty)): Mono((c: Checker) => TyEqLenAt
   ) => tyeq_list_at_move(c1, c2, g, xs, ys, h(e))
 }
 
-// Both steps said true: what they give, together.
 pub theorem post_of_and(
   c: Checker,
   m: Mut1(Bool, Checker),
@@ -1150,7 +1143,6 @@ pub theorem post_of_and(
   )
 }
 
-// The first of two unifying steps and, when it says true, the second.
 pub theorem uok_and(
   c: Checker,
   m: Mut1(Bool, Checker),
@@ -1203,8 +1195,6 @@ pub def UnifyA(
 ): Prop := ∀ c: Checker. ∀ h: Ty. ∀ x: Ty. ∀ n: Text. ∀ args: List(
   Ty
 ). UOk(c, ck_unify_app_in(k, c, h, x, n, args), TyApp(h, x), TyNamed(n, args))
-
-// ----- pairs -----
 
 pub theorem post_true_len(
   c: Checker,
@@ -1268,8 +1258,6 @@ pub theorem pairs_step(
   }
 }
 
-// ----- `h(x) ~ n(args)` -----
-
 pub fn ck_opt_or<A>(d: A, o: Option(A)): A {
   match o: A {
     None => d
@@ -1307,8 +1295,8 @@ pub theorem ck_split_k_some(
 ): False {
   match o: (ck_split_k(a, o) = None) -> False {
     None => (
-      e2: Some(Pair { fst: Nil, snd: a }) = None
-    ) => ck_none_ne_some(Pair { fst: Nil, snd: a }, Eq::sym(e2))
+      e2: Some(Pair { fst: Nil(Ty), snd: a }) = None
+    ) => ck_none_ne_some(Pair { fst: Nil(Ty), snd: a }, Eq::sym(e2))
     Some(q) => (
       e2: Some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }) = None
     ) => ck_none_ne_some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }, Eq::sym(e2))
@@ -1495,8 +1483,6 @@ pub theorem app_step(
   ck_app_k_ok(j, hu, c, h, x, n, args, ty_split_last(args))(Refl)
 }
 
-// ----- one step of `ck_unify_in` -----
-
 pub fn ck_steps_of(c: Checker): Nat {
   c.steps
 }
@@ -1560,8 +1546,6 @@ pub theorem unify_step(
     )(Refl)
   )
 }
-
-// ----- what the conditions say -----
 
 pub theorem ck_bool_and_left(a: Bool, b: Bool, e: Bool::and(a, b) = true): (a = true) {
   match a: (Bool::and(a, b) = true) -> (a = true) {
@@ -1634,8 +1618,6 @@ pub theorem kind_same_of(
     )
   )(e)
 }
-
-// ----- one step of `ck_unify_rest_in` -----
 
 pub theorem post_seq(
   c: Checker,
@@ -2377,8 +2359,6 @@ pub theorem rest_step(
 ): UOk(c, ck_unify_rest_in(Succ(j), c, a, b), a, b) {
   rest_step_eqs(j, hu, hp, happ, c, a, b, a, b, Refl, Refl)
 }
-
-// ----- by fuel -----
 
 pub def UnifyAt(k: Nat): Prop := And(UnifyU(k), And(UnifyR(k), And(UnifyP(k), UnifyA(k))))
 

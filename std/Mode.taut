@@ -1,4 +1,6 @@
 import "Std.taut"
+import std::prelude::Macro
+import std::prelude::Shared
 
 // A relation's inputs select a rule; premises are processed in their written order.
 // Success carries an output, its derivation and uniqueness. Failure carries a
@@ -39,7 +41,7 @@ pub(open) struct SpecItem { head: SynIdent, args: List(SynIdent) }
 // What the spec says, with the names this macro writes.
 pub(open) struct Gen {
   rel: SynIdent
-  roles: List(SynIdent × Text)
+  roles: List(Text × SynIdent)
   res: SynIdent
   ok: SynIdent
   bad: SynIdent
@@ -67,7 +69,6 @@ pub(open) struct MoRow {
   types: List(@key SynExpr × @value SynExpr)
 }
 
-// The arguments of a relation, split by the role of their position.
 pub(open) struct Split { rec: Option(SynExpr), ins: List(SynExpr), out: Option(SynExpr) }
 
 module Mo {
@@ -136,7 +137,10 @@ module Mo {
       Cons(t.answer.name, Cons(t.answer.name_2, Cons(t.answer.name_3, Nil))),
       at
     )
-    let rest := Cons(Mo::item("name", Cons(t.name, Nil), at), Cons(result, Mo::clauses(t.clause, at)))
+    let rest := Cons(
+      Mo::item("name", Cons(t.name, Nil), at),
+      Cons(result, Mo::clauses(t.clause, at))
+    )
     Syn::append(roles, rest)
   }
 
@@ -170,10 +174,7 @@ module Mo {
     }
   }
 
-  pub fn roles(
-    items: List(SpecItem),
-    at: SynSpan
-  ): List(SynIdent × Text) ! {macro_error, Div} {
+  pub fn roles(items: List(SpecItem), at: SynSpan): List(Text × SynIdent) ! {macro_error, Div} {
     match items {
       Nil => Nil
       Cons(i, rest) => {
@@ -188,7 +189,7 @@ module Mo {
   }
 
   pub fn split(
-    roles: List(SynIdent × Text),
+    roles: List(Text × SynIdent),
     args: List(SynExpr),
     at: SynSpan
   ): Split ! {macro_error, Div} {
@@ -304,11 +305,7 @@ module Mo {
     ExApp(ExVar(g.rel), Mo::replace_out(g.roles, args, o), g.at)
   }
 
-  pub fn replace_out(
-    roles: List(SynIdent × Text),
-    args: List(SynExpr),
-    o: SynExpr
-  ): List(SynExpr) {
+  pub fn replace_out(roles: List(Text × SynIdent), args: List(SynExpr), o: SynExpr): List(SynExpr) {
     match roles {
       Nil => args
       Cons(r, rr) => match args {
@@ -329,9 +326,8 @@ module Mo {
     }
   }
 
-  // The names of the positions with this role, each with its type, in order.
   pub fn of_role(
-    roles: List(SynIdent × Text),
+    roles: List(Text × SynIdent),
     tys: List(SynExpr),
     want: Text
   ): List(SynExpr × SynIdent) {
@@ -340,7 +336,7 @@ module Mo {
       Cons(r, rr) => match tys {
         Nil => Nil
         Cons(t, tr) => if (r: Text) == want {
-          Cons(#((r: SynIdent), t), Mo::of_role(rr, tr, want))
+          Cons(#(t, (r: SynIdent)), Mo::of_role(rr, tr, want))
         } else {
           Mo::of_role(rr, tr, want)
         }
@@ -355,7 +351,7 @@ module Mo {
     }
   }
 
-  pub fn role_names(roles: List(SynIdent × Text), want: Text): List(SynIdent) {
+  pub fn role_names(roles: List(Text × SynIdent), want: Text): List(SynIdent) {
     match roles {
       Nil => Nil
       Cons(r, rr) => if (r: Text) == want { Cons((r: SynIdent), Mo::role_names(rr, want)) } else {
@@ -363,8 +359,6 @@ module Mo {
       }
     }
   }
-
-  // ---- the rules as arms: a match on each position a rule asks a constructor of ----
 
   pub fn nth(l: List(SynExpr), k: u64, at: SynSpan): SynExpr ! {macro_error, Div} {
     match l {
@@ -641,7 +635,9 @@ module Mo {
         "mode: relation parameters must be written as positions in its signature"
       )
     }
-    if not(Mp::prop_sort(d.sort)) { Syn::error(at, "mode: the relation must end in Prop") } else { #() }
+    if not(
+      Mp::prop_sort(d.sort)
+    ) { Syn::error(at, "mode: the relation must end in Prop") } else { #() }
     let result := Mo::one(items, "result", at)
     let signature := Mp::signature(d.sort)
     let tys := Mp::instantiate_types(signature, Mo::all_names(roles), Nil, at)
@@ -667,7 +663,12 @@ module Mo {
     }
     let params := Syn::append(Mo::of_role(roles, tys, "rec"), Mo::of_role(roles, tys, "in"))
     let out := Mo::of_role(roles, tys, "out")
-    Mp::type_order(Syn::append(params, out), Mo::names(Mo::first_names(Mp::role_params(roles))), Nil, at)
+    Mp::type_order(
+      Syn::append(params, out),
+      Mo::names(Mo::first_names(Mp::role_params(roles))),
+      Nil,
+      at
+    )
     let all := Mo::all_names(roles)
     let answer := ExApp(ExVar(g.res), Mo::vars(Mo::first_names(params)), at)
     let proof := Mo::name(at, Mo::unused(Mo::names(Mo::first_names(Syn::append(params, out))), "h"))
@@ -677,7 +678,7 @@ module Mo {
       params: Syn::append(
         out,
         Syn::append(
-          Cons(#(proof, ExApp(ExVar(d.name), all, at)), Nil),
+          Cons(#(ExApp(ExVar(d.name), all, at), proof), Nil),
           Mp::unique_param(g, all, out)
         )
       )
@@ -685,10 +686,7 @@ module Mo {
     }
     let bad := SynIndCtor { name: g.bad, implicit: 0,
       params: Cons(
-        #(
-          Mo::name(at, Mo::unused(Mo::expr_names(all), "refute")),
-          Mp::refute_type(g, all)
-        ),
+        #(Mp::refute_type(g, all), Mo::name(at, Mo::unused(Mo::expr_names(all), "refute"))),
         Nil
       ), result: answer }
     let res := SynInductive {
@@ -718,7 +716,7 @@ module Mo {
     Cons(StInductive(res), Cons(StFn(f), Nil))
   }
 
-  pub fn all_names(roles: List(SynIdent × Text)): List(SynExpr) {
+  pub fn all_names(roles: List(Text × SynIdent)): List(SynExpr) {
     match roles {
       Nil => Nil
       Cons(r, rr) => Cons(ExVar((r: SynIdent)), Mo::all_names(rr))
@@ -741,7 +739,7 @@ module Mo {
     }
   }
 
-  pub fn count_roles(l: List(SynIdent × Text)): u64 {
+  pub fn count_roles(l: List(Text × SynIdent)): u64 {
     match l {
       Nil => 0
       Cons(_, rest) => 1 + Mo::count_roles(rest)
@@ -755,7 +753,7 @@ module Mp {
   pub fn evidence_params(es: List(MpEvidence)): List(SynExpr × SynIdent) {
     match es {
       Nil => Nil
-      Cons(e, rest) => Cons(#(e.unique, e.ty), Mp::evidence_params(rest))
+      Cons(e, rest) => Cons(#(e.ty, e.unique), Mp::evidence_params(rest))
     }
   }
   pub fn evidence_remap(
@@ -809,7 +807,10 @@ module Mp {
   pub fn syn_params(ps: List(SynExpr × SynIdent)): List(SynParam) {
     match ps {
       Nil => Nil
-      Cons(p, rest) => Cons(SynParam { name: Some((p: SynIdent)), ty: (p: SynExpr) }, Mp::syn_params(rest))
+      Cons(p, rest) => Cons(
+        SynParam { name: Some((p: SynIdent)), ty: (p: SynExpr) },
+        Mp::syn_params(rest)
+      )
     }
   }
   pub fn lam(ns: List(SynIdent), body: SynExpr, at: SynSpan): SynExpr {
@@ -824,7 +825,7 @@ module Mp {
       Cons(n, rest) => Cons(BName(n, None), Mp::binders(rest))
     }
   }
-  pub fn output_type(roles: List(SynIdent × Text), tys: List(SynExpr)): Option(SynExpr) {
+  pub fn output_type(roles: List(Text × SynIdent), tys: List(SynExpr)): Option(SynExpr) {
     match roles {
 
       Nil => None
@@ -848,11 +849,7 @@ module Mp {
       at,
       Mo::unused(Mo::expr_names(Cons(rel, Cons(out, Nil))), concat(name.name, "_proof"))
     )
-    Mp::pi(
-      Cons(#(name, ty), Cons(#(h, rel), Nil)),
-      Mp::eq(ty, ExVar(name), out),
-      at
-    )
+    Mp::pi(Cons(#(ty, name), Cons(#(rel, h), Nil)), Mp::eq(ty, ExVar(name), out), at)
   }
   pub fn unique_param(
     g: Gen,
@@ -867,8 +864,14 @@ module Mp {
         let y := Mo::name(g.at, Mo::unused(Mo::expr_names(args), "mode_other"))
         Cons(
           #(
-            Mo::name(g.at, Mo::unused(Mo::expr_names(args), "unique")),
-            Mp::unique_type((o: SynExpr), Mo::app_out(g, args, ExVar(y)), ExVar((o: SynIdent)), y, g.at)
+            Mp::unique_type(
+              (o: SynExpr),
+              Mo::app_out(g, args, ExVar(y)),
+              ExVar((o: SynIdent)),
+              y,
+              g.at
+            ),
+            Mo::name(g.at, Mo::unused(Mo::expr_names(args), "unique"))
           ),
           Nil
         )
@@ -880,13 +883,10 @@ module Mp {
     let h := Mo::name(g.at, Mo::unused(Mo::expr_names(args), "mode_derivation"))
     match g.output_type {
 
-      None => Mp::pi(Cons(#(h, Mo::call(g.rel, args, g.at)), Nil), Mp::false_prop(), g.at)
+      None => Mp::pi(Cons(#(Mo::call(g.rel, args, g.at), h), Nil), Mp::false_prop(), g.at)
 
       Some(ty) => Mp::pi(
-        Cons(
-          #(y, ty),
-          Cons(#(h, Mo::app_out(g, args, ExVar(y))), Nil)
-        ),
+        Cons(#(ty, y), Cons(#(Mo::app_out(g, args, ExVar(y)), h), Nil)),
         Mp::false_prop(),
         g.at
       )
@@ -903,7 +903,11 @@ module Mp {
         Cons(h, Nil)
       )
     }
-    Mo::call(g.bad, Cons(Mp::lam(ns, Mo::match_expr(ExVar(h), Mp::false_prop(), Nil, g.at), g.at), Nil), g.at)
+    Mo::call(
+      g.bad,
+      Cons(Mp::lam(ns, Mo::match_expr(ExVar(h), Mp::false_prop(), Nil, g.at), g.at), Nil),
+      g.at
+    )
   }
   pub fn ctor(cs: List(SynIndCtor), name: SynIdent, at: SynSpan): SynIndCtor ! {macro_error, Div} {
     match cs {
@@ -918,7 +922,10 @@ module Mp {
 
       Nil => e
 
-      Cons(#(@original original, @renamed renamed), rest) => Mp::sub(Syn::replace(e, ExVar(original), ExVar(renamed)), rest)
+      Cons(#(@original original, @renamed renamed), rest) => Mp::sub(
+        Syn::replace(e, ExVar(original), ExVar(renamed)),
+        rest
+      )
     }
   }
   pub fn lookup(env: List(@original SynIdent × @renamed SynIdent), x: SynIdent): SynIdent {
@@ -926,7 +933,9 @@ module Mp {
 
       Nil => x
 
-      Cons(#(@original original, @renamed renamed), rest) => if original.name == x.name { renamed } else { Mp::lookup(rest, x) }
+      Cons(#(@original original, @renamed renamed), rest) => if original.name == x.name {
+        renamed
+      } else { Mp::lookup(rest, x) }
     }
   }
   pub fn env(
@@ -958,7 +967,9 @@ module Mp {
 
       Nil => Syn::error(at, concat("mode: no premise ", name.name))
 
-      Cons(p, rest) => if (p: SynIdent).name == name.name { (p: SynExpr) } else { Mp::param(rest, name, at) }
+      Cons(p, rest) => if (
+        p: SynIdent
+      ).name == name.name { (p: SynExpr) } else { Mp::param(rest, name, at) }
     }
   }
   pub fn after(ps: List(SynExpr × SynIdent), name: SynIdent): List(SynExpr × SynIdent) {
@@ -978,7 +989,9 @@ module Mp {
 
         None => Syn::error(g.at, "mode: a premise has a named relation")
 
-        Some(n) => if n.name == g.rel.name { Mo::split(g.roles, (p: List(SynExpr)), g.at).out } else {
+        Some(n) => if n.name == g.rel.name {
+          Mo::split(g.roles, (p: List(SynExpr)), g.at).out
+        } else {
           Some(Mo::last((p: List(SynExpr)), g.at))
         }
       }
@@ -1047,7 +1060,10 @@ module Mp {
 
       Cons(p, rest) => {
         let before := Mp::lookup(env, (p: SynIdent))
-        let next := Mo::name(at, Mo::unused(Mo::names(Mp::env_names(env)), concat(before.name, "_next")))
+        let next := Mo::name(
+          at,
+          Mo::unused(Mo::names(Mp::env_names(env)), concat(before.name, "_next"))
+        )
         Mp::rebind(rest, Mp::env_set(env, (p: SynIdent), next), at)
       }
     }
@@ -1062,7 +1078,9 @@ module Mp {
       Nil => Nil
 
       Cons(#(@original original, @renamed renamed), rest) => Cons(
-        if original.name == key.name { #(@original key, @renamed value) } else { #(@original original, @renamed renamed) },
+        if original.name == key.name { #(@original key, @renamed value) } else {
+          #(@original original, @renamed renamed)
+        },
         Mp::env_set(rest, key, value)
       )
     }
@@ -1076,7 +1094,7 @@ module Mp {
       Nil => Nil
 
       Cons(p, rest) => Cons(
-        #(Mp::lookup(env, (p: SynIdent)), Mp::sub((p: SynExpr), env)),
+        #(Mp::sub((p: SynExpr), env), Mp::lookup(env, (p: SynIdent))),
         Mp::remap(rest, env)
       )
     }
@@ -1141,21 +1159,13 @@ module Mp {
       Cons(e, rest) => Cons(Mp::transport(e, orig, to), Mp::transport_all(rest, orig, to))
     }
   }
-  pub fn transport_option(
-    e: Option(SynExpr),
-    orig: SynExpr,
-    to: SynExpr
-  ): Option(SynExpr) ! {Div} {
+  pub fn transport_option(e: Option(SynExpr), orig: SynExpr, to: SynExpr): Option(SynExpr) ! {Div} {
     match e {
       None => None
       Some(value) => Some(Mp::transport(value, orig, to))
     }
   }
-  pub fn transport_params(
-    ps: List(SynParam),
-    orig: SynExpr,
-    to: SynExpr
-  ): List(SynParam) ! {Div} {
+  pub fn transport_params(ps: List(SynParam), orig: SynExpr, to: SynExpr): List(SynParam) ! {Div} {
     match ps {
       Nil => Nil
       Cons(p, rest) => Cons(
@@ -1328,7 +1338,7 @@ module Mp {
 
 pub(open) struct MpCall {
   term: SynExpr, ok: SynIdent, bad: SynIdent,
-  rel: SynIdent, args: List(SynExpr), roles: List(SynIdent × Text),
+  rel: SynIdent, args: List(SynExpr), roles: List(Text × SynIdent),
   output: Option(SynExpr), output_type: Option(SynExpr)
 }
 pub(open) struct MpWork {
@@ -1336,7 +1346,7 @@ pub(open) struct MpWork {
   proofs: List(SynExpr), done: List(MpEvidence), premise: SynIdent, call: MpCall
 }
 module Mp {
-  pub fn via_roles(args: List(SynExpr), at: SynSpan): List(SynIdent × Text) {
+  pub fn via_roles(args: List(SynExpr), at: SynSpan): List(Text × SynIdent) {
     match args {
 
       Nil => Nil
@@ -1355,10 +1365,18 @@ module Mp {
       None => Syn::error(g.at, "mode: a premise has a named relation") }
     if name.name == g.rel.name {
       let s := Mo::split(g.roles, (parts: List(SynExpr)), g.at)
-      MpCall { term: Mo::call(g.fname, Cons(Mo::need(s.rec, g.at), s.ins), g.at), ok: g.ok, bad: g.bad,
-        rel: name, args: (parts: List(SynExpr)), roles: g.roles, output: s.out, output_type: match g.output_type {
+      MpCall { term: Mo::call(
+        g.fname,
+        Cons(Mo::need(s.rec, g.at), s.ins),
+        g.at
+      ), ok: g.ok, bad: g.bad,
+        rel: name, args: (
+          parts: List(SynExpr)
+        ), roles: g.roles, output: s.out, output_type: match g.output_type {
           None => None
-          Some(ty) => Some(Mp::apply(ty, Mp::pairs(Mo::all_names(g.roles), (parts: List(SynExpr))))) } }
+          Some(ty) => Some(
+            Mp::apply(ty, Mp::pairs(Mo::all_names(g.roles), (parts: List(SynExpr))))
+          ) } }
     } else {
       let v := Mo::via_item(Mo::named(g.items, "via"), name, g.at)
       Mp::contract_constructor(
@@ -1381,13 +1399,18 @@ module Mp {
         Mo::init((parts: List(SynExpr))),
         g.at
       ), ok: Mo::arg(v, 2, g.at), bad: Mo::arg(v, 3, g.at),
-        rel: name, args: (parts: List(SynExpr)), roles: Mp::via_roles(
+        rel: name, args: (
+          parts: List(SynExpr)
+        ), roles: Mp::via_roles(
           (parts: List(SynExpr)),
           g.at
         ), output: Some(
           Mo::last((parts: List(SynExpr)), g.at)
         ), output_type: Some(
-          Mo::last(Mp::instantiate_types(Mp::signature(ty0), (parts: List(SynExpr)), Nil, g.at), g.at)
+          Mo::last(
+            Mp::instantiate_types(Mp::signature(ty0), (parts: List(SynExpr)), Nil, g.at),
+            g.at
+          )
         ) }
     }
   }
@@ -1402,9 +1425,9 @@ module Mp {
     let y := Mo::name(g.at, Mo::unused(Mo::expr_names(c.args), "mode_absent_answer"))
     let h := Mo::name(g.at, Mo::unused(Mo::expr_names(c.args), "mode_absent_proof"))
     match c.output_type {
-      None => Mp::pi(Cons(#(h, Mo::call(c.rel, c.args, g.at)), Nil), Mp::false_prop(), g.at)
+      None => Mp::pi(Cons(#(Mo::call(c.rel, c.args, g.at), h), Nil), Mp::false_prop(), g.at)
       Some(ty) => Mp::pi(
-        Cons(#(y, ty), Cons(#(h, Mp::rel(c, ExVar(y), g.at)), Nil)),
+        Cons(#(ty, y), Cons(#(Mp::rel(c, ExVar(y), g.at), h), Nil)),
         Mp::false_prop(),
         g.at
       )
@@ -1491,13 +1514,7 @@ module Mp {
           let failure := Mo::call(
             g.bad,
             Cons(
-              Mp::certificate(
-                g,
-                r,
-                done,
-                MpReject(h, no),
-                Cons(#(no, Mp::call_refute(g, c)), Nil)
-              ),
+              Mp::certificate(g, r, done, MpReject(h, no), Cons(#(Mp::call_refute(g, c), no), Nil)),
               Nil
             ),
             g.at
@@ -1553,8 +1570,22 @@ module Mp {
     u: SynIdent
   ): List(SynExpr × SynIdent) ! {macro_error, Div} {
     let y := Mo::name(g.at, Mo::unused(w.row.vars, "mode_equal_output"))
-    Cons(#(h, Mp::rel(w.call, whole, g.at)), Cons(#(u,
-      Mp::unique_type(Mo::need(w.call.output_type, g.at), Mp::rel(w.call, ExVar(y), g.at), whole, y, g.at)), Nil))
+    Cons(
+      #(Mp::rel(w.call, whole, g.at), h),
+      Cons(
+        #(
+          Mp::unique_type(
+            Mo::need(w.call.output_type, g.at),
+            Mp::rel(w.call, ExVar(y), g.at),
+            whole,
+            y,
+            g.at
+          ),
+          u
+        ),
+        Nil
+      )
+    )
   }
   pub fn eq_item(items: List(SpecItem), ty: SynExpr, at: SynSpan): SpecItem ! {macro_error, Div} {
     match items {
@@ -1616,7 +1647,10 @@ module Mp {
   pub fn param_types(ps: List(SynExpr × SynIdent)): List(@key SynExpr × @value SynExpr) {
     match ps {
       Nil => Nil
-      Cons(p, rest) => Cons(#(@key ExVar((p: SynIdent)), @value (p: SynExpr)), Mp::param_types(rest))
+      Cons(p, rest) => Cons(
+        #(@key ExVar((p: SynIdent)), @value (p: SynExpr)),
+        Mp::param_types(rest)
+      )
     }
   }
   pub fn expr_type(
@@ -1626,7 +1660,10 @@ module Mp {
   ): SynExpr ! {macro_error, Div} {
     match ps {
       Nil => Syn::error(at, "mode: the compared variable has no declared type")
-      Cons(#(@key key, @value value), rest) => if Syn::same(key, e) { value } else { Mp::expr_type(rest, e, at) }
+      Cons(#(@key key, @value value), rest) => if Syn::same(
+        key,
+        e
+      ) { value } else { Mp::expr_type(rest, e, at) }
     }
   }
   // A projection of the field being compared turns whole-output uniqueness into
@@ -1778,16 +1815,16 @@ module Mp {
           w.done,
           MpDifferent(w.premise, u, no, Mp::projection(g, w, whole, got, want, compared)),
           Cons(
-            #(u, Mp::call_unique(g, w.call, whole)),
+            #(Mp::call_unique(g, w.call, whole), u),
             Cons(
               #(
-                no,
                 ExPi(
                   Cons(SynParam { name: None, ty: Mp::eq(compared, want, got) }, Nil),
                   Mp::false_prop(),
                   None,
                   g.at
-                )
+                ),
+                no
               ),
               Nil
             )
@@ -1890,7 +1927,7 @@ module Mp {
             w.row,
             w.done,
             MpShape(w.premise, u),
-            Cons(#(u, Mp::call_unique(g, w.call, failed)), Nil)
+            Cons(#(Mp::call_unique(g, w.call, failed), u), Nil)
           )
           let body := Mp::lam(
             Cons(h, Cons(u, Nil)),
@@ -1968,7 +2005,13 @@ module Mp {
         match Mo::var_of(r, pat) {
 
           Some(v) => {
-            let row := Mo::subst_row(r, v.name, Mo::call(c, Mo::vars(fields), at), Mo::names(fields), at)
+            let row := Mo::subst_row(
+              r,
+              v.name,
+              Mo::call(c, Mo::vars(fields), at),
+              Mo::names(fields),
+              at
+            )
             Cons(Mp::pats_row(row, Syn::append(Mp::remove(row.pats, k), Mo::vars(fields))), tail)
           }
 
@@ -2020,12 +2063,19 @@ module Mp {
       Nil => Nil
       Cons(name, rest) => {
         let c := Mo::name(g.at, name)
-        let fields := Mp::ctor_fields(c, Syn::append(Mp::rows_scope(rows), Mo::expr_names(cur)), g.at)
+        let fields := Mp::ctor_fields(
+          c,
+          Syn::append(Mp::rows_scope(rows), Mo::expr_names(cur)),
+          g.at
+        )
         let value := Mo::call(c, Mo::vars(fields), g.at)
         let nextcur := Syn::replace_all(cur, Mo::nth(subjects, k, g.at), value)
         let nextsubjects := Syn::append(Mp::remove(subjects, k), Mo::vars(fields))
         let body := Mp::compile(g, Mp::specialize(rows, k, c, fields, g.at), nextcur, nextsubjects)
-        Cons(Mo::arm(PtCtor(c, Mo::pats(fields)), body), Mp::input_arms(g, rest, rows, cur, subjects, k))
+        Cons(
+          Mo::arm(PtCtor(c, Mo::pats(fields)), body),
+          Mp::input_arms(g, rest, rows, cur, subjects, k)
+        )
       }
     }
   }
@@ -2095,7 +2145,7 @@ module Mp {
       }
     }
   }
-  pub fn role_count(rs: List(SynIdent × Text), role: Text): u64 {
+  pub fn role_count(rs: List(Text × SynIdent), role: Text): u64 {
     match rs {
       Nil => 0
       Cons(r, rest) => (if (r: Text) == role { 1 } else { 0 }) + Mp::role_count(rest, role)
@@ -2113,7 +2163,7 @@ module Mp {
       } else { Mp::distinct_names(rest, Cons(n.name, seen), at) }
     }
   }
-  pub fn validate_roles(rs: List(SynIdent × Text), at: SynSpan): Unit ! {macro_error, Div} {
+  pub fn validate_roles(rs: List(Text × SynIdent), at: SynSpan): Unit ! {macro_error, Div} {
     if Mp::role_count(
       rs,
       "rec"
@@ -2124,10 +2174,10 @@ module Mp {
     ) > 1 { Syn::error(at, "mode: at most one out position is allowed") } else { #() }
     Mp::distinct_names(Mo::first_names(Mp::role_params(rs)), Nil, at)
   }
-  pub fn role_params(rs: List(SynIdent × Text)): List(SynExpr × SynIdent) {
+  pub fn role_params(rs: List(Text × SynIdent)): List(SynExpr × SynIdent) {
     match rs {
       Nil => Nil
-      Cons(r, rest) => Cons(#((r: SynIdent), ExVar((r: SynIdent))), Mp::role_params(rest))
+      Cons(r, rest) => Cons(#(ExVar((r: SynIdent)), (r: SynIdent)), Mp::role_params(rest))
     }
   }
   pub fn validate_clauses(
@@ -2243,7 +2293,10 @@ module Mp {
           ) {
             Syn::error(
               h.span,
-              concat("mode: premise ", concat(h.name, " does not recurse on a strict input subterm"))
+              concat(
+                "mode: premise ",
+                concat(h.name, " does not recurse on a strict input subterm")
+              )
             )
           } else { #() }
           let next := match call.output {
@@ -2291,10 +2344,16 @@ module Mp {
   pub fn binding(e: SynExpr, bindings: List(@key SynExpr × @value SynExpr)): Option(SynExpr) {
     match bindings {
       Nil => None
-      Cons(#(@key key, @value value), rest) => if Syn::same(e, key) { Some(value) } else { Mp::binding(e, rest) }
+      Cons(#(@key key, @value value), rest) => if Syn::same(
+        e,
+        key
+      ) { Some(value) } else { Mp::binding(e, rest) }
     }
   }
-  pub fn apply_all(es: List(SynExpr), bindings: List(@key SynExpr × @value SynExpr)): List(SynExpr) {
+  pub fn apply_all(
+    es: List(SynExpr),
+    bindings: List(@key SynExpr × @value SynExpr)
+  ): List(SynExpr) {
     match es {
       Nil => Nil
       Cons(e, rest) => Cons(Mp::apply(e, bindings), Mp::apply_all(rest, bindings))

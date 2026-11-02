@@ -181,7 +181,6 @@ fn type_name(s: &Stmt) -> Option<String> {
     }
 }
 
-/// The names a statement declares.
 fn defines(s: &Stmt) -> Vec<String> {
     match s {
         Stmt::Theorem(t) | Stmt::Def(t) => vec![t.name.clone()],
@@ -224,7 +223,6 @@ fn mentions(s: &Stmt, ctors: &HashSet<String>) -> Vec<String> {
     out
 }
 
-/// The constructors the statements declare.
 fn constructors(stmts: &[Stmt]) -> HashSet<String> {
     fn go(s: &Stmt, out: &mut HashSet<String>) {
         match s {

@@ -8,7 +8,6 @@ use super::node::Node;
 use super::syn::Lift;
 use crate::surface::{Stmt, SurfaceTerm};
 
-/// The term that makes the syntax of `body`.
 pub fn desugar(stmts: bool, body: &[Stmt], span: Span) -> Result<SurfaceTerm, String> {
     let lift = Lift {
         scopes: &[],

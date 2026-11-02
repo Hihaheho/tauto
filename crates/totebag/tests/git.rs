@@ -66,7 +66,7 @@ fn repository(at: &Path) -> String {
     git(at, &["init", "--quiet"]);
     write(
         &at.join("lib/Tauto.eure"),
-        "package { name = \"lib\", version = \"0.1.0\", sources = [\"src\"] }\n",
+        "package { name = \"lib\", version = \"0.1.0\", }\n",
     );
     write(&at.join("lib/src/lib.taut"), "fn one(): i64 { 1 }\n");
     write(&at.join("run.sh"), "#!/bin/sh\n");
@@ -99,8 +99,7 @@ fn a_fetched_tree_is_the_commit_and_is_kept_under_its_id() {
         File {
             path: "lib/Tauto.eure".into(),
             executable: false,
-            bytes: b"package { name = \"lib\", version = \"0.1.0\", sources = [\"src\"] }\n"
-                .to_vec(),
+            bytes: b"package { name = \"lib\", version = \"0.1.0\", }\n".to_vec(),
         },
         File {
             path: "lib/src/lib.taut".into(),

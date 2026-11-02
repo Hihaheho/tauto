@@ -1,5 +1,8 @@
 // A value of a macro's world as plain data (`crates/tauto-surface/src/macros/node.rs`),
 // and the text the differential test compares.
+import "../../surface/src/surface.taut"
+import "../../surface/src/dump.taut"
+import "../../text/src/text.taut"
 import std::Text
 
 pub(open) enum Node {
@@ -12,7 +15,7 @@ pub(open) enum Node {
   NList(List(Node))
   NOpt(Option(Node))
   // A product's value: each member under its key (the member's type as written, or its
-  // label `@name SynIdent`), in the product's one order (`nd_product2`).
+  // label `@name SynIdent`), in the order of the declared type (`nd_product2`).
   NProduct(List(NMember))
   // A value filled in where a `quote` has `$`: the term that makes it.
   NSplice(SurfaceTerm)
@@ -26,19 +29,14 @@ pub(open) struct NField { label: Option(Text), value: Node }
 // and its value. A member is found by its label, or by its type when it has none.
 pub(open) struct NMember { label: Option(Text), ty: Text, value: Node }
 
-// The product of two members without labels, each under the type it is written as: the
-// members stand in the order of their types, never in the order they are given.
+// The product of two members without labels, each under the type it is written as, in the
+// order given: the order of the declared type.
 pub fn nd_product2(ka: Text, a: Node, kb: Text, b: Node): Node {
   let ma := NMember { label: None, ty: ka, value: a }
   let mb := NMember { label: None, ty: kb, value: b }
-  match Text::ordering(kb, ka): Node {
-    Less => NProduct(Cons(mb, Cons(ma, Nil)))
-    Equal => NProduct(Cons(ma, Cons(mb, Nil)))
-    Greater => NProduct(Cons(ma, Cons(mb, Nil)))
-  }
+  NProduct(Cons(ma, Cons(mb, Nil)))
 }
 
-// The member of a product without a label, of the type `ty`.
 pub fn nd_member(ms: List(NMember), ty: Text): Option(Node) {
   match ms {
     Nil => None
@@ -65,7 +63,6 @@ pub fn nd_unlabeled(fields: List(Node)): List(NField) {
 
 pub(open) struct NLabeled { name: Text, value: Node }
 
-// A struct's value: all its fields named.
 pub fn nd_st(name: Text, fields: List(NLabeled)): Node {
   NCtor(name, nd_labeled(fields))
 }
@@ -98,8 +95,6 @@ pub fn nd_opt_texts(xs: Option(List(Text))): Node {
     Some(l) => NOpt(Some(nd_texts(l)))
   }
 }
-
-// ---------------------------------------------------------------- text
 
 pub fn nd_join(parts: List(Text), sep: Text): Text {
   text_join(parts, sep)
@@ -151,9 +146,6 @@ pub fn nd_show(n: Node): Text {
   }
 }
 
-// ---------------------------------------------------------------- as a term
-
-// A span: where it starts and where it ends.
 pub(open) struct NdSp { start: Nat, end: Nat }
 
 pub fn nd_term(kind: SurfaceKind, sp: NdSp): SurfaceTerm {
@@ -220,7 +212,7 @@ pub fn nd_member_term(m: NMember, sp: NdSp): SurfaceTerm {
   }
 }
 
-// `#(…)` of the members in the product's order, each the first of a `Pair` with the
+// `#(…)` of the members in the order written, each the first of a `Pair` with the
 // rest for its second.
 pub fn nd_product_term(ms: List(NMember), sp: NdSp): SurfaceTerm {
   match ms {

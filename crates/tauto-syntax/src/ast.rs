@@ -24,7 +24,6 @@ pub enum Ast {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaError(pub &'static str);
 
-/// What one right-side symbol became, before its parent takes it.
 enum Value {
     Ast(Ast),
     /// A repetition's items, last first (so that adding the next one is a push).

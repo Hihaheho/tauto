@@ -9,8 +9,8 @@ struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("tauto-macro-borrow-{}", std::process::id()));
-        fs::create_dir_all(root.join("support")).unwrap();
-        fs::create_dir_all(root.join("app")).unwrap();
+        fs::create_dir_all(root.join("support/src")).unwrap();
+        fs::create_dir_all(root.join("app/src")).unwrap();
         Self(root)
     }
     fn write(&self, name: &str, text: &str) {
@@ -35,14 +35,17 @@ fn successful(output: Output) -> String {
 #[test]
 fn nested_repeated_and_generic_quoted_borrows_agree_in_all_backends() {
     let f = Fixture::new();
+    f.write("support/Tauto.eure", "package { name = \"support\" }\n");
     f.write(
-        "support/Tauto.eure",
-        "package { name = \"support\" sources = [\"lib.tauto\"] }\n",
+        "app/Tauto.eure",
+        "package { name = \"consumer\" }\ndependencies { support { path = \"../support\" } }\n",
     );
-    f.write("app/Tauto.eure", "package { name = \"consumer\" sources = [\"main.tauto\"] }\ndependencies { support { path = \"../support\" } }\n");
     f.write(
-        "support/lib.tauto",
+        "support/src/lib.tauto",
         &r#"
+import std::prelude::Classes
+import std::prelude::Macro
+
 pub(open) enum Item { Item(Text) }
 pub fn inspect(item: Item): u64 { match item { Item(text) => Text::len(text) } }
 pub fn forward(item: Item, read: () -> Text): u64 { inspect(item) + Text::len(read()) }
@@ -64,8 +67,11 @@ pub macro fn keep(code: Judgement): SynExpr { Judgement::term(code) }
 "#.to_string(),
     );
     f.write(
-        "app/main.tauto",
+        "app/src/main.tauto",
         &r#"
+import std::prelude::Classes
+import support::lib
+
 perform show("direct", example!("hello"))
 perform show("repeated", example!("world"))
 perform show("nested", example!(example!("hello")))

@@ -1,9 +1,18 @@
 // What `float_encode` writes, read back as a number: the three ways a rounded
 // digit string lands in the bits (subnormal, normal, and a carry into the exponent).
 
+import "Float.taut"
 import "FloatDecode.taut"
-
-// ---- the bits `float_encode` writes -----------------------------------------------------
+import "FloatReal.taut"
+import "Int.taut"
+import "IntLaws.taut"
+import "IntNorm.taut"
+import "IntOrder.taut"
+import "Nat.taut"
+import "Rat.taut"
+import "RatLaws.taut"
+import "Tactic.taut"
+import "UInt.taut"
 
 pub fn float_encode_by(o: Bool, s: Nat, m: Nat, t: Nat): Nat {
   match o: Nat {
@@ -16,11 +25,7 @@ pub fn float_encode_by(o: Bool, s: Nat, m: Nat, t: Nat): Nat {
 pub def EncodeFinite(
   m: Nat,
   t: Nat
-): Prop := Eq(
-  Bool,
-  (t - 2926) * 4503599627370496 + m < 9218868437227405312,
-  true
-)
+): Prop := Eq(Bool, (t - 2926) * 4503599627370496 + m < 9218868437227405312, true)
 
 pub theorem float_encode_fin(
   s: Nat,
@@ -29,7 +34,12 @@ pub theorem float_encode_fin(
   h: EncodeFinite(m, t)
 ): Float::encode(s, m, t) = s * 9223372036854775808 + ((t - 2926) * 4503599627370496 + m) {
   Eq::subst(
-    (o: Bool) => float_encode_by(o, s, m, t) = s * 9223372036854775808 + ((t - 2926) * 4503599627370496 + m),
+    (o: Bool) => float_encode_by(
+      o,
+      s,
+      m,
+      t
+    ) = s * 9223372036854775808 + ((t - 2926) * 4503599627370496 + m),
     Eq::sym(h),
     Refl
   )
@@ -82,14 +92,21 @@ pub theorem float_field_lt(
 pub theorem float_field_shape(
   E: Nat,
   f: Nat
-): IntOfNat(Succ(4503599627370496 * E + f)) = Int::add(Int::add(IntOfNat(4503599627370496 * E), 1), IntOfNat(f)) {
-  by int_norm!(): IntOfNat(Succ(4503599627370496 * E + f)) = Int::add(Int::add(IntOfNat(4503599627370496 * E), IntOfNat(1)), IntOfNat(f)) {}
+): IntOfNat(
+  Succ(4503599627370496 * E + f)
+) = Int::add(Int::add(IntOfNat(4503599627370496 * E), 1), IntOfNat(f)) {
+  by int_norm!(): IntOfNat(
+    Succ(4503599627370496 * E + f)
+  ) = Int::add(Int::add(IntOfNat(4503599627370496 * E), IntOfNat(1)), IntOfNat(f)) {}
 }
 
 pub theorem float_field_shape_b(
   E: Nat
 ): Int::add(Int::mul(IntOfNat(E), 4503599627370496), 0) = IntOfNat(4503599627370496 * E) {
-  by int_norm!(): Int::add(Int::mul(IntOfNat(E), IntOfNat(4503599627370496)), IntOfNat(0)) = IntOfNat(4503599627370496 * E) {}
+  by int_norm!(): Int::add(
+    Int::mul(IntOfNat(E), IntOfNat(4503599627370496)),
+    IntOfNat(0)
+  ) = IntOfNat(4503599627370496 * E) {}
 }
 
 // Given the fields of what `float_encode(s, c, t)` writes and `M 2^e = c 2^t`,
@@ -167,14 +184,15 @@ pub theorem float_decode_sub_bits(
 pub theorem float_sub_bits_shape(
   s: Nat,
   c: Nat
-): s * 9223372036854775808 + (0 * 4503599627370496 + c) = 9223372036854775808 * s + (4503599627370496 * 0 + c) {
-  by nat_norm!(): s * 9223372036854775808 + (0 * 4503599627370496 + c) = 9223372036854775808 * s + (4503599627370496 * 0 + c) {}
+): s * 9223372036854775808 + (
+  0 * 4503599627370496 + c
+) = 9223372036854775808 * s + (4503599627370496 * 0 + c) {
+  by nat_norm!(): s * 9223372036854775808 + (
+    0 * 4503599627370496 + c
+  ) = 9223372036854775808 * s + (4503599627370496 * 0 + c) {}
 }
 
-pub theorem float_enc_fin_sub(
-  c: Nat,
-  hc: c < 4503599627370496 = true
-): EncodeFinite(c, 2926) {
+pub theorem float_enc_fin_sub(c: Nat, hc: c < 4503599627370496 = true): EncodeFinite(c, 2926) {
   yn_of_nat_le(
     Succ(0 + c),
     9218868437227405312,
@@ -201,9 +219,7 @@ pub theorem float_enc_fin_sub(
   )
 }
 
-pub theorem float_succ_zero_add(
-  c: Nat
-): IntOfNat(Succ(c)) = IntOfNat(Succ(0 + c)) {
+pub theorem float_succ_zero_add(c: Nat): IntOfNat(Succ(c)) = IntOfNat(Succ(0 + c)) {
   by int_norm!(): IntOfNat(Succ(c)) = IntOfNat(Succ(0 + c)) {}
 }
 
@@ -216,7 +232,15 @@ pub theorem float_decode_normal(
   hg: g < 4503599627370496 = true,
   hfin: EncodeFinite(4503599627370496 + g, 2926 + T)
 ): DecodeOk(s, 4503599627370496 + g, 2926 + T) {
-  let eb: Float::encode(s, 4503599627370496 + g, 2926 + T) = float_bits_of(s, Succ(T), g) := Eq::trans(
+  let eb: Float::encode(
+    s,
+    4503599627370496 + g,
+    2926 + T
+  ) = float_bits_of(
+    s,
+    Succ(T),
+    g
+  ) := Eq::trans(
     float_encode_fin(s, 4503599627370496 + g, 2926 + T, hfin),
     float_normal_bits_shape(s, T, g)
   )
@@ -235,9 +259,7 @@ pub theorem float_decode_normal(
           (z: Nat) => NatLe(Succ(z), 9218868437227405312),
           float_normal_field_shape(T, g),
           nat_le_of_yn(
-            Succ(
-              (2926 + T - 2926) * 4503599627370496 + (4503599627370496 + g)
-            ),
+            Succ((2926 + T - 2926) * 4503599627370496 + (4503599627370496 + g)),
             9218868437227405312,
             hfin
           )
@@ -256,14 +278,7 @@ pub theorem float_decode_normal(
   )
 }
 
-pub theorem Eq_congr2_mul(
-  a: Nat,
-  b: Nat,
-  c: Nat,
-  d: Nat,
-  e1: a = b,
-  e2: c = d
-): a * c = b * d {
+pub theorem Eq_congr2_mul(a: Nat, b: Nat, c: Nat, d: Nat, e1: a = b, e2: c = d): a * c = b * d {
   Eq::trans(Eq::congr(⟦□ * c⟧, e1), Eq::congr(⟦b * □⟧, e2))
 }
 
@@ -285,9 +300,13 @@ pub theorem float_normal_bits_shape(
   s: Nat,
   T: Nat,
   g: Nat
-): s * 9223372036854775808 + ((2926 + T - 2926) * 4503599627370496 + (4503599627370496 + g)) = float_bits_of(s, Succ(T), g) {
+): s * 9223372036854775808 + (
+  (2926 + T - 2926) * 4503599627370496 + (4503599627370496 + g)
+) = float_bits_of(s, Succ(T), g) {
   Eq::subst(
-    (z: Nat) => s * 9223372036854775808 + (z * 4503599627370496 + (4503599627370496 + g)) = float_bits_of(s, Succ(T), g),
+    (z: Nat) => s * 9223372036854775808 + (
+      z * 4503599627370496 + (4503599627370496 + g)
+    ) = float_bits_of(s, Succ(T), g),
     Eq::sym(nat_sub_add_left(2926, T)),
     float_normal_bits_core(s, T, g)
   )
@@ -297,8 +316,12 @@ pub theorem float_normal_bits_core(
   s: Nat,
   T: Nat,
   g: Nat
-): s * 9223372036854775808 + (T * 4503599627370496 + (4503599627370496 + g)) = 9223372036854775808 * s + (4503599627370496 * Succ(T) + g) {
-  by nat_norm!(): s * 9223372036854775808 + (T * 4503599627370496 + (4503599627370496 + g)) = 9223372036854775808 * s + (4503599627370496 * Succ(T) + g) {}
+): s * 9223372036854775808 + (
+  T * 4503599627370496 + (4503599627370496 + g)
+) = 9223372036854775808 * s + (4503599627370496 * Succ(T) + g) {
+  by nat_norm!(): s * 9223372036854775808 + (
+    T * 4503599627370496 + (4503599627370496 + g)
+  ) = 9223372036854775808 * s + (4503599627370496 * Succ(T) + g) {}
 }
 
 pub theorem float_normal_field_shape(
@@ -332,7 +355,14 @@ pub theorem float_decode_core_at(
   he: float_e_by(E == 0, E) = e,
   ev: M * Nat::pow2(e) = c * Nat::pow2(t)
 ): DecodeOk(s, c, t) {
-  let ev2: float_m_by(E == 0, f) * Nat::pow2(float_e_by(E == 0, E)) = c * Nat::pow2(t) := Eq::trans(
+  let ev2: float_m_by(
+    E == 0,
+    f
+  ) * Nat::pow2(
+    float_e_by(E == 0, E)
+  ) = c * Nat::pow2(
+    t
+  ) := Eq::trans(
     Eq_congr2_mul(
       float_m_by(E == 0, f),
       M,
@@ -353,11 +383,17 @@ pub theorem float_zero_lt_frac(): 0 < 4503599627370496 = true {
 pub theorem float_carry_bits_shape(
   s: Nat,
   T: Nat
-): s * 9223372036854775808 + ((2926 + T - 2926) * 4503599627370496 + 9007199254740992) = float_bits_of(s, Succ(Succ(T)), 0) {
+): s * 9223372036854775808 + (
+  (2926 + T - 2926) * 4503599627370496 + 9007199254740992
+) = float_bits_of(s, Succ(Succ(T)), 0) {
   Eq::subst(
-    (z: Nat) => s * 9223372036854775808 + (z * 4503599627370496 + 9007199254740992) = float_bits_of(s, Succ(Succ(T)), 0),
+    (z: Nat) => s * 9223372036854775808 + (
+      z * 4503599627370496 + 9007199254740992
+    ) = float_bits_of(s, Succ(Succ(T)), 0),
     Eq::sym(nat_sub_add_left(2926, T)),
-    by nat_norm!(): s * 9223372036854775808 + (T * 4503599627370496 + 9007199254740992) = 9223372036854775808 * s + (4503599627370496 * Succ(Succ(T)) + 0) {}
+    by nat_norm!(): s * 9223372036854775808 + (
+      T * 4503599627370496 + 9007199254740992
+    ) = 9223372036854775808 * s + (4503599627370496 * Succ(Succ(T)) + 0) {}
   )
 }
 
@@ -391,11 +427,7 @@ pub theorem float_carry_value(
     ),
     Eq::sym(float_carry_e_shape(T)),
     Eq::subst(
-      (w: Nat) => Eq(
-        Nat,
-        (0 + 4503599627370496) * w,
-        9007199254740992 * Nat::pow2(2926 + T)
-      ),
+      (w: Nat) => Eq(Nat, (0 + 4503599627370496) * w, 9007199254740992 * Nat::pow2(2926 + T)),
       Eq::sym(float_pow2_succ_eq(2926 + T)),
       float_carry_value_core(Nat::pow2(2926 + T))
     )
@@ -406,9 +438,7 @@ pub theorem float_pow2_succ_eq(x: Nat): Nat::pow2(Succ(x)) = 2 * Nat::pow2(x) {
   Refl
 }
 
-pub theorem float_carry_e_shape(
-  T: Nat
-): Succ(Succ(T)) + 2925 = Succ(2926 + T) {
+pub theorem float_carry_e_shape(T: Nat): Succ(Succ(T)) + 2925 = Succ(2926 + T) {
   by nat_norm!(): Succ(Succ(T)) + 2925 = Succ(2926 + T) {}
 }
 
@@ -418,9 +448,7 @@ pub theorem float_carry_value_core(
   by nat_norm!(): Eq(Nat, (0 + 4503599627370496) * (2 * P), 9007199254740992 * P) {}
 }
 
-pub theorem float_carry_m(
-  T: Nat
-): float_m_by(Succ(Succ(T)) == 0, 0) = 0 + 4503599627370496 {
+pub theorem float_carry_m(T: Nat): float_m_by(Succ(Succ(T)) == 0, 0) = 0 + 4503599627370496 {
   Refl
 }
 
@@ -435,10 +463,7 @@ pub theorem float_carry_eb(
   T: Nat,
   hfin: EncodeFinite(9007199254740992, 2926 + T)
 ): Float::encode(s, 9007199254740992, 2926 + T) = float_bits_of(s, Succ(Succ(T)), 0) {
-  Eq::trans(
-    float_encode_fin(s, 9007199254740992, 2926 + T, hfin),
-    float_carry_bits_shape(s, T)
-  )
+  Eq::trans(float_encode_fin(s, 9007199254740992, 2926 + T, hfin), float_carry_bits_shape(s, T))
 }
 
 pub theorem float_carry_hf(
@@ -507,9 +532,5 @@ pub theorem float_encode_le(
   t: Nat,
   h: EncodeFinite(m, t)
 ): NatLe(Succ((t - 2926) * 4503599627370496 + m), 9218868437227405312) {
-  nat_le_of_yn(
-    Succ((t - 2926) * 4503599627370496 + m),
-    9218868437227405312,
-    h
-  )
+  nat_le_of_yn(Succ((t - 2926) * 4503599627370496 + m), 9218868437227405312, h)
 }

@@ -1,10 +1,14 @@
-// Derives syntax types from the written grammar: a struct, enum or token for
-// each non-terminal, and a result type and constructor for each production.
+import "bytes.taut"
+import "emit.taut"
+import "model.taut"
+import "par.taut"
+import "scn.taut"
 import std::Text
+import std::prelude::Shared
+import std::prelude::Affine
 
 pub(open) enum FTy {
   FTok
-  // A tauto expression written in the text.
   FExpr
   FNamed(Text)
   FList(FTy)
@@ -28,10 +32,8 @@ pub(open) enum STy {
 // The type a production builds (-1 for none) and its constructor in it.
 pub(open) struct SPt { ty: i64, ctor: u64 }
 
-// A generated non-terminal's type, once made.
 pub(open) struct SMade { nt: u64, ty: FTy }
 
-// The numbers handed out for an owner and a kind.
 pub(open) struct SCnt { owner: u64, kind: Text, n: u64 }
 
 pub(open) struct SGr {
@@ -114,7 +116,6 @@ pub fn sg_snake(name: Text): Text {
   text_lower_ascii(Text::of(b))
 }
 
-// The upper-case letters of `name` made lower case.
 pub fn text_lower_ascii(t: Text): Text {
   var b := Buf::new()
   var at: u64 := 0
@@ -413,7 +414,6 @@ pub fn sg_fields(g: SGr, &mut cx: SCx, owner: u64, rhs: List(MSym)): List(SField
   out
 }
 
-// The type of the element of a repetition or option, or of a group.
 pub fn sg_generated(g: SGr, &mut cx: SCx, owner: u64, m: u64): FTy {
   match sg_made_find(&cx.made, m) {
     Some(t) => t
@@ -593,8 +593,6 @@ pub fn sg_build(m: MModel): SSchema {
     SCx { types: ts, ptype: pt, made: md, counters: cn } => SSchema { types: ts, ptype: pt }
   }
 }
-
-// ---------------------------------------------------------------- the lines
 
 pub fn sg_pt_get(&v: Vec(SPt), i: u64): SPt {
   let &x := Vec::index(&v, i)

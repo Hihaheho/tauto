@@ -1,5 +1,3 @@
-//! Expressions, statements, patterns and `handle`.
-
 use proc_macro2::Ident;
 use quote::quote;
 use tauto_nir::*;
@@ -91,7 +89,6 @@ impl PatOut {
         }
     }
 
-    /// ` if g && h`, or nothing.
     pub fn guard_clause(guards: &[Rs]) -> Rs {
         if guards.is_empty() {
             Rs::new()
@@ -107,7 +104,6 @@ impl PatOut {
 }
 
 pub(crate) fn field_ident(name: &str) -> Ident {
-    // A name in a module (`File::open`).
     id(&name.replace("::", "__"))
 }
 
@@ -126,12 +122,10 @@ pub(crate) fn variant_ident(data: &str, name: &str) -> Ident {
     id(short)
 }
 
-/// The Rust name of a local.
 pub(crate) fn lid(l: &Local) -> Ident {
     id(&l.rust())
 }
 
-/// `.f` or `.0`: a field of a record or of a pair.
 fn field_tok(f: &FieldRef) -> Rs {
     match f.index {
         Some(i) => {
@@ -145,17 +139,14 @@ fn field_tok(f: &FieldRef) -> Rs {
     }
 }
 
-/// The operation constant `OP_name`.
 fn op_const(name: &str) -> Ident {
     id(&format!("OP_{name}"))
 }
 
-/// `let x = x.clone();` for each name.
 pub(crate) fn clone_each(names: impl IntoIterator<Item = Ident>) -> Rs {
     concat(names.into_iter().map(|n| quote!(let #n = #n.clone();)))
 }
 
-/// `let mut x = x.clone();` for each name.
 pub(crate) fn clone_each_mut(names: impl IntoIterator<Item = Ident>) -> Rs {
     concat(names.into_iter().map(|n| quote!(let mut #n = #n.clone();)))
 }
@@ -174,8 +165,6 @@ pub(crate) fn pass_on(tys: Vec<Rs>, first: Rs) -> (Vec<Rs>, Vec<Rs>) {
 }
 
 impl Gen<'_> {
-    // ---- abort propagation ---------------------------------------------
-
     /// An expression of type `!` that sends the abort `a` outward.
     pub fn propagate(&self, a: &Rs, fx: &Fx) -> Rs {
         if fx.sync_budget {
@@ -199,8 +188,6 @@ impl Gen<'_> {
             quote!(match #call { Ok(v) => v, Err(a) => #leave })
         }
     }
-
-    // ---- blocks and statements -------------------------------------------
 
     pub fn block(&mut self, b: &Block, fx: &mut Fx) -> Rs {
         let mut stmts = Rs::new();
@@ -312,8 +299,6 @@ impl Gen<'_> {
         }
     }
 
-    // ---- places ------------------------------------------------------------
-
     pub fn place(&self, p: &Place) -> Rs {
         self.place_as(p, false)
     }
@@ -359,7 +344,6 @@ impl Gen<'_> {
         }
     }
 
-    /// The `k` of an arm as a function value.
     fn cont_value(&self, l: &Local, ty: &Ty) -> Rs {
         let x = lid(l);
         let Ty::Fn(f) = ty else {
@@ -401,8 +385,6 @@ impl Gen<'_> {
         let (params, args) = (comma(params), comma(args));
         quote!(&mut |#params| #place(#args))
     }
-
-    // ---- expressions -----------------------------------------------------------
 
     pub fn expr(&mut self, e: &Expr, fx: &mut Fx) -> Rs {
         let s = self.expr_inner(e, fx);
@@ -867,7 +849,6 @@ impl Gen<'_> {
         (params, call)
     }
 
-    /// Records the type a local of a function type is written with.
     pub(crate) fn note_fn_local(&mut self, local: &Local, ty: &Ty) {
         if matches!(ty, Ty::Fn(_)) && !ty.has_infer() {
             self.fn_locals.insert(local.id, ty.clone());
@@ -976,7 +957,6 @@ impl Gen<'_> {
         quote!(&mut |#params| #call)
     }
 
-    /// A function item as the `OFnMut` a borrowing closure of the O tier is.
     fn fn_item_o(&self, inst: InstId, targs: &[Ty], ft: &FnTy) -> Rs {
         let (_, call) = self.fn_item_call(inst, targs, ft, true);
         let names = (0..ft.params.len()).map(|i| {
@@ -1097,7 +1077,6 @@ impl Gen<'_> {
         self.closure_o_as(c, ty)
     }
 
-    /// `closure_o`, made to be held as `ty`.
     fn closure_o_as(&mut self, c: &ClosureNode, ty: Rs) -> Rs {
         let mut fx = Fx::in_future();
         let mut params = vec![quote!(ev)];
@@ -1209,8 +1188,6 @@ impl Gen<'_> {
             quote!({ #clones #make })
         }
     }
-
-    // ---- constructors --------------------------------------------------------
 
     fn ctor(&mut self, c: &CtorRef, fields: &[(Option<String>, Expr)], fx: &mut Fx) -> Rs {
         let mut vals: Vec<(Option<String>, Rs)> = Vec::new();
@@ -1324,8 +1301,6 @@ impl Gen<'_> {
             quote!(#name::#v)
         }
     }
-
-    // ---- calls -----------------------------------------------------------------
 
     fn call(&mut self, c: &CallNode, e: &Expr, fx: &mut Fx) -> Rs {
         if let (Some(tail), Callee::Inst(inst)) = (self.self_tail, &c.callee)
@@ -1571,10 +1546,11 @@ impl Gen<'_> {
                 let a0 = &args[0];
                 quote!((#a0).clone())
             }
-            "Vec::into_list" | "words" | "Os::args" | "Os::list_dir" | "Os::run" | "Os::fetch"
-            | "Os::resolve" | "Os::tcp_listen" | "Os::tcp_accept" | "Os::tcp_connect"
-            | "Os::tls_accept" | "Os::tls_connect" | "Array::of_list" | "Array::to_list"
-            | "Bytes::of_list" | "Bytes::to_list" | "Text::of_utf8" => {
+            "Vec::into_list" | "words" | "Os::args" | "Os::list_dir" | "Os::stat" | "Os::run"
+            | "Os::fetch" | "Os::resolve" | "Os::tcp_listen" | "Os::tcp_accept"
+            | "Os::tcp_connect" | "Os::child_spawn" | "Os::child_wait" | "Os::tls_accept"
+            | "Os::tls_connect" | "Array::of_list" | "Array::to_list" | "Bytes::of_list"
+            | "Bytes::to_list" | "Text::of_utf8" => {
                 quote!(#n(#a))
             }
             // A body that may wait is a future the host runs (`exec::OBody`).
@@ -1622,8 +1598,6 @@ impl Gen<'_> {
         }
     }
 
-    // ---- perform -----------------------------------------------------------------
-
     /// The type of an answer, `_` where Rust is to infer it.
     pub(crate) fn answer_ty(&self, t: &Ty) -> Rs {
         if t.has_infer() { quote!(_) } else { self.ty(t) }
@@ -1665,8 +1639,6 @@ impl Gen<'_> {
             }
         }
     }
-
-    // ---- match and patterns ------------------------------------------------------
 
     fn match_expr(&mut self, m: &MatchNode, fx: &mut Fx) -> Rs {
         if let Some(result) = self.array_get_match(m, fx) {
@@ -1756,7 +1728,6 @@ impl Gen<'_> {
         }
     }
 
-    /// The statement that binds the names of `p` from the field in `b`.
     fn pat_take(&mut self, p: &Pat, b: &Ident, indirect: Indirect, by_ref: bool) -> Rs {
         let mut inner = PatOut::default();
         let pat = self.pat(p, by_ref, &mut inner);
@@ -1947,8 +1918,6 @@ impl Gen<'_> {
             }
         }
     }
-
-    // ---- handle ---------------------------------------------------------------
 
     fn handle(&mut self, h: &HandleNode, fx: &mut Fx) -> Rs {
         if h.m {

@@ -26,7 +26,6 @@ pub const MAX_FILES: usize = 65_536;
 /// At most this many bytes in all the files of a tree.
 pub const MAX_BYTES: u64 = 512 << 20;
 
-/// One regular file of a tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     /// Relative, with `/` between components.
@@ -59,7 +58,6 @@ pub fn check_path(path: &str) -> Result<(), String> {
 }
 
 impl Tree {
-    /// Checks the files and computes their ID.
     pub fn new(files: Vec<File>) -> Result<Tree, String> {
         if files.len() > MAX_FILES {
             return Err(say!("totebag-too-many-files", max = MAX_FILES));

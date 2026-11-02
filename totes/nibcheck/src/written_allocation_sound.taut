@@ -1,4 +1,24 @@
 import "written_allocation_names.taut"
+import std::Map
+import std::MapLaws
+import std::MapText
+import std::Text
+import "allocation_generic_map.taut"
+import "allocation_normalization.taut"
+import "allocation_rigid_map.taut"
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "diagnostic_sound.taut"
+import "instantiation_allocation_sound.taut"
+import "rules_written.taut"
+import "ty.taut"
+import "type_allocation.taut"
+import "types_decl.taut"
+import "types_infer.taut"
+import "unify_sound.taut"
+import "written_sound.taut"
+import "../../surface/src/surface.taut"
 
 mutual {
   pub theorem written_term_allocated<env: Datas, generics: Ordmap(
@@ -79,13 +99,13 @@ mutual {
         end,
         not_info,
         Parameter,
-        Constructor,
+        constructor,
         argument
       ) => allocated_apply(
         head,
         value,
         limit,
-        written_type_name_allocated(Constructor, limit, And::right(bounded)),
+        written_type_name_allocated(constructor, limit, And::right(bounded)),
         written_term_allocated(argument, limit, bounded)
       )
       WrittenKindNested(
@@ -101,14 +121,14 @@ mutual {
         name,
         first,
         last,
-        Constructor,
+        constructor,
         arguments,
         arity
       ) => allocated_list_append(
         first,
         last,
         limit,
-        written_term_allocated(Constructor, limit, bounded),
+        written_term_allocated(constructor, limit, bounded),
         written_terms_allocated(arguments, limit, bounded)
       )
       WrittenKindFunction(
@@ -236,7 +256,7 @@ pub theorem ck_written_type_allocated(
     ck_val(ck_written(c, term, generics)),
     ck_written_sound(c, term, generics, clean),
     limit,
-    Bounded
+    bounded
   )
 }
 // The names a body may write a type with stand for rigid types, which hold

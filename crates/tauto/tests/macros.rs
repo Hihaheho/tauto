@@ -57,7 +57,7 @@ pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
   quote { Eq(Nat, $l, $r) }
 }
 "#
-            .to_string(),
+        .to_string(),
     )
 }
 
@@ -67,8 +67,7 @@ fn check_json_lists_the_macro_runs_with_where_they_were_called() {
     let dir = scratch("json");
     let (lib, lib_text) = math_lib();
     std::fs::write(dir.join(lib), lib_text).unwrap();
-    let main =
-        r#"import "math.nib"
+    let main = r#"import "math.nib"
 theorem one_plus_two(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
 "#;
     std::fs::write(dir.join("main.nib"), main).unwrap();
@@ -86,7 +85,8 @@ fn a_typed_macro_may_be_in_a_theorems_statement() {
     let dir = scratch("typed-statement");
     std::fs::write(
         dir.join("lib.nib"),
-        r#"pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
+        r#"import std::prelude::Macro
+pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 "#,
     )
     .unwrap();

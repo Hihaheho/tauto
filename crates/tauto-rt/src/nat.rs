@@ -67,7 +67,6 @@ impl Nat {
         }
     }
 
-    /// The number a string of decimal digits writes.
     pub fn parse(s: &str) -> Option<Nat> {
         if s.is_empty() {
             return None;

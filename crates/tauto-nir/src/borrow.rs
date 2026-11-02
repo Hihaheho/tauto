@@ -123,12 +123,10 @@ fn blocked_fns(pkg: &Package) -> HashSet<InstId> {
     out
 }
 
-/// Whether `e` is a read of one of the tracked locals.
 fn tracked_read(e: &Expr, tracked: &HashMap<u32, bool>) -> bool {
     matches!(&e.kind, ExprKind::Read { local, .. } if tracked.contains_key(&local.id))
 }
 
-/// The locals a pattern binds, with whether each sits in a shared box.
 fn binds(p: &Pat, boxed: bool, out: &mut Vec<(u32, bool)>) -> bool {
     match p {
         Pat::Bind(l, _) => {
@@ -152,7 +150,6 @@ struct Check<'a> {
     /// The parameter and what its matches bind, with whether each is in a box.
     tracked: HashMap<u32, bool>,
     ok: bool,
-    /// The parameter is the scrutinee of some `match`.
     matched: bool,
 }
 
@@ -541,7 +538,6 @@ fn refer(p: &mut Pat, out: &mut Vec<u32>) {
     }
 }
 
-/// The locals an expression mentions.
 fn mentioned(e: &Expr) -> HashSet<u32> {
     let mut out = HashSet::new();
     e.walk(&mut |x| match &x.kind {

@@ -1,10 +1,19 @@
 import "lin_state.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "rows.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "../../text/src/text.taut"
 
 // Control-flow linearity, frames, statements' spans and the paths of a walk
 // (`event`, `merge` of `lin.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
 
-// The indexes from `from`, `n` of them.
 pub fn range_from(n: Nat, r#from: Nat): List(Nat) {
   match n: List(Nat) {
     Zero => Nil
@@ -213,8 +222,6 @@ pub fn lin_call_event(&mut c: Lin, t: SurfaceTerm): Unit {
   }
 }
 
-// ----- functions and blocks -----
-
 pub fn bound_is_at_most_one(b: Option(Text)): Bool {
   match b: Bool {
     Some(x) => x == "<=1"
@@ -346,8 +353,6 @@ pub fn lin_leave_function(&mut c: Lin, span: TySpan): Unit {
   lin_report_unused_below(c.count, &mut c, lin_frame(c).base, span)
   set_to(&mut c.dead, true)
 }
-
-// ----- paths -----
 
 pub fn lin_states_below(n: Nat, c: Lin, acc: List(LinState)): List(LinState) {
   match n: List(LinState) {

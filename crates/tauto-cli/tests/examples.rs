@@ -114,8 +114,9 @@ fn the_tasks_example_runs_on_tokio() {
     let dir = std::env::temp_dir().join(format!("tauto-tasks-tokio-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("bridge/src")).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
     let src = example("rust/tasks");
-    for f in ["main.taut", "bridge/Cargo.toml", "bridge/src/lib.rs"] {
+    for f in ["src/main.taut", "bridge/Cargo.toml", "bridge/src/lib.rs"] {
         std::fs::copy(src.join(f), dir.join(f)).unwrap();
     }
     let manifest = std::fs::read_to_string(src.join("Tauto.eure"))
@@ -140,8 +141,9 @@ fn an_extern_type_that_cannot_cross_threads_is_refused() {
     let dir = std::env::temp_dir().join(format!("tauto-tasks-bad-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("bridge/src")).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
     let src = example("rust/tasks");
-    for f in ["Tauto.eure", "main.taut", "bridge/Cargo.toml"] {
+    for f in ["Tauto.eure", "src/main.taut", "bridge/Cargo.toml"] {
         std::fs::copy(src.join(f), dir.join(f)).unwrap();
     }
     std::fs::write(
@@ -190,4 +192,44 @@ fn well_founded_recursion_runs_as_written_on_both_backends() {
     let rust = stdout(&["run", "--backend", "rust"], &path);
     assert_eq!(eval, "4\n3 7 5 \n13\n");
     assert_eq!(eval, rust);
+}
+
+/// A tote that reads text with an `inductive_syntax!` and whose rules `mode!`
+/// turns into a checker runs: `std/Mode.taut`'s functions are macro code, run
+/// while the program is read, and are not part of what runs.
+#[test]
+fn typed_lang_reads_checks_and_runs_text() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))
+        .args(["run", "--backend", "eval", "--tote"])
+        .arg(example("typed-lang"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(
+        b"1 + 2 + 3\nif 1 + 1 == 2 then 10 else 20\n(1 == 1) == true\n1 + true\nif 1 then 2 else 3\nif true then 1 else false\n1 + * 2\n2 + 3\n\n:quit\n99\n"
+    ).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "typed-lang REPL (:quit to exit)\n\
+         > 6 : Nat\n\
+         > 10 : Nat\n\
+         > rejected by the type checker\n\
+         > rejected by the type checker\n\
+         > rejected by the type checker\n\
+         > rejected by the type checker\n\
+         > syntax error: macro.syntax_error: in tl: expected Num or KwTrue or KwFalse or LParen, found Error\n\
+         > 5 : Nat\n\
+         > > "
+    );
 }

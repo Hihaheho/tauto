@@ -1,5 +1,7 @@
 import "Rewrite.taut"
 import "NatNorm.taut"
+import std::prelude::Macro
+import std::prelude::Shared
 
 // `nat_norm!()`, for a goal `l = r` on `Nat` whose sides are made of `Nat::add`,
 // `Nat::mul` (or `+` and `*`, which are the same), `Succ`, `Zero`, numerals and anything else (which is a variable of the
@@ -14,7 +16,7 @@ pub macro fn nat_norm(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
     Nil => match Tac::eq_goal(s.before) {
       None => Syn::error(s.span, "nat_norm!: the goal is not an equation of Nat")
       Some(#(@lhs l, @rhs r, @ty ty)) => if Syn::name_of(ty) == Some("Nat") {
-        Tac::nat_norm_sides(s.span, l, r)
+        Tac::nat_norm_sides(s, l, r)
       } else {
         Syn::error(s.span, "nat_norm!: the goal is not an equation of Nat")
       }
@@ -22,14 +24,104 @@ pub macro fn nat_norm(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
   }
 }
 
+// `nat_le!()`, for a goal `l <= r = true` or `l < r = true` (`Nat::le`, `Nat::lt`) on `Nat`,
+// with `l` and `r` read as for `nat_norm!`. The term is `Nat::norm_le(vars, l', r', Refl)`,
+// whose `Refl` the kernel accepts only when `Np::le_chk` says that every term of the normal
+// form of `l'` is matched by one of `r'` with the same monomial and a coefficient that is not
+// smaller; `l < r` is read as `Succ(l) <= r`. Hypotheses are not used: a goal that needs
+// one is not proved. No goal is left: write no arm.
+pub macro fn nat_le(s: ProofStep): SynExpr ! {macro_error, Div} {
+  match s.after {
+    Cons(_, _) => Syn::error(s.span, "nat_le! leaves no goal: write no arm")
+    Nil => match Syn::app_parts(Judgement::term(s.before)) {
+      None => Syn::error(
+        s.span,
+        "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat"
+      )
+      Some(p) => match Tac::two((p: List(SynExpr))) {
+        None => Syn::error(
+          s.span,
+          "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat"
+        )
+        Some(#(@lhs l, @rhs r)) => if Syn::same(r, quote { true }) {
+          Tac::nat_le_goal(s.span, l)
+        } else {
+          Syn::error(s.span, "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat")
+        }
+      }
+    }
+  }
+}
+
 module Tac {
-  pub fn nat_norm_sides(at: SynSpan, l: SynExpr, r: SynExpr): SynExpr ! {macro_error, Div} {
+  // `l <= r` or `l < r`: the two sides and whether the comparison is strict.
+  pub fn nat_le_goal(at: SynSpan, rel: SynExpr): SynExpr ! {macro_error, Div} {
+    match Syn::app_parts(rel) {
+      None => Syn::error(at, "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat")
+      Some(p) => match Syn::name_of((p: SynExpr)) {
+        None => Syn::error(at, "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat")
+        Some(name) => match Tac::two((p: List(SynExpr))) {
+          None => Syn::error(
+            at,
+            "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat"
+          )
+          Some(#(@lhs l, @rhs r)) => if name == "Nat::le" || name == "<=" {
+            Tac::nat_le_sides(at, false, l, r)
+          } else {
+            if name == "Nat::lt" || name == "<" {
+              Tac::nat_le_sides(at, true, l, r)
+            } else {
+              Syn::error(at, "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn nat_le_sides(
+    at: SynSpan,
+    strict: Bool,
+    l: SynExpr,
+    r: SynExpr
+  ): SynExpr ! {macro_error, Div} {
     let a := Tac::nn_read(l, Nil, at)
     let b := Tac::nn_read(r, (a: List(SynExpr)), at)
     let env := Tac::nn_list((b: List(SynExpr)))
     let x := (a: SynExpr)
     let y := (b: SynExpr)
-    quote { Nat::norm_eq($env, $x, $y, Refl) }
+    if strict {
+      quote { Nat::norm_le($env, NeAdd($x, NeConst(Succ(Zero))), $y, Refl) }
+    } else {
+      quote { Nat::norm_le($env, $x, $y, Refl) }
+    }
+  }
+
+  pub fn nat_norm_sides(s: ProofStep, l: SynExpr, r: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let at := s.span
+    let a := Tac::nn_read(l, Nil, at)
+    let b := Tac::nn_read(r, (a: List(SynExpr)), at)
+    let env := Tac::nn_list((b: List(SynExpr)))
+    let x := (a: SynExpr)
+    let y := (b: SynExpr)
+    let proof := quote { Nat::norm_eq($env, $x, $y, Refl) }
+    let goal := Judgement::ty_of(s.before, Judgement::term(s.before))
+    match Elab::check(proof, s.before, Some(goal)) {
+      Ok(_) => proof
+      Err(_) => match Tac::elaborated(s.before) {
+        None => proof
+        Some(_) => match Elab::check(quote { Refl }, s.before, Some(goal)) {
+          Ok(_) => proof
+          Err(d) => Syn::error(
+            at,
+            concat(
+              "nat_norm!: the two sides are not equal as polynomials of Nat (anything that is not `+`, `*`, `Succ`, `Zero` or a numeral is one variable): ",
+              d.message
+            )
+          )
+        }
+      }
+    }
   }
 
   // The `NatExpr` of `e`, with the variables met so far (in order) and then the ones
@@ -38,7 +130,7 @@ module Tac {
     e: SynExpr,
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     match Syn::nat_text(e) {
       Some(n) => {
         let k := ExNat(n, at)
@@ -68,7 +160,7 @@ module Tac {
     args: List(SynExpr),
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     match args {
       Nil => Tac::nn_var(e, vars, at)
       Cons(a, rest) => match rest {
@@ -109,7 +201,7 @@ module Tac {
     e: SynExpr,
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     match Tac::nn_index(e, vars, 0) {
       Some(i) => #(Tac::nn_var_expr(i), vars)
       None => {
@@ -138,7 +230,6 @@ module Tac {
     }
   }
 
-  // `Zero`, `Succ(Zero)`, … for `i`.
   pub fn nn_nat(i: u64): SynExpr {
     if i == 0 {
       quote { Zero }

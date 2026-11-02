@@ -68,7 +68,6 @@ struct Sugar {
     /// The functions of [`Sugar::OPERATORS`] that are declared: an operator
     /// is read as its function only when that function is.
     ops: HashSet<&'static str>,
-    /// `false` and `true` read as the constructors of `Bool` they are.
     bools: bool,
     records: Records,
     /// The labels met, when `@a T` is read as its family; `None` (extraction) leaves
@@ -95,12 +94,10 @@ pub(super) fn label_of(family: &str) -> Option<&str> {
 pub type Records = HashMap<String, (String, Vec<String>)>;
 
 impl Kernel {
-    /// `stmt` with the sugar above read.
     pub(super) fn program_sugar(&self, stmt: &Stmt) -> Stmt {
         self.program_sugar_labels(stmt).0
     }
 
-    /// `program_sugar`, with the labels (`@a T`) it met.
     pub(super) fn program_sugar_labels(&self, stmt: &Stmt) -> (Stmt, BTreeSet<String>) {
         let text = self
             .inds
@@ -421,9 +418,7 @@ impl Sugar {
             }
             // `A × B × C` is `Prod(A, Prod(B, C))`, the type `#(a, b, c)` makes, which the
             // kernel unfolds to `Pair(A, Pair(B, C))`. The members
-            // stand in one order whatever order they are written in: the labelled ones first,
-            // by their labels, then the others by how their types are written, so `A × B`
-            // and `B × A` are one type. The names are read after the program's names are
+            // stand in the order they are written: `A × B` and `B × A` are two types. The names are read after the program's names are
             // told apart: `Pair` and `Unit` are then the prelude's, as a file's own
             // declaration of either has its full name.
             // A member that is itself a product gives its members, and a member `Unit` gives
@@ -437,9 +432,7 @@ impl Sugar {
                         None => T::var("Unit", sp),
                     };
                 }
-                let mut items: Vec<&T> = items.iter().collect();
-                items.sort_by_cached_key(|i| member_key(i));
-                let mut items: Vec<T> = items.into_iter().map(|i| self.ty(i)).collect();
+                let mut items: Vec<T> = items.iter().map(|i| self.ty(i)).collect();
                 let last = items.pop().expect("two or more");
                 return items.into_iter().rev().fold(last, |snd, fst| {
                     let cell = T::new(TermKind::Var("Prod".into()), fst.span);
@@ -686,7 +679,6 @@ impl Sugar {
     }
 }
 
-/// The kind of literal a `match` of literals is on.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Literal {
     Text,
@@ -844,12 +836,6 @@ fn app(f: &str, args: Vec<T>, at: &T) -> T {
         at.span,
     )
 }
-
-/// Where a member of a product stands, in the one order of the members.
-fn member_key(t: &T) -> (u8, String) {
-    crate::surface::print::product_member_key_of(t)
-}
-
 
 #[cfg(test)]
 mod tests {

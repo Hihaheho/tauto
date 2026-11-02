@@ -24,6 +24,32 @@ import "pattern_scope.taut"
 import "record_frame.taut"
 import "widen_frame.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::MapLaws
+import std::Text
+import "arm_frame.taut"
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "datas_registration.taut"
+import "expr_checks_frame.taut"
+import "fits_sound.taut"
+import "freevars.taut"
+import "instantiation_frame.taut"
+import "join_sound.taut"
+import "obligation_state_frame.taut"
+import "product_frame.taut"
+import "rows.taut"
+import "signature_frame.taut"
+import "tracked_read_frame.taut"
+import "tracked_state_frame.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_infer.taut"
+import "types_match.taut"
+import "unify_sound.taut"
 
 pub def Inference_ck_infer_in_tracked(
   k: Nat
@@ -551,6 +577,14 @@ pub theorem ck_fits_run_frame_tracked(
 ): TrackedRunFrame(c, ck_fits(c, a, b)) {
   tracked_run_grows(c, ck_fits(c, a, b), And::left(ck_fits_ok(c, a, b)(ordered)))
 }
+pub theorem ck_fits_wide_run_frame_tracked(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): TrackedRunFrame(c, ck_fits_wide(c, a, b)) {
+  tracked_run_grows(c, ck_fits_wide(c, a, b), And::left(ck_fits_wide_ok(c, a, b)(ordered)))
+}
 pub theorem run_expect_after_frame_tracked(
   c: Checker,
   a: Ty,
@@ -594,8 +628,8 @@ pub theorem ck_expect_run_frame_tracked(
       Unit,
       c,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
-      ck_fits(c, a, b),
-      ck_fits_run_frame_tracked(c, a, b, ordered),
+      ck_fits_wide(c, a, b),
+      ck_fits_wide_run_frame_tracked(c, a, b, ordered),
       fits => next => onext => run_expect_after_frame_tracked(next, a, b, span, what, fits, onext)
     )
   )

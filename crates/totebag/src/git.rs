@@ -356,7 +356,6 @@ impl Mirror {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
-    /// The bytes of each blob, in order.
     fn blobs<'a>(&self, oids: impl Iterator<Item = &'a str>) -> Result<Vec<Vec<u8>>, String> {
         let request: String = oids.map(|o| format!("{o}\n")).collect();
         let mut c = git(Some(&self.dir));

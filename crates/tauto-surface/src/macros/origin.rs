@@ -15,7 +15,11 @@ pub struct SpanMap {
 }
 
 impl SpanMap {
-    pub fn fresh(&mut self, written: u32, expansion: u32) -> Span {
+    /// A span for a node of expansion `expansion`. `written` 0 is no position of the
+    /// macro's output (`Syn::call_span()`, a name `Syn::global` makes): the node stands
+    /// at `call`, the start of the macro call.
+    pub fn fresh(&mut self, written: u32, expansion: u32, call: u32) -> Span {
+        let written = if written == 0 { call } else { written };
         let at = EXPANSION_BASE + self.origins.len() as u32;
         self.origins.push((written, expansion));
         Span::new(at, at + 1)

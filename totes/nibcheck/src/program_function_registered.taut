@@ -2,6 +2,21 @@ import "rules_registered_signatures.taut"
 import "program_function_table_preserved.taut"
 import "function_name_fresh.taut"
 import "../../surface/src/surface.taut"
+import std::Map
+import std::Row
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "function_name_absence.taut"
+import "function_table_registration.taut"
+import "program_function_table_ordered.taut"
+import "program_signature_sound.taut"
+import "rules_decls.taut"
+import "signature_frame.taut"
+import "signature_table_frame.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 pub(open) inductive FunctionBeforeRest(
   rest: List(SurfaceStmt)
@@ -66,12 +81,12 @@ pub theorem ck_program_decl_registered(
   c: Checker,
   ordered: CkFnsOrdered(c)
 ): RegisteredOptionalSignature(
-  fnt_table(ck_st(ck_program_decl(c, Stmt))),
-  ck_val(ck_program_decl(c, Stmt))
+  fnt_table(ck_st(ck_program_decl(c, stmt))),
+  ck_val(ck_program_decl(c, stmt))
 ) {
-  match Stmt: RegisteredOptionalSignature(
-    fnt_table(ck_st(ck_program_decl(c, Stmt))),
-    ck_val(ck_program_decl(c, Stmt))
+  match stmt: RegisteredOptionalSignature(
+    fnt_table(ck_st(ck_program_decl(c, stmt))),
+    ck_val(ck_program_decl(c, stmt))
   ) {
     StLet(name, ty, value, borrow, mutable) => RegisteredOptionalNone
     StVar(name, ty, value, borrow) => RegisteredOptionalNone
@@ -127,8 +142,8 @@ pub theorem ck_program_decl_before(
   c: Checker,
   seen: List(Text),
   fresh: FreshFunctionNames(types_function_decls(Cons(stmt, rest)), seen)
-): FunctionBeforeRest(rest, ck_val(ck_program_decl(c, Stmt))) {
-  match Stmt: FunctionBeforeRest(rest, ck_val(ck_program_decl(c, Stmt))) {
+): FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) {
+  match stmt: FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) {
     StLet(name, ty, value, borrow, mutable) => FunctionBeforeNone
     StVar(name, ty, value, borrow) => FunctionBeforeNone
     StModule(name, stmts, start, end) => FunctionBeforeNone
@@ -147,7 +162,7 @@ pub theorem ck_program_decl_before(
         fresh_function_absent(
           types_function_decls(rest),
           Cons(signature_name(f), seen),
-          fresh_function_tail(f, types_function_decls(rest), seen, Fresh),
+          fresh_function_tail(f, types_function_decls(rest), seen, fresh),
           signature_name(f),
           MemHere(seen)
         )
@@ -332,7 +347,7 @@ pub theorem ck_program_decls_registered(
         ck_program_decl(c, Stmt),
         ck_program_decl_ordered(c, Stmt, ordered),
         ck_program_decl_registered(Stmt, c, ordered),
-        ck_program_decl_before(Stmt, rest, c, seen, Fresh),
+        ck_program_decl_before(Stmt, rest, c, seen, fresh),
         next => next_ordered => ck_program_decls_registered(
           rest,
           next,
@@ -342,7 +357,7 @@ pub theorem ck_program_decls_registered(
             types_stmt_functions(Stmt),
             types_function_decls(rest),
             seen,
-            Fresh
+            fresh
           )
         )
       )

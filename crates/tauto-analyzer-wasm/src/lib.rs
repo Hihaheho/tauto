@@ -177,7 +177,6 @@ pub fn attempt(path: &str, hole: &str, expr: &str, keep: bool) -> Result<Json, S
     })
 }
 
-/// What `suggest` answers.
 pub fn suggest_json(path: &str, hole: &str, limit: usize) -> Result<Json, String> {
     let path = Path::new(path);
     WS.with(|ws| {
@@ -194,7 +193,6 @@ pub fn suggest_json(path: &str, hole: &str, limit: usize) -> Result<Json, String
     })
 }
 
-/// What `set_text` does.
 pub fn set_text_str(path: &str, text: &str) {
     WS.with(|ws| ws.borrow_mut().set_text(Path::new(path), text.to_string()));
 }

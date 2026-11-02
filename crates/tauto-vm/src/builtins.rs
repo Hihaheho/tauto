@@ -9,8 +9,8 @@ use tauto_rt::host::{Host as _, System};
 use crate::code::{Ctor, Program};
 use crate::machine::{Machine, checked};
 use crate::value::{
-    Answer, Data, Error, MutexState, Pending, PendingState, Place, R, SharedKind, Signal, Step,
-    TOO_LARGE, Value, equal, fail, temp_ref,
+    Answer, Data, Error, GuardState, MutexState, Pending, PendingState, Place, R, Root, SharedKind,
+    Signal, Step, TOO_LARGE, Value, equal, fail, temp_ref,
 };
 
 /// What a builtin answers: a value, or an operation it performs (with no
@@ -27,7 +27,6 @@ pub enum Out {
     Host(crate::hostcall::Job),
 }
 
-/// The constructors the builtins make.
 pub struct Known {
     some: Rc<Ctor>,
     none: Rc<Ctor>,
@@ -99,7 +98,6 @@ impl Known {
         }
         out
     }
-    /// The items of a `List`.
     pub fn items(&self, mut v: Value) -> R<Vec<Value>> {
         let mut out = Vec::new();
         loop {
@@ -117,7 +115,6 @@ impl Known {
     }
 }
 
-/// The builtins the machine has.
 pub const NAMES: &[&str] = &[
     "clone",
     "replace",
@@ -253,6 +250,8 @@ pub const NAMES: &[&str] = &[
     "Ref::new",
     "Ref::get",
     "Ref::set",
+    "Weak::of",
+    "Weak::get",
     "Atomic::new",
     "Atomic::load",
     "Atomic::store",
@@ -268,8 +267,14 @@ pub const NAMES: &[&str] = &[
     "Os::write_bytes",
     "Os::create_dir",
     "Os::remove",
+    "Os::stat",
+    "Os::move_path",
+    "Os::copy_file",
+    "Os::canonicalize",
     "Os::temp_dir",
     "Os::read_line",
+    "Os::read_stdin",
+    "Os::flush",
     "Os::env",
     "Os::wall_ms",
     "Os::monotonic_ns",
@@ -290,6 +295,9 @@ pub const NAMES: &[&str] = &[
     "Mutex::claim",
     "Mutex::take_claimed",
     "Mutex::put",
+    "MutexGuard::claimed",
+    "MutexGuard::get",
+    "MutexGuard::get_mut",
 ];
 
 fn pending(v: &Value) -> R<Rc<Pending>> {
@@ -727,6 +735,11 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             *shared(&a[0])?.borrow_mut() = a[1].clone();
             v(Value::Unit)
         }
+        "Weak::of" => v(Value::Weak(Rc::downgrade(&shared(&a[0])?))),
+        "Weak::get" => match a[0].get()? {
+            Value::Weak(w) => v(k.option(w.upgrade().map(|c| Value::Shared(SharedKind::Ref, c)))),
+            x => fail(format!("internal: expected a Weak, got {}", x.kind())),
+        },
         "Atomic::new" => v(Value::Shared(
             SharedKind::Atomic,
             Rc::new(std::cell::RefCell::new(a[0].get()?)),
@@ -780,6 +793,32 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
         )),
         "Os::create_dir" => v(k.result(System.create_dir(&a[0].as_text()?).map(|()| Value::Unit))),
         "Os::remove" => v(k.result(System.remove(&a[0].as_text()?).map(|()| Value::Unit))),
+        "Os::stat" => v(k.result(System.stat(&a[0].as_text()?).map(|found| {
+            let items = match found {
+                None => Vec::new(),
+                Some(s) => vec![
+                    Value::text(s.kind),
+                    Value::text(&s.size.to_string()),
+                    Value::text(&s.modified_ms.to_string()),
+                ],
+            };
+            k.list(items.into_iter())
+        }))),
+        "Os::move_path" => v(k.result(
+            System
+                .rename(&a[0].as_text()?, &a[1].as_text()?)
+                .map(|()| Value::Unit),
+        )),
+        "Os::copy_file" => v(k.result(
+            System
+                .copy(&a[0].as_text()?, &a[1].as_text()?)
+                .map(|()| Value::Unit),
+        )),
+        "Os::canonicalize" => v(k.result(
+            System
+                .canonicalize(&a[0].as_text()?)
+                .map(|p| Value::text(&p)),
+        )),
         // The run may read and write under the directory, as under one the
         // user picked (`Permissions::choose`).
         "Os::temp_dir" => {
@@ -790,6 +829,13 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
                     .ok_or_else(|| format!("{dir}: cannot be resolved"))
             });
             v(k.result(made.map(|d| Value::text(&d))))
+        }
+        "Os::read_stdin" => v(Value::Bytes(Rc::from(
+            System.read_stdin(a[0].as_int()?.clamp(0, 1 << 24) as usize),
+        ))),
+        "Os::flush" => {
+            System.flush();
+            v(Value::Unit)
         }
         "Os::read_line" => v(k.option(System.read_line().map(|t| Value::text(&t)))),
         "Os::env" => v(k.option(System.env(&a[0].as_text()?).map(|t| Value::text(&t)))),
@@ -877,6 +923,28 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
                 None => fail("internal: a mutex's content taken before it was handed"),
             }
         }
+        "MutexGuard::claimed" => {
+            let mx = mutex(&a[0])?;
+            let s = signal(&a[1])?;
+            let x = s.handed.borrow_mut().take();
+            match x {
+                Some(x) => v(Value::Guard(Rc::new(GuardState {
+                    mutex: mx,
+                    content: Rc::new(std::cell::RefCell::new(x)),
+                }))),
+                None => fail("internal: a mutex's content taken before it was handed"),
+            }
+        }
+        "MutexGuard::get" | "MutexGuard::get_mut" => match a[0].get()? {
+            Value::Guard(g) => v(Value::Ref(Rc::new(Place {
+                root: Root::Cell(g.content.clone()),
+                path: Vec::new(),
+            }))),
+            other => fail(format!(
+                "internal: expected a MutexGuard, got {}",
+                other.kind()
+            )),
+        },
         "Mutex::put" => {
             let mx = mutex(&a[0])?;
             let mut mx = mx.borrow_mut();

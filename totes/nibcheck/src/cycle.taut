@@ -1,5 +1,15 @@
+import std::TextOps
 import "lin_arms.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "freevars.taut"
+import "lin_state.taut"
+import "ty.taut"
+import "types_run.taut"
 
 // Which mutable storages may hold which others (`cycle/analysis.rs`), in the
 // proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
@@ -15,7 +25,6 @@ pub(open) inductive CyAtom: Type {
   AtCell(site: Nat): CyAtom
   // A borrowed `var` (or container) place: read through, never stored.
   AtPlace(site: Nat): CyAtom
-  // A function or closure.
   AtLam(lam: Nat): CyAtom
   // A value nothing is known about.
   AtUnknown(id: Nat): CyAtom
@@ -47,11 +56,9 @@ pub(open) inductive CyFilter: Type {
 }
 
 pub(open) inductive CyBound: Type {
-  // A value.
   BdVal(n: Nat): CyBound
   // A borrowed parameter or view: the place it stands for is read through.
   BdPlace(n: Nat): CyBound
-  // A `var` of this site.
   BdVar(site: Nat): CyBound
 }
 
@@ -104,7 +111,6 @@ pub(open) inductive Cy: Type {
     cell_count: Nat,
     lams: Ordmap(Nat, CyLam),
     lam_count: Nat,
-    // Why, and where.
     unknowns: Ordmap(Nat, Pair(Text, Nat)),
     unknown_count: Nat,
     effect_args: Ordmap(Text, List(Nat)),
@@ -115,11 +121,9 @@ pub(open) inductive Cy: Type {
     host_fns: Ordmap(Text, Bool),
     // The generic global functions, analysed afresh at each direct call.
     generic_fns: Ordmap(Text, SurfaceFn),
-    // The generic functions being analysed afresh now.
     cloning: List(Text),
     // How many fresh copies have been made (`cy_max_clones`).
     clones: Nat,
-    // The newest first.
     bindings: List(CyBinding),
     frames: List(CyFrame),
     // The frames being built, the innermost first: every value made and
@@ -473,6 +477,12 @@ pub fn cy_extern_model(name: Text): Option(CyExtern) {
     Some(ExDowngrade)
   } else if name == "Weak.get" {
     Some(ExUpgrade)
+  } else if name == "MutexGuard.get_mut" {
+    Some(ExLoadMut)
+  } else if name == "MutexGuard.get" {
+    Some(ExLoad)
+  } else if name == "MutexGuard.claimed" {
+    Some(ExFlatten)
   } else if cy_extern_in(
     name,
     Cons(
@@ -513,7 +523,7 @@ pub fn cy_extern_model(name: Text): Option(CyExtern) {
     Some(ExFlatten)
   } else if cy_extern_in(name, Cons("secret", Cons("expose", Nil))) {
     Some(ExFlatten)
-  } else if Text::starts_with(name, "ct_", 0) {
+  } else if Text::starts_with(name, "ct_") {
     // The secret words (`std/prelude/Secret.taut`).
     Some(ExFlatten)
   } else {
@@ -557,8 +567,6 @@ pub fn cy_quiet_name(c: Cy, name: Text): Bool {
     name
   ) || Ordmap::contains(c.host_fns, name, Ordmap::compare_text) || cy_is_operator(name)
 }
-
-// ----- atoms and nodes -----
 
 pub fn cy_atom_rank(a: CyAtom): Pair(Nat, Nat) {
   match a: Pair(Nat, Nat) {
@@ -660,7 +668,6 @@ pub fn cy_flow_each(froms: List(Nat), &mut c: Cy, to: Nat): Unit {
   }
 }
 
-// Each of the first into the one at its position in the second.
 pub fn cy_flow_zip(froms: List(Nat), &mut c: Cy, tos: List(Nat)): Unit {
   match froms: Unit {
     Nil => #()
@@ -755,7 +762,6 @@ pub fn cy_nodes(ps: List(Text), &mut c: Cy): List(Nat) {
   }
 }
 
-// A function or closure of these parameters.
 pub fn cy_new_lam(&mut c: Cy, params: List(Text)): Nat {
   let ps := cy_nodes(params, &mut c)
   let ret := cy_node(&mut c)
@@ -782,7 +788,6 @@ pub fn cy_nonempty(ns: List(Nat)): List(Nat) {
   }
 }
 
-// The union of some nodes.
 pub fn cy_join(&mut c: Cy, parts: List(Nat)): Nat {
   match cy_nonempty(parts): Nat {
     Nil => 0
@@ -796,8 +801,6 @@ pub fn cy_join(&mut c: Cy, parts: List(Nat)): Nat {
     }
   }
 }
-
-// ----- types -----
 
 pub fn cy_term_type(c: Cy, t: SurfaceTerm): Option(Ty) {
   Ordmap::get(c.types.terms, term_at_of(t), term_at_compare)
@@ -870,7 +873,7 @@ mutual {
         Nil => Pair { fst: false, snd: seen }
         Cons(t, rest) => {
           let r := cy_holds_ty(j, d, t, inside, seen)
-          if (r: Bool) { r } else { cy_holds_any(j, d, rest, inside, (r: List(Text))) }
+          if r.fst { r } else { cy_holds_any(j, d, rest, inside, r.snd) }
         }
       }
     }
@@ -891,7 +894,10 @@ mutual {
           "Ref",
           Cons(
             "Mutex",
-            Cons("Vec", Cons("HashMap", Cons("Slice", Cons("Task", Cons("Pending", Nil)))))
+            Cons(
+              "MutexGuard",
+              Cons("Vec", Cons("HashMap", Cons("Slice", Cons("Task", Cons("Pending", Nil)))))
+            )
           )
         ),
         n
@@ -901,17 +907,17 @@ mutual {
         Pair { fst: false, snd: seen }
       } else {
         let r := cy_holds_any(j, d, args, inside, seen)
-        if (r: Bool) {
+        if r.fst {
           r
         } else {
           match datas_decl(d, n): Pair(Bool, List(Text)) {
-            None => Pair { fst: true, snd: (r: List(Text)) }
+            None => Pair { fst: true, snd: r.snd }
             Some(data) => if data.is_struct && cy_data_is_handle(data.constructors) {
-              Pair { fst: true, snd: (r: List(Text)) }
-            } else if list_has_text((r: List(Text)), n) {
-              Pair { fst: false, snd: (r: List(Text)) }
+              Pair { fst: true, snd: r.snd }
+            } else if list_has_text(r.snd, n) {
+              Pair { fst: false, snd: r.snd }
             } else {
-              cy_holds_ctors(j, d, data.constructors, Cons(n, (r: List(Text))))
+              cy_holds_ctors(j, d, data.constructors, Cons(n, r.snd))
             }
           }
         }
@@ -931,7 +937,7 @@ mutual {
         Nil => Pair { fst: false, snd: seen }
         Cons(x, rest) => {
           let r := cy_holds_fields(j, d, x.fields, seen)
-          if (r: Bool) { r } else { cy_holds_ctors(j, d, rest, (r: List(Text))) }
+          if r.fst { r } else { cy_holds_ctors(j, d, rest, r.snd) }
         }
       }
     }
@@ -949,7 +955,7 @@ mutual {
         Nil => Pair { fst: false, snd: seen }
         Cons(f, rest) => {
           let r := cy_holds_ty(j, d, f.ty, true, seen)
-          if (r: Bool) { r } else { cy_holds_fields(j, d, rest, (r: List(Text))) }
+          if r.fst { r } else { cy_holds_fields(j, d, rest, r.snd) }
         }
       }
     }
@@ -1151,7 +1157,6 @@ pub fn cy_typed(&mut c: Cy, n: Nat, ty: Option(Ty)): Nat {
   }
 }
 
-// `cy_read_through` of an argument, kept to what its type allows.
 pub fn cy_read_through_typed(&mut c: Cy, n: Nat, t: Option(SurfaceTerm)): Nat {
   let v := cy_read_through(&mut c, n)
   match t: Nat {
@@ -1164,8 +1169,6 @@ pub fn cy_max_clones(): Nat {
   4096
 }
 
-// ----- names -----
-
 pub fn cy_find_in(bs: List(CyBinding), name: Text): Option(CyBinding) {
   match bs: Option(CyBinding) {
     Nil => None
@@ -1177,7 +1180,6 @@ pub fn cy_find(c: Cy, name: Text): Option(CyBinding) {
   cy_find_in(c.bindings, name)
 }
 
-// The innermost frame being built, or 0.
 pub fn cy_scope(c: Cy): Nat {
   match c.scopes: Nat {
     Cons(f, rest) => f
@@ -1185,12 +1187,10 @@ pub fn cy_scope(c: Cy): Nat {
   }
 }
 
-// The current frame holds `n`.
 pub fn cy_hold(&mut c: Cy, n: Nat): Unit {
   cy_flow(&mut c, n, cy_scope(c))
 }
 
-// The node of what a binding holds.
 pub fn cy_bound_node(&mut c: Cy, bound: CyBound): Nat {
   match bound: Nat {
     BdVal(n) => n
@@ -1339,7 +1339,6 @@ pub fn cy_bound(place: Bool, n: Nat): CyBound {
   if place { BdPlace(n) } else { BdVal(n) }
 }
 
-// `n` when the type holds what the check follows, else nothing.
 pub fn cy_kept(holds: Bool, n: Nat): Nat {
   if holds { n } else { 0 }
 }
@@ -1372,10 +1371,9 @@ pub fn cy_bind_params(
   }
 }
 
-// The name a place starts at: `x`, `x.f`.
 pub fn cy_place_root(t: SurfaceTerm): Option(Text) {
   match lin_place(t): Option(Text) {
-    Some(p) => Some((p: Text))
+    Some(p) => Some(p.fst)
     None => None
   }
 }
@@ -1461,8 +1459,6 @@ pub fn cy_bind_patterns(
     }
   }
 }
-
-// ----- the walk -----
 
 mutual {
   // The node of the value of `t`. `raw` leaves places unread (a function that
@@ -1624,7 +1620,6 @@ mutual {
     }
   }
 
-  // The value of the last statement.
   pub fn cy_stmts(k: Nat, &mut c: Cy, stmts: List(SurfaceStmt), raw: Bool): Nat {
     match k: Nat {
       Zero => 0
@@ -2048,7 +2043,6 @@ mutual {
         set_to(&mut c.scopes, Cons(stack, c.scopes))
         let b := cy_eval(j, &mut c, body, false)
         set_to(&mut c.scopes, saved_scopes)
-        // The body runs in the frame around the handle.
         cy_hold(&mut c, stack)
         // The frames of the body hold the scope of the handle (the
         // evaluator's frames hold their whole environment), and a resume
@@ -2064,7 +2058,6 @@ mutual {
     }
   }
 
-  // Whether one of them is a `return` arm.
   pub fn cy_handlers(
     k: Nat,
     &mut c: Cy,
@@ -2125,7 +2118,6 @@ mutual {
   }
 }
 
-// `dst` holds what each of the bindings is bound to.
 pub fn cy_hold_bindings(bs: List(CyBinding), &mut c: Cy, dst: Nat): Unit {
   match bs: Unit {
     Nil => #()
@@ -2148,8 +2140,6 @@ pub fn cy_collect_externs(fns: List(SurfaceFn), &mut c: Cy): Unit {
     }
   }
 }
-
-// ----- the program -----
 
 // The functions to walk, the oldest first, as `(lam, decl)` pairs newest
 // first in `acc`.
@@ -2263,8 +2253,6 @@ pub fn cy_not_fns(ss: List(SurfaceStmt)): List(SurfaceStmt) {
   }
 }
 
-// ----- solving -----
-
 pub fn cy_union(&mut c: Cy, dst: Nat, src: Nat): Unit {
   cy_insert_all(cy_atom_list(c, src), &mut c, dst)
 }
@@ -2289,7 +2277,6 @@ pub fn cy_solve_copies(es: List(Pair(Nat, Ordmap(Nat, Bool))), &mut c: Cy): Unit
   }
 }
 
-// What each storage of `src` holds, into `dst`.
 pub fn cy_load_atoms(atoms: List(CyAtom), &mut c: Cy, dst: Nat): Unit {
   match atoms: Unit {
     Nil => #()
@@ -2450,7 +2437,6 @@ pub fn cy_solve_stores(es: List(Pair(Nat, Nat)), &mut c: Cy): Unit {
   }
 }
 
-// The atoms of `src` its filter keeps, into `dst`.
 pub fn cy_filter_atoms(atoms: List(CyAtom), &mut c: Cy, f: CyFilter): Unit {
   match atoms: Unit {
     Nil => #()
@@ -2512,8 +2498,6 @@ pub fn cy_solve(k: Nat, &mut c: Cy): Unit {
   }
 }
 
-// ----- the result -----
-
 pub(open) inductive CyFrontier: Type {
   CyFrontierMk(cells: Ordmap(Nat, Bool), unknown: List(Nat), lams: Ordmap(Nat, Bool)): CyFrontier
 }
@@ -2573,11 +2557,11 @@ pub fn cy_frontier(c: Cy, contents: Nat): CyFrontier {
 
 // `(why, start)` before by where, then why.
 pub fn cy_unknown_before(a: Pair(Text, Nat), b: Pair(Text, Nat)): Bool {
-  let less := match Text::ordering((a: Text), (b: Text)): Bool {
+  let less := match Text::ordering(a.fst, b.fst): Bool {
     Less => true
     _ => false
   }
-  (a: Nat) < (b: Nat) || ((a: Nat) == (b: Nat) && less)
+  a.snd < b.snd || (a.snd == b.snd && less)
 }
 
 pub fn cy_pick(first: Bool, x: Pair(Text, Nat), y: Pair(Text, Nat)): Option(Pair(Text, Nat)) {
@@ -2620,7 +2604,7 @@ pub fn cy_edges(
         Some(u) => Cons(
           LinError {
             message: Text::concat_all(
-              Cons(cell.what, Cons(" may hold a value that cannot be checked for reference cycles: ", Cons((u: Text), Nil)))
+              Cons(cell.what, Cons(" may hold a value that cannot be checked for reference cycles: ", Cons(u.fst, Nil)))
             ),
             start: cell.start,
             end: cell.end
@@ -2896,8 +2880,8 @@ pub fn cy_dedup(es: List(LinError)): List(LinError) {
 pub fn cy_diagnostics(c: Cy): List(LinError) {
   let n := c.cell_count
   let found := cy_edges(n + 1, c, 0, Ordmap::empty(), Nil)
-  let reach := cy_reaches(n + 1, (found: Ordmap(Nat, List(Nat))), 0, n, Ordmap::empty())
-  let all := cy_cycles(n + 1, c, reach, 0, Ordmap::empty(), (found: List(LinError)))
+  let reach := cy_reaches(n + 1, found.fst, 0, n, Ordmap::empty())
+  let all := cy_cycles(n + 1, c, reach, 0, Ordmap::empty(), found.snd)
   cy_dedup(cy_sort_errors(all))
 }
 

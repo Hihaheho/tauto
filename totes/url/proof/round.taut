@@ -1,10 +1,17 @@
 import "percent.taut"
 import "../src/valid.taut"
+import "bytes.taut"
+import "../src/bytes.taut"
+import "../src/parse.taut"
+import "../src/percent.taut"
+import "../src/url.taut"
+import std::Base
+import std::List
+import std::Nat
+import std::NatDiv
 
 // Parsing the serialization of a valid URL gives the URL back
 // (`parse_serialize`).
-
-// ---- booleans and small numbers -----------------------------------------------------
 
 pub theorem or_false(a: Bool, b: Bool, h: Bool::or(a, b) = false): And(a = false, b = false) {
   match a: (Bool::or(a, b) = false) -> And(a = false, b = false) {
@@ -88,8 +95,6 @@ pub theorem clean_to(
   )
 }
 
-// ---- the sets hold the C0 control set -------------------------------------------------
-
 pub theorem c0_c0(b: Nat, h: c0_control_set(b) = false): c0_control_set(b) = false { h }
 
 pub theorem query_c0(b: Nat, h: query_set(b) = false): c0_control_set(b) = false {
@@ -112,9 +117,6 @@ pub theorem userinfo_c0(b: Nat, h: userinfo_set(b) = false): c0_control_set(b) =
   or_false(c0_control_set(b), userinfo_extra(b), h).a
 }
 
-// ---- query and fragment ------------------------------------------------------------
-
-// An optional part with no byte in `set`.
 pub fn opt_clean(set: (Nat) -> Bool, o: Option(List(Nat))): Bool {
   match o: Bool {
     None => true
@@ -179,7 +181,10 @@ pub theorem tail_of_ok(
   hq: opt_clean(qset, q) = true,
   f: Option(List(Nat)),
   hf: opt_clean(fragment_set, f) = true
-): tail_of(qset, List::append(h, List::append(opt_bytes(63, q), opt_bytes(35, f)))) = MkTail(h, q, f) {
+): tail_of(
+  qset,
+  List::append(h, List::append(opt_bytes(63, q), opt_bytes(35, f)))
+) = MkTail(h, q, f) {
   match f: tail_of(
     qset,
     List::append(h, List::append(opt_bytes(63, q), opt_bytes(35, f)))
@@ -222,8 +227,6 @@ pub theorem tail_of_ok(
     }
   }
 }
-
-// ---- segments -----------------------------------------------------------------------
 
 pub fn seg_rest3(sp: Bool, s: List(Nat)): Bool {
   Bool::and(Nat::eq(dots(s), 0), implies(sp, all_bytes(ne(92), s)))
@@ -370,8 +373,6 @@ pub theorem path_of_join(
   )
 }
 
-// ---- bytes by bounds -------------------------------------------------------------------
-
 // A test that bounds the bytes, and a fact checked below the bound.
 pub theorem bounded_to(
   p: (Nat) -> Bool,
@@ -429,8 +430,6 @@ pub theorem opt_list_is_sound(
   }(h)
 }
 
-// ---- ports --------------------------------------------------------------------------
-
 pub fn port_check(l: List(Nat), n: Nat): Bool {
   match l: Bool {
     Nil => false
@@ -438,11 +437,227 @@ pub fn port_check(l: List(Nat), n: Nat): Bool {
   }
 }
 
+pub fn opt_snoc(o: Option(Nat), c: Nat): Option(Nat) {
+  match o: Option(Nat) {
+    None => None
+    Some(m) => Some(Nat::add(Nat::mul(m, 10), Nat::sub(c, 48)))
+  }
+}
+
+// Reading the digits of `x` and then one more digit `c`.
+pub theorem digits_value_snoc(
+  x: List(Nat),
+  acc: Nat,
+  c: Nat,
+  h: is_digit(c) = true
+): digits_value(acc, List::append(x, Cons(c, Nil))) = opt_snoc(digits_value(acc, x), c) {
+  match x: digits_value(acc, List::append(x, Cons(c, Nil))) = opt_snoc(digits_value(acc, x), c) {
+    Nil => Eq::subst(
+      (z: Bool) => (match z: Option(Nat) {
+          true => digits_value(Nat::add(Nat::mul(acc, 10), Nat::sub(c, 48)), Nil)
+          false => None
+        }) = Some(Nat::add(Nat::mul(acc, 10), Nat::sub(c, 48))),
+      Eq::sym(h),
+      Refl
+    )
+    Cons(b, t) => match is_digit(
+      b
+    ) eqn e: digits_value(
+      acc,
+      List::append(Cons(b, t), Cons(c, Nil))
+    ) = opt_snoc(digits_value(acc, Cons(b, t)), c) {
+      true => ⊢ digits_value(
+        Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)),
+        List::append(t, Cons(c, Nil))
+      ) = opt_snoc(
+        digits_value(Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), t),
+        c
+      ) from digits_value_snoc(t, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), c, h)
+      false => ⊢ None = opt_snoc(None, c) from Refl
+    }
+  }
+}
+
+pub theorem port_check_snoc(
+  x: List(Nat),
+  q: Nat,
+  n: Nat,
+  c: Nat,
+  hx: port_check(x, q) = true,
+  hc: is_digit(c) = true,
+  hn: Nat::add(Nat::mul(q, 10), Nat::sub(c, 48)) = n
+): port_check(List::append(x, Cons(c, Nil)), n) = true {
+  match x: (port_check(x, q) = true) -> port_check(List::append(x, Cons(c, Nil)), n) = true {
+    Nil => (e: false = true) => False::elim(false_ne_true(e))
+    Cons(b, t) => (e: Bool::and(opt_is(digits_value(0, Cons(b, t)), q), all_bytes(is_digit, Cons(b, t))) = true) => Bool::and_intro(
+      opt_is(digits_value(0, List::append(Cons(b, t), Cons(c, Nil))), n),
+      all_bytes(is_digit, List::append(Cons(b, t), Cons(c, Nil))),
+      Eq::subst(
+        (o: Option(Nat)) => opt_is(o, n) = true,
+        Eq::sym(
+          Eq::trans(
+            digits_value_snoc(Cons(b, t), 0, c, hc),
+            Eq::trans(
+              Eq::congr(
+                (o: Option(Nat)) => opt_snoc(o, c),
+                opt_is_sound(
+                  digits_value(0, Cons(b, t)),
+                  q,
+                  Bool::and_split(
+                    opt_is(digits_value(0, Cons(b, t)), q),
+                    all_bytes(is_digit, Cons(b, t)),
+                    e
+                  ).a
+                )
+              ),
+              Eq::congr(Some, hn)
+            )
+          )
+        ),
+        Nat::eq_refl(n)
+      ),
+      all_bytes_append(
+        is_digit,
+        Cons(b, t),
+        Cons(c, Nil),
+        Bool::and_split(
+          opt_is(digits_value(0, Cons(b, t)), q),
+          all_bytes(is_digit, Cons(b, t)),
+          e
+        ).b,
+        all_bytes_cons(is_digit, c, Nil, hc, Refl)
+      )
+    )
+  }(hx)
+}
+
+// The decimal digits of every `n` below `m`, when those of every quotient below `b` are right.
+pub theorem port_text_level(
+  k: Nat,
+  m: Nat,
+  b: Nat,
+  hb: below(
+    m,
+    (y: Nat) => Bool::or(Nat::lt(y, 10), Nat::lt(Nat::div_nz(y, 10, Nat::ne_zero(10, Refl)), b))
+  ) = true,
+  ih: (q: Nat) -> (Nat::lt(q, b) = true) -> port_check(decimal(k, q), q) = true,
+  n: Nat,
+  hn: Nat::lt(n, m) = true
+): port_check(decimal(Succ(k), n), n) = true {
+  match Nat::lt(n, 10) eqn e: port_check(decimal(Succ(k), n), n) = true {
+    true => ⊢ port_check(
+      Cons(Nat::add(n, 48), Nil),
+      n
+    ) = true from below_sound(10, (y: Nat) => port_check(Cons(Nat::add(y, 48), Nil), y), n, Refl, e)
+    false => ⊢ port_check(
+      List::append(
+        decimal(k, Nat::div_nz(n, 10, Nat::ne_zero(10, Refl))),
+        Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), Nil)
+      ),
+      n
+    ) = true from port_check_snoc(
+      decimal(k, Nat::div_nz(n, 10, Nat::ne_zero(10, Refl))),
+      Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)),
+      n,
+      Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48),
+      ih(
+        Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)),
+        Eq::subst(
+          (z: Bool) => Bool::or(z, Nat::lt(Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)), b)) = true,
+          e,
+          below_sound(
+            m,
+            (y: Nat) => Bool::or(
+              Nat::lt(y, 10),
+              Nat::lt(Nat::div_nz(y, 10, Nat::ne_zero(10, Refl)), b)
+            ),
+            n,
+            hb,
+            hn
+          )
+        )
+      ),
+      below_sound(
+        10,
+        (y: Nat) => is_digit(Nat::add(y, 48)),
+        Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)),
+        Refl,
+        Nat::mod_lt(n, 10, Refl)
+      ),
+      Eq::trans(
+        Eq::congr(
+          (z: Nat) => Nat::add(Nat::mul(Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)), 10), z),
+          Nat::eq_sound(
+            Nat::sub(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), 48),
+            Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)),
+            below_sound(
+              10,
+              (y: Nat) => Nat::eq(Nat::sub(Nat::add(y, 48), 48), y),
+              Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)),
+              Refl,
+              Nat::mod_lt(n, 10, Refl)
+            )
+          )
+        ),
+        Eq::trans(
+          Eq::congr(
+            (z: Nat) => Nat::add(z, Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl))),
+            Nat::mul_comm(Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)), 10)
+          ),
+          Nat::div_mod_eq(n, 10, Nat::ne_zero(10, Refl))
+        )
+      )
+    )
+  }
+}
+
 pub theorem port_text_check(
   n: Nat,
   h: Nat::lt(n, 65536) = true
 ): port_check(port_text(n), n) = true {
-  below_sound(65536, (y: Nat) => port_check(port_text(y), y), n, Refl, h)
+  port_text_level(
+    4,
+    65536,
+    10000,
+    Refl,
+    (q: Nat) => (h4: Nat::lt(q, 10000) = true) => port_text_level(
+      3,
+      10000,
+      1000,
+      Refl,
+      (r: Nat) => (h3: Nat::lt(r, 1000) = true) => port_text_level(
+        2,
+        1000,
+        100,
+        Refl,
+        (s: Nat) => (h2: Nat::lt(s, 100) = true) => port_text_level(
+          1,
+          100,
+          10,
+          Refl,
+          (t: Nat) => (h1: Nat::lt(t, 10) = true) => port_text_level(
+            0,
+            10,
+            0,
+            Refl,
+            (u: Nat) => (h0: Nat::lt(u, 0) = true) => False::elim(
+              false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(u)), h0))
+            ),
+            t,
+            h1
+          ),
+          s,
+          h2
+        ),
+        r,
+        h3
+      ),
+      q,
+      h4
+    ),
+    n,
+    h
+  )
 }
 
 pub theorem port_of_check(
@@ -477,9 +692,7 @@ pub theorem port_check_digits(
 ): all_bytes(is_digit, l) = true {
   match l: (port_check(l, n) = true) -> all_bytes(is_digit, l) = true {
     Nil => (e: false = true) => False::elim(false_ne_true(e))
-    Cons(b, t) => (
-      e: Bool::and(opt_is(digits_value(0, Cons(b, t)), n), all_bytes(is_digit, Cons(b, t))) = true
-    ) => Bool::and_split(
+    Cons(b, t) => (e: Bool::and(opt_is(digits_value(0, Cons(b, t)), n), all_bytes(is_digit, Cons(b, t))) = true) => Bool::and_split(
       opt_is(digits_value(0, Cons(b, t)), n),
       all_bytes(is_digit, Cons(b, t)),
       e
@@ -539,7 +752,6 @@ pub theorem port_of_text(
   )
 }
 
-// A byte of `:port`.
 pub fn port_byte(b: Nat): Bool {
   Bool::and(Nat::lt(b, 59), Bool::or(Nat::eq(b, 58), is_digit(b)))
 }
@@ -579,8 +791,6 @@ pub theorem port_part_bytes(
 pub theorem port_byte_bound(b: Nat, h: port_byte(b) = true): Nat::lt(b, 59) = true {
   Bool::and_split(Nat::lt(b, 59), Bool::or(Nat::eq(b, 58), is_digit(b)), h).a
 }
-
-// ---- the authority ----------------------------------------------------------------------
 
 pub theorem host_c0(b: Nat, h: host_set(b) = false): c0_control_set(b) = false {
   or_false(c0_control_set(b), forbidden_host(b), h).a
@@ -702,7 +912,9 @@ pub theorem user_pass_ok(
   hp: clean(userinfo_set, p) = true
 ): user_pass(List::append(u, pass_part(p))) = (Pair { fst: u, snd: p }) {
   let h58: all_bytes(ne(58), u) = true := clean_to(userinfo_set, ne(58), userinfo_c0, Refl, u, hu)
-  match p: (clean(userinfo_set, p) = true) -> user_pass(List::append(u, pass_part(p))) = (Pair { fst: u, snd: p }) {
+  match p: (
+    clean(userinfo_set, p) = true
+  ) -> user_pass(List::append(u, pass_part(p))) = (Pair { fst: u, snd: p }) {
     Nil => (e: true = true) => Eq::subst(
       (w: List(Nat)) => user_pass(w) = Pair { fst: u, snd: Nil },
       Eq::sym(List::append_nil(u)),
@@ -1133,8 +1345,6 @@ pub theorem authority_round(
   }(e)
 }
 
-// ---- the bytes of the parts --------------------------------------------------------------
-
 // A byte of the part before `?`: printable and not a space, not `#`, not
 // `?`.
 pub fn hbyte(b: Nat): Bool {
@@ -1182,9 +1392,7 @@ pub theorem all_bytes_and(
     all_bytes(p, x) = true
   ) -> (all_bytes(q, x) = true) -> all_bytes((b: Nat) => Bool::and(p(b), q(b)), x) = true {
     Nil => (e1: true = true) => (e2: true = true) => Refl
-    Cons(y, t) => (e1: all_bytes(p, Cons(y, t)) = true) => (
-      e2: all_bytes(q, Cons(y, t)) = true
-    ) => all_bytes_cons(
+    Cons(y, t) => (e1: all_bytes(p, Cons(y, t)) = true) => (e2: all_bytes(q, Cons(y, t)) = true) => all_bytes_cons(
       (b: Nat) => Bool::and(p(b), q(b)),
       y,
       t,
@@ -1395,8 +1603,6 @@ pub theorem auth_part_bytes(
   }(h)
 }
 
-// ---- the part before `?` ------------------------------------------------------------------
-
 pub theorem drop_keep(l: List(Nat), h: starts_with(47, l) = false): drop_slashes(l) = l {
   match l: (starts_with(47, l) = false) -> drop_slashes(l) = l {
     Nil => (e: false = false) => Refl
@@ -1522,7 +1728,11 @@ pub theorem with_path_some(
   e: a = Some(x),
   ss: List(List(Nat))
 ): with_path(a, ss) = Some(Pair { fst: x, snd: ss }) {
-  Eq::subst((o: Option(Authority)) => with_path(o, ss) = Some(Pair { fst: x, snd: ss }), Eq::sym(e), Refl)
+  Eq::subst(
+    (o: Option(Authority)) => with_path(o, ss) = Some(Pair { fst: x, snd: ss }),
+    Eq::sym(e),
+    Refl
+  )
 }
 
 // The authority and nonempty segments read back.
@@ -1539,7 +1749,11 @@ pub theorem auth_path_segs(
     segs_ok(sp, ss) = true
   ) -> (
     is_empty_list(ss) = false
-  ) -> auth_path(sp, d, List::append(auth_part(a), segments_part(ss))) = Some(Pair { fst: a, snd: ss }) {
+  ) -> auth_path(
+    sp,
+    d,
+    List::append(auth_part(a), segments_part(ss))
+  ) = Some(Pair { fst: a, snd: ss }) {
     Nil => (e1: true = true) => (e2: true = false) => False::elim(true_ne_false(e2))
     Cons(s, rest) => (e1: segs_ok(sp, Cons(s, rest)) = true) => (e2: false = false) => Eq::trans(
       Eq::subst(
@@ -1909,9 +2123,14 @@ pub theorem segs_hier(
     MkTail(hier_part(None, Segments(ss)), q, f)
   ) = Some(MkUrl(s, None, Segments(ss), q, f)) {
     Nil => (e1: true = true) => (e2: true = false) => False::elim(true_ne_false(e2))
-    Cons(s0, rest) => (e1: segs_ok(false, Cons(s0, rest)) = true) => (
-      e2: false = false
-    ) => segs_hier_cons(s, q, f, s0, rest, e1)
+    Cons(s0, rest) => (e1: segs_ok(false, Cons(s0, rest)) = true) => (e2: false = false) => segs_hier_cons(
+      s,
+      q,
+      f,
+      s0,
+      rest,
+      e1
+    )
   }(hs, hne)
 }
 
@@ -1975,8 +2194,6 @@ pub theorem segs_hier_cons(
   }(hs)
 }
 
-// ---- the scheme ------------------------------------------------------------------------
-
 // `p` fails at `c`: a byte it accepts is not `c`.
 pub theorem ne_of(
   p: (Nat) -> Bool,
@@ -1991,7 +2208,10 @@ pub theorem ne_of(
     (e: Nat::eq(b, c) = false) => Eq::congr(not, e),
     (e: Nat::eq(b, c) = true) => False::elim(
       true_ne_false(
-        Eq::trans(Eq::sym(hb), Eq::subst((z: Nat) => p(z) = false, Eq::sym(Nat::eq_sound(b, c, e)), hc))
+        Eq::trans(
+          Eq::sym(hb),
+          Eq::subst((z: Nat) => p(z) = false, Eq::sym(Nat::eq_sound(b, c, e)), hc)
+        )
       )
     )
   )
@@ -2223,8 +2443,6 @@ pub theorem after_plain(
   )
 }
 
-// ---- the whole URL ------------------------------------------------------------------------
-
 pub fn v_qf(sp: Bool, q: Option(List(Nat)), f: Option(List(Nat))): Bool {
   Bool::and(query_ok(sp, q), fragment_ok(f))
 }
@@ -2345,7 +2563,9 @@ pub theorem special_round(
     d,
     tail_of(special_query_set, rest_of(a, p, q, f))
   ) = Some(MkUrl(s, a, p, q, f)) {
-    None => (e: Bool::and(false, v_pqf(true, None, p, q, f)) = true) => False::elim(false_ne_true(e))
+    None => (e: Bool::and(false, v_pqf(true, None, p, q, f)) = true) => False::elim(
+      false_ne_true(e)
+    )
     Some(x) => match p: (
       v_apqf(true, Some(d), Some(x), p, q, f) = true
     ) -> parse_special(
@@ -2519,18 +2739,22 @@ pub theorem plain_round(
               all_bytes_imp(
                 (b: Nat) => Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))),
                 ne(35),
-                (b: Nat) => (
-                  eb: Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))) = true
-                ) => Bool::and_split(not(Nat::eq(b, 35)), not(Nat::eq(b, 63)), eb).a,
+                (b: Nat) => (eb: Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))) = true) => Bool::and_split(
+                  not(Nat::eq(b, 35)),
+                  not(Nat::eq(b, 63)),
+                  eb
+                ).a,
                 o,
                 hin
               ),
               all_bytes_imp(
                 (b: Nat) => Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))),
                 ne(63),
-                (b: Nat) => (
-                  eb: Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))) = true
-                ) => Bool::and_split(not(Nat::eq(b, 35)), not(Nat::eq(b, 63)), eb).b,
+                (b: Nat) => (eb: Bool::and(not(Nat::eq(b, 35)), not(Nat::eq(b, 63))) = true) => Bool::and_split(
+                  not(Nat::eq(b, 35)),
+                  not(Nat::eq(b, 63)),
+                  eb
+                ).b,
                 o,
                 hin
               ),
@@ -2572,7 +2796,11 @@ pub theorem plain_round(
         let hss: segs_ok(
           false,
           ss
-        ) = true := Bool::and_split(segs_ok(false, ss), implies(true, not(is_empty_list(ss))), hpo).a
+        ) = true := Bool::and_split(
+          segs_ok(false, ss),
+          implies(true, not(is_empty_list(ss))),
+          hpo
+        ).a
         let hne: is_empty_list(
           ss
         ) = false := not_empty_list(

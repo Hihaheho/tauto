@@ -1,4 +1,14 @@
 import "written_unique_base.taut"
+import std::Base
+import std::Map
+import std::Text
+import "datas.taut"
+import "rules_written.taut"
+import "rules_written_name.taut"
+import "ty.taut"
+import "unify_sound.taut"
+import "written_value_base.taut"
+import "../../surface/src/surface.taut"
 
 pub theorem written_unique_named<env: Datas, generics: Ordmap(
   Text,
@@ -23,7 +33,7 @@ pub theorem written_unique_named<env: Datas, generics: Ordmap(
 ): TyNamed(name, types) = other {
   match meaning: TyNamed(name, types) = other {
     WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, begin, finish) => False::elim(
-      NotTuple(Refl)
+      not_tuple(Refl)
     )
     WrittenKindInfo(
       ctor_ast_occurrence,
@@ -67,7 +77,7 @@ pub theorem written_unique_named<env: Datas, generics: Ordmap(
       finish,
       other_not_info,
       Parameter,
-      Constructor,
+      constructor,
       argument
     ) => False::elim(ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), Parameter)))
   }
@@ -121,7 +131,7 @@ pub theorem written_unique_generic<env: Datas, generics: Ordmap(
       SliceBorrowed,
       arguments,
       arity
-    ) => False::elim(ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), Parameter)))
+    ) => False::elim(ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), parameter)))
     WrittenKindGeneric(
       ctor_ast_occurrence,
       gs,
@@ -142,7 +152,7 @@ pub theorem written_unique_generic<env: Datas, generics: Ordmap(
       Eq::congr(
         (h: Ty) => ty_apply(h, t),
         Eq::trans(
-          Eq::sym(written_name_determined(Constructor)),
+          Eq::sym(written_name_determined(constructor)),
           written_name_determined(other_constructor)
         )
       ),
@@ -207,11 +217,11 @@ pub theorem written_unique_nested<env: Datas, generics: Ordmap(
       other_name,
       other_first,
       other_last,
-      Constructor,
+      constructor,
       arguments,
       arity
     ) => written_named_extend_equal(
-      ihhead(env, TyNamed(other_name, other_first), Constructor),
+      ihhead(env, TyNamed(other_name, other_first), constructor),
       last,
       other_last,
       ihtail(env, other_last, arguments)

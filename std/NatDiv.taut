@@ -1,3 +1,4 @@
+import "Base.taut"
 import "Nat.taut"
 import "Tactic.taut"
 
@@ -26,9 +27,21 @@ module Nat {
   ): Nat::divmod(Succ(a), b, q, r) = dm_step(b, Nat::divmod(a, b, q, r)) {
     match a: Nat::divmod(Succ(a), b, q, r) = dm_step(b, Nat::divmod(a, b, q, r)) {
       Zero => Refl
-      Succ(a2) => match Succ(r) == b: Nat::divmod(Succ(Succ(a2)), b, q, r) = dm_step(b, Nat::divmod(Succ(a2), b, q, r)) {
-        false => ⊢ Nat::divmod(Succ(a2), b, q, Succ(r)) = dm_step(b, Nat::divmod(a2, b, q, Succ(r))) from divmod_succ(a2, b, q, Succ(r))
-        true => ⊢ Nat::divmod(Succ(a2), b, Succ(q), Zero) = dm_step(b, Nat::divmod(a2, b, Succ(q), Zero)) from divmod_succ(a2, b, Succ(q), Zero)
+      Succ(a2) => match Succ(
+        r
+      ) == b: Nat::divmod(Succ(Succ(a2)), b, q, r) = dm_step(b, Nat::divmod(Succ(a2), b, q, r)) {
+        false => ⊢ Nat::divmod(
+          Succ(a2),
+          b,
+          q,
+          Succ(r)
+        ) = dm_step(b, Nat::divmod(a2, b, q, Succ(r))) from divmod_succ(a2, b, q, Succ(r))
+        true => ⊢ Nat::divmod(
+          Succ(a2),
+          b,
+          Succ(q),
+          Zero
+        ) = dm_step(b, Nat::divmod(a2, b, Succ(q), Zero)) from divmod_succ(a2, b, Succ(q), Zero)
       }
     }
   }
@@ -64,9 +77,7 @@ module Nat {
     b: Nat,
     p: Nat × Nat
   ): dm_snd(dm_step(b, p)) = wrap_succ(Succ(dm_snd(p)) == b, dm_snd(p)) {
-    match p: dm_snd(
-      dm_step(b, p)
-    ) = wrap_succ(Succ(dm_snd(p)) == b, dm_snd(p)) {
+    match p: dm_snd(dm_step(b, p)) = wrap_succ(Succ(dm_snd(p)) == b, dm_snd(p)) {
       #(q, r) => match Succ(r) == b: dm_snd(dm_step(b, #(q, r))) = wrap_succ(Succ(r) == b, r) {
         false => ⊢ dm_snd(#(q, Succ(r))) = wrap_succ(false, r) from Refl
         true => ⊢ dm_snd(#(Succ(q), Zero)) = wrap_succ(true, r) from Refl
@@ -74,7 +85,6 @@ module Nat {
     }
   }
 
-  // The remainder of `n + 1`: one more, or 0 when that reaches `b`.
   pub theorem mod_succ(
     n: Nat,
     b: Nat,
@@ -85,8 +95,6 @@ module Nat {
       snd_dm_step(b, Nat::divmod(n, b, Zero, Zero))
     )
   }
-
-  // ---- order ------------------------------------------------------------------
 
   pub theorem lt_succ_self(n: Nat): n < Succ(n) = true {
     match n: n < Succ(n) = true {
@@ -108,7 +116,6 @@ module Nat {
     }
   }
 
-  // A number below `b` that is not the one just below it is two below.
   pub theorem lt_succ_of_ne(
     r: Nat,
     b: Nat,
@@ -143,9 +150,10 @@ module Nat {
     }
   }
 
-  // ---- division ---------------------------------------------------------------
-
-  pub theorem mod_succ_lt(n: Nat, b: Nat): Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)) < Succ(b) = true {
+  pub theorem mod_succ_lt(
+    n: Nat,
+    b: Nat
+  ): Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)) < Succ(b) = true {
     match n: Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)) < Succ(b) = true {
       Zero => Refl
       Succ(m) => Eq::subst(
@@ -173,17 +181,25 @@ module Nat {
     p: Nat × Nat
   ): dm_value(b, dm_step(b, p)) = Succ(dm_value(b, p)) {
     match p: dm_value(b, dm_step(b, p)) = Succ(dm_value(b, p)) {
-      #(q, r) => match Succ(r) == b eqn e: dm_value(b, dm_step(b, #(q, r))) = Succ(dm_value(b, #(q, r))) {
+      #(q, r) => match Succ(
+        r
+      ) == b eqn e: dm_value(b, dm_step(b, #(q, r))) = Succ(dm_value(b, #(q, r))) {
         false => ⊢ dm_value(b, #(q, Succ(r))) = Succ(add(mul(b, q), r)) from Refl
-        true => ⊢ dm_value(b, #(Succ(q), Zero)) = Succ(add(mul(b, q), r)) from Eq::sym(
-          Eq::congr(⟦add(mul(b, q), □)⟧, Nat::eq_sound(Succ(r), b, e))
-        )
+        true => ⊢ dm_value(
+          b,
+          #(Succ(q), Zero)
+        ) = Succ(
+          add(mul(b, q), r)
+        ) from Eq::sym(Eq::congr(⟦add(mul(b, q), □)⟧, Nat::eq_sound(Succ(r), b, e)))
       }
     }
   }
 
-  // `n = b * (n div b) + n mod b`.
-  pub theorem div_mod_eq(n: Nat, b: Nat, h: ¬(b = 0)): add(mul(b, Nat::div_nz(n, b, h)), Nat::rem_nz(n, b, h)) = n {
+  pub theorem div_mod_eq(
+    n: Nat,
+    b: Nat,
+    h: ¬(b = 0)
+  ): add(mul(b, Nat::div_nz(n, b, h)), Nat::rem_nz(n, b, h)) = n {
     match n: dm_value(b, Nat::divmod(n, b, Zero, Zero)) = n {
       Zero => Refl
       Succ(m) => Eq::trans(
@@ -227,16 +243,16 @@ module Nat {
     p: Nat × Nat
   ): dm_step(b, pair_shift(p)) = pair_shift(dm_step(b, p)) {
     match p: dm_step(b, pair_shift(p)) = pair_shift(dm_step(b, p)) {
-      #(q, r) => match Succ(r) == b: dm_step(b, pair_shift(#(q, r))) = pair_shift(dm_step(b, #(q, r))) {
+      #(q, r) => match Succ(
+        r
+      ) == b: dm_step(b, pair_shift(#(q, r))) = pair_shift(dm_step(b, #(q, r))) {
         false => ⊢ #(Succ(q), Succ(r)) = pair_shift(#(q, Succ(r))) from Refl
         true => ⊢ #(Succ(Succ(q)), Zero) = pair_shift(#(Succ(q), Zero)) from Refl
       }
     }
   }
 
-  pub theorem divmod_self(
-    b: Nat
-  ): Nat::divmod(Succ(b), Succ(b), Zero, Zero) = #(Succ(Zero), Zero) {
+  pub theorem divmod_self(b: Nat): Nat::divmod(Succ(b), Succ(b), Zero, Zero) = #(Succ(Zero), Zero) {
     Eq::trans(
       divmod_succ(b, Succ(b), Zero, Zero),
       Eq::trans(
@@ -252,7 +268,6 @@ module Nat {
     )
   }
 
-  // Adding the divisor adds one to the quotient and keeps the remainder.
   pub theorem divmod_add_self(
     n: Nat,
     b: Nat
@@ -293,24 +308,16 @@ module Nat {
     k: Nat,
     r: Nat
   ): add(mul(Succ(b), Succ(k)), r) = add(add(mul(Succ(b), k), r), Succ(b)) {
-    by nat_norm!(
-      #()
-    ): (add(mul(Succ(b), Succ(k)), r) = add(add(mul(Succ(b), k), r), Succ(b))) {}
+    by nat_norm!(#()): (add(mul(Succ(b), Succ(k)), r) = add(add(mul(Succ(b), k), r), Succ(b))) {}
   }
 
-  // Division is determined: `(b * q + r) div b = q` and `mod` is `r` when `r < b`.
   pub theorem divmod_of(
     q: Nat,
     r: Nat,
     b: Nat,
     h: r < Succ(b) = true
   ): Nat::divmod(add(mul(Succ(b), q), r), Succ(b), Zero, Zero) = #(q, r) {
-    match q: Nat::divmod(
-      add(mul(Succ(b), q), r),
-      Succ(b),
-      Zero,
-      Zero
-    ) = #(q, r) {
+    match q: Nat::divmod(add(mul(Succ(b), q), r), Succ(b), Zero, Zero) = #(q, r) {
       Zero => Eq::trans(
         Eq::congr(⟦Nat::divmod(□, Succ(b), Zero, Zero)⟧, add_zero_left(r)),
         divmod_small(r, Succ(b), h)
@@ -343,7 +350,6 @@ module Nat {
     Eq::congr(dm_fst, divmod_of(q, r, b, h))
   }
 
-  // `n` is `b * (n div b)` when `n mod b = 0`.
   pub theorem mul_div_of_mod_zero(
     n: Nat,
     b: Nat,
@@ -366,31 +372,49 @@ module Nat {
     k: Nat,
     q: Nat
   ): mul(mul(Succ(a), Succ(k)), q) = add(mul(Succ(a), mul(Succ(k), q)), Zero) {
-    by nat_norm!(
-      #()
-    ): (
-      mul(mul(Succ(a), Succ(k)), q) = add(mul(Succ(a), mul(Succ(k), q)), Zero)
-    ) {}
+    by nat_norm!(#()): (mul(mul(Succ(a), Succ(k)), q) = add(mul(Succ(a), mul(Succ(k), q)), Zero)) {}
   }
 
-  // What `a * k` divides, `a` divides.
   pub theorem mod_zero_of_mul(
     n: Nat,
     a: Nat,
     k: Nat,
-    h: Nat::rem_nz(n, mul(Succ(a), Succ(k)), Nat::ne_zero(mul(Succ(a), Succ(k)), Refl)) == Zero = true
+    h: Nat::rem_nz(
+      n,
+      mul(Succ(a), Succ(k)),
+      Nat::ne_zero(mul(Succ(a), Succ(k)), Refl)
+    ) == Zero = true
   ): Nat::rem_nz(n, Succ(a), Nat::succ_ne_zero(a)) == Zero = true {
     Eq::subst(
       (x: Nat) => Nat::rem_nz(x, Succ(a), Nat::succ_ne_zero(a)) == Zero = true,
       Eq::sym(
         Eq::trans(
-          mul_div_of_mod_zero(n, mul(Succ(a), Succ(k)), Nat::ne_zero(mul(Succ(a), Succ(k)), Refl), h),
-          mul_regroup(a, k, Nat::div_nz(n, mul(Succ(a), Succ(k)), Nat::ne_zero(mul(Succ(a), Succ(k)), Refl)))
+          mul_div_of_mod_zero(
+            n,
+            mul(Succ(a), Succ(k)),
+            Nat::ne_zero(mul(Succ(a), Succ(k)), Refl),
+            h
+          ),
+          mul_regroup(
+            a,
+            k,
+            Nat::div_nz(n, mul(Succ(a), Succ(k)), Nat::ne_zero(mul(Succ(a), Succ(k)), Refl))
+          )
         )
       ),
       Eq::subst(
         (x: Nat) => x == Zero = true,
-        Eq::sym(mod_of(mul(Succ(k), Nat::div_nz(n, mul(Succ(a), Succ(k)), Nat::ne_zero(mul(Succ(a), Succ(k)), Refl))), Zero, a, Refl)),
+        Eq::sym(
+          mod_of(
+            mul(
+              Succ(k),
+              Nat::div_nz(n, mul(Succ(a), Succ(k)), Nat::ne_zero(mul(Succ(a), Succ(k)), Refl))
+            ),
+            Zero,
+            a,
+            Refl
+          )
+        ),
         Refl
       )
     )
@@ -399,29 +423,30 @@ module Nat {
   pub theorem fst_dm_step(
     b: Nat,
     p: Nat × Nat
-  ): dm_fst(
-    dm_step(b, p)
-  ) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) {
-    match p: dm_fst(
-      dm_step(b, p)
-    ) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) {
-      #(q, r) => match Succ(r) == b: dm_fst(dm_step(b, #(q, r))) = add(q, bool_ind(dm_snd(dm_step(b, #(q, r))) == Zero)) {
+  ): dm_fst(dm_step(b, p)) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) {
+    match p: dm_fst(dm_step(b, p)) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) {
+      #(q, r) => match Succ(
+        r
+      ) == b: dm_fst(dm_step(b, #(q, r))) = add(q, bool_ind(dm_snd(dm_step(b, #(q, r))) == Zero)) {
         false => ⊢ dm_fst(#(q, Succ(r))) = add(q, bool_ind(dm_snd(#(q, Succ(r))) == Zero)) from Refl
-        true => ⊢ dm_fst(#(Succ(q), Zero)) = add(q, bool_ind(dm_snd(#(Succ(q), Zero)) == Zero)) from Refl
+        true => ⊢ dm_fst(
+          #(Succ(q), Zero)
+        ) = add(q, bool_ind(dm_snd(#(Succ(q), Zero)) == Zero)) from Refl
       }
     }
   }
 
-  // The quotient of `n + 1` is one more exactly when `b` divides `n + 1`.
   pub theorem div_succ(
     n: Nat,
     b: Nat,
     h: ¬(b = 0)
-  ): Nat::div_nz(Succ(n), b, h) = add(Nat::div_nz(n, b, h), bool_ind(Nat::rem_nz(Succ(n), b, h) == Zero)) {
+  ): Nat::div_nz(
+    Succ(n),
+    b,
+    h
+  ) = add(Nat::div_nz(n, b, h), bool_ind(Nat::rem_nz(Succ(n), b, h) == Zero)) {
     Eq::subst(
-      (p: Nat × Nat) => dm_fst(
-        p
-      ) = add(Nat::div_nz(n, b, h), bool_ind(dm_snd(p) == Zero)),
+      (p: Nat × Nat) => dm_fst(p) = add(Nat::div_nz(n, b, h), bool_ind(dm_snd(p) == Zero)),
       Eq::sym(divmod_succ(n, b, Zero, Zero)),
       fst_dm_step(b, Nat::divmod(n, b, Zero, Zero))
     )

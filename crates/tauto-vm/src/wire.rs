@@ -14,7 +14,6 @@ use tauto_nir::{Arith, Cmp, Package, Quant, Width};
 
 type Rs<T> = Result<T, String>;
 
-/// A constructor: its data type, its name and its fields' names.
 struct Ctor {
     tag: String,
     names: Vec<Option<String>>,
@@ -30,7 +29,6 @@ pub(crate) struct Writer {
     parsers: Vec<(String, String, tauto_nir::Ty, String)>,
 }
 
-/// The program of the package.
 pub fn write(pkg: &Package) -> Rs<String> {
     if !pkg.externs.is_empty() {
         return Err("extern functions (the machine has no host bindings)".into());
@@ -429,11 +427,16 @@ impl Writer {
                 self.list(es)?;
             }
             Cps::Define {
-                id, shared, init, ..
+                id,
+                shared,
+                init,
+                drop,
+                ..
             } => {
                 self.num(9);
                 self.num(id);
                 self.yn(*shared);
+                self.yn(*drop);
                 self.expr(init)?;
             }
             Cps::Assign {
@@ -587,7 +590,6 @@ pub fn machine_args(
     out
 }
 
-/// The locals `e` uses, and those it binds.
 fn locals(e: &Cps, used: &mut Vec<u32>, bound: &mut Vec<u32>) {
     fn pat(p: &CpsPat, bound: &mut Vec<u32>) {
         match p {

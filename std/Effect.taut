@@ -103,23 +103,18 @@ module Comp {
     arm: ∀ o: Op. ((Res(o)) -> B) -> B,
     o: Op,
     k: (Res(o)) -> Comp(Op, Res, A)
-  ): fold(
-    Op,
-    Res,
-    ret,
-    arm,
-    CompOp(o, k)
-  ) = arm(o, (r: Res(o)) => fold(Op, Res, ret, arm, k(r))) {
+  ): fold(Op, Res, ret, arm, CompOp(o, k)) = arm(o, (r: Res(o)) => fold(Op, Res, ret, arm, k(r))) {
     Refl
   }
 }
 
 // An operation arm that gives equal results for pointwise equal continuations.
 pub def ArmExt(Op: Type, Res: (Op) -> Type, B: Type, arm: ∀ o: Op. ((Res(o)) -> B) -> B): Prop :=
-∀ o: Op, k1: (Res(o)) -> B, k2: (Res(o)) -> B. (∀ r: Res(o). k1(r) = k2(r)) -> (arm(o, k1) = arm(o, k2))
+∀ o: Op, k1: (
+  Res(o)
+) -> B, k2: (Res(o)) -> B. (∀ r: Res(o). k1(r) = k2(r)) -> (arm(o, k1) = arm(o, k2))
 
 module Comp {
-  // Equal computations are handled to equal results.
   pub theorem handle_respects<Op: Type, Res: (
     Op
   ) -> Type, A: Type, B: Type>(
@@ -141,7 +136,6 @@ module Comp {
     }
   }
 
-  // Handling a sequence handles the first part with a return arm that handles the rest.
   pub theorem handle_bind<Op: Type, Res: (
     Op
   ) -> Type, A: Type, B: Type, C: Type>(
@@ -168,13 +162,7 @@ module Comp {
       CompOp(o, k) => ext(
         o,
         (r: Res(o)) => fold(Op, Res, ret, arm, bind(Op, Res, k(r), f)),
-        (r: Res(o)) => fold(
-          Op,
-          Res,
-          (a: A) => fold(Op, Res, ret, arm, f(a)),
-          arm,
-          k(r)
-        ),
+        (r: Res(o)) => fold(Op, Res, (a: A) => fold(Op, Res, ret, arm, f(a)), arm, k(r)),
         (r: Res(o)) => handle_bind(ret, arm, ext, k(r), f)
       )
     }

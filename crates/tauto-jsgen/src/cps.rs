@@ -25,7 +25,6 @@ pub struct Options {
 #[derive(Debug, Clone)]
 pub struct Modules {
     pub program: String,
-    /// Each chunk's file name, next to `program.mjs`, and its text.
     pub chunks: Vec<(String, String)>,
 }
 
@@ -174,7 +173,6 @@ impl Crossing {
     }
 }
 
-/// An exported function, checked.
 pub(crate) struct ExportEntry<'p> {
     pub name: &'p str,
     pub f: &'p FnInst,
@@ -261,7 +259,6 @@ pub(crate) fn export_table<'p>(pkg: &'p Package, options: &Options) -> R<Vec<Exp
     Ok(table)
 }
 
-/// The table of exported functions, and `instantiate`.
 fn exports(pkg: &Package, options: &Options) -> R<String> {
     let table: Vec<String> = export_table(pkg, options)?
         .into_iter()
@@ -335,6 +332,10 @@ pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
         };
         let name = if direct.contains(&f.id) {
             text.push_str(&crate::direct::write(pkg, f, &format!("g{}", f.id))?);
+            if crate::direct::constant(f) {
+                text.push_str(&crate::direct::constant_cps(f));
+                continue;
+            }
             "g"
         } else {
             "f"
@@ -532,6 +533,7 @@ impl Print<'_> {
                 shared,
                 init,
                 immutable,
+                ..
             } => format!("defineLocal({id},{shared},{},{immutable})", self.cps(init)?),
             Cps::Assign {
                 id,
@@ -872,6 +874,9 @@ const BUILTINS: &[&str] = &[
     "Mutex::claim",
     "Mutex::take_claimed",
     "Mutex::put",
+    "MutexGuard::claimed",
+    "MutexGuard::get",
+    "MutexGuard::get_mut",
     "Atomic::new",
     "Atomic::load",
     "Atomic::store",
@@ -894,11 +899,17 @@ const BUILTINS: &[&str] = &[
     "Os::create_dir",
     "Os::list_dir",
     "Os::remove",
+    "Os::stat",
+    "Os::move_path",
+    "Os::copy_file",
+    "Os::canonicalize",
     "Os::temp_dir",
     "Os::run",
     "Os::exit",
     "Os::stop",
     "Os::read_line",
+    "Os::read_stdin",
+    "Os::flush",
     "Os::env",
     "Os::wall_ms",
     "Os::monotonic_ns",
@@ -910,6 +921,12 @@ const BUILTINS: &[&str] = &[
     "Os::check",
     "Os::fetch",
     "Os::resolve",
+    "Os::child_spawn",
+    "Os::child_read",
+    "Os::child_write",
+    "Os::child_close_stdin",
+    "Os::child_wait",
+    "Os::child_close",
     "Os::tcp_listen",
     "Os::tcp_accept",
     "Os::tcp_connect",

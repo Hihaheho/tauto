@@ -297,9 +297,6 @@ impl Printer {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Terms
-
     /// `level` is the indent of the line the term starts on; `outer` the
     /// binding power the context asks of it.
     fn term(&mut self, level: usize, t: &SurfaceTerm, outer: u8) {
@@ -646,6 +643,19 @@ impl Printer {
                 return;
             }
         }
+        // `Eq(T, a, b)` is written `a = b`, which reads back to it with `T` found from the sides.
+        if let (TermKind::Var(n), [_, a, b]) = (&*function.kind, args) {
+            if prelude_eq(n) && eq_readable(a, b) {
+                let eq = SurfaceTerm::app("=", vec![a.clone(), b.clone()], function.span);
+                if let TermKind::App {
+                    function,
+                    arguments,
+                } = &*eq.kind
+                {
+                    return self.app(level, function, arguments, outer);
+                }
+            }
+        }
         if let TermKind::Var(marked) = &*function.kind {
             let op: &str = marked.split(SEP).next().unwrap_or(marked.as_ref());
             if let (Some(prec), [a, b]) = (binary(op), args) {
@@ -831,9 +841,6 @@ impl Printer {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Statements
-
     /// The statements one after the other; a function followed by its registration as a macro is
     /// written `macro fn`.
     fn stmts(&mut self, level: usize, items: &[&Stmt]) {
@@ -977,7 +984,9 @@ impl Printer {
                 self.indent(level);
                 self.w("}");
             }
-            Stmt::Import { path, module: true, .. } => self.w(&format!("import {path}")),
+            Stmt::Import {
+                path, module: true, ..
+            } => self.w(&format!("import {path}")),
             Stmt::Import { path, .. } => self.w(&format!("import {}", quoted(path))),
             Stmt::Inductive(i) => self.inductive(level, i),
             Stmt::Module { name: n, items, .. } => {
@@ -1110,7 +1119,6 @@ impl Printer {
         self.w(">");
     }
 
-    /// `(A: Type, B: Type)`: the parameters of a type declaration.
     fn type_params(&mut self, params: &[String], rows: &[bool]) {
         if params.is_empty() {
             return;
@@ -1405,6 +1413,57 @@ fn prelude_is(n: &str, base: &str) -> bool {
             == Some(base)
 }
 
+/// Whether `n` names the prelude's propositional equality `Eq`.
+fn prelude_eq(n: &str) -> bool {
+    n == "Eq"
+        || n.strip_prefix(super::qualify::PRELUDE_MODULE)
+            .and_then(|r| r.strip_prefix(super::qualify::SEPARATOR))
+            == Some("Eq")
+}
+
+/// Whether `Eq(T, a, b)` reads back from `a = b`: `T` is found from a side that has a type of its
+/// own, and the left side does not start with a bracket or an operator.
+fn eq_readable(a: &SurfaceTerm, b: &SurfaceTerm) -> bool {
+    fn untyped(t: &SurfaceTerm) -> bool {
+        match &*t.kind {
+            TermKind::Nat(_) | TermKind::Hole(_) | TermKind::Lam { .. } => true,
+            TermKind::Var(n) => matches!(
+                n.rsplit(super::qualify::SEPARATOR).next(),
+                Some("Nil" | "None")
+            ),
+            _ => false,
+        }
+    }
+    fn opens(t: &SurfaceTerm) -> bool {
+        match &*t.kind {
+            TermKind::Tuple(_)
+            | TermKind::Product(_)
+            | TermKind::Union(_)
+            | TermKind::Ascribe { .. }
+            | TermKind::Block(_)
+            | TermKind::Record { .. }
+            | TermKind::Pi { .. }
+            | TermKind::Exists { .. }
+            | TermKind::Lam { .. }
+            | TermKind::Tagged { .. }
+            | TermKind::Borrow { .. } => true,
+            TermKind::Field { base, .. } => opens(base),
+            TermKind::App {
+                function,
+                arguments,
+            } => match &*function.kind {
+                TermKind::Var(op) if op == "-" && arguments.len() == 1 => true,
+                TermKind::Var(op) if binary(op).is_some() && arguments.len() == 2 => {
+                    opens(&arguments[0])
+                }
+                _ => opens(function),
+            },
+            _ => false,
+        }
+    }
+    !(untyped(a) && untyped(b)) && !opens(a)
+}
+
 /// `Pair { fst: a, snd: b }`, which `#(a, b)` reads to.
 fn pair_term(t: &SurfaceTerm) -> Option<(&SurfaceTerm, &SurfaceTerm)> {
     match &*t.kind {
@@ -1447,25 +1506,6 @@ fn pair_pattern(p: &Pattern) -> Option<(&Pattern, &Pattern)> {
 fn is_unit(t: &SurfaceTerm) -> bool {
     matches!(&*t.kind, TermKind::App { function, arguments }
         if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(n) if n == "Tuple"))
-}
-
-/// Where a member of a product stands in its one order, which is the order of the
-/// nested `Pair`s it is kept in: the members with a label first, by their labels,
-/// then the others, by their types written with full names. A product is a record
-/// from its members' labels (or types) to values; this order is how it is laid out.
-pub fn product_member_key(label: Option<&str>, full_type: &str) -> (u8, String) {
-    match label {
-        Some(l) => (0, l.to_string()),
-        None => (1, full_type.to_string()),
-    }
-}
-
-/// [`product_member_key`] of a member written as a type.
-pub fn product_member_key_of(t: &SurfaceTerm) -> (u8, String) {
-    match &*t.kind {
-        TermKind::Tagged { tag, .. } => product_member_key(Some(tag), ""),
-        _ => product_member_key(None, &print_term(t)),
-    }
 }
 
 #[cfg(test)]

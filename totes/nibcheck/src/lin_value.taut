@@ -1,5 +1,19 @@
 import "cycle.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "freevars.taut"
+import "lin_arms.taut"
+import "lin_flow.taut"
+import "lin_state.taut"
+import "rows.taut"
+import "ty.taut"
+import "types_run.taut"
+import "../../text/src/text.taut"
 
 // Expressions and statements (`value`, `field`, `app`, `lend`, `access`,
 // `closure`, `block`, `stmt`, `match_expr`, `handle`, `function` of `lin.rs`):
@@ -20,7 +34,6 @@ pub fn lin_is_var(t: SurfaceTerm): Bool {
   }
 }
 
-// Whether `t` has a type of a duplicable value.
 pub fn lin_term_is_dup(c: Lin, t: SurfaceTerm): Bool {
   match lin_term_type(c, t): Bool {
     Some(ty) => class_is_dup(lin_class_of(c, Some(ty)).fst)
@@ -40,8 +53,6 @@ pub fn lin_is_borrow(c: Lin, t: SurfaceTerm): Bool {
     _ => false
   }
 }
-
-// ----- names -----
 
 // A `let` of a closure that borrows keeps what it borrows.
 pub fn lin_let_closure(b: Binding, pos: LinPos): Option(Pair(List(Text), Bool)) {
@@ -105,8 +116,6 @@ pub fn lin_budget_lent(&mut c: Lin, body: SurfaceTerm): Unit {
   }
 }
 
-// ----- fields -----
-
 pub fn lin_base_is_info(c: Lin, base: SurfaceTerm): Bool {
   match lin_term_type(c, base): Bool {
     Some(ty) => match ty_unborrowed(ty): Bool {
@@ -126,7 +135,7 @@ pub fn lin_field_place(
   r#class: LinClass,
   pos: LinPos
 ): Unit {
-  match lin_find(c, (p: Text)): Unit {
+  match lin_find(c, p.fst): Unit {
     None => #()
     Some(i) => {
       lin_read(&mut c, i, span_of(t))
@@ -136,14 +145,14 @@ pub fn lin_field_place(
           if not(pos_is_result(pos) && lin_frame(c).returns_borrow) {
             lin_error(
               &mut c,
-              cat2(text_join((p: List(Text)), "."), " is borrowed and cannot be moved"),
+              cat2(text_join(p.snd, "."), " is borrowed and cannot be moved"),
               span_of(t)
             )
           }
         } else {
           lin_error(
             &mut c,
-            cat4(text_join((p: List(Text)), "."), " is ", class_word(r#class), cat2("; destructure ", (p: Text))),
+            cat4(text_join(p.snd, "."), " is ", class_word(r#class), cat2("; destructure ", p.fst)),
             span_of(t)
           )
         }
@@ -151,8 +160,6 @@ pub fn lin_field_place(
     }
   }
 }
-
-// ----- calls -----
 
 // A name bound to a closure that borrows: lent to a `&f` parameter all the same.
 pub fn lin_is_borrow_closure_var(c: Lin, t: SurfaceTerm): Bool {
@@ -320,7 +327,6 @@ pub fn access_clash(prev: LinUse, how: LinUse, name: Text, rest: Option(Text)): 
   }
 }
 
-// The message of an overlap with a place one call lent or moved before, if any.
 pub fn access_overlap(
   prevs: List(Access),
   root: Nat,
@@ -341,8 +347,6 @@ pub fn access_overlap(
   }
 }
 
-// Records a place one call lends or moves, and reports an overlap with what it
-// lent or moved before.
 pub fn lin_access(
   &mut c: Lin,
   accesses: List(Access),
@@ -367,8 +371,8 @@ pub fn lin_access(
 
 pub fn lin_move_access(&mut c: Lin, accesses: List(Access), a: SurfaceTerm): List(Access) {
   match lin_place(a): List(Access) {
-    Some(p) => match lin_find(c, (p: Text)): List(Access) {
-      Some(i) => lin_access(&mut c, accesses, i, (p: List(Text)), UseMove, span_of(a))
+    Some(p) => match lin_find(c, p.fst): List(Access) {
+      Some(i) => lin_access(&mut c, accesses, i, p.snd, UseMove, span_of(a))
       None => accesses
     }
     None => accesses
@@ -466,18 +470,18 @@ pub fn lin_lend_binding(
     accesses
   } else {
     if binding_owns(b) && not(state_is_owned(b.state)) {
-      lin_error(&mut c, cat2((p: Text), " is borrowed after move"), span_of(a))
+      lin_error(&mut c, cat2(p.fst, " is borrowed after move"), span_of(a))
       accesses
     } else {
       match lin_frozen_by(c, i, mutable): List(Access) {
         Some(r#by) => {
-          lin_error(&mut c, lin_frozen_text((p: Text), r#by), span_of(a))
+          lin_error(&mut c, lin_frozen_text(p.fst, r#by), span_of(a))
           accesses
         }
         None => {
           let acc: List(
             Access
-          ) := lin_access(&mut c, accesses, i, (p: List(Text)), lin_use_of(mutable), span_of(a))
+          ) := lin_access(&mut c, accesses, i, p.snd, lin_use_of(mutable), span_of(a))
           if collect {
             set_to(&mut c.lent, List::append(c.lent, Cons(Pair { fst: i, snd: mutable }, Nil)))
           }
@@ -487,8 +491,6 @@ pub fn lin_lend_binding(
     }
   }
 }
-
-// ----- closures -----
 
 pub fn text_without(xs: List(Text), x: Text): List(Text) {
   match xs: List(Text) {
@@ -597,8 +599,6 @@ pub fn capture_result(cap: Capture): Option(Pair(List(Text), Bool)) {
   }
 }
 
-// ----- bodies -----
-
 // What a function's or a closure's body sets aside of the walk around it.
 pub(open) inductive LinSaved: Type {
   LinSavedMk(dead: Bool, arm_floor: Option(Nat), arm_direct: Option(Pair(Nat, Text))): LinSaved
@@ -622,8 +622,6 @@ pub fn lin_leave_body(&mut c: Lin, saved: LinSaved, mark: Nat, span: TySpan): Un
   set_to(&mut c.arm_floor, saved.arm_floor)
   set_to(&mut c.arm_direct, saved.arm_direct)
 }
-
-// ----- statements -----
 
 pub fn rest_is_nil(ss: List(SurfaceStmt)): Bool {
   match ss: Bool {
@@ -704,8 +702,6 @@ pub fn lin_assign(&mut c: Lin, name: Text, value: SurfaceTerm): Unit {
     }
   }
 }
-
-// ----- the walk -----
 
 mutual {
   // Walks `t`, whose value is taken as `pos` says. A closure that borrows
@@ -841,7 +837,7 @@ mutual {
         } else {
           lin_error(
             &mut c,
-            cat3("this closure borrows ", text_join((nm: List(Text)), ", "), " and cannot be stored"),
+            cat3("this closure borrows ", text_join(nm.fst, ", "), " and cannot be stored"),
             span_of(t)
           )
           None
@@ -1025,7 +1021,7 @@ mutual {
           lin_drop_in(j, &mut c, target, PosDrop)
           accesses
         }
-        Some(p) => match lin_find(c, (p: Text)): List(Access) {
+        Some(p) => match lin_find(c, p.fst): List(Access) {
           None => accesses
           Some(i) => lin_lend_binding(&mut c, a, p, i, mutable0, accesses, collect)
         }
@@ -1033,7 +1029,6 @@ mutual {
     }
   }
 
-  // The call a `let &x` binds; returns what it borrows.
   pub fn lin_call_lending_in(k: Nat, &mut c: Lin, value: SurfaceTerm): List(Pair(Nat, Bool)) {
     match k: List(Pair(Nat, Bool)) {
       Zero => Nil
@@ -1451,8 +1446,6 @@ mutual {
   }
 }
 
-// ----- the check -----
-
 pub fn lin_check_all(&mut c: Lin, program: List(SurfaceStmt)): List(LinError) {
   lin_check_fns_in(c.steps, &mut c, program)
   lin_push_frame(&mut c, frame_default())
@@ -1488,7 +1481,6 @@ pub fn lin_run(
   lin_run_report(types_check(prelude, program, module_errors), prelude, program)
 }
 
-// The dump of the use check from the program's type report.
 pub fn lin_run_report(
   types: TypeReport,
   prelude: List(SurfaceStmt),

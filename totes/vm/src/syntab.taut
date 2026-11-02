@@ -6,7 +6,6 @@ import "../../scan/src/scan.taut"
 // parse tables of an LL(k) or LALR(1) grammar, and for each production what its node
 // becomes, with the machine's constructors already chosen.
 
-// A symbol of a production's right side.
 pub(open) inductive SynSym: Type {
   SynN(non_terminal: Nat): SynSym
   SynT(terminal: Nat): SynSym
@@ -22,14 +21,11 @@ pub(open) inductive SynElem: Type {
 // What a production's node becomes when it closes (`tauto_syntax::Shape`).
 pub(open) inductive SynShape: Type {
   ShNode(ctor: Nat, spanned: Bool, keep: List(Bool)): SynShape
-  // The first value, as it is.
   ShPass: SynShape
   ShSome(e: SynElem): SynShape
   ShNone: SynShape
-  // A repetition: no items, or one more item.
   ShEmpty: SynShape
   ShMore(e: SynElem): SynShape
-  // The tables do not fit the schema.
   ShBad(message: Text): SynShape
 }
 
@@ -68,7 +64,6 @@ pub(open) inductive SynParser: Type {
   Mk(
     name: Text,
     scan: ScanTables,
-    // The terminals' names, and whether the parser skips each.
     terminals: Array(Text),
     skipped: Array(Bool),
     start: Nat,
@@ -77,7 +72,6 @@ pub(open) inductive SynParser: Type {
     lookahead: Array(Option(SynLook)),
     states: Array(SynState),
     productions: Array(SynProd),
-    // The machine's constructors of `SynSpan`, `SynCtx`, `SynToken` and `SynDiag`.
     span: Nat,
     ctx: Nat,
     token: Nat,

@@ -1,6 +1,12 @@
 import std::Map
 import "freevars.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "../../text/src/text.taut"
 
 // `module M { … }` and the names `M.f` (`crates/tauto-surface/src/surface/modules.rs`), in the proof
 // language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」): modules are flattened where the program is
@@ -14,9 +20,7 @@ pub(open) inductive ModState: Type {
     modules: Ordmap(Text, Bool),
     // Every function in a module, by its full name (`A.B.f`).
     fns: Ordmap(Text, Bool),
-    // The names bound in the current lexical scope.
     locals: List(Text),
-    // The newest first.
     errors: List(TypeError)
   ): ModState
 }
@@ -34,7 +38,6 @@ pub fn mod_join(path: List(Text), name: Text): Text {
   }
 }
 
-// The first `n` names of `path`.
 pub fn mod_take(n: Nat, path: List(Text)): List(Text) {
   match n: List(Text) {
     Zero => Nil
@@ -67,8 +70,6 @@ pub fn mod_has_module(stmts: List(SurfaceStmt)): Bool {
     Cons(st, rest) => stmt_is_module(st) || mod_has_module(rest)
   }
 }
-
-// ----- collecting -----
 
 pub fn mod_add_fn(&mut s: ModState, path: List(Text), name: Text): Unit {
   match path: Unit {
@@ -156,8 +157,6 @@ mutual {
   }
 }
 
-// ----- names -----
-
 pub fn mod_is_local(names: List(Text), name: Text): Bool {
   match names: Bool {
     Nil => false
@@ -186,7 +185,6 @@ pub fn mod_name(s: ModState, name: Text, path: List(Text)): Text {
   if mod_is_local(s.locals, name) { name } else { mod_name_from(list_len(path), s, name, path) }
 }
 
-// The full path of the module `m` written in `path`.
 pub fn mod_module_from(n: Nat, s: ModState, m: Text, path: List(Text)): Option(Text) {
   match n: Option(Text) {
     Zero => if Ordmap::contains(s.modules, m, Ordmap::compare_text) { Some(m) } else { None }
@@ -206,7 +204,6 @@ pub fn mod_module(s: ModState, m: Text, path: List(Text)): Option(Text) {
   mod_module_from(list_len(path), s, m, path)
 }
 
-// `A.B` written as a chain of fields over a name.
 mutual {
   pub fn mod_dotted(t: SurfaceTerm): Option(List(Text)) {
     match t: Option(List(Text)) {
@@ -268,8 +265,6 @@ pub fn mod_optional_name(name: Option(Text)): List(Text) {
   }
 }
 
-// ----- rewriting -----
-
 pub fn mod_dots(parts: List(Text)): List(Text) {
   match parts: List(Text) {
     Nil => Nil
@@ -291,7 +286,6 @@ pub fn mod_qualified(s: ModState, parts: List(Text), path: List(Text)): Option(T
   }
 }
 
-// A qualified name: `M.f`, `M.N.f`.
 pub fn mod_qualified_kind(s: ModState, sk: SurfaceKind, path: List(Text)): Option(Text) {
   match sk: Option(Text) {
     SkField(base, name) => match mod_dotted_kind(sk): Option(Text) {
@@ -620,8 +614,6 @@ mutual {
   }
 }
 
-// ----- flattening -----
-
 pub fn mod_renamed(path: List(Text), f: SurfaceFn): SurfaceFn {
   SurfaceFn {
     name: mod_join(path, f.name),
@@ -703,7 +695,6 @@ mutual {
   }
 }
 
-// The classes at the top level.
 pub fn mod_classes(stmts: List(SurfaceStmt), acc: Ordmap(Text, Bool)): Ordmap(Text, Bool) {
   match stmts: Ordmap(Text, Bool) {
     Nil => acc
@@ -732,29 +723,31 @@ pub fn modules_flatten(stmts: List(SurfaceStmt)): ModResolved {
   ) { mod_resolve_all(stmts) } else { ModResolved { stmts: stmts, errors: Nil } }
 }
 
+mutual {
+  pub fn modules_drop_sets(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
+    match stmts: List(SurfaceStmt) {
+      Nil => Nil
+      Cons(s, rest) => modules_drop_one(s, modules_drop_sets(rest))
+    }
+  }
+
+  pub fn modules_drop_one(s: SurfaceStmt, more: List(SurfaceStmt)): List(SurfaceStmt) {
+    match s: List(SurfaceStmt) {
+      StEffect(e) => match e.set: List(SurfaceStmt) {
+        Some(names) => more
+        None => Cons(s, more)
+      }
+      StMutual(items, a, b) => Cons(StMutual(modules_drop_sets(items), a, b), more)
+      StModule(name, items, a, b) => Cons(StModule(name, modules_drop_sets(items), a, b), more)
+      _ => Cons(s, more)
+    }
+  }
+}
+
 // Flattens the modules of `stmts`, and drops the declarations of sets of
 // effects (`effect Host {Div, stdout}`): a set is a name for effects, not
 // an effect, so what follows never sees it as one.
 pub fn modules_resolve(stmts: List(SurfaceStmt)): ModResolved {
   let flat := modules_flatten(stmts)
   ModResolved { stmts: modules_drop_sets(flat.stmts), errors: flat.errors }
-}
-
-pub fn modules_drop_sets(stmts: List(SurfaceStmt)): List(SurfaceStmt) {
-  match stmts: List(SurfaceStmt) {
-    Nil => Nil
-    Cons(StEffect(e), rest) => match e.set: List(SurfaceStmt) {
-      Some(names) => modules_drop_sets(rest)
-      None => Cons(StEffect(e), modules_drop_sets(rest))
-    }
-    Cons(StMutual(items, a, b), rest) => Cons(
-      StMutual(modules_drop_sets(items), a, b),
-      modules_drop_sets(rest)
-    )
-    Cons(StModule(name, items, a, b), rest) => Cons(
-      StModule(name, modules_drop_sets(items), a, b),
-      modules_drop_sets(rest)
-    )
-    Cons(s, rest) => Cons(s, modules_drop_sets(rest))
-  }
 }

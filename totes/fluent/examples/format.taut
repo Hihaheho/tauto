@@ -1,31 +1,33 @@
 import "../src/bundle.taut"
+import "../src/resolve.taut"
+import std::Text
 
 // Messages formatted by computation: variables, plurals, string selectors, terms with
 // arguments, attributes, multiline patterns, and what happens when something is missing.
 
 fn ftl(): Text {
-  "# Simple things are simple.
+  "# A message with a variable, and a term.
 hello = Hello, {$name}!
--brand = Firefox
+-product = Orchard
     .gender = masculine
-about = About {-brand}.
+about = About {-product}.
 
 # Plurals by the category of the number, and an exact number Before it.
-emails = {$count ->
-    [0] You have no new email.
-    [one] You have one new email.
-   *[other] You have {$count} new emails.
+inbox = {$count ->
+    [0] The inbox is empty.
+    [one] The inbox has one message.
+   *[other] The inbox has {$count} messages.
 }
 
--thing = {$case ->
-   *[nominative] the thing
-    [object] the thing's
+-item = {$case ->
+   *[nominative] the lamp
+    [object] the lamp's
 }
-of-thing = Look at {-thing(case: \"object\")} color.
+of-item = See {-item(case: \"object\")} cable.
 
-login = Log in
-    .placeholder = name@example.com
-    .title = Use your account
+account = Account
+    .placeholder = user@example.org
+    .title = Choose an account
 
 long =
     First line,
@@ -45,27 +47,27 @@ theorem hello(): says(en(), "hello", Cons(arg_str("name", "Anne"), Nil)) = "Hell
   Refl
 }
 
-theorem about(): says(en(), "about", Nil) = "About Firefox." {
+theorem about(): says(en(), "about", Nil) = "About Orchard." {
   Refl
 }
 
-theorem emails_zero(): says(en(), "emails", Cons(arg_num("count", 0), Nil)) = "You have no new email." {
+theorem inbox_zero(): says(en(), "inbox", Cons(arg_num("count", 0), Nil)) = "The inbox is empty." {
   Refl
 }
 
-theorem emails_one(): says(en(), "emails", Cons(arg_num("count", 1), Nil)) = "You have one new email." {
+theorem inbox_one(): says(en(), "inbox", Cons(arg_num("count", 1), Nil)) = "The inbox has one message." {
   Refl
 }
 
-theorem emails_five(): says(en(), "emails", Cons(arg_num("count", 5), Nil)) = "You have 5 new emails." {
+theorem inbox_five(): says(en(), "inbox", Cons(arg_num("count", 5), Nil)) = "The inbox has 5 messages." {
   Refl
 }
 
-theorem term_with_argument(): says(en(), "of-thing", Nil) = "Look at the thing's color." {
+theorem term_with_argument(): says(en(), "of-item", Nil) = "See the lamp's cable." {
   Refl
 }
 
-theorem attribute(): format_attr(en(), "login", "placeholder", Nil) = Formatted::Mk("name@example.com", Nil) {
+theorem attribute(): format_attr(en(), "account", "placeholder", Nil) = Formatted::Mk("user@example.org", Nil) {
   Refl
 }
 
@@ -73,12 +75,10 @@ theorem multiline(): says(en(), "long", Nil) = "First line,\nsecond line." {
   Refl
 }
 
-// Placeables are isolated by default.
 theorem isolated(): format_text(with_resource(bundle_new("en"), ftl()), "hello", Cons(arg_str("name", "Anne"), Nil)) = "Hello, \u{2068}Anne\u{2069}!" {
   Refl
 }
 
-// A missing variable is written as Fluent writes it, and reported.
 theorem missing_variable(): format(en(), "hello", Nil) = Formatted::Mk("Hello, {$name}!", Cons(UnknownVariable(Text::bytes("name")), Nil)) {
   Refl
 }
@@ -87,9 +87,8 @@ theorem missing_message(): format(en(), "nope", Nil) = Formatted::Mk("{nope}", C
   Refl
 }
 
-// Without its variable, a select expression takes its default variant.
-theorem select_default(): format(en(), "emails", Nil) = Formatted::Mk(
-    "You have {$count} new emails.",
+theorem select_default(): format(en(), "inbox", Nil) = Formatted::Mk(
+    "The inbox has {$count} messages.",
     Cons(UnknownVariable(Text::bytes("count")), Cons(UnknownVariable(Text::bytes("count")), Nil))
   ) {
   Refl

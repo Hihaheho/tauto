@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use super::{Ctx, FileEntry, Kernel, Sort, T, Verdict, sort_of};
 use crate::surface::TermKind;
 
-/// What a parameter (or a result) is for extraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// A type, or a function that returns one: a generic in Nib.
@@ -32,7 +31,6 @@ pub struct Signature {
     pub result: Role,
 }
 
-/// An inductive family: whether it is a proposition, and its constructors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Family {
     pub prop: bool,
@@ -44,7 +42,17 @@ pub struct Family {
     pub ctors: Vec<String>,
 }
 
-/// The files checked, every entry, and the signatures of what checked.
+/// A pattern written with a constructor's short name (`Mk`) that the kernel
+/// read as the constructor of the matched type (`One::Mk`), by the span of the
+/// arm's body. It is metadata for extraction: the kernel's typing is not
+/// consulted again, and the kernel's rules do not depend on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtorSite {
+    pub span: tauto_parol::Span,
+    pub written: String,
+    pub resolved: String,
+}
+
 pub struct Checked {
     /// Executable declarations excluded from the proof environment.
     pub runtime: HashSet<String>,
@@ -61,6 +69,7 @@ pub struct Checked {
     pub classes: HashSet<String>,
     /// The declarations a decidable equality generated, by the family that lists them.
     pub derived: Vec<(String, Vec<crate::surface::Stmt>)>,
+    pub ctor_sites: Vec<CtorSite>,
 }
 
 pub fn checked_entries(
@@ -145,12 +154,11 @@ pub fn checked_entries(
         records: kernel.records(),
         derived: std::mem::take(&mut kernel.derived),
         classes: kernel.classes.class_names(),
+        ctor_sites: std::mem::take(&mut kernel.ctor_sites),
     }
 }
 
 impl Kernel {
-    /// The roles of the parameters of a declaration of type `ty`, and of its
-    /// result.
     fn signature_of(&mut self, ty: &T) -> Signature {
         let mut ctx: Ctx = Vec::new();
         let mut params = Vec::new();

@@ -19,13 +19,11 @@ fn barrier(x: u64) -> u64 {
     black_box(x)
 }
 
-/// All ones when `c`, all zeros otherwise.
 #[inline(always)]
 fn mask(c: Secret<bool>) -> u64 {
     barrier(u64::from(c.0)).wrapping_neg()
 }
 
-/// `true` when the low bit of `bit` is set; `bit` is 0 or 1.
 #[inline(always)]
 fn bool_of_bit(bit: u64) -> bool {
     barrier(bit) & 1 == 1
@@ -89,7 +87,6 @@ words! {
         ct_u64_shl ct_u64_shr ct_u64_rotl ct_u64_rotr ct_u64_eq ct_u64_lt ct_u64_select,
 }
 
-/// The high 64 bits of the 128-bit product.
 pub fn ct_u64_mul_hi(a: Secret<u64>, b: Secret<u64>) -> Secret<u64> {
     Secret(((u128::from(a.0) * u128::from(b.0)) >> 64) as u64)
 }
@@ -106,7 +103,6 @@ pub fn ct_u32_of_u8(a: Secret<u8>) -> Secret<u32> {
     Secret(u32::from(a.0))
 }
 
-/// The low bits.
 pub fn ct_u8_of_u32(a: Secret<u32>) -> Secret<u8> {
     Secret(a.0 as u8)
 }

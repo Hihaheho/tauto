@@ -1,11 +1,23 @@
 import "summary_state.taut"
+import std::Base
+import std::Map
+import std::MapLaws
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "kind_sound.taut"
+import "summary_sound.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
 
 // Written types preserve the declaration environment and the substitution.
 pub fn frame_read_view(
   c: Checker
 ): Pair(Datas, Ordmap(Nat, Ty)) { Pair { fst: c.datas, snd: c.subst } }
-pub fn frame_read_datas(v: Pair(Datas, Ordmap(Nat, Ty))): Datas { (v: Datas) }
-pub fn frame_read_subst(v: Pair(Datas, Ordmap(Nat, Ty))): Ordmap(Nat, Ty) { (v: Ordmap(Nat, Ty)) }
+pub fn frame_read_datas(v: Pair(Datas, Ordmap(Nat, Ty))): Datas { v.fst }
+pub fn frame_read_subst(v: Pair(Datas, Ordmap(Nat, Ty))): Ordmap(Nat, Ty) { v.snd }
 
 pub def CkReadFrame<A: Type>(
   c: Checker,
@@ -110,7 +122,7 @@ pub fn frame_arity_k(
   span: TySpan,
   constructor: Bool
 ): Mut1(Unit, Checker) {
-  match Constructor: Mut1(Unit, Checker) {
+  match constructor: Mut1(Unit, Checker) {
     true => frame_arity_decl(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => mut1(Star, c)
   }
@@ -156,8 +168,8 @@ pub theorem frame_arity_k_ok(
   given: Nat,
   span: TySpan,
   constructor: Bool
-): CkReadFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
-  match Constructor: CkReadFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
+): CkReadFrame(c, frame_arity_k(c, n, given, span, constructor)) {
+  match constructor: CkReadFrame(c, frame_arity_k(c, n, given, span, constructor)) {
     true => frame_arity_decl_ok(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => Refl
   }
@@ -381,10 +393,10 @@ pub fn frame_set_constructor_position(c: Checker, b: Bool): Checker {
     locals: c.locals,
     terms: c.terms,
     closure_results: c.closure_results,
-    product_checks: c.product_checks,
     hint: c.hint,
     under_borrow: c.under_borrow,
     type_params: c.type_params,
+    widen_products: c.widen_products,
     steps: c.steps
   }
 }
@@ -421,10 +433,10 @@ pub fn frame_set_under_borrow(c: Checker, b: Bool): Checker {
     locals: c.locals,
     terms: c.terms,
     closure_results: c.closure_results,
-    product_checks: c.product_checks,
     hint: c.hint,
     under_borrow: b,
     type_params: c.type_params,
+    widen_products: c.widen_products,
     steps: c.steps
   }
 }
@@ -495,13 +507,13 @@ pub theorem frame_app_nested_ok(
   span: TySpan,
   after: List(Ty),
   inner: Ty
-): CkReadFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
-  match inner: CkReadFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
+): CkReadFrame(c, frame_app_nested(c, span, after, inner)) {
+  match inner: CkReadFrame(c, frame_app_nested(c, span, after, inner)) {
     TyNamed(n, before) => frame_return_ok(
       c,
-      TyNamed(n, List::append(before, MkAfter)),
-      ck_arity(c, n, list_len(List::append(before, MkAfter)), span),
-      ck_arity_frame(c, n, list_len(List::append(before, MkAfter)), span)
+      TyNamed(n, List::append(before, after)),
+      ck_arity(c, n, list_len(List::append(before, after)), span),
+      ck_arity_frame(c, n, list_len(List::append(before, after)), span)
     )
     TyInt(width) => Refl
     TyBool => Refl
@@ -1298,7 +1310,7 @@ pub fn frame_written_kind_k(
     SkQuote(stmts_form, stmts) => frame_written_invalid(c, span)
     SkSplice(value) => frame_written_invalid(c, span)
     SkSyntaxLit(name, body) => frame_written_invalid(c, span)
-    SkStep(tactic, arg, call_start, CallEnd, before, arms) => frame_written_invalid(c, span)
+    SkStep(tactic, arg, call_start, call_end, before, arms) => frame_written_invalid(c, span)
   }
 }
 
@@ -1591,7 +1603,7 @@ pub theorem frame_unf_SkStep(
   span: TySpan,
   under_borrow: Bool
 ): ck_written_kind(
-    SkStep(tactic, arg, call_start, CallEnd, before, arms),
+    SkStep(tactic, arg, call_start, call_end, before, arms),
     c,
     generics,
     span,
@@ -1865,14 +1877,14 @@ mutual {
         Eq::sym(frame_unf_SkSyntaxLit(name, body, c, generics, span, under_borrow)),
         Refl(Pair(Datas, Ordmap(Nat, Ty)), frame_read_view(c))
       )
-      SkStep(tactic, arg, call_start, CallEnd, before, arms) => Eq::subst(
+      SkStep(tactic, arg, call_start, call_end, before, arms) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
         Eq::sym(
           frame_unf_SkStep(
             tactic,
             arg,
             call_start,
-            CallEnd,
+            call_end,
             before,
             arms,
             c,

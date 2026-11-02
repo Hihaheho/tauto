@@ -1,4 +1,9 @@
 import "ty.taut"
+import std::Base
+import std::Map
+import std::Text
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
 
 // The declared `struct`s and `enum`s, and the kinds of types over them
 // (`Datas` and `Data` of `types.rs`), in the proof language
@@ -68,9 +73,9 @@ pub fn datas_named_ctor(cs: List(DataCtor), name: Text, index: Nat): Option(Nat)
 pub fn datas_ctor_candidates_in(ds: List(Pair(Text, Data)), name: Text): List(Pair(Text, Nat)) {
   match ds: List(Pair(Text, Nat)) {
     Nil => Nil
-    Cons(d, rest) => match datas_named_ctor((d: Data).constructors, name, 0): List(Pair(Text, Nat)) {
+    Cons(d, rest) => match datas_named_ctor(d.snd.constructors, name, 0): List(Pair(Text, Nat)) {
       None => datas_ctor_candidates_in(rest, name)
-      Some(index) => Cons(Pair { fst: (d: Text), snd: index }, datas_ctor_candidates_in(rest, name))
+      Some(index) => Cons(Pair { fst: d.fst, snd: index }, datas_ctor_candidates_in(rest, name))
     }
   }
 }
@@ -163,7 +168,6 @@ pub fn list_has_text(xs: List(Text), x: Text): Bool {
   }
 }
 
-// The constructor `c` of `d`.
 pub fn datas_constructor(d: Datas, name: Text, c: Nat): Option(DataCtor) {
   match datas_decl(d, name): Option(DataCtor) {
     None => None
@@ -185,7 +189,6 @@ pub fn data_instance_from(
   }
 }
 
-// The generics zipped with the arguments.
 pub fn data_instance(d: Data, args: List(Ty)): Ordmap(Text, Ty) {
   data_instance_from(d.generics, args, Ordmap::empty())
 }
@@ -215,7 +218,6 @@ pub fn data_declared_kind(data: Data): Kind {
   }
 }
 
-// Which arguments count: each generic in `holds`.
 pub fn generics_picked(gs: List(Text), holds: List(Text)): List(Bool) {
   match gs: List(Bool) {
     Nil => Nil
@@ -276,7 +278,6 @@ mutual {
       TyBorrow(x, m) => datas_kind(d, x)
       TyParam(n, pk) => pk
       TyInfo(x) => KindAffine
-      // A dictionary is shared.
       TyPoly(gs, x) => KindShared
       // What `F` makes is bounded by the kind `F` is declared with.
       TyApp(h, x) => match h: Kind {
@@ -299,9 +300,6 @@ mutual {
   }
 }
 
-// ----- the summary of each declaration -----
-
-// Whether every one of `xs` is in `ys`.
 pub fn texts_within(xs: List(Text), ys: List(Text)): Bool {
   match xs: Bool {
     Nil => true
@@ -313,12 +311,11 @@ pub fn holds_add(holds: List(Text), n: Text): List(Text) {
   if list_has_text(holds, n) { holds } else { Cons(n, holds) }
 }
 
-// The kind of `acc` and of `r`, with the holds of `r`.
 pub fn kind_pair_join(
   acc: Pair(Kind, List(Text)),
   r: Pair(Kind, List(Text))
 ): Pair(Kind, List(Text)) {
-  Pair { fst: kind_join((acc: Kind), (r: Kind)), snd: (r: List(Text)) }
+  Pair { fst: kind_join(acc.fst, r.fst), snd: r.snd }
 }
 
 // The kind of field type `t` over `gs`, but for the arguments: the generics
@@ -343,7 +340,7 @@ mutual {
           picks_tail(picks),
           gs,
           match picks_head(every, picks): Pair(Kind, List(Text)) {
-            true => kind_pair_join(acc, field_kind(d, t, gs, (acc: List(Text))))
+            true => kind_pair_join(acc, field_kind(d, t, gs, acc.snd))
             false => acc
           }
         )
@@ -394,7 +391,7 @@ pub fn fields_kind(
 ): Pair(Kind, List(Text)) {
   match fs: Pair(Kind, List(Text)) {
     Nil => acc
-    Cons(f, rest) => fields_kind(d, rest, gs, kind_pair_join(acc, field_kind(d, f.ty, gs, (acc: List(Text)))))
+    Cons(f, rest) => fields_kind(d, rest, gs, kind_pair_join(acc, field_kind(d, f.ty, gs, acc.snd)))
   }
 }
 
@@ -467,7 +464,6 @@ pub fn datas_map_decls(
   }
 }
 
-// One round over the declarations in order: `snd` says whether one grew.
 pub fn datas_round(es: List(Pair(Text, Data)), d: Datas, grew: Bool): Pair(Datas, Bool) {
   match es: Pair(Datas, Bool) {
     Nil => Pair { fst: d, snd: grew }
@@ -480,8 +476,8 @@ pub fn datas_round(es: List(Pair(Text, Data)), d: Datas, grew: Bool): Pair(Datas
           data.generics,
           Pair { fst: data.base, snd: data.holds }
         )
-        let base := kind_join(data.base, (r: Kind))
-        if kind_eq(base, data.base) && texts_within((r: List(Text)), data.holds) {
+        let base := kind_join(data.base, r.fst)
+        if kind_eq(base, data.base) && texts_within(r.snd, data.holds) {
           datas_round(rest, d, grew)
         } else {
           datas_round(
@@ -491,7 +487,7 @@ pub fn datas_round(es: List(Pair(Text, Data)), d: Datas, grew: Bool): Pair(Datas
               Ordmap::insert(
                 d.decls,
                 e.fst,
-                data_with_summary(data, base, (r: List(Text))),
+                data_with_summary(data, base, r.snd),
                 Ordmap::compare_text
               )
             ),
@@ -508,7 +504,7 @@ pub fn datas_rounds(k: Nat, d: Datas): Datas {
     Zero => datas_with_decls(d, datas_map_decls(Ordmap::entries(d.decls), data_top, d.decls))
     Succ(j) => {
       let r := datas_round(Ordmap::entries(d.decls), d, false)
-      if (r: Bool) { datas_rounds(j, (r: Datas)) } else { (r: Datas) }
+      if r.snd { datas_rounds(j, r.fst) } else { r.fst }
     }
   }
 }
@@ -532,9 +528,6 @@ pub fn ty_in_list(xs: List(Ty), t: Ty): Bool {
   }
 }
 
-// ----- structural classes -----
-
-// The classes whose instances follow from a type's structure.
 pub fn class_is_structural(r#class: Text): Bool {
   r#class == "PartialEq" || r#class == "DecEq" || r#class == "Hash"
 }
@@ -723,8 +716,6 @@ pub fn datas_structural(d: Datas, r#class: Text, t: Ty, assume: List(Pair(Text, 
   datas_structural_in(d.steps, d, r#class, t, assume, Nil)
 }
 
-// ----- clone -----
-
 pub fn field_types(fs: List(DataField), map: Ordmap(Text, Ty)): List(Ty) {
   match fs: List(Ty) {
     Nil => Nil
@@ -842,8 +833,6 @@ pub fn datas_no_clone(d: Datas, t: Ty): Option(Text) {
   datas_no_clone_in(d.steps, d, t, Nil)
 }
 
-// ----- record patterns and fields -----
-
 pub(open) inductive Positional: Type {
   PositionalOk(patterns: List(SurfacePattern)): Positional
   PositionalErr(message: Text): Positional
@@ -924,7 +913,7 @@ pub fn not_a_constructor(name: Text): Positional {
 pub fn datas_positional(d: Datas, name: Text, fields: List(SurfacePatternField)): Positional {
   match datas_ctor(d, name): Positional {
     None => not_a_constructor(name)
-    Some(dc) => match datas_constructor(d, (dc: Text), (dc: Nat)): Positional {
+    Some(dc) => match datas_constructor(d, dc.fst, dc.snd): Positional {
       None => not_a_constructor(name)
       Some(ctor) => match positional_check(name, ctor.fields, fields): Positional {
         Some(e) => PositionalErr(e)
@@ -943,7 +932,7 @@ pub fn datas_positional_expected(
 ): Positional {
   match datas_ctor_expected(d, name, expected): Positional {
     None => PositionalErr(datas_ctor_error(d, name))
-    Some(dc) => match datas_constructor(d, (dc: Text), (dc: Nat)): Positional {
+    Some(dc) => match datas_constructor(d, dc.fst, dc.snd): Positional {
       None => PositionalErr(datas_ctor_error(d, name))
       Some(ctor) => match positional_check(name, ctor.fields, fields): Positional {
         Some(e) => PositionalErr(e)
@@ -963,7 +952,6 @@ pub fn substituted_fields(fs: List(DataField), map: Ordmap(Text, Ty)): List(Data
   }
 }
 
-// The field types of constructor `c` of `d` at the type arguments.
 pub fn datas_fields(d: Datas, dname: Text, c: Nat, args: List(Ty)): List(DataField) {
   match datas_decl(d, dname): List(DataField) {
     None => Nil

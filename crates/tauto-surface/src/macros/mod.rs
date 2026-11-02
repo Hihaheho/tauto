@@ -1,5 +1,3 @@
-//! Syntax values, quotations, scopes and source origins.
-
 pub mod node;
 pub mod origin;
 pub mod quote;

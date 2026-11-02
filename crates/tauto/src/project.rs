@@ -15,10 +15,8 @@ use tauto_message::msg;
 
 use totebag::spec::GitSource;
 
-/// The project of each tote read, both by canonical path.
 static PROJECTS: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
 
-/// Notes that the tote in `tote` is read as part of `project`.
 pub(crate) fn note(tote: &Path, project: &Path) {
     PROJECTS
         .lock()

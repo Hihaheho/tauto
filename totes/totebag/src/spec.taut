@@ -1,10 +1,13 @@
 import "text.taut"
+import "../../url/src/bytes.taut"
+import "../../url/src/parse.taut"
+import "../../url/src/url.taut"
+import std::Base
+import std::Text
 
 // Where a tote comes from and the identifiers that fix it, as `Tauto.eure`
 // and `Tauto.lock` spell them: each check takes the text and says whether
 // Totebag accepts it, or why not.
-
-// ---- names -----------------------------------------------------------------------
 
 pub fn tb_name_byte(b: Nat): Bool {
   Bool::or(is_lower(b), Bool::or(is_digit(b), Nat::eq(b, 45)))
@@ -22,8 +25,6 @@ pub fn tb_name(l: List(Nat)): Bool {
 pub fn tb_valid_name(t: Text): Bool {
   tb_name(Text::bytes(t))
 }
-
-// ---- repository URLs -------------------------------------------------------------
 
 pub(open) inductive TbUrlProblem: Type {
   // Over 2048 bytes, or a byte that is not plain.
@@ -99,10 +100,7 @@ pub fn tb_check_url(t: Text): Option(TbUrlProblem) {
   tb_url(Text::bytes(t))
 }
 
-// ---- refs ------------------------------------------------------------------------
-
 pub fn tb_ref_forbidden(b: Nat): Bool {
-  // ~ ^ : ? * [
   Bool::or(Nat::eq(b, 126), Bool::or(Nat::eq(b, 94), Bool::or(Nat::eq(b, 58),
     Bool::or(Nat::eq(b, 63), Bool::or(Nat::eq(b, 42), Nat::eq(b, 91))))))
 }
@@ -138,8 +136,6 @@ pub fn tb_check_ref(t: Text): Bool {
   tb_ref(Text::bytes(t))
 }
 
-// ---- directories -----------------------------------------------------------------
-
 pub fn tb_dir_byte(b: Nat): Bool {
   Bool::or(is_alpha(b), Bool::or(is_digit(b), Bool::or(Nat::eq(b, 46), Bool::or(Nat::eq(b, 95), Nat::eq(b, 45)))))
 }
@@ -167,8 +163,6 @@ pub fn tb_dir(d: List(Nat)): Bool {
 pub fn tb_check_dir(t: Text): Bool {
   tb_dir(Text::bytes(t))
 }
-
-// ---- commit and tree IDs ---------------------------------------------------------
 
 pub fn tb_hex(n: Nat, l: List(Nat)): Bool {
   Bool::and(Nat::eq(List::length(l), n), all_bytes(tb_lower_hex, l))

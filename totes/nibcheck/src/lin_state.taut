@@ -1,5 +1,14 @@
 import "types_run.taut"
 import "freevars.taut"
+import std::List
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "rows.taut"
+import "ty.taut"
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
 
 // Use, control-flow linearity and borrows (`lin.rs`): the checker's state and
 // what it does to the bindings, in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
@@ -15,7 +24,6 @@ pub(open) inductive LinClass: Type {
 pub(open) inductive LinMode: Type {
   // A `let`, a parameter, a pattern's name, `k`.
   ModeOwned: LinMode
-  // A `var`'s cell.
   ModeVar: LinMode
   // A `var` a closure captured: it may be borrowed and assigned, not moved out
   // of.
@@ -69,24 +77,18 @@ pub(open) inductive Frame: Type {
     // how many loops.
     budgets: Nat,
     loops: Nat,
-    // Row variables bounded `<=1`.
     bounded: List(Text),
-    // Row variables bounded `direct`.
     direct_bounded: List(Text),
-    // The function returns a borrow (`-> &A`).
     returns_borrow: Bool
   ): Frame
 }
 
-// How a term's value is taken.
 pub(open) inductive LinPos: Type {
   // Moved: an argument, a field, an effect's argument, a `:=`.
   PosMove: LinPos
   // Bound by `let` or called in place: a closure that borrows may be.
   PosLet: LinPos
-  // A function's result.
   PosResult: LinPos
-  // The value is dropped (a statement's).
   PosDrop: LinPos
 }
 
@@ -96,7 +98,6 @@ pub(open) inductive LinUse: Type {
   UseMut: LinUse
 }
 
-// A place lent or moved in one call.
 pub(open) inductive Access: Type {
   AccessMk(root: Nat, path: List(Text), how: LinUse): Access
 }
@@ -113,7 +114,6 @@ pub(open) inductive Lin: Type {
     count: Nat,
     // The current frame first.
     frames: List(Frame),
-    // The newest first.
     errors: List(LinError),
     // The current path has returned.
     dead: Bool,
@@ -125,7 +125,6 @@ pub(open) inductive Lin: Type {
     arm_direct: Option(Pair(Nat, Text)),
     // What the call a `let &x` binds lends.
     lent: List(Pair(Nat, Bool)),
-    // Enough steps to walk the program.
     steps: Nat
   ): Lin
 }
@@ -223,7 +222,6 @@ pub fn mode_is_shared_borrow(m: LinMode): Bool {
   }
 }
 
-// A borrow, or a closure that borrows.
 pub fn mode_borrows(m: LinMode): Bool {
   match m: Bool {
     ModeBorrow(x) => true
@@ -467,7 +465,6 @@ pub fn lin_class_of_ty(c: Lin, t: Ty): Pair(LinClass, Option(Bool)) {
   }
 }
 
-// The class and mode a name of type `ty` gets.
 pub fn lin_class_of(c: Lin, ty: Option(Ty)): Pair(LinClass, Option(Bool)) {
   match ty: Pair(LinClass, Option(Bool)) {
     None => Pair { fst: ClassDup, snd: None }
@@ -530,7 +527,7 @@ pub fn lin_mode_of(is_var: Bool, borrow: Option(Bool)): LinMode {
 
 pub fn lin_push(&mut c: Lin, name: Text, site: Nat, is_var: Bool): Nat {
   let cm := lin_class_of(c, lin_local_type(c, name, site))
-  let i := lin_push_binding(&mut c, name, (cm: LinClass), lin_mode_of(is_var, (cm: Option(Bool))))
+  let i := lin_push_binding(&mut c, name, cm.fst, lin_mode_of(is_var, cm.snd))
   if lin_shared_view(c, lin_local_type(c, name, site)) {
     lin_put(&mut c, i, binding_with_shared_view(lin_get(c, i), true))
   }
@@ -580,7 +577,7 @@ pub fn lin_report_unused_below(n: Nat, &mut c: Lin, mark: Nat, span: TySpan): Un
 pub fn frozen_keep(fs: List(Pair(Nat, Bool)), mark: Nat): List(Pair(Nat, Bool)) {
   match fs: List(Pair(Nat, Bool)) {
     Nil => Nil
-    Cons(f, rest) => if (f: Nat) < mark { Cons(f, frozen_keep(rest, mark)) } else {
+    Cons(f, rest) => if f.fst < mark { Cons(f, frozen_keep(rest, mark)) } else {
       frozen_keep(rest, mark)
     }
   }
@@ -738,7 +735,6 @@ pub fn lin_take_binding(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
   }
 }
 
-// Moves binding `i`.
 pub fn lin_take(&mut c: Lin, i: Nat, span: TySpan): Unit {
   if lin_direct_arm_moves(&mut c, i, span) {
     #()

@@ -20,17 +20,13 @@ pub type Env = Rc<RefCell<Vec<Value>>>;
 pub enum Value {
     Unit,
     Bool(bool),
-    /// Every width of integer, `nat` included, checked to its range.
     Int(i128),
     Float(f64),
     Float32(f32),
     Text(Rc<str>),
-    /// `Buf`: a text that grows.
     Buf(Rc<String>),
     Data(Rc<Data>),
-    /// A product's members.
     Product(Rc<Vec<Value>>),
-    /// A member of a union.
     Inject(u32, u32, Rc<Value>),
     Vec(Rc<Vec<Value>>),
     Array(Rc<Vec<Value>>),
@@ -41,14 +37,14 @@ pub enum Value {
     Map(Rc<Vec<(Value, Value)>>),
     /// `Ref`, `Mutex` and `Atomic` of the prelude: one slot every copy shares.
     Shared(SharedKind, Rc<RefCell<Value>>),
+    /// `Weak` of the prelude: a handle on a `Ref`'s slot that does not keep
+    /// it alive. It upgrades while some strong handle on the slot remains.
+    Weak(std::rc::Weak<RefCell<Value>>),
     /// What `show` carries: the value already shown.
     Shown(Rc<str>),
-    /// A borrow of a place.
     Ref(Rc<Place>),
-    /// A function of the program.
     Fn(u32),
     Closure(Rc<Closure>),
-    /// A continuation of a handler arm.
     Cont(Rc<Cont>),
     /// A signal: raised once, never lowered.
     Signal(Rc<Signal>),
@@ -56,11 +52,12 @@ pub enum Value {
     Pending(Rc<Pending>),
     /// A mutex: its content and the places in line for it.
     Mutex(Rc<RefCell<MutexState>>),
+    /// A locked mutex's content: handed back when the guard is dropped.
+    Guard(Rc<GuardState>),
     /// What the arm of `exceeded` gets.
     Info,
     /// What the arm of `exceeded` answers (`budget_value` and `info_*`).
     Answer(Rc<Answer>),
-    /// A moved-out slot.
     Moved,
 }
 
@@ -85,7 +82,6 @@ pub struct Pending {
 
 pub enum PendingState {
     Ready(Value),
-    /// A task that still runs.
     Running,
     /// A sleep that ends at the instant.
     Timer(std::time::Instant),
@@ -129,6 +125,34 @@ pub struct MutexState {
     pub waiting: std::collections::VecDeque<Rc<Signal>>,
 }
 
+impl MutexState {
+    /// Hands `v` to the first place in line, or keeps it if there is none.
+    pub fn put(&mut self, v: Value) {
+        match self.waiting.pop_front() {
+            Some(s) => {
+                *s.handed.borrow_mut() = Some(v);
+                s.raise();
+            }
+            None => self.value = Some(v),
+        }
+    }
+}
+
+/// What `MutexGuard::claimed` made: the mutex and the content taken from it.
+pub struct GuardState {
+    pub mutex: Rc<RefCell<MutexState>>,
+    pub content: Rc<RefCell<Value>>,
+}
+
+impl Drop for GuardState {
+    fn drop(&mut self) {
+        let v = std::mem::replace(&mut *self.content.borrow_mut(), Value::Moved);
+        if !matches!(v, Value::Moved) {
+            self.mutex.borrow_mut().put(v);
+        }
+    }
+}
+
 pub enum Answer {
     /// The budget's value: its body stops.
     Value(Value),
@@ -163,29 +187,24 @@ pub struct Closure {
     pub captures: Vec<(u32, Value)>,
 }
 
-/// Where a borrow points.
 pub struct Place {
     pub root: Root,
     pub path: Vec<Step>,
 }
 
 pub enum Root {
-    /// A slot of a frame.
     Slot(Env, u32),
     /// A cell: a shared `var`, or a temporary that was borrowed.
     Cell(Rc<RefCell<Value>>),
 }
 
-/// A step of a path.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     /// A field of a constructor or a member of a product, by index.
     Index(usize),
     /// A field by name, found in the constructor's names.
     Name(Rc<str>),
-    /// An item of a `Vec` or an `Array`.
     Item(usize),
-    /// The value of a `HashMap` entry.
     Entry(usize),
 }
 
@@ -194,9 +213,7 @@ pub type R<T> = Result<T, Error>;
 /// What ends a run that does not end normally.
 #[derive(Debug)]
 pub enum Error {
-    /// A run-time error: the message.
     Runtime(String),
-    /// `exit(code)`.
     Exit(i32),
 }
 
@@ -278,6 +295,7 @@ impl Value {
             Value::Secret(_) => "Secret",
             Value::Map(_) => "HashMap",
             Value::Shared(..) => "a shared slot",
+            Value::Weak(_) => "Weak",
             Value::Shown(_) => "a shown value",
             Value::Ref(_) => "a borrow",
             Value::Fn(_) | Value::Closure(_) => "a function",
@@ -285,13 +303,13 @@ impl Value {
             Value::Signal(_) => "Signal",
             Value::Pending(_) => "Pending",
             Value::Mutex(_) => "Mutex",
+            Value::Guard(_) => "MutexGuard",
             Value::Info => "Info",
             Value::Answer(_) => "a budget answer",
             Value::Moved => "a moved value",
         }
     }
 
-    /// The part of the value at one step.
     pub fn at(&self, step: &Step) -> R<Value> {
         match (self, step) {
             (Value::Ref(p), _) => p.get()?.at(step),
@@ -369,7 +387,6 @@ impl Place {
         Ok(v)
     }
 
-    /// Changes the value at the place with `f`.
     pub fn with_mut<T>(&self, f: impl FnOnce(&mut Value) -> R<T>) -> R<T> {
         match &self.root {
             Root::Slot(env, i) => {
@@ -418,7 +435,6 @@ impl Place {
         })
     }
 
-    /// The place one step further.
     pub fn child(&self, step: Step) -> Place {
         let mut path = self.path.clone();
         path.push(step);
@@ -510,8 +526,10 @@ pub fn equal(a: &Value, b: &Value) -> R<bool> {
             true
         }
         (Value::Shared(_, x), Value::Shared(_, y)) => Rc::ptr_eq(x, y),
+        (Value::Weak(x), Value::Weak(y)) => std::rc::Weak::ptr_eq(x, y),
         (Value::Signal(x), Value::Signal(y)) => Rc::ptr_eq(x, y),
         (Value::Mutex(x), Value::Mutex(y)) => Rc::ptr_eq(x, y),
+        (Value::Guard(x), Value::Guard(y)) => Rc::ptr_eq(x, y),
         _ => false,
     })
 }
@@ -591,7 +609,9 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
             out.push(')');
         }
         Value::Shared(SharedKind::Mutex, _) | Value::Mutex(_) => out.push_str("Mutex"),
+        Value::Weak(_) => out.push_str("Weak"),
         Value::Signal(_) => out.push_str("Signal"),
+        Value::Guard(_) => out.push_str("MutexGuard"),
         // A secret's content is never shown.
         Value::Secret(_) => out.push_str("Secret"),
         Value::Pending(_) => out.push_str("Pending"),

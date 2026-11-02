@@ -3,17 +3,28 @@
 
 use std::path::Path;
 
-use tauto_syntax::{Event, Limits, ParseError, parse};
+use tauto_syntax::{Limits, ParseError, parse};
 
 use tauto::syntax::LiteralUse;
+
+mod kept;
+mod tokens;
 
 /// A token of a literal's text, as a byte range of the file it is written in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DslToken {
     pub start: usize,
     pub end: usize,
-    /// One of [`KINDS`].
     pub kind: &'static str,
+}
+
+/// Why a text is coloured by the names of its grammar's terminals although its syntax registers a
+/// `tokens` function: a warning at the text, as a byte range of the file it is written in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DslNote {
+    pub start: usize,
+    pub end: usize,
+    pub message: String,
 }
 
 /// The kinds a token is coloured as, in the order a client's legend lists them.
@@ -56,6 +67,23 @@ fn load(path: &Path, text: &str) -> Result<(tauto::program::Loaded, u32), String
     Ok((loaded, base))
 }
 
+/// The program of the file at `path` (its text given) read and expanded, and where the file
+/// starts in it.
+fn expand(path: &Path, text: &str) -> Result<(tauto::program::Expanded, u32), String> {
+    let dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
+    let expanded = tauto::syntax::with_search_dirs(dirs, || {
+        tauto::program::expand_with_text(path, Some(text))
+    })?;
+    let own = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let base = expanded
+        .files
+        .iter()
+        .find(|f| f.path.canonicalize().unwrap_or_else(|_| f.path.clone()) == own)
+        .map(|f| f.base)
+        .ok_or_else(|| tauto_message::msg!("analyzer-file-not-read").to_string())?;
+    Ok((expanded, base))
+}
+
 /// The literals of the file at `path` (its text given), each read with its syntax.
 fn literals(path: &Path, text: &str) -> Result<(Vec<LiteralUse>, u32, std::path::PathBuf), String> {
     let (loaded, base) = load(path, text)?;
@@ -63,69 +91,11 @@ fn literals(path: &Path, text: &str) -> Result<(Vec<LiteralUse>, u32, std::path:
     Ok((loaded.literals, base, own))
 }
 
-/// The tokens of the syntax literals written in the file. A literal of a syntax that registers a
-/// `tokens` function (`with tokens f`) is coloured as the function says; the others have their
-/// tokens, outside the skipped ones (white space, comments), coloured by how the grammar names
-/// the terminal. A literal that does not read has none: the error is the diagnostic's to show.
-pub fn dsl_tokens(path: &Path, text: &str) -> Result<Vec<DslToken>, String> {
-    let (loaded, base) = load(path, text)?;
-    let library = tauto::registered::Library::open(&loaded.program, &loaded.registrations).ok();
-    let mut out = Vec::new();
-    for u in loaded.literals {
-        if let Some(library) = &library
-            && library.has(&u.syntax, tauto::syntax::Role::Tokens)
-            && let Ok(Some(marks)) = library.highlight(&u.syntax, &u.tables, &u.lit.text)
-        {
-            for m in marks {
-                let (a, b) = (u.lit.position(m.start), u.lit.position(m.end));
-                if a < base || (b - base) as usize > text.len() {
-                    continue;
-                }
-                out.push(DslToken {
-                    start: (a - base) as usize,
-                    end: (b - base) as usize,
-                    kind: m.kind,
-                });
-            }
-            continue;
-        }
-        let Ok(events) = parse(&u.tables, &u.lit.text, 0, &Limits::default()) else {
-            continue;
-        };
-        for e in events {
-            let Event::Token(t) = e else { continue };
-            if t.start == t.end {
-                continue;
-            }
-            let name = &u.tables.terminals()[t.terminal as usize];
-            let (a, b) = (u.lit.position(t.start), u.lit.position(t.end));
-            if a < base {
-                continue;
-            }
-            let (a, b) = ((a - base) as usize, (b - base) as usize);
-            // A literal of an imported file is that file's.
-            if b > text.len() {
-                continue;
-            }
-            out.push(DslToken {
-                start: a,
-                end: b,
-                kind: if u.tables.is_skipped(t.terminal) {
-                    "comment"
-                } else {
-                    kind_of(name)
-                },
-            });
-        }
-    }
-    out.retain(|t| {
-        !text
-            .get(t.start..t.end)
-            .is_some_and(|s| s.trim().is_empty())
-    });
-    out.sort_by_key(|t| t.start);
-    out.dedup();
-    Ok(out)
+/// The tokens of the syntax literals written in the file and of the fenced blocks in its line
+/// comments, with the warnings for the texts whose registered `tokens` function could not be
+/// used (`tokens::dsl_tokens`).
+pub fn dsl_tokens(path: &Path, text: &str) -> Result<(Vec<DslToken>, Vec<DslNote>), String> {
+    tokens::dsl_tokens(path, text)
 }
 
 /// The terminals the literal around `offset` can go on with there, or none
@@ -196,4 +166,17 @@ pub fn position_of(text: &str, offset: usize) -> (usize, usize) {
         .next()
         .map_or(0, |l| l.chars().map(char::len_utf16).sum());
     (line, col)
+}
+
+/// A token as `line:col kind text`, the line and the column (in characters) from 1.
+pub fn token_line(text: &str, token: &DslToken) -> String {
+    let before = &text[..token.start];
+    let line = before.matches('\n').count() + 1;
+    let from = before.rfind('\n').map_or(0, |i| i + 1);
+    let col = text[from..token.start].chars().count() + 1;
+    format!(
+        "{line}:{col} {} {}",
+        token.kind,
+        &text[token.start..token.end]
+    )
 }

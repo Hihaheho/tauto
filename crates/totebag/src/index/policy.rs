@@ -108,7 +108,6 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// The rule for revisions of `project`.
     pub fn rule(&self, project: &Sha256) -> &Rule {
         self.rules
             .iter()
@@ -283,7 +282,6 @@ fn find<'a>(alias: &str, indexes: &'a [(Trusted, bool)]) -> Result<&'a (Trusted,
         .ok_or_else(|| say!("totebag-no-such-index", alias = alias))
 }
 
-/// The observers named `names`.
 pub(super) fn observers(
     names: &[String],
     indexes: &[(Trusted, bool)],

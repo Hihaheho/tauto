@@ -13,6 +13,7 @@ mod commands;
 mod dev;
 mod doc;
 mod elaborate;
+mod highlight;
 mod i18n;
 mod index;
 mod init;
@@ -242,6 +243,9 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|a| a == "doc") {
         return with_deep_stack(|| doc::command(&args[1..]));
     }
+    if args.first().is_some_and(|a| a == "highlight") {
+        return with_deep_stack(|| highlight::command(&args[1..]));
+    }
     if args.first().is_some_and(|a| a == "syntax") {
         return syntax::command(&args[1..]);
     }
@@ -290,7 +294,6 @@ fn main() -> ExitCode {
         eprintln!("{e}");
         return ExitCode::from(2);
     }
-    // `--permissions FILE`: the `--allow-*` flags written in a file.
     if args.first().is_some_and(|a| a == "run" || a == "dev") {
         args = match permission_file::expand(&args) {
             Ok(args) => args,
@@ -345,7 +348,6 @@ fn main() -> ExitCode {
     usage()
 }
 
-/// The entries of `USAGE` for `command`.
 fn command_usage(command: &str) -> Vec<&'static str> {
     let head = format!("tauto {command}");
     USAGE
@@ -355,7 +357,6 @@ fn command_usage(command: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// The entries of one line of `USAGE`: split at ` | ` outside parentheses.
 fn top_level_entries(line: &'static str) -> Vec<&'static str> {
     let mut out = Vec::new();
     let (mut depth, mut start) = (0i32, 0);
@@ -374,21 +375,15 @@ fn top_level_entries(line: &'static str) -> Vec<&'static str> {
     out
 }
 
-/// `tauto lint PATH…`: each file, and each `.taut` file under a directory. With `--fix`, the
-/// fixes [`tauto::lint::fix`] makes are written to the file first.
+/// `tauto lint PATH…`: each file, and each `.taut` file under a directory.
 /// Exit status: 0 when nothing is found, 1 otherwise, 2 when a path cannot
 /// be read.
 fn lint_paths(paths: &[String]) -> ExitCode {
     let mut files = Vec::new();
     let mut json = false;
-    let mut fix = false;
     for p in paths {
         if p == "--json" {
             json = true;
-            continue;
-        }
-        if p == "--fix" {
-            fix = true;
             continue;
         }
         if p.starts_with('-') {
@@ -413,24 +408,13 @@ fn lint_paths(paths: &[String]) -> ExitCode {
     let mut found_json = Vec::new();
     for file in &files {
         let shown = file.display().to_string();
-        let mut source = match std::fs::read_to_string(file) {
+        let source = match std::fs::read_to_string(file) {
             Ok(source) => source,
             Err(error) => {
                 eprintln!("{shown}: {error}");
                 return ExitCode::from(2);
             }
         };
-        // `--fix`: the fixes made first, and what is left found.
-        if fix {
-            let fixed = tauto::lint::fix(&source);
-            if fixed != source {
-                if let Err(error) = std::fs::write(file, &fixed) {
-                    eprintln!("{shown}: {error}");
-                    return ExitCode::from(2);
-                }
-                source = fixed;
-            }
-        }
         let (found, error) = match tauto::lint::lint(&source) {
             Ok(found) => (found.iter().map(|f| f.to_string()).collect(), false),
             Err(error) => (vec![error], true),
@@ -541,6 +525,7 @@ fn proof_command(args: &[String]) -> ExitCode {
     let (mut by, mut limit, mut write) = (None, 20usize, false);
     let (mut using, mut verify) = (Vec::new(), false);
     let mut tote = false;
+    let (mut fix, mut dry_run) = (false, false);
     let mut timings = None;
     let mut rest = args[1..].iter();
     while let Some(a) = rest.next() {
@@ -556,6 +541,8 @@ fn proof_command(args: &[String]) -> ExitCode {
             },
             "--write" => write = true,
             "--tote" if command == "check" => tote = true,
+            "--fix" if command == "check" => fix = true,
+            "--dry-run" if command == "check" => dry_run = true,
             "--timings" if command == "check" => timings = Some(false),
             "--timings=json" if command == "check" => timings = Some(true),
             "--verify" if command == "suggest" => verify = true,
@@ -587,6 +574,12 @@ fn proof_command(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     };
+    if dry_run && !fix || fix && (tote || json || command != "check") {
+        return usage();
+    }
+    if fix {
+        return run(fix_command(path, dry_run));
+    }
     match (command, hole, with) {
         ("check", None, None) if tote => run(report::check_tote_report(path).map(|r| {
             if json {
@@ -846,7 +839,7 @@ fn format_files(args: &[String]) -> ExitCode {
 }
 
 /// The file laid out, and then the bodies of its syntax literals laid out by the functions their
-/// syntaxes register for it (`with fmt f`). A file that does not load has no literal laid out.
+/// syntaxes register for it (`with fmt f`). What is left as written is a warning.
 fn with_literals(path: &str, formatted: String) -> String {
     match tauto::fmt_literals::format_literals(Path::new(path), &formatted) {
         Ok((text, warnings)) => {
@@ -859,7 +852,10 @@ fn with_literals(path: &str, formatted: String) -> String {
                 tauto::fmt::format(&text).unwrap_or(text)
             }
         }
-        Err(_) => formatted,
+        Err(error) => {
+            eprintln!("{path}: {error}");
+            formatted
+        }
     }
 }
 
@@ -940,7 +936,6 @@ pub(crate) fn locate_in(loaded: &Loaded, entry: &str, shown: &str) -> String {
 /// What `tauto run` and `tauto dev` read from their arguments.
 pub(crate) struct RunArgs {
     pub check_ownership: bool,
-    /// `--steps N`, when given.
     pub steps: Option<u64>,
     pub file: Option<String>,
     pub tote: Option<String>,
@@ -977,7 +972,6 @@ pub(crate) fn parse_run_args(args: &[String]) -> Result<RunArgs, ExitCode> {
                 Some(dir) => out.tote = Some(dir.clone()),
                 None => return Err(usage()),
             },
-            // The arguments of the program: `os_args()`.
             "--" => {
                 out.program_args = rest.by_ref().cloned().collect();
                 break;
@@ -1126,16 +1120,16 @@ fn expand_command(args: &[String]) -> ExitCode {
 }
 
 /// The syntax of every command, one entry per ` | `; its prose is in `usage_text`.
-const USAGE: &str = "tauto run [--check-ownership] [--steps N] [--allow-(read|write|env|net|run)[=…] | --allow-all | --allow-interactive | --permissions FILE]… [--approve-trust] (FILE | --tote DIR) [-- ARGS…] | tauto lint [--json] [--fix] PATH… | tauto fmt [--check] FILE…\n       \
+const USAGE: &str = "tauto run [--check-ownership] [--steps N] [--allow-(read|write|env|net|run)[=…] | --allow-all | --allow-interactive | --permissions FILE]… [--approve-trust] (FILE | --tote DIR) [-- ARGS…] | tauto lint [--json] PATH… | tauto fmt [--check] FILE…\n       \
          tauto dev [--backend vm|eval] [--check-ownership] [--steps N] [--allow-(read|write|env|net|run)[=…] | --allow-all | --allow-interactive | --permissions FILE]… [--approve-trust] (FILE | --tote DIR) [-- ARGS…]\n       \
          tauto init [DIR]\n       \
          tauto add (--git URL [--branch NAME | --tag NAME] [--dir DIR] [--project ID] | --path DIR) [NAME] | tauto remove NAME\n       \
          tauto update [NAME…] [--dry-run] | tauto lock [--check] | tauto fetch [--verify] | tauto deps | tauto audit [--json]\n       \
          tauto index (sync | status | check [NAME…] | new DIR | observe NAME | decide NAME accept|reject | withdraw NAME | publish)\n       \
          tauto test [PATH] [--filter TEXT] [--json] | tauto bench PATH [OPTIONS] | tauto doc PATH [-o DIR]\n       \
-         tauto extract FILE… | tauto expand FILE | tauto lsp\n       \
+         tauto extract FILE… | tauto expand FILE | tauto lsp | tauto highlight [--tokens] [--timings] [--repeat N [--edit]] FILE\n       \
          tauto eval FILE EXPR\n       \
-         tauto check FILE [--json] [--verbose] [--fresh] [--timings[=json]] [--timeout SECS] | tauto check --tote DIR [--json] [--verbose] [--fresh]\n       \
+         tauto check FILE [--json] [--verbose] | tauto check FILE --fix [--dry-run] [--fresh] [--timings[=json]] [--timeout SECS] | tauto check --tote DIR [--json] [--verbose] [--fresh]\n       \
          tauto goals FILE [--hole NAME] [--json] | tauto assumptions FILE [NAME] [--json]\n       \
          tauto elaborate FILE [NAME] [--json] | tauto proof-status [PATH] [--json]\n       \
          tauto try FILE --hole NAME --with EXPR [--json] | tauto fill FILE --hole NAME --with EXPR [--json]\n       \
@@ -1150,7 +1144,6 @@ const USAGE: &str = "tauto run [--check-ownership] [--steps N] [--allow-(read|wr
          tauto publish-crates plan|check|apply|resume [OPTIONS]\n       \
          tauto --help | tauto --version";
 
-/// `accepted` or `rejected`, for a candidate of `try`, `fill` and `expand`.
 fn accepted_text(accepted: bool) -> String {
     if accepted {
         i18n::t!("main-accepted")
@@ -1159,7 +1152,6 @@ fn accepted_text(accepted: bool) -> String {
     }
 }
 
-/// The usage of every command, with its notes, in the user's language.
 fn usage_text() -> String {
     let project = "tauto COMMAND [ARGS…]";
     format!(
@@ -1178,4 +1170,85 @@ fn usage_text() -> String {
 pub(crate) fn usage() -> ExitCode {
     eprintln!("{}", usage_text());
     ExitCode::from(2)
+}
+
+/// `tauto check FILE --fix [--dry-run]`: the edits the diagnostics carry, made in memory
+/// round by round (`tauto::fix`); the files are written once at the end, or shown as a
+/// diff with `--dry-run`.
+fn fix_command(path: &std::path::Path, dry_run: bool) -> Result<ExitCode, String> {
+    let outcome = tauto::fix::fix(path)?;
+    let shown = |p: &std::path::Path| p.display().to_string();
+    for (edit, (line, col)) in &outcome.applied {
+        println!(
+            "{}",
+            i18n::t!(
+                "main-fix-applied",
+                file = shown(&edit.file),
+                line = line.to_string(),
+                col = col.to_string(),
+                title = edit.title.clone()
+            )
+        );
+    }
+    for r in &outcome.reverted {
+        let new = if r.new_errors.is_empty() {
+            String::new()
+        } else {
+            i18n::t!("main-fix-new-errors", errors = r.new_errors.join("; "))
+        };
+        println!(
+            "{}",
+            i18n::t!(
+                "main-fix-reverted",
+                file = shown(&r.edit.file),
+                title = r.edit.title.clone(),
+                before = r.before.to_string(),
+                after = r
+                    .after
+                    .map_or_else(|| i18n::t!("main-fix-unreadable"), |n| n.to_string()),
+                new = new
+            )
+        );
+    }
+    for u in &outcome.unfixed {
+        let (line, col) = u.at.unwrap_or((0, 0));
+        let key = if u.reverted {
+            "main-fix-unfixed-reverted"
+        } else {
+            "main-fix-unfixed"
+        };
+        println!(
+            "{}",
+            i18n::t!(
+                key,
+                file = shown(&u.file),
+                line = line.to_string(),
+                col = col.to_string(),
+                message = u.message.clone()
+            )
+        );
+    }
+    println!(
+        "{}",
+        i18n::t!(
+            "main-fix-summary",
+            before = outcome.errors_before.to_string(),
+            after = outcome.errors_after.to_string(),
+            applied = outcome.applied.len().to_string(),
+            reverted = outcome.reverted.len().to_string(),
+            unfixed = outcome.unfixed.len().to_string()
+        )
+    );
+    for (file, old, new) in outcome.changed() {
+        if dry_run {
+            print!("{}", tauto::fix::unified_diff(&shown(file), old, new));
+        } else {
+            std::fs::write(file, new).map_err(|e| format!("{}: {e}", file.display()))?;
+        }
+    }
+    Ok(if outcome.errors_after == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }

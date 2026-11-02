@@ -8,7 +8,6 @@ const MANIFEST: &str = r#"
 package {
   name = "files-demo"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 rust {
@@ -32,12 +31,13 @@ fn reads_the_rust_section() {
     tauto_messages::install();
     let m = parse(MANIFEST, Path::new("Tauto.eure")).unwrap();
     assert_eq!(m.package.name, "files-demo");
-    assert_eq!(m.package.sources, vec!["src"]);
+    assert!(m.package.additional_sources.is_empty());
+    assert_eq!(m.package.source_paths(), vec!["src"]);
     assert_eq!(m.rust.bridge.as_deref(), Some("bridge"));
     assert_eq!(m.rust.bindings, vec!["bind/regex.eure"]);
     assert_eq!(m.rust.types["File"].value, "std::fs::File");
     assert_eq!(m.rust.externs["file_open"].value, "std::fs::File::open");
-    assert_eq!(m.rust.externs["file_open"].line, 15);
+    assert_eq!(m.rust.externs["file_open"].line, 14);
     assert_eq!(m.rust.dependencies["regex"].value, "\"1.11.1\"");
 }
 
@@ -216,7 +216,6 @@ fn reads_commands_and_what_the_project_grants_them() {
 package {
   name = "app"
   version = "0.1.0"
-  sources = ["src"]
 }
 commands {
   bk {

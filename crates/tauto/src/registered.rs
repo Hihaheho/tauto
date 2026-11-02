@@ -1,19 +1,19 @@
 //! The functions a `syntax` registers with `with fmt f, tokens g`
 //! (`docs/design/macro.md`「構文に付ける関数（`with`）」): what lays out a literal's text
 //! and what an editor colours it as. They run in the program they are written in, with the
-//! builtins and the limits of a macro, and read the text as tokens or as the lossless tree.
+//! limits of a macro, answer no host effect, and read the text as tokens or as the lossless tree.
 
 use std::rc::Rc;
 use tauto_message::{Message, msg};
 
 use tauto_syntax::{Cst, Event, Limits, ParseError, Tables, build_cst, parse};
 
-use crate::eval::{Host, MACRO_BUILTINS, call_function};
+use crate::eval::{Host, call_function};
 use crate::macros::{Node, Options};
 use crate::rows::{RowReport, check_program_rows};
-use crate::surface::{Program, Stmt, TermKind, walk};
+use crate::surface::Program;
 use crate::syntax::{Registration, Role};
-use crate::types::{Ty, TypeReport, check_program, prelude};
+use crate::types::{Ty, TypeReport, check_program};
 use tauto_parol::Span;
 
 /// The colours an editor's legend lists, in order: what a `SynHighlight` names one of.
@@ -46,7 +46,6 @@ pub const HIGHLIGHT_KINDS: [&str; 23] = [
 /// How deep a tree may be before it is not handed to a function.
 const DEPTH: usize = 2_000;
 
-/// What a registered function reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reads {
     /// `List(SynTok)`: the scanner's tokens, skipped ones included. Needs no parse, so it works
@@ -56,7 +55,6 @@ pub enum Reads {
     Tree,
 }
 
-/// A part of a literal's text and what it is coloured as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Highlight {
     pub start: u32,
@@ -73,12 +71,13 @@ struct Bound {
 
 /// The program the registered functions run in, checked.
 pub struct Library<'p> {
-    program: &'p Program,
+    program: std::borrow::Cow<'p, Program>,
     report: TypeReport,
     registrations: Vec<(Registration, Bound)>,
+    /// The registrations that could not be bound, and why.
+    unbound: Vec<(Registration, String)>,
 }
 
-/// Why registered functions are wrong, at where they are registered.
 pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(String, Span)> {
     if registrations.is_empty() {
         return Vec::new();
@@ -95,7 +94,7 @@ pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(Strin
     let rows = check_program_rows(program);
     let mut errors = Vec::new();
     for r in registrations {
-        if let Err(message) = bind(program, &report, &rows, r) {
+        if let Err(message) = bind(&report, &rows, r) {
             errors.push((message, r.span));
         }
     }
@@ -110,12 +109,7 @@ fn wanted(role: Role) -> &'static str {
     }
 }
 
-fn bind(
-    program: &Program,
-    report: &TypeReport,
-    rows: &RowReport,
-    r: &Registration,
-) -> Result<Bound, String> {
+fn bind(report: &TypeReport, rows: &RowReport, r: &Registration) -> Result<Bound, String> {
     let head = |problem: Message| {
         msg!(
             "tauto-reg",
@@ -180,13 +174,13 @@ fn bind(
             if e.starts_with('?') {
                 return Err(head(msg!("tauto-reg-unknown-effect", effect = e.as_str())));
             }
-            if e != "Div" {
-                return Err(head(msg!("tauto-reg-div-only", effect = e.as_str())));
+            if crate::host::HOST_EFFECTS.contains(&e.as_str()) {
+                return Err(head(msg!("tauto-reg-host-effect", effect = e.as_str())));
+            }
+            if !matches!(e.as_str(), "Div" | "macro_error") {
+                return Err(head(msg!("tauto-reg-effect", effect = e.as_str())));
             }
         }
-    }
-    if let Some(path) = unreachable_builtin(program, &r.function) {
-        return Err(head(msg!("tauto-reg-reaches", path = path.join(" -> "))));
     }
     Ok(Bound {
         function: r.function.clone(),
@@ -194,90 +188,73 @@ fn bind(
     })
 }
 
-/// A path from `function` to a builtin a macro may not call, when there is one.
-fn unreachable_builtin(program: &Program, function: &str) -> Option<Vec<String>> {
-    use std::collections::{HashMap, HashSet};
-    let mut fns: HashMap<&str, &crate::surface::FnDecl> = HashMap::new();
-    let mut externs: HashSet<&str> = HashSet::new();
-    for s in prelude().stmts.iter().chain(&program.stmts) {
-        match s {
-            Stmt::Fn(f) => {
-                fns.insert(&f.name, f);
-            }
-            Stmt::Extern { fns: es, .. } => externs.extend(es.iter().map(|f| f.name.as_str())),
-            _ => {}
-        }
-    }
-    let allows = |n: &str| {
-        MACRO_BUILTINS.iter().any(|a| match a.strip_suffix('*') {
-            Some(p) => n.starts_with(p),
-            None => *a == n,
-        })
-    };
-    let mut seen = HashSet::new();
-    let mut stack = vec![vec![function.to_string()]];
-    while let Some(path) = stack.pop() {
-        let here = path.last().expect("a path has a name").clone();
-        if !seen.insert(here.clone()) {
-            continue;
-        }
-        let Some(f) = fns.get(here.as_str()) else {
-            continue;
-        };
-        let mut body = f.body.clone();
-        let mut names = Vec::new();
-        walk::term(&mut body, &mut |t| {
-            if let TermKind::Var(n) = &*t.kind {
-                names.push(n.clone());
-            }
-        });
-        for n in names {
-            let mut next = path.clone();
-            next.push(n.clone());
-            if externs.contains(n.as_str()) && !allows(&n) {
-                return Some(next);
-            }
-            if fns.contains_key(n.as_str()) {
-                stack.push(next);
-            }
-        }
-    }
-    None
-}
-
 impl<'p> Library<'p> {
     /// The program checked, with the registrations that are right. `Err` when the program does
     /// not check; a registration that is wrong is left out (`validate` says why).
     pub fn open(program: &'p Program, registrations: &[Registration]) -> Result<Self, String> {
+        Self::open_with(std::borrow::Cow::Borrowed(program), registrations, true)
+    }
+
+    /// As [`Library::open`], but a program that does not check is used as far as it goes: a call
+    /// of a function that does not check is the call's own error.
+    pub fn open_lenient(
+        program: &'p Program,
+        registrations: &[Registration],
+    ) -> Result<Self, String> {
+        Self::open_with(std::borrow::Cow::Borrowed(program), registrations, false)
+    }
+
+    /// [`Library::open_lenient`] of a program it keeps.
+    pub fn open_lenient_owned(
+        program: Program,
+        registrations: &[Registration],
+    ) -> Result<Library<'static>, String> {
+        Library::open_with(std::borrow::Cow::Owned(program), registrations, false)
+    }
+
+    fn open_with(
+        program: std::borrow::Cow<'p, Program>,
+        registrations: &[Registration],
+        strict: bool,
+    ) -> Result<Self, String> {
         if registrations.is_empty() {
             return Ok(Library {
                 program,
                 report: TypeReport::default(),
                 registrations: Vec::new(),
+                unbound: Vec::new(),
             });
         }
-        let report = check_program(program);
-        if let Some(e) = report.errors.first() {
+        let report = check_program(&program);
+        if strict && let Some(e) = report.errors.first() {
             return Err(e.to_string());
         }
         let report = report.with_prelude();
-        let rows = check_program_rows(program);
-        let bound = registrations
-            .iter()
-            .filter_map(|r| {
-                bind(program, &report, &rows, r)
-                    .ok()
-                    .map(|b| (r.clone(), b))
-            })
-            .collect();
+        let rows = check_program_rows(&program);
+        let mut bound = Vec::new();
+        let mut unbound = Vec::new();
+        for r in registrations {
+            match bind(&report, &rows, r) {
+                Ok(b) => bound.push((r.clone(), b)),
+                Err(why) => unbound.push((r.clone(), why)),
+            }
+        }
         Ok(Library {
             program,
             report,
             registrations: bound,
+            unbound,
         })
     }
 
-    /// Whether any function is registered for `syntax` in this `role`.
+    /// Why the function registered for `role` of `syntax` cannot be used, when it cannot.
+    pub fn unbound(&self, syntax: &str, role: Role) -> Option<&str> {
+        self.unbound
+            .iter()
+            .find(|(r, _)| r.syntax == syntax && r.role == role)
+            .map(|(_, why)| why.as_str())
+    }
+
     pub fn has(&self, syntax: &str, role: Role) -> bool {
         self.find(syntax, role).is_some()
     }
@@ -292,7 +269,13 @@ impl<'p> Library<'p> {
     fn call(&self, bound: &Bound, args: &[Node]) -> Result<Node, String> {
         let limits = Options::default();
         let mut host = Host::new(limits.call_steps, limits.allocations);
-        match call_function(self.program, &self.report, &bound.function, args, &mut host) {
+        match call_function(
+            &self.program,
+            &self.report,
+            &bound.function,
+            args,
+            &mut host,
+        ) {
             Ok((node, _)) => Ok(node),
             Err(e) => Err(msg!(
                 "tauto-reg-call-error",
@@ -397,7 +380,6 @@ impl<'p> Library<'p> {
     }
 }
 
-/// The text as a function reads it.
 fn input_node(reads: Reads, tables: &Tables, text: &str) -> Result<Node, String> {
     let token = |t: &tauto_syntax::Token| {
         Node::Ctor(

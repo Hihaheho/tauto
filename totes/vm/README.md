@@ -137,7 +137,7 @@ before timing; each execution is checked against the evaluator's output, error o
 exit status. A warmup precedes the measured samples. The benchmark prints individual times
 and the median. `--filter` selects a workload and `--prepare-only` writes the inputs and
 prints machine invocations without measuring. The encoded inputs remain in `target/vm-bench`
-for profiling. The workloads are in `crates/tauto-test-suite/benches/vm.rs`.
+for profiling. The workloads are in `tools/tauto-test-suite/benches/vm.rs`.
 
 ```bash
 cargo run --locked -p tauto-cli --bin tauto -- build --release totes/vm

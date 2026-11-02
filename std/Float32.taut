@@ -1,4 +1,7 @@
+import "Base.taut"
 import "Float.taut"
+import "Nat.taut"
+import "UInt.taut"
 
 // `Float32` (IEEE 754 binary32) as the proofs see it: its 32 bits.
 // Extraction maps `Float32` onto Nib's `Float32` and the functions marked
@@ -20,15 +23,16 @@ pub(open) inductive Float32: Type {
 
 module Float32 {
   pub fn u32_of_nat_mod(n: Nat): U32 {
-    U32::Mk(Nat::rem_nz(n, 4294967296, Nat::ne_zero(4294967296, Refl)), Nat::mod_lt(n, 4294967296, Refl))
+    U32::Mk(
+      Nat::rem_nz(n, 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::mod_lt(n, 4294967296, Refl)
+    )
   }
 
   // The `Float32` whose bits are `n` (modulo `2^32`).
   pub fn of_raw(n: Nat): Float32 {
     Float32::Mk(u32_of_nat_mod(n))
   }
-
-  // ---- the parts of the bits ----------------------------------------------------
 
   pub fn sign_of(n: Nat): Nat {
     Nat::div_nz(n, 2147483648, Nat::ne_zero(2147483648, Refl))
@@ -88,8 +92,6 @@ module Float32 {
     }
   }
 
-  // ---- between `Float` and `Float32` -------------------------------------------
-
   // The bits of `m * 2^(t - 4000)` with sign `s`, for `m <= 2^24` and
   // `t >= 3851`, or an infinity when it is too large.
   pub fn encode(s: Nat, m: Nat, t: Nat): Nat {
@@ -105,14 +107,24 @@ module Float32 {
   pub fn round_shift(s: Nat, m: Nat, t: Nat, k: Nat): Nat {
     match k < 125: Nat {
       false => zero_raw(s)
-      true => round_at(s, Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)), Nat::pow2(k), t)
+      true => round_at(
+        s,
+        Nat::div_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)),
+        Nat::rem_nz(m, Nat::pow2(k), Nat::pow2_ne_zero(k)),
+        Nat::pow2(k),
+        t
+      )
     }
   }
 
   pub fn round_at(s: Nat, q: Nat, r: Nat, p: Nat, t: Nat): Nat {
     match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r: Nat {
       true => encode(s, Succ(q), t)
-      false => match r == Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1: Nat {
+      false => match r == Nat::div_nz(
+        p,
+        2,
+        Nat::ne_zero(2, Refl)
+      ) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1: Nat {
         true => encode(s, Succ(q), t)
         false => encode(s, q, t)
       }
@@ -178,8 +190,6 @@ module Float32 {
     of_float(f(Float::of_float32(x), Float::of_float32(y)))
   }
 
-  // ---- the functions ---------------------------------------------------------------
-
   // Mapped: the bits of `x`; every NaN has the bits `0x7FC00000`.
   pub fn bits(x: Float32): U32 {
     u32_of_nat_mod(raw(x))
@@ -220,7 +230,6 @@ module Float32 {
     of_float(Float::div(Float::of_float32(a), Float::of_float32(b), h))
   }
 
-  // `a / b`, or `None` when `b` is zero.
   pub fn checked_div(a: Float32, b: Float32): Option(Float32) {
     match Float::checked_div(Float::of_float32(a), Float::of_float32(b)): Option(Float32) {
       None => None
@@ -233,7 +242,6 @@ module Float32 {
     Float::is_nan(Float::of_float32(x))
   }
 
-  // Whether `x` is an infinity.
   pub fn is_infinite(x: Float32): Bool {
     Float::is_infinite(Float::of_float32(x))
   }
@@ -297,16 +305,12 @@ module Float32 {
   pub axiom cosh(x: Float32): Float32
   pub axiom tanh(x: Float32): Float32
 
-  // ---- examples ------------------------------------------------------------------
-
   // `0.1` as a `Float32` is `0x3DCCCCCD`, and adding `0.2` gives `0x3E99999A`.
   pub theorem tenth(): raw(of_float(0.1)) = 1036831949 {
     Refl
   }
 
-  pub theorem tenths(): raw(
-    add(of_float(0.1), of_float(0.2))
-  ) = 1050253722 {
+  pub theorem tenths(): raw(add(of_float(0.1), of_float(0.2))) = 1050253722 {
     Refl
   }
 

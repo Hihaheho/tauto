@@ -24,10 +24,7 @@ impl Drop for Fixture {
 
 #[test]
 fn explicit_scope_filters_before_limit_and_preserves_order() {
-    let f = Fixture::new(
-        "scope",
-        r#"theorem t<A: Prop>(a: A, b: A): A { ?h }"#,
-    );
+    let f = Fixture::new("scope", r#"theorem t<A: Prop>(a: A, b: A): A { ?h }"#);
     let report = check_report(&f.path(), None).unwrap();
     let hole = find_hole(&report, &f.path(), "h").unwrap();
     let selected = select(&report, &hole, &["b".into()], 1).unwrap();
@@ -43,10 +40,7 @@ fn explicit_scope_filters_before_limit_and_preserves_order() {
 
 #[test]
 fn wrong_type_is_not_a_candidate_or_a_checked_term() {
-    let f = Fixture::new(
-        "wrong",
-        r#"theorem t<A: Prop>(a: A, n: Nat): A { ?h }"#,
-    );
+    let f = Fixture::new("wrong", r#"theorem t<A: Prop>(a: A, n: Nat): A { ?h }"#);
     let report = check_report(&f.path(), None).unwrap();
     let hole = find_hole(&report, &f.path(), "h").unwrap();
     assert!(
@@ -67,7 +61,7 @@ fn accepted_partial_edits_are_not_verified_proofs() {
         "partial",
         r#"theorem t<A: Prop, B: Prop>(a: A, b: B): And(A, B) { ?h }"#,
     );
-    let result = verify(&f.path(), "h", "and_intro(?left, ?right)");
+    let result = verify(&f.path(), "h", "AndIntro(?left, ?right)");
     assert_eq!(result.status, "incomplete");
     assert_eq!(result.remaining_holes, ["left", "right"]);
     assert_eq!(result.axioms, None);

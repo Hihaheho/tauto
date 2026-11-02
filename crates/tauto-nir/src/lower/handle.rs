@@ -1,5 +1,3 @@
-//! `perform` and `handle`.
-
 use tauto::surface::{Handler, SurfaceTerm, TermKind};
 use tauto::types::{Quant, Ty as TTy};
 

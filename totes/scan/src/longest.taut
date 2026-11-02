@@ -1,5 +1,7 @@
 import "scan.taut"
 import std::Nat
+import std::Base
+import std::Text
 
 // The scanner cuts the longest token the automaton accepts (`docs/design/self-host.md`「scan（`totes/scan/src/longest.taut`）」).
 // An automaton run is `scan_walk`: `m` characters from a state, one
@@ -11,9 +13,6 @@ import std::Nat
 // * Every one is no longer than what `scan_find` gives
 //   (`scan_find_longest`).
 
-// ---- runs of the automaton --------------------------------------------------
-
-// The byte after the character at `i`.
 pub fn scan_after(text: Text, i: Nat): Nat {
   i + scan_char_length(Text::byte_value(text, i))
 }
@@ -40,7 +39,6 @@ pub fn scan_walk(
   }
 }
 
-// The steps of `scan_walk`, on the comparison and on the next state.
 pub fn scan_walk_in(
   m: Nat,
   t: ScanTables,
@@ -85,8 +83,6 @@ pub fn scan_pair_snd(p: Pair(Nat, Nat)): Nat {
     Pair { fst: a, snd: b } => b
   }
 }
-
-// ---- small facts ------------------------------------------------------------
 
 pub theorem scan_none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
   match e: False {
@@ -144,8 +140,6 @@ pub theorem scan_le_add(a: Nat, d: Nat): Nat::le(a, Nat::add(a, d)) = true {
 pub theorem scan_le_after(text: Text, i: Nat): Nat::le(i, scan_after(text, i)) = true {
   scan_le_add(i, scan_char_length(Text::byte_value(text, i)))
 }
-
-// ---- the steps of `scan_find_in` --------------------------------------------
 
 pub fn scan_find_upd(
   best: Option(Pair(Nat, Nat)),
@@ -504,8 +498,6 @@ pub theorem scan_find_in_longest(
   }
 }
 
-// ---- what `scan_find_in` gives is a token of a run --------------------------
-
 // From `s` at byte `i`, a run of a character at least reaches the state
 // `s2` at byte `e`, and an accept entry of `s2` for `tok` holds there.
 pub(open) inductive ScanHit(
@@ -575,7 +567,6 @@ pub theorem scan_walk_one(
   )
 }
 
-// A run one character longer.
 pub theorem scan_walk_snoc(
   m: Nat,
   t: ScanTables,
@@ -734,8 +725,6 @@ pub theorem scan_find_in_sound(
     )
   }
 }
-
-// ---- a run fits in the text -------------------------------------------------
 
 pub theorem scan_lt_pred(
   a: Nat,
@@ -933,9 +922,6 @@ pub theorem scan_walk_bound(
   }
 }
 
-// ---- the theorems -----------------------------------------------------------
-
-// The first state of the automaton `dfa`.
 pub fn scan_start(t: ScanTables, dfa: Nat): Nat {
   scan_number(t.dfa_first, dfa)
 }

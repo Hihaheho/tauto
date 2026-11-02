@@ -7,17 +7,20 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauto_message::msg;
 
+mod expansions;
 pub mod include;
+pub mod inputs;
+pub use expansions::{keep_expansions, keeps_expansions};
+pub use inputs::Inputs;
 
 use tauto_parol::Span;
 
-use crate::macros::{Expansion, Options, expand_files_in, origin::SpanMap};
+use crate::macros::{Expansion, origin::SpanMap};
 use crate::surface::{PRELUDE_BASE, Program, Stmt, parse_program_unresolved_at};
 
 #[derive(Debug, Clone)]
 pub struct SourceFile {
     pub path: PathBuf,
-    /// Where the file's spans start.
     pub base: u32,
     pub text: String,
 }
@@ -25,22 +28,16 @@ pub struct SourceFile {
 pub struct Loaded {
     pub program: Program,
     pub files: Vec<SourceFile>,
-    /// Each file's statements, expanded and with its modules resolved.
     pub per_file: Vec<Vec<Stmt>>,
     /// The same before the classes are expanded for running: what the
     /// kernel reads, which has classes of its own.
     pub kernel_files: Vec<Vec<Stmt>>,
-    /// Where the spans of macro output came from.
     pub spans: SpanMap,
     pub expansions: Vec<Expansion>,
     pub warnings: Vec<(String, Span)>,
-    /// Edits that answer a macro error, by where the error is.
     pub fixes: Vec<(Span, crate::check::Fix)>,
-    /// The syntax literals that were read.
     pub literals: Vec<crate::syntax::LiteralUse>,
-    /// The functions registered for syntaxes (`with fmt f, tokens g`).
     pub registrations: Vec<crate::syntax::Registration>,
-    /// The files `include_text!` read (canonical paths), each once.
     pub included: Vec<PathBuf>,
     /// Local include paths attempted, including files that could not be read.
     pub include_inputs: Vec<PathBuf>,
@@ -56,7 +53,6 @@ pub struct Loaded {
     extracted: Option<(Program, HashSet<String>)>,
 }
 
-/// Source files as read and the origins of macro-generated spans.
 #[derive(Debug, Clone, Default)]
 pub struct SourceMap {
     pub files: Vec<SourceFile>,
@@ -176,7 +172,6 @@ pub fn load(entry: &Path) -> Result<Loaded, String> {
     load_with_text(entry, None)
 }
 
-/// [`load`] with the text of `entry` itself given instead of read.
 pub fn load_with_text(entry: &Path, text: Option<&str>) -> Result<Loaded, String> {
     let given = text.and_then(|t| Some((entry.canonicalize().ok()?, t.to_string())));
     load_with_source(entry, &|path: &Path| match &given {
@@ -195,6 +190,7 @@ pub type Source<'a> = dyn Fn(&Path) -> Option<Result<String, String>> + 'a;
 /// given need not exist on disk; its path is then taken as written, made
 /// absolute and without `.` and `..`.
 pub fn load_with_source(entry: &Path, source: &Source<'_>) -> Result<Loaded, String> {
+    crate::surface::parsed::begin_reading();
     let mut order = Order {
         done: HashSet::new(),
         stack: Vec::new(),
@@ -202,7 +198,62 @@ pub fn load_with_source(entry: &Path, source: &Source<'_>) -> Result<Loaded, Str
         source,
     };
     order.visit(entry)?;
+    crate::phases::mark("read");
     assemble(order.files, entry.parent(), true, source)
+}
+
+/// The program of `entry` (its text given, when it is) read and its macros expanded, without
+/// being resolved and checked: what an editor colours the literals of the file by.
+pub struct Expanded {
+    pub files: Vec<SourceFile>,
+    pub literals: Vec<crate::syntax::LiteralUse>,
+    pub registrations: Vec<crate::syntax::Registration>,
+    pub syntax_dirs: Vec<PathBuf>,
+    /// What it was read from.
+    pub inputs: Inputs,
+}
+
+pub fn expand_with_text(entry: &Path, text: Option<&str>) -> Result<Expanded, String> {
+    let source = given(entry, text);
+    crate::surface::parsed::begin_reading();
+    let texts = inputs::order(entry, &source)?;
+    crate::phases::mark("read");
+    let stage = expand_stage(texts.clone(), entry.parent(), true, &source, None)?;
+    let inputs = inputs::of(&texts, &stage.included.inputs);
+    Ok(Expanded {
+        files: stage.files,
+        literals: stage.out.literals,
+        registrations: stage.out.registrations,
+        syntax_dirs: stage.syntax_dirs,
+        inputs,
+    })
+}
+
+/// The inputs now of the program of `entry` (its text given, when it is), read before with the
+/// inputs `before`.
+pub fn current_inputs(entry: &Path, text: Option<&str>, before: &Inputs) -> Result<Inputs, String> {
+    crate::surface::parsed::begin_reading();
+    inputs::current(entry, &given(entry, text), before)
+}
+
+/// The program of the first `n` of the files `inputs` holds (of the program of `entry`), as
+/// [`load`] reads it.
+pub fn load_first(entry: &Path, inputs: &Inputs, n: usize) -> Result<Loaded, String> {
+    let files = inputs.files[..n.min(inputs.files.len())].to_vec();
+    let held = files.clone();
+    assemble(files, entry.parent(), true, &move |p: &Path| {
+        held.iter()
+            .find(|(q, _)| canonical_path(q) == p)
+            .map(|(_, t)| Ok(t.clone()))
+    })
+}
+
+fn given(entry: &Path, text: Option<&str>) -> impl Fn(&Path) -> Option<Result<String, String>> {
+    let given = text.and_then(|t| Some((entry.canonicalize().ok()?, t.to_string())));
+    move |path: &Path| match &given {
+        Some((own, text)) if own == path => Some(Ok(text.clone())),
+        _ => None,
+    }
 }
 
 /// [`load`] of several entries as one program: each file once, a file
@@ -253,7 +304,6 @@ struct Order<'a> {
     done: HashSet<PathBuf>,
     stack: Vec<PathBuf>,
     files: Vec<(PathBuf, String)>,
-    /// The files whose text is given, not read.
     source: &'a Source<'a>,
 }
 
@@ -315,7 +365,10 @@ impl Order<'_> {
             .map_err(|e| parse_error(&shown.display().to_string(), &text, 0, &e))?;
         self.stack.push(path.clone());
         for stmt in &program.stmts {
-            if let Stmt::Import { path: rel, module, .. } = stmt {
+            if let Stmt::Import {
+                path: rel, module, ..
+            } = stmt
+            {
                 let target = crate::stdlib::import_target(shown, rel, *module)
                     .map_err(|e| format!("{}: {e}", shown.display()))?;
                 self.visit(&target)?;
@@ -367,11 +420,38 @@ fn assemble_keeping(
     generated: &HashMap<PathBuf, Vec<bool>>,
     graph: Option<&HashMap<PathBuf, Vec<PathBuf>>>,
 ) -> Result<Loaded, String> {
+    let stage = expand_stage(texts, root, imports, source, graph)?;
+    finish(stage, generated, graph)
+}
+
+/// The files read and their macros expanded: what [`finish`] makes a [`Loaded`] of.
+struct Stage {
+    files: Vec<SourceFile>,
+    imported: Vec<Vec<PathBuf>>,
+    included: include::Included,
+    qualified: Vec<(String, Span)>,
+    /// The names one import would make seen, and where each file's last import ends.
+    missing: Vec<crate::surface::qualify::MissingImport>,
+    last_import: Vec<Option<u32>>,
+    modules: Vec<String>,
+    imports: Option<Vec<Vec<usize>>>,
+    below: Vec<HashSet<usize>>,
+    out: crate::macros::Output,
+    syntax_dirs: Vec<PathBuf>,
+}
+
+fn expand_stage(
+    texts: Vec<(PathBuf, String)>,
+    root: Option<&Path>,
+    imports: bool,
+    source: &Source<'_>,
+    graph: Option<&HashMap<PathBuf, Vec<PathBuf>>>,
+) -> Result<Stage, String> {
     let imports_given = imports || graph.is_some();
     let mut files = Vec::new();
-    // The paths each file imports.
     let mut imported: Vec<Vec<PathBuf>> = Vec::new();
     let mut included = include::Included::default();
+    let mut last_import: Vec<Option<u32>> = Vec::new();
     let mut per_file: Vec<Vec<Stmt>> = Vec::new();
     let mut base = 0u32;
     for (path, text) in texts {
@@ -386,9 +466,16 @@ fn assemble_keeping(
         include::read_includes(&mut program.stmts, &path, source, &mut included);
         let mut stmts = Vec::new();
         imported.push(Vec::new());
+        last_import.push(None);
         for stmt in program.stmts {
             match &stmt {
-                Stmt::Import { path: rel, module, .. } if imports => {
+                Stmt::Import {
+                    path: rel,
+                    module,
+                    span,
+                } if imports => {
+                    let last = last_import.last_mut().unwrap();
+                    *last = Some(last.map_or(span.end, |e: u32| e.max(span.end)));
                     // A dependency's module is its file, as the loader read it:
                     // what a file imports from a dependency is what it reaches.
                     let target = match crate::stdlib::import_target(&path, rel, *module) {
@@ -430,6 +517,7 @@ fn assemble_keeping(
         files.push(SourceFile { path, base, text });
         base = next as u32;
     }
+    crate::phases::mark("parse");
     let dirs: Vec<PathBuf> = files
         .iter()
         .filter_map(|f: &SourceFile| f.path.parent().map(Path::to_path_buf))
@@ -458,15 +546,64 @@ fn assemble_keeping(
     let imports = imports_given.then_some(imports.as_slice());
     let mut per_file = per_file;
     let below = totes_below(&files);
-    let (mut qualified, seeing) = crate::surface::qualify::files_before_macros(
+    let (qualified, seeing, missing) = crate::surface::qualify::files_before_macros(
         &mut per_file,
         &modules,
         imports,
         Some(&below),
     );
-    let mut out = crate::syntax::with_search_dirs(dirs, || {
-        expand_files_in(per_file, &Options::default(), seeing, modules.clone())
+    // The expansion of a file takes at most the time the check of it may
+    // (`Tauto.eure`'s `check`); the expansion and the check are counted
+    // apart, each from its own start. A manifest that cannot be read is
+    // reported by the check, so the default limit stands in for it here.
+    let time_limits: Vec<(String, std::time::Duration)> = files
+        .iter()
+        .map(|f| {
+            let limit =
+                crate::manifest::time_limit(&f.path).unwrap_or(crate::manifest::DEFAULT_TIME_LIMIT);
+            (f.path.display().to_string(), limit)
+        })
+        .collect();
+    let out = crate::syntax::with_search_dirs(dirs, || {
+        expansions::expand(per_file, seeing, modules.clone(), time_limits)
     });
+    tauto_kernel::check::Kernel::new().set_file_limit(None);
+    crate::phases::mark("expand");
+    Ok(Stage {
+        files,
+        imported,
+        included,
+        qualified,
+        missing,
+        last_import,
+        modules,
+        imports: imports.map(<[_]>::to_vec),
+        below,
+        out,
+        syntax_dirs,
+    })
+}
+
+/// The expanded files resolved and joined into one program.
+fn finish(
+    stage: Stage,
+    generated: &HashMap<PathBuf, Vec<bool>>,
+    graph: Option<&HashMap<PathBuf, Vec<PathBuf>>>,
+) -> Result<Loaded, String> {
+    let Stage {
+        files,
+        imported,
+        mut included,
+        mut qualified,
+        mut missing,
+        last_import,
+        modules,
+        imports,
+        below,
+        mut out,
+        syntax_dirs,
+    } = stage;
+    let imports = imports.as_deref();
     for (file, stmts) in files.iter().zip(&mut out.files) {
         if let Some(keep) = generated.get(&file.path) {
             let mut made = keep.iter();
@@ -474,12 +611,16 @@ fn assemble_keeping(
         }
     }
     let models = crate::surface::qualify::split_models(&mut out.files, &modules, imports);
-    qualified.extend(crate::surface::qualify::files_with_totes(
+    let (after, more) = crate::surface::qualify::files_after_macros(
         &mut out.files,
         &modules,
         imports,
         Some(&below),
-    ));
+    );
+    qualified.extend(after);
+    missing.extend(more);
+    out.fixes
+        .extend(import_fixes(&files, &last_import, missing));
     qualified.extend(crate::surface::qualify::sealed_externs(
         &out.files,
         &totes_of(&files),
@@ -494,8 +635,8 @@ fn assemble_keeping(
             &out.files, &modules,
         ));
     } else {
-        // TODO(messages): compare the id once `tauto-surface` gives these errors
-        // as messages; until then this is the text in the installed language.
+        // The text in the installed language is matched, because `tauto-surface`
+        // does not give these errors as messages with an id.
         qualified.retain(|(m, _)| !m.contains("is already declared as"));
     }
     out.stmts = out.files.concat();
@@ -551,11 +692,13 @@ fn assemble_keeping(
     let mut read = HashSet::new();
     included.files.retain(|p| read.insert(p.clone()));
     let kernel_files = per_file.clone();
+    crate::phases::mark("resolve");
     crate::types::expand_loaded(&mut program, &mut per_file, 1 << 30);
     // The kernel reads `decreasing_by` as written; a program that runs does not.
     crate::surface::walk::strip_proofs_in(&mut program.stmts);
     let wrong = crate::registered::validate(&program, &out.registrations);
     program.errors.extend(wrong);
+    crate::phases::mark("classes");
     Ok(Loaded {
         program,
         files,
@@ -650,6 +793,11 @@ fn totes_of(files: &[SourceFile]) -> Vec<Option<String>> {
 /// without its extension from the directory that holds all of them
 /// (`app::List`).
 fn modules_of(files: &[SourceFile]) -> Vec<String> {
+    module_names(files)
+}
+
+/// The module of each file, as [`Loaded`] qualified the names of its declarations.
+pub fn module_names(files: &[SourceFile]) -> Vec<String> {
     let std_root = Path::new(crate::stdlib::ROOT);
     let extracted = |f: &SourceFile| f.path == Path::new(crate::extract::EXTRACTED_PATH);
     let own: Vec<PathBuf> = files
@@ -681,7 +829,6 @@ fn modules_of(files: &[SourceFile]) -> Vec<String> {
                 Ok(rel) => (Some("std".to_string()), rel.to_path_buf()),
                 Err(_) => {
                     let p = canonical_path(&f.path);
-                    // A file of a tote: the tote's name, then the path in it.
                     let tote = p.ancestors().skip(1).find_map(|d| {
                         let name = crate::manifest::read(d).ok()?.package.name;
                         Some((name, d.to_path_buf()))
@@ -708,7 +855,6 @@ fn modules_of(files: &[SourceFile]) -> Vec<String> {
         .collect()
 }
 
-/// Reads a tote and its dependencies, checking proofs and lowering executable declarations.
 pub fn load_tote(dir: &Path) -> Result<Loaded, String> {
     load_extracted_tote(tote_texts_mode(dir, true)?)
 }
@@ -763,7 +909,6 @@ fn load_extracted_tote(extracted: crate::extract::Extracted) -> Result<Loaded, S
     Ok(loaded)
 }
 
-/// Checked executable definitions followed by the source modules' runtime declarations.
 pub fn tote_texts(dir: &Path) -> Result<Vec<(PathBuf, String)>, String> {
     tote_texts_mode(dir, false).map(|extracted| extracted.texts)
 }
@@ -836,7 +981,7 @@ pub fn load_command(project: &Path, tote: &Path, name: &str) -> Result<Loaded, S
 
 /// The file of the command `name` whose `main` the manifest of the tote in
 /// `dir` writes: a source file of this tote, not of a tote inside it, and
-/// outside its `sources`.
+/// outside its sources.
 pub fn command_main(
     dir: &Path,
     manifest: &crate::manifest::Manifest,
@@ -876,7 +1021,7 @@ pub fn command_main(
     {
         return Err(format!(
             "the command {name} of {tote} runs {main}, which is one of its sources; \
-             a command's main is outside `sources`, so that the tote's dependents never read it"
+             a command's main is outside the sources, so that the tote's dependents never read it"
         ));
     }
     Ok(path)
@@ -1099,14 +1244,19 @@ fn manifest_sources(
     manifest: &crate::manifest::Manifest,
 ) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
-    for source in &manifest.package.sources {
-        source_files(&dir.join(source), &mut files)?;
+    for source in manifest.package.source_paths() {
+        let path = dir.join(&source);
+        // `src` is the default: a tote without the directory has none.
+        if source == crate::manifest::DEFAULT_SOURCE && !path.exists() {
+            continue;
+        }
+        source_files(&path, &mut files)?;
     }
     files.sort();
     Ok(files)
 }
 
-/// The `.taut` and `.tauto` files of the tote in `dir` outside its `sources`:
+/// The `.taut` and `.tauto` files of the tote in `dir` outside its sources:
 /// its proofs, examples and tests. A directory with its own `Tauto.eure` is
 /// another tote, and hidden directories and `target` hold no files of the tote.
 pub fn package_other_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -1140,7 +1290,6 @@ fn other_files(dir: &Path, root: bool, out: &mut Vec<PathBuf>) -> Result<(), Str
     Ok(())
 }
 
-/// Whether a path has a supported Tauto source extension.
 pub fn is_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
@@ -1150,17 +1299,6 @@ pub fn is_source_file(path: &Path) -> bool {
 
 /// The `.taut` and `.tauto` source files under `dir`; reject legacy extensions.
 fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    if dir.is_file() {
-        if is_source_file(dir) {
-            out.push(dir.to_path_buf());
-        } else {
-            return Err(format!(
-                "{}: tote sources must use .taut or .tauto",
-                dir.display()
-            ));
-        }
-        return Ok(());
-    }
     let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     for entry in entries {
         let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
@@ -1194,7 +1332,6 @@ pub(crate) fn prelude_module_names() -> &'static [String] {
     })
 }
 
-/// The name a statement declares, for `rename_models`.
 fn stmt_name(s: &Stmt) -> Option<String> {
     match s {
         Stmt::Fn(f) => Some(f.name.clone()),
@@ -1202,4 +1339,33 @@ fn stmt_name(s: &Stmt) -> Option<String> {
         Stmt::Inductive(d) => Some(d.name.clone()),
         _ => None,
     }
+}
+
+/// The edit that writes the import a name needs ([`crate::surface::qualify::MissingImport`]),
+/// by where the name is written: after the last import of the file, or at its start when it
+/// has none.
+fn import_fixes(
+    files: &[SourceFile],
+    last_import: &[Option<u32>],
+    missing: Vec<crate::surface::qualify::MissingImport>,
+) -> Vec<(Span, crate::check::Fix)> {
+    missing
+        .into_iter()
+        .filter_map(|m| {
+            let file = files.get(m.file)?;
+            let line = format!("import {}", m.spelling);
+            let (at, text) = match last_import.get(m.file).copied().flatten() {
+                Some(end) => (end, format!("\n{line}")),
+                None => (file.base, format!("{line}\n")),
+            };
+            Some((
+                m.at,
+                crate::check::Fix {
+                    title: line,
+                    span: Span::new(at, at),
+                    text,
+                },
+            ))
+        })
+        .collect()
 }

@@ -1,9 +1,11 @@
 import "union_sound.taut"
+import std::Base
+import std::Row
+import "ty.taut"
 
-// `ty_product` keeps exactly the leaves of what it multiplies, as `ty_union`
-// does for a union (`union_sound.taut`): read as a set, the members of
-// `ty_product(ts)` are the leaves of `ts`, and each member is a leaf (not a
-// product, not `()`).
+// `ty_product` keeps exactly the leaves of what it multiplies, in the order
+// written: the members of `ty_product(ts)` are the leaves of `ts`, and each
+// member is a leaf (not a product, not `()`).
 
 // A product leaf is any type but a product or `()`.
 pub fn ty_pplain(t: Ty): Bool {
@@ -34,6 +36,56 @@ pub fn ty_pmembers(u: Ty): List(Ty) {
 }
 
 pub def AllPPlain(ms: List(Ty)): Prop := ∀ z: Ty. (Mem(Ty, z, ms)) -> PPlain(z)
+
+// A member after appending `w` is `w` or was there before.
+pub theorem snoc_mem(
+  e: Ty,
+  ms: List(Ty),
+  w: Ty,
+  m: Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty))))
+): Or(e = w, Mem(Ty, e, ms)) {
+  match ms: Or(e = w, Mem(Ty, e, ms)) {
+    Nil => Or::elim(
+      mem_cons_inv(w, Nil(Ty), m),
+      q => OrInl(q),
+      k => Mem::nil(Or(e = w, Mem(Ty, e, Nil(Ty))), k)
+    )
+    Cons(h, rest) => Or::elim(
+      mem_cons_inv(h, List::append(rest, Cons(w, Nil(Ty))), m),
+      q => OrInr(mem_of_eq(e, h, rest, q)),
+      k => Or::elim(
+        snoc_mem(e, rest, w, k),
+        q => OrInl(q),
+        k2 => OrInr(MemThere(Ty, e, h, rest, k2))
+      )
+    )
+  }
+}
+
+// Appending keeps what was there.
+pub theorem snoc_keep(
+  e: Ty,
+  ms: List(Ty),
+  w: Ty,
+  m: Mem(Ty, e, ms)
+): Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty)))) {
+  match ms: Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty)))) {
+    Nil => Mem::nil(Mem(Ty, e, Cons(w, Nil(Ty))), m)
+    Cons(h, rest) => Or::elim(
+      mem_cons_inv(h, rest, m),
+      q => mem_of_eq(e, h, List::append(rest, Cons(w, Nil(Ty))), q),
+      k => MemThere(Ty, e, h, List::append(rest, Cons(w, Nil(Ty))), snoc_keep(e, rest, w, k))
+    )
+  }
+}
+
+// `w` is a member after appending it.
+pub theorem snoc_has(w: Ty, ms: List(Ty)): Mem(Ty, w, List::append(ms, Cons(w, Nil(Ty)))) {
+  match ms: Mem(Ty, w, List::append(ms, Cons(w, Nil(Ty)))) {
+    Nil => MemHere(Ty, w, Nil(Ty))
+    Cons(h, rest) => MemThere(Ty, w, h, List::append(rest, Cons(w, Nil(Ty))), snoc_has(w, rest))
+  }
+}
 
 pub theorem pleaf_of_eq(
   e: Ty,
@@ -80,7 +132,7 @@ mutual {
       )
       TyUnit => OrInr(k)
       _ => Or::elim(
-        insert_mem(e, ms, w, k),
+        snoc_mem(e, ms, w, k),
         q => OrInl(
           Eq::subst(
             (z: Ty) => PLeaves(e, Cons(z, rest)),
@@ -123,7 +175,7 @@ mutual {
     match x: Mem(Ty, e, product_members_add_one(x, w, ms)) {
       TyProduct(inner) => padd_keep(e, inner, ms, m)
       TyUnit => m
-      _ => insert_keep(e, ms, w, m)
+      _ => snoc_keep(e, ms, w, m)
     }
   }
 }
@@ -138,7 +190,7 @@ pub theorem pone_has(
   match x: Mem(Ty, w, product_members_add_one(x, w, ms)) {
     TyProduct(inner) => False::elim(false_ne_true(p))
     TyUnit => False::elim(false_ne_true(p))
-    _ => insert_has(w, ms)
+    _ => snoc_has(w, ms)
   }
 }
 
@@ -160,8 +212,6 @@ pub theorem pleaves_plain(e: Ty, ts: List(Ty), l: PLeaves(e, ts)): PPlain(e) {
     PlvThere(y, rest, l2) => pleaves_plain(e, rest, l2)
   }
 }
-
-// ----- ty_product -----
 
 pub theorem padded_plain(ts: List(Ty)): AllPPlain(product_members_add(ts, Nil(Ty))) {
   z => m => Or::elim(

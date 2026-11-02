@@ -41,13 +41,13 @@ fn unsigned(t: &SurfaceTerm) -> bool {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Size {
-    /// The decreasing parameter itself.
     Whole,
-    /// A strict part of it.
     Part,
     /// The parameter itself (`part: false`) or a strict part of it, known
     /// not to be zero.
-    NonZero { part: bool },
+    NonZero {
+        part: bool,
+    },
     /// Anything else, or a name that shadows one of the above.
     Other,
 }
@@ -57,7 +57,6 @@ type Names = HashMap<String, Size>;
 struct Scan<'a> {
     name: &'a str,
     at: usize,
-    /// Whether the parameter at `at` is of an unsigned integer type.
     unsigned: bool,
     ok: bool,
 }

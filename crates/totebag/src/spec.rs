@@ -34,14 +34,12 @@ impl GitSource {
         Ok(())
     }
 
-    /// The project's ID as bytes.
     pub fn project_id(&self) -> Option<[u8; 32]> {
         self.project
             .as_deref()
             .map(|p| crate::index::strict::sha256(p).expect("checked"))
     }
 
-    /// Whether the repository is on this machine (`file:///…`).
     pub fn is_local(&self) -> bool {
         self.url.starts_with("file:///")
     }
@@ -121,7 +119,6 @@ impl Rev {
         self.0.split_once(':').map_or("", |(_, h)| h)
     }
 
-    /// `sha1` or `sha256`.
     pub fn format(&self) -> &str {
         self.0.split_once(':').map_or("", |(f, _)| f)
     }

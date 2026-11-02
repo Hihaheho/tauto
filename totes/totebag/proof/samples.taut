@@ -2,6 +2,9 @@
 // checked by computing.
 
 import "../src/policy.taut"
+import "../src/lock.taut"
+import "../src/spec.taut"
+import "../src/tree.taut"
 
 pub theorem tb_url_https(): tb_check_url("https://example.com/tauto/monorepo") = None { Refl }
 pub theorem tb_url_file(): tb_check_url("file:///srv/git/text.git") = None { Refl }
@@ -82,8 +85,6 @@ pub theorem tb_path_up(): tb_check_path("a/../b") = Some(PathComponents) { Refl 
 pub theorem tb_path_backslash(): tb_check_path("a\\b") = Some(PathCharacters) { Refl }
 pub theorem tb_path_c1(): tb_check_path("a\u{85}b") = Some(PathCharacters) { Refl }
 
-// ---- the lock ----------------------------------------------------------------------
-
 fn semver(rev: Text): TbLocked {
   MkLocked(
     "semver",
@@ -155,8 +156,6 @@ pub theorem tb_plan_update(): tb_plan(true, false, false, true, true) = FetchHea
 pub theorem tb_plan_offline_new(): tb_plan(false, false, true, false, false) = NeedsNetwork { Refl }
 pub theorem tb_plan_check_new(): tb_plan(false, true, true, false, false) = ReportUnlocked { Refl }
 
-// ---- the paths of a tree -----------------------------------------------------------
-
 fn tp(p: Text, f: Text): TbTreePath { MkTreePath(p, f) }
 
 pub theorem tb_tree_ok(): tb_check_tree(
@@ -171,8 +170,6 @@ pub theorem tb_tree_case(): tb_check_tree(
 pub theorem tb_tree_file_dir(): tb_check_tree(
   Cons(tp("a/b", "a/b"), Cons(tp("A", "a"), Nil))
 ) = Some(FileAndDirectory("A", "a/b")) { Refl }
-
-// ---- trust policies ----------------------------------------------------------------
 
 fn alice(): TbIndex { MkIndex("alice", "1", "https://example.org/alice/index", "refs/heads/main") }
 fn bob(): TbIndex { MkIndex("bob", "2", "https://example.org/bob/index", "refs/heads/main") }

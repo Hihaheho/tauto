@@ -21,13 +21,11 @@ mod generator;
 use generator::E::*;
 use generator::*;
 
-/// What each checker says.
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Judgement {
     named: bool,
     /// The core on the named checker's elaborated term, when it accepts.
     core_elaborated: Option<bool>,
-    /// The core on the term as written.
     core_written: bool,
 }
 
@@ -229,7 +227,6 @@ fn two_checkers_agree() {
         report.push_str(&format!("{kind}:\n  {}", case.source("t")));
     }
     assert!(found.is_empty(), "the checkers disagree:\n{report}");
-    // The cases are not all one way.
     assert!(
         accepted > cases / 10 && rejected > cases / 20,
         "{accepted} accepted, {rejected} rejected"

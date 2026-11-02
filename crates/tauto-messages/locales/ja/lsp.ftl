@@ -5,3 +5,8 @@ lsp-internal-error = 名前を読む途中で内部エラーが起きた
 lsp-no-new-name = 新しい名前がない
 lsp-file-not-open = ファイルが開かれていない
 lsp-file-does-not-load = ファイルを読み込めない
+
+# `tauto highlight`.
+highlight-usage = 使い方: tauto highlight [--tokens] [--timings] [--repeat N [--edit]] FILE
+highlight-error = highlight: { $error }
+highlight-total = 合計

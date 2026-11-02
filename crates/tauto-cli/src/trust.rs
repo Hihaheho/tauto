@@ -231,7 +231,7 @@ const STD_DIR: &str = "<std>";
 
 fn resolve(from: &str, import: &str, module: bool) -> Result<String, String> {
     if let Some(module) = import.strip_prefix("std::").filter(|_| module) {
-        let module = module.replace('.', "/");
+        let module = module.replace("::", "/");
         let path = format!("{STD_DIR}/{module}.taut");
         path_name(&path)?;
         return Ok(path);
@@ -278,6 +278,11 @@ fn parse_at(text: &str, base: u32) -> Result<Program, String> {
     Ok(program)
 }
 fn supported(stmt: &mut Stmt) -> Result<(), String> {
+    // A module holds the declarations a file does; the loader reads its
+    // names (`load_closed`), as the checker does.
+    if let Stmt::Module { items, .. } = stmt {
+        return items.iter_mut().try_for_each(supported);
+    }
     match stmt {
         Stmt::Import { .. }
         | Stmt::Theorem(_)
@@ -442,6 +447,14 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
         if sha256_hex(source.text.as_bytes()) != source.sha256 {
             return Err(crate::i18n::t!("trust-hash-mismatch", path = path));
         }
+        // The loader reads the standard library from the checker's own copy,
+        // so a bundled copy must be that text.
+        if let Some(file) = path.strip_prefix(STD_DIR).and_then(|n| n.strip_prefix('/')) {
+            let own = tauto::stdlib::FILES.iter().find(|(f, _)| *f == file);
+            if own.is_none_or(|(_, text)| *text != source.text) {
+                return Err(crate::i18n::t!("trust-std-differs", path = path));
+            }
+        }
     }
     let mut order = Vec::new();
     order_sources(
@@ -468,15 +481,23 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
         declarations: vec![], explicit_axioms: vec![], used_axioms: vec![],
         extern_functions: vec![], declared_effects: vec![], function_effect_rows: vec![], unchecked_statements: vec![],
     };
+    let loaded = load_closed(entry, sources)?;
     let mut kernel = Kernel::new(); // Never call `use_cache`, regardless of the caller's environment.
     declare_prelude(&mut kernel)?;
     let mut used = BTreeSet::new();
-    let mut base = 0u32;
-    for (file, _) in order {
-        let text = &sources[&file].text;
-        let mut program = parse_at(text, base)?;
-        base += text.len() as u32 + 1;
-        for stmt in &program.stmts {
+    // The loader reads the files in the same dependency order as `order_sources`.
+    // The kernel's names carry the loader's module of the file (`src::main::stop`);
+    // the report names a declaration as its file does.
+    let modules = tauto::program::module_names(&loaded.files);
+    for (loaded_file, stmts) in loaded.files.iter().zip(&loaded.kernel_files) {
+        let file = bundle_name(&loaded_file.path)?;
+        let mut program = Program {
+            stmts: stmts.clone(),
+            errors: Vec::new(),
+        };
+        let mut flat = Vec::new();
+        flatten(&program.stmts, &mut flat);
+        for stmt in flat {
             match stmt {
                 Stmt::Theorem(t) if t.body.is_none() => report.explicit_axioms.push(t.name.clone()),
                 Stmt::Extern { fns, instances, .. } => {
@@ -500,15 +521,16 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
                     report.declared_effects.push(e.name.clone());
                     report
                         .unchecked_statements
-                        .push(format!("{file}: effect {}", e.name));
+                        .push(format!("{file}: effect {}", short(&e.name, &modules)));
                 }
                 Stmt::Fn(f) => {
                     // A secret made public in code that may run: the backends
                     // keep the rest of a secret's uses in constant time.
                     if tauto::direct::mentions(&f.body, "expose") {
-                        report
-                            .unchecked_statements
-                            .push(format!("{file}: {} makes a secret public (expose)", f.name));
+                        report.unchecked_statements.push(format!(
+                            "{file}: {} makes a secret public (expose)",
+                            short(&f.name, &modules)
+                        ));
                     }
                     report.function_effect_rows.push(FunctionEffects {
                         source: file.clone(),
@@ -563,6 +585,23 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
             });
         }
     }
+    let shorten = |names: &mut Vec<String>| {
+        *names = names.iter().map(|n| short(n, &modules)).collect();
+    };
+    shorten(&mut report.explicit_axioms);
+    shorten(&mut report.extern_functions);
+    shorten(&mut report.declared_effects);
+    for d in &mut report.declarations {
+        d.name = short(&d.name, &modules);
+        shorten(&mut d.axioms);
+    }
+    for row in &mut report.function_effect_rows {
+        row.name = short(&row.name, &modules);
+        if let Some(written) = &mut row.written {
+            shorten(written);
+        }
+    }
+    let used: BTreeSet<String> = used.iter().map(|n| short(n, &modules)).collect();
     report.used_axioms = used.into_iter().collect();
     Ok(report)
 }
@@ -602,6 +641,77 @@ fn order_sources(
     done.insert(name.into());
     out.push((name.into(), program));
     Ok(())
+}
+/// Where the bundle's own files are read from: a path that is not on disk, so
+/// the loader finds the sources only among the bundle's.
+const VIRTUAL_ROOT: &str = "/<tauto-trust-bundle>";
+
+/// Reads the bundle's files with the loader that `tauto check` uses, so that
+/// modules, visibility and names mean what they mean there. The text of every
+/// file is the bundle's (the standard library's, checked equal to the
+/// checker's own copy in `recheck`); no file is read from the verifier's disk.
+fn load_closed(
+    entry: &str,
+    sources: &BTreeMap<String, Source>,
+) -> Result<tauto::program::Loaded, String> {
+    let root = Path::new(VIRTUAL_ROOT);
+    let given: BTreeMap<std::path::PathBuf, &str> = sources
+        .iter()
+        .map(|(name, source)| {
+            (
+                tauto::program::canonical_path(&root.join(name)),
+                source.text.as_str(),
+            )
+        })
+        .collect();
+    let loaded = tauto::program::load_with_source(&root.join(entry), &|path: &Path| {
+        given.get(path).map(|text| Ok(text.to_string()))
+    })
+    .map_err(|e| crate::i18n::t!("trust-load-failed", error = e))?;
+    if let Some((error, _)) = loaded.program.errors.first() {
+        return Err(crate::i18n::t!("trust-load-failed", error = error.clone()));
+    }
+    Ok(loaded)
+}
+
+/// `name` without the module of the file that declares it, the longest of
+/// `modules` that prefixes it.
+fn short(name: &str, modules: &[String]) -> String {
+    modules
+        .iter()
+        .filter(|m| {
+            !m.is_empty()
+                && name
+                    .strip_prefix(m.as_str())
+                    .is_some_and(|r| r.starts_with("::"))
+        })
+        .max_by_key(|m| m.len())
+        .map_or_else(|| name.to_string(), |m| name[m.len() + 2..].to_string())
+}
+
+/// The bundle's name for a file the loader read.
+fn bundle_name(path: &Path) -> Result<String, String> {
+    let path = tauto::program::canonical_path(path);
+    if let Ok(rest) = path.strip_prefix(tauto::stdlib::ROOT) {
+        return Ok(format!("{STD_DIR}/{}", rest.display()));
+    }
+    match path.strip_prefix(VIRTUAL_ROOT) {
+        Ok(rest) => Ok(rest.display().to_string()),
+        Err(_) => Err(crate::i18n::t!(
+            "trust-load-failed",
+            error = path.display().to_string()
+        )),
+    }
+}
+
+/// The declarations of `stmts`, those inside modules too, in order.
+fn flatten<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => flatten(items, out),
+            _ => out.push(stmt),
+        }
+    }
 }
 fn verify_file(path: &Path, axiom_free: bool) -> Result<String, String> {
     let text = bounded_read(path, MAX_BYTES)?;

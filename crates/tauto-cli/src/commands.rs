@@ -39,6 +39,7 @@ pub(crate) const BUILT_IN: &[&str] = &[
     "fmt",
     "goals",
     "help",
+    "highlight",
     "index",
     "init",
     "library",
@@ -68,11 +69,9 @@ pub(crate) fn is_name(word: &str) -> bool {
         && !BUILT_IN.contains(&word)
 }
 
-/// A command a tote offers the project.
 struct Offer {
     name: String,
     tote: String,
-    /// The tote's directory.
     dir: PathBuf,
     command: Command,
 }
@@ -261,8 +260,7 @@ fn run_offer(project: &Path, manifest: &Manifest, offer: &Offer, args: &[String]
             return ExitCode::from(2);
         }
     };
-    let needed: BTreeSet<&str> =
-        tauto::host::permissions(rows.host_effects.iter().chain(&rows.task_effects));
+    let needed: BTreeSet<&str> = tauto::host::permissions(rows.host_effects.iter());
     let missing = permissions.missing(needed);
     if !missing.is_empty() {
         eprintln!(
@@ -394,7 +392,6 @@ pub(crate) fn help() -> Option<String> {
     Some(lines.join("\n"))
 }
 
-/// The commands the tote in `dir` gives, as `tauto add` shows them.
 pub(crate) fn given(dir: &Path) -> Vec<String> {
     let Ok(manifest) = tauto::manifest::read(dir) else {
         return Vec::new();

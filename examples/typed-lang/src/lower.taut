@@ -1,0 +1,76 @@
+import "core.taut"
+import "syntax.taut"
+import "../../../std/Base.taut"
+import "../../../std/Text.taut"
+
+// 木（`tl::Expr::I`）を核の `Term` にする。ここは全域な普通の関数で、型は見ない。
+
+pub fn num_of(t: Text): Nat {
+  digits(Text::bytes(t), 0)
+}
+
+pub fn digits(bs: List(Nat), acc: Nat): Nat {
+  match bs: Nat {
+    Nil => acc
+    Cons(b, rest) => digits(rest, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)))
+  }
+}
+
+mutual {
+  pub fn lower_expr(e: tl::Expr::I): Term {
+    match e: Term {
+      IfExpr_I(i) => lower_if(i)
+      Cmp_I(c) => lower_cmp(c)
+    }
+  }
+  pub fn lower_if(i: tl::IfExpr::I): Term {
+    match i: Term {
+      Mk(k1, c, k2, t, k3, e) => TmIf(lower_expr(c), lower_expr(t), lower_expr(e))
+    }
+  }
+  pub fn lower_cmp(c: tl::Cmp::I): Term {
+    match c: Term {
+      Mk(sum, opt) => lower_cmp_opt(lower_sum(sum), opt)
+    }
+  }
+  pub fn lower_cmp_opt(lhs: Term, o: Option(tl::Cmp_Opt1::I)): Term {
+    match o: Term {
+      None => lhs
+      Some(r) => lower_cmp_rhs(lhs, r)
+    }
+  }
+  pub fn lower_cmp_rhs(lhs: Term, r: tl::Cmp_Opt1::I): Term {
+    match r: Term {
+      Mk(op, rhs) => TmEq(lhs, lower_sum(rhs))
+    }
+  }
+  pub fn lower_sum(s: tl::Sum::I): Term {
+    match s: Term {
+      Mk(atom, rep) => lower_rep(lower_atom(atom), rep)
+    }
+  }
+  pub fn lower_rep(acc: Term, rep: List(tl::Sum_Rep1::I)): Term {
+    match rep: Term {
+      Nil => acc
+      Cons(r, more) => lower_rep(lower_rep_step(acc, r), more)
+    }
+  }
+  pub fn lower_rep_step(acc: Term, r: tl::Sum_Rep1::I): Term {
+    match r: Term {
+      Mk(op, atom) => TmAdd(acc, lower_atom(atom))
+    }
+  }
+  pub fn lower_atom(a: tl::Atom::I): Term {
+    match a: Term {
+      Num_I(t) => TmNum(num_of(t))
+      KwTrue_I(t) => TmBool(true)
+      KwFalse_I(t) => TmBool(false)
+      Paren_I(p) => lower_paren(p)
+    }
+  }
+  pub fn lower_paren(p: tl::Paren::I): Term {
+    match p: Term {
+      Mk(l, e, r) => lower_expr(e)
+    }
+  }
+}

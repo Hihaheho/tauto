@@ -17,7 +17,6 @@ pub fn div(a: f64, b: f64) -> Option<f64> {
     (b != 0.0).then_some(a / b)
 }
 
-/// `a / b` in generated code.
 pub fn float_div(a: f64, b: f64, at: Loc) -> f64 {
     div(a, b).unwrap_or_else(|| error(messages::DIVISION_BY_ZERO, at))
 }
@@ -165,14 +164,10 @@ computed! {
     float_tanh => tanh(x),
 }
 
-// ---- `Float32` (IEEE 754 binary32) ----------------------------------------
-
-/// `a / b` of `Float32`: `None` when `b` is a zero.
 pub fn div32(a: f32, b: f32) -> Option<f32> {
     (b != 0.0).then_some(a / b)
 }
 
-/// `a / b` of `Float32` in generated code.
 pub fn float32_div(a: f32, b: f32, at: Loc) -> f32 {
     div32(a, b).unwrap_or_else(|| error(messages::DIVISION_BY_ZERO, at))
 }

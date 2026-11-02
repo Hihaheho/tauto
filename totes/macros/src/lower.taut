@@ -5,10 +5,12 @@
 import std::Text
 
 import "../../surface/src/surface.taut"
+import "node.taut"
+import "../../text/src/text.taut"
+import std::prelude::Affine
 
 pub(open) struct Lw { errs: Vec(Text), opened: Vec(LwOpen) }
 
-// An atom `Judgement::open` opened, and the name made for it.
 pub(open) struct LwOpen { atom: i64, name: Text }
 
 pub(open) struct LwCtx { scope: i64, atoms: List(LwAtom) }
@@ -29,8 +31,6 @@ pub fn lw_open_atom(): i64 {
 pub fn lw_fail(&mut lw: Lw, why: Text): Unit {
   Vec::push(&mut lw.errs, why)
 }
-
-// ---------------------------------------------------------------- accessors
 
 pub fn lw_ctor_name(n: Node): Text {
   match n {
@@ -187,8 +187,6 @@ pub fn lw_opt_bool(&mut lw: Lw, n: Node): Option(Bool) {
   }
 }
 
-// ---------------------------------------------------------------- names
-
 pub fn lw_has(xs: List(i64), x: i64): Bool {
   match xs {
     Nil => false
@@ -217,7 +215,6 @@ pub fn lw_sorted(xs: List(i64)): List(i64) {
   }
 }
 
-// `scopes` with `s` removed when it is there, added when it is not.
 pub fn lw_flip(scopes: List(i64), s: i64): List(i64) {
   if lw_has(scopes, s) {
     lw_sorted(lw_without(scopes, s))
@@ -266,7 +263,6 @@ pub fn lw_int_list(&mut lw: Lw, xs: List(Node)): List(i64) {
   }
 }
 
-// A name, marked with the scopes after the flip.
 pub fn lw_ident(c: LwCtx, &mut lw: Lw, n: Node): Text {
   let name := lw_text(&mut lw, lw_named(&mut lw, n, "name"))
   let ctx := lw_named(&mut lw, n, "ctx")
@@ -298,8 +294,6 @@ pub fn lw_term(kind: SurfaceKind, sp: LwSp): SurfaceTerm {
 pub fn lw_sp(&mut lw: Lw, n: Node, i: u64): LwSp {
   lw_span_of(&mut lw, lw_field(&mut lw, n, i))
 }
-
-// ---------------------------------------------------------------- expressions
 
 pub fn lw_exprs(c: LwCtx, &mut lw: Lw, n: Node): List(SurfaceTerm) {
   lw_expr_list(c, &mut lw, lw_list(&mut lw, n))
@@ -563,8 +557,6 @@ pub fn lw_expr(c: LwCtx, &mut lw: Lw, n: Node): SurfaceTerm {
     lw_term(SkOther("?"), LwSp { start: 0, end: 0 })
   }
 }
-
-// ---------------------------------------------------------------- statements
 
 pub fn lw_stmts(c: LwCtx, &mut lw: Lw, n: Node): List(SurfaceStmt) {
   lw_stmt_list(c, &mut lw, lw_list(&mut lw, n))
@@ -851,8 +843,6 @@ pub fn lw_effect(c: LwCtx, &mut lw: Lw, n: Node): SurfaceEffect {
     set: None
   }
 }
-
-// ---------------------------------------------------------------- patterns
 
 pub fn lw_patterns(c: LwCtx, &mut lw: Lw, xs: List(Node)): List(SurfacePattern) {
   match xs {

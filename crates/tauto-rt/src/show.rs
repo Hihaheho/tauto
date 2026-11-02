@@ -3,7 +3,8 @@
 //! program's own types.
 
 use crate::stdlib::{
-    Atomic, Bytes, HashMap, Mutex, Pending, Ref, Secret, Signal, Weak, atomic_load, ref_with,
+    Atomic, Bytes, HashMap, Mutex, MutexGuard, Pending, Ref, Secret, Signal, Weak, atomic_load,
+    ref_with,
 };
 use crate::{Nat, Never, Owned, Product, Rc, Shared, Text, Unlink};
 
@@ -204,6 +205,12 @@ impl<T> Show for Weak<T> {
 impl<T> Show for Mutex<T> {
     fn show(&self) -> String {
         "Mutex".to_string()
+    }
+}
+
+impl<T> Show for MutexGuard<T> {
+    fn show(&self) -> String {
+        "MutexGuard".to_string()
     }
 }
 

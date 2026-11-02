@@ -152,7 +152,6 @@ impl<'a> Fields<'a> {
         })
     }
 
-    /// A required text field checked by `check`.
     pub fn text_as<T>(
         &mut self,
         key: &str,

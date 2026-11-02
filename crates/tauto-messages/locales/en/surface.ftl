@@ -16,10 +16,11 @@ surface-literal-needs-name = a syntax literal needs the syntax's name, as in nam
 surface-expr-no-inductive = `${"{"}…{"}"}` has no inductive form (its terminal makes a SynExpr)
 surface-effect-set-generic = the effect set { $name } has type parameters; a set of effects takes none yet
 surface-effect-set-names-itself = the effect set { $name } names itself: { $path } -> { $name }
-surface-module-collides-with-class = module { $name } collides with class { $name }
+surface-module-collides-with-class = module { $module } collides with class { $name }
 surface-module-declared-twice = module { $name } is declared twice
 surface-dot-names-a-declaration = `.` takes a field; write the name of a declaration with `::`: `{ $name }`
 surface-name-of-a-module = { $name } is the name of a module
+surface-name-shadowed = { $name } names more than one declaration here: { $names }; write the module path (`M::{ $name }`) of the one you mean
 surface-block-indent = macro.block_indent: this line is indented { $lead }, the closing fence { $indent }
 surface-extern-rust-path = write extern {"{"} … {"}"}; the rust path goes in Tauto.eure
 surface-expected-one-expression = expected one expression
@@ -56,4 +57,3 @@ surface-row-variables = a row has at most one row variable
 surface-row-repeats-effect = the effect `{ $name }` is written twice in one set literal
 surface-raw-underscore = `r#_` is not a name: `_` is not written as a raw name
 surface-syntax-macro-shape = `{ $macro }` takes a name, a grammar block and, when it registers functions, `with(fmt: f, tokens: g)`
-surface-match-scrutinee-ascription = a `match` scrutinee with a type, `match (e: T): G`, is not read; bind it first with `let x: T := e`

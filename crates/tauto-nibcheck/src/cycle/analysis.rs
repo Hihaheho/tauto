@@ -26,7 +26,6 @@ use crate::lin::pattern_names;
 use crate::surface::{FnDecl, Handler, Pattern, Program, Stmt, SurfaceTerm, TermKind};
 use crate::types::{Datas, ParamId, Ty, TypeReport, prelude, site};
 
-/// A reason the program may have a strong reference cycle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CycleDiag {
     pub message: String,
@@ -42,7 +41,6 @@ enum Atom {
     Cell(usize),
     /// A borrowed `var` (or container) place: never stored, read through.
     Place(usize),
-    /// A function or closure.
     Lam(usize),
     /// A value nothing is known about.
     Unknown(usize),
@@ -78,14 +76,11 @@ struct Call {
     frame: Node,
 }
 
-/// How a name is bound.
 #[derive(Clone, Copy, Debug)]
 enum Bound {
-    /// A value.
     Val(Node),
     /// A borrowed parameter or view: the place it stands for is read through.
     Place(Node),
-    /// A `var` of this site.
     Var(usize),
 }
 
@@ -102,7 +97,6 @@ struct Frame {
     raw: bool,
 }
 
-/// What a prelude `extern` does with the storages it is given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Extern {
     /// The result holds what the arguments held: an immutable value built
@@ -111,17 +105,12 @@ enum Extern {
     /// A function the host provides: it keeps what it is given in a state of
     /// its own, which it may give back, and its handles are that state.
     Host,
-    /// Makes a storage holding the value arguments.
     Alloc,
-    /// Puts the value arguments into the storage of the first.
     Store,
-    /// Takes a value out of the storage of the first.
     Load,
     /// `Store`, and the old content comes back.
     Swap,
-    /// `weak_of`: a `Weak` on each storage of the first.
     Downgrade,
-    /// `weak_get`: the storage of each `Weak` of the first.
     Upgrade,
     /// `replace(&mut x, v)`: the place itself is written, not what it holds.
     Replace,
@@ -142,37 +131,171 @@ fn extern_model(name: &str) -> Option<Extern> {
         "replace" => Replace,
         "Weak::of" => Downgrade,
         "Weak::get" => Upgrade,
-        "Vec::get_mut" | "Vec::last_mut" | "Vec::as_mut_slice" | "HashMap::get_mut" => LoadMut,
-        "Ref::get" | "Mutex::take_claimed" | "Vec::pop" | "Vec::index" | "Vec::get" | "Vec::as_slice"
-        | "Slice::get" | "HashMap::get" | "HashMap::index" => Load,
+        "Vec::get_mut"
+        | "Vec::last_mut"
+        | "Vec::as_mut_slice"
+        | "HashMap::get_mut"
+        | "MutexGuard::get_mut" => LoadMut,
+        "Ref::get"
+        | "Mutex::take_claimed"
+        | "Vec::pop"
+        | "Vec::index"
+        | "Vec::get"
+        | "Vec::as_slice"
+        | "Slice::get"
+        | "HashMap::get"
+        | "HashMap::index"
+        | "MutexGuard::get" => Load,
         "Vec::into_list" | "Vec::into_array" | "HashMap::into_vec" => Convert,
-        "Vec::len" | "Vec::clear" | "Vec::truncate" | "Vec::swap" | "Slice::len" | "Text::of"
-        | "Buf::of" | "Buf::clone" | "Buf::new" | "Buf::push" | "Syn::parse" | "Syn::expr_of"
-        | "Syn::expand" | "Syn::open" | "Judgement::mentions" | "Judgement::same_atom" | "Elab::whnf"
-        | "Elab::defeq" | "Elab::check" | "Elab::global" | "Elab::resolve" | "I64::of_i32"
-        | "I32::of_i64" | "I64::of_u64" | "U64::of_i64" | "U64::of_u32" | "U32::of_u64"
-        | "U64::of_u8" | "U8::of_u64" | "Os::args" | "Os::read_file" | "Os::write_file"
-        | "Os::read_bytes" | "Os::write_bytes" | "Os::secure_random" | "Os::create_dir"
-        | "Os::list_dir" | "Os::remove" | "Os::temp_dir" | "Os::run" | "Os::print" | "Os::eprint"
-        | "Os::tcp_listen" | "Os::tcp_accept" | "Os::tcp_connect" | "Os::tcp_read" | "Os::tcp_write"
-        | "Os::tcp_shutdown" | "Os::tcp_close" | "Os::tcp_unlisten" | "Os::tls_accept"
-        | "Os::tls_connect" | "Os::tls_read" | "Os::tls_write" | "Os::tls_shutdown"
-        | "Os::tls_close" | "Os::exit" | "Os::stop" | "Os::sleep_pending" | "Os::offload"
-        | "Pending::ready" | "Pending::take" | "Pending::is_ready" | "Pending::signal"
-        | "Mutex::claim" | "Atomic::new" | "Atomic::load" | "Atomic::store" | "Atomic::fetch_add"
-        | "words" | "concat" | "Array::of_list" | "Array::get" | "Array::len" | "Array::to_list"
-        | "Bytes::of_list" | "Bytes::to_list" | "Bytes::len" | "Bytes::get" | "Bytes::slice"
-        | "Bytes::concat" | "Bytes::eq" | "Bytes::of_text" | "Text::of_bytes" | "Text::len"
-        | "Text::byte" | "Text::slice" | "Text::compare" | "Text::of_code_point" | "Text::of_utf8"
-        | "Text::of_i64" | "Text::of_u64" | "U32::and" | "U32::or" | "U32::xor" | "U32::shl"
-        | "U32::shr" | "U32::rotl" | "U32::rotr" | "U64::and" | "U64::or" | "U64::xor" | "U64::shl"
-        | "U64::shr" | "U64::rotl" | "U64::rotr" | "Text::of_nat" | "Nat::of_u64" | "U64::of_nat"
-        | "Float::of_i64" | "I64::of_float" | "Float::of_text" | "Text::of_float" | "Float::bits"
-        | "Float::of_bits" | "Float::is_nan" | "Float::abs" | "Float::floor" | "Float::ceil"
-        | "Float::trunc" | "Float::round" | "Float::sqrt" | "Float::cbrt" | "Float::exp"
-        | "Float::ln" | "Float::log2" | "Float::log10" | "Float::pow" | "Float::sin" | "Float::cos"
-        | "Float::tan" | "Float::asin" | "Float::acos" | "Float::atan" | "Float::atan2"
-        | "Float::sinh" | "Float::cosh" | "Float::tanh" | "secret" | "expose" => Flatten,
+        "Vec::len"
+        | "Vec::clear"
+        | "Vec::truncate"
+        | "Vec::swap"
+        | "Slice::len"
+        | "Text::of"
+        | "Buf::of"
+        | "Buf::clone"
+        | "Buf::new"
+        | "Buf::push"
+        | "Syn::parse"
+        | "Syn::expr_of"
+        | "Syn::expand"
+        | "Syn::open"
+        | "Judgement::mentions"
+        | "Judgement::same_atom"
+        | "Elab::whnf"
+        | "Elab::defeq"
+        | "Elab::check"
+        | "Elab::global"
+        | "Elab::resolve"
+        | "I64::of_i32"
+        | "I32::of_i64"
+        | "I64::of_u64"
+        | "U64::of_i64"
+        | "U64::of_u32"
+        | "U32::of_u64"
+        | "U64::of_u8"
+        | "U8::of_u64"
+        | "Os::args"
+        | "Os::read_file"
+        | "Os::write_file"
+        | "Os::read_bytes"
+        | "Os::write_bytes"
+        | "Os::secure_random"
+        | "Os::create_dir"
+        | "Os::list_dir"
+        | "Os::remove"
+        | "Os::temp_dir"
+        | "Os::run"
+        | "Os::child_spawn"
+        | "Os::child_read"
+        | "Os::child_write"
+        | "Os::child_close_stdin"
+        | "Os::child_wait"
+        | "Os::child_close"
+        | "Os::print"
+        | "Os::eprint"
+        | "Os::tcp_listen"
+        | "Os::tcp_accept"
+        | "Os::tcp_connect"
+        | "Os::tcp_read"
+        | "Os::tcp_write"
+        | "Os::tcp_shutdown"
+        | "Os::tcp_close"
+        | "Os::tcp_unlisten"
+        | "Os::tls_accept"
+        | "Os::tls_connect"
+        | "Os::tls_read"
+        | "Os::tls_write"
+        | "Os::tls_shutdown"
+        | "Os::tls_close"
+        | "Os::exit"
+        | "Os::stop"
+        | "Os::sleep_pending"
+        | "Os::offload"
+        | "Pending::ready"
+        | "Pending::take"
+        | "Pending::is_ready"
+        | "Pending::signal"
+        | "Mutex::claim"
+        // The guard holds the mutex, so reading or writing through it is
+        // reading or writing the mutex's content.
+        | "MutexGuard::claimed"
+        | "Atomic::new"
+        | "Atomic::load"
+        | "Atomic::store"
+        | "Atomic::fetch_add"
+        | "words"
+        | "concat"
+        | "Array::of_list"
+        | "Array::get"
+        | "Array::len"
+        | "Array::to_list"
+        | "Bytes::of_list"
+        | "Bytes::to_list"
+        | "Bytes::len"
+        | "Bytes::get"
+        | "Bytes::slice"
+        | "Bytes::concat"
+        | "Bytes::eq"
+        | "Bytes::of_text"
+        | "Text::of_bytes"
+        | "Text::len"
+        | "Text::byte"
+        | "Text::slice"
+        | "Text::compare"
+        | "Text::of_code_point"
+        | "Text::of_utf8"
+        | "Text::of_i64"
+        | "Text::of_u64"
+        | "U32::and"
+        | "U32::or"
+        | "U32::xor"
+        | "U32::shl"
+        | "U32::shr"
+        | "U32::rotl"
+        | "U32::rotr"
+        | "U64::and"
+        | "U64::or"
+        | "U64::xor"
+        | "U64::shl"
+        | "U64::shr"
+        | "U64::rotl"
+        | "U64::rotr"
+        | "Text::of_nat"
+        | "Nat::of_u64"
+        | "U64::of_nat"
+        | "Float::of_i64"
+        | "I64::of_float"
+        | "Float::of_text"
+        | "Text::of_float"
+        | "Float::bits"
+        | "Float::of_bits"
+        | "Float::is_nan"
+        | "Float::abs"
+        | "Float::floor"
+        | "Float::ceil"
+        | "Float::trunc"
+        | "Float::round"
+        | "Float::sqrt"
+        | "Float::cbrt"
+        | "Float::exp"
+        | "Float::ln"
+        | "Float::log2"
+        | "Float::log10"
+        | "Float::pow"
+        | "Float::sin"
+        | "Float::cos"
+        | "Float::tan"
+        | "Float::asin"
+        | "Float::acos"
+        | "Float::atan"
+        | "Float::atan2"
+        | "Float::sinh"
+        | "Float::cosh"
+        | "Float::tanh"
+        | "secret"
+        | "expose" => Flatten,
         // `Float32`'s functions (`std/prelude/Num.taut`).
         n if n.starts_with("Float32::") || n == "Float::of_float32" => Flatten,
         // The secret words (`std/prelude/Secret.taut`).
@@ -328,7 +451,6 @@ impl<'a> Analysis<'a> {
         self.lams.len() - 1
     }
 
-    /// The union of some nodes.
     fn join(&mut self, parts: &[Node]) -> Node {
         let parts: Vec<Node> = parts.iter().copied().filter(|n| *n != EMPTY).collect();
         match parts.as_slice() {
@@ -343,8 +465,6 @@ impl<'a> Analysis<'a> {
             }
         }
     }
-
-    // ---- types ----
 
     fn ty(&self, t: &SurfaceTerm) -> Option<&Ty> {
         // The prelude's bodies are not typed here: what they hold is not
@@ -365,20 +485,16 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    // ---- names ----
-
     fn find(&self, name: &str) -> Option<usize> {
         self.bindings.iter().rposition(|b| b.name == name)
     }
 
-    /// The current frame holds `n`.
     fn hold(&mut self, n: Node) {
         if let Some(f) = self.scopes.last().copied() {
             self.flow(n, f);
         }
     }
 
-    /// The node of what a binding holds.
     fn bound_node(&mut self, bound: Bound) -> Node {
         match bound {
             Bound::Val(n) | Bound::Place(n) => n,
@@ -414,8 +530,6 @@ impl<'a> Analysis<'a> {
             }
         }
     }
-
-    // ---- program ----
 
     fn collect_fns(&mut self, stmts: &[Stmt], decls: &mut Vec<(usize, FnDecl)>) {
         for s in stmts {
@@ -477,8 +591,6 @@ impl<'a> Analysis<'a> {
         self.scopes.pop();
         self.frames.pop();
     }
-
-    // ---- terms ----
 
     /// The node of the value of `t`. `raw` leaves places unread (a function
     /// that returns a borrow).
@@ -766,7 +878,6 @@ impl<'a> Analysis<'a> {
                                 self.flow(v, c);
                             }
                             Bound::Place(p) => self.stores.push((p, v)),
-                            // A name a borrowed `match` binds to a `&mut`.
                             Bound::Val(n) => self.stores.push((n, v)),
                         }
                     }
@@ -951,8 +1062,6 @@ impl<'a> Analysis<'a> {
         Some(l)
     }
 
-    /// Evaluates the arguments of a call to a known function into its
-    /// parameters.
     fn args(&mut self, arguments: &[SurfaceTerm], lam: Option<usize>) -> Vec<Node> {
         let nodes: Vec<Node> = arguments.iter().map(|a| self.eval(a, false)).collect();
         if let Some(l) = lam {
@@ -1150,12 +1259,9 @@ impl<'a> Analysis<'a> {
         res
     }
 
-    // ---- solving ----
-
     fn solve(&mut self) {
         loop {
             let mut changed = false;
-            // Copy edges.
             for n in 0..self.pts.len() {
                 if self.pts[n].is_empty() {
                     continue;
@@ -1168,7 +1274,6 @@ impl<'a> Analysis<'a> {
                     }
                 }
             }
-            // Loads, reads, stores.
             for i in 0..self.loads.len() {
                 let (dst, src) = self.loads[i];
                 for a in self.pts[src].clone() {
@@ -1268,8 +1373,6 @@ impl<'a> Analysis<'a> {
             }
         }
     }
-
-    // ---- result ----
 
     /// The sites a content reaches through immutable values and closures.
     fn frontier(&self, contents: Node) -> (BTreeSet<usize>, Vec<usize>) {
@@ -1412,7 +1515,7 @@ fn holds(datas: &Datas, t: &Ty, seen: &mut HashSet<String>) -> bool {
         Ty::Named(n, args) => {
             if matches!(
                 n.as_str(),
-                "Ref" | "Mutex" | "Vec" | "HashMap" | "Slice" | "Task" | "Pending"
+                "Ref" | "Mutex" | "MutexGuard" | "Vec" | "HashMap" | "Slice" | "Task" | "Pending"
             ) {
                 return true;
             }
@@ -1500,7 +1603,6 @@ fn storage_kinds(
             let Some(d) = datas.decls.get(n) else {
                 return false;
             };
-            // A host handle.
             if d.constructors.iter().all(|c| c.fields.is_empty())
                 && d.constructors.len() <= 1
                 && d.is_struct
@@ -1613,14 +1715,14 @@ mod tests {
     #[test]
     fn independent_cells_are_free() {
         accepts(
-            "let a := ref_new(1)\nlet b := ref_new(2)\nref_set(a, ref_get(b))\nlet n := ref_get(a)",
+            "let a := Ref::new(1)\nlet b := Ref::new(2)\nRef::set(a, Ref::get(b))\nlet n := Ref::get(a)",
         );
     }
 
     #[test]
     fn a_vec_in_a_ref_that_holds_a_closure_over_the_ref_is_a_cycle() {
         rejects(
-            "let r := Ref::new(0)\nlet m := Mutex::new(Vec::new())\nMutex::lock(m, (&mut v) => Vec::push(&mut v, () => Mutex::lock(m, (&mut w) => Vec::len(&w))))",
+            "let r := Ref::new(0)\nlet m := Mutex::new(Vec::new())\nvar g := Mutex::lock(m)\nlet &mut v := MutexGuard::get_mut(&mut g)\nVec::push(&mut v, () => {\n  let h := Mutex::lock(m)\n  let &w := MutexGuard::get(&h)\n  Vec::len(&w)\n})",
             "cycle",
         );
     }
@@ -1643,7 +1745,7 @@ mod tests {
     #[test]
     fn replace_writes_the_place() {
         rejects(
-            "let m := Mutex::new(() => 0)\nMutex::lock(m, (&mut f) => replace(&mut f, () => Mutex::lock(m, (&mut g) => 1)))",
+            "let m := Mutex::new(() => 0)\nvar g := Mutex::lock(m)\nlet &mut f := MutexGuard::get_mut(&mut g)\nreplace(&mut f, () => {\n  let h := Mutex::lock(m)\n  let &k := MutexGuard::get(&h)\n  1\n})",
             "cycle",
         );
     }

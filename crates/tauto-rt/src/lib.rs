@@ -19,6 +19,7 @@ pub use std::sync::Arc as Rc;
 pub mod a;
 pub mod budget;
 pub mod budget_contract;
+pub mod child;
 pub mod cps;
 pub mod ct;
 pub mod ev;
@@ -54,7 +55,6 @@ pub enum Text {
 }
 
 impl Text {
-    /// A literal of the program.
     pub const fn lit(s: &'static str) -> Text {
         Text::Static(s)
     }
@@ -126,7 +126,6 @@ impl fmt::Display for Text {
     }
 }
 
-/// `Never`: a value of it does not exist.
 #[derive(Debug, Clone, Copy)]
 pub enum Never {}
 
@@ -143,7 +142,6 @@ pub type Payload = Box<dyn Any>;
 /// The operation `show`, which the host handles.
 pub const OP_SHOW: Op = Op::new(0, "show");
 
-/// An operation: its number in the generated crate, and its name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Op {
     pub id: OpId,
@@ -156,7 +154,6 @@ impl Op {
     }
 }
 
-/// A place in a tauto source file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Loc {
     pub file: &'static str,
@@ -178,7 +175,6 @@ pub struct TautoError {
     pub at: Option<Loc>,
 }
 
-/// Raises a run-time error.
 pub fn error(message: impl Into<String>, at: Loc) -> ! {
     std::panic::panic_any(TautoError {
         message: message.into(),
@@ -186,7 +182,6 @@ pub fn error(message: impl Into<String>, at: Loc) -> ! {
     })
 }
 
-/// A run-time error outside any place.
 pub fn error_here(message: impl Into<String>) -> ! {
     std::panic::panic_any(TautoError {
         message: message.into(),
@@ -297,7 +292,6 @@ pub fn unshare<P: link::Unshare>(rc: &mut P) -> &mut P::Target {
     rc.unshare()
 }
 
-/// The value in an owned field that a `match` took apart.
 pub fn unbox<P: link::Unbox>(b: P) -> P::Target {
     b.unbox()
 }
@@ -308,12 +302,10 @@ pub fn linear_clone<T>(what: &'static str) -> T {
     panic!("tauto: a linear value was copied: {what}")
 }
 
-/// A `match` none of whose arms fits.
 pub fn no_arm(at: Loc) -> ! {
     error(messages::NO_ARM, at)
 }
 
-/// Whether a `Text` is the literal `lit` (a `match` pattern on text).
 pub fn nat_is<T: std::borrow::Borrow<Nat>>(t: &T, lit: u64) -> bool {
     *t.borrow() == Nat::from_u64(lit)
 }
@@ -363,7 +355,6 @@ impl Bomb {
         Bomb { armed: true, what }
     }
 
-    /// The value is consumed.
     pub fn defuse(mut self) {
         self.armed = false;
     }
@@ -430,7 +421,7 @@ pub fn run_main_with(args: Vec<String>, main: impl FnOnce() + Send) -> std::proc
             std::process::ExitCode::from(1)
         }
     };
-    // Diagnostics read by the test suite (`crates/tauto-test-suite`, Rust
+    // Diagnostics read by the test suite (`tools/tauto-test-suite`, Rust
     // backend): when set, these print the steps counted against the budget
     // and the dropped probes on stderr after the program ends. They only
     // read state and change neither what runs nor the exit code. They are
@@ -557,7 +548,6 @@ fn catch_unwind_payload(payload: Box<dyn Any + Send>) -> Result<(), String> {
     Err(report(&*payload))
 }
 
-/// The report of a panic that ended the program.
 fn report(payload: &(dyn Any + Send)) -> String {
     if let Some(e) = payload.downcast_ref::<TautoError>() {
         match e.at {

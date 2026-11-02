@@ -1,3 +1,8 @@
+import "analysis.taut"
+import "ktuple.taut"
+import std::prelude::Shared
+import std::prelude::Affine
+
 // FOLLOW(k) and the deciding of k for each non-terminal.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
@@ -209,8 +214,6 @@ pub fn lg_vec_set(&mut v: Vec(LgSet), i: u64, x: LgSet): Unit {
   }
 }
 
-// ---------------------------------------------------------------- deciding k
-
 // The sets FIRST(k) and FOLLOW(k) for k = 0, 1, … as far as they are made.
 pub(open) struct LgCache { firsts: List(LgFirst), follows: List(LgFollow) }
 
@@ -249,7 +252,6 @@ pub fn lg_append_follow(xs: List(LgFollow), x: LgFollow): List(LgFollow) {
   }
 }
 
-// The cache with the sets up to `k` made.
 pub fn lg_cache_upto(g: LgGrammar, c: LgCache, k: u64): LgCache {
   var cache := c
   var made := lg_len_first(cache.firsts)
@@ -324,7 +326,6 @@ pub fn lg_rev_pairs(xs: List(Pair(u64, LgSet))): List(Pair(u64, LgSet)) {
   out
 }
 
-// Whether the tuples of no two productions have a tuple in common.
 pub fn lg_pairwise_disjoint(xs: List(Pair(u64, LgSet))): Bool {
   match xs {
     Nil => true

@@ -21,7 +21,6 @@ struct Counts {
     holes: usize,
     axioms: BTreeSet<String>,
     externs: usize,
-    /// Files that did not read or check at all.
     unread: Vec<String>,
 }
 

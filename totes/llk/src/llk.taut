@@ -1,6 +1,8 @@
 import std::Stack
 import std::Array
 import "../../scan/src/scan.taut"
+import "../../text/src/text.taut"
+import std::Base
 
 // The LL(k) parser that reads the tables of the LL(k) table generator, in the
 // proof language (`docs/design/self-host.md`). `README.md` says what it does
@@ -53,7 +55,6 @@ pub(open) inductive LlkTables: Type {
     max_k: Nat,
     terminals: Nat,
     non_terminals: Nat,
-    // The terminals that are skipped in each scanner mode.
     skip: Array(List(Nat)),
     // Per non-terminal: its production when no token is read, plus one (0
     // for None); its lookahead depth in tokens; where its states start.
@@ -66,8 +67,6 @@ pub(open) inductive LlkTables: Type {
   ): LlkTables
 }
 
-// ---- reading the tables ------------------------------------------------------
-
 // The `k` numbers from `at`, put before `done` last first.
 pub fn llk_numbers_onto(k: Nat, a: Array(Nat), at: Nat, done: List(Nat)): List(Nat) {
   match k: List(Nat) {
@@ -78,14 +77,9 @@ pub fn llk_numbers_onto(k: Nat, a: Array(Nat), at: Nat, done: List(Nat)): List(N
 
 // The skipped terminals of `k` modes from `p` (last mode first), and where
 // they end.
-pub fn llk_skips_in(
-  k: Nat,
-  a: Array(Nat),
-  p: Nat,
-  done: List(List(Nat))
-): Pair(List(List(Nat)), Nat) {
-  match k: Pair(List(List(Nat)), Nat) {
-    Zero => Pair { fst: done, snd: p }
+pub fn llk_skips_in(k: Nat, a: Array(Nat), p: Nat, done: List(List(Nat))): List(List(Nat)) × Nat {
+  match k: List(List(Nat)) × Nat {
+    Zero => #(done, p)
     Succ(k2) => llk_skips_in(
       k2,
       a,
@@ -103,9 +97,9 @@ pub fn llk_starts_in(
   at: Nat,
   states: Nat,
   done: List(Nat)
-): Pair(List(Nat), Nat) {
-  match k: Pair(List(Nat), Nat) {
-    Zero => Pair { fst: done, snd: states }
+): List(Nat) × Nat {
+  match k: List(Nat) × Nat {
+    Zero => #(done, states)
     Succ(k2) => llk_starts_in(k2, a, at + 3, states + scan_number(a, at), Cons(states, done))
   }
 }
@@ -119,11 +113,11 @@ pub fn llk_cells_in(
   filled: Nat,
   rp: Nat,
   done: List(Nat)
-): Pair(List(Nat), Nat) {
-  match fuel: Pair(List(Nat), Nat) {
-    Zero => Pair { fst: done, snd: rp }
-    Succ(f) => match filled < total: Pair(List(Nat), Nat) {
-      false => Pair { fst: done, snd: rp }
+): List(Nat) × Nat {
+  match fuel: List(Nat) × Nat {
+    Zero => #(done, rp)
+    Succ(f) => match filled < total: List(Nat) × Nat {
+      false => #(done, rp)
       true => llk_cells_in(
         f,
         total,
@@ -162,9 +156,9 @@ pub fn llk_productions_in(
   a: Array(Nat),
   pp: Nat,
   done: List(LlkProduction)
-): Pair(List(LlkProduction), Nat) {
-  match k: Pair(List(LlkProduction), Nat) {
-    Zero => Pair { fst: done, snd: pp }
+): List(LlkProduction) × Nat {
+  match k: List(LlkProduction) × Nat {
+    Zero => #(done, pp)
     Succ(k2) => llk_productions_in(
       k2,
       a,
@@ -240,8 +234,6 @@ pub fn llk_tables_read(
     Array::of_list(text_number_list(productions))
   )
 }
-
-// ---- the tokens ----------------------------------------------------------------
 
 pub fn llk_member(xs: List(Nat), x: Nat): Bool {
   match xs: Bool {
@@ -324,8 +316,6 @@ pub fn llk_rest(tokens: List(LlkTok)): List(LlkTok) {
   }
 }
 
-// ---- predicting a production ---------------------------------------------------
-
 pub fn llk_last(production: Nat, last: Nat): Nat {
   match production: Nat {
     Zero => last
@@ -388,9 +378,6 @@ pub fn llk_predict(&t: LlkTables, non_terminal: Nat, tokens: List(LlkTok)): Opti
   )
 }
 
-// ---- parsing -------------------------------------------------------------------
-
-// The skipped tokens as events, pushed in order.
 pub fn llk_trivia_onto(trivia: List(ScanToken), &mut events: Stack(LlkEvent)): Unit {
   match trivia: Unit {
     Nil => #()
@@ -401,7 +388,6 @@ pub fn llk_trivia_onto(trivia: List(ScanToken), &mut events: Stack(LlkEvent)): U
   }
 }
 
-// The symbols of a production, pushed in order.
 pub fn llk_push_symbols(symbols: List(LlkSym), &mut stack: Stack(LlkSym)): Unit {
   match symbols: Unit {
     Nil => #()
@@ -489,7 +475,6 @@ pub fn llk_run_in(
   }
 }
 
-// A parse budget computed from the token count and the number of non-terminals.
 pub fn llk_fuel(t: LlkTables, tokens: List(LlkTok)): Nat {
   (List::length(tokens) + 1) * (t.non_terminals + 1) * 16
 }

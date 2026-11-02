@@ -1,4 +1,22 @@
 import "data_fields_sound.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "data_fields_context_sound.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "datas_registration.taut"
+import "diagnostic_sound.taut"
+import "registration_error_sound.taut"
+import "rules_data_fields.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "written_composite_sound.taut"
+import "written_context_sound.taut"
+import "written_list_sound.taut"
+import "written_transfer_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub theorem data_ctors_state(
   c: Checker,
@@ -77,14 +95,14 @@ pub theorem data_ctors_after_sound(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
-  Cons(surface_data_ctor_mk(name, fields), rest),
+  Cons(SurfaceDataCtorMk(name, fields), rest),
   ck_val(data_ctors_after(name, rest, generics, m))
 ) {
   match m: WrittenDataCtors(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
-    Cons(surface_data_ctor_mk(name, fields), rest),
+    Cons(SurfaceDataCtorMk(name, fields), rest),
     ck_val(data_ctors_after(name, rest, generics, m))
   ) {
     mut1(types, next) => {
@@ -102,7 +120,7 @@ pub theorem data_ctors_after_sound(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
-          Cons(surface_data_ctor_mk(name, fields), rest),
+          Cons(SurfaceDataCtorMk(name, fields), rest),
           ctors
         ),
         Eq::sym(
@@ -165,7 +183,7 @@ pub theorem data_ctors_cons_elaborates(
     Cons(ctor, rest),
     ck_val(registration_ctors_cons(ctor, rest, c, generics))
   ) {
-    surface_data_ctor_mk(name, fields) => data_ctors_after_sound(
+    SurfaceDataCtorMk(name, fields) => data_ctors_after_sound(
       c,
       name,
       fields,

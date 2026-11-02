@@ -36,7 +36,6 @@ pub fn command(args: &[String]) -> ExitCode {
     }
 }
 
-/// The syntax of `tauto syntax`, one line per subcommand.
 const USAGE: &str = "tauto syntax gen [--check | --force] [DIR]\n       \
                      tauto syntax show DIR NAME\n       \
                      tauto syntax source DIR NAME";
@@ -46,7 +45,6 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
-/// A grammar declared in the tote, and where.
 struct Declared {
     name: String,
     grammar: String,

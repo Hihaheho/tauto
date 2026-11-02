@@ -1,6 +1,10 @@
 import "machine.taut"
 import "cps.taut"
+import "builtins.taut"
+import "mval.taut"
 import std::List
+import std::Base
+import std::Text
 
 // The compiler: from each function's continuation-passing form, the lowering every
 // backend shares (`tauto_nir::cps`, which Rust writes as `wire.taut` reads it), to the code
@@ -12,8 +16,6 @@ import std::List
 // that reads it later sees what was written. A local that holds a borrow itself (it is
 // read through, or written through) is never boxed: copies of the borrow name the same
 // place.
-
-// ---- which locals are boxed ---------------------------------------------------------------
 
 // What the analysis collects: the locals that are borrowed or shared, those written inside
 // a `handle` or a `budget`, and those that hold borrows.
@@ -62,7 +64,7 @@ mutual {
       CMap(value, op) => c_uses(value, inside, u)
       CBranch(c, t, o) => c_uses(o, inside, c_uses(t, inside, c_uses(c, inside, u)))
       CSeq(items) => c_uses_list(items, inside, u)
-      CDefine(id, r#shared, init) => {
+      CDefine(id, r#shared, drop, init) => {
         let u2 := c_uses(init, inside, u)
         match r#shared {
           true => cu_add_box(u2, id)
@@ -129,8 +131,6 @@ pub fn c_boxed(body: Cps, more: List(Nat)): List(Nat) {
   }
 }
 
-// ---- the compiler's state ------------------------------------------------------------------
-
 // The slots of the function being compiled (local, slot), the count of them, its boxed
 // locals, the functions of the closures so far (the first at `base`), and the first thing
 // the machine cannot run.
@@ -158,7 +158,6 @@ pub fn c_lookup(slots: List(Pair(Nat, Nat)), id: Nat): Option(Nat) {
   }
 }
 
-// The slot of a local, given one if it has none.
 pub fn c_slot(st: CSt, id: Nat): Pair(Nat, CSt) {
   match st {
     Cst(slots, count, boxed, extra, base, bad) => match c_lookup(slots, id) {
@@ -185,8 +184,6 @@ pub fn c_fail(st: CSt, what: Text): CSt {
     }
   }
 }
-
-// ---- values and operations -------------------------------------------------------------
 
 pub fn c_value(v: CVal): MVal {
   match v {
@@ -230,7 +227,6 @@ pub fn c_unary(op: CUnary): MOp {
   }
 }
 
-// The index of the name in the list.
 pub fn c_index(names: List(Text), n: Text, at: Nat): Option(Nat) {
   match names {
     Nil => None
@@ -238,9 +234,6 @@ pub fn c_index(names: List(Text), n: Text, at: Nat): Option(Nat) {
   }
 }
 
-// ---- patterns ---------------------------------------------------------------------------
-
-// The pattern, with its locals given slots, and the locals it binds.
 mutual {
   pub fn c_pat(p: CPat, st: CSt, ids: List(Nat)): Pair(MPat, Pair(CSt, List(Nat))) {
     match p {
@@ -272,7 +265,6 @@ mutual {
   }
 }
 
-// Boxes the boxed locals among `ids`, then runs `k`.
 pub fn c_box_all(ids: List(Nat), st: CSt, k: MCode): CR {
   match ids {
     Nil => Cr(k, st)
@@ -287,8 +279,6 @@ pub fn c_box_all(ids: List(Nat), st: CSt, k: MCode): CR {
     }
   }
 }
-
-// ---- expressions --------------------------------------------------------------------------
 
 pub fn c_with_slots(st: CSt, slots: List(Pair(Nat, Nat)), count: Nat, boxed: List(Nat)): CSt {
   match st {
@@ -305,7 +295,6 @@ pub fn c_slots_of(st: CSt): Pair(List(Pair(Nat, Nat)), Pair(Nat, List(Nat))) {
   }
 }
 
-// Adds the function of a closure; its index.
 pub fn c_add_fn(st: CSt, f: MFn): Pair(Nat, CSt) {
   match st {
     Cst(slots, count, boxed, extra, base, bad) => Pair {
@@ -339,6 +328,21 @@ pub fn c_not_inner(captures: List(Nat), refs: List(Pair(Nat, Nat))): List(Nat) {
   List::filter((id: Nat) => not(c_member(c_inner_ids(refs), id)), captures)
 }
 
+// The code that ends a block: what it defined and drops, last defined first, then `k`.
+pub fn c_clears(items: List(Cps), k: MCode, st: CSt): Pair(MCode, CSt) {
+  match items {
+    Nil => Pair { fst: k, snd: st }
+    Cons(item, rest) => match item {
+      CDefine(id, r#shared, drop, init) => if drop {
+        match c_slot(st, id) {
+          Pair { fst: s, snd: st2 } => c_clears(rest, McClear(s, c_is_boxed(st2, id), k), st2)
+        }
+      } else { c_clears(rest, k, st) }
+      _ => c_clears(rest, k, st)
+    }
+  }
+}
+
 pub fn c_slot_all(ids: List(Nat), st: CSt): CSt {
   match ids {
     Nil => st
@@ -348,7 +352,6 @@ pub fn c_slot_all(ids: List(Nat), st: CSt): CSt {
   }
 }
 
-// Loads the outer slots in order, then `k`.
 pub fn c_loads(found: List(Pair(Nat, Nat)), k: MCode): MCode {
   match found {
     Nil => k
@@ -384,7 +387,6 @@ pub fn c_ref_slots(slots: List(Pair(Nat, Nat)), refs: List(Pair(Nat, Nat))): Lis
 }
 
 mutual {
-  // The code of `e`, which leaves its value on the stack, then `k`.
   pub fn c_expr(fuel: Nat, e: Cps, k: MCode, st: CSt): CR {
     match fuel {
       Zero => Cr(k, c_fail(st, "a program nested too deep"))
@@ -427,9 +429,11 @@ mutual {
         }
         CSeq(items) => match items {
           Nil => Cr(McPush(MvUnit, k), st)
-          Cons(first, rest) => c_seq_from(f, first, rest, k, st)
+          Cons(first, rest) => match c_clears(items, k, st) {
+            Pair { fst: k2, snd: st2 } => c_seq_from(f, first, rest, k2, st2)
+          }
         }
-        CDefine(id, r#shared, init) => match c_slot(st, id) {
+        CDefine(id, r#shared, drop, init) => match c_slot(st, id) {
           Pair { fst: s, snd: st2 } => {
             let put := if c_is_boxed(
               st2,
@@ -545,7 +549,6 @@ mutual {
     }
   }
 
-  // The values in order, then `k`.
   pub fn c_all(fuel: Nat, es: List(Cps), k: MCode, st: CSt): CR {
     match fuel {
       Zero => Cr(k, c_fail(st, "a program nested too deep"))
@@ -558,7 +561,6 @@ mutual {
     }
   }
 
-  // A sequence: each value but the last is dropped.
   pub fn c_seq_from(fuel: Nat, first: Cps, rest: List(Cps), k: MCode, st: CSt): CR {
     match fuel {
       Zero => Cr(k, c_fail(st, "a program nested too deep"))
@@ -585,7 +587,10 @@ mutual {
         snd: c_fail(st, "a program nested too deep")
       }
       Succ(f) => match pats {
-        Nil => Pair { fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } }, snd: st }
+        Nil => Pair {
+          fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+          snd: st
+        }
         Cons(p, ps) => match guards {
           Nil => Pair {
             fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
@@ -625,7 +630,6 @@ mutual {
     }
   }
 
-  // The arms of a `handle`: patterns, continuation slots and bodies.
   pub fn c_handler_arms(
     fuel: Nat,
     pats: List(List(CPat)),
@@ -639,7 +643,10 @@ mutual {
         snd: c_fail(st, "a program nested too deep")
       }
       Succ(f) => match pats {
-        Nil => Pair { fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } }, snd: st }
+        Nil => Pair {
+          fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+          snd: st
+        }
         Cons(ps, pss) => match ks {
           Nil => Pair {
             fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
@@ -688,8 +695,6 @@ mutual {
   }
 }
 
-// ---- functions and the program ------------------------------------------------------------
-
 pub fn c_bad(st: CSt): Option(Text) {
   match st {
     Cst(slots, count, boxed, extra, base, bad) => bad
@@ -702,12 +707,20 @@ pub fn c_extra(st: CSt): List(MFn) {
   }
 }
 
+// The end of a function drops the parameters it owns: a `MutexGuard` passed by value.
+pub fn c_param_clears(params: List(Nat), slot: Nat, st: CSt, k: MCode): MCode {
+  match params {
+    Nil => k
+    Cons(p, rest) => McClear(slot, c_is_boxed(st, p), c_param_clears(rest, Succ(slot), st, k))
+  }
+}
+
 // A function: its parameters take the first slots.
 pub fn c_fn(f: CFn, st: CSt): Pair(MFn, CSt) {
   match f {
     Cfn(params, body) => {
       let inner := c_with_slots(st, c_fresh(params, 0), List::length(params), c_boxed(body, Nil))
-      match c_expr(100000000, body, McRet, inner) {
+      match c_expr(100000000, body, c_param_clears(params, 0, inner, McRet), inner) {
         Cr(bc, st2) => match c_box_all(params, st2, bc) {
           Cr(bc2, st3) => match c_slots_of(st3) {
             Pair { fst: s, snd: cb } => match cb {
@@ -733,7 +746,6 @@ pub fn c_fns(fs: List(CFn), st: CSt): Pair(List(MFn), CSt) {
 
 pub(open) inductive CResult: Type {
   COk(p: MProgram): CResult
-  // What the machine cannot run yet.
   CUnsupported(what: Text): CResult
 }
 

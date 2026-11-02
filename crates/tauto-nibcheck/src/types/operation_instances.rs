@@ -1,5 +1,3 @@
-//! Checked, directly determined instances of parameterized operations.
-
 use super::*;
 
 /// What the bounded, directly executed body establishes about an arm.
@@ -137,7 +135,6 @@ impl Checker {
         self.instantiate_operation_with(sig, type_args)
     }
 
-    /// An operation's signature at the given type arguments, one per generic.
     pub(super) fn instantiate_operation_with(
         &mut self,
         sig: &EffectSig,
@@ -462,14 +459,20 @@ mod tests {
     use super::*;
 
     fn checked(case: &str) -> (Program, TypeReport) {
-        let source = crate::types::operation_instances::case_inputs::source_static("types/operation-instances.eure", case);
+        let source = crate::types::operation_instances::case_inputs::source_static(
+            "types/operation-instances.eure",
+            case,
+        );
         let program = crate::surface::parse_program_as_written(source).unwrap();
         let report = check_program(&program);
         (program, report)
     }
 
     fn fixture(name: &str) -> (Program, TypeReport) {
-        let source = crate::types::operation_instances::case_inputs::fixture_static("types/operation-instances.eure", name);
+        let source = crate::types::operation_instances::case_inputs::fixture_static(
+            "types/operation-instances.eure",
+            name,
+        );
         let program = crate::surface::parse_program_as_written(source).unwrap();
         let report = check_program(&program);
         (program, report)
@@ -787,61 +790,118 @@ mod tests {
 mod case_inputs {
     pub fn fixture_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("types/operation-instances.eure", "operation-instance-equal-payloads-have-distinct-answer-arguments") => r#"effect convert<A, B>(value: A): B
+            (
+                "types/operation-instances.eure",
+                "operation-instance-equal-payloads-have-distinct-answer-arguments",
+            ) => {
+                r#"effect convert<A, B>(value: A): B
 handle {
   let number: i64 := perform convert(true)
   let text: Text := perform convert(true)
   true
-} with { ∀ A, B. convert<A, B>(_), k => true }"#,
-        ("types/operation-instances.eure", "operation-instance-mutable-storage-is-not-replayed") => r#"effect identity<A>(value: A): A
+} with { ∀ A, B. convert<A, B>(_), k => true }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-mutable-storage-is-not-replayed",
+            ) => {
+                r#"effect identity<A>(value: A): A
 let result := handle {
   var value := perform identity(7)
   value
-} with { ∀ A. identity<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-latent-body-is-not-a-request") => r#"effect identity<A>(value: A): A
+} with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-latent-body-is-not-a-request",
+            ) => {
+                r#"effect identity<A>(value: A): A
 let result := handle {
   fn unused(): Text { perform identity("latent") }
   perform identity(7)
-} with { ∀ A. identity<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-phantom-argument-is-not-invented") => r#"effect phantom<A>(value: i64): i64
-let result := handle { perform phantom(7) } with { phantom(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-rigid-outer-parameter-is-owned") => r#"effect identity<A>(value: A): A
+} with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-phantom-argument-is-not-invented",
+            ) => {
+                r#"effect phantom<A>(value: i64): i64
+let result := handle { perform phantom(7) } with { phantom(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-rigid-outer-parameter-is-owned",
+            ) => {
+                r#"effect identity<A>(value: A): A
 fn relay<T>(input: T): T {
   handle { perform identity(input) } with { identity<T>(value), k => k(value) }
-}"#,
-        ("types/operation-instances.eure", "operation-instance-product-is-not-owned-evidence") => r#"effect identity<A>(value: A): A
+}"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-product-is-not-owned-evidence",
+            ) => {
+                r#"effect identity<A>(value: A): A
 let callback := () => "kept"
-let product := callback × true
-let result := handle { perform identity(product) } with { ∀ A. identity<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-nominal-fields-are-owned-evidence") => r#"struct Holder { callback: () -> Text }
+let product := #(callback, true)
+let result := handle { perform identity(product) } with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-nominal-fields-are-owned-evidence",
+            ) => {
+                r#"struct Holder { callback: () -> Text }
 struct Wrapped { holder: Holder }
 effect identity<A>(value: A): A
 let wrapped := Wrapped { holder: Holder { callback: () => "kept" } }
-let result := handle { perform identity(wrapped) } with { ∀ A. identity<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-return-storage-is-not-replayed") => r#"linear struct Token {}
+let result := handle { perform identity(wrapped) } with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-return-storage-is-not-replayed",
+            ) => {
+                r#"linear struct Token {}
 effect identity<A>(): A
 let result := handle { perform identity() } with {
   return value => { var saved := value; 7 }
   identity<Token>(), k => k(Token {})
-}"#,
-        ("types/operation-instances.eure", "operation-instance-result-only-requests-remain-distinct") => r#"effect supply<A>(): A
+}"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-result-only-requests-remain-distinct",
+            ) => {
+                r#"effect supply<A>(): A
 handle {
   let number: i64 := perform supply()
   let text: Text := perform supply()
   true
-} with { ∀ A. supply<A>(), k => true }"#,
-        ("types/operation-instances.eure", "operation-instance-nested-handler-is-not-a-direct-summary") => r#"effect identity<A>(value: A): A
+} with { ∀ A. supply<A>(), k => true }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-nested-handler-is-not-a-direct-summary",
+            ) => {
+                r#"effect identity<A>(value: A): A
 effect ask(): i64
 let result := handle {
   handle { perform ask() } with { ask(), k => k(perform identity(7)) }
-} with { ∀ A. identity<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-user-show-is-not-builtin") => r#"effect show<A>(value: A): A
-let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-captured-cell-is-not-owned-evidence") => r#"effect identity<A>(value: A): A
+} with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            ("types/operation-instances.eure", "operation-instance-user-show-is-not-builtin") => {
+                r#"effect show<A>(value: A): A
+let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-captured-cell-is-not-owned-evidence",
+            ) => {
+                r#"effect identity<A>(value: A): A
 var text: Text := "kept"
 let callback := () => text
-let result := handle { perform identity(callback) } with { ∀ A. identity<A>(value), k => k(value) }"#,
-        _ => panic!("no copied input {file}/{name}"),
+let result := handle { perform identity(callback) } with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]
@@ -850,79 +910,138 @@ let result := handle { perform identity(callback) } with { ∀ A. identity<A>(va
     }
     pub fn source_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("types/operation-instances.eure", "operation-instance-linear-wildcard-is-rejected") => r#"linear struct Token {}
+            (
+                "types/operation-instances.eure",
+                "operation-instance-linear-wildcard-is-rejected",
+            ) => {
+                r#"linear struct Token {}
 effect second<A, B>(first: A, second: B): B
 let result := handle { perform second(Token {}, 7) } with {
   second<Token, i64>(_, value), k => k(value)
-}"#,
-        ("types/operation-instances.eure", "operation-instance-nested-linear-wildcard-is-rejected") => r#"linear struct Token {}
+}"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-nested-linear-wildcard-is-rejected",
+            ) => {
+                r#"linear struct Token {}
 struct Wrapped(A: Type) { value: A }
 effect second<A, B>(first: Wrapped(A), second: B): B
 let token: Token := Token {}
 let wrapped: Wrapped(Token) := Wrapped { value: token }
 let result := handle { perform second(wrapped, 7) } with {
   second<Token, i64>(Wrapped { value: _ }, value), k => k(value)
-}"#,
-        ("types/operation-instances.eure", "operation-instance-nested-linear-return-builds-with-its-instance") => r#"linear struct Token {}
+}"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-nested-linear-return-builds-with-its-instance",
+            ) => {
+                r#"linear struct Token {}
 struct Wrapped(A: Type) { value: A }
 effect supply<A>(): A
 let result := handle { let w: Wrapped(Token) := perform supply(); w } with {
   return Wrapped { value: _ } => 7
   supply<Wrapped(Token)>(), k => k(Wrapped { value: Token {} })
-}"#,
-        ("types/operation-instances.eure", "operation-instance-independent-parameters-and-wildcard") => r#"effect second<A, B>(first: A, second: B): B
+}"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-independent-parameters-and-wildcard",
+            ) => {
+                r#"effect second<A, B>(first: A, second: B): B
 let result := handle { perform second("kept", 7) } with {
   second<Text, i64>(_, value), k => k(value)
 }
-perform show("answer", result)"#,
-        ("types/operation-instances.eure", "operation-instance-result-only-singleton") => r#"effect supply<A>(): A
+perform show("answer", result)"#
+            }
+            ("types/operation-instances.eure", "operation-instance-result-only-singleton") => {
+                r#"effect supply<A>(): A
 let result: i64 := handle { perform supply() } with { supply<i64>(), k => k(7) }
-perform show("answer", result)"#,
-        ("types/operation-instances.eure", "operation-instance-indeterminate-integers-keep-frontend-behavior") => r#"effect identity<A>(value: A): A
+perform show("answer", result)"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-indeterminate-integers-keep-frontend-behavior",
+            ) => {
+                r#"effect identity<A>(value: A): A
 let result := handle {
   if true { perform identity(7) } else { perform identity(8) }
 } with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)"#,
-        ("types/operation-instances.eure", "operation-instance-host-wrapper-keeps-signatures") => r#"effect identity<A>(value: A): A
+perform show("answer", result)"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-host-wrapper-keeps-signatures",
+            ) => {
+                r#"effect identity<A>(value: A): A
 effect keep<B>(fixed: i64 | Text, value: B): B
 let number: i64 := 7
 let result := handle { perform identity(number) } with { ∀ A. identity<A>(value), k => k(value) }
 let kept := handle { perform keep(number, true) } with { ∀ B. keep<B>(_, value), k => k(value) }
 perform stdout("host\n")
 perform show("answer", result)
-perform show("kept", kept)"#,
-        ("types/operation-instances.eure", "operation-instance-independent-parameters-cannot-collapse") => r#"effect second<A, B>(first: A, second: B): B
+perform show("kept", kept)"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-independent-parameters-cannot-collapse",
+            ) => {
+                r#"effect second<A, B>(first: A, second: B): B
 let result := handle { perform second("kept", 7) } with {
   second<Text, i64>(first, second), k => k(first)
-}"#,
-        ("types/operation-instances.eure", "operation-instance-distinct-requests-remain-a-rust-boundary") => r#"effect identity<A>(value: A): A
+}"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-distinct-requests-remain-a-rust-boundary",
+            ) => {
+                r#"effect identity<A>(value: A): A
 handle {
   let number: i64 := perform identity(7)
   let text: Text := perform identity("kept")
   perform show("number", number)
   perform show("text", text)
-} with { ∀ A. identity<A>(value), k => k(value) }"#,
-        ("types/operation-instances.eure", "operation-instance-builtin-show-keeps-erased-payloads") => r#"let result := handle {
+} with { ∀ A. identity<A>(value), k => k(value) }"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-builtin-show-keeps-erased-payloads",
+            ) => {
+                r#"let result := handle {
   perform show("number", 7)
   perform show("text", "kept")
   9
 } with { ∀ A. show<A>(_, _), k => k(#()) }
-perform show("answer", result)"#,
-        ("types/operation-instances.eure", "operation-instance-opaque-callback-keeps-javascript-behavior") => r#"effect identity<A>(value: A): A
+perform show("answer", result)"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-opaque-callback-keeps-javascript-behavior",
+            ) => {
+                r#"effect identity<A>(value: A): A
 let action := () => perform identity(7)
 let result := handle { action() } with { ∀ A. identity<A>(value), k => k(value) }
-perform show("answer", result)"#,
-        ("types/operation-instances.eure", "operation-instance-linear-return-wildcard-builds-with-its-instance") => r#"linear struct Token {}
+perform show("answer", result)"#
+            }
+            (
+                "types/operation-instances.eure",
+                "operation-instance-linear-return-wildcard-builds-with-its-instance",
+            ) => {
+                r#"linear struct Token {}
 effect supply<A>(): A
 let result := handle { let t: Token := perform supply(); t } with {
   return _ => 7
   supply<Token>(), k => k(Token {})
-}"#,
-        ("types/operation-instances.eure", "operation-instance-narrowed-arm-mismatch") => r#"effect identity<A>(value: A): A
+}"#
+            }
+            ("types/operation-instances.eure", "operation-instance-narrowed-arm-mismatch") => {
+                r#"effect identity<A>(value: A): A
 let result := handle { perform identity("kept") } with {
   identity<Text>(value), k => k(value + 1)
-}"#,
-        _ => panic!("no copied input {file}/{name}"),
+}"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

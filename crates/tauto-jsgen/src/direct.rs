@@ -23,7 +23,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use tauto_nir::cps::data_owner;
 use tauto_nir::*;
 
-/// Whether `ty` is an integer, or a borrow of one.
 fn int(ty: &Ty) -> bool {
     match ty {
         Ty::Int(_) => true,
@@ -128,12 +127,10 @@ impl<'p> Values<'p> {
         matches!(ty, Ty::Vec(_) | Ty::Buf) && self.ty(ty)
     }
 
-    /// Whether a value of type `ty` is a cell.
     fn cell(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::RefMut(inner) if !self.object(inner))
     }
 
-    /// Whether `local` holds a cell.
     fn is_cell(&self, local: &Local, ty: &Ty) -> bool {
         local.storage() == Storage::BorrowMut && !self.object(strip(ty))
     }
@@ -190,7 +187,6 @@ impl<'p> Values<'p> {
         }
     }
 
-    /// The positions along `path` from a value of type `ty`.
     fn path(&self, ty: &Ty, path: &[FieldRef]) -> Option<Vec<usize>> {
         let mut ty = ty.clone();
         let mut out = Vec::new();
@@ -257,7 +253,6 @@ fn option_pattern(p: &Pat) -> bool {
     }
 }
 
-/// Whether `p` binds a name mutably.
 fn binds_mutably(p: &Pat) -> bool {
     match p {
         Pat::Bind(local, _) => local.storage() == Storage::BorrowMut,
@@ -266,7 +261,6 @@ fn binds_mutably(p: &Pat) -> bool {
     }
 }
 
-/// `ty` without a borrow around it.
 fn strip(ty: &Ty) -> &Ty {
     match ty {
         Ty::Ref(inner) | Ty::RefMut(inner) => inner,
@@ -353,7 +347,6 @@ enum Builtin {
     Concat,
     TextCompare,
     TextOfInt,
-    /// A bitwise operation on a word, written inline.
     Bits,
     /// `pureBuiltin` in `builtins.js`.
     Pure,
@@ -576,7 +569,6 @@ impl Writer<'_> {
             ExprKind::Float(x) => crate::cps::float_literal(*x),
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Text(t) => quote(t),
-            // A cell read as its value.
             ExprKind::Read { local, how }
                 if self.values.is_cell(local, &self.locals[&local.id])
                     && !self.values.cell(&e.ty) =>
@@ -751,7 +743,10 @@ impl Writer<'_> {
                             let (x, y) = (&a[0], &a[1]);
                             match &name[..] {
                                 "U32::and" | "U32::or" | "U32::xor" | "U32::shl" | "U32::shr" => {
-                                    format!("u32{}({x},{y})", &name[4..])
+                                    format!(
+                                        "u32{}({x},{y})",
+                                        name.strip_prefix("U32::").unwrap_or(name)
+                                    )
                                 }
                                 _ => format!(
                                     "small(pureBuiltin({},[big({x}),big({y})]))",
@@ -1241,4 +1236,42 @@ pub fn write(pkg: &Package, f: &FnInst, cps: &str) -> R<String> {
         borrowed,
         id = f.id
     ))
+}
+
+/// Whether `f` only builds a value out of literals (a table, say): it takes
+/// nothing, calls nothing and loops nowhere, so it spends no fuel and its
+/// continuation form is its direct form run at once. Such a function is not
+/// written twice.
+pub fn constant(f: &FnInst) -> bool {
+    if !f.params.is_empty() || !f.generics.is_empty() {
+        return false;
+    }
+    let mut only = true;
+    f.body.walk(&mut |e| {
+        only &= matches!(
+            e.kind,
+            ExprKind::Unit
+                | ExprKind::Int(_)
+                | ExprKind::Float(_)
+                | ExprKind::Bool(_)
+                | ExprKind::Text(_)
+                | ExprKind::Ctor { .. }
+                | ExprKind::Block(_)
+        );
+    });
+    only
+}
+
+/// The continuation form of a function `constant` accepts: the direct form run
+/// at once.
+pub fn constant_cps(f: &FnInst) -> String {
+    let value = if int(&f.ret) {
+        format!("big(d{}())", f.id)
+    } else {
+        format!("d{}()", f.id)
+    };
+    format!(
+        "\nfunction g{}(c,args,k){{return more(()=>k(c,{value}));}}\n",
+        f.id
+    )
 }

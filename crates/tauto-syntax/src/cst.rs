@@ -33,7 +33,6 @@ impl Cst {
 
 struct Frame {
     non_terminal: u32,
-    /// Each child, paired with whether it holds a token that is not skipped.
     children: Vec<(Cst, bool)>,
 }
 

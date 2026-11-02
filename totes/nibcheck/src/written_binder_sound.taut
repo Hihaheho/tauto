@@ -1,6 +1,12 @@
 import "rules_written_binders.taut"
 import "unify_sound.taut"
 import "types_decl.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "../../surface/src/surface.taut"
 
 pub fn written_binder_kind_lookup(name: Text, o: Option(Kind)): Option(Pair(Text, Kind)) {
   match o: Option(Pair(Text, Kind)) {
@@ -222,10 +228,10 @@ pub theorem pi_binder_absent(
 
 pub fn written_binders_prefix(
   r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
-): List(Pair(Text, Kind)) { (r: List(Pair(Text, Kind))) }
+): List(Pair(Text, Kind)) { r.fst }
 pub fn written_binders_suffix(
   r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
-): List(SurfaceParam) { (r: List(SurfaceParam)) }
+): List(SurfaceParam) { r.snd }
 pub def WrittenBinderSplit(
   ps: List(SurfaceParam),
   r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
@@ -234,7 +240,7 @@ pub def WrittenBinderSplit(
 pub fn written_binders_cons_result(
   b: Pair(Text, Kind),
   r: Pair(List(Pair(Text, Kind)), List(SurfaceParam))
-): Pair(List(Pair(Text, Kind)), List(SurfaceParam)) { Pair { fst: Cons(b, (r: List(Pair(Text, Kind)))), snd: (r: List(SurfaceParam)) } }
+): Pair(List(Pair(Text, Kind)), List(SurfaceParam)) { Pair { fst: Cons(b, r.fst), snd: r.snd } }
 pub fn written_binders_choice(
   p: SurfaceParam,
   rest: List(SurfaceParam),
@@ -333,11 +339,11 @@ pub theorem written_binders_skip<ps: List(
 ), suffix: List(
   SurfaceParam
 )>(
-  split: WrittenBindersPrefix(ps, bs, Suffix),
+  split: WrittenBindersPrefix(ps, bs, suffix),
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_written_params(ps, c, generics, list_len(bs)) = ck_written_params(Suffix, c, generics, 0) {
-  match MkSplit: ck_written_params(ps, c, generics, list_len(bs)) = ck_written_params(Suffix, c, generics, 0) {
+): ck_written_params(ps, c, generics, list_len(bs)) = ck_written_params(suffix, c, generics, 0) {
+  match split: ck_written_params(ps, c, generics, list_len(bs)) = ck_written_params(suffix, c, generics, 0) {
     WrittenBindersNil => Refl
     WrittenBindersStop(first, rest, ordinary) => Refl
     WrittenBindersCons(first, rest, b, tail, remaining, head, split_tail) => Eq::trans(

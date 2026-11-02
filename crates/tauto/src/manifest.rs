@@ -1,7 +1,7 @@
 //! `Tauto.eure`: the tote's manifest.
 //!
 //! ```eure
-//! package { name = "files-demo", version = "0.1.0", sources = ["src"] }
+//! package { name = "files-demo", version = "0.1.0", additional-sources = ["proof"] }
 //! rust {
 //!   bridge = "bridge"
 //!   executor = "tokio"
@@ -9,6 +9,10 @@
 //!   types { File = "std::fs::File" }
 //!   extern { file_open = "std::fs::File::open" }
 //!   dependencies { regex = "1.11.1" }
+//! }
+//! check {
+//!   time-limit = 10
+//!   slow { "src/slow.taut" = 120 }
 //! }
 //! dependencies {
 //!   text { path = "../text" }
@@ -26,6 +30,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauto_message::msg;
 
 use eure_document::document::EureDocument;
@@ -42,17 +47,46 @@ pub struct Entry {
     pub line: usize,
 }
 
+/// How long checking one source file may take when `check.time-limit` does
+/// not say.
+pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckSection {
+    pub time_limit: Option<Duration>,
+    /// `slow`: files that may take longer, by path from the manifest's
+    /// directory, each with its own limit.
+    pub slow: BTreeMap<String, Duration>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Package {
     pub name: String,
     pub version: String,
-    pub sources: Vec<String>,
+    /// `additional-sources`: directories besides the default
+    /// source directory `src`, by path from the manifest's directory. A file
+    /// under one is named, to a dependent, by its path from the tote's root
+    /// without the extension (`proof/compiler.taut` is `compiler::proof::compiler`);
+    /// a file under `src` by its path from `src` (`src/compiler.taut` is
+    /// `compiler::compiler`).
+    pub additional_sources: Vec<String>,
 }
 
-/// The `rust` section, and the files it points to merged in.
+/// The default source directory every tote has, not written in `Tauto.eure`.
+pub const DEFAULT_SOURCE: &str = "src";
+
+impl Package {
+    /// Every source of the tote, by path from its directory: `src`, then the
+    /// additional sources.
+    pub fn source_paths(&self) -> Vec<String> {
+        std::iter::once(DEFAULT_SOURCE.to_string())
+            .chain(self.additional_sources.iter().cloned())
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RustSection {
-    /// The directory of the bridge crate, from the tote's root.
     pub bridge: Option<String>,
     /// Where the bodies of tasks run: `"tokio"` (the default: many tasks on
     /// each thread of a reactor) or `"threads"` (a thread for each task).
@@ -71,7 +105,6 @@ pub struct RustSection {
     /// For an extern, which of its parameters and result are `usize` /
     /// `isize` in Rust: `p1 q2 r`.
     pub marks: BTreeMap<String, Entry>,
-    /// The right-hand side of a `[dependencies]` line, as TOML.
     pub dependencies: BTreeMap<String, Entry>,
 }
 
@@ -86,7 +119,6 @@ pub struct JavaScriptSection {
     /// Fieldless structs whose values are host objects, each with the
     /// binding that runs when Tauto drops its last reference.
     pub types: BTreeMap<String, Entry>,
-    /// Functions that `instantiate` exports, by name.
     pub exports: Vec<String>,
     /// Externs whose callbacks the first host value argument keeps.
     pub retain: Vec<String>,
@@ -98,7 +130,7 @@ pub struct JavaScriptSection {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Manifest {
     pub package: Package,
-    /// The totes it depends on, by name.
+    pub check: CheckSection,
     pub dependencies: Vec<(String, Dependency)>,
     pub rust: RustSection,
     pub javascript: JavaScriptSection,
@@ -114,7 +146,6 @@ pub struct Manifest {
     /// `trust { commands { bk { tote = "bikkuri", read = ["src"] } } }`. Only
     /// the project's own manifest is read for it, as for `trust_extern`.
     pub trust_commands: BTreeMap<String, CommandTrust>,
-    /// Where `Tauto.eure` is.
     pub file: PathBuf,
 }
 
@@ -124,11 +155,9 @@ pub struct Command {
     /// The program it runs, from the tote's root: a source file outside the
     /// tote's `sources`, so that it is never part of what a dependent reads.
     pub main: String,
-    /// One line on what it does, for `tauto --help` and `tauto audit`.
     pub about: String,
 }
 
-/// What a project grants one command it runs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandTrust {
     /// The tote whose command this is. The grant belongs to this tote's
@@ -140,7 +169,6 @@ pub struct CommandTrust {
     pub allow: Vec<(String, Option<Vec<String>>)>,
 }
 
-/// Where a dependency comes from.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Dependency {
     /// A directory, from the depending tote: `text { path = "../text" }`.
@@ -184,7 +212,9 @@ pub fn dependency_dir(dir: &Path, name: &str, dependency: &Dependency) -> Result
 pub fn read(dir: &Path) -> Result<Manifest, String> {
     let file = dir.join("Tauto.eure");
     let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-    parse(&text, &file)
+    let m = parse(&text, &file)?;
+    check_sources(dir, &m)?;
+    Ok(m)
 }
 
 /// Reads `Tauto.eure` in `dir`, and the bindings it names.
@@ -192,6 +222,7 @@ pub fn load(dir: &Path) -> Result<Manifest, String> {
     let file = dir.join("Tauto.eure");
     let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut m = parse(&text, &file)?;
+    check_sources(dir, &m)?;
     let bindings = m.rust.bindings.clone();
     for b in bindings {
         let path = dir.join(&b);
@@ -200,6 +231,47 @@ pub fn load(dir: &Path) -> Result<Manifest, String> {
         merge_bindings(&mut m.rust, &text, &path)?;
     }
     Ok(m)
+}
+
+/// The additional sources of the tote in `dir` name no file twice: none is
+/// `src` or inside it, and `src` has no entry of the module path an
+/// additional source names (a directory `src/proof` and the additional source
+/// `proof` would both name `tote::proof::...`).
+fn check_sources(dir: &Path, m: &Manifest) -> Result<(), String> {
+    let fail = |e: String| format!("{}: {e}", m.file.display());
+    for source in &m.package.additional_sources {
+        let path = Path::new(source);
+        let normal = !source.is_empty()
+            && path
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !normal {
+            return Err(fail(
+                msg!("tauto-manifest-source-path", source = source.as_str()).to_string(),
+            ));
+        }
+        if dir.join(path).is_file() {
+            return Err(fail(
+                msg!("tauto-manifest-source-is-file", source = source.as_str()).to_string(),
+            ));
+        }
+        if path.starts_with(DEFAULT_SOURCE) {
+            return Err(fail(
+                msg!("tauto-manifest-source-in-src", source = source.as_str()).to_string(),
+            ));
+        }
+        let first = path
+            .components()
+            .next()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if dir.join(DEFAULT_SOURCE).join(&first).is_dir() {
+            return Err(fail(
+                msg!("tauto-manifest-source-collides", source = source.as_str()).to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `Tauto.eure` alone, with its own `rust.types` and `rust.extern`.
@@ -219,9 +291,35 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                     match k.as_str() {
                         "name" => out.package.name = text_of(&doc, v).map_err(&fail)?,
                         "version" => out.package.version = text_of(&doc, v).map_err(&fail)?,
-                        "sources" => out.package.sources = list_of(&doc, v).map_err(&fail)?,
+                        "sources" => {
+                            return Err(fail(msg!("tauto-manifest-sources-removed").to_string()));
+                        }
+                        "additional-sources" => {
+                            out.package.additional_sources = list_of(&doc, v).map_err(&fail)?;
+                        }
                         other => {
                             return Err(msg!("tauto-manifest-unknown-key", key = other).to_string());
+                        }
+                    }
+                }
+            }
+            "check" => {
+                for (k, v) in map(&doc, id).map_err(&fail)? {
+                    match k.as_str() {
+                        "time-limit" => {
+                            out.check.time_limit = Some(seconds_of(&doc, v).map_err(&fail)?);
+                        }
+                        "slow" => {
+                            for (path, node) in map(&doc, v).map_err(&fail)? {
+                                let secs = seconds_of(&doc, node)
+                                    .map_err(|e| fail(format!("check.slow.{path}: {e}")))?;
+                                out.check.slow.insert(path, secs);
+                            }
+                        }
+                        other => {
+                            return Err(
+                                msg!("tauto-manifest-unknown-check-key", key = other).to_string()
+                            );
                         }
                     }
                 }
@@ -484,6 +582,21 @@ fn text_of(doc: &EureDocument, id: NodeId) -> Result<String, String> {
     }
 }
 
+/// A positive, finite number of seconds, written as an integer or a decimal.
+fn seconds_of(doc: &EureDocument, id: NodeId) -> Result<Duration, String> {
+    let secs = match &doc.node(id).content {
+        NodeValue::Primitive(P::Integer(n)) => n.to_string().parse::<f64>().ok(),
+        NodeValue::Primitive(P::F64(x)) => Some(*x),
+        NodeValue::Primitive(P::F32(x)) => Some(f64::from(*x)),
+        NodeValue::Primitive(P::Decimal(d)) => d.to_string().parse::<f64>().ok(),
+        _ => None,
+    };
+    match secs {
+        Some(s) if s.is_finite() && s > 0.0 && s < 1e9 => Ok(Duration::from_secs_f64(s)),
+        _ => Err(msg!("tauto-manifest-expected-seconds").to_string()),
+    }
+}
+
 fn list_of(doc: &EureDocument, id: NodeId) -> Result<Vec<String>, String> {
     let NodeValue::Array(items) = &doc.node(id).content else {
         return Err(msg!("tauto-manifest-expected-texts").to_string());
@@ -491,7 +604,6 @@ fn list_of(doc: &EureDocument, id: NodeId) -> Result<Vec<String>, String> {
     items.iter().map(|i| text_of(doc, *i)).collect()
 }
 
-/// The line of `key = …` in a block named `section`, or 1.
 fn line_of(text: &str, section: &str, key: &str) -> usize {
     let mut in_section = false;
     for (i, line) in text.lines().enumerate() {
@@ -538,7 +650,6 @@ fn entries(
     Ok(out)
 }
 
-/// `path`, written in the manifest `file`, as an absolute path.
 fn from_tote(file: &Path, path: &str) -> PathBuf {
     let dir = file.parent().unwrap_or(Path::new(""));
     let dir = if dir.is_absolute() {
@@ -741,7 +852,6 @@ fn dependencies(
     Ok(out)
 }
 
-/// `{ main = "cmd/bk.taut", about = "…" }`.
 fn command(doc: &EureDocument, id: NodeId) -> Result<Command, String> {
     let (mut main, mut about) = (None, None);
     for (k, v) in map(doc, id)? {
@@ -832,4 +942,53 @@ fn valid_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// How long checking the file `path` may take: its entry in `check.slow` of
+/// the nearest `Tauto.eure` above it, else that manifest's `check.time-limit`,
+/// else [`DEFAULT_TIME_LIMIT`].
+///
+/// Every `check.slow` entry of that manifest names an existing file and a
+/// limit above the manifest's time limit; otherwise it is an error.
+pub fn time_limit(path: &Path) -> Result<Duration, String> {
+    let path = crate::program::canonical_path(path);
+    let Some(file) = path
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("Tauto.eure"))
+        .find(|f| f.is_file())
+    else {
+        return Ok(DEFAULT_TIME_LIMIT);
+    };
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let manifest = parse(&text, &file)?;
+    let dir = file.parent().unwrap_or(Path::new(""));
+    let default = manifest.check.time_limit.unwrap_or(DEFAULT_TIME_LIMIT);
+    let mut own = None;
+    for (name, limit) in &manifest.check.slow {
+        let listed = dir.join(name);
+        if !listed.is_file() {
+            return Err(format!(
+                "{}: {}",
+                file.display(),
+                msg!("tauto-manifest-slow-missing", path = name.as_str())
+            ));
+        }
+        if *limit <= default {
+            return Err(format!(
+                "{}: {}",
+                file.display(),
+                msg!(
+                    "tauto-manifest-slow-not-slower",
+                    path = name.as_str(),
+                    limit = limit.as_secs_f64().to_string(),
+                    default = default.as_secs_f64().to_string()
+                )
+            ));
+        }
+        if crate::program::canonical_path(&listed) == path {
+            own = Some(*limit);
+        }
+    }
+    Ok(own.unwrap_or(default))
 }

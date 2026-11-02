@@ -11,14 +11,12 @@ use crate::macros::syn::SpanTable;
 use crate::rows::Row;
 use tauto_message::{Message, msg};
 
-/// One call of a typed macro in a declaration.
 struct Site {
     name: String,
     call: Span,
     arg: SurfaceTerm,
 }
 
-/// What a checked declaration shows of itself.
 struct Checked {
     report: TypeReport,
     rows: RowReport,
@@ -45,21 +43,25 @@ impl Expander<'_> {
         if reg.file >= self.file {
             return false;
         }
+        if let Some(typed) = self.typed_macros.get(name) {
+            return *typed;
+        }
         let function = reg.function.clone();
-        self.library();
+        self.library_holding(&function);
         let Some(lib) = self.lib.as_ref() else {
             return false;
         };
-        match lib.report.schemes.get(&function).map(|s| &s.ty) {
+        let typed = match lib.report.schemes.get(&function).map(|s| &s.ty) {
             Some(Ty::Fn(params, _, _)) => matches!(
                 params.as_slice(),
                 [p] if matches!(p.unborrowed(), Ty::Named(n, _) if n == "Judgement")
             ),
             _ => false,
-        }
+        };
+        self.typed_macros.insert(name.to_string(), typed);
+        typed
     }
 
-    /// Runs the typed macros of the declarations of this file, one by one.
     pub(super) fn typed_pass(&mut self, stmts: Vec<Stmt>) -> Vec<Stmt> {
         if self.macros.is_empty() {
             return stmts;
@@ -109,6 +111,8 @@ impl Expander<'_> {
     }
 
     fn typed_decl(&mut self, d: Stmt, before: &[Stmt], typed: &HashSet<String>) -> Stmt {
+        // The declaration is checked with every file before this one.
+        self.current_library();
         if let Some(problem) = self.lib.as_ref().and_then(|l| l.problem.clone()) {
             let mut probe = d.clone();
             let mut first = None;
@@ -129,7 +133,6 @@ impl Expander<'_> {
             all.extend(before.iter().cloned());
             self.elab_prefix = crate::surface::modules::resolve_in_prelude(all).0;
         }
-        // 1. The declaration without its typed calls.
         let mut sites: Vec<Site> = Vec::new();
         let mut plain = d.clone();
         walk::stmt(&mut plain, &mut |t| {
@@ -164,7 +167,6 @@ impl Expander<'_> {
             self.error("macro.fragment", msg!("macro-fragment"), at);
             return plain;
         }
-        // 2. It has to check as it is.
         let first = self.check(before, &plain);
         if !first.report.errors.is_empty() {
             // A function of the kernel's language is checked by the kernel.
@@ -176,7 +178,6 @@ impl Expander<'_> {
         if !self.lib_ok() {
             return plain;
         }
-        // 3. Run each macro on its expression.
         let mut outputs: Vec<(SurfaceTerm, Vec<String>)> = Vec::new();
         let mut made: Vec<Expansion> = Vec::new();
         for site in &sites {
@@ -194,7 +195,6 @@ impl Expander<'_> {
                 None => return plain,
             }
         }
-        // 4. Put them in the declaration's place.
         let mut next = d.clone();
         let mut at = 0usize;
         walk::stmt(&mut next, &mut |t| {
@@ -209,9 +209,10 @@ impl Expander<'_> {
                 .chain(before.iter())
                 .chain(std::iter::once(&next)),
         );
-        let mut resolved = scope::resolve(vec![next], &ctors);
+        let mut resolved = scope::resolve_seeing(vec![next], &ctors, &|scopes, name| {
+            self.macro_sees(scopes, name)
+        });
         let next = resolved.pop().expect("one statement");
-        // 5. It has to check again, and mean the same.
         let second = self.check(before, &next);
         if let Some(e) = second.report.errors.first() {
             let at = sites[0].call;
@@ -331,7 +332,7 @@ impl Expander<'_> {
                             site.call,
                         );
                         let lemma = Stmt::Theorem(crate::surface::TheoremDecl {
-            budget: None,
+                            budget: None,
                             vis: Default::default(),
                             decreasing_by: None,
                             name: "macro_proof".into(),
@@ -342,9 +343,11 @@ impl Expander<'_> {
                             span: site.call,
                         });
                         let ctors = ctor_names(self.done.iter().chain(before.iter()));
-                        let lemma = scope::resolve(vec![lemma], &ctors)
-                            .pop()
-                            .expect("one statement");
+                        let lemma = scope::resolve_seeing(vec![lemma], &ctors, &|scopes, name| {
+                            self.macro_sees(scopes, name)
+                        })
+                        .pop()
+                        .expect("one statement");
                         match verdict(&lemma) {
                             Some(Verdict::Checked { .. }) => {}
                             Some(Verdict::Failed(e)) => {
@@ -385,9 +388,11 @@ impl Expander<'_> {
                 .chain(before.iter())
                 .chain(std::iter::once(&next)),
         );
-        let next = scope::resolve(vec![next], &ctors)
-            .pop()
-            .expect("one statement");
+        let next = scope::resolve_seeing(vec![next], &ctors, &|scopes, name| {
+            self.macro_sees(scopes, name)
+        })
+        .pop()
+        .expect("one statement");
         match verdict(&next) {
             Some(Verdict::Checked { .. }) => {}
             Some(Verdict::Failed(e)) if is_type_mismatch(&e.message) => {
@@ -510,7 +515,7 @@ impl Expander<'_> {
         let mut captures = Vec::new();
         let lowered = {
             let spans = &mut self.spans;
-            let mut fresh = |written: u32| spans.fresh(written, id);
+            let mut fresh = |written: u32| spans.fresh(written, id, site.call.start);
             let mut lower = Lower {
                 scope: u64::from(id),
                 fresh: &mut fresh,
@@ -629,9 +634,11 @@ impl Expander<'_> {
         all.extend(before.iter().cloned());
         let (prefix, _) = crate::surface::modules::resolve_in_prelude(all);
         let ctors = ctor_names(self.done.iter().chain(before.iter()));
-        let lemma = scope::resolve(vec![lemma], &ctors)
-            .pop()
-            .expect("one statement");
+        let lemma = scope::resolve_seeing(vec![lemma], &ctors, &|scopes, name| {
+            self.macro_sees(scopes, name)
+        })
+        .pop()
+        .expect("one statement");
         match self
             .checker
             .check_in(&prefix, &lemma)
@@ -663,7 +670,6 @@ impl Expander<'_> {
         self.lib.as_ref().is_some_and(|l| l.problem.is_none())
     }
 
-    /// The type, and the effects, of what the macro made against what it was given.
     fn compare(
         &self,
         site: &Site,
@@ -708,7 +714,6 @@ impl Expander<'_> {
         None
     }
 
-    /// Makes the `Judgement` of the argument, runs the macro, and reads what it made.
     fn run_typed(
         &mut self,
         site: &Site,
@@ -760,7 +765,7 @@ impl Expander<'_> {
         let mut captures = Vec::new();
         let lowered = {
             let spans = &mut self.spans;
-            let mut fresh = |written: u32| spans.fresh(written, id);
+            let mut fresh = |written: u32| spans.fresh(written, id, site.call.start);
             let mut lower = Lower {
                 scope: u64::from(id),
                 fresh: &mut fresh,
@@ -923,8 +928,8 @@ impl Expander<'_> {
         for (id, occurrence) in table.borrow().terms.iter() {
             if let Some(t) = c.report.terms.get(occurrence) {
                 tys.push(Node::product(vec![
-                    (None, "u64", Node::Int(*id as i64)),
                     (None, "SynExpr", type_node(t)?),
+                    (None, "u64", Node::Int(*id as i64)),
                 ]));
             }
         }
@@ -982,10 +987,8 @@ impl Expander<'_> {
     }
 }
 
-/// The `Judgement` of an argument, the atoms of its context, its effects and its judgement.
 type CodeOf = (Node, HashMap<String, u64>, Vec<String>, String);
 
-/// A call of a typed macro with an expression for its argument.
 fn is_site(t: &SurfaceTerm, typed: &HashSet<String>) -> bool {
     matches!(&*t.kind, TermKind::MacroCall { name, arg }
         if typed.contains(split(name).0) && !matches!(&*arg.kind, TermKind::SyntaxLit(_)))
@@ -1019,7 +1022,7 @@ pub(super) fn kernel_decl(d: &Stmt) -> Option<crate::surface::TheoremDecl> {
                 params.push((n.clone(), t.clone()?));
             }
             Some(crate::surface::TheoremDecl {
-            budget: None,
+                budget: None,
                 vis: Default::default(),
                 decreasing_by: None,
                 name: f.name.clone(),
@@ -1034,7 +1037,6 @@ pub(super) fn kernel_decl(d: &Stmt) -> Option<crate::surface::TheoremDecl> {
     }
 }
 
-/// Whether a verdict's message is the kernel's type mismatch.
 fn is_type_mismatch(message: &Message) -> bool {
     // A mismatch may come with lines added after it, as the message of another.
     matches!(

@@ -1,5 +1,6 @@
 import "freevars.taut"
 import "../../surface/src/surface.taut"
+import std::Text
 
 // The syntax of a `direct` operation's arm (`direct.rs`), in the proof
 // language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」): every path of the arm ends in one call
@@ -30,7 +31,6 @@ pub fn dir_any_mentions(ts: List(SurfaceTerm), name: Text): Bool {
   }
 }
 
-// Whether the name occurs in `t`, assigned or read.
 pub fn dir_mentions(t: SurfaceTerm, name: Text): Bool {
   dir_any_mentions(subterms(t, Nil), name)
 }
@@ -70,7 +70,6 @@ pub fn dir_is_call(f: SurfaceTerm, args: List(SurfaceTerm), k: Text): Bool {
   }
 }
 
-// Whether `body` is a tail form for the continuation `k`.
 mutual {
   pub fn dir_is_tail(body: SurfaceTerm, k: Text): Bool {
     match body: Bool {
@@ -130,7 +129,7 @@ mutual {
 pub fn dir_here_lends(t: SurfaceTerm, name: Text): Bool {
   match t.kind: Bool {
     SkBorrow(m, x) => m && match lin_place(x): Bool {
-      Some(p) => (p: Text) == name
+      Some(p) => p.fst == name
       None => false
     }
     SkBlock(stmts) => dir_assigns(stmts, name)

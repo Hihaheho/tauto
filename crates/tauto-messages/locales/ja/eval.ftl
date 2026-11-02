@@ -49,6 +49,7 @@ eval-cell-get-takes-a-cell = cell_get はセルをとる
 eval-cell-set-takes-a-cell = cell_set はセルをとる
 eval-mutex-claim-takes-a-mutex = Mutex.claim は Mutex をとる
 eval-mutex-take-claimed-takes-a-mutex = Mutex.take_claimed は Mutex をとる
+eval-mutex-guard-get-takes-a-guard = MutexGuard.get は MutexGuard をとる
 eval-mutex-take-claimed-of-an-empty = 空の Mutex への Mutex.take_claimed: シグナルが上がっていない
 eval-atomic-fetch-add-takes-an-atomic = Atomic.fetch_add は Atomic をとる
 eval-buf-push-takes-a-buf = Buf.push は Buf をとる

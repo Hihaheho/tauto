@@ -20,14 +20,10 @@ pub use code::{Program, compile};
 pub use host::{Captured, Host, Process};
 pub use value::Error;
 
-/// How a run ended.
 #[derive(Debug)]
 pub enum End {
-    /// The top level returned.
     Done,
-    /// `exit(code)`.
     Exit(i32),
-    /// A run-time error, with its message.
     Error(String),
 }
 

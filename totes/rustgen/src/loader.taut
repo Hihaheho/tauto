@@ -1,5 +1,13 @@
 import "declare.taut"
+import "bindings.taut"
+import "data.taut"
+import "../../surface/src/surface.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
 import std::Text
+import std::TextOps
+import std::Base
 
 pub(open) inductive RustgenSource: Type {
   Mk(id: Text, contents: Text): RustgenSource
@@ -41,7 +49,7 @@ pub fn rustgen_path_parts(parts: List(Text), reverse: List(Text)): RustgenResult
   }
 }
 pub fn rustgen_path_valid(path: Text): Bool {
-  std::prelude::Text::len(path) != 0 && Text::slice_or_empty(path, 0, 1) != "/" &&
+  Text::len(path) != 0 && Text::slice_or_empty(path, 0, 1) != "/" &&
   List::length(text_split(path, "\\")) == 1 && List::length(text_split(path, ":")) == 1 &&
   List::length(text_split(path, "\n")) == 1 && List::length(text_split(path, "\r")) == 1 &&
   List::length(text_split(path, "\t")) == 1 &&
@@ -99,7 +107,7 @@ pub fn rustgen_range_has(id: Text, files: List(RustgenSourceRange)): Bool {
   }
 }
 pub fn rustgen_wire_line(w: RustgenWire): RustgenResult(Pair(Text, RustgenWire)) {
-  match Text::find(w.contents, "\n", w.at): RustgenResult(Pair(Text, RustgenWire)) {
+  match text_find(w.contents, "\n", w.at): RustgenResult(Pair(Text, RustgenWire)) {
     None => RustgenErr("truncated source bundle header")
     Some(end) => RustgenOk(Pair {
       fst: Text::slice_or_empty(w.contents, w.at, end),

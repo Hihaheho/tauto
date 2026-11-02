@@ -1,3 +1,5 @@
+import "../../pargen/src/list.taut"
+
 // The k-tuples of the lookahead analysis. The order of the tuples decides
 // the numbering of the lookahead automata, which is checked against the
 // reference tables.
@@ -68,7 +70,6 @@ pub fn lg_list_eq(xs: List(u64), ys: List(u64)): Bool {
   same
 }
 
-// Whether two sorted lists have nothing in common.
 pub fn lg_disjoint(xs: List(u64), ys: List(u64)): Bool {
   var a := xs
   var b := ys
@@ -96,8 +97,6 @@ pub fn lg_disjoint(xs: List(u64), ys: List(u64)): Bool {
   }
   free
 }
-
-// ---------------------------------------------------------------- tuples
 
 pub fn lg_unpack(packed: u64, n: u64): List(u64) {
   if n == 0 {
@@ -176,7 +175,6 @@ pub fn lg_terms_concat(a: List(u64), b: List(u64), k: u64): List(u64) {
   }
 }
 
-// Tuple `a` followed by tuple `b`, cut at `k`.
 pub fn kt_concat(a: u64, b: u64, k: u64): u64 {
   if kt_complete(a) {
     kt_make(true, kt_terms(a), lg_min(kt_len(a), k))
@@ -189,8 +187,6 @@ pub fn kt_concat(a: u64, b: u64, k: u64): u64 {
 pub fn kt_is_eps(key: u64): Bool {
   not(kt_complete(key)) && lg_is_eps(kt_terms(key))
 }
-
-// ---------------------------------------------------------------- sets
 
 // A set of tuples: the tuples (sorted), the set's `k` and its completeness
 // flag, which is kept as the operations below set it (it is not always what
@@ -209,7 +205,6 @@ pub fn lg_set_end(k: u64): LgSet {
   LgSet { tuples: Cons(kt_make(true, Cons(0, Nil), k), Nil), k: k, done: true }
 }
 
-// The set of one string of terminals read with lookahead `k`.
 pub fn lg_set_of(run: List(u64), k: u64): LgSet {
   let ts := lg_take(run, k)
   let c := lg_terms_complete(ts, k)
@@ -320,7 +315,6 @@ pub fn lg_member(xs: List(u64), v: u64): Bool {
   }
 }
 
-// The union, the flag as it was.
 pub fn lg_set_append(s: LgSet, other: LgSet): LgSet {
   LgSet { tuples: lg_union(s.tuples, other.tuples), k: s.k, done: s.done }
 }

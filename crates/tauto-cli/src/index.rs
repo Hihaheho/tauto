@@ -20,10 +20,8 @@ use totebag_index::explain::{explain, span};
 /// The trust policy beside a project's `Tauto.eure`.
 pub const POLICY_FILE: &str = "Trust.eure";
 
-/// The variable naming the user's policy file.
 const USER_POLICY_VAR: &str = "TAUTO_USER_TRUST";
 
-/// The help of `tauto index`.
 fn help() -> String {
     crate::i18n::t!("index-help")
 }
@@ -88,7 +86,6 @@ fn take_tote(args: &mut Vec<String>) -> Result<PathBuf, String> {
     }
 }
 
-/// Where the user policy comes from.
 pub enum UserSource {
     File(PathBuf),
     /// There is none, at this path if one could be there.
@@ -267,7 +264,6 @@ fn policy_indexes(policy: &Policy) -> Vec<&policy::Trusted> {
     used
 }
 
-/// What `rule` requires, in a line.
 fn requires(rule: &Rule) -> String {
     let names = |ts: Vec<&str>| ts.join(", ");
     let witnesses = rule

@@ -3,6 +3,8 @@ import std::Stack
 import std::Array
 import "../../scan/src/scan.taut"
 import "../../llk/src/llk.taut"
+import "../../text/src/text.taut"
+import std::Base
 
 // The LALR(1) parser that reads the tables of the LALR(1) table generator,
 // in the proof language (`docs/design/self-host.md`). `README.md` says what
@@ -41,7 +43,6 @@ pub(open) inductive LrTables: Type {
     start: Nat,
     terminals: Nat,
     non_terminals: Nat,
-    // The terminals that are skipped in each scanner mode.
     skip: Array(List(Nat)),
     // (state, terminal): 0 none, `s * 4 + 1` shift to `s`, `p * 4 + 2`
     // reduce by `p`, `p * 4 + 3` accept by `p`.
@@ -52,8 +53,6 @@ pub(open) inductive LrTables: Type {
   ): LrTables
 }
 
-// ---- reading the tables ------------------------------------------------------
-
 // The cells, run by run, until `total` are (last first), and where the runs
 // end. Each run fills one cell at least, so `fuel` is `total`.
 pub fn lr_cells_in(
@@ -63,11 +62,11 @@ pub fn lr_cells_in(
   filled: Nat,
   rp: Nat,
   done: List(Nat)
-): Pair(List(Nat), Nat) {
-  match fuel: Pair(List(Nat), Nat) {
-    Zero => Pair { fst: done, snd: rp }
-    Succ(f) => match filled < total: Pair(List(Nat), Nat) {
-      false => Pair { fst: done, snd: rp }
+): List(Nat) × Nat {
+  match fuel: List(Nat) × Nat {
+    Zero => #(done, rp)
+    Succ(f) => match filled < total: List(Nat) × Nat {
+      false => #(done, rp)
       true => lr_cells_in(
         f,
         total,
@@ -105,9 +104,9 @@ pub fn lr_productions_in(
   a: Array(Nat),
   pp: Nat,
   done: List(LrProduction)
-): Pair(List(LrProduction), Nat) {
-  match k: Pair(List(LrProduction), Nat) {
-    Zero => Pair { fst: done, snd: pp }
+): List(LrProduction) × Nat {
+  match k: List(LrProduction) × Nat {
+    Zero => #(done, pp)
     Succ(k2) => lr_productions_in(
       k2,
       a,
@@ -187,8 +186,6 @@ pub fn lr_tokens(&t: LrTables, tokens: List(ScanToken), length: Nat): List(LlkTo
   llk_tokens_in(tokens, t.skip, length, Nil, Nil)
 }
 
-// ---- the stack ---------------------------------------------------------------
-
 pub fn lr_top(states: List(Nat)): Nat {
   match states: Nat {
     Nil => 0
@@ -261,8 +258,6 @@ pub fn lr_expected_in(k: Nat, &t: LrTables, state: Nat, done: List(Nat)): List(N
   }
 }
 
-// ---- parsing -----------------------------------------------------------------
-
 // Where a parse is: the tokens ahead, and the stack as three lists, top
 // first: the states (the first state at the bottom), the symbols and the
 // numbers of their nodes. `nodes` holds the nodes made so far, last first,
@@ -278,7 +273,6 @@ pub(open) inductive LrConf: Type {
   ): LrConf
 }
 
-// What a step gives: where the parse goes on from, or how it ends.
 pub(open) inductive LrNext: Type {
   LrGo(conf: LrConf): LrNext
   LrEnd(run: LrRun): LrNext
@@ -297,7 +291,6 @@ pub fn lr_broken(): LrNext {
   LrEnd(LrStuck(LlkError { at: None, expected: Nil }))
 }
 
-// One step: the action of the state on top for the next token.
 pub fn lr_step(&t: LrTables, c: LrConf): LrNext {
   match c: LrNext {
     Mk(tokens, states, syms, kids, nodes, count) => lr_act(
@@ -575,7 +568,6 @@ pub fn lr_run(fuel: Nat, &t: LrTables, c: LrConf): LrRun {
   }
 }
 
-// A budget of steps from the number of tokens and of non-terminals.
 pub fn lr_fuel(t: LrTables, tokens: List(LlkTok)): Nat {
   (List::length(tokens) + 1) * (t.non_terminals + 1) * 16
 }
@@ -590,9 +582,6 @@ pub fn lr_run_all(fuel: Nat, &t: LrTables, tokens: List(LlkTok)): LrRun {
   )
 }
 
-// ---- the events --------------------------------------------------------------
-
-// What is left to walk: a node, or the close of one.
 pub(open) inductive LrWork: Type {
   LrWNode(index: Nat): LrWork
   LrWClose: LrWork
@@ -642,7 +631,6 @@ pub fn lr_walk(
   }
 }
 
-// The skipped tokens before the end of the input.
 pub fn lr_end_trivia(tokens: List(LlkTok)): List(ScanToken) {
   match tokens: List(ScanToken) {
     Nil => Nil

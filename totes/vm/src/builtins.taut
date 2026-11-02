@@ -1,19 +1,26 @@
 import "mval.taut"
+import "seq.taut"
 import std::SInt
 import std::UInt
+import std::Int
+import std::prelude::Shared
+import std::Base
+import std::Bytes
+import std::Float
+import std::Float32
+import std::Text
+import std::Array
 
 // The runtime library's functions (`Cps::Builtin`), as the other backends' runtimes define
 // them. A builtin is called by its number in `m_builtin_names`. What only the host can do
 // it asks of the shell (`mout_ask`); the tasks' functions are the scheduler's
 // (`machine.taut`).
 
-// What a builtin answers.
 pub(open) inductive MOut: Type {
   MoutVal(v: MVal, cx: MCx): MOut
   MoutErr(message: Text): MOut
   // It performs `op` with no arguments and no resumption (`out_of_bounds`, `missing`).
   MoutPerform(op: Text): MOut
-  // The host answers the request.
   MoutAsk(name: Text, args: List(MVal), cx: MCx): MOut
   MoutExit(code: Int): MOut
   // Starts a task that runs `f`, whose result goes to the pending `p`.
@@ -407,7 +414,6 @@ pub fn m_builtin_names(): List(Text) {
   )
 }
 
-// The builtins only the host answers, by name.
 pub fn m_host_names(): List(Text) {
   Cons(
     "Os::args",
@@ -479,7 +485,10 @@ pub fn m_host_names(): List(Text) {
                                                                       "Os::tls_write",
                                                                       Cons(
                                                                         "Os::tls_shutdown",
-                                                                        Cons("Os::tls_close", Nil)
+                                                                        Cons(
+                                                                          "Os::tls_close",
+                                                                          Cons("Os::stat", Cons("Os::move_path", Cons("Os::copy_file", Cons("Os::canonicalize", Cons("Os::read_stdin", Cons("Os::flush", Cons("Os::child_spawn", Cons("Os::child_read", Cons("Os::child_write", Cons("Os::child_close_stdin", Cons("Os::child_wait", Cons("Os::child_close", Nil))))))))))))
+                                                                        )
                                                                       )
                                                                     )
                                                                   )
@@ -516,8 +525,6 @@ pub fn m_host_names(): List(Text) {
     )
   )
 }
-
-// ---- the prelude's constructors -------------------------------------------------------
 
 // Rust writes the prelude's constructors first, in this order.
 pub fn m_some(v: MVal): MVal {
@@ -569,8 +576,6 @@ pub fn m_items(fuel: Nat, ctors: List(MCtor), cx: MCx, v: MVal): List(MVal) {
   }
 }
 
-// ---- reading the arguments --------------------------------------------------------------
-
 pub fn m_as_int(v: MVal): Int {
   match v {
     MvInt(i) => i
@@ -578,7 +583,6 @@ pub fn m_as_int(v: MVal): Int {
   }
 }
 
-// The integer as an index, when it is not negative.
 pub fn m_as_nat(v: MVal): Nat {
   match v {
     MvInt(i) => match i {
@@ -649,8 +653,6 @@ pub fn m_as_entries(v: MVal): List(Pair(MVal, MVal)) {
   }
 }
 
-// ---- bits ---------------------------------------------------------------------------------
-
 // The bitwise operation `op` (0 and, 1 or, 2 xor) of the low `bits` bits.
 pub fn m_bitwise(bits: Nat, op: Nat, a: Nat, b: Nat): Nat {
   match bits {
@@ -664,9 +666,22 @@ pub fn m_bitwise(bits: Nat, op: Nat, a: Nat, b: Nat): Nat {
         if Nat::eq(
           op,
           1
-        ) { if Nat::eq(Nat::add(x, y), 0) { 0 } else { 1 } } else { Nat::rem_nz(Nat::add(x, y), 2, Nat::ne_zero(2, Refl)) }
+        ) { if Nat::eq(Nat::add(x, y), 0) { 0 } else { 1 } } else {
+          Nat::rem_nz(Nat::add(x, y), 2, Nat::ne_zero(2, Refl))
+        }
       }
-      Nat::add(bit, Nat::mul(2, m_bitwise(rest, op, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl)))))
+      Nat::add(
+        bit,
+        Nat::mul(
+          2,
+          m_bitwise(
+            rest,
+            op,
+            Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+            Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+          )
+        )
+      )
     }
   }
 }
@@ -686,7 +701,13 @@ pub fn m_bits(bits: Nat, op: Nat, x: Nat, y: Nat): Nat {
     match Nat::eq(bits, 0) eqn hb: Nat {
       // With no bits, every result is taken modulo 1, except `shr` by `y` itself.
       true => if Nat::eq(op, 4) { Nat::div_nz(x, Nat::pow2(y), Nat::pow2_ne_zero(y)) } else { 0 }
-      false => m_bits_nz(bits, op, x, Nat::rem_nz(y, bits, Nat::ne_zero(bits, hb)), Nat::ne_zero(bits, hb))
+      false => m_bits_nz(
+        bits,
+        op,
+        x,
+        Nat::rem_nz(y, bits, Nat::ne_zero(bits, hb)),
+        Nat::ne_zero(bits, hb)
+      )
     }
   }
 }
@@ -702,15 +723,16 @@ pub fn m_bits_nz(bits: Nat, op: Nat, x: Nat, s: Nat, hb: ¬(bits = 0)): Nat {
     } else {
       let l := if Nat::eq(op, 5) { s } else { Nat::rem_nz(Nat::sub(bits, s), bits, hb) }
       Nat::rem_nz(
-        Nat::add(Nat::mul(x, Nat::pow2(l)), Nat::div_nz(x, Nat::pow2(Nat::sub(bits, l)), Nat::pow2_ne_zero(Nat::sub(bits, l)))),
+        Nat::add(
+          Nat::mul(x, Nat::pow2(l)),
+          Nat::div_nz(x, Nat::pow2(Nat::sub(bits, l)), Nat::pow2_ne_zero(Nat::sub(bits, l)))
+        ),
         modulus,
         Nat::pow2_ne_zero(bits)
       )
     }
   }
 }
-
-// ---- text ---------------------------------------------------------------------------------
 
 pub fn m_space(b: Nat): Bool {
   Bool::or(Nat::eq(b, 32), Bool::and(Nat::le(9, b), Nat::le(b, 13)))
@@ -766,8 +788,6 @@ pub fn m_all_bytes(xs: List(MVal)): Option(List(Nat)) {
     }
   }
 }
-
-// ---- maps -----------------------------------------------------------------------------------
 
 pub fn m_find_key_general(
   ctors: List(MCtor),
@@ -825,8 +845,6 @@ pub fn m_find_key(
   }
 }
 
-// ---- the builtins -----------------------------------------------------------------------------
-
 pub fn m_val(v: MVal, cx: MCx): MOut {
   MoutVal(v, cx)
 }
@@ -852,7 +870,6 @@ pub fn m_update(ctors: List(MCtor), cx: MCx, r: MVal, f: (MVal) -> MVal, g: (MVa
   }
 }
 
-// A borrow of the `i`-th item of what `r` names.
 pub fn m_item_ref(cx: MCx, r: MVal, s: MPath): Pair(MVal, MCx) {
   m_child(cx, r, s)
 }
@@ -861,11 +878,7 @@ pub fn m_checked_int(w: Nat, i: Int, cx: MCx): MOut {
   if m_fits(w, i) { MoutVal(MvInt(i), cx) } else { MoutErr(m_too_large()) }
 }
 
-pub fn m_float1(
-  f: (Float) -> Float,
-  a: List(MVal),
-  cx: MCx
-): MOut {
+pub fn m_float1(f: (Float) -> Float, a: List(MVal), cx: MCx): MOut {
   MoutVal(MvFloat(f(m_as_float(m_nth_or_unit(a, 0)))), cx)
 }
 
@@ -915,7 +928,6 @@ pub fn m_map_insert(ctors: List(MCtor), cx: MCx, r: MVal, k0: MVal, x: MVal): MO
   }
 }
 
-// The object of a pending, a signal or a mutex.
 pub fn m_pending_of(cx: MCx, id: Nat): Pair(MPend, Nat) {
   match cx_obj(cx, id) {
     Some(o) => match o {
@@ -945,7 +957,6 @@ pub fn m_ready(cx: MCx, p: Nat): Pair(Bool, MCx) {
   }
 }
 
-// A new pending in the state, with its signal.
 pub fn m_new_pending(cx: MCx, state: MPend, raised: Bool): Pair(Nat, MCx) {
   match cx_alloc(cx, MoSignal(raised, None)) {
     Pair { fst: s, snd: cx2 } => cx_alloc(cx2, MoPending(state, s))
@@ -1034,7 +1045,10 @@ pub fn m_builtin_names_float32(): List(Text) {
                                                   "Float32::atan2",
                                                   Cons(
                                                     "Float32::sinh",
-                                                    Cons("Float32::cosh", Cons("Float32::tanh", Nil))
+                                                    Cons(
+                                                      "Float32::cosh",
+                                                      Cons("Float32::tanh", m_builtin_names_guard())
+                                                    )
                                                   )
                                                 )
                                               )
@@ -1082,7 +1096,11 @@ pub fn m_builtin(ctors: List(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
         if Nat::lt(b, 127) {
           m_builtin_90(ctors, cx, b, a0, a1, a2, v0, v1, v2)
         } else {
-          m_builtin_float32(cx, b, v0, v1)
+          if Nat::lt(b, 154) {
+            m_builtin_float32(cx, b, v0, v1)
+          } else {
+            if Nat::lt(b, 157) { m_builtin_guard(cx, b, v0, v1) } else { m_builtin_weak(cx, b, v0) }
+          }
         }
       }
     }
@@ -1156,7 +1174,10 @@ pub fn m_builtin_0(
                               (old: MVal) => MvVec(ms_take(m_as_seq(old), m_as_nat(v1))),
                               (old: MVal) => MvUnit
                             )
-                          } else { if Bool::or(Nat::eq(b, 17), Bool::or(Nat::eq(b, 18), Nat::eq(b, 19))) {
+                          } else { if Bool::or(
+                            Nat::eq(b, 17),
+                            Bool::or(Nat::eq(b, 18), Nat::eq(b, 19))
+                          ) {
                               m_vec_get(ctors, cx, a0, v1, false)
                             } else { if Nat::eq(b, 20) {
                                 let n := m_items_len(v0)
@@ -1285,10 +1306,23 @@ pub fn m_builtin_30(
                     } else { if Nat::eq(b, 41) {
                         m_map_get(ctors, cx, a0, a1, true)
                       } else { if Nat::eq(b, 42) {
-                          m_val(MvVec(ms_of_list(List::map((e: Pair(MVal, MVal)) => m_pair(e.fst, e.snd), m_as_entries(v0)))), cx)
+                          m_val(
+                            MvVec(
+                              ms_of_list(
+                                List::map(
+                                  (e: Pair(MVal, MVal)) => m_pair(e.fst, e.snd),
+                                  m_as_entries(v0)
+                                )
+                              )
+                            ),
+                            cx
+                          )
                         } else { if Nat::eq(b, 43) {
                             let bs := Text::bytes(m_as_text(v0))
-                            if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), List::length(bs))) {
+                            if Bool::and(
+                              not(m_is_neg(v1)),
+                              Nat::lt(m_as_nat(v1), List::length(bs))
+                            ) {
                               m_val(m_some(m_int(match List::nth(bs, m_as_nat(v1)) {
         None => 0
         Some(x) => x
@@ -1336,10 +1370,7 @@ pub fn m_builtin_30(
                                             } else { if Nat::eq(b, 57) {
                                                 match I64::of_int(m_as_int(v0)) {
                                                   None => MoutErr(m_too_large())
-                                                  Some(n) => m_val(
-                                                    MvFloat(Float::of_i64(n)),
-                                                    cx
-                                                  )
+                                                  Some(n) => m_val(MvFloat(Float::of_i64(n)), cx)
                                                 }
                                               } else { if Nat::eq(b, 58) {
                                                   match I64::of_float_checked(m_as_float(v0)) {
@@ -1347,9 +1378,7 @@ pub fn m_builtin_30(
                                                     Some(n) => m_val(MvInt(I64::val(n)), cx)
                                                   }
                                                 } else { if Nat::eq(b, 59) {
-                                                    match Float::of_text(
-                                                      m_as_text(v0)
-                                                    ) {
+                                                    match Float::of_text(m_as_text(v0)) {
                                                       None => m_val(m_none(), cx)
                                                       Some(x) => m_val(m_some(MvFloat(x)), cx)
                                                     }
@@ -1379,9 +1408,7 @@ pub fn m_builtin_60(
     } else { if Nat::eq(b, 62) {
         match U64::of_nat_checked(m_as_nat(v0)) {
           None => MoutErr(m_too_large())
-          Some(n) => if m_is_neg(
-            v0
-          ) { MoutErr(m_too_large()) } else { fl(Float::of_bits(n)) }
+          Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float::of_bits(n)) }
         }
       } else { if Nat::eq(b, 63) {
           m_val(MvBool(Float::is_nan(a)), cx)
@@ -1400,34 +1427,13 @@ pub fn m_builtin_60(
                                 } else { if Nat::eq(b, 76) { fl(Float::sin(a))
                                   } else { if Nat::eq(b, 77) { fl(Float::cos(a))
                                     } else { if Nat::eq(b, 78) { fl(Float::tan(a))
-                                      } else { if Nat::eq(
-                                        b,
-                                        79
-                                      ) { fl(Float::asin(a))
-                                        } else { if Nat::eq(
-                                          b,
-                                          80
-                                        ) { fl(Float::acos(a))
-                                          } else { if Nat::eq(
-                                            b,
-                                            81
-                                          ) { fl(Float::atan(a))
-                                            } else { if Nat::eq(
-                                              b,
-                                              82
-                                            ) { fl(Float::atan2(a, y))
-                                              } else { if Nat::eq(
-                                                b,
-                                                83
-                                              ) { fl(Float::sinh(a))
-                                                } else { if Nat::eq(
-                                                  b,
-                                                  84
-                                                ) { fl(Float::cosh(a))
-                                                  } else { if Nat::eq(
-                                                    b,
-                                                    85
-                                                  ) { fl(Float::tanh(a))
+                                      } else { if Nat::eq(b, 79) { fl(Float::asin(a))
+                                        } else { if Nat::eq(b, 80) { fl(Float::acos(a))
+                                          } else { if Nat::eq(b, 81) { fl(Float::atan(a))
+                                            } else { if Nat::eq(b, 82) { fl(Float::atan2(a, y))
+                                              } else { if Nat::eq(b, 83) { fl(Float::sinh(a))
+                                                } else { if Nat::eq(b, 84) { fl(Float::cosh(a))
+                                                  } else { if Nat::eq(b, 85) { fl(Float::tanh(a))
                                                     } else { if Nat::eq(b, 86) {
                                                         m_val(
                                                           m_list(
@@ -1475,7 +1481,11 @@ pub fn m_builtin_90(
           } else { if Nat::eq(b, 110) {
               let c := m_id_of(v0)
               let old := m_as_nat(cx_cell(cx, c))
-              let new := Nat::rem_nz(Nat::add(old, m_as_nat(v1)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+              let new := Nat::rem_nz(
+                Nat::add(old, m_as_nat(v1)),
+                18446744073709551616,
+                Nat::ne_zero(18446744073709551616, Refl)
+              )
               m_val(m_int(old), cx_put(cx, c, MoCell(m_int(new))))
             } else { if Nat::eq(b, 111) {
                 m_val(MvSecret(a0), cx)
@@ -1555,7 +1565,10 @@ pub fn m_builtin_90(
                                                 cx_put(
                                                   cx2,
                                                   m,
-                                                  MoMutex(value, List::append(waiting, Cons(s, Nil)))
+                                                  MoMutex(
+                                                    value,
+                                                    List::append(waiting, Cons(s, Nil))
+                                                  )
                                                 )
                                               )
                                             }
@@ -1601,6 +1614,22 @@ pub fn m_builtin_90(
                                         } } } } } } } } } } } } } } } } } } } }
 }
 
+// The builtins of `Weak` (157 on). A `Weak` is a `MvShared` of kind 2 on the cell of the `Ref`
+// it was made from. The heap never frees a cell, so the cell is there as long as the `Weak` is:
+// `Weak::get` always answers `Some`, as a collector that has not run yet does.
+pub fn m_builtin_weak(cx: MCx, b: Nat, v0: MVal): MOut {
+  match v0 {
+    MvShared(k, c) => if Nat::eq(b, 157) {
+        m_val(MvShared(2, c), cx)
+      } else { if Nat::eq(b, 158) {
+          m_val(m_some(MvShared(0, c)), cx)
+        } else {
+          MoutErr(m_internal())
+        } }
+    _ => MoutErr(m_internal())
+  }
+}
+
 // The builtins of `Float32` (127 on): the same as `Float`'s, on 32 bits.
 pub fn m_builtin_float32(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
   let a := m_as_float32(v0)
@@ -1615,9 +1644,7 @@ pub fn m_builtin_float32(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
       } else { if Nat::eq(b, 130) {
           match U32::of_nat_checked(m_as_nat(v0)) {
             None => MoutErr(m_too_large())
-            Some(n) => if m_is_neg(
-              v0
-            ) { MoutErr(m_too_large()) } else { fl(Float32::of_bits(n)) }
+            Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float32::of_bits(n)) }
           }
         } else { if Nat::eq(b, 131) {
             m_val(MvBool(Float32::is_nan(a)), cx)
@@ -1668,4 +1695,94 @@ pub fn m_builtin_float32(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
                                                       } else {
                                                         MoutErr(m_internal())
                                                       } } } } } } } } } } } } } } } } } } } } } } } } } } }
+}
+
+// The builtins of `MutexGuard`, from 154 on, then those of `Weak`, from 157 on.
+pub fn m_builtin_names_guard(): List(Text) {
+  Cons(
+    "MutexGuard::claimed",
+    Cons(
+      "MutexGuard::get",
+      Cons("MutexGuard::get_mut", Cons("Weak::of", Cons("Weak::get", Nil)))
+    )
+  )
+}
+
+// Hands `x` to the first place in line for the mutex, or keeps it if there is none.
+pub fn m_mutex_put(cx: MCx, m: Nat, x: MVal): MCx {
+  match m_mutex_of(cx, m) {
+    Pair { fst: value, snd: waiting } => match waiting {
+      Cons(s, rest) => m_raise(cx_put(cx, m, MoMutex(value, rest)), s, Some(x))
+      Nil => cx_put(cx, m, MoMutex(Some(x), Nil))
+    }
+  }
+}
+
+// Drops a guard: its content goes back to the mutex. A guard dropped before gives nothing.
+pub fn m_release(cx: MCx, m: Nat, c: Nat): MCx {
+  match cx_obj(cx, c) {
+    Some(o) => match o {
+      MoCell(x) => match x {
+        MvMoved => cx
+        _ => m_mutex_put(cx_put(cx, c, MoCell(MvMoved)), m, x)
+      }
+      _ => cx
+    }
+    None => cx
+  }
+}
+
+// Whether some value of the work list is, or holds, the guard whose content is in the cell `c`.
+pub fn m_holds_guard(fuel: Nat, work: List(MVal), c: Nat): Bool {
+  match fuel {
+    Zero => false
+    Succ(f) => match work {
+      Nil => false
+      Cons(v, rest) => match v {
+        MvGuard(m, d) => if Nat::eq(c, d) { true } else { m_holds_guard(f, rest, c) }
+        MvData(k, fs) => m_holds_guard(f, List::append(fs, rest), c)
+        MvProduct(ms) => m_holds_guard(f, List::append(ms, rest), c)
+        MvInject(u, w, x) => m_holds_guard(f, Cons(x, rest), c)
+        _ => m_holds_guard(f, rest, c)
+      }
+    }
+  }
+}
+
+// What a local owns: the value in its slot, or with `boxed` the value in the cell the slot
+// borrows. A borrow the local was given owns nothing.
+pub fn m_owned(cx: MCx, boxed: Bool, held: MVal): MVal {
+  match boxed {
+    false => held
+    true => match held {
+      MvRef(cell, path) => match path {
+        MrPath(steps) => match steps {
+          Nil => cx_cell(cx, cell)
+          Cons(s, more) => MvUnit
+        }
+      }
+      _ => MvUnit
+    }
+  }
+}
+
+// `MutexGuard::claimed` (154), `get` (155) and `get_mut` (156).
+pub fn m_builtin_guard(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
+  if Nat::eq(b, 154) {
+    let s := m_id_of(v1)
+    match m_handed(cx, s) {
+      None => MoutErr("internal: a mutex's content taken before it was handed")
+      Some(x) => match cx_alloc(cx, MoCell(x)) {
+        Pair { fst: c, snd: cx2 } => m_val(
+          MvGuard(m_id_of(v0), c),
+          cx_put(cx2, s, MoSignal(true, None))
+        )
+      }
+    }
+  } else {
+    match v0 {
+      MvGuard(m, c) => m_val(MvRef(c, MrPath(Nil)), cx)
+      _ => MoutErr(m_internal())
+    }
+  }
 }

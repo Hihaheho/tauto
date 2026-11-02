@@ -1,8 +1,13 @@
 // The model of a grammar: the terminals in the order they are
 // written, the non-terminals sorted, the productions with their numbers.
+import "bytes.taut"
+import "canon.taut"
+import "list.taut"
+import "par.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::prelude::Affine
 
-// A symbol of a production.
 pub(open) enum MSym {
   MN(u64)
   MT(u64, Bool)
@@ -23,18 +28,14 @@ pub(open) struct MModel {
   start: u64
   prods: List(MProd)
   scanners: List(PScanner)
-  // For each scanner, the terminals it skips.
   skips: List(List(u64))
   // For each scanner, what it does on a terminal, sorted by the terminal.
   ttrans: List(List(MTrans))
-  // The states of the scanner (`%state`).
   dyn_states: List(PState)
 }
 
 // On the terminal `tok`: `kind` 0 enter, 1 push or 2 pop the scanner `target`.
 pub(open) struct MTrans { tok: u64, kind: u64, target: u64 }
-
-// ---------------------------------------------------------------- lists
 
 pub fn md_rev_text(xs: List(Text)): List(Text) {
   text_list_reverse(xs)
@@ -70,8 +71,6 @@ pub fn md_index_text(names: List(Text), n: Text, at: u64): u64 {
     Cons(x, rest) => if x == n { at } else { md_index_text(rest, n, at + 1) }
   }
 }
-
-// ---------------------------------------------------------------- terminals
 
 // Whether two terminals are the same one: the same text, read the same way
 // (`"…"` and `/…/` alike), and the same lookahead.
@@ -214,8 +213,6 @@ pub fn md_add_term(out: List(PTerm), t: PTerm): List(PTerm) {
   }
 }
 
-// ---------------------------------------------------------------- names
-
 pub fn md_is_alnum(b: u64): Bool {
   (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
 }
@@ -331,7 +328,6 @@ pub fn md_symbol_name(c: u64): Text {
   }
 }
 
-// The name of a terminal made of its characters.
 pub fn md_name_of_chars(s: Text): Text {
   var b := Buf::new()
   var cap := true
@@ -361,59 +357,6 @@ pub fn md_name_of_chars(s: Text): Text {
   }
 }
 
-pub fn md_is_meta(c: u64): Bool {
-  c == 92 || c == 46 || c == 43 || c == 42 || c == 63 || c == 40 || c == 41 || c == 124 || c == 91 || c == 93 || c == 123 || c == 125 || c == 94 || c == 36 || c == 35 || c == 38 || c == 45 || c == 126
-}
-
-// Whether `t` has `\u{hex}` at `at`, and where it ends.
-pub fn md_unicode_escape_end(t: Text, at: u64): Option(u64) {
-  if lk_byte(t, at) == 92 && lk_byte(t, at + 1) == 117 && lk_byte(t, at + 2) == 123 {
-    var i := at + 3
-    while md_is_hex(lk_byte(t, i)) && i < std::prelude::Text::len(t) {
-      i := i + 1
-    }
-    if i > at + 3 && lk_byte(t, i) == 125 && i < std::prelude::Text::len(t) { Some(i + 1) } else { None }
-  } else {
-    None
-  }
-}
-
-pub fn md_is_hex(b: u64): Bool {
-  (b >= 48 && b <= 57) || (b >= 65 && b <= 70) || (b >= 97 && b <= 102)
-}
-
-// The text of a terminal as a regular expression: a text written with `'…'` has its meta characters escaped.
-pub fn md_expand(t: PTerm): Text {
-  if t.kind != 2 {
-    t.text
-  } else {
-    var b := Buf::new()
-    var at: u64 := 0
-    while at < std::prelude::Text::len(t.text) {
-      match md_unicode_escape_end(t.text, at) {
-        Some(end) => {
-          Buf::push(&mut b, &lk_slice(t.text, at, end))
-          at := end
-        }
-        None => {
-          match lk_decode(t.text, at) {
-            Some(#(@code code, @len len)) => {
-              if code < 128 && md_is_meta(code) {
-                Buf::push(&mut b, &"\\")
-              }
-              Buf::push(&mut b, &lk_slice(t.text, at, at + len))
-              at := at + len
-            }
-            None => {
-              at := at + 1
-            }
-          }
-        }
-      }
-    }
-    Text::of(b)
-  }
-}
 
 pub fn md_count_prods(prods: List(PProd), lhs: Text): u64 {
   match prods {
@@ -487,8 +430,6 @@ pub fn md_terminal_names(prods: List(PProd), terms: List(PTerm)): List(Text) {
   }
   text_list_reverse(Cons(cn_name(acc, "Error"), acc))
 }
-
-// ---------------------------------------------------------------- building
 
 // Whether a name is written as a factor anywhere (inside groups too).
 pub fn md_uses(prods: List(PProd), n: Text): Bool {
@@ -740,7 +681,6 @@ pub fn md_prod_named(prods: List(PProd), lhs: Text): Option(PProd) {
   }
 }
 
-// Whether some production of the non-terminal has one of the attributes.
 pub fn md_has_attr(prods: List(PProd), lhs: Text, a: u64, b: u64): Bool {
   match prods {
     Nil => false

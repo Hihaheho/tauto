@@ -36,3 +36,5 @@ analyzer-rename-leaves-syntax-error = the rename would leave { $path } with a sy
 analyzer-rename-captures = `{ $new_name }` would change what some name in { $path } refers to (it is already in scope there)
 analyzer-rename-not-a-name = `{ $name }` is not a name
 analyzer-rename-keyword = `{ $name }` is a keyword
+analyzer-tokens-unused = the colours of `{ $syntax }` are not those of `{ $function }`, which could not be used: { $why }
+analyzer-tokens-outside = it made a range outside the text

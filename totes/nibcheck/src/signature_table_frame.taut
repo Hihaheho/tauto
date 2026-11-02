@@ -1,4 +1,17 @@
 import "signature_frame.taut"
+import std::Base
+import std::List
+import std::Map
+import std::MapLaws
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "kind_sound.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
 
 // Reading a signature preserves the function table used by expression lookup.
 pub fn fnt_table(c: Checker): Ordmap(Text, Scheme) { c.fns }
@@ -96,8 +109,8 @@ pub theorem fnt_frame_arity_k_ok(
   given: Nat,
   span: TySpan,
   constructor: Bool
-): CkFnsFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
-  match Constructor: CkFnsFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
+): CkFnsFrame(c, frame_arity_k(c, n, given, span, constructor)) {
+  match constructor: CkFnsFrame(c, frame_arity_k(c, n, given, span, constructor)) {
     true => fnt_frame_arity_decl_ok(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => Refl
   }
@@ -263,13 +276,13 @@ pub theorem fnt_frame_app_nested_ok(
   span: TySpan,
   after: List(Ty),
   inner: Ty
-): CkFnsFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
-  match inner: CkFnsFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
+): CkFnsFrame(c, frame_app_nested(c, span, after, inner)) {
+  match inner: CkFnsFrame(c, frame_app_nested(c, span, after, inner)) {
     TyNamed(n, before) => fnt_frame_return_ok(
       c,
-      TyNamed(n, List::append(before, MkAfter)),
-      ck_arity(c, n, list_len(List::append(before, MkAfter)), span),
-      fnt_ck_arity_frame(c, n, list_len(List::append(before, MkAfter)), span)
+      TyNamed(n, List::append(before, after)),
+      ck_arity(c, n, list_len(List::append(before, after)), span),
+      fnt_ck_arity_frame(c, n, list_len(List::append(before, after)), span)
     )
     TyInt(width) => Refl
     TyBool => Refl
@@ -998,14 +1011,14 @@ mutual {
         Eq::sym(frame_unf_SkSyntaxLit(name, body, c, generics, span, under_borrow)),
         Refl(Ordmap(Text, Scheme), fnt_table(c))
       )
-      SkStep(tactic, arg, call_start, CallEnd, before, arms) => Eq::subst(
+      SkStep(tactic, arg, call_start, call_end, before, arms) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkFnsFrame(c, z),
         Eq::sym(
           frame_unf_SkStep(
             tactic,
             arg,
             call_start,
-            CallEnd,
+            call_end,
             before,
             arms,
             c,
@@ -1287,8 +1300,8 @@ pub theorem fnt_ck_sig_params_frame(
   c: Checker,
   borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
-): CkFnsFrame(c, ck_sig_params(Pts, c, borrows, map)) {
-  match Pts: CkFnsFrame(c, ck_sig_params(Pts, c, borrows, map)) {
+): CkFnsFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  match pts: CkFnsFrame(c, ck_sig_params(pts, c, borrows, map)) {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkFnsFrame(c, z),

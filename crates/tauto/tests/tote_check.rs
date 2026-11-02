@@ -11,9 +11,7 @@ fn tote(base: &Path, name: &str, deps: &str, src: &str) -> PathBuf {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Tauto.eure"),
-        format!(
-            "package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}}\n{deps}"
-        ),
+        format!("package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n}}\n{deps}"),
     )
     .unwrap();
     std::fs::write(dir.join("src").join(format!("{name}.taut")), src).unwrap();
@@ -190,10 +188,13 @@ fn a_builtin_whose_std_model_is_not_imported_here_is_warned() {
     let text = check_tote_report(&app).unwrap().text(false);
     assert!(text.contains("warning unchecked_builtin: "), "{text}");
     assert!(
-        text.contains("`len` runs as written and is not checked by the kernel: it calls the prelude's built-in `text_len`, not `std::Text::text_len`"),
+        text.contains("`len` runs as written and is not checked by the kernel: it calls the prelude's built-in `Text::len`, not `std::Text::Text::len`"),
         "{text}"
     );
-    assert!(text.contains("`import std::Text` in this file"), "{text}");
+    assert!(
+        text.contains("Importing `std::Text` in this file changes which declaration"),
+        "{text}"
+    );
     // Only where the chain starts: `twice` runs as written because of `len`.
     assert_eq!(
         text.matches("warning unchecked_builtin").count(),
@@ -311,6 +312,7 @@ fn main(): Nat {
 
 #[test]
 fn a_file_of_the_tote_that_does_not_import_the_std_model_is_warned() {
+    tauto_messages::install();
     // `app.taut` imports `std::Text`; `other.taut` of the same tote does
     // not, so its `text_len` is the prelude's and `len` runs as written.
     let b = base("unchecked-builtin-same-tote");
@@ -328,7 +330,7 @@ fn a_file_of_the_tote_that_does_not_import_the_std_model_is_warned() {
     let text = check_tote_report(&app).unwrap().text(false);
     assert!(text.contains("ok      size"), "{text}");
     assert!(
-        text.contains("`len` runs as written and is not checked by the kernel: it calls the prelude's built-in `text_len`, not `std::Text::text_len`"),
+        text.contains("`len` runs as written and is not checked by the kernel: it calls the prelude's built-in `Text::len`, not `std::Text::Text::len`"),
         "{text}"
     );
     assert_eq!(
@@ -340,6 +342,7 @@ fn a_file_of_the_tote_that_does_not_import_the_std_model_is_warned() {
 
 #[test]
 fn a_std_declaration_another_file_of_the_tote_imports_is_not_seen_here() {
+    tauto_messages::install();
     // `text_concat` is the standard library's only, not a built-in of the
     // prelude: `app.taut` imports it, `other.taut` does not and so does not
     // mean it.
@@ -359,7 +362,7 @@ fn a_std_declaration_another_file_of_the_tote_imports_is_not_seen_here() {
     let text = r.text(false);
     assert!(text.contains("ok      twice"), "{text}");
     assert_eq!(
-        text.matches("`text_concat` is declared by `std::Text`, which this file does not import")
+        text.matches("`Text::concat` is declared by `std::Text`, which this file does not import")
             .count(),
         1,
         "{text}"
@@ -378,6 +381,7 @@ fn a_std_declaration_another_file_of_the_tote_imports_is_not_seen_here() {
 
 #[test]
 fn a_std_declaration_a_dependency_imports_is_not_seen_here() {
+    tauto_messages::install();
     let b = base("std-not-imported-dependency");
     tote(
         &b,
@@ -394,7 +398,7 @@ fn a_std_declaration_a_dependency_imports_is_not_seen_here() {
     let r = check_tote_report(&app).unwrap();
     let text = r.text(false);
     assert_eq!(
-        text.matches("`text_concat` is declared by `std::Text`, which this file does not import")
+        text.matches("`Text::concat` is declared by `std::Text`, which this file does not import")
             .count(),
         1,
         "{text}"
@@ -404,6 +408,7 @@ fn a_std_declaration_a_dependency_imports_is_not_seen_here() {
 
 #[test]
 fn text_equality_of_a_dependency_checks_when_the_tote_declares_text_eq_too() {
+    tauto_messages::install();
     // The tote's own `text_eq` has `std::Text`'s renamed to its full name;
     // the dependency's `==` on `Text` still means the standard library's.
     let b = base("text-eq-renamed");
@@ -427,6 +432,7 @@ fn text_equality_of_a_dependency_checks_when_the_tote_declares_text_eq_too() {
 
 #[test]
 fn what_a_dependency_imports_does_not_reach_the_totes_that_use_it() {
+    tauto_messages::install();
     // `mid` imports `deep`, which declares `Node`, `Key` and the prelude's
     // `text_of_bytes` too. `app` declares `Node` and `Key` and depends on
     // `mid`; `top` depends on `app`. Neither sees what `mid` imports, and
@@ -452,7 +458,7 @@ fn what_a_dependency_imports_does_not_reach_the_totes_that_use_it() {
     );
     std::fs::write(
         app.join("src/cli.taut"),
-        "import \"app.taut\"\nimport mid::mid\npub fn run(n: Node): u64 { node_y(n) + mid_go(1) }\npub fn readable(b: Bytes): Bool {\n  match Text::of_bytes(b) {\n    Some(t) => true\n    None => false\n  }\n}\n",
+        "import \"app.taut\"\nimport mid::mid\nimport std::prelude::Shared\npub fn run(n: Node): u64 { node_y(n) + mid_go(1) }\npub fn readable(b: Bytes): Bool {\n  match Text::of_bytes(b) {\n    Some(t) => true\n    None => false\n  }\n}\n",
     )
     .unwrap();
     let top = tote(
@@ -472,12 +478,16 @@ fn what_a_dependency_imports_does_not_reach_the_totes_that_use_it() {
 mod case_inputs {
     pub fn fixture_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("inputs/tauto.eure", "tote-check-proof") => r#"import "../src/app.taut"
+            ("inputs/tauto.eure", "tote-check-proof") => {
+                r#"import "../src/app.taut"
 theorem proof_t(): Zero = Zero { Refl }
-"#,
-        ("inputs/tauto.eure", "tote-check-example-bad") => r#"theorem example_bad(): Succ(Zero) = Zero { Refl }
-"#,
-        _ => panic!("no copied input {file}/{name}"),
+"#
+            }
+            ("inputs/tauto.eure", "tote-check-example-bad") => {
+                r#"theorem example_bad(): Succ(Zero) = Zero { Refl }
+"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

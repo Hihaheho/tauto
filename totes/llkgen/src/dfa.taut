@@ -1,3 +1,7 @@
+import "ktuple.taut"
+import "../../pargen/src/list.taut"
+import std::prelude::Affine
+
 // The lookahead automata: a trie of the tuples of a production, the union of
 // the tries of a non-terminal's productions, and the minimal automaton.
 //
@@ -31,8 +35,6 @@ pub fn lg_find_trans(xs: List(u64), term: u64): Option(u64) {
   }
 }
 
-// The state a transition leads to, new if
-// there was none.
 pub fn lg_dfa_add(&mut states: Vec(LgState), r#from: u64, term: u64): u64 {
   let st := lg_state_get(&states, r#from)
   match lg_find_trans(st.trans, term) {
@@ -50,7 +52,6 @@ pub fn lg_dfa_add(&mut states: Vec(LgState), r#from: u64, term: u64): u64 {
   }
 }
 
-// The trie of the tuples of production `prod`.
 pub fn lg_dfa_of(tuples: List(u64), prod: u64): Vec(LgState) {
   var states: Vec(LgState) := Vec::new()
   Vec::push(&mut states, LgState { prod: match tuples {
@@ -166,8 +167,6 @@ pub fn lg_set_u64(&mut v: Vec(u64), i: u64, x: u64): Unit {
   }
 }
 
-// ---------------------------------------------------------------- minimal
-
 // A state of the compiled automaton: its number, its production plus one
 // and its neighbours, each `next state * 65536 + terminal`, sorted.
 pub(open) struct LgNode { id: u64, prod: u64, nb: List(u64) }
@@ -269,7 +268,6 @@ pub fn lg_node_get(nodes: List(LgNode), id: u64): LgNode {
   }
 }
 
-// Two nodes made one: `merge` goes into `keep`.
 pub fn lg_combine(nodes: List(LgNode), keep: u64, merge: u64): List(LgNode) {
   let k := lg_node_get(nodes, keep)
   let m := lg_node_get(nodes, merge)
@@ -311,8 +309,6 @@ pub fn lg_with_nb(nodes: List(LgNode), id: u64, nb: List(u64)): List(LgNode) {
   }
 }
 
-// The first two nodes with the same production among the accepting ones
-// (their numbers), if any.
 pub fn lg_find_same_prod(nodes: List(LgNode)): Option(@keep u64 × @merge u64) {
   match nodes {
     Nil => None
@@ -334,7 +330,6 @@ pub fn lg_find_prod_in(nodes: List(LgNode), prod: u64): Option(u64) {
   }
 }
 
-// The first two states that do not accept and have the same neighbours.
 pub fn lg_find_same_nb(nodes: List(LgNode)): Option(@keep u64 × @merge u64) {
   match nodes {
     Nil => None
@@ -372,12 +367,10 @@ pub fn lg_count_nodes(nodes: List(LgNode)): u64 {
   }
 }
 
-// The least number from 1 that no node has.
 pub fn lg_free_id(nodes: List(LgNode), r#from: u64): u64 {
   if lg_has_id(nodes, r#from) { lg_free_id(nodes, r#from + 1) } else { r#from }
 }
 
-// The id of the first node whose id is not its place, if any.
 pub fn lg_misplaced(nodes: List(LgNode), at: u64): Option(u64) {
   match nodes {
     Nil => None
@@ -390,7 +383,6 @@ pub fn lg_move(nodes: List(LgNode), r#from: u64, to: u64): List(LgNode) {
   moved
 }
 
-// Node `from` becomes `to` and the neighbours leading to `from` lead to `to`.
 pub fn lg_rename_ids(nodes: List(LgNode), r#from: u64, to: u64): List(LgNode) {
   match nodes {
     Nil => Nil

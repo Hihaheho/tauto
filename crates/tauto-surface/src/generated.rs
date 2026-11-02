@@ -11,7 +11,6 @@ use crate::surface::{Generates, Stmt};
 /// The title of the edit that writes a list; `tauto fmt --fill-generated` applies the edits with it.
 pub const FIX_TITLE: &str = "Write the list of what it makes";
 
-/// The widest a line of a written list is.
 const WIDTH: usize = 96;
 
 /// The kind and name of each declaration `s` makes (those of a `mutual` too); false when `s` is not
@@ -63,7 +62,6 @@ fn show(items: &[(String, String)]) -> String {
         .join(", ")
 }
 
-/// Why the list is not what was made, or `None` when it is.
 pub fn mismatch(
     start: &str,
     listed: &[(String, String)],
@@ -149,7 +147,6 @@ mod tests {
             .collect()
     }
 
-    /// The edit that writes a long list after a call keeps it on one line, and the file reads back.
     #[test]
     fn a_long_list_after_a_call_is_written_on_one_line_and_reads_back() {
         let made = long();
@@ -170,7 +167,6 @@ mod tests {
         }
     }
 
-    /// The list of an inductive declaration may still be broken, and reads back.
     #[test]
     fn a_long_list_of_a_declaration_is_broken_and_reads_back() {
         let made = long();

@@ -1,5 +1,9 @@
+import "Base.taut"
+import "MapLaws.taut"
+import "Nat.taut"
 import "Sort.taut"
 import "Tactic.taut"
+import std::prelude::Ord
 
 // A priority queue, persistent: a leftist heap ordered by a comparator `cmp`
 // given at every call, as in `Map::taut`. The least element is at the root;
@@ -115,7 +119,7 @@ module Heap {
       Zero => Nil
       Succ(m) => match pop(cmp, h): List(A) {
         None => Nil
-        Some(p) => Cons((p: A), drain(cmp, m, (p: Heap(A))))
+        Some(#(x, rest)) => Cons(x, drain(cmp, m, rest))
       }
     }
   }
@@ -125,8 +129,6 @@ module Heap {
     drain(cmp, len(h), h)
   }
 
-  // ---- the size -----------------------------------------------------------------
-
   pub theorem make_len<A: Type>(
     x: A,
     a: Heap(A),
@@ -134,7 +136,9 @@ module Heap {
   ): len(make(x, a, b)) = Succ(Nat::add(len(a), len(b))) {
     match rank(b) <= rank(a): len(make(x, a, b)) = Succ(Nat::add(len(a), len(b))) {
       true => ⊢ len(HeapNode(Succ(rank(b)), x, a, b)) = Succ(Nat::add(len(a), len(b))) from Refl
-      false => ⊢ len(HeapNode(Succ(rank(a)), x, b, a)) = Succ(Nat::add(len(a), len(b))) from Eq::congr(⟦Succ(□)⟧, Nat::add_comm(len(b), len(a)))
+      false => ⊢ len(
+        HeapNode(Succ(rank(a)), x, b, a)
+      ) = Succ(Nat::add(len(a), len(b))) from Eq::congr(⟦Succ(□)⟧, Nat::add_comm(len(b), len(a)))
     }
   }
 
@@ -158,7 +162,9 @@ module Heap {
     j: Nat,
     h: Nat
   ): Succ(Nat::add(j, Succ(Nat::add(m, h)))) = Succ(Nat::add(m, Succ(Nat::add(j, h)))) {
-    by nat_norm!(): Succ(Nat::add(j, Succ(Nat::add(m, h)))) = Succ(Nat::add(m, Succ(Nat::add(j, h)))) {}
+    by nat_norm!(): Succ(
+      Nat::add(j, Succ(Nat::add(m, h)))
+    ) = Succ(Nat::add(m, Succ(Nat::add(j, h)))) {}
   }
 
   // The merge when `x` is not after the root of `h`: `rest` takes all of `h`.
@@ -172,10 +178,7 @@ module Heap {
   ): len(make(x, l, rest(h))) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
     Eq::trans(
       make_len(x, l, rest(h)),
-      Eq::trans(
-        Eq::congr(⟦Succ(Nat::add(len(l), □))⟧, hr(h)),
-        len_arith_left(len(l), n, len(h))
-      )
+      Eq::trans(Eq::congr(⟦Succ(Nat::add(len(l), □))⟧, hr(h)), len_arith_left(len(l), n, len(h)))
     )
   }
 
@@ -189,18 +192,11 @@ module Heap {
     n: Nat,
     hr: ∀ z: Heap(A). len(rest(z)) = Nat::add(n, len(z)),
     h: Heap(A)
-  ): len(
-    merge_into(cmp, x, l, rest, h)
-  ) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
-    match h: len(
-      merge_into(cmp, x, l, rest, h)
-    ) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
+  ): len(merge_into(cmp, x, l, rest, h)) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
+    match h: len(merge_into(cmp, x, l, rest, h)) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
       HeapLeaf => Eq::trans(
         make_len(x, l, rest(HeapLeaf)),
-        Eq::trans(
-          Eq::congr(⟦Succ(Nat::add(len(l), □))⟧, hr(HeapLeaf)),
-          len_arith_leaf(len(l), n)
-        )
+        Eq::trans(Eq::congr(⟦Succ(Nat::add(len(l), □))⟧, hr(HeapLeaf)), len_arith_leaf(len(l), n))
       )
       HeapNode(k, y, hl, hh) => Ordering::cases(
         (o: Ordering) => len(match o: Heap(A) {
@@ -256,14 +252,9 @@ module Heap {
   ): len(push(cmp, h, x)) = Succ(len(h)) {
     Eq::trans(
       merge_len(cmp, HeapNode(1, x, HeapLeaf, HeapLeaf), h),
-      Eq::trans(
-        Nat::add_succ_left(0, len(h)),
-        Eq::congr(⟦Succ(□)⟧, Nat::add_zero_left(len(h)))
-      )
+      Eq::trans(Nat::add_succ_left(0, len(h)), Eq::congr(⟦Succ(□)⟧, Nat::add_zero_left(len(h))))
     )
   }
-
-  // ---- the order ----------------------------------------------------------------
 
   // `x` is not before the bound `o`; every element is above no bound.
   pub fn above<A>(cmp: (A, A) -> Ordering, o: Option(A), x: A): Prop {
@@ -290,7 +281,7 @@ module Heap {
   pub fn popped_ok<A>(cmp: (A, A) -> Ordering, o: Option(A × Heap(A))): Prop {
     match o: Prop {
       None => True
-      Some(p) => ok(cmp, Some((p: A)), (p: Heap(A)))
+      Some(#(x, rest)) => ok(cmp, Some(x), rest)
     }
   }
 
@@ -535,7 +526,6 @@ module Heap {
     }
   }
 
-  // The heap left by a pop is a heap.
   pub theorem pop_ordered<A: Type>(
     cmp: (A, A) -> Ordering,
     w: OrdmapLaw(A, cmp),
@@ -560,7 +550,6 @@ module Heap {
     }
   }
 
-  // No element of a heap above `a` is before `a`.
   pub theorem ok_all_le<A: Type>(
     cmp: (A, A) -> Ordering,
     w: OrdmapLaw(A, cmp),

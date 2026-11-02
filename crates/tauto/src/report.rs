@@ -183,7 +183,6 @@ impl Status {
     }
 }
 
-/// A hole with the declaration and file it is in.
 #[derive(Clone)]
 pub struct Hole {
     pub file: PathBuf,
@@ -195,9 +194,7 @@ pub struct Hole {
 pub struct Report {
     pub entries: Vec<FileEntry>,
     pub expansions: Vec<check::ExpansionInfo>,
-    /// The constants a proof may use, by name.
     pub library: Vec<LibEntry>,
-    /// The time each declaration took, in order (`text_timings`).
     pub timings: Vec<check::Timing>,
     /// What is never used or never runs in the files checked as one's own
     /// (`crate::deadcode`, and the `match` arms no value reaches). A warning
@@ -206,7 +203,6 @@ pub struct Report {
     sources: BTreeMap<PathBuf, String>,
 }
 
-/// A warning with the file it is in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileWarning {
     pub file: PathBuf,
@@ -581,6 +577,16 @@ fn unchecked_builtins(
         if !own.contains(&path) {
             continue;
         }
+        // The standard library files this file itself imports: the builtin it
+        // calls is its own choice when it imports the model.
+        let imported: BTreeSet<&str> = loaded
+            .imports
+            .get(i)
+            .into_iter()
+            .flatten()
+            .filter(|p| crate::stdlib::text(p).is_some())
+            .filter_map(|p| p.file_stem()?.to_str())
+            .collect();
         let mut these = Vec::new();
         fns(stmts, &mut these);
         for s in these {
@@ -598,7 +604,7 @@ fn unchecked_builtins(
                     return None;
                 }
                 let module = crate::stdlib::module_of(n)?;
-                read.contains(module).then_some((n, module))
+                (read.contains(module) && !imported.contains(module)).then_some((n, module))
             });
             let Some((n, module)) = found else { continue };
             let Some(span) = check::stmt_span(loaded, i, s) else {
@@ -631,6 +637,14 @@ fn run_only_fns(stmts: &[Stmt], out: &mut Vec<String>) {
             _ => {}
         }
     }
+}
+
+/// A status word padded with spaces to `width` display columns (wide
+/// characters count two), so the names after it line up. The caller adds
+/// one more space after the label.
+fn label(word: String, width: usize) -> String {
+    let w: usize = word.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+    format!("{word}{}", " ".repeat(width.saturating_sub(w + 1)))
 }
 
 impl ToteReport {
@@ -699,8 +713,6 @@ fn code_of(d: &Diagnostic) -> &'static str {
     }
 }
 
-/// The messages that say something cannot be inferred, or needs an expected
-/// type.
 const CANNOT_INFER: &[&str] = &[
     "kernel-core-cannot-infer-function",
     "kernel-cannot-infer-function",
@@ -751,7 +763,6 @@ pub fn line_col(source: &str, offset: usize) -> (usize, usize) {
 }
 
 impl Report {
-    /// The files the report is of, with their text.
     pub fn files(&self) -> impl Iterator<Item = (&Path, &str)> {
         self.sources.iter().map(|(p, t)| (p.as_path(), t.as_str()))
     }
@@ -824,7 +835,6 @@ impl Report {
         out
     }
 
-    /// `line:col` of a byte offset in `file`.
     pub fn place(&self, file: &Path, offset: usize) -> (usize, usize) {
         line_col(self.source(file), offset)
     }
@@ -1147,7 +1157,7 @@ impl Report {
             out.push_str(&self.entry_line(e));
         }
         for e in self.externs() {
-            out.push_str(&format!("trusted {e}\n"));
+            out.push_str(&format!("{} {e}\n", msg!("tauto-label-trusted")));
         }
         out.push_str(&self.warning_lines());
         out
@@ -1196,24 +1206,45 @@ impl Report {
             }
         }
         for e in self.externs() {
-            out.push_str(&format!("trusted {e}\n"));
+            out.push_str(&format!("{} {e}\n", msg!("tauto-label-trusted")));
         }
         out.push_str(&self.warning_lines());
-        let mut line = format!("{ok} ok, {failed} failed, {incomplete} incomplete");
+        // Counts go in as strings so no locale groups their digits.
+        let n = |n: usize| n.to_string();
+        let (ok, failed, incomplete) = (n(ok), n(failed), n(incomplete));
+        let mut line = msg!(
+            "tauto-summary-counts",
+            ok = ok.as_str(),
+            failed = failed.as_str(),
+            incomplete = incomplete.as_str()
+        )
+        .to_string();
         if cascaded > 0 {
+            let count = n(cascaded);
             line.push_str(&format!(
-                " ({cascaded} only because a declaration they use failed)"
+                " {}",
+                msg!("tauto-summary-cascaded", count = count.as_str())
             ));
         }
-        line.push_str(&format!("; {skipped} skipped, {imported} from imports"));
+        let (skipped, imported) = (n(skipped), n(imported));
+        line.push_str(
+            &msg!(
+                "tauto-summary-skipped",
+                skipped = skipped.as_str(),
+                imported = imported.as_str()
+            )
+            .to_string(),
+        );
         if !self.warnings.is_empty() {
-            line.push_str(&format!("; {} warnings", self.warnings.len()));
+            let count = n(self.warnings.len());
+            line.push_str(&msg!("tauto-summary-warnings", count = count.as_str()).to_string());
         }
         if axioms.is_empty() {
-            line.push_str("; axioms: none");
+            line.push_str(&msg!("tauto-summary-axioms-none").to_string());
         } else {
             let axioms: Vec<_> = axioms.into_iter().collect();
-            line.push_str(&format!("; axioms: {}", axioms.join(", ")));
+            let list = axioms.join(", ");
+            line.push_str(&msg!("tauto-summary-axioms", list = list.as_str()).to_string());
         }
         out.push_str(&line);
         out.push('\n');
@@ -1249,22 +1280,31 @@ impl Report {
             .collect()
     }
 
-    /// The line `text` writes for one declaration.
     fn entry_line(&self, e: &FileEntry) -> String {
         let mut out = String::new();
         let file = e.file.display().to_string();
         let name = crate::surface::qualify::written(&e.entry.name);
         match &e.entry.verdict {
             Verdict::Checked { axioms } if axioms.is_empty() => {
-                out.push_str(&format!("ok      {name}\n"));
+                out.push_str(&format!(
+                    "{} {name}\n",
+                    label(msg!("tauto-label-ok").to_string(), 8)
+                ));
             }
-            Verdict::Checked { axioms } => out.push_str(&format!(
-                "ok      {} (axioms: {})\n",
-                name,
-                axioms.join(", ")
-            )),
+            Verdict::Checked { axioms } => {
+                let list = axioms.join(", ");
+                out.push_str(&format!(
+                    "{} {} {}\n",
+                    label(msg!("tauto-label-ok").to_string(), 8),
+                    name,
+                    msg!("tauto-entry-axioms", list = list.as_str())
+                ))
+            }
             Verdict::Skipped(why) => {
-                out.push_str(&format!("skipped {name} ({why})\n"));
+                out.push_str(&format!(
+                    "{} {name} ({why})\n",
+                    label(msg!("tauto-label-skipped").to_string(), 8)
+                ));
             }
             Verdict::Failed(d) => {
                 let place = match d.span {
@@ -1274,12 +1314,25 @@ impl Report {
                     }
                     None => format!("{file}: "),
                 };
-                out.push_str(&format!("FAILED  {}: {place}{}\n", name, d.message));
+                out.push_str(&format!(
+                    "{} {}: {place}{}\n",
+                    label(msg!("tauto-label-failed").to_string(), 8),
+                    name,
+                    d.message
+                ));
             }
             Verdict::Incomplete { holes, uses } => {
                 let mut why: Vec<String> = holes.iter().map(|h| format!("?{}", h.name)).collect();
-                why.extend(uses.iter().map(|u| format!("uses `{u}`")));
-                out.push_str(&format!("INCOMPLETE {} ({})\n", name, why.join(", ")));
+                why.extend(uses.iter().map(|u| {
+                    let u = u.to_string();
+                    msg!("tauto-entry-uses", name = u.as_str()).to_string()
+                }));
+                out.push_str(&format!(
+                    "{} {} ({})\n",
+                    label(msg!("tauto-label-incomplete").to_string(), 0),
+                    name,
+                    why.join(", ")
+                ));
             }
         }
         out
@@ -1340,10 +1393,8 @@ pub fn find_hole(report: &Report, path: &Path, name: &str) -> Result<Hole, Strin
 /// A candidate for a hole, checked but not written.
 pub struct Attempt {
     pub hole: Hole,
-    /// The file's text with the hole replaced by the candidate.
     pub candidate: String,
     pub report: Report,
-    /// The holes of the file before the candidate went in.
     pub before: Vec<Hole>,
     /// The declaration with the hole is not rejected by the candidate.
     pub accepted: bool,
@@ -1379,7 +1430,6 @@ fn declarations(source: &str) -> Vec<Stmt> {
     out
 }
 
-/// `text` with the identifier `from` written as `to`.
 fn rename_ident(text: &str, from: &str, to: &str) -> String {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut out = String::new();

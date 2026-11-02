@@ -15,6 +15,26 @@ import "pattern_scope.taut"
 import "record_frame.taut"
 import "signature_frame.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::Row
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "finish_frame.taut"
+import "instantiation_pending_sound.taut"
+import "instantiation_requirement_frame.taut"
+import "kind_sound.taut"
+import "obligation_state_frame.taut"
+import "rows.taut"
+import "stable_state_frame.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_infer.taut"
+import "types_match.taut"
+import "unify_sound.taut"
+import "../../text/src/text.taut"
 
 pub fn tracked_literal_entry(negative: Bool, magnitude: Nat, ty: Ty, span: TySpan): TyLiteral {
   TyLiteral {
@@ -2102,8 +2122,8 @@ pub theorem frame_arity_k_ok_tracked(
   given: Nat,
   span: TySpan,
   constructor: Bool
-): TrackedFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
-  match Constructor: TrackedFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
+): TrackedFrame(c, frame_arity_k(c, n, given, span, constructor)) {
+  match constructor: TrackedFrame(c, frame_arity_k(c, n, given, span, constructor)) {
     true => frame_arity_decl_ok_tracked(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -2220,13 +2240,13 @@ pub theorem frame_app_nested_ok_tracked(
   span: TySpan,
   after: List(Ty),
   inner: Ty
-): TrackedFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
-  match inner: TrackedFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
+): TrackedFrame(c, frame_app_nested(c, span, after, inner)) {
+  match inner: TrackedFrame(c, frame_app_nested(c, span, after, inner)) {
     TyNamed(n, before) => tracked_return(
       c,
-      TyNamed(n, List::append(before, MkAfter)),
-      ck_arity(c, n, list_len(List::append(before, MkAfter)), span),
-      ck_arity_frame_tracked(c, n, list_len(List::append(before, MkAfter)), span)
+      TyNamed(n, List::append(before, after)),
+      ck_arity(c, n, list_len(List::append(before, after)), span),
+      ck_arity_frame_tracked(c, n, list_len(List::append(before, after)), span)
     )
     TyInt(width) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyBool => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -3058,14 +3078,14 @@ mutual {
         Eq::sym(frame_unf_SkSyntaxLit(name, body, c, generics, span, under_borrow)),
         tracked_state_refl(c)
       )
-      SkStep(tactic, arg, call_start, CallEnd, before, arms) => Eq::subst(
+      SkStep(tactic, arg, call_start, call_end, before, arms) => Eq::subst(
         (z: Mut1(Ty, Checker)) => TrackedFrame(c, z),
         Eq::sym(
           frame_unf_SkStep(
             tactic,
             arg,
             call_start,
-            CallEnd,
+            call_end,
             before,
             arms,
             c,
@@ -3523,8 +3543,8 @@ pub theorem ck_sig_params_frame_tracked(
   c: Checker,
   borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
-): TrackedFrame(c, ck_sig_params(Pts, c, borrows, map)) {
-  match Pts: TrackedFrame(c, ck_sig_params(Pts, c, borrows, map)) {
+): TrackedFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  match pts: TrackedFrame(c, ck_sig_params(pts, c, borrows, map)) {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),

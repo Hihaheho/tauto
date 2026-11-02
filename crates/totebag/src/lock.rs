@@ -52,7 +52,6 @@ impl Lock {
         self.totes.iter().find(|t| t.name == name)
     }
 
-    /// Adds or replaces the tote of that name.
     pub fn put(&mut self, locked: Locked) {
         let lock = api::tb_put(to_list(&self.totes), locked.to_core());
         self.totes = of_list(&lock).iter().map(Locked::of_core).collect();
@@ -63,7 +62,6 @@ impl Lock {
     }
 }
 
-/// What locking changed in the lock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Added(Locked),
@@ -130,7 +128,6 @@ fn to_list(totes: &[Locked]) -> List<api::TbLocked> {
     list(totes.iter().map(Locked::to_core))
 }
 
-/// The lock beside the manifest in `dir`, if there is one.
 pub fn read(dir: &Path) -> Result<Option<Lock>, String> {
     let file = dir.join(FILE);
     match std::fs::read_to_string(&file) {

@@ -10,7 +10,6 @@ use crate::i18n;
 const USAGE: &str =
     "tauto bench FILE|DIR [--backend rust] [--warmup N] [--samples N] [--timeout-ms N] [--json]";
 
-/// The help of `tauto bench`, in the user's language.
 fn help() -> String {
     i18n::t!("bench-help", usage = USAGE)
 }

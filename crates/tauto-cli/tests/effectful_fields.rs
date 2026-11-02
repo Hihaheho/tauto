@@ -77,6 +77,8 @@ fn effectful_fields_agree_on_both_backends() {
 #[test]
 fn suspending_function_values_agree_on_both_backends() {
     let source = r#"
+import std::prelude::Par
+
 effect ask(i: i64): i64 resume 1
 
 struct Job { run: () -> Unit ! {ask, Div} }
@@ -144,6 +146,8 @@ perform show("s", s)
 #[test]
 fn effectful_function_items_as_callbacks_agree_on_both_backends() {
     let source = r#"
+import std::prelude::Os
+
 effect log(m: Text): Unit resume 1
 
 fn hello(): Unit ! {log, stdout} {

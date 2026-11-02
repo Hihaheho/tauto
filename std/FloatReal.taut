@@ -1,5 +1,9 @@
+import "Base.taut"
+import "Float.taut"
 import "Float32.taut"
+import "Int.taut"
 import "Rat.taut"
+import "UInt.taut"
 
 module Float {
   // The numbers the bits of a `Float` stand for. `Float` (`std/Float::taut`)
@@ -22,22 +26,14 @@ module Float {
   // `±m * 2^(e - 4000)`.
   pub fn val_of(n: Nat): Rat {
     match 4000 <= e_of(n): Rat {
-      true => Rat::of_int(
-        signed(sign_of(n), m_of(n) * Nat::pow2(e_of(n) - 4000))
-      )
-      false => Rat::Mk(
-        signed(sign_of(n), m_of(n)),
-        Nat::pow2(4000 - e_of(n)) - 1
-      )
+      true => Rat::of_int(signed(sign_of(n), m_of(n) * Nat::pow2(e_of(n) - 4000)))
+      false => Rat::Mk(signed(sign_of(n), m_of(n)), Nat::pow2(4000 - e_of(n)) - 1)
     }
   }
 
-  // `x` is a number: not NaN and not an infinity.
   pub fn finite(x: Float): Bool {
     not(is_nan(x) || is_infinite(x))
   }
-
-  // ---- rounding a number -------------------------------------------------------
 
   // The nearest `Float` to `r`, ties to even: an infinity when it is too
   // large, `+0` for 0, and a zero with the sign of `r` when `r` rounds to
@@ -63,15 +59,7 @@ module Float {
   pub fn of_frac(s: Nat, p: Nat, q: Nat): Nat {
     match p == 0: Nat {
       true => 0
-      false => of_scaled(
-        Float::pack,
-        inf_raw(s),
-        s,
-        p,
-        q,
-        56 + rat_len(q),
-        rat_len(p)
-      )
+      false => of_scaled(Float::pack, inf_raw(s), s, p, q, 56 + rat_len(q), rat_len(p))
     }
   }
 
@@ -91,20 +79,12 @@ module Float {
       // Scaled up by `k = up - down`: the exponent is `4000 - k - 1`, and
       // what lies below `2^-2100` is far below the smallest subnormal.
       true => match up - down < 2100: Nat {
-        true => pack(
-          s,
-          sticky(p * Nat::pow2(up - down), q),
-          3999 - (up - down)
-        )
+        true => pack(s, sticky(p * Nat::pow2(up - down), q), 3999 - (up - down))
         false => pack(s, 0, 0)
       }
       // Scaled down by `k = down - up`: beyond `2^1100` it is infinite.
       false => match down - up < 1100: Nat {
-        true => pack(
-          s,
-          sticky(p, q * Nat::pow2(down - up)),
-          3999 + (down - up)
-        )
+        true => pack(s, sticky(p, q * Nat::pow2(down - up)), 3999 + (down - up))
         false => inf
       }
     }
@@ -118,7 +98,11 @@ module Float {
         true => 0
         false => 1
       }
-      false => 2 * Nat::div_nz(n, q, Nat::ne_zero(q, h)) + rem_bit(Nat::rem_nz(n, q, Nat::ne_zero(q, h)))
+      false => 2 * Nat::div_nz(
+        n,
+        q,
+        Nat::ne_zero(q, h)
+      ) + rem_bit(Nat::rem_nz(n, q, Nat::ne_zero(q, h)))
     }
   }
 
@@ -130,17 +114,12 @@ module Float {
     }
   }
 
-  // ---- how far ------------------------------------------------------------------
-
-  // `y` is a number within `eps` of `r`.
   pub fn near(y: Float, r: Rat, eps: Rat): Bool {
     match val(y): Bool {
       None => false
       Some(v) => Rat::le(Rat::dist(v, r), eps)
     }
   }
-
-  // ---- a total order -------------------------------------------------------------
 
   // IEEE 754's `totalOrder`: `-NaN < -inf < … < -0 < +0 < … < +inf < NaN`.
   // With a single NaN, it is the bits read as a signed number.
@@ -164,8 +143,6 @@ module Float {
       false => 18446744073709551615 - n
     }
   }
-
-  // ---- examples ------------------------------------------------------------------
 
   // `0.1 + 0.2` is the rounding of the exact sum of the two numbers, which
   // is not `0.3`.
@@ -229,9 +206,7 @@ module Float {
     Refl
   }
 
-  pub theorem of_rat_third(): of_rat(
-    Rat::frac(IntOfNat(1), 2)
-  ) = div(1.0, 3.0, Refl) {
+  pub theorem of_rat_third(): of_rat(Rat::frac(IntOfNat(1), 2)) = div(1.0, 3.0, Refl) {
     Refl
   }
 

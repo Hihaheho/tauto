@@ -27,7 +27,6 @@ pub(crate) fn unsupported<T>(what: Message, span: Span) -> R<T> {
     })
 }
 
-/// What lowering reads: the program and the checks' reports.
 #[derive(Clone, Copy)]
 pub struct LowerInput<'a> {
     pub program: &'a Program,
@@ -36,17 +35,14 @@ pub struct LowerInput<'a> {
     pub lib: bool,
 }
 
-/// A checked program lowered.
 pub struct Lowered {
     pub package: Package,
 }
 
-/// Why a source did not become a package.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompileError {
     /// The front end rejected it (syntax, types, rows, use check).
     Front(String),
-    /// A form the generator does not write.
     Unsupported(Unsupported),
     /// An error that `tauto build` reports (`Decimal`, no binding, …).
     Build(String),
@@ -81,7 +77,6 @@ fn poly(t: &tauto::types::Ty) -> bool {
     }
 }
 
-/// Parses, checks and lowers `source`.
 pub fn compile(source: &str) -> Result<Package, CompileError> {
     compile_with(source, false)
 }
@@ -113,7 +108,6 @@ pub fn compile_with_observer(
     compile_target(source, lib, false, observe)
 }
 
-/// As `compile_javascript`, notifying the observer before each phase starts.
 pub fn compile_javascript_with_observer(
     source: &str,
     observe: impl FnMut(CompilePhase),
@@ -243,19 +237,18 @@ fn compile_program(
             msg!("nir-use-error", error = e.to_string()).to_string(),
         ));
     }
-    // The standard effects that reach the top level or that a task performs:
+    // The standard effects that reach the top level (a task's are in the row of its `spawn`):
     // the prelude's `host_run` answers them around the program and around
     // each task, which is checked again. What `host_run` leaves to the host
     // (`wait`) the backend's driver answers (`tauto_rt::o::run_top`).
     if !wrapped
-        && (!rows.host_effects.is_empty() || !rows.task_effects.is_empty())
+        && (!rows.host_effects.is_empty())
         && let Some(wrapped) = tauto::host::wrap(program)
     {
-        let permissions: Vec<String> =
-            tauto::host::permissions(rows.host_effects.iter().chain(&rows.task_effects))
-                .into_iter()
-                .map(str::to_string)
-                .collect();
+        let permissions: Vec<String> = tauto::host::permissions(rows.host_effects.iter())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         let mut package = compile_program(
             &wrapped,
             loaded,
@@ -314,7 +307,6 @@ fn prune_dead(program: &Program, types: &TypeReport) -> Option<Program> {
     any.then_some(pruned)
 }
 
-/// The statements of a block after its first `return`.
 fn dead_after_return(stmts: &[Stmt]) -> Option<std::ops::Range<usize>> {
     let from = stmts.iter().position(|s| matches!(s, Stmt::Return(_)))? + 1;
     (from < stmts.len()).then_some(from..stmts.len())
@@ -350,7 +342,6 @@ fn run_tests(program: &Program) -> Option<Program> {
     any.then_some(program)
 }
 
-/// The rows of a program, and what the library's functions perform.
 fn add_prelude_rows(mut rows: RowReport) -> RowReport {
     rows.merge_prelude(check_program_rows(prelude()));
     rows
@@ -417,9 +408,7 @@ pub fn lower(input: LowerInput<'_>) -> Result<Package, CompileError> {
 pub(crate) enum Origin {
     Program,
     Prelude,
-    /// An `extern` of the prelude.
     Builtin,
-    /// An `extern` the program declares.
     Extern,
 }
 
@@ -473,7 +462,6 @@ pub(crate) struct InstKey {
 /// A bound that a call forces on the caller's type parameter.
 pub(crate) struct Edge {
     pub callee: InstId,
-    /// The callee's type parameter and the caller's type for it.
     pub args: Vec<(String, Ty)>,
 }
 
@@ -508,7 +496,6 @@ pub(crate) struct Lowerer<'a> {
     pub declaration_param_names: HashMap<ParamId, String>,
     pub datas: Vec<DataDef>,
     pub data_index: HashMap<String, usize>,
-    /// Each data type's row parameters (`row_parameters_of`).
     pub row_params: HashMap<String, Vec<usize>>,
     /// Recursive generic data whose cells share their tails.
     pub rc_datas: HashSet<String>,
@@ -519,7 +506,6 @@ pub(crate) struct Lowerer<'a> {
     /// suspending row (`carried_row`); the others hold them at the tier of
     /// the row as written.
     pub carried: HashMap<String, Tier>,
-    /// The tiers this lowering found the data types must carry.
     pub carried_wanted: std::cell::RefCell<HashMap<String, Tier>>,
     pub unions: Vec<UnionDef>,
     pub union_ids: HashMap<Vec<Ty>, UnionId>,
@@ -532,7 +518,6 @@ pub(crate) struct Lowerer<'a> {
     pub work: VecDeque<InstId>,
     pub next_local: u32,
     pub next_handle: u32,
-    /// A `perform spawn` was lowered.
     pub spawns: bool,
     pub next_budget: u32,
     /// Set by the scan for escaping captures: a `var` is mentioned in the
@@ -550,7 +535,6 @@ pub(crate) struct Lowerer<'a> {
     pub rust_unsupported: std::cell::RefCell<Option<Unsupported>>,
 }
 
-/// A name in scope.
 #[derive(Clone)]
 pub(crate) struct Binding {
     pub name: String,
@@ -561,13 +545,11 @@ pub(crate) struct Binding {
     pub fn_row: Option<Row>,
     /// The function value was lowered with suspendable budget ticks.
     pub budgeted: bool,
-    /// A `var` whose cell a closure may share.
     pub celled: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
-    /// The continuation of an arm that resumes.
     Cont,
     /// The same, in an arm of `exceeded`: `k` takes a `BudgetAnswer`.
     ContBudget,
@@ -582,7 +564,6 @@ pub(crate) struct CFrame {
     pub captures: Vec<Local>,
 }
 
-/// A function body being lowered.
 pub(crate) struct Cx {
     pub bindings: Vec<Binding>,
     /// Nonowning aliases to exact lexical bindings; never source names.
@@ -593,8 +574,6 @@ pub(crate) struct Cx {
     pub rowvars: HashMap<String, Tier>,
     pub tier: Tier,
     pub frames: Vec<CFrame>,
-    /// The result type of the function or closure being lowered, for
-    /// `return`.
     pub ret: TTy,
     pub inst: InstId,
     /// Inside the body of a `budget`, or of a function that runs under one.
@@ -618,7 +597,6 @@ pub(crate) struct Cx {
     pub held: HashMap<u32, Ty>,
 }
 
-/// The functions declared inside the body `t`, at any depth.
 fn collect_nested<'a>(t: &'a SurfaceTerm, out: &mut Vec<&'a FnDecl>) {
     tauto::surface::walk::values(t, &mut |node| {
         if let tauto::surface::walk::Node::Stmt(Stmt::Fn(f)) = node {
@@ -882,7 +860,6 @@ impl<'a> Lowerer<'a> {
         Ok(pkg)
     }
 
-    /// The program's own `extern` declarations.
     fn extern_defs(&mut self) -> Vec<ExternDef> {
         let mut out = Vec::new();
         for s in &self.program.stmts {
@@ -938,8 +915,6 @@ impl<'a> Lowerer<'a> {
         out
     }
 
-    // ---- locals --------------------------------------------------------
-
     pub fn fresh_local(&mut self, name: &str, repr: Repr) -> Local {
         self.next_local += 1;
         Local {
@@ -949,16 +924,12 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    // ---- kinds ---------------------------------------------------------
-
     pub fn kind_of(&self, t: &TTy) -> Kind {
         match t {
             TTy::Param(_, k) => *k,
             t => self.types.datas.kind(t),
         }
     }
-
-    // ---- rows and tiers ------------------------------------------------
 
     pub fn quant(&self, effect: &str) -> Quant {
         self.rows
@@ -1066,6 +1037,9 @@ impl<'a> Lowerer<'a> {
         let Some(src) = self.fns.get(name) else {
             return Row::new();
         };
+        if src.origin == Origin::Builtin && tauto::host::is_host_primitive(src.decl) {
+            return Row::new();
+        }
         if let Some(declaration) = self
             .rows
             .declaration_row(name, src.decl.body.id())
@@ -1400,8 +1374,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    // ---- instances -----------------------------------------------------
-
     pub fn rust_name(&mut self, source: &str, tier: Tier) -> String {
         let base = format!(
             "{}__{}",
@@ -1418,7 +1390,6 @@ impl<'a> Lowerer<'a> {
         if *n == 1 { base } else { format!("{base}_{n}") }
     }
 
-    /// The instance of `name` with the given tiers for its row variables.
     pub fn instance(
         &mut self,
         name: &str,
@@ -1689,7 +1660,6 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// The type parameters that fill a type of `rc_datas`.
     fn shared_params(&self, t: &TTy, out: &mut HashSet<ParamId>) {
         fn params(t: &TTy, out: &mut HashSet<ParamId>) {
             match t {
@@ -1723,7 +1693,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// A parameter: its local, the way Rust takes it.
     pub fn bind_param(
         &mut self,
         cx: &mut Cx,
@@ -1762,8 +1731,6 @@ impl<'a> Lowerer<'a> {
         });
         (local, nty)
     }
-
-    // ---- the top level -------------------------------------------------
 
     fn lower_top(&mut self) -> R<InstId> {
         // What reaches the top level is the host's: a `wait` there makes the
@@ -1822,8 +1789,6 @@ impl<'a> Lowerer<'a> {
         Ok(id)
     }
 
-    // ---- bounds --------------------------------------------------------
-
     /// Closes the bounds over the calls: a callee's type parameter needs
     /// `Show` / `==` of what the caller passes for it, so the caller's
     /// parameters in that type need it too.
@@ -1880,11 +1845,10 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Whether Rust can clone a value of the type.
     fn cloneable(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Vec(a) | Ty::Array(a) | Ty::Option(a) => self.cloneable(a),
-            Ty::Std(n, _) => n != "Pending",
+            Ty::Std(n, _) => n != "Pending" && n != "MutexGuard",
             Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.cloneable(a) && self.cloneable(b)
             }
@@ -2057,8 +2021,7 @@ mod scoped_generic_tests {
     #[test]
     fn row_tokens_require_their_exact_lexical_owner() {
         tauto_messages::install();
-        let input =
-            r#"effect choose(): Bool resume ω
+        let input = r#"effect choose(): Bool resume ω
 fn apply<!e>(f: () -> i64 ! e): i64 ! e { f() }
 let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
   choose(), k => k(true) + k(false)
@@ -2136,7 +2099,8 @@ let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
                 Tier::O,
             ),
         ] {
-            let input = crate::lower::case_inputs::source_static("check/local-function-rows.eure", case);
+            let input =
+                crate::lower::case_inputs::source_static("check/local-function-rows.eure", case);
             let package = compile(input).unwrap_or_else(|error| panic!("{case}: {error}"));
             let javascript =
                 compile_javascript(input).unwrap_or_else(|error| panic!("{case}: {error}"));
@@ -2242,7 +2206,8 @@ perform show("r", r)
                 "row-polymorphic function `apply`",
             ),
         ] {
-            let input = crate::lower::case_inputs::source_static("check/local-function-rows.eure", case);
+            let input =
+                crate::lower::case_inputs::source_static("check/local-function-rows.eure", case);
             for result in [compile(input), compile_javascript(input)] {
                 assert!(
                     matches!(result, Err(CompileError::Unsupported(Unsupported { what, .. }))
@@ -2339,8 +2304,7 @@ perform show("r", r)
 
     #[test]
     fn owned_capture_storage_is_inside_the_declaration_block() {
-        let input =
-            r#"affine struct Probe {}
+        let input = r#"affine struct Probe {}
 module Probe {
   extern { fn new(&name: Text): Probe }
 }
@@ -2689,7 +2653,8 @@ outer()
 mod case_inputs {
     pub fn source_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("types/scoped-generics.eure", "named-mutable-capture-keeps-declaration-cell") => r#"fn outer(): Unit {
+            ("types/scoped-generics.eure", "named-mutable-capture-keeps-declaration-cell") => {
+                r#"fn outer(): Unit {
   var value: i64 := 0
   fn next(): i64 { value := value + 1; value }
   {
@@ -2699,8 +2664,13 @@ mod case_inputs {
   }
   perform show("second", next())
 }
-outer()"#,
-        ("types/scoped-generics.eure", "captured-source-name-does-not-shadow-function-value-wrapper") => r#"fn outer<A: Shared>(a0: A): i64 {
+outer()"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "captured-source-name-does-not-shadow-function-value-wrapper",
+            ) => {
+                r#"fn outer<A: Shared>(a0: A): i64 {
   fn inner<B: Shared>(x: B): B {
     perform show("captured", a0)
     x
@@ -2708,8 +2678,10 @@ outer()"#,
   let alias := inner
   alias(7)
 }
-perform show("answer", outer("text"))"#,
-        ("types/scoped-generics.eure", "nested-same-name-capture-multiple-uses") => r#"fn outer<A: Shared>(value: A): A {
+perform show("answer", outer("text"))"#
+            }
+            ("types/scoped-generics.eure", "nested-same-name-capture-multiple-uses") => {
+                r#"fn outer<A: Shared>(value: A): A {
   fn inner<A: Shared>(other: A): A {
     perform show("captured", value)
     let local: A := other
@@ -2718,8 +2690,13 @@ perform show("answer", outer("text"))"#,
   perform show("number", inner(1))
   inner(value)
 }
-perform show("answer", outer("text"))"#,
-        ("types/scoped-generics.eure", "recursive-shared-capture-keeps-declaration-binding") => r#"fn outer(): Text {
+perform show("answer", outer("text"))"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "recursive-shared-capture-keeps-declaration-binding",
+            ) => {
+                r#"fn outer(): Text {
   let value := "original"
   fn read(count: i64): Text {
     if count == 0 { value } else {
@@ -2729,8 +2706,13 @@ perform show("answer", outer("text"))"#,
   }
   read(1)
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "transitive-owned-capture-keeps-declaration-binding") => r#"fn outer(): Text {
+perform show("answer", outer())"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "transitive-owned-capture-keeps-declaration-binding",
+            ) => {
+                r#"fn outer(): Text {
   let original := "original"
   let value := Buf::of(&original)
   fn take(): Buf { value }
@@ -2739,8 +2721,10 @@ perform show("answer", outer())"#,
   fn forward(): Text { Text::of(take()) }
   forward()
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "named-owned-capture-keeps-declaration-binding") => r#"fn outer(): Text {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "named-owned-capture-keeps-declaration-binding") => {
+                r#"fn outer(): Text {
   let original := "original"
   let value := Buf::of(&original)
   fn consume(): Text { Text::of(value) }
@@ -2748,8 +2732,13 @@ perform show("answer", outer())"#,
   let value := Buf::of(&shadow)
   consume()
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "generic-named-owned-capture-keeps-declaration-binding") => r#"fn outer(): Text {
+perform show("answer", outer())"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "generic-named-owned-capture-keeps-declaration-binding",
+            ) => {
+                r#"fn outer(): Text {
   let original := "original"
   let value := Buf::of(&original)
   fn consume<A: Shared>(marker: A): Text { Text::of(value) }
@@ -2757,8 +2746,10 @@ perform show("answer", outer())"#,
   let value := Buf::of(&shadow)
   consume(7)
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "local-function-value-keeps-generic-bound-edges") => r#"fn outer<A: Shared>(value: A): A {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "local-function-value-keeps-generic-bound-edges") => {
+                r#"fn outer<A: Shared>(value: A): A {
   fn echo<B: Shared>(other: B): B {
     perform show("echo", other)
     other
@@ -2766,31 +2757,45 @@ perform show("answer", outer())"#,
   let alias := echo
   alias(value)
 }
-perform show("answer", outer("text"))"#,
-        ("types/scoped-generics.eure", "transitive-generic-captures-keep-own-and-outer-identities") => r#"fn outer<A: Shared>(value: A): A {
+perform show("answer", outer("text"))"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "transitive-generic-captures-keep-own-and-outer-identities",
+            ) => {
+                r#"fn outer<A: Shared>(value: A): A {
   fn first<A: Shared>(marker: A) { value }
   fn forward<A: Shared>(marker: A) { first(marker) }
   let number := forward(7)
   forward(true)
 }
-perform show("answer", outer("original"))"#,
-        ("types/scoped-generics.eure", "owned-outer-generic-capture-keeps-its-identity-and-kind") => r#"fn outer<A>(value: A): A {
+perform show("answer", outer("original"))"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "owned-outer-generic-capture-keeps-its-identity-and-kind",
+            ) => {
+                r#"fn outer<A>(value: A): A {
   fn inner<A: Shared>(marker: A) { value }
   inner(1)
 }
 let text := "payload"
 let value := Buf::of(&text)
 let restored := outer(value)
-perform show("answer", Text::of(restored))"#,
-        ("types/scoped-generics.eure", "named-shared-capture-keeps-declaration-binding") => r#"fn outer(): Text {
+perform show("answer", Text::of(restored))"#
+            }
+            ("types/scoped-generics.eure", "named-shared-capture-keeps-declaration-binding") => {
+                r#"fn outer(): Text {
   let value := "original"
   fn read(): Text { value }
   let value := "shadow"
   perform show("first", read())
   read()
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use") => r#"fn outer(): Text {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "generic-named-owned-affine-capture-single-use") => {
+                r#"fn outer(): Text {
   let text := "text"
   let value := Buf::of(&text)
   fn consume<A: Shared>(marker: A): Text {
@@ -2799,8 +2804,13 @@ perform show("answer", outer())"#,
   }
   consume(1)
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "generic-named-borrowed-affine-capture-can-be-read-repeatedly") => r#"fn outer(&value: Buf): Unit {
+perform show("answer", outer())"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "generic-named-borrowed-affine-capture-can-be-read-repeatedly",
+            ) => {
+                r#"fn outer(&value: Buf): Unit {
   fn read<A: Shared>(marker: A): Text {
     let local: A := marker
     Text::of(Buf::clone(&value))
@@ -2810,29 +2820,40 @@ perform show("answer", outer())"#,
 }
 let text := "text"
 let value := Buf::of(&text)
-outer(&value)"#,
-        ("types/scoped-generics.eure", "local-generic-union-order-keeps-authoritative-type-arguments") => r#"fn outer(): Text {
+outer(&value)"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "local-generic-union-order-keeps-authoritative-type-arguments",
+            ) => {
+                r#"fn outer(): Text {
   fn observe<B: Shared, A: Shared>(known: B, input: B | A): B { known }
   let number: i64 := 7
   let input := if true { number } else { "unseen" }
   observe("known", input)
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "local-generic-inferred-result-is-instantiated") => r#"fn outer(): Unit {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "local-generic-inferred-result-is-instantiated") => {
+                r#"fn outer(): Unit {
   fn identity<A: Shared>(value: A) { value }
   let number: i64 := identity(7)
   let text: Text := identity("text")
   perform show("number", number)
   perform show("text", text)
 }
-outer()"#,
-        ("types/scoped-generics.eure", "named-borrowed-capture-keeps-declaration-binding") => r#"fn outer(&value: Text): Text {
+outer()"#
+            }
+            ("types/scoped-generics.eure", "named-borrowed-capture-keeps-declaration-binding") => {
+                r#"fn outer(&value: Text): Text {
   fn read(): Text { clone(value) }
   let value := "shadow"
   read()
 }
-perform show("answer", outer("original"))"#,
-        ("types/scoped-generics.eure", "generic-named-mutable-cell-capture-stays-shared") => r#"fn outer(): i64 {
+perform show("answer", outer("original"))"#
+            }
+            ("types/scoped-generics.eure", "generic-named-mutable-cell-capture-stays-shared") => {
+                r#"fn outer(): i64 {
   var count: i64 := 0
   fn next<A: Shared>(marker: A): i64 {
     let local: A := marker
@@ -2843,23 +2864,32 @@ perform show("answer", outer("original"))"#,
   let second := next(true)
   first + second
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "var-uses-function-type-parameter") => r#"fn collect<A: Shared>(first: A, second: A): List(A) {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "var-uses-function-type-parameter") => {
+                r#"fn collect<A: Shared>(first: A, second: A): List(A) {
   var values: Vec(A) := Vec::new()
   Vec::push(&mut values, first)
   Vec::push(&mut values, second)
   Vec::into_list(values)
 }
-perform show("items", collect("a", "b"))"#,
-        ("types/scoped-generics.eure", "transitive-shared-capture-keeps-declaration-binding") => r#"fn outer(): Text {
+perform show("items", collect("a", "b"))"#
+            }
+            (
+                "types/scoped-generics.eure",
+                "transitive-shared-capture-keeps-declaration-binding",
+            ) => {
+                r#"fn outer(): Text {
   let value := "original"
   fn read(): Text { value }
   let value := "shadow"
   fn forward(): Text { read() }
   forward()
 }
-perform show("answer", outer())"#,
-        ("types/scoped-generics.eure", "nested-generic-instantiates-at-each-use") => r#"fn outer(): Unit {
+perform show("answer", outer())"#
+            }
+            ("types/scoped-generics.eure", "nested-generic-instantiates-at-each-use") => {
+                r#"fn outer(): Unit {
   fn identity<A: Shared>(value: A): A {
     let local: A := value
     local
@@ -2867,15 +2897,22 @@ perform show("answer", outer())"#,
   perform show("number", identity(7))
   perform show("text", identity("text"))
 }
-outer()"#,
-        ("types/scoped-generics.eure", "named-owned-affine-capture-single-use") => r#"fn outer(): Text {
+outer()"#
+            }
+            ("types/scoped-generics.eure", "named-owned-affine-capture-single-use") => {
+                r#"fn outer(): Text {
   let text := "text"
   let value := Buf::of(&text)
   fn consume(marker: i64): Text { Text::of(value) }
   consume(1)
 }
-perform show("answer", outer())"#,
-        ("check/local-function-rows.eure", "computed-callback-row-requires-backend-evidence") => r#"effect ask(): i64
+perform show("answer", outer())"#
+            }
+            (
+                "check/local-function-rows.eure",
+                "computed-callback-row-requires-backend-evidence",
+            ) => {
+                r#"effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
 let result := handle {
   apply(if true { () => perform ask() } else { () => perform ask() })
@@ -2884,16 +2921,23 @@ let result := handle {
   return value => value
 }
 perform show("value", result)
-"#,
-        ("check/local-function-rows.eure", "implicit-row-direct-call-keeps-suspension") => r#"effect ask(): i64
+"#
+            }
+            ("check/local-function-rows.eure", "implicit-row-direct-call-keeps-suspension") => {
+                r#"effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
 let result := handle { apply(() => perform ask()) } with {
   ask(), k => k(42)
   return value => value
 }
 perform show("value", result)
-"#,
-        ("check/local-function-rows.eure", "local-owned-row-shadows-outer-direct-bound-at-runtime") => r#"effect ask(): i64
+"#
+            }
+            (
+                "check/local-function-rows.eure",
+                "local-owned-row-shadows-outer-direct-bound-at-runtime",
+            ) => {
+                r#"effect ask(): i64
 fn outer<!e: direct>(): i64 ! {ask} {
   fn inner<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
   inner(() => perform ask())
@@ -2903,16 +2947,26 @@ let result := handle { outer() } with {
   return value => value
 }
 perform show("value", result)
-"#,
-        ("check/local-function-rows.eure", "implicit-row-direct-call-keeps-many-resumptions") => r#"effect choose(): i64 resume ω
+"#
+            }
+            (
+                "check/local-function-rows.eure",
+                "implicit-row-direct-call-keeps-many-resumptions",
+            ) => {
+                r#"effect choose(): i64 resume ω
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
 let result := handle { apply(() => perform choose()) } with {
   choose(), k => k(1) + k(2)
   return value => value
 }
 perform show("value", result)
-"#,
-        ("check/local-function-rows.eure", "implicit-row-function-value-requires-backend-evidence") => r#"effect ask(): i64
+"#
+            }
+            (
+                "check/local-function-rows.eure",
+                "implicit-row-function-value-requires-backend-evidence",
+            ) => {
+                r#"effect ask(): i64
 fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
 let alias := apply
 let result := handle { alias(() => perform ask()) } with {
@@ -2920,8 +2974,9 @@ let result := handle { alias(() => perform ask()) } with {
   return value => value
 }
 perform show("value", result)
-"#,
-        _ => panic!("no copied input {file}/{name}"),
+"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

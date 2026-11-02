@@ -50,6 +50,7 @@ impl Fixture {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for (n, t) in files {
+            std::fs::create_dir_all(dir.join(n).parent().unwrap()).unwrap();
             std::fs::write(dir.join(n), t).unwrap();
         }
         Fixture { dir }
@@ -270,24 +271,24 @@ fn a_tote_s_other_files_are_not_edited_blindly() {
         "blind",
         &[
             (
-                "lib.nib",
+                "src/lib.nib",
                 r#"fn double(x: i64): i64 { x + x }
 "#,
             ),
             (
-                "loose.nib",
+                "src/loose.nib",
                 r#"fn g(): i64 { double(1) }
 "#,
             ),
             (
                 "Tauto.eure",
-                "package {\n  name = \"blind\"\n  version = \"0.1.0\"\n  sources = [\".\"]\n}\n",
+                "package {\n  name = \"blind\"\n  version = \"0.1.0\"\n}\n",
             ),
         ],
     );
-    let mut nav = open(&f, "lib.nib");
+    let mut nav = open(&f, "src/lib.nib");
     let e = nav
-        .rename(f.at("lib.nib", "double", 0, 0), "dbl", &f.workspace())
+        .rename(f.at("src/lib.nib", "double", 0, 0), "dbl", &f.workspace())
         .unwrap_err();
     assert!(e.contains("loose.nib"), "{e}");
 }
@@ -307,15 +308,15 @@ fn proofs_have_constructors_generics_and_theorems() {
     let f = Fixture::new("proofs", &[("p.taut", proofs_source())]);
     let mut nav = open(&f, "p.taut");
     let def = nav
-        .definition(f.at("p.taut", "even_ss(even", 0, 0), None)
+        .definition(f.at("p.taut", "EvenSs(EvenZero", 0, 0), None)
         .unwrap();
-    assert_eq!(def.span.start as usize, f.at("p.taut", "even_ss<m", 0, 0));
+    assert_eq!(def.span.start as usize, f.at("p.taut", "EvenSs<m", 0, 0));
     let h = nav
-        .hover(f.at("p.taut", "even_ss(even", 0, 0), None)
+        .hover(f.at("p.taut", "EvenSs(EvenZero", 0, 0), None)
         .unwrap();
     assert!(
         h.contents
-            .contains("even_ss<m: Nat>(h: Even(m)): Even(succ(succ(m)))"),
+            .contains("EvenSs<m: Nat>(h: Even(m)): Even(Succ(Succ(m)))"),
         "{}",
         h.contents
     );
@@ -325,11 +326,11 @@ fn proofs_have_constructors_generics_and_theorems() {
         .unwrap();
     assert_eq!(m.span.start as usize, f.at("p.taut", "m: Nat", 0, 0));
     let edits = nav
-        .rename(f.at("p.taut", "even_zero", 0, 0), "ev0", &f.workspace())
+        .rename(f.at("p.taut", "EvenZero", 0, 0), "Ev0", &f.workspace())
         .unwrap();
     let out = f.apply(&edits);
-    assert!(out["p.taut"].contains("ev0(): Even(0)"));
-    assert!(out["p.taut"].contains("even_ss(ev0())"));
+    assert!(out["p.taut"].contains("Ev0: Even(0)"));
+    assert!(out["p.taut"].contains("EvenSs(Ev0)"));
     let edits = nav
         .rename(f.at("p.taut", "<P: Prop>", 0, 1), "Q", &f.workspace())
         .unwrap();
@@ -509,7 +510,8 @@ pub macro fn mk(p: swp::Pair): List(SynStmt) {
     fn $a(): i64 { 1 }
   }
 }
-"#.to_string();
+"#
+    .to_string();
     let main = r#"import "lib.nib"
 mk!(`produced unused`) => fn produced
 fn user(): i64 { produced() }

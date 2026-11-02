@@ -1,7 +1,7 @@
 import "percent.taut"
+import "bytes.taut"
 import std::Text
-
-// A URL record and its serialization (URL Standard, "URL serializing").
+import std::Base
 
 pub(open) inductive Authority: Type {
   // `user:pass@host:port`; the empty user and password are left out, and so is
@@ -27,10 +27,7 @@ pub(open) inductive Url: Type {
   ): Url
 }
 
-// ---- schemes --------------------------------------------------------------------
-
 pub(open) inductive SchemeKind: Type {
-  // A special scheme and its default port.
   Special(default_port: Nat): SchemeKind
   File: SchemeKind
   NotSpecial: SchemeKind
@@ -66,7 +63,6 @@ pub fn is_special(s: List(Nat)): Bool {
   }
 }
 
-// A lower-case letter, a digit, `+`, `-` or `.`.
 pub fn scheme_byte(b: Nat): Bool {
   Bool::or(is_lower(b), Bool::or(is_digit(b), Bool::or(Nat::eq(b, 43), Bool::or(Nat::eq(b, 45), Nat::eq(b, 46)))))
 }
@@ -86,8 +82,6 @@ pub fn query_set_of(s: List(Nat)): (Nat) -> Bool {
   }
 }
 
-// ---- ports ----------------------------------------------------------------------
-
 // The decimal digits of `n`, with `fuel` digits at most.
 pub fn decimal(fuel: Nat, n: Nat): List(Nat) {
   match fuel: List(Nat) {
@@ -104,7 +98,6 @@ pub fn port_text(n: Nat): List(Nat) {
   decimal(5, n)
 }
 
-// The value of decimal digits, read after `acc`.
 pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
   match l: Option(Nat) {
     Nil => Some(acc)
@@ -114,8 +107,6 @@ pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
     }
   }
 }
-
-// ---- serializing ----------------------------------------------------------------
 
 pub fn opt_bytes(c: Nat, o: Option(List(Nat))): List(Nat) {
   match o: List(Nat) {
@@ -152,7 +143,6 @@ pub fn auth_part(a: Authority): List(Nat) {
   }
 }
 
-// `/a/b` for `["a", "b"]`.
 pub fn segments_part(ss: List(List(Nat))): List(Nat) {
   match ss: List(Nat) {
     Nil => Nil

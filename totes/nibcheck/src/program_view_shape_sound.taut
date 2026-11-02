@@ -1,6 +1,19 @@
 import "data_shape_sound.taut"
 import "run_prepared_data_fact.taut"
 import "../../surface/src/surface.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas_registration.taut"
+import "diagnostic_report.taut"
+import "diagnostic_sound.taut"
+import "field_recheck_sound.taut"
+import "prepare_data_body_sound.taut"
+import "program_data_body_sound.taut"
+import "rules_data_shape.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 pub fn DataStmtViewShape(stmt: SurfaceStmt): Prop {
   match stmt: Prop {
@@ -43,8 +56,8 @@ pub theorem ck_program_data_one_view_shape(
   stmt: SurfaceStmt,
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_program_data_one(c, stmt)))
-): DataStmtViewShape(Stmt) {
-  match Stmt: DataStmtViewShape(Stmt) {
+): DataStmtViewShape(stmt) {
+  match stmt: DataStmtViewShape(stmt) {
     StLet(name, ty, value, borrow, mutable) => Trivial
     StVar(name, ty, value, borrow) => Trivial
     StModule(name, stmts, start, end) => Trivial

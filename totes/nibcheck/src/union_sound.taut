@@ -1,5 +1,9 @@
 import "ty_eq.taut"
 import std::Row
+import std::Map
+import std::MapText
+import std::Text
+import "ty.taut"
 
 // `ty_union` keeps exactly the leaves of what it joins
 // (`docs/design/self-host.md`「層 1：合併とタグ（`src/union_sound.taut`）」):
@@ -50,8 +54,6 @@ pub theorem mem_cons_inv<A: Type, e: A>(
 pub theorem mem_of_eq<A: Type>(e: A, h: A, t: List(A), q: e = h): Mem(A, e, Cons(h, t)) {
   Eq::subst((z: A) => Mem(A, z, Cons(h, t)), Eq::sym(q), MemHere(A, h, t))
 }
-
-// ----- members_insert -----
 
 pub fn ins_k(t: Ty, m: Ty, rest: List(Ty), o: Ordering): List(Ty) {
   match o: List(Ty) {
@@ -161,7 +163,6 @@ pub theorem insk_keep(
   }
 }
 
-// Inserting keeps what was there.
 pub theorem insert_keep(
   e: Ty,
   ms: List(Ty),
@@ -177,8 +178,6 @@ pub theorem insert_keep(
     )
   }
 }
-
-// ----- members_add -----
 
 pub theorem leaf_of_eq(
   e: Ty,
@@ -240,7 +239,6 @@ mutual {
 }
 
 mutual {
-  // Adding keeps what was there.
   pub theorem add_keep(
     e: Ty,
     ts: List(Ty),
@@ -268,7 +266,6 @@ mutual {
   }
 }
 
-// A leaf added on its own is a member.
 pub theorem one_has(
   x: Ty,
   w: Ty,
@@ -300,8 +297,6 @@ pub theorem leaves_plain(e: Ty, ts: List(Ty), l: Leaves(e, ts)): Plain(e) {
     LvThere(y, rest, l2) => leaves_plain(e, rest, l2)
   }
 }
-
-// ----- ty_union -----
 
 pub theorem added_plain(ts: List(Ty)): AllPlain(members_add(ts, Nil(Ty))) {
   z => m => Or::elim(
@@ -356,10 +351,6 @@ pub theorem union_mem(
 pub theorem union_has(e: Ty, ts: List(Ty), l: Leaves(e, ts)): Mem(Ty, e, ty_members(ty_union(ts))) {
   Eq::subst((z: List(Ty)) => Mem(Ty, e, z), Eq::sym(union_members(ts)), add_has(l, Nil(Ty)))
 }
-
-// ----- tags -----
-
-// The same steps for a set of tags.
 
 pub fn tins_k(tag: Text, t: Text, rest: List(Text), o: Ordering): List(Text) {
   match o: List(Text) {
@@ -553,7 +544,6 @@ pub theorem tags_union_right(
   tags_into_has(m, a)
 }
 
-// The tags on a type, and the type under them.
 pub fn ty_tags(t: Ty): List(Text) {
   match t: List(Text) {
     TyTagged(tags, x) => tags

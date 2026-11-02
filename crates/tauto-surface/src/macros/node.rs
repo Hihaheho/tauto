@@ -18,7 +18,7 @@ pub enum Node {
     List(Vec<Node>),
     Option(Option<Box<Node>>),
     /// A product's value: each member under its key, the member's type as written
-    /// with full names and its label (`@name SynIdent`), in the product's one order.
+    /// with full names and its label (`@name SynIdent`), in the order written.
     Product(Vec<(String, Node)>),
     /// A value filled in where a `quote` has `$`: the term that makes it.
     Splice(Box<SurfaceTerm>),
@@ -50,14 +50,13 @@ impl Node {
         Node::Option(n.map(Box::new))
     }
 
-    /// The product of `members`, each `(label, type, value)`: a member is found by
-    /// its label, or by its type when it has none, never by its place.
+    /// The product of `members`, each `(label, type, value)`, in the order given: the order of
+    /// the declared type. A member is also found by its label, or by its type when it has none.
     pub fn product(members: Vec<(Option<&str>, &str, Node)>) -> Node {
-        let mut ms: Vec<(String, Node)> = members
+        let ms: Vec<(String, Node)> = members
             .into_iter()
             .map(|(l, t, n)| (member_key(l, t), n))
             .collect();
-        ms.sort_by_cached_key(|(k, _)| key_order(k));
         Node::Product(ms)
     }
 
@@ -79,7 +78,6 @@ impl Node {
         }
     }
 
-    /// The value of a field, by position.
     pub fn field(&self, i: usize) -> Option<&Node> {
         match self {
             Node::Ctor(_, fs) => fs.get(i).map(|(_, f)| f),
@@ -87,7 +85,6 @@ impl Node {
         }
     }
 
-    /// The value of a field, by name.
     pub fn named(&self, name: &str) -> Option<&Node> {
         match self {
             Node::Ctor(_, fs) => fs
@@ -162,7 +159,10 @@ impl Node {
             Node::Option(Some(n)) => format!("Some({})", n.show()),
             Node::Product(ms) => format!(
                 "<{}>",
-                ms.iter().map(|(_, n)| n.show()).collect::<Vec<_>>().join(" ")
+                ms.iter()
+                    .map(|(_, n)| n.show())
+                    .collect::<Vec<_>>()
+                    .join(" ")
             ),
             Node::Splice(_) | Node::SpliceList(_) => "splice".into(),
         }
@@ -213,7 +213,7 @@ impl Node {
             }
             Node::Option(None) => var("Option::None"),
             Node::Option(Some(n)) => app("Option::Some", vec![n.to_term(span)]),
-            // `#(@a x, …)`: the members in the product's order, each under its label.
+            // `#(@a x, …)`: the members in the order written, each under its label.
             Node::Product(ms) => {
                 let mut members: Vec<SurfaceTerm> = ms
                     .iter()
@@ -329,15 +329,7 @@ pub fn member_key(label: Option<&str>, ty: &str) -> String {
     }
 }
 
-/// The label of a member's key, when it has one.
 pub fn label_of(key: &str) -> Option<&str> {
-    key.strip_prefix('@').map(|r| r.split(' ').next().unwrap_or(r))
-}
-
-/// Where a member stands in the product's one order, by its key.
-pub fn key_order(key: &str) -> (u8, String) {
-    match label_of(key) {
-        Some(l) => crate::surface::print::product_member_key(Some(l), ""),
-        None => crate::surface::print::product_member_key(None, key),
-    }
+    key.strip_prefix('@')
+        .map(|r| r.split(' ').next().unwrap_or(r))
 }

@@ -16,10 +16,11 @@ surface-literal-needs-name = syntax リテラルには name`…` のように sy
 surface-expr-no-inductive = `${"{"}…{"}"}` には inductive の形がない (その終端記号は SynExpr を作る)
 surface-effect-set-generic = エフェクト集合 { $name } に型パラメータがある。エフェクト集合はまだ型パラメータを取らない
 surface-effect-set-names-itself = エフェクト集合 { $name } が自分自身を含む: { $path } -> { $name }
-surface-module-collides-with-class = module { $name } が class { $name } と衝突する
+surface-module-collides-with-class = module { $module } が class { $name } と衝突する
 surface-module-declared-twice = module { $name } が二度宣言されている
 surface-dot-names-a-declaration = `.` はフィールドの取り出しだけに使う。宣言の名前は `::` で書く：`{ $name }`
 surface-name-of-a-module = { $name } は module の名前である
+surface-name-shadowed = { $name } がここでは複数の宣言を指す：{ $names }。意図する宣言を module の道筋（`M::{ $name }`）で書くこと
 surface-block-indent = macro.block_indent: この行の字下げは { $lead }、閉じフェンスは { $indent } である
 surface-extern-rust-path = extern {"{"} … {"}"} と書くこと。rust のパスは Tauto.eure に書く
 surface-expected-one-expression = 式が一つであるべきだ
@@ -56,4 +57,3 @@ surface-row-variables = 行に書ける行変数は高々一つ
 surface-row-repeats-effect = 集合のリテラルに effect `{ $name }` が二度書かれている
 surface-raw-underscore = `r#_` は名前ではない：`_` は生の名前として書けない
 surface-syntax-macro-shape = `{ $macro }` は名前と文法のブロックを取り、関数を登録するときは `with(fmt: f, tokens: g)` を取る
-surface-match-scrutinee-ascription = 型つきの `match` の判別対象 `match (e: T): G` はまだ読めない。先に `let x: T := e` で束縛すること

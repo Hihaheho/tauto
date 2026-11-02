@@ -252,7 +252,6 @@ impl Kernel {
         let asked = "request'".to_string();
         let ty = |name: &str| var(name, span);
 
-        // The result types, each with its answer and its `get`.
         let mut results: Vec<(String, SurfaceTerm)> = Vec::new();
         let mut result_of = Vec::new();
         for m in &members {
@@ -332,7 +331,6 @@ impl Kernel {
             span,
         }));
         for m in &members {
-            // `k` is `Zero` there.
             let body = self.subst(m.zero, &m.f.params[0], &var("Zero", span));
             decls.push(Stmt::Fn(FnDecl {
                 budget: None,

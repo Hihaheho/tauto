@@ -35,3 +35,5 @@ analyzer-rename-leaves-syntax-error = 名前を変えると { $path } に構文�
 analyzer-rename-captures = `{ $new_name }` にすると { $path } のある名前の指す先が変わる (そこで既にスコープにある)
 analyzer-rename-not-a-name = `{ $name }` は名前ではない
 analyzer-rename-keyword = `{ $name }` はキーワードだ
+analyzer-tokens-unused = `{ $syntax }` の色は `{ $function }` が決めたものではない（使えなかった）: { $why }
+analyzer-tokens-outside = テキストの外の範囲を作った

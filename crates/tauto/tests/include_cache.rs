@@ -34,9 +34,7 @@ fn a_proof_is_checked_again_when_a_file_it_includes_changes() {
     unsafe { std::env::set_var("TAUTO_CACHE", &cache) };
     std::fs::write(
         dir.join("main.taut"),
-        r#"inductive Text: Type {
-  text(bytes: List(Nat)): Text
-}
+        r#"import std::Text
 theorem t(): Eq(Text, include_text!("d.txt"), "a") { Refl }
 "#,
     )

@@ -48,7 +48,6 @@ pub const FILE: &str = "state.eure";
 pub const MAX_STATE: usize = 16 << 20;
 const MAX_ITEMS: usize = 1 << 16;
 
-/// A checkpoint: its commit and its digest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Point {
     pub rev: Rev,
@@ -64,7 +63,6 @@ pub struct Check {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ledger {
-    /// The index's ID, the digest of its root.
     pub index: Sha256,
     pub url: String,
     pub reference: String,
@@ -278,7 +276,6 @@ fn read_point(f: &mut strict::Fields<'_>, name: &str) -> Result<Point, String> {
     })
 }
 
-/// Where the state is kept.
 pub struct Store {
     dir: PathBuf,
 }

@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 fn macros_source() -> &'static str {
-    r#"pub macro fn passthrough(input: SynExpr): SynExpr { input }"#
+    r#"import std::prelude::Macro
+
+pub macro fn passthrough(input: SynExpr): SynExpr { input }"#
 }
 
 struct Fixture(PathBuf);
@@ -26,10 +28,7 @@ impl Fixture {
         fs::write(path, text).unwrap();
     }
     fn manifest(&self, path: &str, name: &str, extra: &str) {
-        self.write(
-            path,
-            &format!("package {{ name = \"{name}\" sources = [\"main.taut\"] }}\n{extra}\n"),
-        );
+        self.write(path, &format!("package {{ name = \"{name}\" }}\n{extra}\n"));
     }
     fn build(&self, dir: &Path, backend: &str) -> Output {
         Command::new(env!("CARGO_BIN_EXE_tauto"))
@@ -87,16 +86,16 @@ fn imported_macro_builds_in_both_backends_and_executes() {
     for ending in ["", "\n"] {
         let f = Fixture::new();
         f.manifest("Tauto.eure", "macro-example", "");
-        f.write("z_macros.taut", &format!("{macros}{ending}"));
+        f.write("src/z_macros.taut", &format!("{macros}{ending}"));
         f.write(
-            "main.taut",
+            "src/main.taut",
             r#"import "z_macros.taut"
 perform show("value", passthrough!(2))
 "#,
         );
         let reference = Command::new(env!("CARGO_BIN_EXE_tauto"))
             .arg("run")
-            .arg(f.0.join("main.taut"))
+            .arg(f.0.join("src/main.taut"))
             .output()
             .unwrap();
         assert!(
@@ -112,23 +111,22 @@ perform show("value", passthrough!(2))
 #[test]
 fn dependency_macros_and_transitive_imports_keep_their_order() {
     let f = Fixture::new();
-    f.write(
-        "support/Tauto.eure",
-        "package { name = \"support\" sources = [\"z_macros.taut\"] }\n",
-    );
-    f.write("support/z_macros.taut", macros_source());
+    f.write("support/Tauto.eure", "package { name = \"support\" }\n");
+    f.write("support/src/z_macros.taut", macros_source());
     f.manifest(
         "app/Tauto.eure",
         "consumer",
         "dependencies { support { path = \"../support\" } }",
     );
     f.write(
-        "app/helper.taut",
-        r#"fn answer(): i64 { passthrough!(2) }
+        "app/src/helper.taut",
+        r#"import support::z_macros
+
+pub fn answer(): i64 { passthrough!(2) }
 "#,
     );
     f.write(
-        "app/main.taut",
+        "app/src/main.taut",
         r#"import "helper.taut"
 perform show("value", answer())
 "#,
@@ -142,7 +140,7 @@ fn same_file_macros_import_cycles_and_expansion_errors_are_rejected() {
     let f = Fixture::new();
     f.manifest("Tauto.eure", "invalid-example", "");
     f.write(
-        "main.taut",
+        "src/main.taut",
         &format!(
             r#"{}
 perform show("value", passthrough!(2))
@@ -152,23 +150,23 @@ perform show("value", passthrough!(2))
     );
     f.rejects(&f.0, "macro.same_file");
     f.write(
-        "main.taut",
+        "src/main.taut",
         r#"import "other.taut"
 "#,
     );
     f.write(
-        "other.taut",
+        "src/other.taut",
         r#"import "main.taut"
 "#,
     );
     f.rejects(&f.0, "cycle");
     f.write(
-        "main.taut",
+        "src/main.taut",
         r#"import "z_macros.taut"
 perform show("value", unknown_macro!(2))
 "#,
     );
-    f.write("z_macros.taut", macros_source());
+    f.write("src/z_macros.taut", macros_source());
     f.rejects(&f.0, "unknown_macro");
 }
 
@@ -177,9 +175,9 @@ fn macro_generated_errors_point_to_the_calling_file() {
     let macros = macros_source();
     let f = Fixture::new();
     f.manifest("Tauto.eure", "locations", "");
-    f.write("z_macros.taut", &format!("{macros}\n"));
+    f.write("src/z_macros.taut", &format!("{macros}\n"));
     f.write(
-        "main.taut",
+        "src/main.taut",
         r#"import "z_macros.taut"
 
 perform show("value", passthrough!(missing_value))
@@ -193,9 +191,9 @@ fn file_offsets_and_generated_rust_locations_follow_macro_origins() {
     let macros = macros_source();
     let f = Fixture::new();
     f.manifest("Tauto.eure", "locations", "");
-    f.write("z_macros.taut", &format!("{macros}\n"));
+    f.write("src/z_macros.taut", &format!("{macros}\n"));
     f.write(
-        "main.taut",
+        "src/main.taut",
         r#"import "z_macros.taut"
 perform show("value", passthrough!(1 + 1))
 "#,
@@ -242,7 +240,7 @@ perform show("value", passthrough!(1 + 1))
     assert!(
         rust.contains(&format!(
             "file: {:?}",
-            f.0.join("main.taut").display().to_string()
+            f.0.join("src/main.taut").display().to_string()
         )),
         "{rust}"
     );
@@ -252,10 +250,10 @@ perform show("value", passthrough!(1 + 1))
 fn imported_macro_keeps_relative_include_text_inputs() {
     let f = Fixture::new();
     f.manifest("Tauto.eure", "included-input", "");
-    f.write("helpers/macros.taut", macros_source());
-    f.write("assets/value.txt", "ab");
+    f.write("src/helpers/macros.taut", macros_source());
+    f.write("src/assets/value.txt", "ab");
     f.write(
-        "main.taut",
+        "src/main.taut",
         r#"import "helpers/macros.taut"
 perform show("value", passthrough!(Text::len(include_text!("assets/value.txt"))))
 "#,

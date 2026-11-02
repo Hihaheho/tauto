@@ -1,9 +1,21 @@
 import "diagnostic_report.taut"
+import std::Base
+import std::Map
+import "checker.taut"
+import "diagnostic_final_lists.taut"
+import "diagnostic_leaves.taut"
+import "diagnostic_lists.taut"
+import "diagnostic_sound.taut"
+import "finish_frame.taut"
+import "finish_obligations.taut"
+import "ty.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 pub def FinalDiagnostics6(c: Checker): Prop := True
 pub fn diagnostic_finish6(
   c: Checker,
   widths: Ordmap(TermAt, Width)
-): Mut1(TypeReport, Checker) { mut1(finish_report(c, Widths), c) }
+): Mut1(TypeReport, Checker) { mut1(finish_report(c, widths), c) }
 pub theorem diagnostic_finish6_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
@@ -11,8 +23,8 @@ pub theorem diagnostic_finish6_accepts(
 ): DiagnosticReportResult(
   FinalDiagnostics6,
   c,
-  Widths,
-  diagnostic_finish6(c, Widths)
+  widths,
+  diagnostic_finish6(c, widths)
 ) { AndIntro(Trivial, Refl) }
 pub def FinalDiagnostics5(
   c: Checker
@@ -28,7 +40,7 @@ pub fn diagnostic_finish5(
   Checker
 ) {
   diagnostic_report_after(
-    (next: Checker) => diagnostic_finish6(next, Widths),
+    (next: Checker) => diagnostic_finish6(next, widths),
     ck_check_pending(List::reverse(finish_pending_items(c)), c)
   )
 }
@@ -36,16 +48,16 @@ pub theorem diagnostic_finish5_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(diagnostic_finish5(c, widths))
-): DiagnosticReportResult(FinalDiagnostics5, c, Widths, diagnostic_finish5(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics5, c, widths, diagnostic_finish5(c, widths)) {
   diagnostic_report_cons(
     c,
-    Widths,
+    widths,
     ck_check_pending(List::reverse(finish_pending_items(c)), c),
-    (next: Checker) => diagnostic_finish6(next, Widths),
+    (next: Checker) => diagnostic_finish6(next, widths),
     DiagnosticItems(TyPending, DiagnosticPending, c, List::reverse(finish_pending_items(c))),
     FinalDiagnostics6,
     h => ck_check_pending_accepts(List::reverse(finish_pending_items(c)), c, h),
-    next => h => diagnostic_finish6_accepts(next, Widths, h),
+    next => h => diagnostic_finish6_accepts(next, widths, h),
     clean
   )
 }
@@ -63,7 +75,7 @@ pub fn diagnostic_finish4(
   Checker
 ) {
   diagnostic_report_after(
-    (next: Checker) => diagnostic_finish5(next, Widths),
+    (next: Checker) => diagnostic_finish5(next, widths),
     ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c)), c)
   )
 }
@@ -71,16 +83,16 @@ pub theorem diagnostic_finish4_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(diagnostic_finish4(c, widths))
-): DiagnosticReportResult(FinalDiagnostics4, c, Widths, diagnostic_finish4(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics4, c, widths, diagnostic_finish4(c, widths)) {
   diagnostic_report_cons(
     c,
-    Widths,
+    widths,
     ck_check_ctor_bounds(List::reverse(finish_ctor_bounds(c)), c),
-    (next: Checker) => diagnostic_finish5(next, Widths),
+    (next: Checker) => diagnostic_finish5(next, widths),
     DiagnosticItems(TyCtorBound, DiagnosticConstructor, c, List::reverse(finish_ctor_bounds(c))),
     FinalDiagnostics5,
     h => ck_check_ctor_bounds_accepts(List::reverse(finish_ctor_bounds(c)), c, h),
-    next => h => diagnostic_finish5_accepts(next, Widths, h),
+    next => h => diagnostic_finish5_accepts(next, widths, h),
     clean
   )
 }
@@ -95,7 +107,7 @@ pub fn diagnostic_finish3(
   Checker
 ) {
   diagnostic_report_after(
-    (next: Checker) => diagnostic_finish4(next, Widths),
+    (next: Checker) => diagnostic_finish4(next, widths),
     ck_check_bounds(List::reverse(finish_bounds(c)), c)
   )
 }
@@ -103,16 +115,16 @@ pub theorem diagnostic_finish3_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(diagnostic_finish3(c, widths))
-): DiagnosticReportResult(FinalDiagnostics3, c, Widths, diagnostic_finish3(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics3, c, widths, diagnostic_finish3(c, widths)) {
   diagnostic_report_cons(
     c,
-    Widths,
+    widths,
     ck_check_bounds(List::reverse(finish_bounds(c)), c),
-    (next: Checker) => diagnostic_finish4(next, Widths),
+    (next: Checker) => diagnostic_finish4(next, widths),
     DiagnosticBounds(c, List::reverse(finish_bounds(c))),
     FinalDiagnostics4,
     h => ck_check_bounds_accepts(List::reverse(finish_bounds(c)), c, h),
-    next => h => diagnostic_finish4_accepts(next, Widths, h),
+    next => h => diagnostic_finish4_accepts(next, widths, h),
     clean
   )
 }
@@ -130,7 +142,7 @@ pub fn diagnostic_finish2(
   Checker
 ) {
   diagnostic_report_after(
-    (next: Checker) => diagnostic_finish3(next, Widths),
+    (next: Checker) => diagnostic_finish3(next, widths),
     ck_check_kept(List::reverse(finish_kept(c)), c)
   )
 }
@@ -138,16 +150,16 @@ pub theorem diagnostic_finish2_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(diagnostic_finish2(c, widths))
-): DiagnosticReportResult(FinalDiagnostics2, c, Widths, diagnostic_finish2(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics2, c, widths, diagnostic_finish2(c, widths)) {
   diagnostic_report_cons(
     c,
-    Widths,
+    widths,
     ck_check_kept(List::reverse(finish_kept(c)), c),
-    (next: Checker) => diagnostic_finish3(next, Widths),
+    (next: Checker) => diagnostic_finish3(next, widths),
     DiagnosticItems(TyKept, DiagnosticKept, c, List::reverse(finish_kept(c))),
     FinalDiagnostics3,
     h => ck_check_kept_accepts(List::reverse(finish_kept(c)), c, h),
-    next => h => diagnostic_finish3_accepts(next, Widths, h),
+    next => h => diagnostic_finish3_accepts(next, widths, h),
     clean
   )
 }
@@ -165,7 +177,7 @@ pub fn diagnostic_finish1(
   Checker
 ) {
   diagnostic_report_after(
-    (next: Checker) => diagnostic_finish2(next, Widths),
+    (next: Checker) => diagnostic_finish2(next, widths),
     ck_check_closures(List::reverse(finish_closure_results(c)), c)
   )
 }
@@ -173,16 +185,16 @@ pub theorem diagnostic_finish1_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(diagnostic_finish1(c, widths))
-): DiagnosticReportResult(FinalDiagnostics1, c, Widths, diagnostic_finish1(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics1, c, widths, diagnostic_finish1(c, widths)) {
   diagnostic_report_cons(
     c,
-    Widths,
+    widths,
     ck_check_closures(List::reverse(finish_closure_results(c)), c),
-    (next: Checker) => diagnostic_finish2(next, Widths),
+    (next: Checker) => diagnostic_finish2(next, widths),
     DiagnosticItems(TyClosure, DiagnosticClosures, c, List::reverse(finish_closure_results(c))),
     FinalDiagnostics2,
     h => ck_check_closures_accepts(List::reverse(finish_closure_results(c)), c, h),
-    next => h => diagnostic_finish2_accepts(next, Widths, h),
+    next => h => diagnostic_finish2_accepts(next, widths, h),
     clean
   )
 }
@@ -200,7 +212,7 @@ pub fn diagnostic_finish0(
   Checker
 ) {
   diagnostic_report_after(
-    (next: Checker) => diagnostic_finish1(next, Widths),
+    (next: Checker) => diagnostic_finish1(next, widths),
     ck_check_literals(List::reverse(finish_literals(c)), c)
   )
 }
@@ -208,35 +220,35 @@ pub theorem diagnostic_finish0_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(diagnostic_finish0(c, widths))
-): DiagnosticReportResult(FinalDiagnostics0, c, Widths, diagnostic_finish0(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics0, c, widths, diagnostic_finish0(c, widths)) {
   diagnostic_report_cons(
     c,
-    Widths,
+    widths,
     ck_check_literals(List::reverse(finish_literals(c)), c),
-    (next: Checker) => diagnostic_finish1(next, Widths),
+    (next: Checker) => diagnostic_finish1(next, widths),
     DiagnosticItems(TyLiteral, DiagnosticLiteral, c, List::reverse(finish_literals(c))),
     FinalDiagnostics1,
     h => ck_check_literals_accepts(List::reverse(finish_literals(c)), c, h),
-    next => h => diagnostic_finish1_accepts(next, Widths, h),
+    next => h => diagnostic_finish1_accepts(next, widths, h),
     clean
   )
 }
 pub theorem diagnostic_finish_unf(
   c: Checker,
   widths: Ordmap(TermAt, Width)
-): finish_after_defaults(c, Widths) = diagnostic_finish0(c, Widths) { Refl }
+): finish_after_defaults(c, widths) = diagnostic_finish0(c, widths) { Refl }
 pub theorem finish_after_defaults_accepts(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
-): DiagnosticReportResult(FinalDiagnostics0, c, Widths, finish_after_defaults(c, Widths)) {
+): DiagnosticReportResult(FinalDiagnostics0, c, widths, finish_after_defaults(c, widths)) {
   Eq::subst(
-    (m: Mut1(TypeReport, Checker)) => DiagnosticReportResult(FinalDiagnostics0, c, Widths, m),
-    Eq::sym(diagnostic_finish_unf(c, Widths)),
+    (m: Mut1(TypeReport, Checker)) => DiagnosticReportResult(FinalDiagnostics0, c, widths, m),
+    Eq::sym(diagnostic_finish_unf(c, widths)),
     diagnostic_finish0_accepts(
       c,
-      Widths,
-      Eq::subst(DiagnosticReportClean, diagnostic_finish_unf(c, Widths), clean)
+      widths,
+      Eq::subst(DiagnosticReportClean, diagnostic_finish_unf(c, widths), clean)
     )
   )
 }
@@ -276,30 +288,9 @@ pub theorem diagnostic_finish_default_result_accepts(
     }
   }
 }
-pub fn diagnostic_finish_products_result(m: Mut1(Unit, Checker)): Mut1(TypeReport, Checker) {
-  match m: Mut1(
-    TypeReport,
-    Checker
-  ) {
-    mut1(v, next) => diagnostic_finish_default_result(
-      ck_check_products(List::reverse(finish_product_checks(next)), next)
-    )
-  }
-}
-pub theorem diagnostic_finish_products_result_accepts(
-  m: Mut1(Unit, Checker),
-  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
-): FinalDiagnostics0(ck_st(diagnostic_finish_products_result(m))) {
-  match m: FinalDiagnostics0(ck_st(diagnostic_finish_products_result(m))) {
-    mut1(v, next) => diagnostic_finish_default_result_accepts(
-      ck_check_products(List::reverse(finish_product_checks(next)), next),
-      clean
-    )
-  }
-}
 pub theorem diagnostic_finish_default_unf(
   c: Checker
-): ck_finish(c) = diagnostic_finish_products_result(ck_default_ints(Ordmap::entries(finish_ints(c)), c)) { Refl }
+): ck_finish(c) = diagnostic_finish_default_result(ck_default_ints(Ordmap::entries(finish_ints(c)), c)) { Refl }
 pub theorem ck_finish_obligations(
   c: Checker,
   clean: DiagnosticReportClean(ck_finish(c))
@@ -307,7 +298,7 @@ pub theorem ck_finish_obligations(
   Eq::subst(
     (z: Mut1(TypeReport, Checker)) => FinalDiagnostics0(ck_st(z)),
     Eq::sym(diagnostic_finish_default_unf(c)),
-    diagnostic_finish_products_result_accepts(
+    diagnostic_finish_default_result_accepts(
       ck_default_ints(Ordmap::entries(finish_ints(c)), c),
       Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
     )

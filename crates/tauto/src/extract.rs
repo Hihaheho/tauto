@@ -22,7 +22,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use tauto_message::{Message, msg};
 
-use crate::check::{Checked, Role, Verdict, record_sugar};
+use crate::check::{Checked, CtorSite, Role, Verdict, record_sugar};
 use crate::surface::print::{in_modules_text, raw};
 use crate::surface::{
     FnDecl, InductiveDecl, MatchArm, Pattern, Stmt, SurfaceTerm, TermKind, parse_program_at,
@@ -33,11 +33,8 @@ use crate::surface::{
 /// name; a declaration of the program's own files with the same name is
 /// extracted from its definition, which is what the proofs were about.
 struct StdNames {
-    /// What the program's own files declare.
     own: HashSet<String>,
-    /// What the files of `std/` declare, as the program reads them.
     std: HashSet<String>,
-    /// What the prelude declares: the library prelude and the kernel's.
     prelude: HashSet<String>,
 }
 
@@ -107,7 +104,6 @@ impl StdNames {
     }
 }
 
-/// The Nib type a family of `std/` is extracted to.
 fn mapped_type(name: &str) -> Option<&'static str> {
     Some(match name {
         "Nat" => "nat",
@@ -157,6 +153,8 @@ fn head_name(head: &SurfaceTerm) -> &str {
             TermKind::Var(n) => n,
             _ => "",
         },
+        // An instance for the product `A × B` is keyed by `Prod`.
+        TermKind::Product(_) => "Prod",
         _ => "",
     }
 }
@@ -644,14 +642,34 @@ pub(crate) fn macro_made(s: &Stmt) -> bool {
     (crate::macros::EXPANSION_BASE..crate::surface::PRELUDE_BASE).contains(&span.start)
 }
 
+/// Whether `path` is the marker file of a non-core prelude file
+/// (`std/prelude/Os.taut` as the loader names it).
+fn is_prelude_marker(path: &Path) -> bool {
+    path.strip_prefix(crate::stdlib::ROOT)
+        .is_ok_and(|rest| rest.starts_with("prelude") && crate::stdlib::text(path).is_some())
+}
+
 pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
     let input = crate::read::check_files_for_extraction(roots, true, true)?;
     let (text, mut runtime, total) = extract_checked(&input, true, roots)?;
+    // The non-core prelude files `extracted.taut` imports (its leading
+    // `import std::prelude::X` lines), as the files the loader reads for them.
+    let prelude_files: Vec<PathBuf> = crate::surface::parse_program_unresolved_at(&text, 0)
+        .map(|p| p.stmts)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Import {
+                path, module: true, ..
+            } if path.starts_with("std::prelude::") => crate::stdlib::import_path(path).ok(),
+            _ => None,
+        })
+        .collect();
     if text
-        != format!(
-            "{EXTRACTED_BEGIN}{}\n{EXTRACTED_END}",
-            crate::fmt::format(HELPERS).unwrap_or(HELPERS.into())
-        )
+        != format!("{EXTRACTED_BEGIN}{}\n{EXTRACTED_END}", {
+            let helpers = with_prelude_imports(HELPERS, &HashSet::new());
+            crate::fmt::format(&helpers).unwrap_or(helpers)
+        })
     {
         runtime.insert(0, (PathBuf::from(EXTRACTED_PATH), text));
     }
@@ -674,14 +692,61 @@ pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
     let kept: HashSet<PathBuf> = runtime.iter().map(|(p, _)| canon(p)).collect();
     let imported: HashMap<PathBuf, &Vec<PathBuf>> =
         input.imports.iter().map(|(p, v)| (canon(p), v)).collect();
+    let mut markers: HashSet<PathBuf> = HashSet::new();
     let mut imports: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    // What a macro made is written out in the file of its call, but its names
+    // were read as the file of the macro reads them: that file's imports are
+    // the file's imports too when it is read again.
+    let mut made_imports: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for (file, stmts) in &input.sources {
+        let mut from: Vec<usize> = Vec::new();
+        for s in stmts.iter().filter(|s| macro_made(s)) {
+            let mut s = s.clone();
+            crate::surface::walk::stmt(&mut s, &mut |t| {
+                if let Some(o) = t.origin()
+                    && !from.contains(&o)
+                {
+                    from.push(o);
+                }
+            });
+        }
+        for o in from {
+            let Some((there, _)) = input.sources.get(o) else {
+                continue;
+            };
+            if there.path == file.path {
+                continue;
+            }
+            let reached = made_imports.entry(canon(&file.path)).or_default();
+            reached.push(there.path.clone());
+            if let Some(more) = imported.get(&canon(&there.path)) {
+                reached.extend(more.iter().cloned());
+            }
+        }
+    }
     for (path, direct) in &input.imports {
+        let direct: Vec<PathBuf> = direct
+            .iter()
+            .chain(made_imports.get(&canon(path)).into_iter().flatten())
+            .cloned()
+            .collect();
+        let direct = &direct;
         let mut out = Vec::new();
         let mut seen = HashSet::new();
+        // A non-core prelude file the file itself imports stays an import of
+        // it (a file of the program: its marker, below), not an import it
+        // passes on.
+        for t in direct.iter().filter(|t| is_prelude_marker(t)) {
+            out.push(t.clone());
+            markers.insert(t.clone());
+        }
         let mut todo: Vec<&PathBuf> = direct.iter().rev().collect();
         while let Some(t) = todo.pop() {
             let c = canon(t);
             if !seen.insert(c.clone()) {
+                continue;
+            }
+            if is_prelude_marker(t) {
                 continue;
             }
             if kept.contains(&c) {
@@ -698,6 +763,25 @@ pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
                 .entry(path.clone())
                 .or_default()
                 .push(extracted.clone());
+        }
+    }
+    // `extracted.taut` reaches the prelude files it imports: they are files
+    // of the program (empty, as the standard library's are), and its imports.
+    let mut runtime = runtime;
+    if runtime.iter().any(|(p, _)| *p == extracted) {
+        for f in &prelude_files {
+            markers.insert(f.clone());
+            let reached = imports.entry(extracted.clone()).or_default();
+            if !reached.contains(f) {
+                reached.push(f.clone());
+            }
+        }
+    }
+    let mut markers: Vec<PathBuf> = markers.into_iter().collect();
+    markers.sort();
+    for f in markers {
+        if !runtime.iter().any(|(p, _)| *p == f) {
+            runtime.push((f, String::new()));
         }
     }
     let mut syntax_dirs: Vec<PathBuf> = Vec::new();
@@ -825,6 +909,7 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
         aliases: type_aliases(&checked, &kept),
         proof_takers: HashSet::new(),
         refined_takers: HashSet::new(),
+        module_segments: module_segments(&checked),
     };
     if checked.families.contains_key("Text") {
         ex.out.push_str(TEXT_HELPERS);
@@ -849,6 +934,9 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
             ex.fresh = fresh;
         }
     }
+    // No imports: the library is read as one program with no import graph,
+    // where every prelude name is visible, and an `import` among its
+    // statements would be read as one of the macro library.
     Ok(legal_names(&ex.out).0)
 }
 
@@ -877,6 +965,103 @@ fn std_declared() -> &'static HashSet<String> {
     })
 }
 
+/// `text` with an `import std::prelude::<file>` for each non-core prelude file
+/// that declares a name the program refers to (`Buf`, `Vec`, `Array`,
+/// `Shared`, ...): the extracted program is one file, and sees only the core
+/// prelude without them. The names are those of the parsed program (terms,
+/// types, patterns, effect rows, bounds and `where` classes), looked up in
+/// `hidden_prelude`; a name the program declares itself is its own. The
+/// imports come first.
+fn with_prelude_imports(text: &str, own: &HashSet<String>) -> String {
+    let Ok(mut program) = crate::surface::parse_program_unresolved_at(text, 0) else {
+        return text.to_string();
+    };
+    let hidden = crate::surface::qualify::hidden_prelude();
+    let mut files: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    // A name `A::b::c`, then each prefix of it.
+    let mut note = |path: &str| {
+        let mut name = path;
+        loop {
+            if own.contains(name) {
+                return;
+            }
+            if let Some(fs) = hidden.get(name) {
+                files.extend(fs.iter().map(String::as_str));
+                return;
+            }
+            match name.rfind("::") {
+                Some(i) => name = &name[..i],
+                None => return,
+            }
+        }
+    };
+    fn pattern(p: &Pattern, note: &mut dyn FnMut(&str)) {
+        match p {
+            Pattern::Ctor { name, args } => {
+                note(name);
+                args.iter().for_each(|a| pattern(a, note));
+            }
+            Pattern::Record { name, fields } => {
+                note(name);
+                fields.iter().for_each(|(_, a)| pattern(a, note));
+            }
+            Pattern::Tuple(ps) => ps.iter().for_each(|a| pattern(a, note)),
+            _ => {}
+        }
+    }
+    fn decl(d: &FnDecl, note: &mut dyn FnMut(&str)) {
+        d.bounds.iter().flatten().for_each(|b| note(b));
+        d.effects.iter().flatten().for_each(|e| note(e));
+        d.where_.iter().for_each(|c| note(&c.class));
+    }
+    fn declarations(s: &Stmt, note: &mut dyn FnMut(&str)) {
+        match s {
+            Stmt::Fn(d) => decl(d, note),
+            Stmt::Instance(i) => {
+                note(&i.class);
+                i.bounds.iter().flatten().for_each(|b| note(b));
+                i.where_.iter().for_each(|c| note(&c.class));
+                i.methods.iter().for_each(|d| decl(d, note));
+            }
+            Stmt::Class(c) => c.methods.iter().for_each(|d| decl(d, note)),
+            Stmt::Extern { fns, .. } => fns.iter().for_each(|d| decl(d, note)),
+            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+                items.iter().for_each(|i| declarations(i, note))
+            }
+            Stmt::Attributed { stmt, .. } => declarations(stmt, note),
+            _ => {}
+        }
+    }
+    for s in &mut program.stmts {
+        declarations(s, &mut note);
+        crate::surface::walk::stmt(s, &mut |t| match &*t.kind {
+            TermKind::Var(n) => note(n),
+            TermKind::Field { .. } => {
+                if let Some(path) = dotted(t) {
+                    note(&path);
+                }
+            }
+            TermKind::Row(es) => es.iter().for_each(|e| note(e)),
+            TermKind::Pi {
+                effects: Some(es), ..
+            } => es.iter().for_each(|e| note(e)),
+            TermKind::Perform { effect, .. } => note(effect),
+            TermKind::Record { name, .. } => note(name),
+            TermKind::Match { arms, .. } => {
+                arms.iter().for_each(|a| pattern(&a.pattern, &mut note))
+            }
+            TermKind::Block(stmts) => stmts.iter().for_each(|s| declarations(s, &mut note)),
+            _ => {}
+        });
+    }
+    let mut out = String::new();
+    for f in files {
+        let _ = writeln!(out, "import std::prelude::{f}");
+    }
+    out.push_str(text);
+    out
+}
+
 fn extract_checked(
     input: &crate::read::ExtractionInput,
     mixed: bool,
@@ -886,11 +1071,7 @@ fn extract_checked(
     let mut problems = Vec::new();
     let unproved = unproved_laws(&checked);
     let generated = generated_nib_names(input);
-    let unused = if mixed {
-        HashSet::new()
-    } else {
-        unused_imported(input, roots)
-    };
+    let unused = unused_imported(input, roots);
     for e in &checked.entries {
         match &e.entry.verdict {
             // What `inductive_syntax!` makes for Nib (the tree `<syntax>.parse` reads, the reader and
@@ -970,6 +1151,7 @@ fn extract_checked(
         aliases: type_aliases(checked, input.sources.iter().flat_map(|(_, s)| s)),
         proof_takers: HashSet::new(),
         refined_takers: HashSet::new(),
+        module_segments: module_segments(&checked),
     };
     if checked.families.contains_key("Text") {
         ex.out.push_str(TEXT_HELPERS);
@@ -988,6 +1170,7 @@ fn extract_checked(
         ex.runtime_files()?;
     }
     let (out, renamed) = legal_names(&ex.out);
+    let out = with_prelude_imports(&out, &ex.std.own);
     let total = ex
         .total
         .into_iter()
@@ -1020,7 +1203,6 @@ fn local_name(n: &str) -> String {
     }
 }
 
-/// `A::b::c` written as a chain of fields over a name.
 fn dotted(t: &crate::surface::SurfaceTerm) -> Option<String> {
     match &*t.kind {
         TermKind::Var(n) => Some(n.clone()),
@@ -1194,6 +1376,7 @@ fn executable(s: &Stmt, runtime: &HashSet<String>) -> bool {
 /// name is a constructor.
 struct Ctors<'a> {
     struct_of: &'a dyn Fn(&str) -> Option<String>,
+    struct_fields: &'a dyn Fn(&str) -> Option<(String, Vec<String>)>,
     is_ctor: &'a dyn Fn(&str) -> bool,
     /// The path of a variant that kept its short name inside a type written
     /// out in modules ([`Extractor::qualified_ctor`]).
@@ -1211,6 +1394,7 @@ fn runtime_source(
 ) -> String {
     let Ctors {
         struct_of,
+        struct_fields,
         is_ctor,
         qualified,
     } = ctors;
@@ -1414,6 +1598,57 @@ fn runtime_source(
             _ => {}
         });
     }
+    // The constructor of a family extracted as a struct is a function of a module
+    // of Nib that executable code reaches by no path of its own; a call of it with
+    // all its fields is the record that function builds, written as extraction
+    // writes it: `Two::Mk(5, 6)` as `Two { left: 5, right: 6 }`.
+    let mut records: Vec<tauto_parol::Span> = Vec::new();
+    for s in &mut kept {
+        crate::surface::walk::stmt(s, &mut |t| {
+            let TermKind::App {
+                function,
+                arguments,
+            } = &*t.kind
+            else {
+                return;
+            };
+            let TermKind::Var(n) = &*function.kind else {
+                return;
+            };
+            if runtime.contains(n) {
+                return;
+            }
+            let Some((family, names)) = struct_fields(n) else {
+                return;
+            };
+            if names.len() != arguments.len() {
+                return;
+            }
+            // The text replaced keeps its line breaks, so that the lines after it
+            // stay where they were.
+            let lines = |span: tauto_parol::Span| {
+                let n = text
+                    .get(range(span, base))
+                    .map_or(0, |w| w.matches('\n').count());
+                "\n".repeat(n)
+            };
+            let mut start = t.span.start;
+            for (k, (name, a)) in names.iter().zip(arguments).enumerate() {
+                let open = if k == 0 {
+                    format!("{family} {{ ")
+                } else {
+                    ", ".into()
+                };
+                let gap = tauto_parol::Span::new(start, a.span.start);
+                included.push((gap, format!("{open}{}: {}", raw(name), lines(gap))));
+                records.push(gap);
+                start = a.span.end;
+            }
+            let gap = tauto_parol::Span::new(start, t.span.end);
+            included.push((gap, format!(" }}{}", lines(gap))));
+            records.push(gap);
+        });
+    }
     // A function of `std/` the proofs read is extracted by its full name
     // (`std::Text::Text::len`), and the executable code is read again
     // without its imports. A call is written by the full name it was
@@ -1514,7 +1749,7 @@ fn runtime_source(
                 let mut renamed: Vec<(&str, String)> = names
                     .into_iter()
                     .filter_map(|n| {
-                        let word = crate::surface::qualify::short(n);
+                        let word = source_word(n);
                         match struct_of(n) {
                             Some(s) => Some((word, s)),
                             None if word != n && written.contains(n) && !runtime.contains(n) => {
@@ -1535,7 +1770,7 @@ fn runtime_source(
                     if runtime.contains(n) {
                         return None;
                     }
-                    let word = crate::surface::qualify::short(n);
+                    let word = source_word(n);
                     if word != n && written.contains(n) {
                         return Some((word, n.to_string()));
                     }
@@ -1564,6 +1799,13 @@ fn runtime_source(
             }
         });
     }
+    // What the loops above wrote inside the text of a record (the name of the
+    // constructor it replaces) is not written.
+    included.retain(|(span, _)| {
+        !records
+            .iter()
+            .any(|g| g != span && g.start <= span.start && span.end <= g.end)
+    });
     included.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
     for (span, literal) in included {
         bytes.splice(range(span, base), literal.into_bytes());
@@ -1594,7 +1836,6 @@ fn made_by_macro(s: &Stmt) -> bool {
     at.start >= crate::macros::EXPANSION_BASE
 }
 
-/// Where a declaration is written; `None` for a statement that is not one.
 fn stmt_span(s: &Stmt) -> Option<tauto_parol::Span> {
     Some(match s {
         Stmt::Fn(f) => f.span,
@@ -1701,7 +1942,14 @@ fn nat_chain(
     Some(out)
 }
 
-/// The constructors a pattern names.
+/// The constructor as a pattern writes it: its own name. The short form of a
+/// renamed constructor has its type before it (`Rect::Mk`), and the source
+/// text has only `Mk` there.
+fn source_word(n: &str) -> &str {
+    let short = crate::surface::qualify::short(n);
+    short.rsplit("::").next().unwrap_or(short)
+}
+
 fn pattern_ctors<'p>(p: &'p Pattern, out: &mut Vec<&'p str>) {
     match p {
         Pattern::Ctor { name, args } => {
@@ -1720,7 +1968,6 @@ fn pattern_ctors<'p>(p: &'p Pattern, out: &mut Vec<&'p str>) {
     }
 }
 
-/// The names a pattern binds, a nullary constructor among them.
 fn pattern_binds<'p>(p: &'p Pattern, out: &mut Vec<&'p str>) {
     match p {
         Pattern::Bind(name) => out.push(name),
@@ -1844,6 +2091,7 @@ fn reachable(
                     aliases: aliases.clone(),
                     proof_takers: HashSet::new(),
                     refined_takers: HashSet::new(),
+                    module_segments: module_segments(checked),
                 };
                 if probe.function(path, &f).is_err() {
                     unsupported.insert(f.name.clone());
@@ -1984,7 +2232,6 @@ fn unused_imported(input: &crate::read::ExtractionInput, roots: &[PathBuf]) -> H
 
 struct Extractor<'a> {
     checked: &'a Checked,
-    /// The names `inductive_syntax!` declarations make for Nib.
     generated: HashSet<String>,
     out: String,
     fresh: usize,
@@ -1996,9 +2243,7 @@ struct Extractor<'a> {
     /// without `()` is the function, passed as a value.
     thunks: HashSet<String>,
     std: &'a StdNames,
-    /// The functions written out, by the names they are written with.
     written: HashSet<String>,
-    /// The files whose executable source is still to be written.
     pending: Vec<(crate::program::SourceFile, Vec<Stmt>)>,
     /// Functions of imported files that nothing in the named files uses;
     /// they are not extracted, so that an import does not make the
@@ -2013,6 +2258,9 @@ struct Extractor<'a> {
     /// The functions and constructors written out that take a refined
     /// value ([`Extractor::refined`]) among the parameters a call writes.
     refined_takers: HashSet<String>,
+    /// Each segment of a module path a declaration is written in, and the
+    /// fresh name a local with that name is written with, once one is.
+    module_segments: HashMap<String, Option<String>>,
 }
 
 /// The functions among `stmts` that return a type and take only types,
@@ -2042,6 +2290,20 @@ fn type_aliases<'s>(
 }
 
 type Locals = HashSet<String>;
+
+/// Each segment of the module path of a name `checked` declares
+/// (`m::src::left` of `m::src::left::emit`), the modules the program is
+/// written in, none with a fresh name yet ([`Extractor::local`]).
+fn module_segments(checked: &Checked) -> HashMap<String, Option<String>> {
+    checked
+        .signatures
+        .keys()
+        .chain(checked.families.keys())
+        .filter_map(|n| n.rsplit_once("::"))
+        .flat_map(|(m, _)| m.split("::"))
+        .map(|m| (m.to_string(), None))
+        .collect()
+}
 
 fn fail<X>(file: &Path, what: Message) -> Result<X, String> {
     Err(format!("{}: {what}", file.display()))
@@ -2142,16 +2404,26 @@ impl Extractor<'_> {
         if !problems.is_empty() {
             return Err(problems.join("\n"));
         }
+        // An imported function nothing in the named files reaches (a macro's, which
+        // runs while the program is read) is left out of what runs.
+        let kept: HashSet<String> = self
+            .checked
+            .runtime
+            .iter()
+            .filter(|n| !self.unused.contains(*n))
+            .cloned()
+            .collect();
         for (file, stmts) in std::mem::take(&mut self.pending) {
             let source = runtime_source(
                 &file.text,
                 file.base,
                 &stmts,
-                &self.checked.runtime,
+                &kept,
                 &self.std,
                 &self.written,
                 Ctors {
                     struct_of: &|c| self.struct_fields(c).map(|(family, _)| family),
+                    struct_fields: &|c| self.struct_fields(c),
                     is_ctor: &|c| self.is_ctor(c),
                     qualified: &|c| self.qualified_ctor(c),
                 },
@@ -2280,8 +2552,15 @@ impl Extractor<'_> {
         // Executable code names the family and its constructors by what
         // they are extracted as, as it names the functions.
         self.written.insert(i.name.clone());
-        self.written
-            .extend(i.constructors.iter().map(|c| c.name.clone()));
+        // A constructor's full name is what it is written as only when its
+        // family is written in its modules (`in_modules_text`); a family
+        // written under its short name is not reached by that path.
+        self.written.extend(
+            i.constructors
+                .iter()
+                .filter(|c| i.name.contains("::") || !c.name.contains("::"))
+                .map(|c| c.name.clone()),
+        );
         let kept = self.kept_params(&i.name);
         let generics: Vec<&str> = i
             .params
@@ -2298,13 +2577,16 @@ impl Extractor<'_> {
             // `x.f` and writes `T { f: e }` as the proofs do.
             let sig = &self.checked.signatures[&c.name];
             let mut fields = Vec::new();
+            let mut types = Vec::new();
             for (k, (n, t)) in c.params.iter().enumerate() {
                 if sig.params[fam.params + k] == Role::Value {
                     if self.refined(t) {
                         self.refined_takers.insert(c.name.clone());
                         self.refined_takers.insert(i.name.clone());
                     }
-                    fields.push(format!("{}: {}", raw(n), self.ty(path, t, &locals)?));
+                    let ty = self.ty(path, t, &locals)?;
+                    fields.push(format!("{}: {ty}", raw(n)));
+                    types.push(ty);
                 }
                 locals.insert(n.clone());
             }
@@ -2320,27 +2602,42 @@ impl Extractor<'_> {
             // A struct is built only by its fields, so the name becomes a
             // function that builds them.
             if c.name != i.name {
+                // The parameters have names of their own: a field's name can
+                // be the name of a module the function is written in.
+                let args: Vec<String> = names.iter().map(|_| self.fresh("field")).collect();
                 let values: Vec<String> = names
                     .iter()
-                    .map(|n| format!("{}: {}", raw(n), raw(n)))
+                    .zip(&args)
+                    .map(|(n, a)| format!("{}: {a}", raw(n)))
+                    .collect();
+                let params: Vec<String> = args
+                    .iter()
+                    .zip(&types)
+                    .map(|(a, t)| format!("{a}: {t}"))
                     .collect();
                 let result = if generics.is_empty() {
                     i.name.clone()
                 } else {
                     format!("{}({})", i.name, generics.join(", "))
                 };
-                let short = crate::surface::qualify::short(&c.name);
-                let ctor = short.rsplit("::").next().unwrap_or(short);
-                // A record expression names its struct without a path, which
-                // the modules around it find.
+                let ctor = c.name.rsplit("::").next().unwrap_or(&c.name);
+                // The function is written in a module named as the struct is
+                // (`m::T` for `m::T::C`), so that two types of one name in two
+                // files have two functions. The record names the struct by its
+                // full name: a bare name could be a constructor of a prelude
+                // file the program imports.
                 let decl = format!(
                     "fn {ctor}{}({}): {result} {{\n  {} {{ {} }}\n}}",
                     angle(&generics),
-                    fields.join(", "),
-                    i.name.rsplit("::").next().unwrap_or(&i.name),
+                    params.join(", "),
+                    i.name,
                     values.join(", ")
                 );
-                let _ = writeln!(self.out, "\n{}", in_modules_text(short, &decl));
+                let _ = writeln!(
+                    self.out,
+                    "\n{}",
+                    in_modules_text(&format!("{}::{ctor}", i.name), &decl)
+                );
             }
             return Ok(());
         }
@@ -2490,7 +2787,8 @@ impl Extractor<'_> {
                     if self.refined(t) {
                         self.refined_takers.insert(f.name.clone());
                     }
-                    params.push(format!("{lent}{}: {}", raw(n), self.ty(path, t, &locals)?))
+                    let ty = self.ty(path, t, &locals)?;
+                    params.push(format!("{lent}{}: {ty}", self.local(n)))
                 }
             }
             locals.insert(n.clone());
@@ -2503,7 +2801,6 @@ impl Extractor<'_> {
         };
         let result = self.ty(path, result, &locals)?;
         let body = match std.and_then(mapped_fn) {
-            // A function a Nib program may call by its name.
             Some(template) => {
                 let names: Vec<String> = f
                     .params
@@ -2621,7 +2918,6 @@ impl Extractor<'_> {
         Ok(format!(" where {}", parts.join(", ")))
     }
 
-    /// `class C(A: Type) { fn m(…): R }`: the methods, without the laws.
     fn class(&mut self, path: &Path, c: &crate::surface::ClassDecl) -> Result<(), String> {
         let locals: Locals = std::iter::once(c.param.clone()).collect();
         let bound = c.bound.as_deref().unwrap_or("Type");
@@ -2707,7 +3003,8 @@ impl Extractor<'_> {
                     _ => "",
                 };
                 if sig.params[n_generics + k] == Role::Value {
-                    params.push(format!("{lent}{}: {}", raw(n), self.ty(path, t, &inner)?));
+                    let ty = self.ty(path, t, &inner)?;
+                    params.push(format!("{lent}{}: {ty}", self.local(n)));
                 }
                 inner.insert(n.clone());
             }
@@ -2734,8 +3031,6 @@ impl Extractor<'_> {
         self.out.push_str(&text);
         Ok(())
     }
-
-    // ---- types ------------------------------------------------------------
 
     fn ty(&self, path: &Path, t: &SurfaceTerm, locals: &Locals) -> Result<String, String> {
         self.ty_in(path, t, locals, &HashMap::new())
@@ -2839,10 +3134,12 @@ impl Extractor<'_> {
                 self.ty_in(path, term, locals, env)?
             )),
             // `@a T`: Nib's own label, a mark of the type.
-            TermKind::Tagged { tag, term } => {
-                Ok(format!("@{} {}", raw(tag), self.ty_in(path, term, locals, env)?))
-            }
-            // `A × B`: Nib's own product, its members as one set (`A × Unit` is `A`).
+            TermKind::Tagged { tag, term } => Ok(format!(
+                "@{} {}",
+                raw(tag),
+                self.ty_in(path, term, locals, env)?
+            )),
+            // `A × B`: Nib's own product, its members in the order written (`A × Unit` is `A`).
             TermKind::Product(items) => {
                 let members = crate::surface::qualify::product_type_members(items)
                     .iter()
@@ -2860,7 +3157,6 @@ impl Extractor<'_> {
         }
     }
 
-    /// The alias `n` given `args`, as the type its body names.
     fn unfold(&self, path: &Path, n: &str, args: Vec<String>) -> Result<String, String> {
         let f = &self.aliases[n];
         if f.params.len() != args.len() {
@@ -2908,11 +3204,54 @@ impl Extractor<'_> {
         }
     }
 
-    // ---- terms ------------------------------------------------------------
+    /// The name a local `n` is written with where it is bound. A local may
+    /// not have the name of a module visible where it is, and the program is
+    /// written in modules named by the paths of its declarations
+    /// (`module m { module src { … } }`), so a local named as a segment of
+    /// such a path is written with a fresh name, the same at its binders and
+    /// its uses.
+    fn local(&mut self, n: &str) -> String {
+        match self.module_segments.get(n) {
+            None => raw(n),
+            Some(Some(m)) => m.clone(),
+            Some(None) => {
+                let m = self.fresh(n);
+                self.module_segments.insert(n.to_string(), Some(m.clone()));
+                m
+            }
+        }
+    }
+
+    /// A local `n` as an expression ([`local_name`]), under the name
+    /// [`Extractor::local`] binds it with.
+    fn local_use(&mut self, n: &str) -> String {
+        if self.module_segments.contains_key(n) {
+            self.local(n)
+        } else {
+            local_name(n)
+        }
+    }
 
     fn fresh(&mut self, base: &str) -> String {
         self.fresh += 1;
         format!("{base}_x{}", self.fresh)
+    }
+
+    /// `t` as the subject of a `match`: in parentheses unless it is a name,
+    /// so that a record it builds (`Item { value: 42 }`) is not read as the
+    /// arms of the `match`.
+    fn subject(
+        &mut self,
+        path: &Path,
+        t: &SurfaceTerm,
+        locals: &Locals,
+        depth: usize,
+    ) -> Result<String, String> {
+        let s = self.expr(path, t, locals, depth)?;
+        Ok(match &*t.kind {
+            TermKind::Var(_) => s,
+            _ => format!("({s})"),
+        })
     }
 
     /// `t` as a Nib expression, `depth` levels of indentation in.
@@ -2934,9 +3273,9 @@ impl Extractor<'_> {
             // A place lent to a call: `&mut x`, `&mut x.f`.
             TermKind::Borrow { mutable, term } => {
                 let place = match &*term.kind {
-                    TermKind::Var(x) => raw(x),
+                    TermKind::Var(x) => self.local(x),
                     TermKind::Field { base, name } => match &*base.kind {
-                        TermKind::Var(x) => format!("{}.{}", raw(x), raw(name)),
+                        TermKind::Var(x) => format!("{}.{}", self.local(x), raw(name)),
                         _ => {
                             return fail(
                                 path,
@@ -2962,7 +3301,8 @@ impl Extractor<'_> {
                 }
                 Ok(out)
             }
-            TermKind::Var(n) if locals.contains(n) || self.thunks.contains(n) => Ok(local_name(n)),
+            TermKind::Var(n) if locals.contains(n) => Ok(self.local_use(n)),
+            TermKind::Var(n) if self.thunks.contains(n) => Ok(local_name(n)),
             TermKind::Var(n) => self.global(path, n, &[], locals, depth),
             TermKind::App {
                 function,
@@ -3085,7 +3425,9 @@ impl Extractor<'_> {
                 }
             },
             TermKind::Lam {
-                params, body, types,
+                params,
+                body,
+                types,
             } => {
                 // A written parameter type is kept: Nib reads a lambda's
                 // parameters before the arguments that would tell them.
@@ -3093,10 +3435,10 @@ impl Extractor<'_> {
                 for (k, p) in params.iter().enumerate() {
                     match types.get(k).and_then(|t| t.as_ref()) {
                         Some(t) => match self.ty_in(path, t, locals, &HashMap::new()) {
-                            Ok(t) => shown.push(format!("{p}: {t}")),
-                            Err(_) => shown.push(p.clone()),
+                            Ok(t) => shown.push(format!("{}: {t}", self.local(p))),
+                            Err(_) => shown.push(self.local(p)),
                         },
-                        None => shown.push(p.clone()),
+                        None => shown.push(self.local(p)),
                     }
                 }
                 let mut inner = locals.clone();
@@ -3118,10 +3460,12 @@ impl Extractor<'_> {
             }
             TermKind::Handle { body, handlers } => self.handle(path, body, handlers, locals, depth),
             // `@a e`: Nib's own label, which leaves the value as it is.
-            TermKind::Tagged { tag, term } => {
-                Ok(format!("@{} ({})", raw(tag), self.expr(path, term, locals, depth)?))
-            }
-            // `#(a, b)`: Nib's own product, its members told apart by their types; the
+            TermKind::Tagged { tag, term } => Ok(format!(
+                "@{} ({})",
+                raw(tag),
+                self.expr(path, term, locals, depth)?
+            )),
+            // `#(a, b)`: Nib's own product, its members in the order written; the
             // std's `Pair` is written as the record it is.
             TermKind::Tuple(items) => {
                 let items = items
@@ -3167,7 +3511,8 @@ impl Extractor<'_> {
                     let x = name(path, pattern)?;
                     inner.insert(x.clone());
                     let e = self.expr(path, body, &inner, depth + 1)?;
-                    arms.push(format!("{pad}return {} => {e}", raw(&x)));
+                    let x = self.local(&x);
+                    arms.push(format!("{pad}return {x} => {e}"));
                 }
                 Handler::Operation {
                     effect,
@@ -3188,12 +3533,12 @@ impl Extractor<'_> {
                     let k = cont.clone().unwrap_or_else(|| "_".into());
                     inner.insert(k.clone());
                     let e = self.expr(path, body, &inner, depth + 1)?;
-                    let xs: Vec<String> = xs.iter().map(|x| raw(x)).collect();
+                    let xs: Vec<String> = xs.iter().map(|x| self.local(x)).collect();
+                    let k = self.local(&k);
                     arms.push(format!(
-                        "{pad}{}({}), {} => {e}",
+                        "{pad}{}({}), {k} => {e}",
                         raw(effect),
-                        xs.join(", "),
-                        raw(&k)
+                        xs.join(", ")
                     ));
                 }
             }
@@ -3280,9 +3625,11 @@ impl Extractor<'_> {
                         let v = self.expr(path, value, &inner, depth + 1)?;
                         // The type written can be what fixes a generic of
                         // the value (`let x: Box(Nat) = empty()`).
-                        match ty.as_ref().map(|ty| self.ty(path, ty, &inner)) {
-                            Some(Ok(ty)) => lines.push(format!("let {}: {ty} := {v}", raw(name))),
-                            _ => lines.push(format!("let {} := {v}", raw(name))),
+                        let ty = ty.as_ref().map(|ty| self.ty(path, ty, &inner));
+                        let x = self.local(name);
+                        match ty {
+                            Some(Ok(ty)) => lines.push(format!("let {x}: {ty} := {v}")),
+                            _ => lines.push(format!("let {x} := {v}")),
                         }
                     }
                     inner.insert(name.clone());
@@ -3294,12 +3641,13 @@ impl Extractor<'_> {
                     borrow: false,
                 } => {
                     let v = self.expr(path, value, &inner, depth + 1)?;
+                    let x = self.local(name);
                     match ty {
                         Some(ty) => {
                             let ty = self.ty(path, ty, &inner)?;
-                            lines.push(format!("var {}: {ty} := {v}", raw(name)))
+                            lines.push(format!("var {x}: {ty} := {v}"))
                         }
-                        None => lines.push(format!("var {} := {v}", raw(name))),
+                        None => lines.push(format!("var {x} := {v}")),
                     }
                     inner.insert(name.clone());
                 }
@@ -3307,7 +3655,7 @@ impl Extractor<'_> {
                     let v = self.expr(path, value, &inner, depth + 1)?;
                     let target = match place {
                         Some(p) => self.expr(path, p, &inner, depth + 1)?,
-                        None => raw(name),
+                        None => self.local(name),
                     };
                     lines.push(format!("{target} := {v}"));
                 }
@@ -3333,7 +3681,6 @@ impl Extractor<'_> {
         }
     }
 
-    /// A global applied to `args` (none when it is not applied).
     fn global(
         &mut self,
         path: &Path,
@@ -3460,7 +3807,6 @@ impl Extractor<'_> {
         }
     }
 
-    /// `n` applied to the value arguments `values`.
     fn call(&mut self, path: &Path, n: &str, values: &[String]) -> Result<String, String> {
         if let Some(c) = self.std.of(n).and_then(|m| mapped_ctor(m, values)) {
             return Ok(c);
@@ -3541,6 +3887,9 @@ impl Extractor<'_> {
             .families
             .iter()
             .find(|(_, f)| f.ctors.iter().any(|c| c == n))?;
+        // The family is declared inside the modules of its name
+        // (`in_modules_text`), the file's module included: that name is the
+        // path.
         family
             .contains("::")
             .then(|| format!("{family}::{}", raw(n)))
@@ -3550,7 +3899,7 @@ impl Extractor<'_> {
     /// declared by (`Expr.ExVar`). A variant renamed to its full name
     /// because another declaration shares its short name
     /// (`fluent.src.syntax.Expr.ExVar`) is declared by its own name inside
-    /// the type, and the modules of the full name are not written out.
+    /// the type, which is written by its full name.
     fn ctor_ref(&self, n: &str) -> String {
         let family = self
             .checked
@@ -3562,16 +3911,10 @@ impl Extractor<'_> {
             return self.qualified_ctor(n).unwrap_or_else(|| raw(n));
         };
         match family {
-            Some(family) => format!(
-                "{}::{}",
-                family.rsplit("::").next().unwrap_or(family),
-                raw(short)
-            ),
+            Some(family) => format!("{family}::{}", raw(short)),
             None => raw(n),
         }
     }
-
-    // ---- match --------------------------------------------------------------
 
     fn matching(
         &mut self,
@@ -3581,6 +3924,29 @@ impl Extractor<'_> {
         locals: &Locals,
         depth: usize,
     ) -> Result<String, String> {
+        // A constructor written by its short name is the one the kernel read it as
+        // (`Checked::ctor_sites`), not the first declaration with that spelling.
+        let named: Vec<MatchArm>;
+        let arms = if self.checked.ctor_sites.is_empty() {
+            arms
+        } else {
+            named = arms
+                .iter()
+                .map(|a| {
+                    let notes: Vec<&CtorSite> = self
+                        .checked
+                        .ctor_sites
+                        .iter()
+                        .filter(|s| s.span == a.body.span)
+                        .collect();
+                    MatchArm {
+                        pattern: self.kernel_named(&a.pattern, &notes, &mut 0),
+                        ..a.clone()
+                    }
+                })
+                .collect();
+            &named[..]
+        };
         // `@a p`: the labels come off the value's type in Nib as in the kernel. The
         // value is bound under them once (`match s { @a v => … }`) and the patterns
         // under them are matched against `v`, at the type the kernel gave `p`.
@@ -3598,7 +3964,7 @@ impl Extractor<'_> {
                     ..a.clone()
                 })
                 .collect();
-            let s = self.expr(path, scrutinee, locals, depth + 1)?;
+            let s = self.subject(path, scrutinee, locals, depth + 1)?;
             let v = self.fresh("unlabelled");
             let mut inner = locals.clone();
             inner.insert(v.clone());
@@ -3655,7 +4021,7 @@ impl Extractor<'_> {
             && let Pattern::Ctor { args, .. } = &arm.pattern
             && let [inner_pat] = args.as_slice()
         {
-            let s = self.expr(path, scrutinee, locals, depth + 1)?;
+            let s = self.subject(path, scrutinee, locals, depth + 1)?;
             let mut inner = locals.clone();
             let bytes = match inner_pat {
                 Pattern::Bind(n) if !self.is_ctor(n) => n.clone(),
@@ -3666,7 +4032,7 @@ impl Extractor<'_> {
             let body = self.expr(path, &arm.body, &inner, depth + 1)?;
             return Ok(braces(
                 &[
-                    format!("let {} := extract_text_bytes({s})", raw(&bytes)),
+                    format!("let {} := extract_text_bytes({s})", self.local(&bytes)),
                     body,
                 ],
                 depth,
@@ -3694,7 +4060,7 @@ impl Extractor<'_> {
                 msg!("tauto-extract-a-match-on-has-no", family = family),
             );
         }
-        let s = self.expr(path, scrutinee, locals, depth + 1)?;
+        let s = self.subject(path, scrutinee, locals, depth + 1)?;
         if matches!(self.std.of(&family), Some("Nat" | "Bool")) {
             return self.chain(path, &s, arms, locals, depth);
         }
@@ -3736,7 +4102,42 @@ impl Extractor<'_> {
         ))
     }
 
-    /// The family of the constructor a pattern names, if it names one.
+    /// `p`, an arm's pattern (the arm's body at `at`), with each constructor named as
+    /// the kernel read it.
+    ///
+    /// The kernel notes the constructors of an arm's pattern in the order it meets
+    /// them, a nested pattern's after the one around it, which is the order of
+    /// this walk. A constructor is taken from the next note when the note was made
+    /// for that spelling; otherwise the pattern is left as written.
+    fn kernel_named(&self, p: &Pattern, notes: &[&CtorSite], next: &mut usize) -> Pattern {
+        let mut read = |name: &String| match notes.get(*next) {
+            Some(site) if site.written == *name => {
+                *next += 1;
+                site.resolved.clone()
+            }
+            _ => name.clone(),
+        };
+        match p {
+            Pattern::Bind(n) => Pattern::Bind(read(n)),
+            Pattern::Ctor { name, args } => {
+                let name = read(name);
+                Pattern::Ctor {
+                    name,
+                    args: args
+                        .iter()
+                        .map(|q| self.kernel_named(q, notes, next))
+                        .collect(),
+                }
+            }
+            Pattern::Tuple(ps) => Pattern::Tuple(
+                ps.iter()
+                    .map(|q| self.kernel_named(q, notes, next))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
     fn pattern_family(&self, p: &Pattern) -> Option<String> {
         let name = match p {
             Pattern::Ctor { name, .. } => name,
@@ -3995,7 +4396,6 @@ impl Extractor<'_> {
         }
     }
 
-    /// What `p` asks of the value `at`: tests, and the names it binds.
     fn test(
         &mut self,
         path: &Path,
@@ -4008,7 +4408,7 @@ impl Extractor<'_> {
         match p {
             Pattern::Wild => Ok(()),
             Pattern::Bind(n) if !self.is_ctor(n) => {
-                binds.push(format!("let {} := {at}", raw(n)));
+                binds.push(format!("let {} := {at}", self.local(n)));
                 locals.insert(n.clone());
                 Ok(())
             }
@@ -4067,7 +4467,7 @@ impl Extractor<'_> {
             Pattern::Wild => Ok("_".into()),
             Pattern::Bind(n) if !self.is_ctor(n) => {
                 locals.insert(n.clone());
-                Ok(raw(n))
+                Ok(self.local(n))
             }
             Pattern::Bind(n) => self.nib_pattern(
                 path,
@@ -4183,7 +4583,6 @@ fn has_bool(p: &Pattern) -> bool {
     }
 }
 
-/// `p` with `false` and `true` written as the constructors of `Bool`.
 fn bool_constructors(p: &Pattern) -> Pattern {
     match p {
         Pattern::Bool(b) => Pattern::Bind(b.to_string()),
@@ -4208,7 +4607,6 @@ fn is_unit(t: &SurfaceTerm) -> bool {
         if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple"))
 }
 
-/// A constructor of `std/` that is mapped onto Nib, applied.
 fn mapped_ctor(n: &str, values: &[String]) -> Option<String> {
     Some(match (n, values) {
         ("Zero", []) => "0".into(),
@@ -4282,7 +4680,6 @@ fn angle(generics: &[&str]) -> String {
     format!("<{}>", gs.join(", "))
 }
 
-/// `(A: Type, B: Type)`: the parameters of a type declaration.
 fn type_params(generics: &[&str]) -> String {
     if generics.is_empty() {
         return String::new();
@@ -4365,7 +4762,6 @@ fn inductive_syntax_stmts(
     }
 }
 
-/// The names of what `inductive_syntax!` declarations make for Nib, in the checked files.
 fn generated_nib_names(input: &crate::read::ExtractionInput) -> HashSet<String> {
     let mut names = HashSet::new();
     for (file, _) in &input.sources {
@@ -4445,6 +4841,19 @@ mod tests {
     }
 
     #[test]
+    fn helpers_import_the_prelude_files_they_name() {
+        let text = with_prelude_imports(&format!("{HELPERS}{TEXT_HELPERS}"), &HashSet::new());
+        let imports: Vec<&str> = text
+            .lines()
+            .take_while(|l| l.starts_with("import "))
+            .collect();
+        assert!(
+            imports.contains(&"import std::prelude::Affine"),
+            "{imports:?}"
+        );
+    }
+
+    #[test]
     fn hygienic_names_become_fresh_names_outside_text() {
         let (out, renamed) =
             legal_names("fn f(t_1: Nat) { let t#1 := \"t#1\" // t#2\n  g#r2(t#1, t_1) }");
@@ -4486,11 +4895,7 @@ perform show("value", twice(2))
         .unwrap();
         let roots = vec![source.clone()];
         let input = crate::read::check_files_for_extraction(&roots, false, true).unwrap();
-        std::fs::write(
-            &source,
-            r#"fn twice(n: Nat): Nat { twice(n) }"#,
-        )
-        .unwrap();
+        std::fs::write(&source, r#"fn twice(n: Nat): Nat { twice(n) }"#).unwrap();
         std::fs::remove_file(&included).unwrap();
         let (text, runtime, total) = extract_checked(&input, true, &roots).unwrap();
         assert!(total.contains("twice"));
@@ -4572,7 +4977,6 @@ fn nib_prelude_fn(name: &str) -> bool {
 /// program can write.
 const HOLE: &str = "\u{0}hole";
 
-/// `shape` with its holes, in order, as the names of `names`.
 fn fill_holes<'n>(shape: &Pattern, names: &mut impl Iterator<Item = &'n String>) -> Pattern {
     match shape {
         Pattern::Bind(n) if n == HOLE => Pattern::Bind(names.next().cloned().unwrap_or_default()),

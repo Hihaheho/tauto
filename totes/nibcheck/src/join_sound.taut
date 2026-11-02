@@ -1,4 +1,11 @@
 import "fits_sound.taut"
+import std::Base
+import "checker.taut"
+import "rules_ty.taut"
+import "ty.taut"
+import "ty_eq.taut"
+import "unify.taut"
+import "unify_sound.taut"
 
 // `ck_join` is sound (`docs/design/self-host.md`
 // 「層 2：`ck_join`（`src/join_sound.taut`）」): the type it gives two
@@ -114,8 +121,6 @@ pub theorem jb1_borrow(
 ): ck_join_borrowed(c, TyBorrow(x, m), b) = ck_jb1y(c, x, m, b, Bool::and(not(ty_is_borrow(b)), kind_dup(ck_kind(c, x)))) {
   Refl
 }
-
-// ----- what each step gives -----
 
 pub def JoinOk(
   c: Checker,
@@ -245,8 +250,6 @@ pub theorem jn_never_sub(
     Eq::subst((z: Ty) => SubAt(c, z, d), Eq::sym(ck_never_of(x, e)), sub_never_at(c, d))
   )
 }
-
-// ----- the type found for a borrow and a value -----
 
 pub theorem opt_none(c: Checker, a: Ty, b: Ty): OptOk(c, mut1(None, c), a, b) {
   (o: CkOrdered(c)) => AndIntro(
@@ -466,8 +469,6 @@ pub theorem jb1_cases(
 pub theorem borrowed_ok(c: Checker, a: Ty, b: Ty): OptOk(c, ck_join_borrowed(c, a, b), a, b) {
   jb1_cases(c, a, a, b, Refl)
 }
-
-// ----- the join -----
 
 pub theorem join_e2_some(
   c: Checker,

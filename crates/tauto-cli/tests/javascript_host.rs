@@ -48,13 +48,13 @@ fn manifest_fetch_effect_and_rejection() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "http-demo" sources = ["main.taut"] }
+        r#"package { name = "http-demo" }
 javascript { extern { get = "host/http.mjs#get" } async = ["get"] sources = ["host"] }
 "#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern { fn get(url: Text): Text }
 effect http_get(url: Text): Text resume 1
 let text := handle { perform http_get("data:text/plain,hello") } with { http_get(url), k => k(get(url)) }
@@ -91,13 +91,13 @@ fn bindings_are_checked_for_target_and_direct_handlers() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "host-demo" sources = ["main.taut"] }
+        r#"package { name = "host-demo" }
 javascript { node { wait = "host.mjs#wait" } async = ["wait"] }"#,
     );
     write(&d, "host.mjs", "export async function wait(){return 1n;}");
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern { fn wait(): i64 }
 perform show("n", wait())"#,
     );
@@ -106,7 +106,7 @@ perform show("n", wait())"#,
     assert!(String::from_utf8_lossy(&out.stderr).contains("unavailable"));
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern { fn wait(): i64 }
 effect ask(): i64 direct
 let n := handle { perform ask() } with { ask(), k => k(wait()) }
@@ -123,7 +123,7 @@ fn rust_externs_are_compiled_to_wasm() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "wasm-demo" sources = ["main.taut"] }
+        r#"package { name = "wasm-demo" }
 rust { bridge = "bridge" types { Counter = "wasm_demo_bridge::Counter" } }
 "#,
     );
@@ -147,8 +147,10 @@ pub fn maybe(n:i64)->Option<i64>{Some(n+1)}
     );
     write(
         &d,
-        "main.taut",
-        r#"affine struct Counter {}
+        "src/main.taut",
+        r#"import std::prelude::Affine
+
+affine struct Counter {}
 extern {
  fn make(n: i64): Counter
  fn bump(&mut n: Counter): i64
@@ -185,7 +187,7 @@ fn async_host_callback_can_suspend_through_a_nib_handler() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "callback-demo" sources = ["main.taut"] }
+        r#"package { name = "callback-demo" }
 javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     );
     write(
@@ -195,7 +197,7 @@ javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"effect ask(n: i64): i64 resume 1
 extern { fn apply(&f: (n: i64) -> i64): i64 }
 let r := handle { apply(&(n) => perform ask(n)) + 1 } with { ask(n), k => k(n * 10) }
@@ -213,7 +215,7 @@ fn callback_abort_leaves_the_host_frame() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "callback-demo" sources = ["main.taut"] }
+        r#"package { name = "callback-demo" }
 javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     );
     write(
@@ -223,7 +225,7 @@ javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"effect ask(n: i64): i64 resume <=1
 extern { fn apply(&f: (n: i64) -> i64): i64 }
 let r := handle { apply(&(n) => perform ask(n)) + 1 } with { ask(n), k => 7 }
@@ -241,7 +243,7 @@ fn wasm_resources_are_released_at_scope_exit_and_abort() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "lifetime-demo" sources = ["main.taut"] }
+        r#"package { name = "lifetime-demo" }
 rust { bridge = "bridge" types { Probe = "lifetime_demo_bridge::Probe" } }"#,
     );
     write(
@@ -258,7 +260,7 @@ pub fn make(n:i64)->Probe{Probe(n)}pub fn dropped()->i64{DROPS.load(Ordering::Se
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"affine struct Probe {}
 extern { fn make(n: i64): Probe
  fn dropped(): i64 }
@@ -290,7 +292,7 @@ fn host_boundaries_reject_reusable_callbacks_and_expired_borrows() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "boundary-demo" sources = ["main.taut"] }
+        r#"package { name = "boundary-demo" }
 javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     );
     write(
@@ -300,7 +302,7 @@ javascript { extern { apply = "host.mjs#apply" } async = ["apply"] }"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"effect choose(): i64 resume ω
 extern { fn apply(&f: (n: i64) -> i64): i64 }
 let n := handle { apply(&(n) => perform choose()) } with { choose(), k => k(1) + k(2) }
@@ -316,7 +318,7 @@ perform show("n", n)"#,
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "boundary-demo" sources = ["main.taut"] }
+        r#"package { name = "boundary-demo" }
 javascript { extern { remember = "host.mjs#remember" inspect = "host.mjs#inspect" } }"#,
     );
     write(
@@ -326,7 +328,7 @@ javascript { extern { remember = "host.mjs#remember" inspect = "host.mjs#inspect
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern { fn remember(&n: i64): Unit
 fn inspect(): i64 }
 let n := 3
@@ -345,7 +347,7 @@ fn wasm_shared_temporaries_survive_multiple_resumptions() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "shared-demo" sources = ["main.taut"] }
+        r#"package { name = "shared-demo" }
 rust { bridge = "bridge" types { Probe = "shared_demo_bridge::Probe" } }"#,
     );
     write(
@@ -360,7 +362,7 @@ rust { bridge = "bridge" types { Probe = "shared_demo_bridge::Probe" } }"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"shared struct Probe {}
 extern { fn make(n: i64): Probe
 fn inspect(p: Probe, n: i64): i64 }
@@ -381,7 +383,7 @@ fn generic_rust_externs_are_specialized_through_nib_functions() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "generic-demo" sources = ["main.taut"] }
+        r#"package { name = "generic-demo" }
 rust { bridge = "bridge" }"#,
     );
     write(
@@ -396,8 +398,10 @@ rust { bridge = "bridge" }"#,
     );
     write(
         &d,
-        "main.taut",
-        r#"extern {
+        "src/main.taut",
+        r#"import std::prelude::Affine
+
+extern {
  fn identity<A>(x: A): A
  fn reverse<A>(xs: Vec(A)): Vec(A)
 }
@@ -425,7 +429,7 @@ fn wasm_callbacks_reenter_and_return_functions() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "function-demo" sources = ["main.taut"] }
+        r#"package { name = "function-demo" }
 rust { bridge = "bridge" }"#,
     );
     write(
@@ -443,7 +447,7 @@ pub fn number(n:i64)->i64{n*10}
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
  fn twice(&f: (n: i64) -> i64): i64
  fn add(n: i64): (i64) -> i64
@@ -472,7 +476,7 @@ fn wasm_borrowed_returns_preserve_mutation_and_owner_lifetime() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "view-demo" sources = ["main.taut"] }
+        r#"package { name = "view-demo" }
 rust { bridge = "bridge" types { Counter = "view_demo_bridge::Counter" } }"#,
     );
     write(
@@ -496,8 +500,10 @@ pub fn bump(n:&mut i64){*n+=1}
     );
     write(
         &d,
-        "main.taut",
-        r#"affine struct Counter {}
+        "src/main.taut",
+        r#"import std::prelude::Affine
+
+affine struct Counter {}
 extern {
  fn make(n: i64): Counter
  fn count(&c: Counter): &i64
@@ -540,7 +546,7 @@ fn wasm_callback_waits_for_fetch_and_reenters_after_suspension() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "async-wasm" sources = ["main.taut"] }
+        r#"package { name = "async-wasm" }
 rust { bridge = "bridge" }
 javascript { extern { get = "host.mjs#get" } async = ["get"] }"#,
     );
@@ -562,7 +568,7 @@ pub fn number(n:i64)->i64{n*10}"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
  fn twice(&f: (n: i64) -> i64): i64
  fn number(n: i64): i64
@@ -587,7 +593,7 @@ fn wasm_callback_borrows_rust_stack_and_updates_it() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "borrow-callback" sources = ["main.taut"] }
+        r#"package { name = "borrow-callback" }
 rust { bridge = "bridge" }"#,
     );
     write(
@@ -602,7 +608,7 @@ rust { bridge = "bridge" }"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern { fn edit(&f: (&mut n: i64) -> Unit): i64 }
 fn change(&mut value: i64): Unit { value := value + 2 }
 let n := edit(&change)
@@ -621,7 +627,7 @@ fn wasm_opaque_iterator_view_keeps_its_vector_alive() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "iterator-demo" sources = ["main.taut"] }
+        r#"package { name = "iterator-demo" }
 rust { bridge = "bridge" types { Cursor = "iterator_demo_bridge::Cursor<'_>" } }"#,
     );
     write(
@@ -638,8 +644,10 @@ pub fn next<'a>(v:&mut Cursor<'a>)->Option<&'a i64>{v.0.next()}"#,
     );
     write(
         &d,
-        "main.taut",
-        r#"view struct Cursor {}
+        "src/main.taut",
+        r#"import std::prelude::Affine
+
+view struct Cursor {}
 extern {
  fn cursor(&v: Vec(i64)): Cursor
  fn next(&mut c: Cursor): Option(&i64)
@@ -669,7 +677,7 @@ fn abandoning_rust_callbacks_are_rejected_before_wasm_build() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "native-callback-policy" sources = ["main.taut"] }
+        r#"package { name = "native-callback-policy" }
 rust { bridge = "bridge" }"#,
     );
     for (declaration, body) in [
@@ -688,7 +696,7 @@ rust { bridge = "bridge" }"#,
         };
         write(
             &d,
-            "main.taut",
+            "src/main.taut",
             &format!(
                 r#"{}
 extern {{ fn apply(&f: (i64) -> i64): i64 }}
@@ -715,7 +723,7 @@ fn owned_nib_callback_can_be_stored_in_rust_and_called_later() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "stored-callback" sources = ["main.taut"] }
+        r#"package { name = "stored-callback" }
 rust { bridge = "bridge" types { Saved = "stored_callback_bridge::Saved" } }"#,
     );
     write(
@@ -732,7 +740,7 @@ pub fn use_saved(s:&Saved,n:i64)->i64{(s.0)(n)}"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"affine struct Saved {}
 extern {
  fn save(f: (i64) -> i64): Saved
@@ -759,7 +767,7 @@ fn generic_borrowed_record_fields_and_nib_reborrows_keep_aliasing() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "field-demo" sources = ["main.taut"] }
+        r#"package { name = "field-demo" }
 rust { bridge = "bridge" }"#,
     );
     write(
@@ -774,7 +782,7 @@ rust { bridge = "bridge" }"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"copy struct Point { x: i64, y: i64 }
 extern { fn r#view<A>(&mut value: A): &mut A }
 fn through<A>(&mut value: A): &mut A { r#view(&mut value) }
@@ -806,7 +814,7 @@ fn concurrent_async_callbacks_preserve_wasm_stack_order() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "concurrent-wasm" sources = ["main.taut"] }
+        r#"package { name = "concurrent-wasm" }
 rust { bridge = "bridge" }
 javascript { extern { parallel = "host.mjs#parallel" wait = "host.mjs#wait" } async = ["parallel", "wait"] }"#,
     );
@@ -827,7 +835,7 @@ javascript { extern { parallel = "host.mjs#parallel" wait = "host.mjs#wait" } as
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
  fn twice(&f: (i64) -> i64): i64
  fn parallel(&f: (i64) -> i64): i64
@@ -849,7 +857,7 @@ fn opaque_clone_and_mutation_agree_with_the_rust_backend() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "clone-demo" sources = ["main.taut"] }
+        r#"package { name = "clone-demo" }
 rust { bridge = "bridge" types { State = "clone_demo_bridge::State" } }"#,
     );
     write(
@@ -871,7 +879,7 @@ pub fn copies()->i64{COPIES.load(Ordering::SeqCst)}"#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"shared struct State {}
 extern {
  fn make(n: i64): State
@@ -910,7 +918,7 @@ fn host_types_keep_the_host_object_and_release_it_once_nobody_holds_it() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "host-types" sources = ["main.taut"] }
+        r#"package { name = "host-types" }
 javascript {
   extern { make = "host/h.mjs#make" label = "host/h.mjs#label" consume = "host/h.mjs#consume" }
   types { Node = "host/h.mjs#release" }
@@ -920,7 +928,7 @@ javascript {
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
   affine type Node
   fn make(name: Text): Node
@@ -950,7 +958,7 @@ perform show("moved", label(&t))
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
   affine type Node
   fn make(name: Text): Node
@@ -972,7 +980,7 @@ fn instances_export_named_functions_without_running_the_program() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "exports" sources = ["main.taut"] }
+        r#"package { name = "exports" }
 javascript {
   exports = ["add", "greet", "fetch_len", "count"]
   extern { get = "host/h.mjs#get" }
@@ -983,7 +991,7 @@ javascript {
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern { fn get(url: Text): Text }
 enum Shape { Circle(i64), Square(i64) }
 fn add(a: i64, b: i64): i64 { a + b }
@@ -1029,13 +1037,13 @@ try { i.add(1n, 1n); } catch (e) { console.log(e.message); }
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "exports" sources = ["main.taut"] }
+        r#"package { name = "exports" }
 javascript { exports = ["ask_twice"] }
 "#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"effect ask(): i64
 fn ask_twice(): i64 { perform ask() + perform ask() }
 "#,
@@ -1053,7 +1061,7 @@ fn kept_callbacks_live_as_long_as_their_host_owner() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "callbacks" sources = ["main.taut"] }
+        r#"package { name = "callbacks" }
 javascript {
   exports = ["setup", "teardown"]
   extern { emitter = "host/h.mjs#emitter" listen = "host/h.mjs#listen" stash = "host/h.mjs#stash" take = "host/h.mjs#take" }
@@ -1065,7 +1073,7 @@ javascript {
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
   affine type Emitter
   fn emitter(): Emitter
@@ -1114,7 +1122,7 @@ console.log(h.fire(2n));
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"effect ask(): i64
 extern {
   affine type Emitter
@@ -1123,8 +1131,8 @@ extern {
   fn stash(e: Emitter): Unit
   fn take(): Emitter
 }
-fn setup(base: i64): Unit { }
-fn teardown(): Unit { }
+fn setup(base: i64): Unit { #() }
+fn teardown(): Unit { #() }
 "#,
     );
     let out = cli(&d, "node");
@@ -1138,7 +1146,7 @@ fn a_running_kept_callback_holds_its_owner_until_it_finishes() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "callbacks" sources = ["main.taut"] }
+        r#"package { name = "callbacks" }
 javascript {
   exports = ["setup", "teardown"]
   extern { emitter = "host/h.mjs#emitter" listen = "host/h.mjs#listen" stash = "host/h.mjs#stash" take = "host/h.mjs#take" wait = "host/h.mjs#wait" }
@@ -1151,7 +1159,7 @@ javascript {
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
   affine type Emitter
   fn emitter(): Emitter
@@ -1219,7 +1227,7 @@ fn exports_pass_host_values_and_functions() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "exports" sources = ["main.taut"] }
+        r#"package { name = "exports" }
 javascript {
   exports = ["name_of", "rename", "make", "twice", "adder"]
   extern { label = "host/h.mjs#label" fresh = "host/h.mjs#fresh" }
@@ -1230,7 +1238,7 @@ javascript {
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"extern {
   affine type Node
   fn label(&n: Node): Text
@@ -1294,11 +1302,11 @@ console.log(add(5n));
         write(
             &d,
             "Tauto.eure",
-            r#"package { name = "exports" sources = ["main.taut"] }
+            r#"package { name = "exports" }
 javascript { exports = ["keep"] }
 "#,
         );
-        write(&d, "main.taut", source);
+        write(&d, "src/main.taut", source);
         let out = cli(&d, "node");
         assert!(!out.status.success());
         assert!(
@@ -1315,13 +1323,13 @@ fn an_aborting_effect_releases_host_values() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "abort" sources = ["main.taut"] }
+        r#"package { name = "abort" }
 javascript { extern { make = "host/h.mjs#make" } types { Node = "host/h.mjs#release" } sources = ["host"] }
 "#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"effect stop(): i64 resume 0
 extern {
   affine type Node
@@ -1354,7 +1362,7 @@ fn generic_function_values_keep_checked_arguments_through_wasm_specialization() 
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "generic-alias-demo" sources = ["main.taut"] }
+        r#"package { name = "generic-alias-demo" }
 rust { bridge = "bridge" }"#,
     );
     write(
@@ -1421,7 +1429,7 @@ perform show("native", native_identity(11))"#;
         });
     }
     assert!(checked_function_value);
-    write(&d, "main.taut", source);
+    write(&d, "src/main.taut", source);
     success(&cli(&d, "node"));
     assert!(d.join("out/externs.wasm").is_file());
     let out = run(&d);
@@ -1440,13 +1448,13 @@ fn chunks_load_on_their_first_call() {
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "chunks" sources = ["main.taut"] }
+        r#"package { name = "chunks" }
 javascript { chunks { settings = ["settings"] } }
 "#,
     );
     write(
         &d,
-        "main.taut",
+        "src/main.taut",
         r#"fn square(n: i64): i64 { n * n }
 fn doubled_square(n: i64): i64 { square(n) * 2 }
 fn settings(n: i64): i64 { doubled_square(n) + 1 }
@@ -1475,7 +1483,7 @@ perform show("again", settings(3))
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "chunks" sources = ["main.taut"] }
+        r#"package { name = "chunks" }
 "#,
     );
     success(&cli(&d, "node"));
@@ -1484,7 +1492,7 @@ perform show("again", settings(3))
     write(
         &d,
         "Tauto.eure",
-        r#"package { name = "chunks" sources = ["main.taut"] }
+        r#"package { name = "chunks" }
 javascript { chunks { settings = ["missing"] } }
 "#,
     );

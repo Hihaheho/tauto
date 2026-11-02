@@ -1,11 +1,10 @@
-//! Deterministic source tests and the shared Eure case assertions.
+//! Source tests: the `perform test` statements in a tote's source files.
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use serde::Serialize;
 
 use crate::i18n;
-use tauto_test_suite::Outcome;
 
 #[derive(Serialize)]
 struct ResultLine {
@@ -55,18 +54,8 @@ pub fn command(args: &[String]) -> ExitCode {
     }
     let mut files = Vec::new();
     let discovered = if path.is_dir() && path.join("Tauto.eure").is_file() {
-        // A package's tests are explicit entries, not every library function.
-        tauto::manifest::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|_| {
-                for folder in ["cases", "tests"] {
-                    let dir = path.join(folder);
-                    if dir.exists() {
-                        discover(&dir, &mut files)?;
-                    }
-                }
-                Ok(())
-            })
+        // A tote's tests are in its sources: the files `tauto check --tote` reads.
+        tauto::program::package_source_files(&path).map(|sources| files = sources)
     } else {
         discover(&path, &mut files)
     };
@@ -87,85 +76,48 @@ pub fn command(args: &[String]) -> ExitCode {
             .unwrap_or(&file)
             .to_string_lossy()
             .replace('\\', "/");
-        if file.extension().is_some_and(|e| e == "eure") {
-            match tauto_test_suite::run_path(&file, root, filter) {
-                Ok(report) => {
-                    if let Some(error) = report.error {
-                        results.push(ResultLine {
-                            name: report.name.clone(),
-                            status: "failed",
-                            detail: error,
-                        });
-                    }
-                    for (case, outcome) in report.results {
-                        let (status, detail) = match outcome {
-                            Outcome::Passed => ("passed", String::new()),
-                            Outcome::Failed(why) => ("failed", why),
-                            Outcome::Todo => ("unsupported", i18n::t!("test-case-todo")),
-                            Outcome::BackendOnly => {
-                                ("unsupported", i18n::t!("test-case-backend-only"))
-                            }
-                            Outcome::UnexpectedPass => {
-                                ("failed", i18n::t!("test-case-unexpected-pass"))
-                            }
-                        };
-                        results.push(ResultLine {
-                            name: format!("{}/{case}", report.name),
-                            status,
-                            detail,
-                        });
-                    }
-                }
-                Err(error) => results.push(ResultLine {
+        // A file whose program performs no `test` holds no test and is not run.
+        match performs_test(&file) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(detail) => {
+                results.push(ResultLine {
                     name,
                     status: "failed",
-                    detail: error.to_string(),
-                }),
+                    detail,
+                });
+                continue;
             }
-        } else {
-            // A file without `perform test` is one test; with it, each named test is one.
-            // The file's theorems are tests the kernel proved. The file is checked once, for
-            // these and for running it.
-            let report = tauto::report::check_report(&file, None);
-            for theorem in proved(&file, report.as_ref().ok()) {
-                let name = format!("{name}::{theorem}");
-                if filter.is_none_or(|f| name.contains(f)) {
-                    results.push(ResultLine {
-                        name,
-                        status: "proved",
-                        detail: String::new(),
-                    });
-                }
-            }
-            let outcome = match backend {
-                Some(backend) => run_backend(&file, backend),
-                None => run_source(&file, report),
-            };
-            match outcome {
-                Ok(tests) if !tests.is_empty() => {
-                    for (test, error) in tests {
-                        let name = format!("{name}::{test}");
-                        if filter.is_none_or(|f| name.contains(f)) {
-                            results.push(ResultLine {
-                                name,
-                                status: if error.is_none() { "passed" } else { "failed" },
-                                detail: error.unwrap_or_default(),
-                            });
-                        }
+        }
+        // The file is an entry: its top-level `perform test` statements are the tests.
+        let outcome = match backend {
+            Some(backend) => run_backend(&file, backend),
+            None => run_source(&file),
+        };
+        match outcome {
+            Ok(tests) => {
+                for (test, error) in tests {
+                    let name = format!("{name}::{test}");
+                    if filter.is_none_or(|f| name.contains(f)) {
+                        results.push(ResultLine {
+                            name,
+                            status: if error.is_none() { "passed" } else { "failed" },
+                            detail: error.unwrap_or_default(),
+                        });
                     }
                 }
-                outcome if filter.is_none_or(|f| name.contains(f)) => results.push(ResultLine {
-                    name,
-                    status: if outcome.is_ok() { "passed" } else { "failed" },
-                    detail: outcome.err().unwrap_or_default(),
-                }),
-                _ => {}
             }
+            Err(detail) if filter.is_none_or(|f| name.contains(f)) => results.push(ResultLine {
+                name,
+                status: "failed",
+                detail,
+            }),
+            Err(_) => {}
         }
     }
     let passed = results
         .iter()
-        .filter(|r| matches!(r.status, "passed" | "proved"))
+        .filter(|r| matches!(r.status, "passed"))
         .count();
     let failed = results.len() - passed;
     if json {
@@ -218,11 +170,38 @@ fn discover(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         && path.file_name().is_none_or(|n| n != "Tauto.eure")
         && path
             .extension()
-            .is_some_and(|e| e == "taut" || e == "tauto" || e == "eure")
+            .is_some_and(|e| e == "taut" || e == "tauto")
     {
         out.push(path.to_path_buf());
     }
     Ok(())
+}
+
+/// Whether the file's statements perform the `test` effect anywhere they run.
+fn performs_test(path: &Path) -> Result<bool, String> {
+    use tauto::surface::walk::{Node, values_stmt};
+    let loaded = tauto::program::load(path)?;
+    if let Some((error, _)) = loaded.program.errors.first() {
+        return Err(error.clone());
+    }
+    let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let mut found = false;
+    for (file, stmts) in loaded.files.iter().zip(&loaded.per_file) {
+        if std::fs::canonicalize(&file.path).ok().as_ref() != Some(&own) {
+            continue;
+        }
+        for stmt in stmts {
+            values_stmt(stmt, &mut |node| {
+                if let Node::Term(term) = node
+                    && let tauto::surface::TermKind::Perform { effect, .. } = &*term.kind
+                    && effect == "test"
+                {
+                    found = true;
+                }
+            });
+        }
+    }
+    Ok(found)
 }
 
 /// Builds and runs a source file on a backend; the tests its `run_test` lines name.
@@ -252,28 +231,9 @@ fn run_backend(path: &Path, backend: &str) -> Result<Vec<(String, Option<String>
     Ok(tests)
 }
 
-/// The theorems a source file declares that the kernel checked, from its report.
-fn proved(path: &Path, report: Option<&tauto::report::Report>) -> Vec<String> {
-    let (Some(report), Ok(source)) = (report, std::fs::read_to_string(path)) else {
-        return Vec::new();
-    };
-    let own = std::fs::canonicalize(path).ok();
-    report
-        .entries
-        .iter()
-        .filter(|e| e.file.as_os_str().is_empty() || std::fs::canonicalize(&e.file).ok() == own)
-        .filter(|e| matches!(e.entry.verdict, tauto::check::Verdict::Checked { .. }))
-        .map(|e| e.entry.name.clone())
-        .filter(|name| source.contains(&format!("theorem {name}")))
-        .collect()
-}
-
 /// Runs a source file after its check; the named tests it ran, with their errors.
-fn run_source(
-    path: &Path,
-    report: Result<tauto::report::Report, String>,
-) -> Result<Vec<(String, Option<String>)>, String> {
-    let report = report?;
+fn run_source(path: &Path) -> Result<Vec<(String, Option<String>)>, String> {
+    let report = tauto::report::check_report(path, None)?;
     if !matches!(report.status(), tauto::report::Status::Ok) {
         return Err(report.text());
     }

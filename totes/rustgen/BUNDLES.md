@@ -12,7 +12,7 @@ runtime diagnostics already display per-file names.
 Create a new bundle with the explicit host filesystem boundary:
 
 ```sh
-cargo run --locked -p selfhost-harness --bin source-bundle -- ROOT OUTPUT
+cargo run --locked --manifest-path tools/selfhost-harness/Cargo.toml --bin source-bundle -- ROOT OUTPUT
 tauto run --tote totes/rustgen -- --graph OUTPUT path/main.taut
 tauto run --tote totes/rustgen -- --bundle OUTPUT path/main.taut answer
 ```
@@ -118,7 +118,7 @@ does not include all package-selected roots, such as Unicode class tables and
 dependency proof files. Complete input delivery does not establish compiler
 selfcompilation or a stage fixed point.
 
-Run `cargo test --locked -p selfhost-harness --test bootstrap_graph`. It compares
+Run `cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test bootstrap_graph`. It compares
 source order and byte ranges against the existing host loader, executes emitted
 Rust after removing its input bundle, and submits the original compiler graph
 without removing proof declarations. Acceptance of that graph is not a stage1
@@ -130,7 +130,7 @@ The complete-input and strict-adapter checks are separate targets:
 
 ```sh
 cargo test --locked -p tauto-test-suite --test selfhost
-cargo test --locked -p selfhost-harness --test shared_cases --test input_bundle
+cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test shared_cases --test input_bundle
 ```
 
 ## Source-reader substitution
@@ -173,7 +173,7 @@ reader diagnostics under the existing shared `macro_error` requirement, with
 that no macro evaluator ran. Audit errors are never converted to those diagnostics.
 A successful reader pass does not satisfy a missing general macro assertion.
 
-The reader regression target is `cargo test --locked -p selfhost-harness --test
+The reader regression target is `cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test
 reader_include`. Its structural oracle visits the host Surface tree
 without executing macros. Tests keep the bundle bytes unchanged, compare resource
 values and spans, check unsupported metadata and dynamic arguments, and run emitted

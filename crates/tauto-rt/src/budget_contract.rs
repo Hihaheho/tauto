@@ -1,5 +1,3 @@
-//! Explicit Rust embedding assertions for nonresuming budget facades.
-
 /// An embedding's assertion of the `closed-host-v1` backend contract.
 ///
 /// Passing a borrowed token to a qualified facade asserts this contract for

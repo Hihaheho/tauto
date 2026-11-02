@@ -326,7 +326,6 @@ mod with_tls {
         }
     }
 
-    /// Sends what the session has to send by the deadline.
     fn flush(
         t: &mut TlsStream<Socket>,
         s: &Session,

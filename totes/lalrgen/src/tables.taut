@@ -1,7 +1,16 @@
 // The table file of an LALR(1) grammar: the lines `totes/llkgen` writes,
 // with the line `lr` (`lr.taut`) where an LL(k) grammar has `max_k` and
 // `lookahead`. `lalrgen_tables` is what the tote gives.
+import "lr.taut"
+import "../../pargen/src/emit.taut"
+import "../../pargen/src/model.taut"
+import "../../pargen/src/par.taut"
+import "../../pargen/src/sch.taut"
+import "../../pargen/src/scn.taut"
+import "../../pargen/src/sha.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::prelude::Affine
 
 
 pub fn la_tables(source: Text): Text {
@@ -58,7 +67,6 @@ pub fn la_tables(source: Text): Text {
   Text::concat_all(Cons(text_join(lines, text_newline()), Cons(text_newline(), Nil)))
 }
 
-// The table file of an LALR(1) grammar, or why there is none.
 pub fn lalrgen_tables(grammar: Text): Result(Text, Text) {
   handle { Ok(la_tables(grammar)) } with {
     fail<Text>(why) => Err(why)

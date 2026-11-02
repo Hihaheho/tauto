@@ -159,7 +159,6 @@ pub const MAX_DEPTH: usize = 10_000;
 /// id is `parse-too-deep`).
 pub const TOO_DEEP: &str = "the source nests too deeply";
 
-/// Parses Tauto source.
 pub fn parse(source: &str) -> Parsed {
     let mut builder = cst::CstBuilder::new();
     match parser::parse_tree(source, &mut builder) {
@@ -313,7 +312,6 @@ fn collect_errors(error: parol_runtime::ParolError, source: &str, out: &mut Vec<
     }
 }
 
-/// Whether `source` is a program of the grammar, or why not.
 pub fn check(source: &str) -> Result<(), String> {
     let parsed = parse(source);
     match parsed.errors.first() {

@@ -4,9 +4,6 @@ import std::Base
 // messages and terms; a value is a pattern, a list of text and placeables; a placeable holds an
 // expression, and a select expression holds variants whose values are patterns again.
 
-// ---- the tree -----------------------------------------------------------------
-
-// The key of a variant: `[one]` or `[3]`.
 pub(open) inductive Key: Type {
   KeyId(name: List(Nat)): Key
   KeyNum(n: Nat): Key
@@ -18,7 +15,6 @@ pub(open) inductive Lit: Type {
   LitNum(n: Nat): Lit
 }
 
-// `name: literal` in `-term(name: literal)`.
 pub(open) inductive NamedArg: Type {
   Named(name: List(Nat), value: Lit): NamedArg
 }
@@ -30,13 +26,9 @@ mutual {
   }
 
   pub(open) inductive Expr: Type {
-    // `"text"`
     ExStr(bytes: List(Nat)): Expr
-    // `42`
     ExNum(n: Nat): Expr
-    // `$name`
     ExVar(name: List(Nat)): Expr
-    // `message` or `message.attribute`
     ExMsg(id: List(Nat), attr: Option(List(Nat))): Expr
     // `-term`, `-term.attribute` (only as a selector) or `-term(name: "value")`
     ExTerm(id: List(Nat), attr: Option(List(Nat)), args: List(NamedArg)): Expr
@@ -65,8 +57,6 @@ pub(open) inductive Entry: Type {
 pub(open) inductive Resource: Type {
   Mk(entries: List(Entry), junk: List(List(Nat))): Resource
 }
-
-// ---- bytes --------------------------------------------------------------------
 
 pub fn in_range(lo: Nat, c: Nat, hi: Nat): Bool {
   Bool::and(Nat::le(lo, c), Nat::le(c, hi))
@@ -97,7 +87,6 @@ pub fn byte_list_eq(a: List(Nat), b: List(Nat)): Bool {
   }
 }
 
-// Spaces dropped.
 pub fn skip_inline(s: List(Nat)): List(Nat) {
   match s: List(Nat) {
     Nil => Nil
@@ -108,7 +97,6 @@ pub fn skip_inline(s: List(Nat)): List(Nat) {
   }
 }
 
-// Spaces and line ends dropped.
 pub fn skip_blank(s: List(Nat)): List(Nat) {
   match s: List(Nat) {
     Nil => Nil
@@ -119,7 +107,6 @@ pub fn skip_blank(s: List(Nat)): List(Nat) {
   }
 }
 
-// What follows the next line end.
 pub fn skip_line(s: List(Nat)): List(Nat) {
   match s: List(Nat) {
     Nil => Nil
@@ -130,7 +117,6 @@ pub fn skip_line(s: List(Nat)): List(Nat) {
   }
 }
 
-// CRLF read as LF.
 pub fn strip_cr(s: List(Nat)): List(Nat) {
   match s: List(Nat) {
     Nil => Nil
@@ -146,8 +132,6 @@ pub fn strip_cr(s: List(Nat)): List(Nat) {
     }
   }
 }
-
-// ---- reading one piece --------------------------------------------------------
 
 // A value read and the bytes after it, or nothing read.
 pub(open) inductive Got(A: Type): Type {
@@ -231,7 +215,6 @@ pub fn string_tail(s: List(Nat)): Got(List(Nat)) {
   }
 }
 
-// `.attribute` when it is there.
 pub fn attr_opt(s: List(Nat)): Got(Option(List(Nat))) {
   match s: Got(Option(List(Nat))) {
     Nil => MkGot(None, Nil)
@@ -269,7 +252,6 @@ pub fn cons_arg(a: NamedArg, g: Got(List(NamedArg))): Got(List(NamedArg)) {
 }
 
 mutual {
-  // After a named argument: `,` and more, or the closing `)`.
   pub fn args_more(fuel: Nat, s: List(Nat)): Got(List(NamedArg)) {
     match fuel: Got(List(NamedArg)) {
       Zero => Bad
@@ -286,7 +268,6 @@ mutual {
     }
   }
 
-  // `name: literal, …)`, or just `)`.
   pub fn args_list(fuel: Nat, s: List(Nat)): Got(List(NamedArg)) {
     match fuel: Got(List(NamedArg)) {
       Zero => Bad
@@ -313,7 +294,6 @@ mutual {
   }
 }
 
-// `(…)` after a term, when it is there.
 pub fn args_opt(s: List(Nat)): Got(List(NamedArg)) {
   match s: Got(List(NamedArg)) {
     Nil => MkGot(Nil, Nil)
@@ -399,9 +379,6 @@ pub fn key(s: List(Nat)): Got(Key) {
   }
 }
 
-// ---- patterns -----------------------------------------------------------------
-
-// A variant as read, with whether it is marked `*`.
 pub(open) inductive RawVariant: Type {
   Raw(default: Bool, key: Key, pat: List(Elem)): RawVariant
 }
@@ -468,7 +445,6 @@ pub fn valid_selector(e: Expr): Bool {
   }
 }
 
-// The trailing spaces of a pattern dropped.
 pub fn trim_bytes(bs: List(Nat)): List(Nat) {
   List::reverse(skip_inline(List::reverse(bs)))
 }
@@ -580,12 +556,10 @@ pub fn dedent(es: List(Elem)): List(Elem) {
   }
 }
 
-// A pattern as read, without its trailing spaces and its common indentation.
 pub fn finish(es: List(Elem)): List(Elem) {
   dedent(trim_end(es))
 }
 
-// The variants not marked `*`, in order.
 pub fn plain_variants(vs: List(RawVariant)): List(Variant) {
   match vs: List(Variant) {
     Nil => Nil
@@ -705,7 +679,6 @@ mutual {
     }
   }
 
-  // After `{`: an expression and `}`, or a selector, `->`, the variants and `}`.
   pub fn p_place(fuel: Nat, s: List(Nat)): Got(Expr) {
     match fuel: Got(Expr) {
       Zero => Bad
@@ -734,7 +707,6 @@ mutual {
     }
   }
 
-  // Variants up to the closing `}`.
   pub fn p_variants(fuel: Nat, s: List(Nat)): Got(List(RawVariant)) {
     match fuel: Got(List(RawVariant)) {
       Zero => Bad
@@ -760,7 +732,6 @@ mutual {
     }
   }
 
-  // After `[`: the key, `]`, the variant's pattern and the variants after it.
   pub fn p_variant(fuel: Nat, s: List(Nat), d: Bool): Got(List(RawVariant)) {
     match fuel: Got(List(RawVariant)) {
       Zero => Bad
@@ -780,8 +751,6 @@ mutual {
     }
   }
 }
-
-// ---- entries ------------------------------------------------------------------
 
 pub fn fuel_of(s: List(Nat)): Nat {
   Succ(Nat::mul(2, List::length(s)))
@@ -807,7 +776,6 @@ pub fn pattern(s: List(Nat)): Got(Option(List(Elem))) {
   }
 }
 
-// `=` and a pattern.
 pub fn equals_pattern(s: List(Nat)): Got(Option(List(Elem))) {
   match skip_inline(s): Got(Option(List(Elem))) {
     Nil => Bad
@@ -825,7 +793,6 @@ pub fn cons_attr(a: Attr, g: Got(List(Attr))): Got(List(Attr)) {
   }
 }
 
-// Indented `.attribute = pattern` lines.
 pub fn attrs(fuel: Nat, s: List(Nat)): Got(List(Attr)) {
   match fuel: Got(List(Attr)) {
     Zero => Bad
@@ -891,7 +858,6 @@ pub fn entry_after_id(is_term: Bool, g: Got(List(Nat))): Got(Entry) {
   }
 }
 
-// A message `id = …` or a term `-id = …`, from the start of a line.
 pub fn entry(s: List(Nat)): Got(Entry) {
   match s: Got(Entry) {
     Nil => Bad
@@ -942,7 +908,6 @@ mutual {
       Succ(j) => match s: Resource {
         Nil => Resource::Mk(Nil, Nil)
         Cons(c, t) => match Bool::or(Nat::eq(c, 10), Nat::eq(c, 35)): Resource {
-          // blank lines and comments
           true => entries(j, skip_line(s))
           false => match Nat::eq(c, 32): Resource {
             true => match skip_inline(s): Resource {
@@ -973,7 +938,6 @@ mutual {
   }
 }
 
-// The messages and terms of FTL bytes, and the junk that could not be read.
 pub fn parse_bytes(s: List(Nat)): Resource {
   entries(fuel_of(strip_cr(s)), strip_cr(s))
 }

@@ -27,7 +27,6 @@ fn a_dependency_binds_its_own_externs() {
         r#"package {
   name = "lib"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 rust {
@@ -46,7 +45,7 @@ rust {
     write(
         &root,
         "lib/src/lib.taut",
-        "extern {\n  fn twice(n: i64): i64\n  fn thrice(n: i64): i64\n}\n\nfn six(n: i64): i64 {\n  twice(n) + thrice(n)\n}\n",
+        "extern {\n  fn twice(n: i64): i64\n  fn thrice(n: i64): i64\n}\n\npub fn six(n: i64): i64 {\n  twice(n) + thrice(n)\n}\n",
     );
     write(&root, "lib/doubling/Cargo.toml", &cargo("doubling", ""));
     write(
@@ -76,7 +75,6 @@ rust {
         r#"package {
   name = "app"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 dependencies {
@@ -93,7 +91,7 @@ trust {
     write(
         &root,
         "app/src/main.taut",
-        "perform show(\"six\", six(1))\n",
+        "import lib::lib\n\nperform show(\"six\", six(1))\n",
     );
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .args(["run", "--backend", "rust", "--approve-trust"])
@@ -126,7 +124,6 @@ fn a_dependency_bridge_gives_its_extern_types() {
         r#"package {
   name = "lib"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 rust {
@@ -137,7 +134,7 @@ rust {
     write(
         &root,
         "lib/src/lib.taut",
-        "extern {\n  affine type Tally\n  fn tally_new(n: i64): Tally\n  fn tally_get(t: Tally): i64\n}\n\nfn tally(n: i64): i64 {\n  tally_get(tally_new(n))\n}\n",
+        "extern {\n  affine type Tally\n  fn tally_new(n: i64): Tally\n  fn tally_get(t: Tally): i64\n}\n\npub fn tally(n: i64): i64 {\n  tally_get(tally_new(n))\n}\n",
     );
     write(&root, "lib/bridge/Cargo.toml", &cargo("lib-bridge", ""));
     write(
@@ -151,7 +148,6 @@ rust {
         r#"package {
   name = "app"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 dependencies {
@@ -168,11 +164,12 @@ trust {
     write(
         &root,
         "app/src/main.taut",
-        "perform show(\"tally\", tally(6))\n",
+        "import lib::lib\n\nperform show(\"tally\", tally(6))\n",
     );
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
-        .args(["run", "--backend", "rust"])
+        .args(["run", "--backend", "rust", "--approve-trust"])
         .arg(root.join("app"))
+        .env("TAUTO_HOME", root.join("home"))
         .output()
         .unwrap();
     assert!(

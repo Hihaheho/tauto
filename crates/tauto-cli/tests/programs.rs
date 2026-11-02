@@ -259,7 +259,7 @@ fn running_and_proving_effects_agree() {
     assert!(!ok);
 }
 
-const EFFECT_PROGRAMS: &str = r#"import std.Nat
+const EFFECT_PROGRAMS: &str = r#"import std::Nat
 effect tick(): Unit
 effect flip(): Bool resume ω
 fn g(n: Nat): Nat { Succ(n) }
@@ -307,11 +307,11 @@ fn text_of_bytes_runs() {
     let f = d.join("t.taut");
     fs::write(
         &f,
-        "import std.Text\nimport std.TextOps\n\
-         fn bytes(): Text { Text.Mk(Cons(104, Cons(195, Cons(169, Nil)))) }\n\
-         fn slice(): Text { Text.slice_or_empty(\"héllo\", 1, 3) }\n\
-         fn joined(): Text { Text.join(\"-\", Text.split_on(\"a,b,c\", 44)) }\n\
-         fn decoded(): Option(Text) { Text.of_utf8(Cons(195, Cons(169, Nil))) }\n\
+        "import std::Text\nimport std::TextOps\n\
+         fn bytes(): Text { Text::Mk(Cons(104, Cons(195, Cons(169, Nil)))) }\n\
+         fn slice(): Text { Text::slice_or_empty(\"héllo\", 1, 3) }\n\
+         fn joined(): Text { Text::join(\"-\", Text::split_on(\"a,b,c\", 44)) }\n\
+         fn decoded(): Option(Text) { Text::of_utf8(Cons(195, Cons(169, Nil))) }\n\
          perform show(\"bytes\", bytes())\n\
          perform show(\"slice\", slice())\n\
          perform show(\"joined\", joined())\n\
@@ -327,7 +327,7 @@ fn text_of_bytes_runs() {
     // Bytes that are not UTF-8 have no `Text` to run as: the program stops.
     fs::write(
         &f,
-        "import std.Text\nfn bad(): Text { Text.Mk(Cons(255, Nil)) }\nperform show(\"bad\", bad())\n",
+        "import std::Text\nfn bad(): Text { Text::Mk(Cons(255, Nil)) }\nperform show(\"bad\", bad())\n",
     )
     .unwrap();
     let (_, _, ok) = tauto(&["run", f.to_str().unwrap()]);
@@ -341,11 +341,11 @@ fn text_of_bytes_in_a_function_value_runs() {
     let f = d.join("t.taut");
     fs::write(
         &f,
-        "import std.Text\n\
+        "import std::Text\n\
          fn then_<A, B>(o: Option(A), f: (x: A) -> Option(B)): Option(B) {\n\
          match o: Option(B) {\n None => None\n Some(a) => f(a)\n }\n}\n\
          fn mk(o: Option(List(Nat))): Option(Text) {\n\
-         then_(o, (bs: List(Nat)) => Some(Text.Mk(bs)))\n}\n\
+         then_(o, (bs: List(Nat)) => Some(Text::Mk(bs)))\n}\n\
          fn go(): Option(Text) { mk(Some(Cons(104, Cons(105, Nil)))) }\n\
          perform show(\"r\", go())\n",
     )
@@ -383,7 +383,9 @@ fn a_function_run_as_written_calls_the_stack_functions() {
     fs::write(
         &file,
         format!(
-            r#"import "{}"
+            r#"import std::prelude::Affine
+import std::prelude::Os
+import "{}"
 fn count(): Nat {{
   var s: Stack(Nat) := Stack::new()
   eprint("counting\n")
@@ -415,7 +417,7 @@ fn run_writes_output_before_the_program_ends() {
     let file = d.join("main.taut");
     fs::write(
         &file,
-        "perform stderr(\"first\\n\")\nperform sleep(5000)\nperform stderr(\"second\\n\")\n",
+        "import std::prelude::Os\n\nperform stderr(\"first\\n\")\nperform sleep(5000)\nperform stderr(\"second\\n\")\n",
     )
     .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tauto"))

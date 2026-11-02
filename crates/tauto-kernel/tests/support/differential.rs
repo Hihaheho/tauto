@@ -33,7 +33,8 @@ inductive DBox(n: Nat): Type {
 inductive Fam(g: (Nat) -> Type): Type1 {
   Fm: Fam(g)
 }
-"#.to_string()
+"#
+    .to_string()
 }
 
 #[derive(Clone, PartialEq, Debug)]

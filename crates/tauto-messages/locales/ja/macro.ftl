@@ -25,7 +25,6 @@ macro-function-result = `{ $function }` は { $ty } を作る。マクロが作�
 macro-unchecked-effect = `{ $function }` は追跡できないエフェクトを行う ({ $effect })
 macro-row-effect = マクロの関数が行えるのは macro_error、macro_warn、elab、Div だが、`{ $function }` は { $effect } を行う
 macro-row-reached = `{ $function }` は { $path } に到達するが、その row は検査を通らない: { $why }
-macro-builtin-reached = `{ $function }` は { $path } に到達する
 
 # Why a function was left out of the library a macro runs in.
 macro-left-out-inductive-ctor = { $why }。`{ $name }` は `inductive` の構築子だが、マクロの関数は実行コードであり、`inductive` ではなく `enum` の構築子 (`List` の `Nil`/`Cons`、`Option` の `None`/`Some`) を使う

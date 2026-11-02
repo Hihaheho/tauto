@@ -3,9 +3,10 @@
 pub mod check {
     pub(crate) use crate::read::stmt_span;
     pub use crate::read::{
-        Checker, anchor_of, check, check_file, check_file_full, check_file_lib, check_file_timed,
-        check_file_with, check_files, check_files_cached, check_tote_files, elaborate_file,
-        eval_file, expansion_infos, localize_entries, macro_failures_of, text_of,
+        Checker, anchor_of, check, check_file, check_file_full, check_file_lib, check_file_sourced,
+        check_file_timed, check_file_with, check_files, check_files_cached, check_tote_files,
+        elaborate_file, eval_file, expansion_infos, localize_entries, macro_failures_of, text_of,
+        time_limits,
     };
     pub use tauto_kernel::check::*;
 }
@@ -16,6 +17,7 @@ pub mod eval {
     pub use tauto_eval::eval::*;
 }
 pub mod extract;
+pub mod fix;
 pub mod fmt;
 pub mod fmt_literals;
 pub use tauto_surface::generated;
@@ -25,10 +27,10 @@ pub mod lin {
 }
 pub mod deadcode;
 pub mod lint;
-mod order;
 pub mod macros;
 pub mod manifest;
 pub use tauto_surface::nibstd;
+pub mod phases;
 pub mod program;
 pub mod project;
 pub mod registered;

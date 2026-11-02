@@ -3,6 +3,22 @@ import "tracked_body_frame.taut"
 import "tracked_records_sound.taut"
 import "finish_literal_sound.taut"
 import "rules_registered_signatures.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "diagnostic_report.taut"
+import "finish_acceptance.taut"
+import "finish_frame.taut"
+import "literal_record_sound.taut"
+import "run_data_names_sound.taut"
+import "stable_state_frame.taut"
+import "tracked_state_frame.taut"
+import "ty.taut"
+import "types_run.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub def FinishStableFrame<A: Type>(
   c: Checker,
@@ -91,14 +107,14 @@ pub theorem literal_after_defaults_records_stable(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
-): FinishStableFrame(c, finish_after_defaults(c, Widths)) {
+): FinishStableFrame(c, finish_after_defaults(c, widths)) {
   Eq::congr(
     Mut1(TypeReport, Checker),
     Pair(List(TyLiteral), Ordmap(Text, Scheme)),
-    finish_after_defaults(c, Widths),
-    mut1(finish_report(c, Widths), c),
+    finish_after_defaults(c, widths),
+    mut1(finish_report(c, widths), c),
     (m: Mut1(TypeReport, Checker)) => ck_stable_view(ck_st(m)),
-    And::right(finish_after_defaults_accepts(c, Widths, clean))
+    And::right(finish_after_defaults_accepts(c, widths, clean))
   )
 }
 pub theorem literal_finish_default_records_stable(
@@ -118,27 +134,6 @@ pub theorem literal_finish_default_records_stable(
     )
   }
 }
-pub theorem literal_finish_products_records_stable(
-  c: Checker,
-  m: Mut1(Unit, Checker),
-  first: FinishStableFrame(c, m),
-  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
-): FinishStableFrame(c, diagnostic_finish_products_result(m)) {
-  match m: FinishStableFrame(c, diagnostic_finish_products_result(m)) {
-    mut1(value, next) => literal_finish_default_records_stable(
-      c,
-      ck_check_products(List::reverse(finish_product_checks(next)), next),
-      Eq::trans(
-        Eq::congr(
-          keep_stable,
-          ck_check_products_keep(List::reverse(finish_product_checks(next)), next)
-        ),
-        first
-      ),
-      clean
-    )
-  }
-}
 pub theorem ck_finish_literal_records_stable(
   c: Checker,
   clean: DiagnosticReportClean(ck_finish(c))
@@ -146,7 +141,7 @@ pub theorem ck_finish_literal_records_stable(
   Eq::subst(
     (m: Mut1(TypeReport, Checker)) => FinishStableFrame(c, m),
     Eq::sym(diagnostic_finish_default_unf(c)),
-    literal_finish_products_records_stable(
+    literal_finish_default_records_stable(
       c,
       ck_default_ints(Ordmap::entries(finish_ints(c)), c),
       ck_default_ints_records_stable(Ordmap::entries(finish_ints(c)), c),

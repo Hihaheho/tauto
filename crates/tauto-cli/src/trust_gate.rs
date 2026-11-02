@@ -103,7 +103,6 @@ fn describe(pending: &[(Source, Option<Vec<String>>)]) -> String {
     out
 }
 
-/// The project's `trust` section and each `--permissions FILE` of `args`.
 fn sources(args: &[String]) -> Result<Vec<Source>, String> {
     let mut out = Vec::new();
     if let Some(dir) = project_dir(args) {

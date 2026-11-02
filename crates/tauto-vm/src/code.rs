@@ -38,7 +38,6 @@ impl Ctor {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Op {
-    /// Pushes a constant.
     Const(u32),
     Unit,
     /// Pushes the value of a slot: through the borrow it holds with
@@ -51,19 +50,22 @@ pub enum Op {
         take: bool,
         indirect: bool,
     },
+    /// Empties a slot at the end of its scope, which drops the value it held
+    /// (a `MutexGuard` gives its lock back).
+    Clear {
+        slot: u32,
+    },
     /// Pops the value into a slot; `shared` puts it in a cell of its own.
     Define {
         slot: u32,
         shared: bool,
     },
-    /// Pops the value into the place.
     Assign {
         slot: u32,
         path: u32,
         through: bool,
         indirect: bool,
     },
-    /// Pushes a borrow of the place.
     Borrow {
         slot: u32,
         path: u32,
@@ -72,9 +74,7 @@ pub enum Op {
     },
     Pop,
     Jump(u32),
-    /// Pops a `Bool` and jumps when it is false.
     JumpIfNot(u32),
-    /// Pops the arguments and the callee below them, and calls it.
     Call {
         argc: u32,
         ticked: bool,
@@ -100,13 +100,10 @@ pub enum Op {
         quant: Q,
         argc: u32,
     },
-    /// Runs the body of a `handle` in a frame of its own.
     Handle(u32),
     /// The body has its value: the arms answer nothing more.
     Unhandle,
-    /// Ends the frame with the value on top.
     Ret,
-    /// Ends the function with the value on top.
     Return,
     /// Matches the value on top against the pattern, binding its names;
     /// jumps when it does not fit.
@@ -121,12 +118,9 @@ pub enum Op {
     Tick,
     /// Takes the answer of `exceeded`: more steps, or the budget's value.
     TickAnswer,
-    /// Runs the body of a `budget` whose steps are on top, in a frame of its
-    /// own.
     Budget(u32),
 }
 
-/// How an operation resumes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Q {
     Zero,
@@ -137,9 +131,7 @@ pub enum Q {
 
 pub struct Code {
     pub ops: Vec<Op>,
-    /// The slots of the frames of a function or closure.
     pub slots: u32,
-    /// The function's parameters' slots.
     pub params: Vec<u32>,
     pub name: Rc<str>,
 }
@@ -207,20 +199,13 @@ pub enum PrimOp {
     Float32Arith(Arith),
     Cmp(Cmp),
     Eq(bool),
-    Construct {
-        ctor: Rc<Ctor>,
-        order: Vec<usize>,
-    },
+    Construct { ctor: Rc<Ctor>, order: Vec<usize> },
     Product(Vec<(usize, Option<usize>)>),
     Concat,
     TextOfInt,
     TextLen,
     TextCompare,
-    Divide {
-        modulo: bool,
-        width: Width,
-    },
-    /// `syn_parse` with the parser.
+    Divide { modulo: bool, width: Width },
     SynParse(Rc<crate::syntax::SynRt>),
 }
 
@@ -235,7 +220,6 @@ pub enum UnaryOp {
     Remap(Option<u32>, Vec<Option<usize>>),
 }
 
-/// The compiled program.
 #[derive(Default)]
 pub struct Program {
     pub codes: Vec<Code>,
@@ -250,9 +234,7 @@ pub struct Program {
     pub pats: Vec<Pat>,
     pub ctors: Vec<Rc<Ctor>>,
     ctor_ids: HashMap<(Rc<str>, Rc<str>), u32>,
-    /// The runtime syntax parsers, by name, hash and result type.
     parsers: Vec<(String, String, tauto_nir::Ty, Rc<crate::syntax::SynRt>)>,
-    /// The code of each function instance.
     pub fns: Vec<u32>,
     pub top: Option<u32>,
 }
@@ -303,7 +285,6 @@ impl Program {
 
 type Rs<T> = Result<T, String>;
 
-/// Compiles the package's functions.
 pub fn compile(pkg: &Package) -> Rs<Program> {
     if !pkg.externs.is_empty() {
         return Err("extern functions (the machine has no host bindings)".into());
@@ -366,7 +347,6 @@ pub fn compile(pkg: &Package) -> Rs<Program> {
     Ok(p)
 }
 
-/// The slots of a function, a closure, or a part of a `handle`.
 #[derive(Default)]
 struct Level {
     slots: BTreeMap<u32, u32>,
@@ -379,7 +359,6 @@ struct Level {
 }
 
 impl Level {
-    /// A local of this level.
     fn own(&mut self, id: u32) -> u32 {
         let n = self.slots.len() as u32;
         *self.slots.entry(id).or_insert(n)
@@ -429,7 +408,6 @@ impl Compiler<'_> {
         }
     }
 
-    /// The slot of a local the code binds.
     fn own(&mut self, id: u32) -> u32 {
         self.levels.last_mut().unwrap().own(id)
     }
@@ -647,6 +625,14 @@ impl Compiler<'_> {
                     }
                     self.expr(e)?;
                 }
+                // What the scope defined and holds a host value is dropped
+                // last defined first, after the value of the scope is made.
+                for e in es.iter().rev() {
+                    if let Cps::Define { id, drop: true, .. } = e {
+                        let (slot, _) = self.slot(*id);
+                        self.ops.push(Op::Clear { slot });
+                    }
+                }
             }
             Cps::Define {
                 id, shared, init, ..
@@ -749,7 +735,6 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// The arms of a `match` whose scrutinee is on top.
     fn arms(&mut self, arms: &[cps::MatchArm]) -> Rs<()> {
         let mut ends = Vec::new();
         for arm in arms {
@@ -963,7 +948,6 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// The slot of a local of the code around, if it has one.
     fn find(&mut self, id: u32) -> Option<(u32, bool)> {
         let at = self.levels.len() - 1;
         resolve(self.levels, at, id)

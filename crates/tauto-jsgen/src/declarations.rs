@@ -203,16 +203,33 @@ export interface RunOptions {
   os_write_bytes?: (path: string, bytes: Uint8Array) => void | PromiseLike<void>;
   /** Makes a directory and its missing parents; one already there is fine. */
   os_create_dir?: (path: string) => void | PromiseLike<void>;
-  /** The names under a directory. */
   os_list_dir?: (path: string) => string[] | PromiseLike<string[]>;
   /** Removes a file, or a directory and all it holds. */
   os_remove?: (path: string) => void | PromiseLike<void>;
+  os_stat?: (path: string) => { kind: 'file' | 'dir' | 'other'; size: number; modified_ms: number } | null | PromiseLike<{ kind: 'file' | 'dir' | 'other'; size: number; modified_ms: number } | null>;
+  os_move_path?: (from: string, to: string) => void | PromiseLike<void>;
+  os_copy_file?: (from: string, to: string) => void | PromiseLike<void>;
+  os_canonicalize?: (path: string) => string | PromiseLike<string>;
   /** Makes a new empty directory for temporary files; the run may read and write under it. */
   os_temp_dir?: () => string | PromiseLike<string>;
   /** Runs a program to its end: its exit status (`null` when a signal ended it) and output. */
   os_run?: (program: string, args: string[], dir: string, env: [string, string][], stdin: Uint8Array) => { status: number | null; stdout: Uint8Array; stderr: string } | PromiseLike<{ status: number | null; stdout: Uint8Array; stderr: string }>;
+  /** Starts a program and goes on while it runs; its number. `env` is [name, value] pairs; `modes` are the input's, output's and error's: 0 a pipe, 1 the run's own. */
+  os_child_spawn?: (program: string, args: string[], dir: string, env: [string, string][], stdin: Uint8Array, modes: number[]) => number[] | PromiseLike<number[]>;
+  /** Up to `max` bytes of a piped output (`which` 1) or error (2), empty at the end; `null` when the deadline (`monotonic_clock` nanoseconds, or `null`) passed first. */
+  os_child_read?: (child: number, which: number, max: number, deadline: bigint | null) => Uint8Array | null | PromiseLike<Uint8Array | null>;
+  os_child_write?: (child: number, bytes: Uint8Array) => void | PromiseLike<void>;
+  os_child_close_stdin?: (child: number) => void | PromiseLike<void>;
+  /** The exit status as `[code]`, `[]` when a signal ended it; `null` when the deadline passed first. */
+  os_child_wait?: (child: number, deadline: bigint | null) => number[] | null | PromiseLike<number[] | null>;
+  /** Ends a program that still runs and lets go of it. */
+  os_child_close?: (child: number) => void | PromiseLike<void>;
   /** A line of standard input without its line break; `null` at its end. */
   os_read_line?: () => string | null;
+  /** Up to `max` bytes of standard input as soon as any arrive; none at its end. */
+  os_read_stdin?: (max: number) => Uint8Array;
+  /** Writes out what `os_print` and `os_eprint` were given. */
+  os_flush?: () => void;
   /** What the standard effects may ask of the host; a kind left out is denied. */
   permissions?: { read?: true | string[]; write?: true | string[]; env?: true | string[]; net?: true | string[]; run?: true | string[]; div?: true };
   /** What `env` reads, behind `permissions.env`. */

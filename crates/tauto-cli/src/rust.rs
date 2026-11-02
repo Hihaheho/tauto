@@ -207,7 +207,6 @@ pub(crate) fn command_with(
                         loaded = Some(program);
                         Ok(source)
                     }
-                    // A program that does not check fails as a front-end error.
                     Err(e) => {
                         eprintln!("{e}");
                         return ExitCode::FAILURE;
@@ -463,7 +462,6 @@ pub(crate) fn command_with(
             &opts,
         );
         if command == "build" && !bindings.externs.is_empty() {
-            // The Rust the build trusts.
             eprintln!("{}", crate::i18n::t!("rust-trusted-code"));
             for (n, b) in &bindings.externs {
                 eprintln!(

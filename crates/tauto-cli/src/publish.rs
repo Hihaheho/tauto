@@ -204,7 +204,6 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// `tauto index new DIR [--name NAME]`: a new index with its empty root.
 fn new(mut args: Vec<String>) -> Result<ExitCode, String> {
     let name = take_value(&mut args, "--name")?;
     let dir = PathBuf::from(one(args, "new DIR [--name NAME]")?);
@@ -307,7 +306,6 @@ fn commit(dir: &Path, message: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
-/// One's own index: its repository, its history, and the batch being written.
 struct Own {
     alias: String,
     dir: PathBuf,
@@ -435,7 +433,6 @@ impl Own {
     }
 }
 
-/// The project of the Git dependency `name` of the tote.
 fn project_of(tote: &Path, name: &str) -> Result<(Sha256, GitSource), String> {
     let manifest = tauto::manifest::read(tote)?;
     match manifest.dependencies.iter().find(|(n, _)| n == name) {

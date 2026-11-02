@@ -14,7 +14,8 @@ fn a_class_is_extracted_as_a_class_with_its_laws_erased() {
             r#"import "{}"
 {}"#,
             BASE,
-            r#"inductive P: Type {
+            r#"import std::prelude::Ord
+inductive P: Type {
   Mk: P
 }
 instance Ord(P) {

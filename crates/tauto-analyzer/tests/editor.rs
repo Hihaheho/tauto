@@ -20,26 +20,6 @@ fn project(name: &str, case: &str) -> (PathBuf, String) {
 }
 
 #[test]
-fn the_tokens_of_a_literal_are_coloured_by_the_grammar() {
-    let (path, text) = project("tokens", "editor_tokens");
-    let tokens = tauto_analyzer::editor::dsl_tokens(&path, &text).expect("reads");
-    let seen: Vec<(&str, &str)> = tokens
-        .iter()
-        .map(|t| (&text[t.start..t.end], t.kind))
-        .collect();
-    assert_eq!(
-        seen,
-        [
-            ("1", "number"),
-            ("+", "operator"),
-            ("2", "number"),
-            ("=", "operator"),
-            ("3", "number")
-        ]
-    );
-}
-
-#[test]
 fn the_completion_lists_what_the_grammar_goes_on_with() {
     let (path, text) = project("complete", "editor_completion");
     let cursor = text.find("+ `").unwrap() + 2;
@@ -56,7 +36,7 @@ fn a_tokens_function_of_the_syntax_says_what_the_literal_is_coloured_as() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../tauto/tests/syntax_fixtures/registered/main.taut");
     let text = std::fs::read_to_string(&fixtures).unwrap();
-    let tokens = tauto_analyzer::editor::dsl_tokens(&fixtures, &text).expect("reads");
+    let (tokens, _) = tauto_analyzer::editor::dsl_tokens(&fixtures, &text).expect("reads");
     let seen: Vec<(&str, &str)> = tokens
         .iter()
         .map(|t| (&text[t.start..t.end], t.kind))
@@ -83,7 +63,8 @@ fn a_tokens_function_of_the_syntax_says_what_the_literal_is_coloured_as() {
 mod case_inputs {
     pub fn file_static(file: &str, name: &str, input: &str) -> &'static str {
         match (file, name, input) {
-        ("aux-analyzer.eure", "editor_completion", "math.nib") => r#"syntax!(math, ```par
+            ("aux-analyzer.eure", "editor_completion", "math.nib") => {
+                r#"syntax!(math, ```par
 %start Eqn
 %title "math"
 %%
@@ -99,31 +80,14 @@ RParen: ')';
 ```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
   fn parse
 pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
-"#,
-        ("aux-analyzer.eure", "editor_completion", "main.nib") => r#"import "math.nib"
+"#
+            }
+            ("aux-analyzer.eure", "editor_completion", "main.nib") => {
+                r#"import "math.nib"
 theorem t(): math!(`1 + `) { Refl(Nat, 3) }
-"#,
-        ("aux-analyzer.eure", "editor_tokens", "math.nib") => r#"syntax!(math, ```par
-%start Eqn
-%title "math"
-%%
-Eqn: Sum Equals Sum;
-Sum: Term { Plus Term };
-Term: Num | Paren;
-Paren: LParen Sum RParen;
-Num: /[0-9]+/;
-Equals: '=';
-Plus: '+';
-LParen: '(';
-RParen: ')';
-```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
-  fn parse
-pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
-"#,
-        ("aux-analyzer.eure", "editor_tokens", "main.nib") => r#"import "math.nib"
-theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
-"#,
-        _ => panic!("no copied input {file}/{name}"),
+"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

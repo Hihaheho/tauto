@@ -5,7 +5,6 @@
 use tauto_rt::permissions::Permissions;
 
 pub trait Host {
-    /// `show(name, value)` that nothing in the program handles.
     fn show(&mut self, name: &str, value: &str);
     fn stdout(&mut self, text: &str);
     fn stderr(&mut self, text: &str);

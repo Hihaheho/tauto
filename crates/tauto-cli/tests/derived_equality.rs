@@ -4,7 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-const SOURCE: &str = r#"inductive Color: Type => fn Color.beq, theorem Color.beq_refl, theorem Color.beq_sound, theorem Color.deq {
+const SOURCE: &str = r#"import std::prelude::Os
+
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
   Red: Color
   Blue: Color
 }
@@ -13,7 +15,7 @@ fn apply2(f: (Color, Color) -> Bool, a: Color, b: Color): Bool {
   f(a, b)
 }
 
-match Bool.and(not(Color.beq(Red, Blue)), apply2(Color.beq, Blue, Blue)) {
+match Bool::and(not(Color::beq(Red, Blue)), apply2(Color::beq, Blue, Blue)) {
   true => perform stdout("ok\n")
   false => perform stdout("wrong\n")
 }

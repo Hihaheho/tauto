@@ -25,7 +25,6 @@ macro-function-result = `{ $function }` makes { $ty }; a macro makes a SynExpr o
 macro-unchecked-effect = `{ $function }` performs an effect that cannot be followed ({ $effect })
 macro-row-effect = the function of a macro may perform macro_error, macro_warn, elab and Div, and `{ $function }` performs { $effect }
 macro-row-reached = `{ $function }` reaches { $path }, whose row does not check: { $why }
-macro-builtin-reached = `{ $function }` reaches { $path }
 
 # Why a function was left out of the library a macro runs in.
 macro-left-out-inductive-ctor = { $why }; `{ $name }` is a constructor of an `inductive`, and a macro function is executable code, which uses the constructors of `enum`s (`List`'s `Nil`/`Cons`, `Option`'s `None`/`Some`), not those of an `inductive`

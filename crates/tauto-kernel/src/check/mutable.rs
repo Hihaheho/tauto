@@ -67,7 +67,6 @@ fn ty(t: &T) -> T {
     t.clone()
 }
 
-/// Whether a term inside `t` (or `t`) is one `p` holds of.
 fn any(t: &T, p: &dyn Fn(&T) -> bool) -> bool {
     let mut found = false;
     crate::surface::walk::term(&mut t.clone(), &mut |t: &mut T| found |= p(t));
@@ -89,7 +88,6 @@ fn mutates(t: &T) -> bool {
     })
 }
 
-/// Whether `f` uses what this module reads.
 fn needs(f: &FnDecl) -> bool {
     // A function with effects is read by `check/effects.rs` or not at all.
     if f.effects.as_ref().is_some_and(|e| !e.is_empty()) {
@@ -202,7 +200,6 @@ fn prepare(t: &T) -> T {
     t
 }
 
-/// What is bound before a value is used.
 enum Bind {
     /// `match call { mutK(value, outs…) => … }`.
     Call {
@@ -210,7 +207,6 @@ enum Bind {
         value: String,
         outs: Vec<String>,
     },
-    /// `let name: ty = value`, as written.
     Let {
         name: String,
         ty: Option<T>,
@@ -223,9 +219,7 @@ struct Rewrite<'k> {
     /// The states in scope, the latest last: each name and its type when
     /// known.
     states: Vec<(String, Option<T>)>,
-    /// The `&mut` parameters, which the function returns.
     outs: Vec<String>,
-    /// The families `MutK` used.
     used: HashSet<usize>,
     fresh: usize,
 }
@@ -297,7 +291,6 @@ impl Rewrite<'_> {
         rest
     }
 
-    /// `name` bound to `value`.
     fn assign(&mut self, name: &str, value: T, binds: &mut Vec<Bind>) {
         let span = value.span;
         let value = match self.state(name).cloned().flatten() {
@@ -312,7 +305,6 @@ impl Rewrite<'_> {
         });
     }
 
-    /// The type of the state `name` as a record: its constructor and fields.
     fn record_of(&self, name: &str, span: Span) -> Result<(String, Vec<String>), Diagnostic> {
         let head = match self.state(name) {
             Some(Some(t)) => match &*t.kind {
@@ -588,7 +580,6 @@ impl Rewrite<'_> {
         }
     }
 
-    /// `t`, which changes no state.
     fn pure(&mut self, t: &T, want: Option<&T>) -> Result<T, Diagnostic> {
         let mut binds = Vec::new();
         let v = self.expr(t, &mut binds, want)?;
@@ -768,7 +759,6 @@ fn t_span(stmts: &[Stmt]) -> Span {
     Span::default()
 }
 
-/// `if c { a } else { b }` as `match c { true => a  false => b }`.
 pub(super) fn if_match(t: &T) -> T {
     let TermKind::If {
         condition,
@@ -934,4 +924,3 @@ impl Kernel {
 fn r_span(f: &FnDecl) -> Span {
     f.result.as_ref().map(|r| r.span).unwrap_or(f.span)
 }
-

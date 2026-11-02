@@ -1,4 +1,9 @@
+import "Base.taut"
+import "Map.taut"
 import "MapLaws.taut"
+import "Text.taut"
+import std::prelude::Ord
+import std::prelude::Shared
 
 module Ordmap {
   // `Ordmap::compare_text` (`Text::ordering` of `std/Text::taut`) is a total order, so the
@@ -31,12 +36,7 @@ module Ordmap {
     }
   }
 
-  pub theorem select3_true(
-    p: Bool,
-    q: Bool,
-    r: Ordering,
-    hp: p = true
-  ): select3(p, q, r) = Less {
+  pub theorem select3_true(p: Bool, q: Bool, r: Ordering, hp: p = true): select3(p, q, r) = Less {
     match p: select3(p, q, r) = Less {
       false => False::elim(false_ne_true(hp))
       true => Refl
@@ -65,14 +65,8 @@ module Bytes {
     xs: List(Nat),
     y: Nat,
     ys: List(Nat)
-  ): compare(
-    Cons(x, xs),
-    Cons(y, ys)
-  ) = Ordmap::select3(x < y, y < x, compare(xs, ys)) {
-    match x < y: compare(
-      Cons(x, xs),
-      Cons(y, ys)
-    ) = Ordmap::select3(x < y, y < x, compare(xs, ys)) {
+  ): compare(Cons(x, xs), Cons(y, ys)) = Ordmap::select3(x < y, y < x, compare(xs, ys)) {
+    match x < y: compare(Cons(x, xs), Cons(y, ys)) = Ordmap::select3(x < y, y < x, compare(xs, ys)) {
       false => ⊢ match y < x: Ordering {
         false => compare(xs, ys)
         true => Greater
@@ -275,7 +269,6 @@ module Ordmap {
 }
 
 module Bytes {
-  // Comparing the other way round is the flipped comparison.
   pub theorem compare_flip(
     a: List(Nat),
     b: List(Nat)
@@ -290,10 +283,7 @@ module Bytes {
         Cons(y, ys) => Eq::trans(
           compare_step(y, ys, x, xs),
           Eq::trans(
-            Eq::congr(
-              ⟦Ordmap::select3(y < x, x < y, □)⟧,
-              compare_flip(xs, ys)
-            ),
+            Eq::congr(⟦Ordmap::select3(y < x, x < y, □)⟧, compare_flip(xs, ys)),
             Eq::trans(
               Ordmap::select3_flip(
                 x < y,
@@ -347,9 +337,13 @@ module Bytes {
               Refl,
               Eq::trans(Eq::sym(compare_step(x, xs, y, ys)), e1),
               Eq::trans(Eq::sym(compare_step(y, ys, z, zs)), e2),
-              (h1: compare(xs, ys) = Less) => (
-                h2: compare(ys, zs) = Less
-              ) => compare_less_trans(xs, ys, zs, h1, h2)
+              (h1: compare(xs, ys) = Less) => (h2: compare(ys, zs) = Less) => compare_less_trans(
+                xs,
+                ys,
+                zs,
+                h1,
+                h2
+              )
             )
           )
         }

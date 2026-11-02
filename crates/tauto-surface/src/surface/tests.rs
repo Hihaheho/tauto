@@ -71,13 +71,7 @@ fn a_function_type_is_an_argument() {
 #[test]
 fn angle_type_arguments_do_not_parse() {
     // A type is applied one way, as a call.
-    assert!(
-        terms_in(
-            r#"theorem t(): Eq<a, b> { Refl }"#,
-            Nt::TheoremDecl
-        )
-        .is_err()
-    );
+    assert!(terms_in(r#"theorem t(): Eq<a, b> { Refl }"#, Nt::TheoremDecl).is_err());
 }
 
 #[test]
@@ -114,11 +108,7 @@ fn quantifiers_and_connectives() {
 
 #[test]
 fn function_types_carry_their_effects() {
-    let mut terms = terms_in(
-        r#"fn f(x: (i64) -> Bool): i64 { 0 }"#,
-        Nt::Param,
-    )
-    .unwrap();
+    let mut terms = terms_in(r#"fn f(x: (i64) -> Bool): i64 { 0 }"#, Nt::Param).unwrap();
     let TermKind::Pi {
         params,
         result,
@@ -169,5 +159,8 @@ fn a_std_model_takes_and_gives_what_its_builtin_does() {
     assert!(model("module Float {\n  pub fn abs(x: std::Float::Float): std::Float::Float {\n    x\n  }\n}\n").is_empty());
     let errors = model("module U64 {\n  pub fn of_nat(n: Nat): Option(U64) {\n    None\n  }\n}\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].0.contains("`std::Model::U64::of_nat`"), "{errors:?}");
+    assert!(
+        errors[0].0.contains("`std::Model::U64::of_nat`"),
+        "{errors:?}"
+    );
 }

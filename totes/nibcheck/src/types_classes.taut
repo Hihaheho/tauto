@@ -1,13 +1,20 @@
 import "types_infer.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::List
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "../../text/src/text.taut"
 
 // Classes and instances (`types/classes.rs`): their declarations are checked,
 // each method becomes a function that carries the class as a `where`, and a
 // constraint of a class is resolved to an assumption or an instance; and the
 // prelude's classes expanded the way `types/expand.rs` gives the signatures,
 // in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
-
-// ----- terms -----
 
 mutual {
   pub fn term_mentions(t: SurfaceTerm, name: Text): Bool {
@@ -151,14 +158,10 @@ pub fn surface_at(k: SurfaceKind, start: Nat, end: Nat): SurfaceTerm {
   surface_term_mk(k, start, end)
 }
 
-// `()` as written.
 pub fn surface_unit_type(): SurfaceTerm {
   surface_at(SkApp(surface_at(SkVar("Tuple"), 0, 0), Nil), 0, 0)
 }
 
-// ----- lists -----
-
-// `xs` cut or filled with `None` to `n` items.
 pub fn opts_resize<A>(n: Nat, xs: List(Option(A))): List(Option(A)) {
   match n: List(Option(A)) {
     Zero => Nil
@@ -202,8 +205,6 @@ pub fn borrows_eq(a: List(Option(Bool)), b: List(Option(Bool))): Bool {
   }
 }
 
-// ----- names -----
-
 // `C.m@H`: the function an instance of `C` for `H` gives `m`.
 pub fn instance_fn(r#class: Text, method: Text, head: Text): Text {
   cat5(r#class, ".", method, "@", head)
@@ -243,9 +244,6 @@ pub fn span_at(start: Nat, end: Nat): TySpan {
   TySpan { start: start, end: end }
 }
 
-// ----- the prelude, expanded -----
-
-// The class named `name` among `cs`.
 pub fn class_named(cs: List(SurfaceClass), name: Text): Option(SurfaceClass) {
   match cs: Option(SurfaceClass) {
     Nil => None
@@ -305,7 +303,6 @@ pub fn method_binders(gs: List(Text), bounds: List(Option(Text))): List(SurfaceP
   }
 }
 
-// A method's type with `by` for the class's parameter.
 pub fn method_type(r#class: SurfaceClass, m: SurfaceFn, r#by: SurfaceTerm): SurfaceTerm {
   let result: SurfaceTerm := match m.result: SurfaceTerm {
     Some(r) => term_replace(r, r#class.param, r#by)
@@ -616,15 +613,12 @@ pub fn expand_stmts(ss: List(SurfaceStmt), cs: List(SurfaceClass)): List(Surface
   }
 }
 
-// The prelude as `types.rs` reads it: its classes expanded (`prelude`).
 pub fn classes_expand_prelude(ss: List(SurfaceStmt)): List(SurfaceStmt) {
   match stmts_classes(ss): List(SurfaceStmt) {
     Nil => ss
     Cons(c, rest) => expand_stmts(ss, Cons(c, rest))
   }
 }
-
-// ----- declarations -----
 
 pub fn stmts_class_names(ss: List(SurfaceStmt)): List(Text) {
   match ss: List(Text) {
@@ -824,7 +818,7 @@ pub fn ck_declare_class(&mut c: Checker, cl: SurfaceClass, own_types: List(Text)
           Ordmap::insert(
             c.classes,
             cl.name,
-            ClassInfo { decl: cl, bound: (bound: Kind), arg: (bound: Option(Kind)) },
+            ClassInfo { decl: cl, bound: bound.fst, arg: bound.snd },
             Ordmap::compare_text
           )
         )
@@ -972,7 +966,6 @@ pub fn head_shape_ok(head: SurfaceTerm, gs: List(Text)): Bool {
   }
 }
 
-// The first generic the head does not mention.
 pub fn generic_not_in_head(gs: List(Text), head: SurfaceTerm): Option(Text) {
   match gs: Option(Text) {
     Nil => None
@@ -1102,7 +1095,6 @@ pub fn ck_same_signature(
   }
 }
 
-// The methods the class asks for, each as the instance defines it.
 pub fn ck_instance_methods(
   expected: List(SurfaceFn),
   &mut c: Checker,
@@ -1221,7 +1213,6 @@ pub fn ck_instance_kind_message(
   }
 }
 
-// What is wrong with the head of an instance for what the class takes.
 pub fn ck_instance_head_message(
   &c: Checker,
   i: SurfaceInstance,
@@ -1233,7 +1224,6 @@ pub fn ck_instance_head_message(
   match info.arg: Option(Pair(Text, TySpan)) {
     Some(arg) => match ty_missing_args(&c, head): Option(Pair(Text, TySpan)) {
       Some(m) => if m == 1 {
-        // A type constructor: the head with its last argument.
         let made := ty_apply(head, TyParam(kind_name(arg), arg))
         let k := datas_kind(c.datas, made)
         if kind_fits(k, info.bound) {
@@ -1353,7 +1343,7 @@ pub fn ck_declare_instance_at(
             let shown := ty_show(ck_shown(&c, head))
             match ck_instance_head_message(&c, i, info, head, ctor): List(SurfaceFn) {
               Some(m) => {
-                ck_error(&mut c, (m: Text), (m: TySpan))
+                ck_error(&mut c, m.fst, m.snd)
                 out
               }
               None => ck_declare_instance_rest(
@@ -1428,9 +1418,6 @@ pub fn ck_declare_classes(&mut c: Checker, program: List(SurfaceStmt)): List(Sur
   List::reverse(ck_declare_instances(program, &mut c, own_classes, own_types, Nil))
 }
 
-// ----- resolution -----
-
-// Why a constraint has no evidence.
 pub(open) inductive Unresolved: Type {
   UnresolvedUndetermined: Unresolved
   UnresolvedAssumption(shown: Text): Unresolved
@@ -1446,7 +1433,6 @@ pub fn ty_strip_one(t: Ty): Ty {
   }
 }
 
-// The type each generic of the head stands for in `t`.
 pub fn head_found(params: List(Ty), args: List(Ty), found: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
   match params: Ordmap(Text, Ty) {
     Nil => found
@@ -1565,7 +1551,6 @@ pub fn ck_resolve_class(
   ck_resolve_class_in(c.steps, &c, r#class, ty_strip_one(ck_resolve(&c, t)), assume)
 }
 
-// The error for a constraint of a class that does not resolve.
 pub fn ck_check_class_pending(&mut c: Checker, p: TyPending): Unit {
   let span := span_at(p.start, p.end)
   match ck_resolve_class(&c, p.r#class, p.ty, p.assume): Unit {

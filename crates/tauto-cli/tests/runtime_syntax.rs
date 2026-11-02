@@ -10,7 +10,7 @@ fn rust_backend_runs_a_runtime_parser_tote() {
     fs::create_dir_all(dir.join(".tauto-syntax")).unwrap();
     fs::write(
         dir.join("Tauto.eure"),
-        "package {\n name = \"runtime-parser\"\n version = \"0.1.0\"\n sources = [\"src\"]\n}\n",
+        "package {\n name = \"runtime-parser\"\n version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tauto/tests/syntax_fixtures");
@@ -24,7 +24,9 @@ fn rust_backend_runs_a_runtime_parser_tote() {
         tables.source(),
     )
     .unwrap();
-    let source = r#"syntax!(math, ```par
+    let source = r#"import std::prelude::Macro
+
+syntax!(math, ```par
 {grammar}```) {}
 perform show("tree", math::parse("(1+2)=3"))
 perform show("error", math::parse("1+="))
@@ -37,7 +39,9 @@ perform show("error", math::parse("1+="))
     .replace("{grammar}", &grammar);
     assert_eq!(
         source,
-        r#"syntax!(math, ```par
+        r#"import std::prelude::Macro
+
+syntax!(math, ```par
 %start Eqn
 %title "math"
 %%

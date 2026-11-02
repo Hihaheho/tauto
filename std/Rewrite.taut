@@ -1,4 +1,5 @@
 import "Std.taut"
+import std::prelude::Macro
 
 // `rewrite!` is here, apart from `Tactic.taut` (which also has `nat_norm!` and so imports
 // `Base`), so that a file can use it without the arithmetic of `Base`.
@@ -16,29 +17,22 @@ import "Std.taut"
 pub macro fn rewrite(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
   let g0 := Judgement::term(s.before)
   let sides := Tac::eq_sides(s)
-  let g1 := match s.after {
-    Nil => match sides {
-      Some(#(@lhs lhs, @rhs rhs)) => Syn::replace(g0, lhs, rhs)
-      None => Syn::error(s.span, "rewrite!: the equation does not check here; write the arm's goal")
-    }
-    Cons(g, rest) => match rest {
-      Nil => Judgement::term(g.ty)
-      Cons(_, _) => Syn::error(s.span, "rewrite! leaves one goal: write one arm")
-    }
-  }
   let z := ExVar(SynIdent { name: "z", ctx: SynCtx { scopes: Nil }, span: s.span })
-  let by_type := match sides {
-    Some(#(@lhs lhs, @rhs rhs)) => Syn::abstract(g0, g1, lhs, rhs, z)
-    None => None
-  }
+  let by_type := Tac::abstract_sides(s, sides, z)
   let body := match by_type {
     Some(m) => m
-    None => match Syn::diff(g0, g1) {
-      None => Syn::error(s.span, "rewrite!: the two goals are written the same")
-      Some(#(@after after, @before before)) => if Syn::same(before, g0) {
-        Tac::motive(s.span, None)
-      } else {
-        Tac::motive(s.span, Syn::abstract(g0, g1, before, after, z))
+    None => match s.after {
+      Nil => Syn::error(s.span, "rewrite!: the equation does not check here; write the arm's goal")
+      Cons(g, rest) => match rest {
+        Nil => match Syn::diff(g0, Judgement::term(g.ty)) {
+          None => Syn::error(s.span, "rewrite!: the two goals are written the same")
+          Some(#(@after after, @before before)) => if Syn::same(before, g0) {
+            Tac::motive(s.span, None)
+          } else {
+            Tac::motive(s.span, Syn::abstract(g0, Judgement::term(g.ty), before, after, z))
+          }
+        }
+        Cons(_, _) => Syn::error(s.span, "rewrite! leaves one goal: write one arm")
       }
     }
   }
@@ -52,7 +46,49 @@ pub macro fn rewrite(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
 }
 
 module Tac {
-  // The body of the motive, once found.
+  // The body of the motive, from the sides `l` and `r` of the equation: the goal before
+  // with `z` where it has `l` and the goal after has `r`. The goals are compared as written
+  // first. Where they are written with another spelling than the sides (the sides come
+  // elaborated: `a + b` for `Nat::add(a, b)`, the implicit arguments of a call given),
+  // the goals are elaborated too, and the goal after, when no arm is written, is the one
+  // before with `l` written `r`.
+  pub fn abstract_sides(
+    s: ProofStep,
+    sides: Option(@lhs SynExpr × @rhs SynExpr),
+    z: SynExpr
+  ): Option(SynExpr) ! {elab, Div} {
+    match sides {
+      None => None
+      Some(#(@lhs lhs, @rhs rhs)) => match s.after {
+        Nil => match Tac::elaborated(s.before) {
+          None => None
+          Some(g0) => Syn::abstract(g0, Syn::replace(g0, lhs, rhs), lhs, rhs, z)
+        }
+        Cons(g, rest) => match rest {
+          Cons(_, _) => None
+          Nil => match Syn::abstract(Judgement::term(s.before), Judgement::term(g.ty), lhs, rhs, z) {
+            Some(m) => Some(m)
+            None => match Tac::elaborated(s.before) {
+              None => None
+              Some(g0) => match Tac::elaborated(g.ty) {
+                None => None
+                Some(g1) => Syn::abstract(g0, g1, lhs, rhs, z)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // The goal `g` as the checker elaborates it, `None` where it does not check.
+  pub fn elaborated(g: Judgement): Option(SynExpr) ! {elab, Div} {
+    match Elab::check(Judgement::term(g), g, None) {
+      Err(_) => None
+      Ok(c) => Some(Judgement::term(c))
+    }
+  }
+
   pub fn motive(at: SynSpan, found: Option(SynExpr)): SynExpr ! {macro_error} {
     match found {
       Some(m) => m
@@ -63,7 +99,6 @@ module Tac {
     }
   }
 
-  // `l` and `r` of `e: l = r`, when `e` checks where the step is.
   pub fn eq_sides(s: ProofStep): Option(@lhs SynExpr × @rhs SynExpr) ! {elab} {
     match Elab::check(s.arg, s.before, None) {
       Err(_) => None
@@ -74,7 +109,6 @@ module Tac {
     }
   }
 
-  // The last two of three arguments.
   pub fn sides(xs: List(SynExpr)): Option(@lhs SynExpr × @rhs SynExpr) {
     match xs {
       Nil => None
@@ -102,7 +136,7 @@ module Tac {
           None => None
           Some(q) => match Tac::typed((q: List(SynExpr))) {
             None => None
-            Some(#(@lhs _, @rhs _, @ty ty)) => Some(#(@ty ty, @lhs l, @rhs r))
+            Some(#(@lhs _, @rhs _, @ty ty)) => Some(#(@lhs l, @rhs r, @ty ty))
           }
         }
         None => Tac::typed((p: List(SynExpr)))
@@ -110,7 +144,6 @@ module Tac {
     }
   }
 
-  // The two of two arguments.
   pub fn two(xs: List(SynExpr)): Option(@lhs SynExpr × @rhs SynExpr) {
     match xs {
       Nil => None
@@ -124,13 +157,12 @@ module Tac {
     }
   }
 
-  // The three of `Eq(T, l, r)`'s arguments.
   pub fn typed(xs: List(SynExpr)): Option(@lhs SynExpr × @rhs SynExpr × @ty SynExpr) {
     match xs {
       Nil => None
       Cons(ty, rest) => match Tac::two(rest) {
         None => None
-        Some(#(@lhs l, @rhs r)) => Some(#(@ty ty, @lhs l, @rhs r))
+        Some(#(@lhs l, @rhs r)) => Some(#(@lhs l, @rhs r, @ty ty))
       }
     }
   }

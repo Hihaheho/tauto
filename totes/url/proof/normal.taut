@@ -1,9 +1,17 @@
 import "round.taut"
+import "bytes.taut"
+import "percent.taut"
+import "../src/bytes.taut"
+import "../src/parse.taut"
+import "../src/percent.taut"
+import "../src/url.taut"
+import "../src/valid.taut"
+import std::Base
+import std::List
+import std::Nat
 
 // The parser returns only valid URLs (`parse_valid`), so parsing what it
 // serializes gives the same URL again (`parse_idem`).
-
-// ---- what encoding writes -----------------------------------------------------------------
 
 // No byte of an encoding is in its set.
 pub theorem enc_out_clean(set: (Nat) -> Bool, s: Stable(set), x: List(Nat)): clean(set, pct_encode(set, x)) = true {
@@ -115,8 +123,6 @@ pub theorem enc_not_slash(
   )
 }
 
-// ---- what cutting leaves --------------------------------------------------------------------
-
 pub fn CutSpec(c: Nat, q: (Nat) -> Bool, l: List(Nat), o: Option(Pair(List(Nat), List(Nat)))): Prop {
   match o: Prop {
     None => all_bytes(ne(c), l) = true
@@ -171,8 +177,6 @@ pub theorem cut_spec(c: Nat, q: (Nat) -> Bool, l: List(Nat), h: all_bytes(q, l) 
     )
   }(h)
 }
-
-// ---- what splitting leaves ---------------------------------------------------------------------
 
 pub theorem push_front_pieces(
   q: (Nat) -> Bool,
@@ -250,8 +254,6 @@ pub theorem split_nonempty(c: Nat, l: List(Nat)): is_empty_list(split_all(c, l))
     )
   }
 }
-
-// ---- what reading a path leaves ---------------------------------------------------------------
 
 // No `\` in a special URL.
 pub fn nb(sp: Bool): (Nat) -> Bool {
@@ -526,8 +528,6 @@ pub theorem split_cases(st: List(List(Nat)), ps: List(List(Nat)), h: is_empty_li
     Cons(s, rest) => (e: false = false) => walk_cons_ne(st, s, rest)
   }(h)
 }
-
-// ---- what the authority functions return -------------------------------------------------------
 
 pub theorem bytes_eq_refl(a: List(Nat)): bytes_eq(a, a) = true {
   match a: bytes_eq(a, a) = true {
@@ -1046,8 +1046,6 @@ pub theorem auth_path_spec(
   auth_path_cut_spec(sp, d, l, cut(47, l), cut_spec(47, nb(sp), l, hl))
 }
 
-// ---- query and fragment ------------------------------------------------------------------
-
 pub fn TailOk(qset: (Nat) -> Bool, t: Tail): Prop {
   match t: Prop {
     MkTail(h, q, f) => And(
@@ -1121,8 +1119,6 @@ pub theorem tail_cut_spec(
 pub theorem tail_spec(qset: (Nat) -> Bool, st: Stable(qset), l: List(Nat)): TailOk(qset, tail_of(qset, l)) {
   tail_cut_spec(qset, st, l, cut(35, l), cut_spec(35, any_byte, l, all_any(l)))
 }
-
-// ---- the URL --------------------------------------------------------------------------------
 
 pub fn UrlSpec(o: Option(Url)): Prop {
   match o: Prop {

@@ -39,11 +39,16 @@ LL(k) one in two places, as parol does:
      the target on each non-terminal.
    - Each production of the extended grammar reduces, in the state where it
      ends, on each terminal of its left side's FOLLOW.
-   - A shift wins over a reduce. Of two reduces, the one by the production
-     written first wins. These are the choices parol gives lalry.
+   - A state that would do two different things on a terminal (a shift and
+     a reduce, or reduces by two productions) is an error, and so is a state
+     that accepts and does something else at the end of the input. The
+     message names the kind of conflict, the state, the terminal and the
+     productions:
+     `LALR(1) shift/reduce conflict in state 6 on Plus`, then one line for
+     the shift (`shift to state 4`) or the production, and one line
+     `reduce by production #1 of E`.
    - On the end of the input, a production of the start symbol accepts
-     (the action names the production). A state where something else is
-     done then too is an error: lalry stops there.
+     (the action names the production).
 
 The `lr` line holds the number of states, then each state's:
 
@@ -54,7 +59,9 @@ The `lr` line holds the number of states, then each state's:
 
 ## How it is tested
 
-The tables are compared with what parol makes. A small Rust program (not in
+The tables of a grammar without conflicts are compared with what parol makes
+(parol settles a conflict by letting a shift win over a reduce and the
+production written first win over a later one; this tote reports it). A small Rust program (not in
 the repository) runs parol's own steps: reading, augmentation, then
 `generate_parser_export_model_from_grammar`. It prints the productions and
 the table in the form `--lr` has.

@@ -124,9 +124,8 @@ tests the compiler core; it is not an import-graph test, a stage1 compiler, a
 stage2 fixed point, or a complete elaborator. The remaining complete
 backend modules are submitted unchanged and reject without output.
 
-The tote names its declaration and entry files explicitly in `package.sources`;
-imports establish dependency order instead of alphabetical scanning of every
-helper file. Run `cargo test --locked -p selfhost-harness --test rustgen --test
+Every file under `src` is a source; imports establish dependency order
+instead of alphabetical scanning of every helper file. Run `cargo test --locked --manifest-path tools/selfhost-harness/Cargo.toml --test rustgen --test
 rustgen_generic --test rustgen_records --test rustgen_closures`. Native tests cover the real compiler core, generic and recursive
 values, empty constructors, lexical pattern scopes, Unicode text, large numeric
 comparisons, overflow and fail-closed rejection. Small substitution and numeric

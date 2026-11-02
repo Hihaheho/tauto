@@ -13,7 +13,6 @@ use crate::tote_main::TOTE_FLAG;
 use tauto_nir::CompileError;
 use tauto_rt::permissions::{Grant, Permissions};
 
-/// A checked program, compiled and ready to start on the machine.
 pub(crate) enum Prepared {
     /// The bytecode, written to `dir`, and the machine's arguments.
     Machine { dir: PathBuf, args: Vec<String> },
@@ -41,7 +40,6 @@ impl Prepared {
         }
     }
 
-    /// Removes the bytecode.
     pub(crate) fn finish(&self) {
         if let Prepared::Machine { dir, .. } = self {
             let _ = std::fs::remove_dir_all(dir);
@@ -49,7 +47,6 @@ impl Prepared {
     }
 }
 
-/// `tauto run [--backend vm] PATH`.
 pub fn command(args: &[String]) -> ExitCode {
     let prepared = match prepare(&args[1..], u64::MAX, None) {
         Ok(p) => p,

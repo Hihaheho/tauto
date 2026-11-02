@@ -1,6 +1,8 @@
 import std::Array
 import std::Text
+import std::prelude::Shared
 import "../../text/src/text.taut"
+import std::Base
 
 // The states of the scanner (`%state` of a grammar, the dynamic state of
 // scnr2): what an accept entry of a terminal written with `%capture` or
@@ -41,8 +43,6 @@ pub(open) inductive ScanDynState: Type {
   Mk(kind: Nat, min: Nat, max: Nat): ScanDynState
 }
 
-// ---- reading -------------------------------------------------------------------
-
 pub fn scan_unit_in(k: Nat, a: Array(Nat), at: Nat, done: List(Text)): List(Text) {
   match k: List(Text) {
     Zero => List::reverse(done)
@@ -81,7 +81,6 @@ pub fn scan_bounds_in(k: Nat, a: Array(Nat), at: Nat): List(Nat) {
   }
 }
 
-// One entry from `at`: it, and where the next one is.
 pub fn scan_dyn_at(a: Array(Nat), at: Nat): Pair(ScanDyn, Nat) {
   let len := Array::get_or(a, at + 3, 0)
   let r := at + 4 + len
@@ -127,8 +126,6 @@ pub fn scan_held_start(k: Nat): List(ScanHeld) {
     Succ(k2) => Cons(ScanHeldNone, scan_held_start(k2))
   }
 }
-
-// ---- the values -------------------------------------------------------------------
 
 pub fn scan_held_at(held: List(ScanHeld), i: Nat): ScanHeld {
   match held: ScanHeld {

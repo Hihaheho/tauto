@@ -66,6 +66,7 @@ function shown(v) {
         case 'Atomic':return 'Atomic('+v.value+')';
         case 'Bytes':return 'Bytes['+Array.from(v.bytes).join(', ')+']';
         case 'Mutex':return 'Mutex';
+        case 'MutexGuard':return 'MutexGuard';
         case 'Signal':return 'Signal';
         case 'Pending':return 'Pending';
         case 'Secret':return 'Secret';

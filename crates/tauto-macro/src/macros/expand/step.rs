@@ -114,9 +114,13 @@ impl Expander<'_> {
                 return without_steps(d);
             }
         };
+        // The context of the next step, taken from the check of the output of
+        // the one before it.
+        let mut carried: Option<HoleGoal> = None;
         while let Some((step, _)) = first_step(&d) {
-            match self.one_step(kernel.as_ref(), &d, before, &step) {
-                Some(term) => {
+            match self.one_step(kernel.as_ref(), &d, before, &step, carried.take()) {
+                Some((term, next)) => {
+                    carried = next;
                     put_first_step(&mut d, term);
                     d = self.resolved(d, before);
                     self.file_expanded = true;
@@ -127,34 +131,44 @@ impl Expander<'_> {
         d
     }
 
-    /// The term the first step of `d` stands for, or `None` after an error.
+    /// The term the first step of `d` stands for, or `None` after an error,
+    /// with the hole of the step after it as the check of the output left it.
+    /// `known` is the hole of this step from the check of the step before it;
+    /// without it the declaration is checked with a hole in this step's place.
     fn one_step(
         &mut self,
         kernel: &dyn PrefixedChecker,
         d: &Stmt,
         before: &[Stmt],
         step: &Step,
-    ) -> Option<SurfaceTerm> {
+        known: Option<HoleGoal>,
+    ) -> Option<(SurfaceTerm, Option<HoleGoal>)> {
         let at = step.call;
         let g0 = step.before.clone().expect("filled by fill_before");
         // 1. The variables in scope where the step is: the declaration with a
         // hole in its place.
-        let probe = with_first_step(d, SurfaceTerm::new(TermKind::Hole(GOAL.into()), at));
-        let here = match kernel.verdict(&probe) {
-            Some(Verdict::Incomplete { holes, .. }) => holes.into_iter().find(|h| h.name == GOAL),
-            Some(Verdict::Skipped(_)) => {
-                self.error("step.fragment", msg!("macro-step-fragment"), at);
-                return None;
+        let here = if known.is_some() {
+            known
+        } else {
+            let probe = with_first_step(d, SurfaceTerm::new(TermKind::Hole(GOAL.into()), at));
+            match kernel.verdict(&probe) {
+                Some(Verdict::Incomplete { holes, .. }) => {
+                    holes.into_iter().find(|h| h.name == GOAL)
+                }
+                Some(Verdict::Skipped(_)) => {
+                    self.error("step.fragment", msg!("macro-step-fragment"), at);
+                    return None;
+                }
+                Some(Verdict::Failed(e)) => {
+                    self.error(
+                        "step.context",
+                        msg!("macro-step-context", message = e.message.clone()),
+                        at,
+                    );
+                    return None;
+                }
+                _ => None,
             }
-            Some(Verdict::Failed(e)) => {
-                self.error(
-                    "step.context",
-                    msg!("macro-step-context", message = e.message.clone()),
-                    at,
-                );
-                return None;
-            }
-            _ => None,
         };
         let Some(here) = here else {
             self.error("step.context", msg!("macro-step-no-goal"), at);
@@ -174,7 +188,6 @@ impl Expander<'_> {
             );
             return None;
         }
-        // 3. The tactic.
         let id = self.expansions.len() as u32 + 1;
         let (term, exp) = self.run_tactic(step, id, &here)?;
         let mut found: Vec<String> = Vec::new();
@@ -216,7 +229,6 @@ impl Expander<'_> {
             );
             return None;
         }
-        // 4. The goals the tactic left, against the arms.
         let made = SurfaceTerm::app("the", vec![g0.clone(), probe_term.clone()], step.call);
         let probe = self.resolved(with_first_step(d, made), before);
         let holes: Vec<HoleGoal> = match kernel.verdict(&probe) {
@@ -334,7 +346,6 @@ impl Expander<'_> {
                 return None;
             }
         }
-        // 5. The arms' proofs in their holes.
         let mut out = probe_term;
         walk::term(&mut out, &mut |t| {
             if let TermKind::Hole(h) = &*t.kind
@@ -353,7 +364,23 @@ impl Expander<'_> {
             }
         });
         self.expansions.push(exp);
-        Some(SurfaceTerm::app("the", vec![g0, out], step.call))
+        // The next step is the first `step'other` of this probe, unless a step
+        // in the body of an arm comes before it: then the declaration is
+        // checked again for its context.
+        let nested = step.arms.iter().any(|a| {
+            let mut body = a.body.clone();
+            let mut any = false;
+            walk::term(&mut body, &mut |t| {
+                any |= matches!(&*t.kind, TermKind::Step(_))
+            });
+            any
+        });
+        let next = if nested {
+            None
+        } else {
+            holes.into_iter().find(|h| h.name == "step'other1")
+        };
+        Some((SurfaceTerm::app("the", vec![g0, out], step.call), next))
     }
 
     fn resolved(&self, d: Stmt, before: &[Stmt]) -> Stmt {
@@ -363,9 +390,11 @@ impl Expander<'_> {
                 .chain(before.iter())
                 .chain(std::iter::once(&d)),
         );
-        let d = scope::resolve(vec![d], &ctors)
-            .pop()
-            .expect("one statement");
+        let d = scope::resolve_seeing(vec![d], &ctors, &|scopes, name| {
+            self.macro_sees(scopes, name)
+        })
+        .pop()
+        .expect("one statement");
         // What a tactic makes names functions by their full names
         // (`Nat.norm_eq`), as the declaration's own names are.
         let mut known = crate::surface::modules::declared(&self.done);
@@ -442,7 +471,6 @@ impl Expander<'_> {
         }
     }
 
-    /// Runs the tactic of `step` where the variables are `here.context`.
     fn run_tactic(
         &mut self,
         step: &Step,
@@ -593,7 +621,7 @@ impl Expander<'_> {
         let mut captures = Vec::new();
         let lowered = {
             let spans = &mut self.spans;
-            let mut fresh = |written: u32| spans.fresh(written, id);
+            let mut fresh = |written: u32| spans.fresh(written, id, step.call.start);
             let mut lower = Lower {
                 scope: u64::from(id),
                 fresh: &mut fresh,
@@ -691,7 +719,6 @@ fn with_first_step(d: &Stmt, by: SurfaceTerm) -> Stmt {
     d
 }
 
-/// `d` with its first step replaced by `by`, the others left as they are.
 fn put_first_step(d: &mut Stmt, by: SurfaceTerm) {
     let mut by = Some(by);
     walk::stmt(d, &mut |t| {
@@ -715,7 +742,6 @@ fn wrap(path: &[(String, Span)], items: Vec<Stmt>) -> Vec<Stmt> {
     items
 }
 
-/// Gives `d` back the name `original` was written with.
 fn set_name(d: &mut Stmt, original: &Stmt) {
     match (d, original) {
         (Stmt::Theorem(t) | Stmt::Def(t), Stmt::Theorem(o) | Stmt::Def(o)) => {
@@ -727,9 +753,20 @@ fn set_name(d: &mut Stmt, original: &Stmt) {
 }
 
 fn without_steps(mut d: Stmt) -> Stmt {
+    // Each hole has its own name: one declaration may hold several steps, and
+    // a hole written twice is an error of its own.
+    let mut n = 0usize;
     walk::stmt(&mut d, &mut |t| {
         if matches!(&*t.kind, TermKind::Step(_)) {
-            *t = SurfaceTerm::new(TermKind::Hole("step".into()), t.span);
+            n += 1;
+            *t = SurfaceTerm::new(
+                TermKind::Hole(if n == 1 {
+                    "step".into()
+                } else {
+                    format!("step'{n}")
+                }),
+                t.span,
+            );
         }
     });
     d

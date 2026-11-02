@@ -3,6 +3,7 @@
 // states of the DFA by its partition).
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "rx.taut"
 import std::Text
 
 // A pattern of a mode: the expression, the terminal it makes, its priority
@@ -135,7 +136,6 @@ pub fn nf_with_eps(a: Nfa, r#from: u64, to: u64): Nfa {
   Nfa { states: nf_add_tr(a.states, r#from, nf_epsilon(to)), n: a.n, start: a.start, end: a.end }
 }
 
-// `a` followed by `b`.
 pub fn nf_concat(a: Nfa, b: Nfa): Nfa {
   if nf_is_empty(a) {
     Nfa { states: b.states, n: b.n, start: b.start, end: b.end }
@@ -151,7 +151,6 @@ pub fn nf_concat(a: Nfa, b: Nfa): Nfa {
   }
 }
 
-// `a` or `b`.
 pub fn nf_alt(a: Nfa, b: Nfa): Nfa {
   let b2 := nf_shift(b, a.n)
   let joined := Nfa {
@@ -167,14 +166,12 @@ pub fn nf_alt(a: Nfa, b: Nfa): Nfa {
   nf_with_end(nf_with_start(with_end, s), e)
 }
 
-// `a` once or not at all.
 pub fn nf_zero_or_one(a: Nfa): Nfa {
   let s := a.n
   let b := nf_with_eps(nf_with_eps(nf_new_state(a), s, a.start), s, a.end)
   nf_with_start(b, s)
 }
 
-// `a` any number of times.
 pub fn nf_zero_or_more(a: Nfa): Nfa {
   let s := a.n
   let b := nf_with_eps(nf_with_eps(nf_new_state(a), s, a.start), s, a.end)
@@ -187,7 +184,6 @@ pub fn nf_leaf_tr(leaf: RHir, target: u64): NTr {
   NTr { kind: 1, leaf: leaf, cc: 0, target: target }
 }
 
-// The NFA of an expression.
 pub fn nf_of_hir(h: RHir): Nfa {
   match h {
     RhEmpty => nf_new()
@@ -338,7 +334,6 @@ pub fn nf_of_patterns(ps: List(SPat)): Nfa {
   a
 }
 
-// The NFA of the lookahead of a pattern.
 pub fn nf_lookahead(p: SPat): Nfa {
   nf_build(
     SPat {

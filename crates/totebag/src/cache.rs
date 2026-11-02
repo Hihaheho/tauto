@@ -52,7 +52,6 @@ impl Cache {
         self.source_dir(id).is_dir()
     }
 
-    /// The bare repository for `url`.
     pub fn mirror_dir(&self, url: &str) -> PathBuf {
         self.root
             .join("git")

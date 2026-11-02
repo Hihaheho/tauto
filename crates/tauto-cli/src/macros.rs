@@ -14,7 +14,6 @@ use tauto::surface::print::print_stmts;
 
 use crate::i18n;
 
-/// The syntax of `tauto macro`, one line per subcommand.
 const USAGE: &str = "tauto macro expand [--all | --at LINE:COL | --write] FILE\n       \
                      tauto macro trace [--json | --diff] FILE\n       \
                      tauto macro inspect FILE --at LINE:COL [--json]";
@@ -206,7 +205,6 @@ fn parse_at(at: &str) -> Option<(usize, usize)> {
         .and_then(|(l, c)| Some((l.parse().ok()?, c.parse().ok()?)))
 }
 
-/// `tauto macro expand --at LINE:COL`: just what the call there made.
 fn expand_at(loaded: &Loaded, at: &str) -> ExitCode {
     let Some((line, col)) = parse_at(at) else {
         return usage();
@@ -236,7 +234,6 @@ fn write_back(loaded: &Loaded, path: &Path) -> ExitCode {
     }
 }
 
-/// `tauto macro trace --diff`: for each run, what it read and what it made.
 fn trace_diff(loaded: &Loaded) {
     for e in &loaded.expansions {
         println!(
@@ -255,8 +252,6 @@ fn trace_diff(loaded: &Loaded) {
     }
 }
 
-/// `tauto macro inspect FILE --at LINE:COL`: what the macro called there was
-/// given and what it made.
 fn inspect(loaded: &Loaded, at: &str, json: bool) -> ExitCode {
     let Some((line, col)) = at
         .split_once(':')

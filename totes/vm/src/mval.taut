@@ -6,11 +6,10 @@ import std::Text
 import std::Bytes
 import std::Float
 import std::Float32
+import std::prelude::Shared
 
 // The values of the machine of `machine.taut`, its code, its frames and its state, and what
 // reads and writes them: the heap, the places a borrow names, equality and `show`.
-
-// ---- a map from numbers ---------------------------------------------------------
 
 // The value at 0 is the node's; an odd number goes left, an even one right.
 pub(open) inductive MTrie(A: Type): Type {
@@ -62,8 +61,6 @@ pub fn mt_set<A>(fuel: Nat, t: MTrie(A), n: Nat, x: Option(A)): MTrie(A) {
   }
 }
 
-// ---- values -------------------------------------------------------------------------
-
 // A step of a place's path: a field or member by index, a field by name, an item of a
 // `Vec` or `Array`, or the value of an entry of a `HashMap`.
 pub(open) inductive MPath: Type {
@@ -100,10 +97,8 @@ pub(open) inductive MVal: Type {
   // A value already written as `show` writes it.
   MvShown(t: Text): MVal
   MvBuf(t: Text): MVal
-  // The `ctor`-th constructor of the program's table, with its fields.
   MvData(ctor: Nat, fields: List(MVal)): MVal
   MvProduct(members: List(MVal)): MVal
-  // The `variant`-th member of the union `union`.
   MvInject(union: Nat, variant: Nat, v: MVal): MVal
   // The `f`-th function of the program, and a closure: a function with the values it
   // captured after its parameters.
@@ -117,11 +112,15 @@ pub(open) inductive MVal: Type {
   MvMap(entries: List(Pair(MVal, MVal))): MVal
   // A borrow of the place: the cell `cell` of the heap, then the path.
   MvRef(cell: Nat, path: MRefPath): MVal
-  // `Ref` (kind 0) or `Atomic` (kind 1): a value shared through the cell.
+  // `Ref` (kind 0), `Atomic` (kind 1) or `Weak` (kind 2, on the cell of a `Ref`): a value shared
+  // through the cell.
   MvShared(kind: Nat, cell: Nat): MVal
   MvSignal(id: Nat): MVal
   MvPending(id: Nat): MVal
   MvMutex(id: Nat): MVal
+  // A locked mutex's content: the mutex, and the cell that holds the content until the
+  // guard is dropped.
+  MvGuard(mutex: Nat, cell: Nat): MVal
   // What `exceeded` is performed with, and its answers.
   MvInfo: MVal
   MvAnswer(v: MVal): MVal
@@ -167,9 +166,7 @@ pub(open) inductive MOp: Type {
   MoDeref: MOp
   // The value in the cell a boxed local's borrow names, one level down.
   MoUnbox: MOp
-  // A borrow of the path in the place the borrow names.
   MoPath(path: List(MPath)): MOp
-  // `syn_run` with the parser (`syn.taut`).
   MoSynParse(parser: SynParser): MOp
 }
 
@@ -181,18 +178,18 @@ pub(open) inductive MCode: Type {
   McStore(slot: Nat, k: MCode): MCode
   // Writes the value on top to a new cell and a borrow of it to the slot.
   McBox(slot: Nat, k: MCode): MCode
+  // Ends the scope of a local (with `boxed`, the slot holds a borrow of the cell that holds the value): a `MutexGuard` it owns gives its content back to the
+  // mutex, unless the value on top of the stack holds the guard.
+  McClear(slot: Nat, boxed: Bool, k: MCode): MCode
   // Writes the value on top at the path in the slot's value, or with `through`, in the
   // place the borrow in the slot names.
   McAssign(slot: Nat, path: List(MPath), through: Bool, k: MCode): MCode
-  // A borrow of the place: the path in the place the borrow in the slot names.
   McBorrow(slot: Nat, path: List(MPath), k: MCode): MCode
   McPop(k: MCode): MCode
   McOp(op: MOp, k: MCode): MCode
-  // Calls the value under the `n` arguments on top of the stack.
   McCall(n: Nat, k: MCode): MCode
   // Calls the `f`-th function with the `n` arguments in place of the running one.
   McTail(f: Nat, n: Nat): MCode
-  // Returns the value on top of the stack from the running function.
   McReturn: MCode
   // A step of the host's limit, or of the budgets in place; `mc_tick_answer` takes what
   // the handler of `exceeded` answered.
@@ -204,7 +201,6 @@ pub(open) inductive MCode: Type {
   // Takes the value on top of the stack and runs the body of the first arm whose
   // pattern fits and whose guard gives `true`.
   McMatch(pats: List(MPat), guards: List(MCode), bodies: List(MCode), k: MCode): MCode
-  // The closure of the `f`-th function with the `n` values on top.
   McClosure(f: Nat, n: Nat, k: MCode): MCode
   // Performs `op` with the `n` values on top. Quantities: 0 none, 1 once, 2 many,
   // 3 `direct`.
@@ -223,9 +219,7 @@ pub(open) inductive MCode: Type {
     rbodies: List(MCode),
     k: MCode
   ): MCode
-  // Runs `body` with a budget of the value on top.
   McBudget(memory: Bool, body: MCode, k: MCode): MCode
-  // The `b`-th builtin of `m_builtin_names` with the `n` values on top.
   McBuiltin(b: Nat, n: Nat, k: MCode): MCode
   // A request of the host with the `n` values on top: the shell answers it.
   McAsk(name: Text, n: Nat, k: MCode): MCode
@@ -245,14 +239,11 @@ pub(open) inductive MProgram: Type {
 }
 
 pub(open) inductive MFrame: Type {
-  // A call: the caller's code, slots and stack.
   MfCall(k: MCode, slots: List(MVal), st: List(MVal)): MFrame
   // A call of a continuation: as `mf_call`, but a `return` in the continuation returns from
   // the function whose `handle` it reaches, so it goes on under this frame.
   MfResume(k: MCode, slots: List(MVal), st: List(MVal)): MFrame
-  // A block of the running function: the code after it and the stack under it.
   MfBlock(k: MCode, st: List(MVal)): MFrame
-  // The condition of a `mc_while`, and its body.
   MfCond(c: MCode, b: MCode, k: MCode, st: List(MVal)): MFrame
   MfBody(c: MCode, b: MCode, k: MCode, st: List(MVal)): MFrame
   // The guard of an arm: on `true` the body runs, else the arms after it.
@@ -304,7 +295,6 @@ pub(open) inductive MPend: Type {
   MpendTaken: MPend
 }
 
-// What the heap holds.
 pub(open) inductive MObj: Type {
   MoCell(v: MVal): MObj
   MoCont(code: MCode, slots: List(MVal), st: List(MVal), fr: List(MFrame)): MObj
@@ -335,8 +325,6 @@ pub(open) inductive MState: Type {
   Mstate(code: MCode, slots: List(MVal), st: List(MVal), fr: List(MFrame), cx: MCx): MState
 }
 
-// ---- messages -------------------------------------------------------------------
-
 pub fn m_too_large(): Text {
   "the number is too large"
 }
@@ -364,8 +352,6 @@ pub fn m_nothing_handles(op: Text): Text {
 pub fn m_internal(): Text {
   "internal: the bytecode is malformed"
 }
-
-// ---- lists ----------------------------------------------------------------------
 
 pub fn m_set<A>(l: List(A), i: Nat, x: A): List(A) {
   match l {
@@ -440,8 +426,6 @@ pub fn m_text_eq(a: Text, b: Text): Bool {
   Text::eq(a, b)
 }
 
-// ---- integers -------------------------------------------------------------------
-
 pub fn m_int_abs(i: Int): Nat {
   match i {
     IntOfNat(n) => n
@@ -456,7 +440,6 @@ pub fn m_int_neg(i: Int): Bool {
   }
 }
 
-// The integer of the sign and the magnitude.
 pub fn m_int_signed(neg: Bool, n: Nat): Int {
   match neg {
     false => IntOfNat(n)
@@ -481,10 +464,13 @@ pub fn m_fits(w: Nat, i: Int): Bool {
       if Nat::eq(w, 1) {
         Nat::lt(n, 9223372036854775808)
       } else {
-        if Nat::eq(
-          w,
-          2
-        ) { Nat::lt(n, 256) } else { if Nat::eq(w, 3) { Nat::lt(n, 4294967296) } else { true } }
+        if Nat::eq(w, 2) { Nat::lt(n, 256) } else {
+          if Nat::eq(w, 3) {
+            Nat::lt(n, 4294967296)
+          } else {
+            if Nat::eq(w, 4) { Nat::lt(n, Nat::mul(4294967296, 4294967296)) } else { true }
+          }
+        }
       }
     }
   }
@@ -496,8 +482,6 @@ pub fn m_text_of_int(i: Int): Text {
     IntNegSucc(n) => Text::concat("-", Text::of_nat(Succ(n)))
   }
 }
-
-// ---- the heap -------------------------------------------------------------------
 
 pub fn cx_heap(cx: MCx): MTrie(MObj) {
   match cx {
@@ -531,7 +515,6 @@ pub fn cx_next(cx: MCx): Nat {
   }
 }
 
-// A new object in the heap, and its number.
 pub fn cx_alloc(cx: MCx, o: MObj): Pair(Nat, MCx) {
   match cx {
     Mcx(MkHeap, next, left, cells, now, tasks, result, Timers, TopDone) => Pair {
@@ -617,7 +600,6 @@ pub fn cx_set_left(cx: MCx, l: Option(Nat)): MCx {
   }
 }
 
-// The value in the cell.
 pub fn cx_cell(cx: MCx, id: Nat): MVal {
   match cx_obj(cx, id) {
     Some(o) => match o {
@@ -628,14 +610,11 @@ pub fn cx_cell(cx: MCx, id: Nat): MVal {
   }
 }
 
-// A borrow of a new cell holding `v`.
 pub fn cx_temp(cx: MCx, v: MVal): Pair(MVal, MCx) {
   match cx_alloc(cx, MoCell(v)) {
     Pair { fst: id, snd: cx2 } => Pair { fst: MvRef(id, MrPath(Nil)), snd: cx2 }
   }
 }
-
-// ---- places ---------------------------------------------------------------------------
 
 pub fn m_ctor_of(ctors: List(MCtor), c: Nat): MCtor {
   match List::nth(ctors, c) {
@@ -644,7 +623,6 @@ pub fn m_ctor_of(ctors: List(MCtor), c: Nat): MCtor {
   }
 }
 
-// The index of the name in the list.
 pub fn m_index_of(names: List(Text), n: Text, at: Nat): Option(Nat) {
   match names {
     Nil => None
@@ -694,7 +672,6 @@ pub fn m_at_name(ctors: List(MCtor), v: MVal, n: Text): MVal {
   }
 }
 
-// The part of a value at a step.
 pub fn m_at(ctors: List(MCtor), v: MVal, s: MPath): MVal {
   match s {
     MpathIndex(i) => m_at_index(v, i)
@@ -704,7 +681,6 @@ pub fn m_at(ctors: List(MCtor), v: MVal, s: MPath): MVal {
   }
 }
 
-// The value with its part at a step replaced.
 pub fn m_with(ctors: List(MCtor), v: MVal, s: MPath, x: MVal): MVal {
   match v {
     MvInject(u, j, inner) => MvInject(u, j, m_with(ctors, inner, s, x))
@@ -786,7 +762,6 @@ pub fn m_get_all(ctors: List(MCtor), cx: MCx, vs: List(MVal)): List(MVal) {
   List::map((v: MVal) => m_get(ctors, cx, v), vs)
 }
 
-// Writes `x` at the place: the path in the cell.
 pub fn m_put(ctors: List(MCtor), cx: MCx, cell: Nat, path: MRefPath, x: MVal): MCx {
   cx_put(cx, cell, MoCell(m_with_path(ctors, cx_cell(cx, cell), mr_steps(path), x)))
 }
@@ -801,7 +776,15 @@ pub fn m_child(cx: MCx, r: MVal, s: MPath): Pair(MVal, MCx) {
   }
 }
 
-// ---- equality -------------------------------------------------------------------------
+// The value inside an injection into a union, when `v` is one. `m_eq_fuel` asks it of each
+// side before it compares them: a `_` arm in a `match` that holds the whole comparison would
+// be elaborated once for each constructor it stands for.
+pub fn m_inj(v: MVal): Option(MVal) {
+  match v {
+    MvInject(u, i, x) => Some(x)
+    _ => None
+  }
+}
 
 mutual {
   pub fn m_eq_fuel(fuel: Nat, ctors: List(MCtor), cx: MCx, a0: MVal, b0: MVal): Bool {
@@ -810,11 +793,11 @@ mutual {
       Succ(f) => {
         let a := m_get(ctors, cx, a0)
         let b := m_get(ctors, cx, b0)
-        match a {
-          MvInject(u, i, x) => m_eq_fuel(f, ctors, cx, x, b)
-          _ => match b {
-            MvInject(u, i, y) => m_eq_fuel(f, ctors, cx, a, y)
-            _ => match a {
+        match m_inj(a) {
+          Some(x) => m_eq_fuel(f, ctors, cx, x, b)
+          None => match m_inj(b) {
+            Some(y) => m_eq_fuel(f, ctors, cx, a, y)
+            None => match a {
               MvUnit => match b {
                 MvUnit => true
                 _ => false
@@ -889,6 +872,10 @@ mutual {
                 MvMutex(y) => Nat::eq(x, y)
                 _ => false
               }
+              MvGuard(m, x) => match b {
+                MvGuard(n, y) => Nat::eq(x, y)
+                _ => false
+              }
               _ => false
             }
           }
@@ -907,7 +894,10 @@ mutual {
         }
         Cons(x, xs2) => match ys {
           Nil => false
-          Cons(y, ys2) => Bool::and(m_eq_fuel(f, ctors, cx, x, y), m_eq_list(f, ctors, cx, xs2, ys2))
+          Cons(y, ys2) => Bool::and(
+            m_eq_fuel(f, ctors, cx, x, y),
+            m_eq_list(f, ctors, cx, xs2, ys2)
+          )
         }
       }
     }
@@ -948,8 +938,6 @@ pub fn m_eq(ctors: List(MCtor), cx: MCx, a: MVal, b: MVal): Bool {
   m_eq_fuel(1000000, ctors, cx, a, b)
 }
 
-// ---- show -----------------------------------------------------------------------------
-
 pub fn m_hex_digit(n: Nat): Nat {
   if Nat::lt(n, 10) { Nat::add(48, n) } else { Nat::add(87, n) }
 }
@@ -961,7 +949,11 @@ pub fn m_hex(fuel: Nat, n: Nat, acc: List(Nat)): List(Nat) {
     Succ(f) => if Nat::lt(n, 16) {
       Cons(m_hex_digit(n), acc)
     } else {
-      m_hex(f, Nat::div_nz(n, 16, Nat::ne_zero(16, Refl)), Cons(m_hex_digit(Nat::rem_nz(n, 16, Nat::ne_zero(16, Refl))), acc))
+      m_hex(
+        f,
+        Nat::div_nz(n, 16, Nat::ne_zero(16, Refl)),
+        Cons(m_hex_digit(Nat::rem_nz(n, 16, Nat::ne_zero(16, Refl))), acc)
+      )
     }
   }
 }
@@ -1058,11 +1050,14 @@ mutual {
           "HashMap{",
           Text::concat(m_join(m_show_entries(f, ctors, cx, es), ", "), "}")
         )
-        MvShared(k, cell) => Text::concat(
-          if Nat::eq(k, 0) { "Ref(" } else { "Atomic(" },
-          Text::concat(m_show_fuel(f, ctors, cx, cx_cell(cx, cell)), ")")
-        )
+        MvShared(k, cell) => if Nat::eq(k, 2) { "Weak" } else {
+          Text::concat(
+            if Nat::eq(k, 0) { "Ref(" } else { "Atomic(" },
+            Text::concat(m_show_fuel(f, ctors, cx, cx_cell(cx, cell)), ")")
+          )
+        }
         MvMutex(m) => "Mutex"
+        MvGuard(m, c) => "MutexGuard"
         MvSignal(s) => "Signal"
         MvPending(p) => "Pending"
         MvSecret(x) => "Secret"

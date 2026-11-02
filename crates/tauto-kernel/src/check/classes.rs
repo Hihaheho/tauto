@@ -72,7 +72,6 @@ impl Registry {
         }
     }
 
-    /// The classes of the proof language declared so far.
     pub(super) fn class_names(&self) -> HashSet<String> {
         self.classes.keys().cloned().collect()
     }
@@ -81,7 +80,6 @@ impl Registry {
         self.methods.contains(name)
     }
 
-    /// The generics of the law `C::l` of its own, if it is one.
     pub(super) fn law_generics(&self, name: &str) -> Option<usize> {
         self.laws.get(name).copied()
     }
@@ -136,6 +134,24 @@ pub(super) fn head_name(head: &T) -> Option<String> {
         TermKind::App { function, .. } => head_name(function),
         _ => None,
     }
+}
+
+/// An instance's head with a product `A × B × C` in it as `Prod(A, Prod(B, C))`, the
+/// type the checker reads it as: the instance is keyed by `Prod`, never by `Pair`.
+fn product_head(head: &T) -> T {
+    let TermKind::Product(items) = &*head.kind else {
+        return head.clone();
+    };
+    let mut items = tauto_surface::surface::qualify::product_type_members(items);
+    let Some(last) = items.pop() else {
+        return T::var("Unit", head.span);
+    };
+    items
+        .into_iter()
+        .rev()
+        .fold(product_head(&last), |snd, fst| {
+            T::app("Prod", vec![product_head(&fst), snd], head.span)
+        })
 }
 
 pub(super) fn call(f: &str, args: Vec<T>, sp: Span) -> T {
@@ -285,7 +301,6 @@ impl Kernel {
         )
     }
 
-    /// `C::m` as a term of the program: a method or a law of a class.
     fn sugared(&self, stmt: &Stmt) -> Stmt {
         self.program_sugar(stmt)
     }
@@ -537,6 +552,10 @@ impl Kernel {
     }
 
     fn instance_decl(&mut self, i: &InstanceDecl) -> Result<Vec<Stmt>, Verdict> {
+        let i = &InstanceDecl {
+            head: product_head(&i.head),
+            ..i.clone()
+        };
         let sp = i.span;
         let Some(class) = self.classes.classes.get(&i.class).cloned() else {
             return Err(Verdict::Skipped(
@@ -579,7 +598,7 @@ impl Kernel {
             .collect();
         let generic_vars: Vec<T> = i.generics.iter().map(|g| T::var(g, sp)).collect();
         let name = |member: &str| format!("{}::{member}@{head}", i.class);
-        let global = format!("{}.inst@{head}", i.class);
+        let global = format!("{}::inst@{head}", i.class);
         let laws_global = format!("{}::laws@{head}", i.class);
 
         let mut out = Vec::new();

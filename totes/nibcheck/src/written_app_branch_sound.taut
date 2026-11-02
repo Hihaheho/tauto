@@ -1,4 +1,22 @@
 import "written_app_choice_sound.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "decl_names_sound.taut"
+import "diagnostic_sound.taut"
+import "error_frame.taut"
+import "rules_written.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "written_application_sound.taut"
+import "written_atomic_sound.taut"
+import "written_context_sound.taut"
+import "written_error_sound.taut"
+import "written_list_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub fn written_info_after(m: Mut1(List(Ty), Checker)): Mut1(Ty, Checker) {
   frame_bind(List(Ty), Ty, (types: List(Ty), state: Checker) => frame_app_info(state, types), m)
@@ -112,7 +130,7 @@ pub theorem written_generic_after_sound(
       name,
       bound,
       not_info,
-      Parameter
+      parameter
     )
   }
 }
@@ -224,10 +242,10 @@ pub theorem written_named_after_sound(
         start,
         end,
         span,
-        NotTuple,
+        not_tuple,
         not_info,
         unbound,
-        SliceBorrowed,
+        slice_borrowed,
         written_terms_state(
           MkState,
           c,
@@ -302,11 +320,11 @@ pub theorem written_named_after_errors(
   state: Checker,
   m: Mut1(List(Ty), Checker),
   before: CkErrorFrame(state, m)
-): CkErrorFrame(MkState, written_named_after(name, span, m)) {
+): CkErrorFrame(state, written_named_after(name, span, m)) {
   error_frame_bind(
     List(Ty),
     Ty,
-    MkState,
+    state,
     (types: List(Ty), next: Checker) => frame_return(
       TyNamed(name, types),
       ck_arity(next, name, list_len(types), span)
@@ -439,7 +457,7 @@ pub theorem written_named_branch_sound(
       name,
       span,
       ck_written_each(args, c, generics),
-      NotTuple,
+      not_tuple,
       not_info,
       unbound,
       same => written_slice_borrowed(name, under_borrow, allowed, same),
@@ -484,7 +502,7 @@ pub theorem written_unit_branch_sound(
     TyUnit
   ) {
     Nil => WrittenKindUnit(start, end)
-    Cons(first, rest) => False::elim(false_ne_true(Eq::congr((n: Nat) => Nat::eq(n, 0), Empty)))
+    Cons(first, rest) => False::elim(false_ne_true(Eq::congr((n: Nat) => Nat::eq(n, 0), empty)))
   }
 }
 pub theorem written_info_branch_sound(
@@ -613,7 +631,7 @@ pub theorem written_generic_branch_sound(
         span,
         ck_written_each(Cons(first, Nil), c, generics),
         same => not_info(same, Refl),
-        Parameter,
+        parameter,
         ih,
         clean
       )

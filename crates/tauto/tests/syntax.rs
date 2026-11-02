@@ -88,8 +88,7 @@ fn a_block_matches_what_eure_makes_of_the_same_block() {
         .map_err(|e| e.to_string())
         .unwrap();
     let want = text_of(&doc, "a");
-    let source =
-        r#"let a := ```plaintext
+    let source = r#"let a := ```plaintext
     alpha
       beta
 
@@ -97,7 +96,7 @@ fn a_block_matches_what_eure_makes_of_the_same_block() {
     ```
 perform show("a", a)
 "#
-            .to_string();
+    .to_string();
     let out = shown(&source).unwrap();
     assert_eq!(out[0].1, format!("{want:?}"));
 }
@@ -107,19 +106,18 @@ fn the_literal_has_the_type_of_the_start_symbol() {
     tauto_messages::install();
     let tables = with_search_dirs(vec![fixtures()], || load_tables(MATH)).unwrap();
     let clause = tauto::syntax::generated_clause("math", &tables, false);
-    let source =
-        r#"syntax!(math, ```par
+    let source = r#"syntax!(math, ```par
 {MATH}```) {clause}
 let e := math`1 + 2 = 3`
 "#
-            .replace("{clause}", &clause)
-            .replace("{MATH}", MATH);
+    .replace("{clause}", &clause)
+    .replace("{MATH}", MATH);
     let report = with_search_dirs(vec![fixtures()], || check_types(&source)).unwrap();
     assert!(report.errors.is_empty(), "{:?}", report.errors);
     assert!(
         report
             .lets
-            .contains(&("e".to_string(), "math.Eqn".to_string())),
+            .contains(&("e".to_string(), "math::Eqn".to_string())),
         "{:?}",
         report.lets
     );

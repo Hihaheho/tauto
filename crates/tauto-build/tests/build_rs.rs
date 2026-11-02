@@ -8,7 +8,8 @@ use std::process::Command;
 use support::{Fixture, cargo, scratch, write};
 
 fn callback_budget_source() -> &'static str {
-    r#"
+    r#"import std::prelude::Shared
+
 fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
   var i: u64 := 0
   var total: u64 := 0
@@ -60,8 +61,7 @@ fn borrowed_callbacks_forward_through_budgeted_helpers() -> Fixture {
         "callback-budget/Tauto.eure",
         r#"
 package { name = "callback-budget"
- version = "0.1.0"
- sources = ["src"] }
+ version = "0.1.0" }
 rust { exports = ["run", "run_array"] }
 "#,
     );
@@ -115,8 +115,7 @@ fn budgeted_callbacks_keep_each_invocation_borrow_local() -> Fixture {
         "logic/Tauto.eure",
         r#"
 package { name = "logic"
- version = "0.1.0"
- sources = ["src"] }
+ version = "0.1.0" }
 rust { exports = ["direct", "direct_loop", "nested", "text_direct", "text_forwarded", "text_owned"] }
 "#,
     );
@@ -255,8 +254,7 @@ fn borrowed_budget_callback_cannot_escape_in_owned_data() {
         "logic/Tauto.eure",
         r#"
 package { name = "logic"
- version = "0.1.0"
- sources = ["src"] }
+ version = "0.1.0" }
 rust { exports = ["leak"] }
 "#,
     );
@@ -332,7 +330,7 @@ fn host_crate(dir: &Fixture, deps: &str) {
     write(
         dir,
         "logic/Tauto.eure",
-        "package {\n  name = \"logic\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n\nrust {\n  bridge = \"bridge\"\n  extern {\n    upper = \"logic_bridge::upper\"\n  }\n}\n",
+        "package {\n  name = \"logic\"\n  version = \"0.1.0\"\n}\n\nrust {\n  bridge = \"bridge\"\n  extern {\n    upper = \"logic_bridge::upper\"\n  }\n}\n",
     );
     write(
         dir,
@@ -388,7 +386,7 @@ fn a_rust_host_reads_runtime_ast_and_diagnostics_without_tote_files() {
     write(
         &dir,
         "logic/Tauto.eure",
-        "package {\n name = \"logic\"\n version = \"0.1.0\"\n sources = [\"src\"]\n}\n",
+        "package {\n name = \"logic\"\n version = \"0.1.0\"\n}\n",
     );
     let fixtures = crates_dir().join("tauto/tests/syntax_fixtures");
     let grammar = std::fs::read_to_string(fixtures.join("ident.par")).unwrap();
@@ -400,7 +398,8 @@ fn a_rust_host_reads_runtime_ast_and_diagnostics_without_tote_files() {
         &format!("logic/.tauto-syntax/{}.tables", tables.grammar_sha256()),
         tables.source(),
     );
-    let declarations = r#"syntax!(ident, ```par
+    let declarations = r#"import std::prelude::Macro
+syntax!(ident, ```par
 %start Decl
 %title "ident"
 %%
@@ -537,8 +536,7 @@ fn selected_budget_wrapper_is_callable_without_helper_warnings() -> Fixture {
         "logic/Tauto.eure",
         r#"
 package { name = "logic"
- version = "0.1.0"
- sources = ["src"] }
+ version = "0.1.0" }
 rust { exports = ["parse_with_budget"] }
 "#,
     );
@@ -585,8 +583,7 @@ fn rust_borrows_callbacks_for_one_call_without_static_captures() -> Fixture {
         "logic/Tauto.eure",
         r#"
 package { name = "logic"
- version = "0.1.0"
- sources = ["src"] }
+ version = "0.1.0" }
 rust { exports = ["apply", "read_first", "read_if", "twice", "both", "produce", "notify", "text_value", "borrow_text", "names"] }
 "#,
     );

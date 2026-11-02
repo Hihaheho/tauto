@@ -42,7 +42,6 @@ module Acc {
   }
 }
 
-// The fixed point of `F` over a well-founded relation.
 pub def wf_fix<A: Type>(
   R: (A, A) -> Prop,
   B: (A) -> Type,
@@ -51,8 +50,6 @@ pub def wf_fix<A: Type>(
   x: A
 ): B(x) := Acc::fix(R, B, F, x, wf(x))
 
-// The unfolding equation of `wf_fix`: the value at `x` is `F` applied to the
-// values at the predecessors.
 pub theorem wf_fix_eq<A: Type>(
   R: (A, A) -> Prop,
   B: (A) -> Type,
@@ -63,9 +60,6 @@ pub theorem wf_fix_eq<A: Type>(
   Acc::fix_eq(R, B, wf, F, x, wf(x))
 }
 
-// ---- relations that are well-founded ---------------------------------------
-
-// The order of the numbers as a proposition.
 pub def NatLt(a: Nat, b: Nat): Prop := a < b = true
 
 module Nat {
@@ -86,7 +80,6 @@ module Nat {
     }
   }
 
-  // Every number below `n` is accessible.
   pub fn lt_acc(n: Nat, m: Nat, h: NatLt(m, n)): Acc(Nat, NatLt, m) {
     match n: Acc(Nat, NatLt, m) {
       Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(m)), h)))
@@ -107,7 +100,6 @@ module Nat {
   }
 }
 
-// The relation on `A` that compares the images under `f`.
 pub def InvImage(
   A: Type,
   B: Type,
@@ -117,7 +109,6 @@ pub def InvImage(
   b: A
 ): Prop := R(f(a), f(b))
 
-// Every `x` whose image is `z` is accessible, when `z` is.
 pub def InvImageAcc(A: Type, B: Type, R: (B, B) -> Prop, f: (A) -> B, z: B): Prop :=
 ∀ x: A. (f(x) = z) -> Acc(A, InvImage(A, B, R, f), x)
 
@@ -148,9 +139,6 @@ pub fn measure_wf<A: Type>(f: (A) -> Nat): WellFounded(A, InvImage(A, Nat, NatLt
   x => inv_image_acc_gen(Nat, NatLt, f, f(x), Nat::lt_wf()(f(x)))(x, Refl)
 }
 
-// ---- a relation with its proof ----------------------------------------------
-
-// A binary relation on `A`.
 pub def Relation(A: Type): Type := (A, A) -> Prop
 
 // What `decreasing_by` takes: a relation on `A` together with the proof that it

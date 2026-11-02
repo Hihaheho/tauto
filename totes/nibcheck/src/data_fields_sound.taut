@@ -2,6 +2,25 @@ import "rules_data_fields.taut"
 import "written_sound.taut"
 import "data_fields_context_sound.taut"
 import "registration_error_sound.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "datas_registration.taut"
+import "diagnostic_sound.taut"
+import "error_frame.taut"
+import "rules_written.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "written_app_branch_sound.taut"
+import "written_composite_sound.taut"
+import "written_context_sound.taut"
+import "written_error_sound.taut"
+import "written_list_sound.taut"
+import "written_transfer_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub theorem data_fields_state(
   c: Checker,
@@ -79,14 +98,14 @@ pub theorem data_fields_after_sound(
   ck_datas_of(c),
   generics,
   frame_constructor_position(c),
-  Cons(surface_data_field_mk(name, body), rest),
+  Cons(SurfaceDataFieldMk(name, body), rest),
   ck_val(data_fields_after(name, rest, generics, m))
 ) {
   match m: WrittenDataFields(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
-    Cons(surface_data_field_mk(name, body), rest),
+    Cons(SurfaceDataFieldMk(name, body), rest),
     ck_val(data_fields_after(name, rest, generics, m))
   ) {
     mut1(t, next) => {
@@ -104,7 +123,7 @@ pub theorem data_fields_after_sound(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
-          Cons(surface_data_field_mk(name, body), rest),
+          Cons(SurfaceDataFieldMk(name, body), rest),
           types
         ),
         Eq::sym(
@@ -270,14 +289,14 @@ pub theorem data_fields_cons_elaborates(
     Cons(field, rest),
     ck_val(registration_fields_cons(field, rest, c, generics))
   ) {
-    surface_data_field_mk(name, body) => {
+    SurfaceDataFieldMk(name, body) => {
       let allowed: term_has_borrow(body) = false := data_fields_checked_allowed(name, body, rest, c, generics, term_has_borrow(body), clean)
       Eq::subst(
         (b: Bool) => WrittenDataFields(
           ck_datas_of(c),
           generics,
           frame_constructor_position(c),
-          Cons(surface_data_field_mk(name, body), rest),
+          Cons(SurfaceDataFieldMk(name, body), rest),
           ck_val(data_fields_checked(name, body, rest, c, generics, b))
         ),
         Eq::sym(allowed),

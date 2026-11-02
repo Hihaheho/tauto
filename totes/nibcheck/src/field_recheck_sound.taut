@@ -2,6 +2,26 @@ import "written_stability_sound.taut"
 import "data_ctors_sound.taut"
 import "field_recheck_context_sound.taut"
 import "field_recheck_error_sound.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "data_fields_sound.taut"
+import "datas.taut"
+import "datas_frame.taut"
+import "diagnostic_sound.taut"
+import "field_recheck_frame.taut"
+import "rules_data_fields.taut"
+import "rules_written.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
+import "written_context_sound.taut"
+import "written_list_sound.taut"
+import "written_sound.taut"
+import "written_transfer_sound.taut"
+import "written_unique_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub theorem recheck_clean_unwrap<A: Type>(
   m: Mut1(A, Checker),
@@ -47,14 +67,14 @@ pub theorem recheck_fields_after_sound(
   ck_datas_of(c),
   generics,
   partial,
-  Cons(surface_data_field_mk(name, body), rest),
+  Cons(SurfaceDataFieldMk(name, body), rest),
   Cons(DataFieldMk(name, t), types)
 ) {
   match m: WrittenDataFields(
     ck_datas_of(c),
     generics,
     partial,
-    Cons(surface_data_field_mk(name, body), rest),
+    Cons(SurfaceDataFieldMk(name, body), rest),
     Cons(DataFieldMk(name, t), types)
   ) {
     mut1(value, next) => {
@@ -111,12 +131,12 @@ pub theorem ck_recheck_fields_sound<old_env: Datas, generics: Ordmap(
         ck_datas_of(c),
         generics,
         partial,
-        Cons(surface_data_field_mk(name, body), rest),
+        Cons(SurfaceDataFieldMk(name, body), rest),
         Cons(DataFieldMk(name, t), values)
       ),
-      ck_recheck_fields(Cons(surface_data_field_mk(name, body), rest), c, generics),
+      ck_recheck_fields(Cons(SurfaceDataFieldMk(name, body), rest), c, generics),
       recheck_fields_after(rest, generics, ck_written(c, body, generics)),
-      recheck_fields_cons_unf(surface_data_field_mk(name, body), rest, c, generics),
+      recheck_fields_cons_unf(SurfaceDataFieldMk(name, body), rest, c, generics),
       branch_clean => recheck_fields_after_sound(
         old_env,
         generics,
@@ -202,14 +222,14 @@ pub theorem recheck_ctors_after_sound(
   ck_datas_of(c),
   generics,
   partial,
-  Cons(surface_data_ctor_mk(name, fields), rest),
+  Cons(SurfaceDataCtorMk(name, fields), rest),
   Cons(DataCtorMk(name, types), ctors)
 ) {
   match m: WrittenDataCtors(
     ck_datas_of(c),
     generics,
     partial,
-    Cons(surface_data_ctor_mk(name, fields), rest),
+    Cons(SurfaceDataCtorMk(name, fields), rest),
     Cons(DataCtorMk(name, types), ctors)
   ) {
     mut1(ignored, next) => {
@@ -259,12 +279,12 @@ pub theorem ck_recheck_ctors_sound<old_env: Datas, generics: Ordmap(
         ck_datas_of(c),
         generics,
         partial,
-        Cons(surface_data_ctor_mk(name, fields), rest),
+        Cons(SurfaceDataCtorMk(name, fields), rest),
         Cons(DataCtorMk(name, types), values)
       ),
-      ck_recheck_ctors(Cons(surface_data_ctor_mk(name, fields), rest), c, generics),
+      ck_recheck_ctors(Cons(SurfaceDataCtorMk(name, fields), rest), c, generics),
       recheck_ctors_after(rest, generics, ck_recheck_fields(fields, c, generics)),
-      recheck_ctors_cons_unf(surface_data_ctor_mk(name, fields), rest, c, generics),
+      recheck_ctors_cons_unf(SurfaceDataCtorMk(name, fields), rest, c, generics),
       branch_clean => recheck_ctors_after_sound(
         generics,
         partial,

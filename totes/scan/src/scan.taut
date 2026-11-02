@@ -2,6 +2,7 @@ import std::Array
 import std::Text
 import "../../text/src/text.taut"
 import "dynamic.taut"
+import std::Base
 
 // The scanner of Tauto's syntax, reading the scanner tables, in the proof
 // language (`docs/design/self-host.md`). `README.md` says what it does and
@@ -56,8 +57,6 @@ pub fn scan_number(a: Array(Nat), i: Nat): Nat {
   Array::get_or(a, i, 0)
 }
 
-// ---- classes of characters ---------------------------------------------------
-
 // The first run in `lo` to `hi` that starts after `code` (a binary search).
 // The range halves each time, so `fuel` is its length.
 pub fn scan_search(fuel: Nat, starts: Array(Nat), code: Nat, lo: Nat, hi: Nat): Nat {
@@ -85,7 +84,6 @@ pub fn scan_run_class(starts: Array(Nat), ends: Array(Nat), classes: Array(Nat),
   }
 }
 
-// The length in bytes of the character that starts with this byte.
 pub fn scan_char_length(first: Nat): Nat {
   match first < 128: Nat {
     true => 1
@@ -99,9 +97,6 @@ pub fn scan_char_length(first: Nat): Nat {
   }
 }
 
-// ---- reading the tables ------------------------------------------------------
-
-// `k` numbers of `a`, from `at`, `step` apart.
 pub fn scan_column(k: Nat, a: Array(Nat), at: Nat, step: Nat): List(Nat) {
   match k: List(Nat) {
     Zero => Nil
@@ -187,7 +182,6 @@ pub(open) inductive ScanBuild: Type {
   ): ScanBuild
 }
 
-// `n` copies of `x` before `l`.
 pub fn scan_repeat_onto(n: Nat, x: Nat, l: List(Nat)): List(Nat) {
   match n: List(Nat) {
     Zero => l
@@ -195,7 +189,6 @@ pub fn scan_repeat_onto(n: Nat, x: Nat, l: List(Nat)): List(Nat) {
   }
 }
 
-// `k` accept entries.
 pub fn scan_accepts_in(k: Nat, s: Array(Nat), b: ScanBuild): ScanBuild {
   match k: ScanBuild {
     Zero => b
@@ -261,7 +254,6 @@ pub fn scan_row_in(
   }
 }
 
-// `k` states of an automaton: each one's accept entries and row.
 pub fn scan_states_in(
   k: Nat,
   n_classes: Nat,
@@ -318,7 +310,6 @@ pub fn scan_add_states(n: Nat, b: ScanBuild): ScanBuild {
   }
 }
 
-// `k` automata.
 pub fn scan_dfas_in(
   k: Nat,
   n_classes: Nat,
@@ -362,7 +353,6 @@ pub fn scan_array(l: List(Nat)): Array(Nat) {
   Array::of_list(List::reverse(l))
 }
 
-// Whether the exclusive read end fits within the array.
 pub fn scan_within(end: Nat, a: Array(Nat)): Bool {
   end <= Array::len(a)
 }
@@ -487,8 +477,6 @@ pub fn scan_next(&t: ScanTables, text: Text, state: Nat, i: Nat): Nat {
   }
 }
 
-// ---- tokens ------------------------------------------------------------------
-
 // Whether the automaton reaches a state that accepts, from `state` at byte
 // `i`, within `k` characters. This is the lookahead of an accept entry: it
 // says true at the first one, so how much longer it could read does not
@@ -541,8 +529,6 @@ pub fn scan_holds(&t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat): Bool {
     }
   }
 }
-
-// ---- the states of the scanner -------------------------------------------------
 
 pub fn scan_accepting(&t: ScanTables, state: Nat): Bool {
   scan_number(t.accept_first, state) < scan_number(t.accept_first, Succ(state))
@@ -611,7 +597,6 @@ pub fn scan_has(l: List(Nat), x: Nat): Bool {
   }
 }
 
-// Whether the automaton `dfa` matches the text from `from` to `to` exactly.
 pub fn scan_exact(&t: ScanTables, text: Text, dfa: Nat, r#from: Nat, to: Nat): Bool {
   scan_has(scan_ends(t, text, dfa, r#from, to), to)
 }
@@ -752,7 +737,6 @@ pub fn scan_capture_best(
   }
 }
 
-// Whether the text the state holds is between a part before and a part after.
 pub fn scan_text_between(
   &t: ScanTables,
   text: Text,
@@ -852,7 +836,6 @@ pub fn scan_commit(&t: ScanTables, text: Text, token: Nat, r#from: Nat, to: Nat)
   }
 }
 
-// The tables while a token from `start` is looked for, the states holding `held`.
 pub fn scan_at(&t: ScanTables, held: List(ScanHeld), start: Nat): ScanTables {
   ScanTables {
     classes: t.classes,
@@ -874,7 +857,6 @@ pub fn scan_at(&t: ScanTables, held: List(ScanHeld), start: Nat): ScanTables {
   }
 }
 
-// The terminal of the first of the `k` accept entries from `j` that holds.
 pub fn scan_accept_in(k: Nat, &t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat): Option(Nat) {
   match k: Option(Nat) {
     Zero => None
@@ -885,7 +867,6 @@ pub fn scan_accept_in(k: Nat, &t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat
   }
 }
 
-// The terminal of the first entry of `state` that holds at byte `i`.
 pub fn scan_accept(&t: ScanTables, text: Text, state: Nat, i: Nat, n: Nat): Option(Nat) {
   scan_accept_in(
     scan_number(t.accept_first, Succ(state)) - scan_number(t.accept_first, state),
@@ -939,9 +920,6 @@ pub fn scan_find(&t: ScanTables, text: Text, dfa: Nat, pos: Nat, n: Nat): Option
   scan_find_in(n - pos, t, text, scan_number(t.dfa_first, dfa), pos, n, None)
 }
 
-// ---- modes -------------------------------------------------------------------
-
-// The mode after a token, and the modes pushed before it.
 pub(open) inductive ScanMode: Type {
   Mk(current: Nat, pushed: List(Nat)): ScanMode
 }
@@ -972,8 +950,6 @@ pub fn scan_change_with(changes: List(ScanModeChange), mode: ScanMode, token: Na
 pub fn scan_change(&t: ScanTables, mode: ScanMode, token: Nat): ScanMode {
   scan_change_with(Array::get_or(t.mode_changes, mode.current, Nil), mode, token)
 }
-
-// ---- the scanner -------------------------------------------------------------
 
 // The tokens from byte `pos` within `k` steps, after `done` (last first).
 // Each step moves on a byte at least.

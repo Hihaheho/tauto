@@ -1,4 +1,7 @@
 import "type_allocation.taut"
+import std::Base
+import std::Text
+import "ty.taut"
 
 pub theorem allocated_list_append(
   left: List(Ty),
@@ -14,6 +17,15 @@ pub theorem allocated_list_append(
       allocated_list_append(tail, right, limit, And::right(first), last)
     )
   }
+}
+pub theorem allocated_members_snoc(
+  members: List(Ty),
+  value: Ty,
+  limit: Nat,
+  original: TypeListAllocated(limit, members),
+  item: TypeAllocated(limit, value)
+): TypeListAllocated(limit, List::append(members, Cons(value, Nil))) {
+  allocated_list_append(members, Cons(value, Nil), limit, original, AndIntro(item, Trivial))
 }
 pub fn allocated_insert_choice(head: Ty, tail: List(Ty), value: Ty, order: Ordering): List(Ty) {
   match order: List(Ty) {
@@ -178,24 +190,24 @@ mutual {
     original: TypeListAllocated(limit, existing)
   ): TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) {
     match ty: TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) {
-      TyInt(width) => allocated_members_insert(existing, whole, limit, original, full)
-      TyBool => allocated_members_insert(existing, whole, limit, original, full)
-      TyText => allocated_members_insert(existing, whole, limit, original, full)
+      TyInt(width) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyBool => allocated_members_snoc(existing, whole, limit, original, full)
+      TyText => allocated_members_snoc(existing, whole, limit, original, full)
       TyUnit => original
-      TyNever => allocated_members_insert(existing, whole, limit, original, full)
-      TyDecimal => allocated_members_insert(existing, whole, limit, original, full)
-      TyFloat => allocated_members_insert(existing, whole, limit, original, full)
-      TyParam(name, kind) => allocated_members_insert(existing, whole, limit, original, full)
-      TyVar(index) => allocated_members_insert(existing, whole, limit, original, full)
-      TyFn(params, result, kind) => allocated_members_insert(existing, whole, limit, original, full)
-      TyUnion(members) => allocated_members_insert(existing, whole, limit, original, full)
+      TyNever => allocated_members_snoc(existing, whole, limit, original, full)
+      TyDecimal => allocated_members_snoc(existing, whole, limit, original, full)
+      TyFloat => allocated_members_snoc(existing, whole, limit, original, full)
+      TyParam(name, kind) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyVar(index) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyFn(params, result, kind) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyUnion(members) => allocated_members_snoc(existing, whole, limit, original, full)
       TyProduct(members) => allocated_product_members_add(members, existing, limit, item, original)
-      TyNamed(name, params) => allocated_members_insert(existing, whole, limit, original, full)
-      TyTagged(tags, inner) => allocated_members_insert(existing, whole, limit, original, full)
-      TyInfo(inner) => allocated_members_insert(existing, whole, limit, original, full)
-      TyBorrow(inner, mutable) => allocated_members_insert(existing, whole, limit, original, full)
-      TyPoly(gs, inner) => allocated_members_insert(existing, whole, limit, original, full)
-      TyApp(head, arg) => allocated_members_insert(existing, whole, limit, original, full)
+      TyNamed(name, params) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyTagged(tags, inner) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyInfo(inner) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyBorrow(inner, mutable) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyPoly(gs, inner) => allocated_members_snoc(existing, whole, limit, original, full)
+      TyApp(head, arg) => allocated_members_snoc(existing, whole, limit, original, full)
     }
   }
 }

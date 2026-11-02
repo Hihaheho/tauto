@@ -1,8 +1,7 @@
 import std::Nat
 import std::List
 import "../src/bytes.taut"
-
-// Lemmas on bytes that the other proofs use.
+import std::Base
 
 // What `below(n, p)` computes holds for every number below `n`.
 pub theorem below_sound(
@@ -121,7 +120,6 @@ pub theorem all_bytes_imp(
   }
 }
 
-// `b` is not `c`.
 pub fn ne(c: Nat): (Nat) -> Bool {
   (b: Nat) => not(Nat::eq(b, c))
 }
@@ -132,8 +130,6 @@ pub theorem ne_false(c: Nat, b: Nat, h: not(Nat::eq(b, c)) = true): Nat::eq(b, c
     false => Refl
   }
 }
-
-// ---- cutting ----------------------------------------------------------------------
 
 pub theorem cut_none(c: Nat, a: List(Nat), h: all_bytes(ne(c), a) = true): cut(c, a) = None {
   match a: cut(c, a) = None {
@@ -225,8 +221,6 @@ pub theorem rcut_app(
   }
 }
 
-// ---- splitting --------------------------------------------------------------------
-
 pub theorem split_one(c: Nat, p: List(Nat), h: all_bytes(ne(c), p) = true): split_all(c, p) = Cons(p, Nil) {
   match p: split_all(c, p) = Cons(p, Nil) {
     Nil => Refl
@@ -311,8 +305,6 @@ pub theorem split_join(
     )
   }
 }
-
-// ---- lower case -------------------------------------------------------------------
 
 pub theorem lower_byte_same(b: Nat, e: is_upper(b) = false): lower_byte(b) = b {
   Eq::subst(

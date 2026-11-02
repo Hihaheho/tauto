@@ -1,3 +1,4 @@
+import "Base.taut"
 import "Nat.taut"
 
 // Unsigned integers of a fixed width, as the proofs see them: a `Nat` with a
@@ -53,7 +54,6 @@ pub fn or_div_zero<A>(o: Option(A)): A ! {DivZero} {
 }
 
 module Nat {
-  // ---- division ----------------------------------------------------------------
 
   // `div`, or `None` when `b` is 0.
   pub fn checked_div(a: Nat, b: Nat): Option(Nat) {
@@ -81,8 +81,6 @@ module Nat {
     or_div_zero(checked_rem(a, b))
   }
 
-  // ---- order lemmas the widths share ------------------------------------------
-
   pub theorem le_lt_trans(
     a: Nat,
     b: Nat,
@@ -104,13 +102,7 @@ module Nat {
   pub theorem sub_le(a: Nat, b: Nat): a - b <= a = true {
     match b: a - b <= a = true {
       Zero => Nat::le_refl(a)
-      Succ(k) => Nat::le_trans(
-        Nat::pred(a - k),
-        a - k,
-        a,
-        pred_le(a - k),
-        sub_le(a, k)
-      )
+      Succ(k) => Nat::le_trans(Nat::pred(a - k), a - k, a, pred_le(a - k), sub_le(a, k))
     }
   }
 
@@ -121,40 +113,73 @@ module Nat {
   // those on numerals at once, so `Refl` decides an equation between words
   // (a hash's test vector) without unfolding `Nat` to unary.
 
-  // `a` and `b` in each of the low `w` bits.
   pub fn bits_and(w: Nat, a: Nat, b: Nat): Nat {
     match w: Nat {
       Zero => Zero
       Succ(k) => Nat::add(
-        Nat::mul(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
-        Nat::mul(2, bits_and(k, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))))
+        Nat::mul(
+          Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+        ),
+        Nat::mul(
+          2,
+          bits_and(
+            k,
+            Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+            Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+          )
+        )
       )
     }
   }
 
-  // `a` or `b` in each of the low `w` bits.
   pub fn bits_or(w: Nat, a: Nat, b: Nat): Nat {
     match w: Nat {
       Zero => Zero
       Succ(k) => Nat::add(
-        Nat::add(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))) - Nat::mul(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
-        Nat::mul(2, bits_or(k, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))))
+        Nat::add(
+          Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+        ) - Nat::mul(
+          Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+          Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+        ),
+        Nat::mul(
+          2,
+          bits_or(
+            k,
+            Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+            Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+          )
+        )
       )
     }
   }
 
-  // `a` or `b` but not both, in each of the low `w` bits.
   pub fn bits_xor(w: Nat, a: Nat, b: Nat): Nat {
     match w: Nat {
       Zero => Zero
       Succ(k) => Nat::add(
-        Nat::rem_nz(Nat::add(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))), 2, Nat::ne_zero(2, Refl)),
-        Nat::mul(2, bits_xor(k, Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))))
+        Nat::rem_nz(
+          Nat::add(
+            Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)),
+            Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+          ),
+          2,
+          Nat::ne_zero(2, Refl)
+        ),
+        Nat::mul(
+          2,
+          bits_xor(
+            k,
+            Nat::div_nz(a, 2, Nat::ne_zero(2, Refl)),
+            Nat::div_nz(b, 2, Nat::ne_zero(2, Refl))
+          )
+        )
       )
     }
   }
 
-  // `2^n`.
   pub fn pow2(n: Nat): Nat {
     match n: Nat {
       Zero => 1
@@ -162,7 +187,6 @@ module Nat {
     }
   }
 
-  // Twice a number that is not 0 is not 0.
   pub theorem double_ne_zero(x: Nat, h: x == 0 = false): Nat::mul(2, x) == 0 = false {
     match x: Nat::mul(2, x) == 0 = false {
       Zero => match true_ne_false(h): Nat::mul(2, Zero) == 0 = false {
@@ -183,8 +207,6 @@ module Nat {
     Nat::ne_zero(pow2(n), pow2_eq_zero(n))
   }
 }
-
-// ---- U8 ---------------------------------------------------------------------
 
 pub(open) inductive U8: Type {
   Mk(val: Nat, ok: val < 256 = true): U8
@@ -226,13 +248,7 @@ module U8 {
   pub fn sub(a: U8, b: U8, h: val(b) <= val(a) = true): U8 {
     U8::Mk(
       val(a) - val(b),
-      Nat::le_lt_trans(
-        val(a) - val(b),
-        val(a),
-        256,
-        Nat::sub_le(val(a), val(b)),
-        ok(a)
-      )
+      Nat::le_lt_trans(val(a) - val(b), val(a), 256, Nat::sub_le(val(a), val(b)), ok(a))
     )
   }
 
@@ -415,8 +431,6 @@ module U8 {
   }
 }
 
-// ---- U32 ---------------------------------------------------------------------
-
 pub(open) inductive U32: Type {
   Mk(val: Nat, ok: val < 4294967296 = true): U32
 }
@@ -457,13 +471,7 @@ module U32 {
   pub fn sub(a: U32, b: U32, h: val(b) <= val(a) = true): U32 {
     U32::Mk(
       val(a) - val(b),
-      Nat::le_lt_trans(
-        val(a) - val(b),
-        val(a),
-        4294967296,
-        Nat::sub_le(val(a), val(b)),
-        ok(a)
-      )
+      Nat::le_lt_trans(val(a) - val(b), val(a), 4294967296, Nat::sub_le(val(a), val(b)), ok(a))
     )
   }
 
@@ -514,7 +522,11 @@ module U32 {
   // Mapped: `a - b` modulo `2^32`.
   pub fn wrapping_sub(a: U32, b: U32): U32 {
     U32::Mk(
-      Nat::rem_nz(Nat::add(val(a), 4294967296) - val(b), 4294967296, Nat::ne_zero(4294967296, Refl)),
+      Nat::rem_nz(
+        Nat::add(val(a), 4294967296) - val(b),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      ),
       Nat::mod_lt(Nat::add(val(a), 4294967296) - val(b), 4294967296, Refl)
     )
   }
@@ -530,14 +542,18 @@ module U32 {
   pub theorem wrapping_add_val(
     a: U32,
     b: U32
-  ): val(wrapping_add(a, b)) = Nat::rem_nz(Nat::add(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    wrapping_add(a, b)
+  ) = Nat::rem_nz(Nat::add(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
     Refl
   }
 
   pub theorem wrapping_mul_val(
     a: U32,
     b: U32
-  ): val(wrapping_mul(a, b)) = Nat::rem_nz(Nat::mul(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    wrapping_mul(a, b)
+  ) = Nat::rem_nz(Nat::mul(val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
     Refl
   }
 
@@ -646,8 +662,6 @@ module U32 {
   }
 }
 
-// ---- U64 ---------------------------------------------------------------------
-
 pub(open) inductive U64: Type {
   Mk(val: Nat, ok: val < 18446744073709551616 = true): U64
 }
@@ -680,11 +694,7 @@ module U64 {
   }
 
   // Mapped: `a + b`, which `h` says fits.
-  pub fn add(
-    a: U64,
-    b: U64,
-    h: Nat::add(val(a), val(b)) < 18446744073709551616 = true
-  ): U64 {
+  pub fn add(a: U64, b: U64, h: Nat::add(val(a), val(b)) < 18446744073709551616 = true): U64 {
     U64::Mk(Nat::add(val(a), val(b)), h)
   }
 
@@ -703,11 +713,7 @@ module U64 {
   }
 
   // Mapped: `a * b`, which `h` says fits.
-  pub fn mul(
-    a: U64,
-    b: U64,
-    h: Nat::mul(val(a), val(b)) < 18446744073709551616 = true
-  ): U64 {
+  pub fn mul(a: U64, b: U64, h: Nat::mul(val(a), val(b)) < 18446744073709551616 = true): U64 {
     U64::Mk(Nat::mul(val(a), val(b)), h)
   }
 
@@ -742,15 +748,21 @@ module U64 {
     val(a) == val(b)
   }
 
-  // `n` modulo `2^64`.
   pub fn of_nat_mod(n: Nat): U64 {
-    U64::Mk(Nat::rem_nz(n, 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)), Nat::mod_lt(n, 18446744073709551616, Refl))
+    U64::Mk(
+      Nat::rem_nz(n, 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::mod_lt(n, 18446744073709551616, Refl)
+    )
   }
 
   // Mapped: `a + b` modulo `2^64`.
   pub fn wrapping_add(a: U64, b: U64): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::add(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::rem_nz(
+        Nat::add(val(a), val(b)),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
       Nat::mod_lt(Nat::add(val(a), val(b)), 18446744073709551616, Refl)
     )
   }
@@ -758,19 +770,23 @@ module U64 {
   // Mapped: `a - b` modulo `2^64`.
   pub fn wrapping_sub(a: U64, b: U64): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::add(val(a), 18446744073709551616) - val(b), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
-      Nat::mod_lt(
+      Nat::rem_nz(
         Nat::add(val(a), 18446744073709551616) - val(b),
         18446744073709551616,
-        Refl
-      )
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
+      Nat::mod_lt(Nat::add(val(a), 18446744073709551616) - val(b), 18446744073709551616, Refl)
     )
   }
 
   // Mapped: `a * b` modulo `2^64`.
   pub fn wrapping_mul(a: U64, b: U64): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::mul(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::rem_nz(
+        Nat::mul(val(a), val(b)),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
       Nat::mod_lt(Nat::mul(val(a), val(b)), 18446744073709551616, Refl)
     )
   }
@@ -778,14 +794,26 @@ module U64 {
   pub theorem wrapping_add_val(
     a: U64,
     b: U64
-  ): val(wrapping_add(a, b)) = Nat::rem_nz(Nat::add(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ): val(
+    wrapping_add(a, b)
+  ) = Nat::rem_nz(
+    Nat::add(val(a), val(b)),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
   pub theorem wrapping_mul_val(
     a: U64,
     b: U64
-  ): val(wrapping_mul(a, b)) = Nat::rem_nz(Nat::mul(val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ): val(
+    wrapping_mul(a, b)
+  ) = Nat::rem_nz(
+    Nat::mul(val(a), val(b)),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
@@ -893,12 +921,14 @@ module U64 {
     Refl
   }
 
-  // ---- bits of U64 ------------------------------------------------------------
-
   // Mapped: the bits set in both `a` and `b`.
   pub fn and(a: U64, b: U64): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::bits_and(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::rem_nz(
+        Nat::bits_and(64, val(a), val(b)),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
       Nat::mod_lt(Nat::bits_and(64, val(a), val(b)), 18446744073709551616, Refl)
     )
   }
@@ -906,7 +936,11 @@ module U64 {
   // Mapped: the bits set in `a` or `b`.
   pub fn or(a: U64, b: U64): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::bits_or(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::rem_nz(
+        Nat::bits_or(64, val(a), val(b)),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
       Nat::mod_lt(Nat::bits_or(64, val(a), val(b)), 18446744073709551616, Refl)
     )
   }
@@ -914,7 +948,11 @@ module U64 {
   // Mapped: the bits set in one of `a` and `b`.
   pub fn xor(a: U64, b: U64): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::bits_xor(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
+      Nat::rem_nz(
+        Nat::bits_xor(64, val(a), val(b)),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
       Nat::mod_lt(Nat::bits_xor(64, val(a), val(b)), 18446744073709551616, Refl)
     )
   }
@@ -922,16 +960,40 @@ module U64 {
   // Mapped: `a` shifted left by `s` modulo 64, the bits past the top dropped.
   pub fn shl(a: U64, s: Nat): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
-      Nat::mod_lt(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Refl)
+      Nat::rem_nz(
+        Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+        18446744073709551616,
+        Refl
+      )
     )
   }
 
   // Mapped: `a` shifted right by `s` modulo 64.
   pub fn shr(a: U64, s: Nat): U64 {
     U64::Mk(
-      Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
-      Nat::mod_lt(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Refl)
+      Nat::rem_nz(
+        Nat::div_nz(
+          val(a),
+          Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+        ),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::div_nz(
+          val(a),
+          Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+        ),
+        18446744073709551616,
+        Refl
+      )
     )
   }
 
@@ -940,16 +1002,32 @@ module U64 {
     U64::Mk(
       Nat::rem_nz(
         Nat::add(
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
-          Nat::div_nz(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))))
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+            18446744073709551616,
+            Nat::ne_zero(18446744073709551616, Refl)
+          ),
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+            Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+          )
         ),
         18446744073709551616,
         Nat::ne_zero(18446744073709551616, Refl)
       ),
       Nat::mod_lt(
         Nat::add(
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
-          Nat::div_nz(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))))
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+            18446744073709551616,
+            Nat::ne_zero(18446744073709551616, Refl)
+          ),
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+            Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+          )
         ),
         18446744073709551616,
         Refl
@@ -962,16 +1040,32 @@ module U64 {
     U64::Mk(
       Nat::rem_nz(
         Nat::add(
-          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+            Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+          ),
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+            18446744073709551616,
+            Nat::ne_zero(18446744073709551616, Refl)
+          )
         ),
         18446744073709551616,
         Nat::ne_zero(18446744073709551616, Refl)
       ),
       Nat::mod_lt(
         Nat::add(
-          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+            Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+          ),
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+            18446744073709551616,
+            Nat::ne_zero(18446744073709551616, Refl)
+          )
         ),
         18446744073709551616,
         Refl
@@ -982,21 +1076,39 @@ module U64 {
   pub theorem and_val(
     a: U64,
     b: U64
-  ): val(and(a, b)) = Nat::rem_nz(Nat::bits_and(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ): val(
+    and(a, b)
+  ) = Nat::rem_nz(
+    Nat::bits_and(64, val(a), val(b)),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
   pub theorem or_val(
     a: U64,
     b: U64
-  ): val(or(a, b)) = Nat::rem_nz(Nat::bits_or(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ): val(
+    or(a, b)
+  ) = Nat::rem_nz(
+    Nat::bits_or(64, val(a), val(b)),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
   pub theorem xor_val(
     a: U64,
     b: U64
-  ): val(xor(a, b)) = Nat::rem_nz(Nat::bits_xor(64, val(a), val(b)), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ): val(
+    xor(a, b)
+  ) = Nat::rem_nz(
+    Nat::bits_xor(64, val(a), val(b)),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
@@ -1005,7 +1117,11 @@ module U64 {
     s: Nat
   ): val(
     shl(a, s)
-  ) = Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ) = Nat::rem_nz(
+    Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
@@ -1014,7 +1130,15 @@ module U64 {
     s: Nat
   ): val(
     shr(a, s)
-  ) = Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)) {
+  ) = Nat::rem_nz(
+    Nat::div_nz(
+      val(a),
+      Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+      Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+    ),
+    18446744073709551616,
+    Nat::ne_zero(18446744073709551616, Refl)
+  ) {
     Refl
   }
 
@@ -1025,8 +1149,16 @@ module U64 {
     rotl(a, s)
   ) = Nat::rem_nz(
     Nat::add(
-      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl)),
-      Nat::div_nz(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))))
+      Nat::rem_nz(
+        Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      ),
+      Nat::div_nz(
+        val(a),
+        Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+        Nat::pow2_ne_zero(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+      )
     ),
     18446744073709551616,
     Nat::ne_zero(18446744073709551616, Refl)
@@ -1041,8 +1173,16 @@ module U64 {
     rotr(a, s)
   ) = Nat::rem_nz(
     Nat::add(
-      Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
-      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))), 18446744073709551616, Nat::ne_zero(18446744073709551616, Refl))
+      Nat::div_nz(
+        val(a),
+        Nat::pow2(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl))),
+        Nat::pow2_ne_zero(Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))
+      ),
+      Nat::rem_nz(
+        Nat::mul(val(a), Nat::pow2(64 - Nat::rem_nz(s, 64, Nat::ne_zero(64, Refl)))),
+        18446744073709551616,
+        Nat::ne_zero(18446744073709551616, Refl)
+      )
     ),
     18446744073709551616,
     Nat::ne_zero(18446744073709551616, Refl)
@@ -1052,7 +1192,6 @@ module U64 {
 }
 
 module U32 {
-  // ---- bits of U32 ------------------------------------------------------------
 
   // Mapped: the bits set in both `a` and `b`.
   pub fn and(a: U32, b: U32): U32 {
@@ -1081,16 +1220,40 @@ module U32 {
   // Mapped: `a` shifted left by `s` modulo 32, the bits past the top dropped.
   pub fn shl(a: U32, s: Nat): U32 {
     U32::Mk(
-      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
-      Nat::mod_lt(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Refl)
+      Nat::rem_nz(
+        Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+        4294967296,
+        Refl
+      )
     )
   }
 
   // Mapped: `a` shifted right by `s` modulo 32.
   pub fn shr(a: U32, s: Nat): U32 {
     U32::Mk(
-      Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
-      Nat::mod_lt(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Refl)
+      Nat::rem_nz(
+        Nat::div_nz(
+          val(a),
+          Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+        ),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      ),
+      Nat::mod_lt(
+        Nat::div_nz(
+          val(a),
+          Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+          Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+        ),
+        4294967296,
+        Refl
+      )
     )
   }
 
@@ -1099,16 +1262,32 @@ module U32 {
     U32::Mk(
       Nat::rem_nz(
         Nat::add(
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
-          Nat::div_nz(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))))
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+            4294967296,
+            Nat::ne_zero(4294967296, Refl)
+          ),
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+            Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+          )
         ),
         4294967296,
         Nat::ne_zero(4294967296, Refl)
       ),
       Nat::mod_lt(
         Nat::add(
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
-          Nat::div_nz(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))))
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+            4294967296,
+            Nat::ne_zero(4294967296, Refl)
+          ),
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+            Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+          )
         ),
         4294967296,
         Refl
@@ -1121,16 +1300,32 @@ module U32 {
     U32::Mk(
       Nat::rem_nz(
         Nat::add(
-          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl))
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+            Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+          ),
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+            4294967296,
+            Nat::ne_zero(4294967296, Refl)
+          )
         ),
         4294967296,
         Nat::ne_zero(4294967296, Refl)
       ),
       Nat::mod_lt(
         Nat::add(
-          Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
-          Nat::rem_nz(Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl))
+          Nat::div_nz(
+            val(a),
+            Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+            Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+          ),
+          Nat::rem_nz(
+            Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+            4294967296,
+            Nat::ne_zero(4294967296, Refl)
+          )
         ),
         4294967296,
         Refl
@@ -1141,35 +1336,57 @@ module U32 {
   pub theorem and_val(
     a: U32,
     b: U32
-  ): val(and(a, b)) = Nat::rem_nz(Nat::bits_and(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    and(a, b)
+  ) = Nat::rem_nz(Nat::bits_and(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
     Refl
   }
 
   pub theorem or_val(
     a: U32,
     b: U32
-  ): val(or(a, b)) = Nat::rem_nz(Nat::bits_or(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    or(a, b)
+  ) = Nat::rem_nz(Nat::bits_or(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
     Refl
   }
 
   pub theorem xor_val(
     a: U32,
     b: U32
-  ): val(xor(a, b)) = Nat::rem_nz(Nat::bits_xor(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    xor(a, b)
+  ) = Nat::rem_nz(Nat::bits_xor(32, val(a), val(b)), 4294967296, Nat::ne_zero(4294967296, Refl)) {
     Refl
   }
 
   pub theorem shl_val(
     a: U32,
     s: Nat
-  ): val(shl(a, s)) = Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    shl(a, s)
+  ) = Nat::rem_nz(
+    Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+    4294967296,
+    Nat::ne_zero(4294967296, Refl)
+  ) {
     Refl
   }
 
   pub theorem shr_val(
     a: U32,
     s: Nat
-  ): val(shr(a, s)) = Nat::rem_nz(Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)) {
+  ): val(
+    shr(a, s)
+  ) = Nat::rem_nz(
+    Nat::div_nz(
+      val(a),
+      Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+      Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+    ),
+    4294967296,
+    Nat::ne_zero(4294967296, Refl)
+  ) {
     Refl
   }
 
@@ -1180,8 +1397,16 @@ module U32 {
     rotl(a, s)
   ) = Nat::rem_nz(
     Nat::add(
-      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl)),
-      Nat::div_nz(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))))
+      Nat::rem_nz(
+        Nat::mul(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      ),
+      Nat::div_nz(
+        val(a),
+        Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+        Nat::pow2_ne_zero(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+      )
     ),
     4294967296,
     Nat::ne_zero(4294967296, Refl)
@@ -1196,8 +1421,16 @@ module U32 {
     rotr(a, s)
   ) = Nat::rem_nz(
     Nat::add(
-      Nat::div_nz(val(a), Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))), Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
-      Nat::rem_nz(Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))), 4294967296, Nat::ne_zero(4294967296, Refl))
+      Nat::div_nz(
+        val(a),
+        Nat::pow2(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl))),
+        Nat::pow2_ne_zero(Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))
+      ),
+      Nat::rem_nz(
+        Nat::mul(val(a), Nat::pow2(32 - Nat::rem_nz(s, 32, Nat::ne_zero(32, Refl)))),
+        4294967296,
+        Nat::ne_zero(4294967296, Refl)
+      )
     ),
     4294967296,
     Nat::ne_zero(4294967296, Refl)

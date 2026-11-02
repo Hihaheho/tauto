@@ -1,10 +1,16 @@
 // Derived from lalry 0.1.0 (Jörg Singer, Geoffry Song; MIT OR Apache-2.0), the crate parol uses; see NOTICE.
+import "../../pargen/src/list.taut"
+import "../../pargen/src/model.taut"
+import "../../pargen/src/par.taut"
+import std::Text
+import std::UInt
+import std::prelude::Shared
+import std::prelude::Affine
+
 // The LALR(1) table of a grammar, made as the crate lalry 0.1.0 makes it for
 // parol: the LR(0) state machine, its extended grammar, the FIRST and FOLLOW
 // sets of that grammar, and the actions. `README.md` says what each step
 // decides.
-
-// ---------------------------------------------------------------- the grammar
 
 // A symbol: a terminal is its number, the non-terminal `n` is
 // `lr_nt_base() + n`, so that terminals come before non-terminals.
@@ -27,11 +33,12 @@ pub(open) struct LrGrammar {
   // The place of each production in the order of (left side, symbols), as
   // lalry orders the items; equal productions have the same.
   rank: Array(u64)
-  // For each rank, the first production that has it.
   prod_of_rank: Array(u64)
-  // For each non-terminal, its productions in order.
   prods_of: Array(List(u64))
   start: u64
+  // The names of the terminals and of the non-terminals, for the messages.
+  terms: List(Text)
+  nts: List(Text)
 }
 
 pub fn lr_or<A: Shared>(a: Array(A), i: u64, d: A): A {
@@ -159,8 +166,9 @@ pub fn lr_grammar(m: MModel): LrGrammar {
     prod_of_rank: Array::of_list(lr_count(0))
     prods_of: Array::of_list(lr_rev_lists(nt_prods))
     start: m.start
+    terms: m.terminal_names
+    nts: m.nts
   }
-  // The productions in order, then a rank for each.
   var order: List(u64) := Nil
   var all := lr_count(p)
   var sorting := true
@@ -222,6 +230,8 @@ pub fn lr_grammar(m: MModel): LrGrammar {
     prod_of_rank: Array::of_list(lg_rev(firsts))
     prods_of: g0.prods_of
     start: g0.start
+    terms: g0.terms
+    nts: g0.nts
   }
 }
 
@@ -243,8 +253,6 @@ pub fn lr_rev_lists(xs: List(List(u64))): List(List(u64)) {
   out
 }
 
-// ---------------------------------------------------------------- items
-
 pub fn lr_item_prod(g: LrGrammar, item: u64): u64 {
   lr_at(g.prod_of_rank, div(item, lr_item_base()))
 }
@@ -253,7 +261,6 @@ pub fn lr_item_pos(item: u64): u64 {
   mod(item, lr_item_base())
 }
 
-// The symbol after the dot, if any.
 pub fn lr_next_sym(g: LrGrammar, item: u64): Option(u64) {
   lr_nth(lr_syms_of(g, lr_item_prod(g, item)), lr_item_pos(item))
 }
@@ -312,8 +319,6 @@ pub fn lr_closure(g: LrGrammar, kernel: List(u64)): List(u64) {
   }
   set
 }
-
-// ---------------------------------------------------------------- the LR(0) machine
 
 pub(open) struct LrMachine {
   // The items of each state, sorted; state 0 starts.
@@ -720,8 +725,6 @@ pub fn lr_rev_syms(xs: List(u64)): List(u64) {
   lg_rev(xs)
 }
 
-// ---------------------------------------------------------------- the table
-
 // An action: `shift(s)` is `s * 4`, `reduce(p)` is `p * 4 + 1`, accepting
 // by `p` is `p * 4 + 2`.
 // For each state, `terminal * 2^32 + action`, sorted by terminal; the end of
@@ -751,23 +754,76 @@ pub fn lr_set_action(row: List(u64), t: u64, a: u64): List(u64) {
   }
 }
 
-// A reduce by `p` on `t`: a shift there wins, and of two reduces the
-// production written first (lalry with parol's priorities).
-pub fn lr_reduce(row: List(u64), t: u64, p: u64): List(u64) {
+pub fn lr_name(names: List(Text), at: u64): Text {
+  match names {
+    Nil => Text::concat_all(Cons("#", Cons(Text::of_u64(at), Nil)))
+    Cons(n, rest) => if at == 0 { n } else { lr_name(rest, at - 1) }
+  }
+}
+
+// A reduce by `p` on the terminal `t` (0 is the end of the input) in the
+// state `state`. Where the state already does something else on `t`, the
+// grammar is not LALR(1): a shift and a reduce, or reduces by two different
+// productions, is an error.
+pub fn lr_reduce(g: LrGrammar, state: u64, row: List(u64), t: u64, p: u64): List(u64) {
   match lr_action_of(row, t) {
     None => lr_set_action(row, t, p * 4 + 1)
     Some(a) => if mod(a, 4) == 2 {
       lr_end_conflict()
-    } else if mod(a, 4) == 1 && p < div(a, 4) {
-      lr_set_action(row, t, p * 4 + 1)
-    } else {
+    } else if mod(a, 4) == 1 && div(a, 4) == p {
       row
+    } else {
+      lr_conflict(g, state, t, a, p)
     }
   }
 }
 
-// Accepting at the end of the input, where nothing else may be done then
-// (lalry stops when something is).
+pub fn lr_production_name(g: LrGrammar, p: u64): Text {
+  match Array::get(g.lhs, p) {
+    Some(l) => Text::concat_all(
+      Cons("production #", Cons(Text::of_u64(p), Cons(" of ", Cons(lr_name(g.nts, l), Nil))))
+    )
+    None => Text::concat_all(Cons("production #", Cons(Text::of_u64(p), Nil)))
+  }
+}
+
+pub fn lr_conflict(g: LrGrammar, state: u64, t: u64, a: u64, p: u64): Never {
+  let shifts := mod(a, 4) == 0
+  let kind := if shifts { "shift/reduce" } else { "reduce/reduce" }
+  let other := if shifts {
+    Text::concat_all(Cons("  shift to state ", Cons(Text::of_u64(div(a, 4)), Nil)))
+  } else {
+    Text::concat_all(Cons("  reduce by ", Cons(lr_production_name(g, div(a, 4)), Nil)))
+  }
+  par_die(
+    Text::concat_all(
+      Cons(
+        "LALR(1) ",
+        Cons(
+          kind,
+          Cons(
+            " conflict in state ",
+            Cons(
+              Text::of_u64(state),
+              Cons(
+                " on ",
+                Cons(
+                  lr_name(g.terms, t),
+                  Cons(
+                    "\n",
+                    Cons(other, Cons("\n  reduce by ", Cons(lr_production_name(g, p), Nil)))
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// Accepting at the end of the input, where nothing else may be done then.
 pub fn lr_accept(row: List(u64), p: u64): List(u64) {
   match lr_action_of(row, 0) {
     None => lr_set_action(row, 0, p * 4 + 2)
@@ -833,7 +889,7 @@ pub fn lr_table(g: LrGrammar): LrTable {
               adding := false
             }
             Cons(t, tmore) => {
-              row := lr_reduce(row, t, r.prod)
+              row := lr_reduce(g, r.end, row, t, r.prod)
               ts := tmore
             }
           }
@@ -842,7 +898,7 @@ pub fn lr_table(g: LrGrammar): LrTable {
           row := if mod(r.lhs, lr_nt_base()) == g.start {
             lr_accept(row, r.prod)
           } else {
-            lr_reduce(row, 0, r.prod)
+            lr_reduce(g, r.end, row, 0, r.prod)
           }
         }
         match Vec::get_mut(&mut actions, r.end) {

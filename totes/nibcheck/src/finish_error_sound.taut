@@ -1,6 +1,16 @@
 import "error_frame.taut"
 import "product_frame.taut"
 import "finish_acceptance.taut"
+import std::Base
+import std::Map
+import "checker.taut"
+import "decl_names_sound.taut"
+import "diagnostic_report.taut"
+import "diagnostic_sound.taut"
+import "finish_frame.taut"
+import "ty.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 pub theorem finish_default_errors(
   c: Checker,
@@ -70,10 +80,10 @@ pub theorem finish_after_defaults_clean(
 ): DiagnosticClean(c) {
   diagnostic_report_state_clean(
     c,
-    Widths,
+    widths,
     Eq::subst(
       DiagnosticReportClean,
-      And::right(finish_after_defaults_accepts(c, Widths, clean)),
+      And::right(finish_after_defaults_accepts(c, widths, clean)),
       clean
     )
   )
@@ -90,21 +100,6 @@ pub theorem finish_default_result_clean(
     )
   }
 }
-pub theorem finish_products_result_clean(
-  m: Mut1(Unit, Checker),
-  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
-): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) {
-    mut1(v, next) => And::left(
-      And::right(ck_check_products_step(List::reverse(finish_product_checks(next)), next))
-    )(
-      finish_default_result_clean(
-        ck_check_products(List::reverse(finish_product_checks(next)), next),
-        clean
-      )
-    )
-  }
-}
 pub theorem ck_finish_input_clean(
   c: Checker,
   clean: DiagnosticReportClean(ck_finish(c))
@@ -112,7 +107,7 @@ pub theorem ck_finish_input_clean(
   ck_default_ints_error_frame(
     Ordmap::entries(finish_ints(c)),
     c,
-    finish_products_result_clean(
+    finish_default_result_clean(
       ck_default_ints(Ordmap::entries(finish_ints(c)), c),
       Eq::subst(DiagnosticReportClean, diagnostic_finish_default_unf(c), clean)
     )

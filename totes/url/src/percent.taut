@@ -1,13 +1,11 @@
 import "bytes.taut"
+import std::Base
 
 // Percent-encoding (URL Standard, "Percent-encoded bytes"). A set is a
 // decision on bytes; a byte in the set is written `%XY` with upper-case hex
 // digits, every other byte as it is. `%` is in none of the sets the parser
 // uses, so encoding a second time changes nothing.
 
-// ---- the sets -----------------------------------------------------------------
-
-// C0 controls and every byte above `~`.
 pub fn c0_control_set(b: Nat): Bool {
   Bool::or(Nat::lt(b, 32), Nat::lt(126, b))
 }
@@ -87,8 +85,6 @@ pub fn component_set(b: Nat): Bool {
   Bool::or(c0_control_set(b), component_extra(b))
 }
 
-// ---- encoding -----------------------------------------------------------------
-
 // The upper-case hex digit of a number below 16. The high digit of a byte
 // is taken modulo 16 too, so every digit written is a hex digit.
 pub fn hex_digit(d: Nat): Nat {
@@ -98,7 +94,6 @@ pub fn hex_digit(d: Nat): Nat {
   }
 }
 
-// The value of a hex digit of either case.
 pub fn hex_value(b: Nat): Option(Nat) {
   match is_digit(b): Option(Nat) {
     true => Some(Nat::sub(b, 48))
@@ -126,8 +121,6 @@ pub fn pct_encode(set: (Nat) -> Bool, l: List(Nat)): List(Nat) {
   }
 }
 
-// ---- decoding -----------------------------------------------------------------
-
 pub fn is_hex(b: Nat): Bool {
   match hex_value(b): Bool {
     None => false
@@ -135,7 +128,6 @@ pub fn is_hex(b: Nat): Bool {
   }
 }
 
-// The byte of two hex digits.
 pub fn hex_pair(h1: Nat, h2: Nat): Option(Nat) {
   match hex_value(h1): Option(Nat) {
     None => None

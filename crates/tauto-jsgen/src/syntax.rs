@@ -18,7 +18,6 @@ pub(crate) fn parser_index(pkg: &Package, name: &str, sha: &str, result: &Ty) ->
         .position(|p| p.name == name && p.sha == sha && p.result == *result)
 }
 
-/// A value of a constructor of `data`, from JavaScript expressions.
 fn ctor(pkg: &Package, data: &str, ctor: &str, values: &[String]) -> R<String> {
     let d = pkg
         .datas

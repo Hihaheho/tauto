@@ -10,8 +10,6 @@ use tauto::check::{LibEntry, Verdict, describe, free_vars};
 use tauto::report::{Attempt, Hole, Json, Report, check_report, find_hole, term_json, try_fill};
 use tauto::surface::{SurfaceTerm as T, TermKind};
 
-// ---- matching types ------------------------------------------------------
-
 /// First-order matching of a type that names unknowns (the parameters of a
 /// constant) against another, up to the names of bound variables.
 struct Matcher<'a> {
@@ -207,8 +205,6 @@ fn chain(ty: &T) -> (Vec<(Option<String>, T)>, &T) {
     (params, at)
 }
 
-// ---- suggest -------------------------------------------------------------
-
 /// An argument a suggestion leaves as a hole of its own.
 #[derive(Debug, Clone)]
 pub struct SuggestedArg {
@@ -387,9 +383,9 @@ pub fn suggest(report: &Report, hole: &Hole, limit: usize) -> Vec<Suggestion> {
             && !in_scope.contains(l.name.as_str())
             && !l.name.contains('\'');
         if usable {
-            out.extend(candidate(
-                hole, &l.name, l.kind, "library", &l.ty, l.implicit,
-            ));
+            // The goal is held as a program writes it (`a = b`), so the type is too.
+            let ty = tauto::check::Kernel::eqs_written(&l.ty);
+            out.extend(candidate(hole, &l.name, l.kind, "library", &ty, l.implicit));
         }
     }
     out.sort_by_key(|s| {
@@ -403,8 +399,6 @@ pub fn suggest(report: &Report, hole: &Hole, limit: usize) -> Vec<Suggestion> {
     out.truncate(limit);
     out
 }
-
-// ---- expand --------------------------------------------------------------
 
 /// How to break a hole into smaller ones.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -455,7 +449,6 @@ impl By {
 /// One arm (or the one function body) an expansion wrote.
 #[derive(Debug, Clone)]
 pub struct Piece {
-    /// The new hole.
     pub hole: String,
     /// The constructor of the arm, if it is one.
     pub constructor: Option<String>,

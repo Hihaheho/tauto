@@ -9,7 +9,6 @@ use tauto_parol::Span;
 /// The kind written before `struct` or `enum` that makes it a family.
 pub const KIND: &str = "inductive";
 
-/// Whether `d` is written `inductive struct` or `inductive enum`.
 pub fn is_inductive(d: &DataDecl) -> bool {
     d.kind.as_deref() == Some(KIND)
 }

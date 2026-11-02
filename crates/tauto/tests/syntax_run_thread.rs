@@ -14,7 +14,7 @@ fn an_extracted_parse_finds_its_tables_at_run_time() {
     std::fs::create_dir_all(syntax.join(".tauto-syntax")).unwrap();
     std::fs::write(
         dir.join("Tauto.eure"),
-        "package {\n  name = \"m\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"m\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     // The grammar and its tables are those of `examples/calc`. The tables are
@@ -33,12 +33,12 @@ fn an_extracted_parse_finds_its_tables_at_run_time() {
     .unwrap();
     std::fs::write(
         syntax.join("arith.taut"),
-        format!("import std::Text\n{declared}"),
+        format!("import std::Text\nimport std::prelude::Macro\n{declared}"),
     )
     .unwrap();
     std::fs::write(
         dir.join("src/main.taut"),
-        "pub fn shown(t: Text): Unit ! {stdout} {\n  match arith::parse(t) {\n    Ok(_) => print(\"parsed\")\n    Err(d) => print(d.message)\n  }\n}\n\
+        "import \"syntax/arith.taut\"\nimport std::prelude::Os\npub fn shown(t: Text): Unit ! {stdout} {\n  match arith::parse(t) {\n    Ok(_) => print(\"parsed\")\n    Err(d) => print(d.message)\n  }\n}\n\
          shown(\"2 + * 3\")\n",
     )
     .unwrap();

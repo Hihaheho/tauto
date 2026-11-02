@@ -61,7 +61,6 @@ pub(super) struct Ctor {
     /// Recursive arguments: which, the binders `ys` they abstract, the
     /// family of the group they land in, and its indices.
     pub recs: Vec<Rec>,
-    /// The indices of the type the constructor returns.
     pub idx: Vec<T>,
     /// The arguments whose equality `no-confusion` yields (those whose type
     /// mentions no earlier argument); set once `I::noconf` exists.
@@ -78,7 +77,6 @@ pub(super) struct Rec {
 
 type RecShape = (usize, Vec<(String, T)>, Vec<T>);
 
-/// What the eliminators of a group are generated from.
 struct Fam {
     name: String,
     ind: Ind,
@@ -89,7 +87,6 @@ struct Fam {
     head: Option<T>,
 }
 
-/// The members a group gains from nested occurrences.
 struct Nested {
     names: Vec<String>,
     /// (member name, the type `J`, its arguments)
@@ -280,7 +277,6 @@ impl Kernel {
             nparams: heads[0].params.len(),
         };
 
-        // Phase B: constructors.
         let mut fams: Vec<Fam> = Vec::new();
         let mut types = Vec::new();
         for (pos, i) in decls.iter().enumerate() {
@@ -327,7 +323,10 @@ impl Kernel {
                             d.span,
                         );
                     }
-                    let internal = self.nest_type(&d, &mut nest)?;
+                    // Positivity and nesting read the type as the kernel does, a product
+                    // as its `Pair`; the field itself keeps the product as it is written.
+                    let lowered = self.kernel_products(&d);
+                    let internal = self.nest_type(&lowered, &mut nest)?;
                     self.positive(&nest.names, &internal)?;
                     inner.push((n.clone(), d.clone()));
                     args.push((n.clone(), d));
@@ -445,7 +444,8 @@ impl Kernel {
                     }
                     let fresh = self.fresh_name(n);
                     renames.push((n.clone(), fresh.clone()));
-                    let internal = self.nest_type(&d, &mut nest)?;
+                    let lowered = self.kernel_products(&d);
+                    let internal = self.nest_type(&lowered, &mut nest)?;
                     self.positive(&nest.names, &internal)?;
                     args.push((fresh, d));
                     internals.push(internal);
@@ -516,11 +516,11 @@ impl Kernel {
             .zip(&family_tys)
             .map(|(d, ty)| super::core::FamSpec {
                 name: d.name.clone(),
-                ty: ty.clone(),
+                ty: self.kernel_products(ty),
                 ctors: types
                     .iter()
                     .filter(|(_, _, f, _, _)| *f == d.name)
-                    .map(|(c, t, ..)| (c.clone(), t.clone()))
+                    .map(|(c, t, ..)| (c.clone(), self.kernel_products(t)))
                     .collect(),
             })
             .collect();

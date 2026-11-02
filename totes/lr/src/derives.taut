@@ -1,5 +1,9 @@
 import "lr.taut"
+import "../../llk/src/llk.taut"
+import "../../scan/src/scan.taut"
 import std::Array
+import std::Stack
+import std::Base
 
 // A parse that succeeds is a derivation by the tables' productions
 // (`docs/design/self-host.md`). `LrForest(t, syms, done)` reads the parser's
@@ -17,8 +21,6 @@ import std::Array
 // the actions and gotos of the tables are does not matter here; that a
 // reduce pops the right side of its production, and an accept is by a
 // production of the start symbol, does.
-
-// ---- the derivation ---------------------------------------------------------
 
 pub fn lr_type_of(token: LlkTok): Nat {
   token.token_type
@@ -69,7 +71,6 @@ pub fn lr_upto(tokens: List(LlkTok), done: List(LlkTok)): List(LlkTok) {
   }
 }
 
-// The step of `lr_upto` on whether the token is the end of the input.
 pub fn lr_upto_at(token: LlkTok, more: List(LlkTok), done: List(LlkTok), c: Bool): List(LlkTok) {
   match c: List(LlkTok) {
     true => done
@@ -82,8 +83,6 @@ pub fn lr_upto_at(token: LlkTok, more: List(LlkTok), done: List(LlkTok), c: Bool
 pub fn lr_goal(t: LrTables, tokens: List(LlkTok), done: List(LlkTok)): Prop {
   LrForest(t, Cons(LrN(lr_start_of(t)), Nil), lr_upto(tokens, done))
 }
-
-// ---- small facts ------------------------------------------------------------
 
 pub theorem lr_option_cases<A: Type>(
   P: (Option(A)) -> Prop,
@@ -126,7 +125,6 @@ pub theorem lr_sym_eq_sound(a: LrSym, b: LrSym, e: lr_sym_eq(a, b) = true): a = 
   }
 }
 
-// The step of `lr_pop` on whether the symbols are the same.
 pub fn lr_pop_at(c: Bool, more: List(LrSym), rest: List(LrSym)): Option(List(LrSym)) {
   match c: Option(List(LrSym)) {
     true => lr_pop(more, rest)
@@ -171,7 +169,6 @@ pub theorem lr_pop_sound(
   }
 }
 
-// At the end of the input there are no more tokens to read.
 pub theorem lr_upto_end(
   tokens: List(LlkTok),
   done: List(LlkTok),
@@ -189,8 +186,6 @@ pub theorem lr_upto_end(
   }
 }
 
-// ---- the steps --------------------------------------------------------------
-
 pub fn lr_is_built(r: LrRun): Bool {
   match r: Bool {
     LrBuilt(nodes, Root) => true
@@ -206,7 +201,6 @@ pub fn lr_syms_of(c: LrConf): List(LrSym) {
   c.syms
 }
 
-// What `lr_run` makes of a step, with `f` steps left.
 pub fn lr_after(f: Nat, t: LrTables, n: LrNext): LrRun {
   match n: LrRun {
     LrGo(c) => lr_run(f, t, c)
@@ -689,7 +683,6 @@ pub theorem lr_accept_case(
   )
 }
 
-// One step, on the kind of the action.
 pub theorem lr_act_case(
   f: Nat,
   t: LrTables,
@@ -724,8 +717,6 @@ pub theorem lr_act_case(
     }
   }
 }
-
-// ---- the parse --------------------------------------------------------------
 
 // A run that says it built a tree: the start symbol alone derives the tokens
 // before the end of the input, after those already read (`done`).

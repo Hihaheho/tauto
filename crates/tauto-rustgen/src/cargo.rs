@@ -31,7 +31,6 @@ impl Options {
     }
 }
 
-/// What the manifest adds to the generated crate.
 #[derive(Default)]
 pub struct Options {
     /// `rust.executor = "threads"`: each task has a thread of its own. Else a
@@ -61,7 +60,6 @@ pub struct WriteStats {
     pub written: usize,
 }
 
-/// Boundaries of generated-file writing and native compilation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildEvent {
     Write,
@@ -106,6 +104,7 @@ const RT: &[(&str, &str)] = rt_files!(
     "a.rs",
     "budget.rs",
     "budget_contract.rs",
+    "child.rs",
     "cps.rs",
     "ct.rs",
     "ev.rs",
@@ -155,7 +154,6 @@ getrandom = \"=0.3.4\"
 tokio = { version = \"=1.53.3\", optional = true, default-features = false, features = [\"rt\", \"time\", \"sync\"] }
 ";
 
-/// The crate for `package`, named `name`.
 pub fn workspace(
     name: &str,
     package: &Package,
@@ -343,6 +341,7 @@ impl Workspace {
             .env("CARGO_TARGET_DIR", target_dir)
             .env("CARGO_BUILD_BUILD_DIR", target_dir)
             .env("CARGO_TERM_COLOR", "never");
+        offline_if_requested(&mut cmd);
         if release {
             cmd.arg("--release");
         }
@@ -367,7 +366,6 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// The error for rustc's `stderr` on the crate in `dir`.
     pub(crate) fn rejected(&self, stderr: &str, dir: &std::path::Path) -> String {
         if let Some(e) = self.extern_type_error(stderr) {
             return e;
@@ -381,6 +379,15 @@ impl Workspace {
             stderr = stderr.to_string()
         )
         .to_string()
+    }
+}
+
+/// Makes a Cargo build of a generated crate fail at once, with Cargo's own
+/// message that a package is missing, instead of retrying the network, when
+/// `CARGO_NET_OFFLINE=true` says there is none.
+pub(crate) fn offline_if_requested(cmd: &mut std::process::Command) {
+    if std::env::var("CARGO_NET_OFFLINE").is_ok_and(|v| v == "true") {
+        cmd.arg("--offline");
     }
 }
 
@@ -414,7 +421,6 @@ fn marker_item(lib: &str, (line, col): (usize, usize), prefix: &str) -> Option<S
             .map_or(lib.len() - start, |(i, _)| i);
     let open = format!("[doc = \" {prefix}");
     let m = lib[..at].rfind(&open)?;
-    // The marker's text, and where its literal ends.
     let mut text = String::new();
     let mut escaped = false;
     let mut literal_end = None;

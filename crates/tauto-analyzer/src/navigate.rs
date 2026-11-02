@@ -93,6 +93,64 @@ impl<'a> Navigator<'a> {
         Some(Navigator { read, world, entry })
     }
 
+    /// As [`Navigator::open`], reading the expressions at `splices` (the bytes of the file
+    /// between the delimiters of its `${ … }` and `$n`) as tauto in the scope of the literal
+    /// they are written in.
+    pub fn open_with_splices(
+        path: &Path,
+        read: &'a dyn Fn(&Path) -> Option<String>,
+        splices: Vec<(u32, u32)>,
+    ) -> Option<Self> {
+        let mut world = World::new(read).with_splices(path, splices);
+        let entry = world.load(path)?;
+        Some(Navigator { read, world, entry })
+    }
+
+    /// The colour of each name the file writes (declared or used), by what it names; a name that
+    /// resolves to nothing is a variable.
+    pub fn name_colours(&self) -> Vec<(Span, &'static str)> {
+        use index::Kind;
+        let colour = |kind: Kind| match kind {
+            Kind::Fn
+            | Kind::Theorem
+            | Kind::Axiom
+            | Kind::Definition
+            | Kind::Method
+            | Kind::Law
+            | Kind::Macro => "function",
+            Kind::Constructor | Kind::Variant => "enumMember",
+            Kind::Inductive
+            | Kind::Struct
+            | Kind::Enum
+            | Kind::Class
+            | Kind::Effect
+            | Kind::Syntax
+            | Kind::Generic => "type",
+            Kind::Module => "namespace",
+            Kind::Field => "property",
+            Kind::Param => "parameter",
+            Kind::Local | Kind::PatternVar | Kind::Binder => "variable",
+        };
+        let index = self.index();
+        let mut out = Vec::new();
+        for (i, d) in index.defs.iter().enumerate() {
+            let kind = colour(
+                self.world
+                    .def(DefId {
+                        file: self.entry,
+                        index: i,
+                    })
+                    .kind,
+            );
+            out.extend(d.spans.iter().map(|s| (*s, kind)));
+        }
+        for r in &index.refs {
+            out.push((r.span, colour(self.world.def(r.target).kind)));
+        }
+        out.extend(index.unresolved.iter().map(|(s, _)| (*s, "variable")));
+        out
+    }
+
     fn index(&self) -> &FileIndex {
         self.world.file(self.entry)
     }
@@ -101,7 +159,6 @@ impl<'a> Navigator<'a> {
         self.index().path.as_deref().unwrap_or(Path::new(""))
     }
 
-    /// The text of a file this has read.
     pub fn text(&self, path: &Path) -> Option<&str> {
         let id = self.world.file_id(path)?;
         Some(self.world.file(id).text.as_str())
@@ -213,8 +270,6 @@ impl<'a> Navigator<'a> {
         md
     }
 
-    // --- uses -----------------------------------------------------------
-
     /// The workspace files that see the file `def` is in (and it).
     fn users(&mut self, def_file: usize, workspace: &[PathBuf]) -> Vec<usize> {
         let mut out = vec![self.entry];
@@ -271,8 +326,6 @@ impl<'a> Navigator<'a> {
         }
         out
     }
-
-    // --- rename ---------------------------------------------------------
 
     /// The range and the name to start a rename from, or why there is none.
     pub fn prepare_rename(&self, offset: usize) -> Result<(Span, String), String> {

@@ -20,13 +20,22 @@ impl Fixture {
         Self(dir)
     }
 
+    fn main(&self) -> PathBuf {
+        let src = self.0.join("src/main.taut");
+        if src.is_file() {
+            src
+        } else {
+            self.0.join("main.taut")
+        }
+    }
+
     fn command(&self, flags: &[&str]) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_tauto"));
         // The messages below are the English ones, whatever the language here.
         cmd.env("TAUTO_LANG", "en");
         cmd.arg("build")
             .args(flags)
-            .arg(self.0.join("main.taut"))
+            .arg(self.main())
             .arg("-o")
             .arg(self.0.join("out"))
             .env("TAUTO_TARGET_DIR", self.0.join("target"))
@@ -283,6 +292,11 @@ fn timings_are_build_only_and_reject_invalid_or_duplicate_formats() {
     }
 }
 
+fn move_into_src(f: &Fixture) {
+    fs::create_dir_all(f.0.join("src")).unwrap();
+    fs::rename(f.0.join("main.taut"), f.0.join("src/main.taut")).unwrap();
+}
+
 #[test]
 fn javascript_rust_extern_failure_reports_the_native_boundary() {
     let f = Fixture::new(
@@ -290,7 +304,12 @@ fn javascript_rust_extern_failure_reports_the_native_boundary() {
 perform show("abs", absolute(0 - 42))
 "#,
     );
-    fs::write(f.0.join("Tauto.eure"), "package { name = \"timed-extern\" sources = [\"main.taut\"] }\nrust { extern { absolute = \"i64::abs\" } }\n").unwrap();
+    fs::write(
+        f.0.join("Tauto.eure"),
+        "package { name = \"timed-extern\" }\nrust { extern { absolute = \"i64::abs\" } }\n",
+    )
+    .unwrap();
+    move_into_src(&f);
     let empty_path = f.0.join("no-tools");
     fs::create_dir(&empty_path).unwrap();
     let out = f
@@ -326,14 +345,15 @@ fn tote_loading_reports_its_combined_proof_check_and_extraction_boundary() {
     );
     fs::write(
         f.0.join("Tauto.eure"),
-        "package { name = \"timed-tote\" sources = [\"main.taut\"] }\n",
+        "package { name = \"timed-tote\" }\n",
     )
     .unwrap();
+    move_into_src(&f);
     for fail in [false, true] {
         if fail {
             fs::write(
                 f.0.join("Tauto.eure"),
-                "package { name = \"timed-tote\" sources = [\"missing.taut\"] }\n",
+                "package { name = \"timed-tote\" additional-sources = [\"missing\"] }\n",
             )
             .unwrap();
         }

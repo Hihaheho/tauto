@@ -12,8 +12,12 @@ module Quot {
     r: (A, A) -> Prop,
     s: (B, B) -> Prop,
     f: (A, B) -> C,
-    hl: ∀ a1: A, a2: A, b: B. (r(a1, a2)) -> (f(a1, b) = f(a2, b)),
-    hr: ∀ a: A, b1: B, b2: B. (s(b1, b2)) -> (f(a, b1) = f(a, b2)),
+    hl: ∀ a1: A,
+    a2: A,
+    b: B. (r(a1, a2)) -> (f(a1, b) = f(a2, b)),
+    hr: ∀ a: A,
+    b1: B,
+    b2: B. (s(b1, b2)) -> (f(a, b1) = f(a, b2)),
     q1: Quot(A, r),
     q2: Quot(B, s)
   ): C {
@@ -42,8 +46,11 @@ module Quot {
   ) -> Prop, a: A, b: A>(
     d: (A, A) -> Bool,
     d_refl: ∀ x: A. d(x, x) = true,
-    d_respects: ∀ x: A, y: A, z: A. (r(y, z)) -> (d(x, y) = d(x, z)),
-    d_sound: ∀ x: A, y: A. (d(x, y) = true) -> r(x, y),
+    d_respects: ∀ x: A,
+    y: A,
+    z: A. (r(y, z)) -> (d(x, y) = d(x, z)),
+    d_sound: ∀ x: A,
+    y: A. (d(x, y) = true) -> r(x, y),
     e: Quot::mk(A, r, a) = Quot::mk(A, r, b)
   ): r(a, b) {
     let tested: d(
@@ -73,11 +80,7 @@ pub def Pointwise(A: Type, B: (A) -> Type, f: ∀ x: A. B(x), g: ∀ x: A. B(x))
 // `y => f(y)` and `y => g(y)` are equal, and these are `f` and `g`.
 pub theorem funext<A: Type, B: (
   A
-) -> Type>(
-  f: ∀ x: A. B(x),
-  g: ∀ x: A. B(x),
-  pointwise: ∀ x: A. f(x) = g(x)
-): f = g {
+) -> Type>(f: ∀ x: A. B(x), g: ∀ x: A. B(x), pointwise: ∀ x: A. f(x) = g(x)): f = g {
   Eq::congr(
     Quot(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v)),
     ∀ x: A. B(x),

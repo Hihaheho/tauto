@@ -55,7 +55,6 @@ use tauto_message::{Message, msg};
 use tauto_rt::nat::Nat;
 pub use tauto_rt::permissions::{Grant, Permissions};
 
-/// Steps a run may take unless the caller says otherwise.
 pub const DEFAULT_BUDGET: u64 = 10_000_000;
 
 #[derive(Clone)]
@@ -80,7 +79,6 @@ pub enum Value<'a> {
     Builtin(&'a str),
     /// A function of a program's `extern` block: a signature only.
     Extern(&'a str),
-    /// A constructor with fields, as a function.
     Ctor(&'a str),
     /// A stopped `budget` body, before a handler has it.
     Stopped(Rc<Stopped<'a>>),
@@ -88,7 +86,6 @@ pub enum Value<'a> {
     Info(Rc<Info<'a>>),
     /// `info.more` (with `true`) or `info.unbounded`.
     Resume(Rc<Info<'a>>, bool),
-    /// A `struct`'s or an `enum`'s value.
     Data(Rc<Data<'a>>),
     /// `Buf`, `Vec(A)`, `HashMap(K, V)`.
     Res(Rc<Res<'a>>),
@@ -96,8 +93,8 @@ pub enum Value<'a> {
     Array(Rc<[Value<'a>]>),
     /// `Bytes`: shared and read-only; a slice shares the storage.
     Bytes(tauto_rt::stdlib::Bytes),
-    /// A product's members in its type's order, each with its type as
-    /// `types.rs` writes it, by which they are told apart.
+    /// A product's members in the order written, each with its type as
+    /// `types.rs` writes it.
     Product(Rc<[(Rc<str>, Value<'a>)]>),
     /// `&mut p`: the place `p` in a `var`'s cell.
     Ref(Place<'a>),
@@ -185,6 +182,9 @@ enum ResKind<'a> {
     Cell(RefCell<Value<'a>>, &'static str),
     /// A `Weak`: the cell while a strong handle on it remains.
     Weak(std::rc::Weak<Res<'a>>),
+    /// A `MutexGuard`: the mutex and the content taken from it. Dropping the
+    /// guard hands the content back.
+    Guard(Rc<Res<'a>>, Rc<RefCell<Value<'a>>>),
 }
 
 /// A `HashMap`'s entries in the order of insertion, which `show` and
@@ -214,7 +214,6 @@ impl<'a> Entries<'a> {
         Entries { list, index }
     }
 
-    /// The position of the entry of `k`.
     fn find(&self, k: &Value<'a>) -> Result<Option<usize>, RunError> {
         for &i in self.index.get(&key_hash(k)).into_iter().flatten() {
             if equal(&self.list[i].0, k)? {
@@ -284,7 +283,7 @@ impl<'a> Root<'a> {
                     .get(*i)
                     .map(|e| e.1.clone())
                     .expect("evaluator place: missing map entry"),
-                ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) => {
+                ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => {
                     unreachable!("evaluator place: element root is not a container")
                 }
             },
@@ -309,7 +308,7 @@ impl<'a> Root<'a> {
                         .expect("evaluator place: missing map entry")
                         .1 = value;
                 }
-                ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) => {
+                ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => {
                     unreachable!("evaluator place: element root is not a container")
                 }
             },
@@ -494,6 +493,7 @@ impl fmt::Display for Value<'_> {
                 ResKind::Cell(_, "Signal") => write!(f, "Signal"),
                 ResKind::Cell(c, name) => write!(f, "{name}({})", c.borrow()),
                 ResKind::Weak(_) => write!(f, "Weak"),
+                ResKind::Guard(..) => write!(f, "MutexGuard"),
                 ResKind::Vec(v) => {
                     write!(f, "Vec[")?;
                     list(f, &v.borrow())?;
@@ -538,10 +538,8 @@ pub struct Outcome {
     /// With the ownership check: the affine and linear values dropped, by
     /// their type's name, in order.
     pub drops: Vec<String>,
-    /// What `os_print` wrote, and `os_eprint`.
     pub stdout: String,
     pub stderr: String,
-    /// The code `os_exit` ended the run with.
     pub exit: Option<i32>,
     /// What `perform test(name, body)` ran, in order: the name and the error
     /// that stopped the body, if one did.
@@ -558,7 +556,6 @@ pub enum RunError {
     /// An error of the running program (a type confusion, an unbound name, an
     /// effect nothing handles).
     Runtime(String),
-    /// The dynamic ownership check stopped the program.
     Ownership(String),
     /// The session's step limit ran out outside any `budget`.
     Interrupted,
@@ -568,7 +565,6 @@ pub enum RunError {
     /// A macro performed `macro_error`: the message, the byte it is about,
     /// and the code.
     MacroError(String, u64, String),
-    /// A macro called a function the macro host does not allow.
     NotAllowed(String),
     /// A macro made more values than the host allows.
     Memory,
@@ -613,9 +609,7 @@ fn ownership<T>(message: impl Into<Message>) -> Result<T, RunError> {
 /// What a run is given besides the program and its step limit.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
-    /// Enables dynamic ownership checking.
     pub check_ownership: bool,
-    /// What `argv` answers.
     pub args: Vec<String>,
     /// What the standard effects may ask of the host
     /// (`docs/design/host-effects.md`); nothing by default.
@@ -657,8 +651,8 @@ pub fn run_program_with_rows(
     // The standard effects that reach the top level or that a task
     // performs: the run needs their permissions, and the prelude's
     // `host_run` answers them.
-    if !rows.host_effects.is_empty() || !rows.task_effects.is_empty() {
-        let needed = crate::host::permissions(rows.host_effects.iter().chain(&rows.task_effects));
+    if !rows.host_effects.is_empty() {
+        let needed = crate::host::permissions(rows.host_effects.iter());
         let missing = options.permissions.missing(needed);
         if !missing.is_empty() {
             return Err(RunError::Denied(tauto_rt::permissions::missing_message(
@@ -670,7 +664,6 @@ pub fn run_program_with_rows(
             // but for what `host_run` answers.
             let mut rows = check_program_rows(&wrapped);
             rows.host_effects.clear();
-            rows.task_effects.clear();
             return run_program_with_rows(&wrapped, budget, options, &rows);
         }
     }
@@ -689,11 +682,10 @@ pub fn run_program_with_rows(
 /// as a message and the byte it is at. `tauto check` reports these, so that
 /// a program it accepts is not one `run` rejects.
 pub fn errors_before_run(program: &Program, rows: &crate::rows::RowReport) -> Vec<(String, u32)> {
-    if !rows.host_effects.is_empty() || !rows.task_effects.is_empty() {
+    if !rows.host_effects.is_empty() {
         if let Some(wrapped) = crate::host::wrap(program) {
             let mut rows = check_program_rows(&wrapped);
             rows.host_effects.clear();
-            rows.task_effects.clear();
             return errors_before_run(&wrapped, &rows);
         }
     }
@@ -793,7 +785,6 @@ fn nodes_down_to<'a>(env: &Env<'a>, base: &Env<'a>) -> Vec<Rc<EnvNode<'a>>> {
     out
 }
 
-/// What the machine is doing.
 #[derive(Clone)]
 enum Ctrl<'a> {
     Eval(&'a SurfaceTerm, Env<'a>),
@@ -814,7 +805,6 @@ enum Frame<'a> {
         rest: &'a [SurfaceTerm],
         env: Env<'a>,
     },
-    /// An operator waits for its operands.
     OpArg {
         op: &'a str,
         width: Width,
@@ -882,7 +872,6 @@ enum Frame<'a> {
         rest: &'a [SurfaceTerm],
         env: Env<'a>,
     },
-    /// A struct's fields, in the order written.
     RecordArgs {
         name: &'a str,
         fields: &'a [(String, SurfaceTerm)],
@@ -902,7 +891,10 @@ enum Frame<'a> {
     },
     /// A budget's body runs above it until the count it keeps, of steps
     /// or of cells, passes `end`.
-    Budget { limit: BudgetLimit, end: u64 },
+    Budget {
+        limit: BudgetLimit,
+        end: u64,
+    },
     BudgetSteps {
         limit: BudgetLimit,
         body: &'a SurfaceTerm,
@@ -910,10 +902,13 @@ enum Frame<'a> {
     },
     /// A function call returns here; `return` unwinds to it. The names from
     /// `env` down to `base` are its parameters.
-    Call { env: Env<'a>, base: Env<'a> },
-    /// `base.name`: the base is evaluated.
-    Field { name: &'a str },
-    /// A product's members, in the order written.
+    Call {
+        env: Env<'a>,
+        base: Env<'a>,
+    },
+    Field {
+        name: &'a str,
+    },
     ProductArgs {
         term: &'a SurfaceTerm,
         members: &'a [SurfaceTerm],
@@ -921,9 +916,13 @@ enum Frame<'a> {
         env: Env<'a>,
     },
     /// `(base: T)`: the base is evaluated; the member has type `key`.
-    Project { key: Rc<str> },
+    Project {
+        key: Rc<str>,
+    },
     /// A product taken to fewer members (`A × B <: A`).
-    Fit { to: &'a Ty },
+    Fit {
+        to: &'a Ty,
+    },
 }
 
 impl<'a> Frame<'a> {
@@ -1012,7 +1011,6 @@ struct Machine<'a> {
     /// The constructor a name or a record names where it is written, once
     /// resolved: the occurrence's type does not change while it runs.
     ctor_keys: RefCell<HashMap<crate::surface::TermId, &'a str>>,
-    /// The dynamic ownership check is on.
     check: bool,
     probes: bool,
     /// The names (by their node) whose value was moved out.
@@ -1039,9 +1037,8 @@ struct Machine<'a> {
     in_test: usize,
 }
 
-/// What a macro's run counts and allows.
+/// What a macro's run counts.
 struct HostState {
-    allowed: &'static [&'static str],
     max_allocations: u64,
     allocations: u64,
     /// The `macro_warn`s: message, byte, code.
@@ -1088,7 +1085,6 @@ fn borrow_locals(report: &TypeReport) -> HashMap<crate::surface::TermId, Vec<(&s
     locals
 }
 
-/// A machine with the prelude's functions and the program's defined.
 fn machine_for<'a>(
     program: &'a Program,
     budget: u64,
@@ -1165,59 +1161,25 @@ fn machine_for<'a>(
     machine
 }
 
-/// What a macro's host allows and limits.
 pub struct Host {
-    /// The builtins a macro may call; a name ending in `*` stands for every
-    /// name that starts so.
-    pub allowed: &'static [&'static str],
     pub max_steps: u64,
     pub max_allocations: u64,
     /// The `macro_warn`s of the calls: message, byte, code.
     pub warnings: Vec<(String, u64, String)>,
     /// Answers `elab_*`; none outside a typed macro.
     pub elab: Option<ElabFn>,
-    /// The expressions `syn_expand` has been asked for, with their expansions.
     pub expanded: Vec<(Node, Node)>,
 }
 
-/// What a call used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallStats {
     pub steps: u64,
     pub allocations: u64,
 }
 
-/// The builtins a macro may call.
-pub const MACRO_BUILTINS: &[&str] = &[
-    "div",
-    "div_i32",
-    "mod",
-    "clone",
-    "concat",
-    "words",
-    "replace",
-    "Text::*",
-    "Buf::*",
-    "Vec::*",
-    "HashMap::*",
-    "I64::of_*",
-    "I32::of_*",
-    "U64::of_*",
-    "U32::of_*",
-    "U8::of_*",
-    "map",
-    "each",
-    "fold",
-    "fold_once",
-    "Syn::*",
-    "Judgement::*",
-    "Elab::*",
-];
-
 impl Host {
     pub fn new(max_steps: u64, max_allocations: u64) -> Self {
         Host {
-            allowed: MACRO_BUILTINS,
             max_steps,
             max_allocations,
             warnings: Vec::new(),
@@ -1239,7 +1201,6 @@ pub fn call_function(
     let call = std::panic::AssertUnwindSafe(|| {
         let mut machine = machine_for(program, host.max_steps, report, RunOptions::default());
         machine.host = Some(HostState {
-            allowed: host.allowed,
             max_allocations: host.max_allocations,
             allocations: 0,
             warnings: Vec::new(),
@@ -1374,7 +1335,6 @@ impl<'a> Machine<'a> {
         }))
     }
 
-    /// A `SynDiag`'s message, byte and code.
     fn diag_parts(&self, diag: &Value<'a>) -> (String, u64, String) {
         let text = |v: Option<&Value<'a>>| match v.map(deref) {
             Some(Value::Text(t)) => t.to_string(),
@@ -1392,7 +1352,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// A [`Node`] as the value it stands for.
     fn node_value(&mut self, n: &Node) -> Result<Value<'a>, RunError> {
         Ok(match n {
             Node::Int(i) => Value::Int(i128::from(*i)),
@@ -1435,7 +1394,6 @@ impl<'a> Machine<'a> {
         })
     }
 
-    /// A value a macro made as a [`Node`].
     fn value_node(&self, v: &Value<'a>) -> Result<Node, RunError> {
         Ok(match deref(v) {
             Value::Int(i) => Node::Int(i64::try_from(i).map_err(|_| overflow())?),
@@ -1475,7 +1433,6 @@ impl<'a> Machine<'a> {
                 for (k, m) in ms.iter() {
                     out.push((k.to_string(), self.value_node(m)?));
                 }
-                out.sort_by_cached_key(|(k, _)| tauto_surface::macros::node::key_order(k));
                 Node::Product(out)
             }
             other => return runtime(msg!("eval-is-not-syntax", other = other.to_string())),
@@ -1584,7 +1541,6 @@ impl<'a> Machine<'a> {
         })
     }
 
-    /// The count a budget of `limit` keeps.
     fn count(&self, limit: BudgetLimit) -> u64 {
         match limit {
             BudgetLimit::Steps => self.steps,
@@ -1592,7 +1548,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Counts `cells` allocated, for `budget(memory: n)`.
     fn alloc(&mut self, cells: u64) {
         self.cells = self.cells.saturating_add(cells);
     }
@@ -1602,7 +1557,6 @@ impl<'a> Machine<'a> {
         self.alloc(1 + len as u64 / 8);
     }
 
-    /// Counts a value made when a macro runs.
     fn allocated(&mut self) -> Result<(), RunError> {
         if let Some(h) = &mut self.host {
             h.allocations += 1;
@@ -1629,6 +1583,7 @@ impl<'a> Machine<'a> {
             ResKind::Map(_) => "HashMap",
             ResKind::Cell(..) => "Cell",
             ResKind::Weak(_) => "Weak",
+            ResKind::Guard(..) => "MutexGuard",
         };
         let token = self.token(false, name);
         Value::Res(Rc::new(Res { kind, token }))
@@ -1642,7 +1597,6 @@ impl<'a> Machine<'a> {
         Ok(list)
     }
 
-    /// The elements of a `List`.
     fn list_items(&self, l: &Value<'a>) -> Result<Vec<Value<'a>>, RunError> {
         let mut out = Vec::new();
         let mut at = l.clone();
@@ -1663,6 +1617,13 @@ impl<'a> Machine<'a> {
     }
 
     /// A host's `Result(List(Text), Text)`.
+    fn unit_result(&mut self, r: Result<(), String>) -> Result<Value<'a>, RunError> {
+        match r {
+            Ok(()) => self.make("Result::Ok", vec![Value::Unit]),
+            Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(e.as_str()))]),
+        }
+    }
+
     fn text_list_result(
         &mut self,
         r: Result<Vec<tauto_rt::Text>, tauto_rt::Text>,
@@ -1680,7 +1641,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Whether `tauto dev` stopped the run.
     fn cancelled(&self) -> bool {
         self.cancel
             .as_ref()
@@ -1808,7 +1768,7 @@ impl<'a> Machine<'a> {
         })
     }
 
-    /// The text list and the bytes the host gave, as `Result(Pair(List(Text), Bytes), Text)`.
+    /// The bytes and the text list the host gave, as `Result(Bytes × List(Text), Text)`.
     fn text_list_bytes_result(
         &mut self,
         r: Result<(Vec<tauto_rt::Text>, tauto_rt::stdlib::Bytes), tauto_rt::Text>,
@@ -1817,14 +1777,14 @@ impl<'a> Machine<'a> {
             Ok((items, body)) => {
                 let items = items.iter().map(|t| Value::Text(Rc::from(&**t))).collect();
                 let list = self.list(items)?;
-                let pair = self.make("Pair::Pair", vec![list, Value::Bytes(body)])?;
+                let pair = self.make("Pair::Pair", vec![Value::Bytes(body), list])?;
                 self.make("Result::Ok", vec![pair])
             }
             Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))]),
         }
     }
 
-    /// A TLS session the host gave, as `Result(Option(Pair(List(Text), Bytes)), Text)`.
+    /// A TLS session the host gave, as `Result(Option(Bytes × List(Text)), Text)`.
     fn tls_session(
         &mut self,
         r: Result<Option<tauto_rt::tls_host::Established>, tauto_rt::Text>,
@@ -1833,7 +1793,7 @@ impl<'a> Machine<'a> {
             Ok(Some((items, peer))) => {
                 let items = items.iter().map(|t| Value::Text(Rc::from(&**t))).collect();
                 let list = self.list(items)?;
-                let pair = self.make("Pair::Pair", vec![list, Value::Bytes(peer.into())])?;
+                let pair = self.make("Pair::Pair", vec![Value::Bytes(peer.into()), list])?;
                 let some = self.option(Some(pair))?;
                 self.make("Result::Ok", vec![some])
             }
@@ -1845,7 +1805,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// The texts of a `List(Text)`.
     fn text_items(&self, l: &Value<'a>, what: &str) -> Result<Vec<tauto_rt::Text>, RunError> {
         let mut texts = Vec::new();
         for t in self.list_items(l)? {
@@ -1857,7 +1816,6 @@ impl<'a> Machine<'a> {
         Ok(texts)
     }
 
-    /// The items of a `List(Bytes)`.
     fn bytes_items(
         &self,
         l: &Value<'a>,
@@ -1873,7 +1831,6 @@ impl<'a> Machine<'a> {
         Ok(items)
     }
 
-    /// The bytes of a `List(u8)`.
     fn byte_items(&mut self, l: &Value<'a>, what: &str) -> Result<Vec<u8>, RunError> {
         let mut bytes = Vec::new();
         for b in self.list_items(l)? {
@@ -1923,7 +1880,8 @@ impl<'a> Machine<'a> {
                     self.drops.push(name);
                 }
                 match &r.kind {
-                    ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) => {}
+                    ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => {
+                    }
                     ResKind::Vec(items) => {
                         let items: Vec<Value<'a>> = items.borrow_mut().drain(..).collect();
                         for item in &items {
@@ -2003,7 +1961,6 @@ impl<'a> Machine<'a> {
         self.run(ctrl, kont)
     }
 
-    /// Starts statement `at` of a block (or ends the block).
     fn start_stmt(
         &mut self,
         stmts: &'a [Stmt],
@@ -2261,7 +2218,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// `&mut p`: the place `p` names in a cell.
     fn place_ref(&mut self, t: &'a SurfaceTerm, env: &Env<'a>) -> Result<Place<'a>, RunError> {
         match &*t.kind {
             TermKind::Var(name) => match lookup(env, name) {
@@ -2581,7 +2537,7 @@ impl<'a> Machine<'a> {
     }
 
     /// A product of the members' values: a member that is a product gives
-    /// its members, a `()` none; in the order of the product's type.
+    /// its members, a `()` none; in the order written.
     fn make_product(
         &self,
         term: &'a SurfaceTerm,
@@ -2607,11 +2563,12 @@ impl<'a> Machine<'a> {
                 (_, None) => return runtime(msg!("eval-a-product-s-member-of-unknown")),
             }
         }
-        let order: Vec<String> = match self.report.term(term).map(|t| t.unborrowed()) {
-            Some(Ty::Product(ts)) => ts.iter().map(|t| t.to_string()).collect(),
-            _ => return Ok(entries.pop().map_or(Value::Unit, |(_, v)| v)),
-        };
-        entries.sort_by_key(|(k, _)| order.iter().position(|o| **o == **k));
+        if !matches!(
+            self.report.term(term).map(|t| t.unborrowed()),
+            Some(Ty::Product(_))
+        ) {
+            return Ok(entries.pop().map_or(Value::Unit, |(_, v)| v));
+        }
         Ok(Value::Product(entries.into()))
     }
 
@@ -2635,7 +2592,6 @@ impl<'a> Machine<'a> {
         match args.split_first() {
             None => {
                 let frame = make(Vec::new(), args, env);
-                // No operands: finish at once.
                 (Ctrl::Ret(Value::Unit), push(kont, frame))
             }
             Some((first, rest)) => (
@@ -3021,7 +2977,6 @@ impl<'a> Machine<'a> {
                 }
             }
             Frame::Handle { handlers, env } => {
-                // The handled computation returned.
                 for h in handlers.iter() {
                     if let Handler::Return { pattern, body } = h {
                         let Some(arm_env) =
@@ -3179,16 +3134,27 @@ impl<'a> Machine<'a> {
                 }
                 Some(env)
             }
-            // `#(p₁, …, pₙ)` on a product: by labels, or in the product's order.
+            // `#(p₁, …, pₙ)` on a product: by labels, or by position.
             (Pattern::Record { .. } | Pattern::Tuple(_), Value::Product(ms))
                 if is_tuple_pattern(pattern) =>
             {
                 let pats = pair_pattern_members(pattern);
+                let labelled = pats.iter().all(|p| p.label().is_some());
+                // `#(x, y)` on `A × B` at `B := C × D`: the value is flat, and `y` is the
+                // product of the members after `x` (`A × B × C` is `A × (B × C)`).
+                if !labelled && pats.len() >= 2 && pats.len() < ms.len() {
+                    let n = pats.len() - 1;
+                    let mut env = env;
+                    for (p, (_, v)) in pats[..n].iter().zip(ms.iter()) {
+                        env = self.bind_pattern(p, v, env, at)?;
+                    }
+                    let rest = Value::Product(ms[n..].to_vec().into());
+                    return self.bind_pattern(&pats[n], &rest, env, at);
+                }
                 if pats.len() != ms.len() {
                     return None;
                 }
                 let mut env = env;
-                let labelled = pats.iter().all(|p| p.label().is_some());
                 for (i, p) in pats.iter().enumerate() {
                     let v = if labelled {
                         let (tag, _) = p.label()?;
@@ -3212,7 +3178,9 @@ impl<'a> Machine<'a> {
             }
             // `#(p, q, …)` on a `Pair` the checker kept as a record: `p` on its
             // first field and `#(q, …)` on the second.
-            (Pattern::Tuple(items), Value::Data(_)) => self.bind_tuple_data(items, original, env, at),
+            (Pattern::Tuple(items), Value::Data(_)) => {
+                self.bind_tuple_data(items, original, env, at)
+            }
             (Pattern::Record { name, fields }, Value::Data(d)) => {
                 if !self.matches_ctor(name, d) {
                     return None;
@@ -3457,7 +3425,6 @@ impl<'a> Machine<'a> {
                     }
                     once.set(true);
                 }
-                // A copy of the set-aside frames goes back on top of the caller.
                 let mut kont = kont;
                 for frame in frames.0.iter().rev() {
                     kont = push(kont, frame.clone());
@@ -3504,7 +3471,6 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// The functions the evaluator implements.
     fn builtin(
         &mut self,
         name: &str,
@@ -3512,12 +3478,10 @@ impl<'a> Machine<'a> {
         kont: Kont<'a>,
     ) -> Result<(Ctrl<'a>, Kont<'a>), RunError> {
         let ret = |v: Value<'a>, kont: Kont<'a>| Ok((Ctrl::Ret(v), kont));
-        if let Some(h) = &self.host
-            && !h.allowed.iter().any(|a| match a.strip_suffix('*') {
-                Some(prefix) => name.starts_with(prefix),
-                None => *a == name,
-            })
-        {
+        // The host answers no standard effect: the builtins that answer one are
+        // the `Os::*` externs, which only the prelude's `host_run` reaches, and
+        // a macro host does not run it.
+        if self.host.is_some() && name.starts_with("Os::") {
             return Err(RunError::NotAllowed(name.to_string()));
         }
         let plain: Vec<Value<'a>> = args.iter().map(deref).collect();
@@ -3719,6 +3683,36 @@ impl<'a> Machine<'a> {
                 }
                 ret(v, kont)
             }
+            // The place handed to this task is the whole content; the guard
+            // gives it back when it is dropped.
+            ("MutexGuard::claimed", [Value::Res(r), _]) => {
+                let ResKind::Cell(c, _) = &r.kind else {
+                    return runtime(msg!("eval-mutex-take-claimed-takes-a-mutex"));
+                };
+                let v = std::mem::replace(&mut *c.borrow_mut(), Value::Moved);
+                if matches!(v, Value::Moved) {
+                    return runtime(msg!("eval-mutex-take-claimed-of-an-empty"));
+                }
+                let guard = self.resource(ResKind::Guard(r.clone(), Rc::new(RefCell::new(v))));
+                ret(guard, kont)
+            }
+            ("MutexGuard::get", [Value::Res(g)]) => {
+                let ResKind::Guard(_, content) = &g.kind else {
+                    return runtime(msg!("eval-mutex-guard-get-takes-a-guard"));
+                };
+                let v = content.borrow().clone();
+                ret(v, kont)
+            }
+            ("MutexGuard::get_mut", [Value::Res(g)]) => {
+                let ResKind::Guard(_, content) = &g.kind else {
+                    return runtime(msg!("eval-mutex-guard-get-takes-a-guard"));
+                };
+                let place = Value::Ref(Place {
+                    root: Root::Cell(content.clone()),
+                    path: Vec::new(),
+                });
+                ret(place, kont)
+            }
             ("Atomic::fetch_add", [Value::Res(r), Value::Int(n)]) => {
                 let ResKind::Cell(c, _) = &r.kind else {
                     return runtime(msg!("eval-atomic-fetch-add-takes-an-atomic"));
@@ -3727,7 +3721,10 @@ impl<'a> Machine<'a> {
                 let Value::Int(old) = old else {
                     return runtime(msg!("eval-atomic-fetch-add-takes-an-atomic"));
                 };
-                *c.borrow_mut() = Value::Int(old.wrapping_add(*n));
+                // The count is a `u64` that wraps around like the compiled
+                // backends' atomic, so the sum stays in `0..2^64`.
+                let sum = (old + *n).rem_euclid(1i128 << 64);
+                *c.borrow_mut() = Value::Int(sum);
                 ret(Value::Int(old), kont)
             }
             ("Buf::new", []) => {
@@ -4028,9 +4025,9 @@ impl<'a> Machine<'a> {
                 ret(v, kont)
             }
             (
-                "U32::and" | "U32::or" | "U32::xor" | "U32::shl" | "U32::shr" | "U32::rotl" | "U32::rotr"
-                | "U64::and" | "U64::or" | "U64::xor" | "U64::shl" | "U64::shr" | "U64::rotl"
-                | "U64::rotr",
+                "U32::and" | "U32::or" | "U32::xor" | "U32::shl" | "U32::shr" | "U32::rotl"
+                | "U32::rotr" | "U64::and" | "U64::or" | "U64::xor" | "U64::shl" | "U64::shr"
+                | "U64::rotl" | "U64::rotr",
                 [Value::Int(a), Value::Int(b)],
             ) => {
                 // The evaluator holds a `u64` in an `i64`: a result past
@@ -4093,12 +4090,12 @@ impl<'a> Machine<'a> {
                 | "U32::of_u64" | "U64::of_u8" | "U8::of_u64",
                 [Value::Int(n)],
             ) => {
-                // The result's width is the name's first part.
-                let width = match name.split('_').next() {
-                    Some("i32") => Width::W32,
-                    Some("i64") => Width::W64,
-                    Some("u8") => Width::U8,
-                    Some("u32") => Width::U32,
+                // The result's width is the name's module.
+                let width = match name.split("::").next() {
+                    Some("I32") => Width::W32,
+                    Some("I64") => Width::W64,
+                    Some("U8") => Width::U8,
+                    Some("U32") => Width::U32,
                     _ => Width::U64,
                 };
                 if !width.fits(*n) {
@@ -4166,6 +4163,29 @@ impl<'a> Machine<'a> {
                 let v = self.text_list_result(result)?;
                 ret(v, kont)
             }
+            ("Os::stat", [Value::Text(path)]) => {
+                let result = tauto_rt::stdlib::os_stat_vec(tauto_rt::Text::from(&**path));
+                let v = self.text_list_result(result)?;
+                ret(v, kont)
+            }
+            ("Os::move_path", [Value::Text(from), Value::Text(to)]) => {
+                let result = tauto_rt::host::Host::rename(&tauto_rt::host::System, from, to);
+                let v = self.unit_result(result)?;
+                ret(v, kont)
+            }
+            ("Os::copy_file", [Value::Text(from), Value::Text(to)]) => {
+                let result = tauto_rt::host::Host::copy(&tauto_rt::host::System, from, to);
+                let v = self.unit_result(result)?;
+                ret(v, kont)
+            }
+            ("Os::canonicalize", [Value::Text(path)]) => {
+                let result = match tauto_rt::host::Host::canonicalize(&tauto_rt::host::System, path)
+                {
+                    Ok(p) => self.make("Result::Ok", vec![Value::Text(Rc::from(p.as_str()))])?,
+                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(e.as_str()))])?,
+                };
+                ret(result, kont)
+            }
             ("Os::remove", [Value::Text(path)]) => {
                 let result = match tauto_rt::host::Host::remove(&tauto_rt::host::System, path) {
                     Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
@@ -4213,6 +4233,78 @@ impl<'a> Machine<'a> {
                 let v = self.text_list_bytes_result(result)?;
                 ret(v, kont)
             }
+            (
+                "Os::child_spawn",
+                [
+                    Value::Text(program),
+                    args,
+                    Value::Text(dir),
+                    env,
+                    Value::Bytes(stdin),
+                    modes,
+                ],
+            ) => {
+                let args = self.text_items(args, "Os::child_spawn")?;
+                let env = self.text_items(env, "Os::child_spawn")?;
+                let modes = self.text_items(modes, "Os::child_spawn")?;
+                let result = tauto_rt::child::os_child_spawn_vec(
+                    tauto_rt::Text::from(&**program),
+                    args,
+                    tauto_rt::Text::from(&**dir),
+                    env,
+                    stdin.clone(),
+                    modes,
+                );
+                let v = self.text_list_result(result)?;
+                ret(v, kont)
+            }
+            ("Os::child_read", [Value::Int(id), Value::Int(which), Value::Int(max), deadline]) => {
+                let deadline = self.deadline(deadline)?;
+                let read = tauto_rt::child::os_child_read_vec(
+                    *id as u64,
+                    *which as u64,
+                    *max as u64,
+                    deadline,
+                );
+                if self.cancelled() {
+                    return Err(RunError::Interrupted);
+                }
+                let v = match read {
+                    Ok(bytes) => {
+                        let bytes = self.option(bytes.map(|b| Value::Bytes(b.into())))?;
+                        self.make("Result::Ok", vec![bytes])?
+                    }
+                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                };
+                ret(v, kont)
+            }
+            ("Os::child_write", [Value::Int(id), Value::Bytes(bytes)]) => {
+                let v = match tauto_rt::child::os_child_write(*id as u64, bytes.clone().into()) {
+                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
+                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                };
+                ret(v, kont)
+            }
+            ("Os::child_close_stdin", [Value::Int(id)]) => {
+                let v = match tauto_rt::child::os_child_close_stdin(*id as u64) {
+                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
+                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                };
+                ret(v, kont)
+            }
+            ("Os::child_wait", [Value::Int(id), deadline]) => {
+                let deadline = self.deadline(deadline)?;
+                let result = tauto_rt::child::os_child_wait_vec(*id as u64, deadline);
+                if self.cancelled() {
+                    return Err(RunError::Interrupted);
+                }
+                let v = self.timed_text_list(result)?;
+                ret(v, kont)
+            }
+            ("Os::child_close", [Value::Int(id)]) => {
+                tauto_rt::child::os_child_close(*id as u64);
+                ret(Value::Unit, kont)
+            }
             ("Os::write_bytes", [Value::Text(path), Value::Bytes(bytes)]) => {
                 let result = match std::fs::write(&**path, &**bytes) {
                     Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
@@ -4228,6 +4320,16 @@ impl<'a> Machine<'a> {
                 let v = self.option(line)?;
                 ret(v, kont)
             }
+            ("Os::read_stdin", [Value::Int(max)]) => {
+                let bytes = tauto_rt::stdlib::os_read_stdin(*max as u64);
+                ret(Value::Bytes(bytes.to_vec().into()), kont)
+            }
+            ("Os::flush", []) => {
+                if self.streaming {
+                    tauto_rt::stdlib::os_flush();
+                }
+                ret(Value::Unit, kont)
+            }
             ("Os::env", [Value::Text(name)]) => {
                 let v = std::env::var(&**name)
                     .ok()
@@ -4235,7 +4337,9 @@ impl<'a> Machine<'a> {
                 let v = self.option(v)?;
                 ret(v, kont)
             }
-            ("Os::wall_ms", []) => ret(Value::Int(i128::from(tauto_rt::stdlib::os_wall_ms())), kont),
+            ("Os::wall_ms", []) => {
+                ret(Value::Int(i128::from(tauto_rt::stdlib::os_wall_ms())), kont)
+            }
             ("Os::monotonic_ns", []) => ret(
                 Value::Int(i128::from(tauto_rt::stdlib::os_monotonic_ns())),
                 kont,
@@ -4543,7 +4647,12 @@ impl<'a> Machine<'a> {
                     owns: false,
                 })
             }
-            Value::Res(r) if matches!(&r.kind, ResKind::Cell(..) | ResKind::Weak(_)) => {
+            Value::Res(r)
+                if matches!(
+                    &r.kind,
+                    ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..)
+                ) =>
+            {
                 Value::Res(r.clone())
             }
             Value::Res(r) => {
@@ -4565,7 +4674,7 @@ impl<'a> Machine<'a> {
                         }
                         ResKind::Map(RefCell::new(Entries::of(copies)))
                     }
-                    ResKind::Cell(..) | ResKind::Weak(_) => unreachable!(),
+                    ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => unreachable!(),
                 };
                 self.resource(kind)
             }
@@ -4696,7 +4805,6 @@ impl<'a> Machine<'a> {
             let ctor = self.ctor_key("Task", None)?;
             return Ok((Ctrl::Ret(self.make(ctor, vec![v])?), start));
         }
-        // The host answers `show`.
         if let ("show", [Value::Text(name), value]) = (effect, args.as_slice()) {
             if self.streaming {
                 println!("{name} = {value}");
@@ -4722,7 +4830,6 @@ impl<'a> Machine<'a> {
             return Ok((Ctrl::Ret(Value::Unit), start));
         }
         if let ("fail" | "fail@Text", [Value::Text(why)]) = (effect, args.as_slice()) {
-            // The host answers a test's `fail`: the test fails with its message.
             if self.in_test > 0 {
                 return runtime(why.to_string());
             }
@@ -4819,7 +4926,6 @@ fn field_of<'a>(v: &Value<'a>, name: &str) -> Result<Value<'a>, RunError> {
     }
 }
 
-/// A value of a declared type, with `owns` computed from what it holds.
 fn data(mut d: Data<'_>) -> Value<'_> {
     d.owns = d.token.is_some() || d.fields.iter().any(may_own);
     Value::Data(Rc::new(d))
@@ -4843,7 +4949,6 @@ fn token_of(v: &Value<'_>) -> Option<Token> {
     }
 }
 
-/// Whether a value holds a token, itself or in what it holds.
 fn holds_token(v: &Value<'_>) -> bool {
     owner(v).is_some()
 }
@@ -4864,6 +4969,7 @@ fn owner(v: &Value<'_>) -> Option<String> {
             ResKind::Map(_) => "HashMap".into(),
             ResKind::Cell(_, name) => (*name).into(),
             ResKind::Weak(_) => "Weak".into(),
+            ResKind::Guard(..) => "MutexGuard".into(),
         }),
         _ => None,
     }
@@ -4972,7 +5078,6 @@ fn operate_float<'a>(op: &str, args: &[Value<'a>]) -> Result<Value<'a>, RunError
     })
 }
 
-/// `Float32`'s operators, as `Float`'s.
 fn operate_float32<'a>(op: &str, args: &[Value<'a>]) -> Result<Value<'a>, RunError> {
     use Value::{Bool, Float32};
     Ok(match (op, args) {
@@ -5249,7 +5354,6 @@ mod tests {
         )
         .set(Value::Int(1));
     }
-
 }
 
 /// The member of a product whose type is `key`; a value that is not a
@@ -5275,6 +5379,15 @@ fn fit<'a>(v: Value<'a>, to: &Ty) -> Result<Value<'a>, RunError> {
     };
     match to.unborrowed() {
         Ty::Product(ts) => {
+            // Members of one type stay where they are: a product of the same type is not rearranged.
+            if ts.len() == ms.len()
+                && ts
+                    .iter()
+                    .zip(ms.iter())
+                    .all(|(t, (k, _))| **k == *t.to_string())
+            {
+                return Ok(v);
+            }
             let keep: Vec<(Rc<str>, Value<'a>)> = ts
                 .iter()
                 .map(|t| {
@@ -5402,4 +5515,19 @@ fn pair_pattern_members(p: &Pattern) -> Vec<&Pattern> {
     let mut out = Vec::new();
     go(p, &mut out);
     out
+}
+
+/// A guard that is dropped gives the mutex its content back, so the next
+/// `Mutex::lock` finds it full.
+impl Drop for Res<'_> {
+    fn drop(&mut self) {
+        if let ResKind::Guard(mutex, content) = &self.kind
+            && let ResKind::Cell(slot, _) = &mutex.kind
+        {
+            let v = std::mem::replace(&mut *content.borrow_mut(), Value::Moved);
+            if !matches!(v, Value::Moved) {
+                *slot.borrow_mut() = v;
+            }
+        }
+    }
 }

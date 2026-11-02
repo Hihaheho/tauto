@@ -211,279 +211,279 @@ pub mod generated {
             }
         }
     }
-    pub const LM10540: Loc = Loc {
+    pub const LM10568: Loc = Loc {
         file: "extracted.taut",
-        line: 520,
+        line: 521,
         col: 9,
     };
-    pub const LM10572: Loc = Loc {
+    pub const LM10600: Loc = Loc {
         file: "extracted.taut",
-        line: 522,
+        line: 523,
         col: 9,
     };
-    pub const LM1071: Loc = Loc {
+    pub const LM1099: Loc = Loc {
         file: "extracted.taut",
-        line: 41,
+        line: 42,
         col: 25,
-    };
-    pub const LM1106: Loc = Loc {
-        file: "extracted.taut",
-        line: 43,
-        col: 17,
-    };
-    pub const LM1110: Loc = Loc {
-        file: "extracted.taut",
-        line: 43,
-        col: 21,
-    };
-    pub const LM1114: Loc = Loc {
-        file: "extracted.taut",
-        line: 43,
-        col: 25,
-    };
-    pub const LM1130: Loc = Loc {
-        file: "extracted.taut",
-        line: 43,
-        col: 41,
     };
     pub const LM1134: Loc = Loc {
         file: "extracted.taut",
-        line: 43,
-        col: 45,
-    };
-    pub const LM11892: Loc = Loc {
-        file: "extracted.taut",
-        line: 588,
-        col: 28,
-    };
-    pub const LM122: Loc = Loc {
-        file: "extracted.taut",
-        line: 5,
-        col: 25,
-    };
-    pub const LM1432: Loc = Loc {
-        file: "extracted.taut",
-        line: 54,
-        col: 9,
-    };
-    pub const LM1446: Loc = Loc {
-        file: "extracted.taut",
-        line: 54,
-        col: 23,
-    };
-    pub const LM1484: Loc = Loc {
-        file: "extracted.taut",
-        line: 55,
-        col: 21,
-    };
-    pub const LM1496: Loc = Loc {
-        file: "extracted.taut",
-        line: 55,
-        col: 33,
-    };
-    pub const LM15893: Loc = Loc {
-        file: "extracted.taut",
-        line: 768,
-        col: 15,
-    };
-    pub const LM15969: Loc = Loc {
-        file: "extracted.taut",
-        line: 772,
-        col: 12,
-    };
-    pub const LM16084: Loc = Loc {
-        file: "extracted.taut",
-        line: 776,
-        col: 15,
-    };
-    pub const LM16387: Loc = Loc {
-        file: "extracted.taut",
-        line: 793,
-        col: 26,
-    };
-    pub const LM1652: Loc = Loc {
-        file: "extracted.taut",
-        line: 64,
-        col: 11,
-    };
-    pub const LM1666: Loc = Loc {
-        file: "extracted.taut",
-        line: 64,
-        col: 25,
-    };
-    pub const LM1719: Loc = Loc {
-        file: "extracted.taut",
-        line: 65,
-        col: 45,
-    };
-    pub const LM1731: Loc = Loc {
-        file: "extracted.taut",
-        line: 65,
-        col: 57,
-    };
-    pub const LM1743: Loc = Loc {
-        file: "extracted.taut",
-        line: 65,
-        col: 69,
-    };
-    pub const LM1869: Loc = Loc {
-        file: "extracted.taut",
-        line: 72,
-        col: 30,
-    };
-    pub const LM2016: Loc = Loc {
-        file: "extracted.taut",
-        line: 79,
-        col: 7,
-    };
-    pub const LM2161: Loc = Loc {
-        file: "extracted.taut",
-        line: 86,
-        col: 12,
-    };
-    pub const LM2213: Loc = Loc {
-        file: "extracted.taut",
-        line: 88,
-        col: 3,
-    };
-    pub const LM234: Loc = Loc {
-        file: "extracted.taut",
-        line: 9,
-        col: 36,
-    };
-    pub const LM2430: Loc = Loc {
-        file: "extracted.taut",
-        line: 99,
-        col: 5,
-    };
-    pub const LM2450: Loc = Loc {
-        file: "extracted.taut",
-        line: 99,
-        col: 25,
-    };
-    pub const LM2462: Loc = Loc {
-        file: "extracted.taut",
-        line: 99,
-        col: 37,
-    };
-    pub const LM26477: Loc = Loc {
-        file: "extracted.taut",
-        line: 1263,
+        line: 44,
         col: 17,
     };
-    pub const LM26676: Loc = Loc {
+    pub const LM1138: Loc = Loc {
         file: "extracted.taut",
-        line: 1273,
-        col: 16,
+        line: 44,
+        col: 21,
     };
-    pub const LM2829: Loc = Loc {
+    pub const LM1142: Loc = Loc {
         file: "extracted.taut",
-        line: 117,
-        col: 30,
+        line: 44,
+        col: 25,
     };
-    pub const LM2840: Loc = Loc {
+    pub const LM1158: Loc = Loc {
         file: "extracted.taut",
-        line: 117,
+        line: 44,
         col: 41,
     };
-    pub const LM295: Loc = Loc {
+    pub const LM1162: Loc = Loc {
         file: "extracted.taut",
-        line: 13,
-        col: 3,
+        line: 44,
+        col: 45,
     };
-    pub const LM3004: Loc = Loc {
+    pub const LM11920: Loc = Loc {
         file: "extracted.taut",
-        line: 126,
-        col: 16,
+        line: 589,
+        col: 28,
     };
-    pub const LM3481: Loc = Loc {
+    pub const LM1460: Loc = Loc {
         file: "extracted.taut",
-        line: 139,
-        col: 13,
-    };
-    pub const LM3494: Loc = Loc {
-        file: "extracted.taut",
-        line: 139,
-        col: 26,
-    };
-    pub const LM3505: Loc = Loc {
-        file: "extracted.taut",
-        line: 139,
-        col: 37,
-    };
-    pub const LM3636: Loc = Loc {
-        file: "extracted.taut",
-        line: 147,
-        col: 22,
-    };
-    pub const LM421: Loc = Loc {
-        file: "extracted.taut",
-        line: 17,
-        col: 11,
-    };
-    pub const LM465: Loc = Loc {
-        file: "extracted.taut",
-        line: 17,
-        col: 55,
-    };
-    pub const LM5122: Loc = Loc {
-        file: "extracted.taut",
-        line: 232,
-        col: 15,
-    };
-    pub const LM530: Loc = Loc {
-        file: "extracted.taut",
-        line: 21,
-        col: 3,
-    };
-    pub const LM541: Loc = Loc {
-        file: "extracted.taut",
-        line: 21,
-        col: 14,
-    };
-    pub const LM55010: Loc = Loc {
-        file: "extracted.taut",
-        line: 2557,
-        col: 24,
-    };
-    pub const LM56235: Loc = Loc {
-        file: "extracted.taut",
-        line: 2613,
-        col: 23,
-    };
-    pub const LM56358: Loc = Loc {
-        file: "extracted.taut",
-        line: 2619,
-        col: 5,
-    };
-    pub const LM659: Loc = Loc {
-        file: "extracted.taut",
-        line: 25,
-        col: 12,
-    };
-    pub const LM685: Loc = Loc {
-        file: "extracted.taut",
-        line: 26,
-        col: 11,
-    };
-    pub const LM744: Loc = Loc {
-        file: "extracted.taut",
-        line: 26,
-        col: 70,
-    };
-    pub const LM7605: Loc = Loc {
-        file: "extracted.taut",
-        line: 363,
+        line: 55,
         col: 9,
     };
-    pub const LM854: Loc = Loc {
+    pub const LM1474: Loc = Loc {
         file: "extracted.taut",
-        line: 32,
+        line: 55,
+        col: 23,
+    };
+    pub const LM150: Loc = Loc {
+        file: "extracted.taut",
+        line: 6,
+        col: 25,
+    };
+    pub const LM1512: Loc = Loc {
+        file: "extracted.taut",
+        line: 56,
+        col: 21,
+    };
+    pub const LM1524: Loc = Loc {
+        file: "extracted.taut",
+        line: 56,
+        col: 33,
+    };
+    pub const LM15921: Loc = Loc {
+        file: "extracted.taut",
+        line: 769,
+        col: 15,
+    };
+    pub const LM15997: Loc = Loc {
+        file: "extracted.taut",
+        line: 773,
+        col: 12,
+    };
+    pub const LM16112: Loc = Loc {
+        file: "extracted.taut",
+        line: 777,
+        col: 15,
+    };
+    pub const LM16415: Loc = Loc {
+        file: "extracted.taut",
+        line: 794,
         col: 26,
     };
-    pub const LM936: Loc = Loc {
+    pub const LM1680: Loc = Loc {
         file: "extracted.taut",
-        line: 36,
+        line: 65,
+        col: 11,
+    };
+    pub const LM1694: Loc = Loc {
+        file: "extracted.taut",
+        line: 65,
+        col: 25,
+    };
+    pub const LM1747: Loc = Loc {
+        file: "extracted.taut",
+        line: 66,
+        col: 45,
+    };
+    pub const LM1759: Loc = Loc {
+        file: "extracted.taut",
+        line: 66,
+        col: 57,
+    };
+    pub const LM1771: Loc = Loc {
+        file: "extracted.taut",
+        line: 66,
+        col: 69,
+    };
+    pub const LM1897: Loc = Loc {
+        file: "extracted.taut",
+        line: 73,
+        col: 30,
+    };
+    pub const LM2044: Loc = Loc {
+        file: "extracted.taut",
+        line: 80,
+        col: 7,
+    };
+    pub const LM2189: Loc = Loc {
+        file: "extracted.taut",
+        line: 87,
+        col: 12,
+    };
+    pub const LM2241: Loc = Loc {
+        file: "extracted.taut",
+        line: 89,
+        col: 3,
+    };
+    pub const LM2458: Loc = Loc {
+        file: "extracted.taut",
+        line: 100,
+        col: 5,
+    };
+    pub const LM2478: Loc = Loc {
+        file: "extracted.taut",
+        line: 100,
+        col: 25,
+    };
+    pub const LM2490: Loc = Loc {
+        file: "extracted.taut",
+        line: 100,
+        col: 37,
+    };
+    pub const LM262: Loc = Loc {
+        file: "extracted.taut",
+        line: 10,
+        col: 36,
+    };
+    pub const LM26505: Loc = Loc {
+        file: "extracted.taut",
+        line: 1264,
+        col: 17,
+    };
+    pub const LM26704: Loc = Loc {
+        file: "extracted.taut",
+        line: 1274,
+        col: 16,
+    };
+    pub const LM2857: Loc = Loc {
+        file: "extracted.taut",
+        line: 118,
+        col: 30,
+    };
+    pub const LM2868: Loc = Loc {
+        file: "extracted.taut",
+        line: 118,
+        col: 41,
+    };
+    pub const LM3032: Loc = Loc {
+        file: "extracted.taut",
+        line: 127,
+        col: 16,
+    };
+    pub const LM323: Loc = Loc {
+        file: "extracted.taut",
+        line: 14,
+        col: 3,
+    };
+    pub const LM3509: Loc = Loc {
+        file: "extracted.taut",
+        line: 140,
+        col: 13,
+    };
+    pub const LM3522: Loc = Loc {
+        file: "extracted.taut",
+        line: 140,
+        col: 26,
+    };
+    pub const LM3533: Loc = Loc {
+        file: "extracted.taut",
+        line: 140,
+        col: 37,
+    };
+    pub const LM3664: Loc = Loc {
+        file: "extracted.taut",
+        line: 148,
+        col: 22,
+    };
+    pub const LM449: Loc = Loc {
+        file: "extracted.taut",
+        line: 18,
+        col: 11,
+    };
+    pub const LM493: Loc = Loc {
+        file: "extracted.taut",
+        line: 18,
+        col: 55,
+    };
+    pub const LM5150: Loc = Loc {
+        file: "extracted.taut",
+        line: 233,
+        col: 15,
+    };
+    pub const LM55038: Loc = Loc {
+        file: "extracted.taut",
+        line: 2558,
+        col: 24,
+    };
+    pub const LM558: Loc = Loc {
+        file: "extracted.taut",
+        line: 22,
+        col: 3,
+    };
+    pub const LM56263: Loc = Loc {
+        file: "extracted.taut",
+        line: 2614,
+        col: 23,
+    };
+    pub const LM56386: Loc = Loc {
+        file: "extracted.taut",
+        line: 2620,
+        col: 5,
+    };
+    pub const LM569: Loc = Loc {
+        file: "extracted.taut",
+        line: 22,
+        col: 14,
+    };
+    pub const LM687: Loc = Loc {
+        file: "extracted.taut",
+        line: 26,
+        col: 12,
+    };
+    pub const LM713: Loc = Loc {
+        file: "extracted.taut",
+        line: 27,
+        col: 11,
+    };
+    pub const LM7633: Loc = Loc {
+        file: "extracted.taut",
+        line: 364,
+        col: 9,
+    };
+    pub const LM772: Loc = Loc {
+        file: "extracted.taut",
+        line: 27,
+        col: 70,
+    };
+    pub const LM882: Loc = Loc {
+        file: "extracted.taut",
+        line: 33,
+        col: 26,
+    };
+    pub const LM964: Loc = Loc {
+        file: "extracted.taut",
+        line: 37,
         col: 26,
     };
     #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
@@ -533,6 +533,30 @@ pub mod generated {
             }
         }
     }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct Child {
+        pub id: u64,
+    }
+    impl Show for Child {
+        fn show(&self) -> String {
+            match self {
+                Child { id: f0 } => format!("Child {{ id: {} }}", f0.show()),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub enum ChildStream {
+        ChildStdout,
+        ChildStderr,
+    }
+    impl Show for ChildStream {
+        fn show(&self) -> String {
+            match self {
+                ChildStream::ChildStdout => "ChildStdout".to_string(),
+                ChildStream::ChildStderr => "ChildStderr".to_string(),
+            }
+        }
+    }
     #[derive(Clone, PartialEq, Eq, std :: hash :: Hash)]
     pub enum Escape {
         Plain,
@@ -563,6 +587,43 @@ pub mod generated {
                     closed: f2,
                 } => format!(
                     "Fifo {{ front: {}, back: {}, closed: {} }}",
+                    f0.show(),
+                    f1.show(),
+                    f2.show()
+                ),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub enum FileKind {
+        IsFile,
+        IsDir,
+        IsOther,
+    }
+    impl Show for FileKind {
+        fn show(&self) -> String {
+            match self {
+                FileKind::IsFile => "IsFile".to_string(),
+                FileKind::IsDir => "IsDir".to_string(),
+                FileKind::IsOther => "IsOther".to_string(),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct FileStat {
+        pub kind: FileKind,
+        pub size: u64,
+        pub modified_ms: u64,
+    }
+    impl Show for FileStat {
+        fn show(&self) -> String {
+            match self {
+                FileStat {
+                    kind: f0,
+                    size: f1,
+                    modified_ms: f2,
+                } => format!(
+                    "FileStat {{ kind: {}, size: {}, modified_ms: {} }}",
                     f0.show(),
                     f1.show(),
                     f2.show()
@@ -708,6 +769,28 @@ pub mod generated {
             }
         }
     }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub struct ProcessIo {
+        pub stdin: Stdio,
+        pub stdout: Stdio,
+        pub stderr: Stdio,
+    }
+    impl Show for ProcessIo {
+        fn show(&self) -> String {
+            match self {
+                ProcessIo {
+                    stdin: f0,
+                    stdout: f1,
+                    stderr: f2,
+                } => format!(
+                    "ProcessIo {{ stdin: {}, stdout: {}, stderr: {} }}",
+                    f0.show(),
+                    f1.show(),
+                    f2.show()
+                ),
+            }
+        }
+    }
     #[derive(Clone)]
     pub struct ProcessOutput {
         pub status: Option<u64>,
@@ -819,6 +902,19 @@ pub mod generated {
                 Shutdown::ShutdownRead => "ShutdownRead".to_string(),
                 Shutdown::ShutdownWrite => "ShutdownWrite".to_string(),
                 Shutdown::ShutdownBoth => "ShutdownBoth".to_string(),
+            }
+        }
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, std :: hash :: Hash)]
+    pub enum Stdio {
+        StdioPiped,
+        StdioInherit,
+    }
+    impl Show for Stdio {
+        fn show(&self) -> String {
+            match self {
+                Stdio::StdioPiped => "StdioPiped".to_string(),
+                Stdio::StdioInherit => "StdioInherit".to_string(),
             }
         }
     }
@@ -1274,7 +1370,7 @@ pub mod generated {
         if (a_1.clone() < b_2.clone()) {
             tauto_rt::nat::Nat::from_u64(0_u64)
         } else {
-            tauto_rt::int::sub_nat(a_1, b_2, LM122)
+            tauto_rt::int::sub_nat(a_1, b_2, LM150)
         }
     }
     #[doc = " extract_float_checked_div"]
@@ -1282,7 +1378,7 @@ pub mod generated {
         if (b_4 == 0.0_f64) {
             None
         } else {
-            Some(tauto_rt::float::float_div(a_3, b_4, LM234))
+            Some(tauto_rt::float::float_div(a_3, b_4, LM262))
         }
     }
     #[doc = " extract_float_is_infinite"]
@@ -1294,7 +1390,7 @@ pub mod generated {
         if (b_7 == tauto_rt::float::float32_of_float(0.0_f64)) {
             None
         } else {
-            Some(tauto_rt::float::float32_div(a_6, b_7, LM465))
+            Some(tauto_rt::float::float32_div(a_6, b_7, LM493))
         }
     }
     #[doc = " extract_float32_is_infinite"]
@@ -1307,7 +1403,7 @@ pub mod generated {
         {
             let mut t_10: f64 = tauto_rt::float::float_trunc(x_9);
             if ((t_10 >= (-9.223372036854776e18_f64)) && (t_10 < 9.223372036854776e18_f64)) {
-                Some(tauto_rt::float::i64_of_float(t_10, LM744))
+                Some(tauto_rt::float::i64_of_float(t_10, LM772))
             } else {
                 None
             }
@@ -1322,7 +1418,7 @@ pub mod generated {
         if (b_12.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
             tauto_rt::nat::Nat::from_u64(0_u64)
         } else {
-            tauto_rt::int::div_nat(a_11, b_12, LM854)
+            tauto_rt::int::div_nat(a_11, b_12, LM882)
         }
     }
     #[doc = " extract_nat_mod"]
@@ -1334,7 +1430,7 @@ pub mod generated {
         if (b_14.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) {
             a_13
         } else {
-            tauto_rt::int::rem_nat(a_13, b_14, LM936)
+            tauto_rt::int::rem_nat(a_13, b_14, LM964)
         }
     }
     #[doc = " extract_nat_divmod"]
@@ -1347,19 +1443,19 @@ pub mod generated {
     ) -> (tauto_rt::nat::Nat, tauto_rt::nat::Nat) {
         if ((b_16.clone() == tauto_rt::nat::Nat::from_u64(0_u64)) || (r_18.clone() >= b_16.clone()))
         {
-            (q_17, tauto_rt::int::add_nat(r_18, a_15, LM1071))
+            (q_17, tauto_rt::int::add_nat(r_18, a_15, LM1099))
         } else {
             (
                 tauto_rt::int::add_nat(
                     q_17,
                     tauto_rt::int::div_nat(
-                        tauto_rt::int::add_nat(r_18.clone(), a_15.clone(), LM1114),
+                        tauto_rt::int::add_nat(r_18.clone(), a_15.clone(), LM1142),
                         b_16.clone(),
-                        LM1110,
+                        LM1138,
                     ),
-                    LM1106,
+                    LM1134,
                 ),
-                tauto_rt::int::rem_nat(tauto_rt::int::add_nat(r_18, a_15, LM1134), b_16, LM1130),
+                tauto_rt::int::rem_nat(tauto_rt::int::add_nat(r_18, a_15, LM1162), b_16, LM1158),
             )
         }
     }
@@ -1369,9 +1465,9 @@ pub mod generated {
         mut t_19: Text,
         mut i_20: tauto_rt::nat::Nat,
     ) -> Option<tauto_rt::nat::Nat> {
-        match tauto_rt::stdlib::text_byte(t_19, tauto_rt::stdlib::u64_of_nat(i_20, LM1446)) {
+        match tauto_rt::stdlib::text_byte(t_19, tauto_rt::stdlib::u64_of_nat(i_20, LM1474)) {
             Some(mut b_21) => Some(tauto_rt::stdlib::nat_of_u64(tauto_rt::stdlib::u64_of_u8(
-                b_21, LM1496,
+                b_21, LM1524,
             ))),
             None => None,
         }
@@ -1389,12 +1485,12 @@ pub mod generated {
             } else {
                 match tauto_rt::stdlib::text_byte(
                     t_22.clone(),
-                    tauto_rt::int::sub_u64(i_23, 1_u64, LM1666),
+                    tauto_rt::int::sub_u64(i_23, 1_u64, LM1694),
                 ) {
                     Some(mut b_25) => {
-                        let tail1 = tauto_rt::int::sub_u64(i_23, 1_u64, LM1719);
+                        let tail1 = tauto_rt::int::sub_u64(i_23, 1_u64, LM1747);
                         let tail2 = List::Cons(
-                            tauto_rt::stdlib::nat_of_u64(tauto_rt::stdlib::u64_of_u8(b_25, LM1743)),
+                            tauto_rt::stdlib::nat_of_u64(tauto_rt::stdlib::u64_of_u8(b_25, LM1771)),
                             Rc::new(acc_24).into(),
                         );
                         i_23 = tail1;
@@ -1467,8 +1563,8 @@ pub mod generated {
             None
         } else {
             tauto_rt::stdlib::text_of_code_point(tauto_rt::stdlib::u32_of_u64(
-                tauto_rt::stdlib::u64_of_nat(c_34, LM2462),
-                LM2450,
+                tauto_rt::stdlib::u64_of_nat(c_34, LM2490),
+                LM2478,
             ))
         }
     }
@@ -1494,8 +1590,8 @@ pub mod generated {
                     match extract_bytes_of__s(ev, rest_39) {
                         Some(mut r_40) => Some(List::Cons(
                             tauto_rt::stdlib::u8_of_u64(
-                                tauto_rt::stdlib::u64_of_nat(b_38, LM2840),
-                                LM2829,
+                                tauto_rt::stdlib::u64_of_nat(b_38, LM2868),
+                                LM2857,
                             ),
                             Rc::new(r_40).into(),
                         )),
@@ -1520,8 +1616,8 @@ pub mod generated {
         match extract_text_of_utf8__s(ev, bs_43) {
             Some(mut t_44) => t_44,
             None => tauto_rt::stdlib::text_of_u64(tauto_rt::stdlib::u64_of_u8(
-                tauto_rt::stdlib::u8_of_u64(256_u64, LM3505),
-                LM3494,
+                tauto_rt::stdlib::u8_of_u64(256_u64, LM3533),
+                LM3522,
             )),
         }
     }
@@ -1536,7 +1632,7 @@ pub mod generated {
         } else {
             {
                 let mut k_47: tauto_rt::nat::Nat =
-                    tauto_rt::int::sub_nat(n_45, tauto_rt::nat::Nat::from_u64(1_u64), LM5122);
+                    tauto_rt::int::sub_nat(n_45, tauto_rt::nat::Nat::from_u64(1_u64), LM5150);
                 (p_46(ev, k_47.clone()) && below__s(ev, k_47, p_46))
             }
         }
@@ -1761,7 +1857,7 @@ pub mod generated {
         {
             let mut m_x5_98: bool = is_upper__s(ev, b_97.clone());
             if m_x5_98 {
-                tauto_rt::int::add_nat(b_97, tauto_rt::nat::Nat::from_u64(32_u64), LM7605)
+                tauto_rt::int::add_nat(b_97, tauto_rt::nat::Nat::from_u64(32_u64), LM7633)
             } else {
                 b_97
             }
@@ -1922,9 +2018,9 @@ pub mod generated {
         {
             let mut m_x7_133: bool = (d_132.clone() < tauto_rt::nat::Nat::from_u64(10_u64));
             if m_x7_133 {
-                tauto_rt::int::add_nat(d_132, tauto_rt::nat::Nat::from_u64(48_u64), LM10540)
+                tauto_rt::int::add_nat(d_132, tauto_rt::nat::Nat::from_u64(48_u64), LM10568)
             } else {
-                tauto_rt::int::add_nat(d_132, tauto_rt::nat::Nat::from_u64(55_u64), LM10572)
+                tauto_rt::int::add_nat(d_132, tauto_rt::nat::Nat::from_u64(55_u64), LM10600)
             }
         }
     }
@@ -2047,9 +2143,9 @@ pub mod generated {
             Some(mut v1_150) => match hex_value__s(ev, h2_149) {
                 None => None,
                 Some(mut v2_151) => Some(tauto_rt::int::add_nat(
-                    tauto_rt::int::mul_nat(v1_150, tauto_rt::nat::Nat::from_u64(16_u64), LM11892),
+                    tauto_rt::int::mul_nat(v1_150, tauto_rt::nat::Nat::from_u64(16_u64), LM11920),
                     v2_151,
-                    LM11892,
+                    LM11920,
                 )),
             },
         }
@@ -2243,7 +2339,7 @@ pub mod generated {
         } else {
             {
                 let mut k_193: tauto_rt::nat::Nat =
-                    tauto_rt::int::sub_nat(fuel_191, tauto_rt::nat::Nat::from_u64(1_u64), LM15893);
+                    tauto_rt::int::sub_nat(fuel_191, tauto_rt::nat::Nat::from_u64(1_u64), LM15921);
                 {
                     let mut m_x26_194: bool =
                         (n_192.clone() < tauto_rt::nat::Nat::from_u64(10_u64));
@@ -2252,7 +2348,7 @@ pub mod generated {
                             tauto_rt::int::add_nat(
                                 n_192,
                                 tauto_rt::nat::Nat::from_u64(48_u64),
-                                LM15969,
+                                LM15997,
                             ),
                             {
                                 thread_local! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; }
@@ -2279,7 +2375,7 @@ pub mod generated {
                                         tauto_rt::nat::Nat::from_u64(10_u64),
                                     ),
                                     tauto_rt::nat::Nat::from_u64(48_u64),
-                                    LM16084,
+                                    LM16112,
                                 ),
                                 {
                                     thread_local! { static N : Rc < List < tauto_rt :: nat :: Nat > > = Rc :: new (List :: Nil) ; }
@@ -2315,14 +2411,14 @@ pub mod generated {
                                     tauto_rt::int::mul_nat(
                                         acc_196,
                                         tauto_rt::nat::Nat::from_u64(10_u64),
-                                        LM16387,
+                                        LM16415,
                                     ),
                                     extract_nat_sub__s(
                                         ev,
                                         b_198,
                                         tauto_rt::nat::Nat::from_u64(48_u64),
                                     ),
-                                    LM16387,
+                                    LM16415,
                                 );
                                 let tail1 = t_199;
                                 acc_196 = tail0;
@@ -3100,7 +3196,7 @@ pub mod generated {
                     let mut k_343: tauto_rt::nat::Nat = tauto_rt::int::sub_nat(
                         m_x48_342,
                         tauto_rt::nat::Nat::from_u64(1_u64),
-                        LM26477,
+                        LM26505,
                     );
                     walk_dots__s(ev, k_343, stack_339, last_341)
                 }
@@ -3119,7 +3215,7 @@ pub mod generated {
         } else {
             {
                 let mut k2_347: tauto_rt::nat::Nat =
-                    tauto_rt::int::sub_nat(k_344, tauto_rt::nat::Nat::from_u64(1_u64), LM26676);
+                    tauto_rt::int::sub_nat(k_344, tauto_rt::nat::Nat::from_u64(1_u64), LM26704);
                 push_last__s(ev, pop__s(ev, stack_345), last_346)
             }
         }
@@ -5710,7 +5806,7 @@ pub mod generated {
                 tauto_rt::int::add_nat(
                     List__length__s::<A>(ev, t_895),
                     tauto_rt::nat::Nat::from_u64(1_u64),
-                    LM3636,
+                    LM3664,
                 )
             }
         }
@@ -5827,6 +5923,9 @@ pub mod generated {
     pub fn os_list_dir(path: Text) -> Result<List<Text>, Text> {
         tauto_rt::stdlib::os_list_dir_vec(path).map(vec_into_list)
     }
+    pub fn os_stat(path: Text) -> Result<List<Text>, Text> {
+        tauto_rt::stdlib::os_stat_vec(path).map(vec_into_list)
+    }
     pub fn os_run(
         program: Text,
         args: List<Text>,
@@ -5857,6 +5956,27 @@ pub mod generated {
         deadline: Option<i64>,
     ) -> Result<Option<List<Text>>, Text> {
         tauto_rt::tcp::os_tcp_connect_vec(address, deadline).map(|s| s.map(vec_into_list))
+    }
+    pub fn os_child_spawn(
+        program: Text,
+        args: List<Text>,
+        dir: Text,
+        env: List<Text>,
+        stdin: tauto_rt::stdlib::Bytes,
+        modes: List<Text>,
+    ) -> Result<List<Text>, Text> {
+        tauto_rt::child::os_child_spawn_vec(
+            program,
+            array_of_list(args).to_vec(),
+            dir,
+            array_of_list(env).to_vec(),
+            stdin,
+            array_of_list(modes).to_vec(),
+        )
+        .map(vec_into_list)
+    }
+    pub fn os_child_wait(id: u64, deadline: Option<i64>) -> Result<Option<List<Text>>, Text> {
+        tauto_rt::child::os_child_wait_vec(id, deadline).map(|s| s.map(vec_into_list))
     }
     pub fn os_tls_accept(
         stream: u64,
@@ -5900,8 +6020,12 @@ pub mod generated {
     pub mod api {
         pub use super::Authority;
         pub use super::Channel;
+        pub use super::Child;
+        pub use super::ChildStream;
         pub use super::Escape;
         pub use super::Fifo;
+        pub use super::FileKind;
+        pub use super::FileStat;
         pub use super::IoError;
         pub use super::Judgement__Use;
         pub use super::List;
@@ -5911,12 +6035,14 @@ pub mod generated {
         pub use super::Pending;
         pub use super::Polled;
         pub use super::Process;
+        pub use super::ProcessIo;
         pub use super::ProcessOutput;
         pub use super::Request;
         pub use super::Response;
         pub use super::SchemeKind;
         pub use super::Semaphore;
         pub use super::Shutdown;
+        pub use super::Stdio;
         pub use super::Tail;
         pub use super::Task;
         pub use super::TbChange;
@@ -6012,4 +6138,5 @@ pub mod generated {
         top__s(&ev);
     }
 }
+#[allow(unused_imports)]
 pub use generated::api::*;

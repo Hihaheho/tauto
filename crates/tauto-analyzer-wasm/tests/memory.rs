@@ -18,8 +18,8 @@ fn a_proof_is_made_in_memory_a_step_at_a_time() {
         .unwrap()
         .render();
     assert!(a.contains("\"accepted\":true"), "{a}");
-    attempt(PATH, "l", "and_right(h)", true).unwrap();
-    let done = attempt(PATH, "r", "and_left(h)", true).unwrap().render();
+    attempt(PATH, "l", "And::right(h)", true).unwrap();
+    let done = attempt(PATH, "r", "And::left(h)", true).unwrap().render();
     assert!(done.contains("\"status\":\"ok\""), "{done}");
     let wrong = attempt(PATH, "nothing", "h", false);
     assert!(wrong.is_err());

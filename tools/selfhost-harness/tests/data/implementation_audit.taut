@@ -1,0 +1,29 @@
+import "../../../../totes/nibcheck/src/types_run.taut"
+import "../../../../totes/rustgen/src/types.taut"
+
+fn audit_print(label: Text, value: Text): () {
+  print(Text.concat_all(Cons(label, Cons(" = ", Cons(value, Cons(text_newline(), Nil))))))
+}
+
+var args: List(RustgenType) := Nil
+var count: u64 := 0
+while count < 10001 {
+  args := Cons(RustgenInt, args)
+  count := count + 1
+}
+let wide := RustgenApply("Wide", args)
+audit_print("wide equality", if rustgen_same(wide, wide) { "true" } else { "false" })
+audit_print(
+  "arity differs",
+  if rustgen_same(wide, RustgenApply("Wide", Nil)) { "true" } else { "false" }
+)
+let r#class := SurfaceClass { name: "C", param: "A", arity: 1, bound: None, methods: Nil, laws: Nil, start: 0, end: 73 }
+let r#instance := SurfaceInstance {
+  generics: Nil, bounds: Nil, r#class: "C",
+  head: SurfaceTerm { kind: SkVar("i64"), start: 80, end: 83 },
+  wheres: Nil, methods: Nil, laws: Nil, start: 80, end: 123
+}
+audit_print(
+  "class and instance extent",
+  Text.of_u64(program_extent(Cons(StClass(r#class), Cons(StInstance(r#instance), Nil))))
+)

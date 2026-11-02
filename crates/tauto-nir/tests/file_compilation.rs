@@ -5,7 +5,8 @@ fn extracted_text_markers_do_not_certify_totality() {
     let extracted = r#"// tauto:extracted
 pub fn proved(n: i64): i64 ! {Div} { if n == 0 { 0 } else { proved(n - 1) } }
 // tauto:extracted-end
-"#.to_string();
+"#
+    .to_string();
     assert!(extracted.starts_with(tauto::extract::EXTRACTED_BEGIN));
     assert!(extracted.ends_with(tauto::extract::EXTRACTED_END));
     let loaded = tauto::program::load_texts(vec![

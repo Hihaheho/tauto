@@ -22,7 +22,6 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Generates {
     pub items: Vec<(String, String)>,
-    /// Whether `=>` is written.
     pub written: bool,
     /// The clause from `=>` to the last name, or, when it is not written, the
     /// empty span where it goes.
@@ -40,12 +39,10 @@ pub struct Replace {
     pub word: String,
     pub kind: String,
     pub name: String,
-    /// From the word to the name.
     pub at: Span,
 }
 
 impl Generates {
-    /// The list as `=> fn a, theorem b`.
     pub fn shown(&self) -> String {
         let list: Vec<String> = self.items.iter().map(|(k, n)| format!("{k} {n}")).collect();
         format!("=> {}", list.join(", "))
@@ -142,7 +139,6 @@ pub enum Stmt {
         items: Vec<Stmt>,
         span: Span,
     },
-    /// `effect name<G>(params): T`: one operation.
     Effect(EffectDecl),
     /// `struct Name(G: Type) { field: T, … }`, with its kind when written.
     Struct(DataDecl),
@@ -152,7 +148,6 @@ pub enum Stmt {
     /// functions the evaluator and the backends implement themselves.
     Extern {
         fns: Vec<FnDecl>,
-        /// `instance C(T)`: instances the host provides.
         instances: Vec<ExternInstance>,
         /// `type T`: types the host provides. The reader puts a `Struct` with
         /// `host` set before the block for each, so what follows sees a
@@ -160,9 +155,7 @@ pub enum Stmt {
         types: Vec<DataDecl>,
         span: Span,
     },
-    /// `class C(A: Type) { fn m(…) … }`.
     Class(ClassDecl),
-    /// `instance<A> C(H(A)) where … { fn m(…) { … } }`.
     Instance(InstanceDecl),
     While {
         condition: SurfaceTerm,
@@ -183,7 +176,6 @@ pub enum Stmt {
         grammar: SyntaxLit,
         /// `inductive_syntax!(…)`: the proof side's `inductive` types are made too.
         inductive: bool,
-        /// `syntax!(math, …) => struct Eqn, …`: every declaration it makes.
         generates: Generates,
         /// `syntax math … with fmt math_fmt, tokens math_tokens = …`: the functions it registers.
         uses: Vec<SyntaxUse>,
@@ -195,7 +187,6 @@ pub enum Stmt {
         function: String,
         span: Span,
     },
-    /// A statement not read yet, with the name of its syntax.
     Other(String, Span),
 }
 
@@ -216,7 +207,6 @@ pub fn dictionary_name(class: &str, index: usize) -> String {
     format!("{DICT}{class}{index}")
 }
 
-/// `instance C(T)` in an `extern` block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternInstance {
     pub class: String,
@@ -252,7 +242,6 @@ pub struct LawDecl {
     pub theorem: TheoremDecl,
 }
 
-/// `instance<generics> C(head) where … { methods }`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstanceDecl {
     pub generics: Vec<String>,
@@ -469,7 +458,6 @@ pub struct TheoremDecl {
     pub body: Option<SurfaceTerm>,
     /// `decreasing_by x`: the parameter the recursion is structural on.
     pub decreasing_by: Option<SurfaceTerm>,
-    /// `budget N` after the result, as in [`FnDecl::budget`].
     pub budget: Option<u64>,
     pub span: Span,
 }
@@ -495,7 +483,6 @@ pub enum Pattern {
     /// checker's elaboration puts it as the prelude's `Pair`
     /// (`qualify::lower_tuples`); Nib and extraction keep it a product.
     Tuple(Vec<Pattern>),
-    /// A pattern not read yet.
     Other(String),
 }
 
@@ -535,11 +522,9 @@ pub struct MatchArm {
 /// `by t!(arg): G0 { Δ ⊢ G from p … }`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Step {
-    /// The tactic's name, without `!`.
     pub tactic: String,
     /// What the call has in its parentheses, not checked.
     pub arg: SurfaceTerm,
-    /// The call `t!(arg)`.
     pub call: Span,
     /// `-> G0`; `None` where the step is the whole proof of a step's arm.
     pub before: Option<SurfaceTerm>,
@@ -563,7 +548,6 @@ pub enum Handler {
     /// `op(p, …), k if guard => body`
     Operation {
         effect: String,
-        /// The instance the arm answers.
         instance: Instance,
         patterns: Vec<Pattern>,
         cont: Option<String>,
@@ -577,13 +561,11 @@ pub enum Handler {
 /// bound. Both are empty for an operation without generics.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Instance {
-    /// The names bound by `∀ … .`.
     pub forall: Vec<String>,
     /// The type arguments, in the order of the operation's generics.
     pub args: Vec<SurfaceTerm>,
 }
 
-/// Where the prelude's spans start.
 pub const PRELUDE_BASE: u32 = 1 << 31;
 
 /// Where the spans of the terms the class expansion makes start, below the
@@ -597,7 +579,6 @@ pub fn parse_program_as_written(source: &str) -> Result<Program, String> {
     parse_program_as_written_at(source, 0)
 }
 
-/// Reads the written program with source spans starting at `base`.
 pub fn parse_program_as_written_at(source: &str, base: u32) -> Result<Program, String> {
     let mut program = parse_program_unresolved_at(source, base)?;
     let (stmts, mut errors) = super::modules::resolve(std::mem::take(&mut program.stmts));
@@ -620,6 +601,13 @@ pub fn parse_expr_at(source: &str, base: u32) -> Result<SurfaceTerm, String> {
 /// A program with the modules left as written: a program of
 /// several files resolves them once all its files are read.
 pub fn parse_program_unresolved_at(source: &str, base: u32) -> Result<Program, String> {
+    if !super::parsed::kept() {
+        return read_program_at(source, base);
+    }
+    super::parsed::get_or_read(source, base, || read_program_at(source, base))
+}
+
+fn read_program_at(source: &str, base: u32) -> Result<Program, String> {
     let parsed = parse(source);
     if let Some(e) = parsed.errors.first() {
         let at = e
@@ -840,7 +828,6 @@ impl Reader<'_> {
         })
     }
 
-    /// The statement with the `pub` or `pub(open)` written before it.
     fn visible_stmt(&self, id: NodeId) -> Stmt {
         let stmt = self.plain_stmt(id);
         match self.first(id, Nt::Visibility) {
@@ -1196,7 +1183,6 @@ impl Reader<'_> {
         })
     }
 
-    /// `where C(T), …` of a declaration.
     fn where_clause(&self, decl: NodeId) -> Vec<Constraint> {
         self.first(decl, Nt::WhereClause)
             .map(|w| {
@@ -1218,7 +1204,6 @@ impl Reader<'_> {
             .unwrap_or_default()
     }
 
-    /// A method of a class or an instance.
     fn method(&self, decl: NodeId) -> FnDecl {
         match self.fn_decl(decl) {
             Stmt::Fn(f) => f,
@@ -1355,18 +1340,6 @@ impl Reader<'_> {
                 ));
             }
         }
-        let mut matches = Vec::new();
-        self.descend(root, Nt::MatchExpr, &mut matches);
-        for m in matches {
-            if let Some(cond) = self.first(m, Nt::Cond)
-                && self.ascribed(cond)
-            {
-                return Some((
-                    self.span(cond).start,
-                    msg!("surface-match-scrutinee-ascription").to_string(),
-                ));
-            }
-        }
         let mut rows = Vec::new();
         self.descend(root, Nt::EffectSet, &mut rows);
         for row in rows {
@@ -1401,25 +1374,6 @@ impl Reader<'_> {
         None
     }
 
-    /// Whether a `match` scrutinee is a parenthesized `(e: T)`.
-    fn ascribed(&self, cond: NodeId) -> bool {
-        let mut node = cond;
-        loop {
-            let kids = self.cst.children(node);
-            match (self.nt(node), kids.as_slice()) {
-                (Some(Nt::Cond | Nt::CondOperand | Nt::CondPostfix | Nt::CondPrimary), [only]) => {
-                    node = *only
-                }
-                (Some(Nt::Paren), _) => {
-                    return kids.iter().any(|k| {
-                        self.nt(*k) == Some(Nt::Item) && self.first(*k, Nt::Colon).is_some()
-                    });
-                }
-                _ => return false,
-            }
-        }
-    }
-
     /// Where a kind is written as a lowercase word, as in `<A: shared>`: it is
     /// written `Shared`.
     fn bare_kind(&self, id: NodeId) -> Option<(u32, u32)> {
@@ -1445,7 +1399,6 @@ impl Reader<'_> {
             .collect()
     }
 
-    /// Where each generic is written, bound and all.
     fn generic_spans(&self, node: NodeId) -> Vec<Span> {
         let Some(generics) = self.generic_node(node) else {
             return Vec::new();
@@ -1885,7 +1838,6 @@ impl Reader<'_> {
         })
     }
 
-    /// `budget N` of a declaration.
     fn decl_budget(&self, decl: NodeId) -> Option<u64> {
         self.first(decl, Nt::DeclBudget)
             .and_then(|b| self.first(b, Nt::Integer))
@@ -2074,7 +2026,6 @@ impl Reader<'_> {
         self.pattern_alt(*alt)
     }
 
-    /// One alternative of a pattern.
     fn pattern_alt(&self, alt: NodeId) -> Pattern {
         let alt = &alt;
         // `@a p`: `p` on the member labelled `a`.
@@ -2350,7 +2301,6 @@ pub fn with_vis(mut stmt: Stmt, vis: Vis, span: Span) -> Stmt {
 }
 
 impl Stmt {
-    /// The visibility of the declaration, for one that has it.
     pub fn vis(&self) -> Option<Vis> {
         match self {
             Stmt::Fn(f) => Some(f.vis),
@@ -2385,65 +2335,4 @@ fn prelude_name(n: &str) -> String {
         super::qualify::PRELUDE_MODULE,
         super::qualify::SEPARATOR
     )
-}
-
-/// A tuple `#(a, b)` as written: a value or a pattern, with each member's span (without the
-/// spaces around it) and its label when it is written `@a e`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TupleSite {
-    pub pattern: bool,
-    pub members: Vec<(Span, Option<String>)>,
-}
-
-/// Every tuple of two or more members the source writes, values and patterns, outermost first.
-/// Nothing when the source does not read.
-pub fn tuple_sites(source: &str) -> Vec<TupleSite> {
-    let parsed = parse(source);
-    if !parsed.errors.is_empty() {
-        return Vec::new();
-    }
-    let reader = Reader::new(&parsed, source);
-    let mut out = Vec::new();
-    if let Some(root) = parsed.cst.root() {
-        reader.tuple_sites(root, &mut out);
-    }
-    out
-}
-
-impl Reader<'_> {
-    fn tuple_sites(&self, id: NodeId, out: &mut Vec<TupleSite>) {
-        let site = match self.nt(id) {
-            Some(Nt::TupleLit) => Some((false, Nt::Expr)),
-            Some(Nt::TuplePattern) => Some((true, Nt::Pattern)),
-            _ => None,
-        };
-        if let Some((pattern, kind)) = site {
-            let members: Vec<(Span, Option<String>)> = self
-                .all(id, kind)
-                .into_iter()
-                .map(|m| {
-                    let s = self.cst.span(m);
-                    let text = &self.source[s.start as usize..s.end as usize];
-                    let start = s.start + (text.len() - text.trim_start().len()) as u32;
-                    let end = s.end - (text.len() - text.trim_end().len()) as u32;
-                    (Span::new(start, end), written_label(text.trim()))
-                })
-                .collect();
-            if members.len() >= 2 {
-                out.push(TupleSite { pattern, members });
-            }
-        }
-        for c in self.cst.children(id) {
-            self.tuple_sites(c, out);
-        }
-    }
-}
-
-/// `a` of a member written `@a e`.
-fn written_label(text: &str) -> Option<String> {
-    let rest = text.strip_prefix('@')?;
-    let end = rest
-        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .unwrap_or(rest.len());
-    (end > 0).then(|| rest[..end].to_string())
 }

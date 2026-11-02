@@ -54,6 +54,7 @@ fn scratch(name: &str, text: &str) -> PathBuf {
 fn a_syntax_without_a_fmt_function_keeps_its_literals() {
     tauto_messages::install();
     let source = r#"import "lib.taut"
+import std::prelude::Macro
 
 fn other(): outline_Doc {
   outline`a ,  1`
@@ -145,7 +146,9 @@ fn errors_of(text: &str) -> Vec<String> {
 #[test]
 fn a_registered_function_must_exist_and_have_the_type_of_its_role() {
     tauto_messages::install();
-    let [missing] = &errors_of(r#"import "lib.taut"
+    let [missing] = &errors_of(
+        r#"import "lib.taut"
+import std::prelude::Macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -158,14 +161,17 @@ Word: /[a-z]+/;
 Comma: ',';
 ```, with(fmt: nothing)) => struct Doc, struct Doc_Rep1, enum Item,
   fn parse
-"#)[..] else {
+"#,
+    )[..] else {
         panic!("one error")
     };
     assert!(
         missing.contains("`nothing`, the fmt function, is not defined"),
         "{missing}"
     );
-    let [arity] = &errors_of(r#"import "lib.taut"
+    let [arity] = &errors_of(
+        r#"import "lib.taut"
+import std::prelude::Macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -178,11 +184,14 @@ Word: /[a-z]+/;
 Comma: ',';
 ```, with(fmt: layout_tokens)) => struct Doc, struct Doc_Rep1, enum Item,
   fn parse
-"#)[..] else {
+"#,
+    )[..] else {
         panic!("one error")
     };
     assert!(arity.contains("takes 1 arguments"), "{arity}");
-    let [reads] = &errors_of(r#"import "lib.taut"
+    let [reads] = &errors_of(
+        r#"import "lib.taut"
+import std::prelude::Macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -195,11 +204,14 @@ Word: /[a-z]+/;
 Comma: ',';
 ```, with(tokens: layout_white)) => struct Doc, struct Doc_Rep1, enum Item,
   fn parse
-"#)[..] else {
+"#,
+    )[..] else {
         panic!("one error")
     };
     assert!(reads.contains("reads SynTok"), "{reads}");
-    let [role] = &errors_of(r#"import "lib.taut"
+    let [role] = &errors_of(
+        r#"import "lib.taut"
+import std::prelude::Macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -212,14 +224,17 @@ Word: /[a-z]+/;
 Comma: ',';
 ```, with(format: layout_fmt)) => struct Doc, struct Doc_Rep1, enum Item,
   fn parse
-"#)[..] else {
+"#,
+    )[..] else {
         panic!("one error")
     };
     assert!(
         role.contains("registers `fmt` and `tokens`, not `format`"),
         "{role}"
     );
-    let [twice] = &errors_of(r#"import "lib.taut"
+    let [twice] = &errors_of(
+        r#"import "lib.taut"
+import std::prelude::Macro
 syntax!(layout2, ```par
 %start Doc
 %title "layout"
@@ -232,7 +247,8 @@ Word: /[a-z]+/;
 Comma: ',';
 ```, with(fmt: layout_fmt, fmt: layout_fmt)) => struct Doc, struct Doc_Rep1,
   enum Item, fn parse
-"#)[..] else {
+"#,
+    )[..] else {
         panic!("one error")
     };
     assert!(twice.contains("`fmt` is registered twice"), "{twice}");
@@ -241,7 +257,9 @@ Comma: ',';
 #[test]
 fn a_registered_function_performs_no_effect_but_div() {
     tauto_messages::install();
-    let errors = errors_of(r#"import "lib.taut"
+    let errors = errors_of(
+        r#"import "lib.taut"
+import std::prelude::Macro
 effect log(m: Text): Unit
 fn noisy(ts: List(SynTok)): List(SynHighlight) ! {log} {
   perform log("x")
@@ -259,7 +277,8 @@ Word: /[a-z]+/;
 Comma: ',';
 ```, with(tokens: noisy)) => struct Doc, struct Doc_Rep1, enum Item,
   fn parse
-"#);
+"#,
+    );
     assert!(
         errors.iter().any(|e| e.contains("may perform Div only")),
         "{errors:?}"
@@ -270,6 +289,7 @@ Comma: ',';
 fn a_function_that_changes_more_than_white_space_leaves_the_literal() {
     tauto_messages::install();
     let all = r#"import "lib.taut"
+import std::prelude::Macro
 fn dropping(ts: List(SynTok), width: u64): Option(Text) { Some("a") }
 syntax!(layout2, ```par
 %start Doc

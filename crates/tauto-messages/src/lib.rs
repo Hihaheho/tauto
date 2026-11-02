@@ -46,12 +46,10 @@ pub fn set_language(setting: Option<&str>) -> bool {
     index.is_some()
 }
 
-/// The tags of the languages with messages.
 pub fn known() -> Vec<&'static str> {
     LOCALES.iter().map(|(t, _)| *t).collect()
 }
 
-/// Whether `setting` names a language with messages.
 pub fn is_known(setting: &str) -> bool {
     primary(setting).is_some_and(|p| LOCALES.iter().any(|(t, _)| *t == p))
 }
@@ -69,18 +67,15 @@ pub fn primary(setting: &str) -> Option<String> {
     }
 }
 
-/// Shows every message ([`Message`]'s `Display`) in the chosen language.
 pub fn install() {
     tauto_message::set_writer(text);
 }
 
-/// The message in the chosen language.
 pub fn text(m: &Message) -> String {
     let chosen = CHOSEN.read().ok().and_then(|c| *c);
     write(chosen, m)
 }
 
-/// The message in English, whatever the chosen language.
 pub fn english(m: &Message) -> String {
     write(None, m)
 }
@@ -177,7 +172,6 @@ impl Read {
     }
 }
 
-/// The messages of one language: the text of each, by its id, and the terms.
 struct Messages {
     lang: &'static str,
     entries: HashMap<&'static str, &'static str>,
@@ -205,7 +199,6 @@ impl Messages {
         }
     }
 
-    /// The bundle of the message `id` alone, with the terms.
     fn bundle(&mut self, id: &str) -> Option<Bundle> {
         if let Some(b) = self.read.get(id) {
             return Some(b.clone());
@@ -271,7 +264,6 @@ mod tests {
     /// `cargo run -p tauto-messages-gen` writes it again.
     #[test]
     fn generated_code_is_current() {
-        // Relative to this crate, as the file names it.
         let manifest = std::path::Path::new("../../totes/fluent/Tauto.eure");
         let (_, text, _) = tauto_build::generate(manifest, None).unwrap();
         let current = std::fs::read_to_string("src/fluent.rs").unwrap();
@@ -361,7 +353,6 @@ mod tests {
             english(&msg!("no-command", name = "x")),
             "no command x: neither tauto nor this project has one (`tauto --help` lists both)"
         );
-        // A message as an argument is written first; an unknown id shows itself.
         assert_eq!(
             english(&msg!(
                 "vm-unsupported",

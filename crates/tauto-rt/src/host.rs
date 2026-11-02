@@ -19,6 +19,14 @@ pub trait Host: Send + Sync {
     fn stderr(&self, t: &str);
     /// One line without its line break; `None` at the end.
     fn read_line(&self) -> Option<String>;
+    /// Up to `max` bytes of standard input as soon as any arrive; none at
+    /// its end. A host without standard input has none.
+    fn read_stdin(&self, max: usize) -> Vec<u8> {
+        let _ = max;
+        Vec::new()
+    }
+    /// Writes out what standard output and error were given.
+    fn flush(&self) {}
     fn read_file(&self, path: &str) -> Result<String, String>;
     fn write_file(&self, path: &str, contents: &str) -> Result<(), String>;
     /// The bytes of a file. A host that answers only text leaves this out
@@ -45,6 +53,26 @@ pub trait Host: Send + Sync {
     fn remove(&self, path: &str) -> Result<(), String> {
         let _ = path;
         Err(absent("fs_remove"))
+    }
+    /// What is at a path (links followed): `None` when nothing is.
+    fn stat(&self, path: &str) -> Result<Option<Stat>, String> {
+        let _ = path;
+        Err(absent("fs_stat"))
+    }
+    /// Moves a file or directory; a file at `to` is replaced.
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        let _ = (from, to);
+        Err(absent("fs_rename"))
+    }
+    /// Copies a file's contents to `to`, replacing a file there.
+    fn copy(&self, from: &str, to: &str) -> Result<(), String> {
+        let _ = (from, to);
+        Err(absent("fs_copy"))
+    }
+    /// The absolute path of what exists, links followed.
+    fn canonicalize(&self, path: &str) -> Result<String, String> {
+        let _ = path;
+        Err(absent("fs_canonicalize"))
     }
     /// Makes a new empty directory for temporary files; its path.
     fn temp_dir(&self) -> Result<String, String> {
@@ -73,6 +101,14 @@ pub trait Host: Send + Sync {
     fn exit(&self, code: i32) -> !;
 }
 
+/// What [`Host::stat`] knows of a path: `kind` is `file`, `dir` or `other`,
+/// `modified_ms` is milliseconds since the Unix epoch (0 when unknown).
+pub struct Stat {
+    pub kind: &'static str,
+    pub size: u64,
+    pub modified_ms: u64,
+}
+
 /// A program to run ([`Host::run`]): its name or path, its arguments, the
 /// directory it runs in (`None`: the process's own), the variables set on
 /// top of the environment, and its standard input.
@@ -84,7 +120,6 @@ pub struct Process {
     pub stdin: Vec<u8>,
 }
 
-/// The operating system, through the standard library.
 pub struct System;
 
 impl Host for System {
@@ -114,6 +149,25 @@ impl Host for System {
                 Some(line)
             }
         }
+    }
+
+    fn read_stdin(&self, max: usize) -> Vec<u8> {
+        use std::io::{BufRead, Write};
+        let _ = std::io::stdout().flush();
+        let stdin = std::io::stdin();
+        let mut lock = stdin.lock();
+        let got = match lock.fill_buf() {
+            Ok(buf) => buf[..buf.len().min(max)].to_vec(),
+            Err(_) => Vec::new(),
+        };
+        lock.consume(got.len());
+        got
+    }
+
+    fn flush(&self) {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
     }
 
     fn read_file(&self, path: &str) -> Result<String, String> {
@@ -162,6 +216,47 @@ impl Host for System {
             std::fs::remove_file(path)
         }
         .map_err(|e| e.to_string())
+    }
+
+    fn stat(&self, path: &str) -> Result<Option<Stat>, String> {
+        let meta = match std::fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        let kind = if meta.is_dir() {
+            "dir"
+        } else if meta.is_file() {
+            "file"
+        } else {
+            "other"
+        };
+        let modified_ms = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as u64);
+        Ok(Some(Stat {
+            kind,
+            size: meta.len(),
+            modified_ms,
+        }))
+    }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        std::fs::rename(from, to).map_err(|e| e.to_string())
+    }
+
+    fn copy(&self, from: &str, to: &str) -> Result<(), String> {
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    fn canonicalize(&self, path: &str) -> Result<String, String> {
+        std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .map_err(|e| e.to_string())
     }
 
     fn temp_dir(&self) -> Result<String, String> {
@@ -324,7 +419,6 @@ impl Host for Absent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Exit(pub i32);
 
-/// Whether this target has an operating system for [`System`] to ask.
 pub const HAS_SYSTEM: bool = !cfg!(all(target_family = "wasm", target_os = "unknown"));
 
 static HOST: OnceLock<Box<dyn Host>> = OnceLock::new();

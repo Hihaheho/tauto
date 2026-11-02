@@ -1,4 +1,14 @@
 import "kind_sound.taut"
+import std::Base
+import std::Map
+import std::MapLaws
+import std::MapText
+import std::Row
+import std::Text
+import "datas.taut"
+import "ty.taut"
+import "ty_eq.taut"
+import std::prelude::Ord
 
 // Summary construction preserves the declared floor and keeps holds inside
 // the declaration's generics.
@@ -505,7 +515,7 @@ pub fn summary_update(d: Datas, n: Text, data: Data): Datas {
     Ordmap::insert(
       d.decls,
       n,
-      data_with_summary(data, kind_join(data.base, (r: Kind)), (r: List(Text))),
+      data_with_summary(data, kind_join(data.base, r.fst), r.snd),
       Ordmap::compare_text
     )
   )
@@ -513,7 +523,7 @@ pub fn summary_update(d: Datas, n: Text, data: Data): Datas {
 
 pub fn summary_test(d: Datas, data: Data): Bool {
   let r := ctors_kind(d, data.constructors, data.generics, Pair { fst: data.base, snd: data.holds })
-  Bool::and(kind_eq(kind_join(data.base, (r: Kind)), data.base), texts_within((r: List(Text)), data.holds))
+  Bool::and(kind_eq(kind_join(data.base, r.fst), data.base), texts_within(r.snd, data.holds))
 }
 
 pub theorem summary_test_sound(
@@ -622,9 +632,9 @@ pub fn summary_round_decl(
   }
 }
 
-pub fn summary_key(e: Pair(Text, Data)): Text { (e: Text) }
-pub fn summary_result(r: Pair(Datas, Bool)): Datas { (r: Datas) }
-pub fn summary_grew(r: Pair(Datas, Bool)): Bool { (r: Bool) }
+pub fn summary_key(e: Pair(Text, Data)): Text { e.fst }
+pub fn summary_result(r: Pair(Datas, Bool)): Datas { r.fst }
+pub fn summary_grew(r: Pair(Datas, Bool)): Bool { r.snd }
 
 pub theorem summary_round_unf(
   e: Pair(Text, Data),

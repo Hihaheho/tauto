@@ -209,8 +209,9 @@ FnKind: KwFnKind ;
 // parameter takes an effect row, `Handlers(!{key} ∪ e)`. This is the application of an effect's name.
 TypeCall: LParen [ TypeCallArg { Comma TypeCallArg } ] RParen ;
 TypeCallArg: Expr | EffectRow ;
-// The kind of a generic, `<F: (Type) -> Copy>`: no `>` stands in it as an operator.
-AngleType: Postfix [ ThinArrow AngleType ] ;
+// The type or kind of a generic, `<p: A × B>`, `<F: (Type) -> Copy>`: no `>` stands in it as an operator,
+// and `×` is the one operator it takes.
+AngleType: Postfix { TimesSign Postfix } [ ThinArrow AngleType ] ;
 // After `=>`, a list of kinds and names is not a lambda's body: it is what a macro call statement or a `decreasing_by` makes.
 Expr: Seq [ FatArrow Gap ( Expr | Generated { Comma Generated } ) ] ;
 // `&x` and `&mut x` borrow; where a borrow may stand is the checker's. `¬P` and a binder `∀ x: A.`

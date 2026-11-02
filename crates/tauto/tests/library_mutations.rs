@@ -77,17 +77,18 @@ fn equality_adapter_rejects_a_congruent_but_wrong_product_operation() {
     let original = root().join("totes/algebra/src/RelationMatrix.taut");
     let source = std::fs::read_to_string(original)
         .unwrap()
-        .replace(
-            "import \"RelationSemiring.taut\"",
-            &format!(
-                "import {:?}",
-                root().join("totes/algebra/src/RelationSemiring.taut")
-            ),
-        )
-        .replace(
-            "import \"Matrix.taut\"",
-            &format!("import {:?}", root().join("totes/algebra/src/Matrix.taut")),
-        );
+        .lines()
+        .map(|line| {
+            match line
+                .strip_prefix("import \"")
+                .and_then(|rest| rest.strip_suffix('"'))
+            {
+                Some(name) => format!("import {:?}", root().join("totes/algebra/src").join(name)),
+                None => line.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let (operations, proofs) = source
         .split_once("theorem algebra_relation_sum_congr")
         .unwrap();

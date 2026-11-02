@@ -30,7 +30,6 @@ enum Slot {
     },
     /// A handler has put the answer here.
     Answer(Payload),
-    /// A budget ran out.
     Budget(u32),
 }
 
@@ -88,7 +87,6 @@ pub fn put_back(op: Op, args: Payload, at: Loc) {
     put_slot(Slot::Request { op, args, at });
 }
 
-/// Puts the answer for the `perform` that is waiting.
 pub fn answer(p: Payload) {
     put_slot(Slot::Answer(p));
 }
@@ -98,7 +96,6 @@ pub fn put_budget(id: u32) {
     put_slot(Slot::Budget(id));
 }
 
-/// Takes a budget out of the slot: this driver answers it.
 pub fn take_budget() -> u32 {
     match take_slot() {
         Slot::Budget(id) => id,
@@ -190,7 +187,6 @@ impl<'l, B, R> Rec<'l, B, R> {
         Rec { f: Rc::new(f) }
     }
 
-    /// The handler, over `body`.
     pub fn call(&self, body: Fut<'l, B>) -> Fut<'l, R> {
         (self.f)(self.clone(), body)
     }

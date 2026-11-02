@@ -25,6 +25,9 @@ pub trait TypedChecker: std::fmt::Debug {
     fn executable(&self, _prefix: &[Stmt]) -> Option<Result<String, String>> {
         None
     }
+    /// Called when the expansion of the file numbered `index` (from 0, in
+    /// the order the files are expanded) starts.
+    fn begin_file(&self, _index: usize) {}
 }
 
 pub trait PrefixedChecker {

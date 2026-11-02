@@ -1,12 +1,22 @@
 import "lin_flow.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "direct.taut"
+import "freevars.taut"
+import "lin_state.taut"
+import "rows.taut"
+import "ty.taut"
+import "types_run.taut"
 
 // What `match` and `handle` need that walks no expression: the names a
 // pattern binds, what `_` drops, what a handle answers, the continuations a
 // borrow pins and what a direct arm borrows (`match_expr`, `handle` of
 // `lin.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
 
-// The names a pattern binds, in the order they are written.
 mutual {
   pub fn pattern_names_ordered(p: SurfacePattern): List(Text) {
     match p: List(Text) {
@@ -105,7 +115,7 @@ mutual {
             j,
             &mut c,
             args,
-            datas_fields(c.types.datas, (dc: Text), (dc: Nat), targs),
+            datas_fields(c.types.datas, dc.fst, dc.snd, targs),
             span
           )
           _ => #()
@@ -186,7 +196,7 @@ pub fn lin_push_arm_names(
 // `match &v`, or a borrowed name: the arms' names borrow.
 pub fn lin_borrowed_place(c: Lin, scrutinee: SurfaceTerm): Option(Nat) {
   match lin_place(scrutinee): Option(Nat) {
-    Some(p) => match lin_find(c, (p: Text)): Option(Nat) {
+    Some(p) => match lin_find(c, p.fst): Option(Nat) {
       Some(i) => if mode_is_borrow(lin_get(c, i).mode) { Some(i) } else { None }
       None => None
     }
@@ -196,12 +206,10 @@ pub fn lin_borrowed_place(c: Lin, scrutinee: SurfaceTerm): Option(Nat) {
 
 pub fn lin_place_found(c: Lin, t: SurfaceTerm): Option(Nat) {
   match lin_place(t): Option(Nat) {
-    Some(p) => lin_find(c, (p: Text))
+    Some(p) => lin_find(c, p.fst)
     None => None
   }
 }
-
-// ----- handle -----
 
 pub fn pattern_binds_all(p: SurfacePattern): Bool {
   match p: Bool {

@@ -21,10 +21,10 @@ fn shows_the_term_the_kernel_checks() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // The type arguments `And.right` and `And.left` leave implicit are written out.
+    // The type arguments `And::right` and `And::left` leave implicit are written out.
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "and_swap := A => B => p => and_intro(B, A, And.right(A, B, p), And.left(A, B, p))\n"
+        "and_swap := A => B => p => AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))\n"
     );
     let out = elaborate(&["compose", "--json"]);
     let text = String::from_utf8_lossy(&out.stdout);

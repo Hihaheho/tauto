@@ -6,14 +6,20 @@
 // are checked in the tests.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "bytes.taut"
+import "par.taut"
+import "uni.taut"
+import "../../text/src/text.taut"
 import std::Text
+import std::UInt
+import std::prelude::Affine
+import std::prelude::Shared
 
 // A range of code points, both ends in.
 pub(open) struct RRange { lo: u64, hi: u64 }
 
 pub(open) enum RHir {
   RhEmpty
-  // The characters, merged: `ab`.
   RhLit(List(u64))
   // A class; none at all when it is empty, which never matches.
   RhClass(List(RRange))
@@ -23,8 +29,6 @@ pub(open) enum RHir {
   RhRep(RHir, u64, Option(u64))
   RhCap(RHir)
 }
-
-// ---------------------------------------------------------------- ranges
 
 pub fn rx_inc(c: u64): u64 {
   if c == 55295 { 57344 } else { c + 1 }
@@ -204,7 +208,6 @@ pub fn rx_intersect(a: List(RRange), b: List(RRange)): List(RRange) {
   rx_canon(out)
 }
 
-// What of `x` is left when `y` is taken off.
 pub fn rx_sub_range(x: RRange, y: RRange): List(RRange) {
   if y.hi < x.lo || x.hi < y.lo {
     Cons(x, Nil)
@@ -263,8 +266,6 @@ pub fn rx_nat(t: Text): u64 {
     None => 0
   }
 }
-
-// ---------------------------------------------------------------- the HIR
 
 pub fn rx_class_literal(rs: List(RRange)): Option(u64) {
   match rs {
@@ -692,7 +693,6 @@ pub fn rx_alternation(subs: List(RHir)): RHir {
   }
 }
 
-// `xs` reversed on to `acc`.
 pub fn rx_rev_append(xs: List(RHir), acc: List(RHir)): List(RHir) {
   match xs {
     Nil => acc
@@ -741,15 +741,10 @@ pub fn rx_repetition(sub: RHir, min0: u64, max0: Option(u64)): RHir {
   }
 }
 
-// ---------------------------------------------------------------- the parser
-
-// The expression read so far and where the next character is.
 pub(open) struct RPos { hir: RHir, at: u64 }
 
-// A set of code points read so far and where the next character is.
 pub(open) struct RSet { rs: List(RRange), at: u64 }
 
-// What follows a backslash: one character, or a set of them.
 pub(open) struct REsc { single: Bool, ch: u64, rs: List(RRange), at: u64 }
 
 // Positions are one-based Unicode scalar positions in the regular expression.
@@ -833,7 +828,6 @@ pub fn rx_is_alnum(c: u64): Bool {
   (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
 }
 
-// A character code in `{…}` or of a fixed number of digits, from `at`.
 pub(open) struct RNum { value: u64, at: u64 }
 
 pub fn rx_hex_digits(cs: RInput, i: u64, count: u64): RNum {
@@ -1002,13 +996,11 @@ pub fn rx_escape(cs: RInput, i: u64): REsc {
   }
 }
 
-// Where an operator of a class (`--`, `&&`, `~~`) is.
 pub fn rx_class_op(cs: RInput, i: u64): Bool {
   let c := rx_peek(cs, i)
   (c == 45 || c == 38 || c == 126) && rx_peek(cs, i + 1) == c
 }
 
-// The items of a class up to `]` or an operator.
 pub fn rx_class_run(cs: RInput, i: u64, first0: Bool): RSet {
   var acc: List(RRange) := Nil
   var at := i
@@ -1031,7 +1023,6 @@ pub fn rx_class_run(cs: RInput, i: u64, first0: Bool): RSet {
       at := inner.at
       first := false
     } else {
-      // A character, a set, or the start of a range.
       var lo: u64 := c
       var is_set := false
       var next := at + 1
@@ -1248,7 +1239,6 @@ pub fn rx_alt(cs: RInput, i: u64): RPos {
   RPos { hir: rx_alternation(rx_rev_hirs(alts)), at: at }
 }
 
-// The tree of the regular expression of a pattern.
 pub fn rx_parse(p: Text): RHir {
   rx_parse_named(p, "pattern")
 }
@@ -1261,8 +1251,6 @@ pub fn rx_parse_named(p: Text, context: Text): RHir {
   }
   r.hir
 }
-
-// ---------------------------------------------------------------- showing
 
 pub fn rx_show_chars(cs: List(u64)): Text {
   match cs {

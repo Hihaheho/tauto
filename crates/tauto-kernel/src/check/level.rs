@@ -33,7 +33,6 @@ impl Level {
         }
     }
 
-    /// The number this level is, when it has no variable.
     pub fn as_const(&self) -> Option<u32> {
         self.vars.is_empty().then_some(self.c)
     }
@@ -95,12 +94,10 @@ impl Level {
         (self.c > 0 && !self.vars.is_empty()).then_some(self.c)
     }
 
-    /// Each variable with its offset.
     pub fn terms(&self) -> impl Iterator<Item = (&str, u32)> {
         self.vars.iter().map(|(v, k)| (v.as_str(), *k))
     }
 
-    /// The variables, in order.
     pub fn variables(&self) -> impl Iterator<Item = &str> {
         self.vars.keys().map(String::as_str)
     }

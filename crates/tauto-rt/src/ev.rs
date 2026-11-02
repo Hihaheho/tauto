@@ -16,7 +16,6 @@ pub trait DirectHandler {
     fn handles(&self, op: OpId) -> bool;
 }
 
-/// The host answers `show`.
 struct Host<F>(F);
 
 impl<F: Fn(Payload)> DirectHandler for Host<F> {
@@ -43,12 +42,10 @@ pub struct Ev<'a> {
 }
 
 impl<'a> Ev<'a> {
-    /// The outermost chain: the host answers `show`, given its payload.
     pub fn host(show: impl Fn(Payload) + 'a) -> Ev<'a> {
         Ev::empty().push(Rc::new(Host(show)))
     }
 
-    /// A chain with no handler, in which nothing is answered.
     pub fn empty() -> Ev<'a> {
         Ev { top: None }
     }
@@ -65,7 +62,6 @@ impl<'a> Ev<'a> {
         }
     }
 
-    /// Whether a handler in the chain has arms for `op`.
     pub fn answers(&self, op: OpId) -> bool {
         let mut chain = self;
         while let Some(node) = &chain.top {

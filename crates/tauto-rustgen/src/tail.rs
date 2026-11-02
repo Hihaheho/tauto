@@ -11,7 +11,6 @@ use crate::expr::Fx;
 use crate::expr::lid;
 use crate::tok::{Rs, id};
 
-/// The label of the loop around a body with a self tail call.
 pub(crate) fn label() -> Rs {
     quote!('tauto_tail)
 }

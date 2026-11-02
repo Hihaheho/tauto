@@ -3,9 +3,10 @@
 // output is checked against them.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "bytes.taut"
+import "par.taut"
 import std::Text
-
-// ---------------------------------------------------------------- names
+import std::prelude::Affine
 
 pub fn cn_has(names: List(Text), n: Text): Bool {
   match names {
@@ -109,9 +110,6 @@ pub fn cn_variables(prods: List(PProd)): List(Text) {
   out
 }
 
-// ---------------------------------------------------------------- options
-
-// Whether a name ends in `Opt` and digits.
 pub fn cn_ends_opt(t: Text): Bool {
   let r#from := cn_digits_from(t)
   r#from >= 3 && lk_slice(t, r#from - 3, r#from) == "Opt"
@@ -228,7 +226,6 @@ pub fn cn_extract_options(prods: List(PProd)): List(PProd) {
   cur
 }
 
-// The reverse of `rev`, then `tail`.
 pub fn cn_rev_prods_onto(rev: List(PProd), tail: List(PProd)): List(PProd) {
   var out := tail
   var rest := rev
@@ -246,8 +243,6 @@ pub fn cn_rev_prods_onto(rev: List(PProd), tail: List(PProd)): List(PProd) {
   }
   out
 }
-
-// ---------------------------------------------------------------- the rest
 
 pub fn cn_is_repeat(f: PFactor): Bool {
   match f {
@@ -328,7 +323,6 @@ pub fn cn_nth_alt(alts: List(PAlt), i: u64): PAlt {
   }
 }
 
-// `prods` with the one at `i` replaced by `by`.
 pub fn cn_splice(prods: List(PProd), i: u64, r#by: List(PProd)): List(PProd) {
   match prods {
     Nil => Nil
@@ -363,7 +357,6 @@ pub fn cn_nth_factor(fs: List(PFactor), i: u64): PFactor {
   }
 }
 
-// The factors with the one at `i` replaced by `by`.
 pub fn cn_replace_factor(fs: List(PFactor), i: u64, r#by: List(PFactor)): List(PFactor) {
   match fs {
     Nil => Nil
@@ -395,7 +388,6 @@ pub fn pf_reverse_onto(rev: List(PFactor), tail: List(PFactor)): List(PFactor) {
   out
 }
 
-// The alternatives with the one at `i` replaced.
 pub fn cn_replace_alt(alts: List(PAlt), i: u64, r#by: PAlt): List(PAlt) {
   match alts {
     Nil => Nil
@@ -420,7 +412,6 @@ pub fn cn_count_alts(alts: List(PAlt)): u64 {
   }
 }
 
-// One production for each alternative.
 pub fn cn_separate(prods: List(PProd)): List(PProd) {
   var out: List(PProd) := Nil
   var rest := prods
@@ -510,7 +501,6 @@ pub fn cn_eliminate_options(prods: List(PProd)): List(PProd) {
   }
 }
 
-// The groups taken out, one at a time until none is left.
 pub fn cn_eliminate_groups(prods: List(PProd)): List(PProd) {
   var cur := prods
   var running := true
@@ -564,7 +554,6 @@ pub fn cn_eliminate_groups(prods: List(PProd)): List(PProd) {
 }
 
 pub fn cn_prods_eq(a: List(PProd), b: List(PProd)): Bool {
-  // Productions are compared by their printed form.
   cn_show(a) == cn_show(b)
 }
 

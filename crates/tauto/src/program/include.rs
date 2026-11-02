@@ -23,7 +23,6 @@ use tauto_parol::Span;
 use super::{Source, canonical_path};
 use crate::surface::{Stmt, SurfaceTerm, TermKind, walk};
 
-/// The name of the call.
 pub const NAME: &str = tauto_macro::macros::expand::INCLUDE_TEXT;
 
 /// What the reader of one file read for its `include_text!` calls.

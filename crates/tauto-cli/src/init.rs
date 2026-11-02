@@ -111,9 +111,7 @@ fn initialize(path: &Path) -> Result<PathBuf, String> {
             Err(e) => return Err(format!("{}: {e}", file.display())),
         }
     }
-    let manifest = format!(
-        "package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}}\n"
-    );
+    let manifest = format!("package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n}}\n");
     let mut made_dirs = Vec::new();
     let mut made_files = Vec::new();
     let result = (|| -> std::io::Result<()> {

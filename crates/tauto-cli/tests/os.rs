@@ -78,7 +78,9 @@ fn the_cli_prints_and_exits() {
     let d = temp("cli");
     fs::write(
         d.join("main.nib"),
-        r#"print("out")
+        r#"import std::prelude::Os
+
+print("out")
 eprint("err")
 perform exit(3)"#,
     )
@@ -97,7 +99,9 @@ fn a_backend_flag_after_the_separator_goes_to_the_program() {
     let d = temp("cli-backend-arg");
     fs::write(
         d.join("main.nib"),
-        r#"print("out")
+        r#"import std::prelude::Os
+
+print("out")
 eprint("err")
 perform exit(3)"#,
     )
@@ -164,7 +168,9 @@ fn the_cli_takes_permission_flags() {
     fs::write(
         d.join("main.nib"),
         format!(
-            r#"match read_file("{}") {{
+            r#"import std::prelude::Os
+
+match read_file("{}") {{
   Ok(t) => print(t)
   Err(e) => eprint(e)
 }}"#,
@@ -205,7 +211,11 @@ fn a_shutdown_from_another_task_wakes_a_read_in_the_rust_backend() {
     fs::create_dir_all(&d).unwrap();
     fs::write(
         d.join("main.taut"),
-        r#"fn read_woken(s: TcpStream): Result(Bytes, IoError) ! {∀ T. spawn(T), sleep, tcp_read, tcp_shutdown, wait} {
+        r#"import std::prelude::Os
+import std::prelude::Par
+import std::prelude::Shared
+
+fn read_woken(s: TcpStream): Result(Bytes, IoError) ! {∀ T. spawn(T), sleep, tcp_read, tcp_shutdown, wait} {
   let forever: Option(i64) := None
   let t := perform spawn(() => perform tcp_read(s, 8, forever))
   perform sleep(50)
@@ -272,7 +282,7 @@ fn a_large_file_is_read_as_bytes() {
     let main = d.join("main.taut");
     fs::write(
         &main,
-        "match perform fs_read_bytes(\"big.bin\") {\n  Ok(b) => print(Text.of_u64(Bytes.len(b)))\n  Err(e) => print(io_message(e))\n}\n",
+        "import std::prelude::Os\nimport std::prelude::Shared\n\nmatch perform fs_read_bytes(\"big.bin\") {\n  Ok(b) => print(Text::of_u64(Bytes::len(b)))\n  Err(e) => print(io_message(e))\n}\n",
     )
     .unwrap();
     for backend in [
@@ -314,9 +324,12 @@ fn net_addr_connects_to_the_address_it_names() {
         String::from_utf8_lossy(&seen).to_ascii_lowercase()
     });
     let src = format!(
-        r#"let r := Request {{ method: "GET", url: "http://pinned.invalid:{port}/", headers: Nil, body: Bytes::of_list(Nil) }}
+        r#"import std::prelude::Os
+import std::prelude::Shared
+
+let r := Request {{ method: "GET", url: "http://pinned.invalid:{port}/", headers: Nil, body: Bytes::of_list(Nil) }}
 match perform net_addr(r, "127.0.0.1") {{
-  Ok(response) => perform show("body", Text.of_bytes(response.body))
+  Ok(response) => perform show("body", Text::of_bytes(response.body))
   Err(e) => perform show("body", io_message(e))
 }}
 "#
@@ -344,7 +357,11 @@ fn tls_pem(name: &str) -> Vec<u8> {
 }
 
 fn tls_client_source(port: u16, roots: &str, name: &str) -> String {
-    r#"fn talk(address: Text, client: TlsClient): Result(Pair(Bytes, Option(Text)), IoError) ! {tcp_connect, tls_connect, tls_read, tls_write, tls_close} {
+    r#"import std::prelude::Os
+import std::prelude::Secret
+import std::prelude::Shared
+
+fn talk(address: Text, client: TlsClient): Result(Pair(Bytes, Option(Text)), IoError) ! {tcp_connect, tls_connect, tls_read, tls_write, tls_close} {
   let forever: Option(i64) := None
   match perform tcp_connect(address, forever) {
     Ok(s) => match perform tls_connect(s, client, forever) {
@@ -461,7 +478,11 @@ fn a_program_answers_a_tls_client() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap().port()
     };
-    let source = r#"fn serve(l: TcpListener, server: TlsServer): Result(Pair(Bytes, Option(Text)), IoError) ! {tcp_accept, tls_accept, tls_read, tls_write, tls_shutdown, tls_close} {
+    let source = r#"import std::prelude::Os
+import std::prelude::Secret
+import std::prelude::Shared
+
+fn serve(l: TcpListener, server: TlsServer): Result(Pair(Bytes, Option(Text)), IoError) ! {tcp_accept, tls_accept, tls_read, tls_write, tls_shutdown, tls_close} {
   let forever: Option(i64) := None
   match perform tcp_accept(l, forever) {
     Ok(s) => match perform tls_accept(s, server, forever) {

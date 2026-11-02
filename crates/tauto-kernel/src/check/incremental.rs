@@ -19,7 +19,6 @@ pub struct Checker {
     kernel: Kernel,
 }
 
-/// What declaring one statement said and left behind.
 pub struct Declared {
     /// The verdicts, with spans as the kernel made them (offsets into the
     /// whole program): `tauto::check::localize_entries` turns them into
@@ -55,7 +54,6 @@ impl Checker {
         self.kernel.library()
     }
 
-    /// Declares one statement.
     pub fn declare(&mut self, stmt: &Stmt) -> Declared {
         let before = Names::of(&self.kernel);
         let program = Program {

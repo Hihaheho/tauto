@@ -7,7 +7,6 @@
 
 use std::task::{Context, Waker};
 
-/// What a flag holds: whether it is raised, and who to wake when it is.
 #[derive(Default)]
 struct State {
     raised: bool,
@@ -23,7 +22,6 @@ impl State {
         self.raised
     }
 
-    /// Raises the flag; the wakers to wake.
     fn raise(&mut self) -> Vec<Waker> {
         self.raised = true;
         std::mem::take(&mut self.wakers)
@@ -128,7 +126,6 @@ mod flag {
 pub use flag::Signal;
 
 impl Signal {
-    /// A flag already raised.
     pub fn raised() -> Signal {
         let s = Signal::new();
         s.raise();

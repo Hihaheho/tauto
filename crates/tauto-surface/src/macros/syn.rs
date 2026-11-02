@@ -37,12 +37,10 @@ fn pt(ctor: &str, fields: Vec<Node>) -> Node {
     Node::ctor(&format!("SynPattern::{ctor}"), fields)
 }
 
-/// `#(n, t)` of a parameter.
 fn param(name: Node, ty: Node) -> Node {
-    Node::product(vec![(None, "SynIdent", name), (None, "SynExpr", ty)])
+    Node::product(vec![(None, "SynExpr", ty), (None, "SynIdent", name)])
 }
 
-/// The two members of a product, found by their types.
 fn members<'n>(p: &'n Node, a: &str, b: &str) -> Result<(&'n Node, &'n Node), String> {
     match (p.member(None, a), p.member(None, b)) {
         (Some(x), Some(y)) => Ok((x, y)),
@@ -122,7 +120,6 @@ pub struct Lift<'a> {
     pub reflip: Option<u64>,
 }
 
-/// The spans a [`Lift`] gave out.
 #[derive(Default)]
 pub struct SpanTable {
     seen: std::collections::HashMap<u32, u32>,
@@ -264,7 +261,6 @@ impl Lift<'_> {
                 )))
             }
             TermKind::Nat(s) => ex("ExNat", vec![Node::text(s), span]),
-            // `SynExpr` has no constructor for a `Float` literal yet.
             TermKind::Float(s) => {
                 return Err(msg!("surface-quote-float", literal = s).to_string());
             }
@@ -440,8 +436,8 @@ impl Lift<'_> {
                 let mut fs = Vec::new();
                 for (n, v) in fields {
                     fs.push(Node::product(vec![
-                        (None, "Text", self.ident_text(n)),
                         (None, "SynExpr", self.expr(v)?),
+                        (None, "Text", self.ident_text(n)),
                     ]));
                 }
                 ex("ExRecord", vec![self.ident(name, t.span), list(fs), span])
@@ -787,8 +783,8 @@ impl Lift<'_> {
                 let mut a = Vec::new();
                 for (n, x) in fields {
                     a.push(Node::product(vec![
-                        (None, "Text", Node::text(n)),
                         (None, "SynPattern", self.pattern(x, span)?),
+                        (None, "Text", Node::text(n)),
                     ]));
                 }
                 pt("PtRecord", vec![self.ident(name, span), list(a)])
@@ -876,15 +872,11 @@ impl Lift<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Lowering
-
 /// Writes the values of a macro's output as the surface syntax. Every node
 /// gets a span of its own (`origin.rs`), and a name the scopes of the
 /// expansion `scope` flipped (`docs/design/macro.md`「衛生（スコープ集合）」, 5).
 pub struct Lower<'a> {
     pub scope: u64,
-    /// Makes the span of a node, given the position it was written at.
     pub fresh: &'a mut dyn FnMut(u32) -> Span,
     /// The names made with `syn_ident_like`, for the trace.
     pub captures: Vec<String>,
@@ -1624,7 +1616,6 @@ impl Lower<'_> {
     }
 }
 
-/// Whether a marked name carries scopes.
 pub fn is_marked(name: &str) -> bool {
     !scope::split(name).1.is_empty()
 }

@@ -50,7 +50,6 @@ pub fn resolve_in_prelude_against<'a>(
     (stmts, errors)
 }
 
-/// The full names of the functions of the prelude's modules.
 fn prelude_fns() -> &'static [String] {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
@@ -131,16 +130,39 @@ pub fn flatten_files<'a>(
     files: &mut [Vec<Stmt>],
     known: impl IntoIterator<Item = &'a str>,
     ctors: &HashSet<String>,
+    imports: Option<&[Vec<usize>]>,
 ) -> Vec<(String, Span)> {
-    let mut all: Vec<String> = known.into_iter().map(str::to_string).collect();
-    for f in files.iter() {
-        all.extend(declared(f));
-        all.extend(declared_flat(f));
-    }
+    let base: Vec<String> = known.into_iter().map(str::to_string).collect();
+    let by_file: Vec<Vec<String>> = files
+        .iter()
+        .map(|f| {
+            let mut names = declared(f);
+            names.extend(declared_flat(f));
+            names
+        })
+        .collect();
     let mut errors = Vec::new();
-    for f in files.iter_mut() {
+    for (i, f) in files.iter_mut().enumerate() {
+        // A file knows the modules of the prelude, of itself and of the files
+        // it imports directly; the other files of the program do not change
+        // what its names mean.
         let mut r = Resolver::default();
-        r.know(all.iter().map(|k| k.as_str()));
+        r.know(base.iter().map(|k| k.as_str()));
+        match imports {
+            Some(imports) => {
+                r.know(by_file[i].iter().map(|k| k.as_str()));
+                for &j in &imports[i] {
+                    if j != i {
+                        r.know(by_file[j].iter().map(|k| k.as_str()));
+                    }
+                }
+            }
+            None => {
+                for names in &by_file {
+                    r.know(names.iter().map(|k| k.as_str()));
+                }
+            }
+        }
         r.program_ctors = ctors.clone();
         let (stmts, mut e) = flatten_with(std::mem::take(f), r);
         *f = stmts;
@@ -181,11 +203,8 @@ fn has_module(stmts: &[Stmt]) -> bool {
 
 #[derive(Default)]
 struct Resolver {
-    /// Every module, by its full path (`A::B`).
     modules: HashSet<String>,
-    /// Every function in a module, by its full name (`A::B::f`).
     fns: HashSet<String>,
-    /// Every type in a module, by its full name (`A::T`).
     types: HashSet<String>,
     /// The constructors of the types in a module, by the module and the short
     /// name (`A::C`), each with its full name (`A::T::C`); a short name two types
@@ -198,7 +217,6 @@ struct Resolver {
     /// The constructors of the program: a pattern that writes one alone
     /// matches it and binds nothing (the names are not qualified yet).
     program_ctors: HashSet<String>,
-    /// Names bound in the current lexical scope, newest last.
     locals: RefCell<Vec<String>>,
 }
 
@@ -234,7 +252,6 @@ fn join(path: &[String], name: &str) -> String {
 }
 
 impl Resolver {
-    /// Takes the full names `known` (`M::f`) as declared elsewhere.
     fn know<'a>(&mut self, known: impl IntoIterator<Item = &'a str>) {
         for name in known {
             let mut at = 0;
@@ -253,9 +270,16 @@ impl Resolver {
             match s {
                 Stmt::Module { name, items, span } => {
                     let full = join(path, name);
-                    if self.classes.contains(&full) {
+                    if self.classes.contains(&full)
+                        || (!path.is_empty() && self.classes.contains(name))
+                    {
                         self.errors.borrow_mut().push((
-                            msg!("surface-module-collides-with-class", name = &full).to_string(),
+                            msg!(
+                                "surface-module-collides-with-class",
+                                module = &full,
+                                name = name
+                            )
+                            .to_string(),
                             *span,
                         ));
                     }
@@ -305,7 +329,6 @@ impl Resolver {
         }
     }
 
-    /// Takes the type `name` of the module `path`, with its constructors `ctors`.
     fn type_in(&mut self, path: &[String], name: &str, ctors: &[&str]) {
         let full = join(path, name);
         self.fns.insert(full.clone());
@@ -392,22 +415,43 @@ impl Resolver {
         }
     }
 
-    /// The full name of `name` written in the module `path`: the innermost
-    /// module that has it, then the outer ones, then the top level.
-    fn name(&self, name: &str, path: &[String]) -> String {
+    /// The full name of `name` written in the module `path`. A name that
+    /// the module (or an inner one) and an outer module both declare is
+    /// ambiguous (the outer one is written with its module path, `A::f`);
+    /// `span`, when given, is where that is reported. A name of the top level
+    /// of the file has no such path, so the module's own declaration is
+    /// the one meant.
+    fn name_at(&self, name: &str, path: &[String], span: Option<Span>) -> String {
         if self.locals.borrow().iter().any(|bound| bound == name) {
             return name.to_string();
         }
+        let mut found: Vec<String> = Vec::new();
         for n in (1..=path.len()).rev() {
             let full = join(&path[..n], name);
             if self.fns.contains(&full) {
-                return full;
-            }
-            if let Some(Some(ctor)) = self.ctors.get(&full) {
-                return ctor.clone();
+                found.push(full);
+            } else if let Some(Some(ctor)) = self.ctors.get(&full) {
+                found.push(ctor.clone());
             }
         }
-        name.to_string()
+        if found.len() > 1
+            && let Some(span) = span
+        {
+            self.errors.borrow_mut().push((
+                msg!(
+                    "surface-name-shadowed",
+                    name = name,
+                    names = found.join(", ")
+                )
+                .to_string(),
+                span,
+            ));
+        }
+        found.into_iter().next().unwrap_or_else(|| name.to_string())
+    }
+
+    fn name(&self, name: &str, path: &[String]) -> String {
+        self.name_at(name, path, None)
     }
 
     /// The full name of a name written with dots (`M::T::C`, `T::C` inside
@@ -416,7 +460,7 @@ impl Resolver {
         if self.locals.borrow().iter().any(|bound| bound == parts[0]) {
             return None;
         }
-        let first = match self.module(parts[0], path) {
+        let first = match self.module_of_path(parts[0], path) {
             Some(m) => m,
             None => {
                 let t = self.name(parts[0], path);
@@ -480,7 +524,6 @@ impl Resolver {
         }
     }
 
-    /// The full path of the module `m` written in `path`.
     fn module(&self, m: &str, path: &[String]) -> Option<String> {
         for n in (0..=path.len()).rev() {
             let full = join(&path[..n], m);
@@ -491,7 +534,25 @@ impl Resolver {
         None
     }
 
-    /// `A::B` written as a chain of fields over a name.
+    /// The module a qualified name `m::…` starts with, written in the module
+    /// `path`: the nearest module `m` of the modules `path` is in, or a top-level
+    /// one. A module is not named by its own name from inside it (`b` inside
+    /// `a::b` is not `a::b`), so a full name that starts with the name of an
+    /// enclosing module (`app::src::app::T` inside `app::src::app`) is read
+    /// from the top level, as written.
+    fn module_of_path(&self, m: &str, path: &[String]) -> Option<String> {
+        for n in (0..=path.len()).rev() {
+            if n > 0 && path.get(n).is_some_and(|p| p == m) {
+                continue;
+            }
+            let full = join(&path[..n], m);
+            if self.modules.contains(&full) {
+                return Some(full);
+            }
+        }
+        None
+    }
+
     fn dotted(t: &SurfaceTerm) -> Option<Vec<&str>> {
         match &*t.kind {
             TermKind::Var(n) => Some(vec![n.as_str()]),
@@ -661,14 +722,19 @@ impl Resolver {
             && let Some(full) = self.dotted_name(&parts, path)
         {
             self.errors.borrow_mut().push((
-                msg!("surface-dot-names-a-declaration", name = parts.join(SEPARATOR)).to_string(),
+                msg!(
+                    "surface-dot-names-a-declaration",
+                    name = parts.join(SEPARATOR)
+                )
+                .to_string(),
                 t.span,
             ));
             t.kind = Arc::new(TermKind::Var(full));
             return;
         }
+        let span = t.span;
         match Arc::make_mut(&mut t.kind) {
-            TermKind::Var(n) => *n = self.name(n, path),
+            TermKind::Var(n) => *n = self.name_at(n, path, Some(span)),
             TermKind::App {
                 function,
                 arguments,
@@ -858,15 +924,19 @@ mod tests {
     #[test]
     fn local_initializers_and_following_uses_have_different_scopes() {
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
+            names(
+                r#"module M { fn f(): i64 { 1 }
 fn g(): i64 { let f := f()
-f } }"#),
+f } }"#
+            ),
             ["M::f", "f"]
         );
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
+            names(
+                r#"module M { fn f(): i64 { 1 }
 fn g(): i64 { var f := f()
-f } }"#),
+f } }"#
+            ),
             ["M::f", "f"]
         );
     }
@@ -874,16 +944,20 @@ f } }"#),
     #[test]
     fn lambda_and_block_bindings_do_not_escape() {
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
+            names(
+                r#"module M { fn f(): i64 { 1 }
 fn g(): i64 { let callback := (f) => f()
-f() } }"#),
+f() } }"#
+            ),
             ["f", "M::f"]
         );
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
+            names(
+                r#"module M { fn f(): i64 { 1 }
 fn g(): i64 { { let f := 2
 f }
-f() } }"#),
+f() } }"#
+            ),
             ["f", "M::f"]
         );
     }
@@ -891,9 +965,11 @@ f() } }"#),
     #[test]
     fn match_patterns_bind_guards_and_bodies_only_in_their_arm() {
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
+            names(
+                r#"module M { fn f(): i64 { 1 }
 fn g(): i64 { match Some(2) { Some(f) if f == 2 => f
-None => f() } } }"#),
+None => f() } } }"#
+            ),
             ["Some", "==", "f", "f", "M::f"]
         );
     }
@@ -901,22 +977,28 @@ None => f() } } }"#),
     #[test]
     fn handler_patterns_and_continuations_are_local() {
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
-fn g(): i64 { handle { 2 } with { return f => f } } }"#),
+            names(
+                r#"module M { fn f(): i64 { 1 }
+fn g(): i64 { handle { 2 } with { return f => f } } }"#
+            ),
             ["f"]
         );
         assert_eq!(
-            names(r#"module M { fn f(): i64 { 1 }
-fn g(): i64 { handle { perform ask() } with { ask(), f => f(42) } } }"#),
+            names(
+                r#"module M { fn f(): i64 { 1 }
+fn g(): i64 { handle { perform ask() } with { ask(), f => f(42) } } }"#
+            ),
             ["f"]
         );
     }
 
     #[test]
     fn arguments_do_not_hide_names_in_the_next_function() {
-        let program = parse_program_as_written(r#"module M { fn f(): i64 { 1 }
+        let program = parse_program_as_written(
+            r#"module M { fn f(): i64 { 1 }
 fn g(f: i64): i64 { f }
-fn h(): i64 { f() } }"#)
+fn h(): i64 { f() } }"#,
+        )
         .unwrap();
         assert!(program.errors.is_empty());
         let Stmt::Fn(g) = &program.stmts[1] else {

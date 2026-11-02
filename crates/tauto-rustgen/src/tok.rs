@@ -20,7 +20,6 @@ pub(crate) const KEYWORDS: &[&str] = &[
     "virtual", "where", "while", "yield",
 ];
 
-/// The keywords a raw identifier cannot spell.
 const NOT_RAW: &[&str] = &["self", "Self", "super", "crate", ""];
 
 /// A name as a Rust identifier; a full name `m.T` is written `m__T`, and
@@ -51,7 +50,6 @@ pub(crate) fn id(s: &str) -> Ident {
     Ident::new(s, Span::call_site())
 }
 
-/// Each name as a token.
 pub(crate) fn idents(names: &[String]) -> Vec<Rs> {
     names
         .iter()
@@ -76,7 +74,6 @@ pub(crate) fn lexes(s: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// A lifetime or a label: `'r`, `'h1`.
 pub(crate) fn lifetime(name: &str) -> Rs {
     raw(name)
 }
@@ -85,12 +82,10 @@ pub(crate) fn lit(s: &str) -> Literal {
     Literal::string(s)
 }
 
-/// A number with no suffix: ids, lines, indexes.
 pub(crate) fn num(n: u64) -> Literal {
     Literal::u64_unsuffixed(n)
 }
 
-/// An integer literal with its type: `5_i64`.
 pub(crate) fn int_lit(n: impl std::fmt::Display, ty: &str) -> Rs {
     raw(&format!("{n}_{ty}"))
 }
@@ -142,8 +137,6 @@ pub(crate) fn tuple(items: &[Rs]) -> Rs {
     }
 }
 
-// ---- looking into tokens ---------------------------------------------------
-
 /// Whether the tokens are one name, or one number that has the shape of a
 /// name: the code that needs no temporary to be named twice.
 pub(crate) fn is_simple(ts: &Rs) -> bool {
@@ -168,7 +161,6 @@ pub(crate) fn is_unit(ts: &Rs) -> bool {
     }
 }
 
-/// Whether the tokens start with `&mut`.
 pub(crate) fn starts_with_mut(ts: &Rs) -> bool {
     let toks: Vec<TokenTree> = ts.clone().into_iter().take(2).collect();
     matches!(toks.as_slice(), [TokenTree::Punct(a), TokenTree::Ident(m)] if a.as_char() == '&' && m == "mut")
@@ -186,7 +178,6 @@ pub(crate) fn is_mut_borrow(ts: &Rs) -> bool {
     }
 }
 
-/// Whether the tokens hold a call, a field access or a block anywhere.
 pub(crate) fn has_call_or_block(ts: &Rs) -> bool {
     ts.clone().into_iter().any(|t| match t {
         TokenTree::Punct(p) => p.as_char() == '.',
@@ -199,7 +190,6 @@ pub(crate) fn has_call_or_block(ts: &Rs) -> bool {
     })
 }
 
-/// The names among `names` that the tokens mention.
 pub(crate) fn mentioned(names: &[Ident], ts: &Rs) -> Vec<Ident> {
     fn collect(ts: &Rs, out: &mut std::collections::HashSet<String>) {
         for t in ts.clone() {
@@ -222,8 +212,6 @@ pub(crate) fn mentioned(names: &[Ident], ts: &Rs) -> Vec<Ident> {
     }
     out
 }
-
-// ---- printing ----------------------------------------------------------------
 
 /// Maximum output size passed to `rustfmt`, to limit formatting cost.
 const FORMAT_LIMIT: usize = 400_000;
@@ -349,7 +337,7 @@ mod tests {
     #[test]
     fn rustfmt_lays_the_text_out() {
         let Some(text) = rustfmt(&items().to_string(), "rustfmt".as_ref()) else {
-            return; // no rustfmt here
+            return;
         };
         assert!(
             text.contains("pub fn f(x: i32) -> i32 {\n    x + 1\n}"),

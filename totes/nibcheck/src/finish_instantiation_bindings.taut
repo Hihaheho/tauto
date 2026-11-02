@@ -1,15 +1,31 @@
 import "final_instantiation_bindings.taut"
 import "finish_literal_sound.taut"
+import std::Base
+import std::Map
+import std::Row
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "diagnostic_report.taut"
+import "finish_acceptance.taut"
+import "finish_frame.taut"
+import "instantiation_requirement_frame.taut"
+import "instantiation_requirements.taut"
+import "rules_kind_bindings.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 pub fn finish_requirements_view(
   c: Checker
 ): Pair(List(TyBound), List(TyCtorBound)) { Pair {fst: c.bounds, snd: c.ctor_bounds} }
 pub fn finish_requirement_bounds(
   r#view: Pair(List(TyBound), List(TyCtorBound))
-): List(TyBound) { (r#view: List(TyBound)) }
+): List(TyBound) { r#view.fst }
 pub fn finish_requirement_ctors(
   r#view: Pair(List(TyBound), List(TyCtorBound))
-): List(TyCtorBound) { (r#view: List(TyCtorBound)) }
+): List(TyCtorBound) { r#view.snd }
 pub def LiteralRecordsFrame_requirements<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
@@ -101,14 +117,14 @@ pub theorem literal_after_defaults_records_requirements(
   c: Checker,
   widths: Ordmap(TermAt, Width),
   clean: DiagnosticReportClean(finish_after_defaults(c, widths))
-): LiteralRecordsFrame_requirements(c, finish_after_defaults(c, Widths)) {
+): LiteralRecordsFrame_requirements(c, finish_after_defaults(c, widths)) {
   Eq::congr(
     Mut1(TypeReport, Checker),
     Pair(List(TyBound), List(TyCtorBound)),
-    finish_after_defaults(c, Widths),
-    mut1(finish_report(c, Widths), c),
+    finish_after_defaults(c, widths),
+    mut1(finish_report(c, widths), c),
     (m: Mut1(TypeReport, Checker)) => finish_requirements_view(ck_st(m)),
-    And::right(finish_after_defaults_accepts(c, Widths, clean))
+    And::right(finish_after_defaults_accepts(c, widths, clean))
   )
 }
 pub theorem literal_finish_default_records_requirements(
@@ -128,27 +144,6 @@ pub theorem literal_finish_default_records_requirements(
     )
   }
 }
-pub theorem literal_finish_products_records_requirements(
-  c: Checker,
-  m: Mut1(Unit, Checker),
-  first: LiteralRecordsFrame_requirements(c, m),
-  clean: DiagnosticReportClean(diagnostic_finish_products_result(m))
-): LiteralRecordsFrame_requirements(c, diagnostic_finish_products_result(m)) {
-  match m: LiteralRecordsFrame_requirements(c, diagnostic_finish_products_result(m)) {
-    mut1(value, next) => literal_finish_default_records_requirements(
-      c,
-      ck_check_products(List::reverse(finish_product_checks(next)), next),
-      Eq::trans(
-        Eq::congr(
-          keep_requirements,
-          ck_check_products_keep(List::reverse(finish_product_checks(next)), next)
-        ),
-        first
-      ),
-      clean
-    )
-  }
-}
 pub theorem ck_finish_literal_records_requirements(
   c: Checker,
   clean: DiagnosticReportClean(ck_finish(c))
@@ -156,7 +151,7 @@ pub theorem ck_finish_literal_records_requirements(
   Eq::subst(
     (m: Mut1(TypeReport, Checker)) => LiteralRecordsFrame_requirements(c, m),
     Eq::sym(diagnostic_finish_default_unf(c)),
-    literal_finish_products_records_requirements(
+    literal_finish_default_records_requirements(
       c,
       ck_default_ints(Ordmap::entries(finish_ints(c)), c),
       ck_default_ints_records_requirements(Ordmap::entries(finish_ints(c)), c),

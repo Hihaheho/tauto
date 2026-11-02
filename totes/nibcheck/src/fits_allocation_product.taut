@@ -1,0 +1,344 @@
+import std::Base
+import std::Nat
+import "allocation_advance.taut"
+import "allocation_state.taut"
+import "checker.taut"
+import "fits_sound.taut"
+import "rules_ty.taut"
+import "ty.taut"
+import "type_allocation.taut"
+import "unify_allocation_sound.taut"
+import "unify_sound.taut"
+
+// `ck_fits` allocates no variable where a product is fitted by the types of its members, and
+// what is run with products kept (`ck_off`) allocates what it allocates.
+
+pub theorem allocation_advance_off(
+  c: Checker,
+  m: Mut1(Bool, Checker),
+  h: AllocationAdvance(ck_off(c), m)
+): AllocationAdvance(c, m) {
+  allocation_advance_start(c, ck_off(c), m, Nat::le_refl(ck_next_of(c)), h)
+}
+
+pub theorem allocated_in(
+  limit: Nat,
+  xs: List(Ty),
+  z: Ty,
+  h: TyIn(xs, z),
+  hs: TypeListAllocated(limit, xs)
+): TypeAllocated(limit, z) {
+  match h: TypeAllocated(limit, z) {
+    InHere(t, rest) => And::left(hs)
+    InThere(ts, t, u, h1) => allocated_in(limit, ts, t, h1, And::right(hs))
+  }
+}
+
+pub fn PairsAllocated(limit: Nat, pairs: List(Pair(Ty, Ty))): Prop {
+  match pairs: Prop {
+    Nil => True
+    Cons(p, rest) => And(
+      And(TypeAllocated(limit, p.fst), TypeAllocated(limit, p.snd)),
+      PairsAllocated(limit, rest)
+    )
+  }
+}
+
+pub theorem pairs_allocated_weaken(
+  pairs: List(Pair(Ty, Ty)),
+  before: Nat,
+  after: Nat,
+  advanced: Nat::le(before, after) = true,
+  h: PairsAllocated(before, pairs)
+): PairsAllocated(after, pairs) {
+  match pairs: PairsAllocated(after, pairs) {
+    Nil => Trivial
+    Cons(p, rest) => AndIntro(
+      AndIntro(
+        type_allocated_weaken(p.fst, before, after, advanced, And::left(And::left(h))),
+        type_allocated_weaken(p.snd, before, after, advanced, And::right(And::left(h)))
+      ),
+      pairs_allocated_weaken(rest, before, after, advanced, And::right(h))
+    )
+  }
+}
+
+pub theorem pairs_allocated(
+  limit: Nat,
+  xs: List(Ty),
+  ys: List(Ty),
+  found: List(Pair(Ty, Ty)),
+  hf: FoundIn(xs, ys, found),
+  hx: TypeListAllocated(limit, xs),
+  hy: TypeListAllocated(limit, ys)
+): PairsAllocated(limit, found) {
+  match hf: PairsAllocated(limit, found) {
+    FoundNil => Trivial
+    FoundCons(y, ys1, p, rest, hin, hsnd, h) => AndIntro(
+      AndIntro(
+        allocated_in(limit, xs, p.fst, hin, hx),
+        Eq::subst((z: Ty) => TypeAllocated(limit, z), Eq::sym(hsnd), And::left(hy))
+      ),
+      pairs_allocated(limit, xs, ys1, rest, h, hx, And::right(hy))
+    )
+  }
+}
+
+pub theorem unify_found_allocation(
+  c: Checker,
+  found: List(Pair(Ty, Ty)),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  bound: PairsAllocated(ck_next_of(c), found)
+): AllocationAdvance(c, ck_unify_found(c, found)) {
+  match found: AllocationAdvance(c, ck_unify_found(c, found)) {
+    Nil => allocation_advance_return(c, true, state)
+    Cons(p, rest) => allocation_advance_and(
+      c,
+      (next: Checker) => ck_unify_found(next, rest),
+      ck_unify(c, p.fst, p.snd),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, p.fst, p.snd),
+        ck_unify_allocation(
+          c,
+          p.fst,
+          p.snd,
+          ordered,
+          state,
+          And::left(And::left(bound)),
+          And::right(And::left(bound))
+        )
+      ),
+      And::left(And::left(ck_unify_ok(c, p.fst, p.snd)(ordered))),
+      (
+        next: Checker,
+        advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true,
+        next_state: CheckerAllocation(next),
+        next_ordered: CkOrdered(next)
+      ) => unify_found_allocation(
+        next,
+        rest,
+        next_ordered,
+        next_state,
+        pairs_allocated_weaken(rest, ck_next_of(c), ck_next_of(next), advanced, And::right(bound))
+      )
+    )
+  }
+}
+
+pub theorem fit_some_allocation(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  f: List(Pair(Ty, Ty)),
+  e: Bool,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  hf: FoundIn(xs, ys, f),
+  hx: TypeListAllocated(ck_next_of(c), xs),
+  hy: TypeListAllocated(ck_next_of(c), ys)
+): AllocationAdvance(c, ck_fit_some(c, f, e)) {
+  match e: AllocationAdvance(c, ck_fit_some(c, f, e)) {
+    true => allocation_advance_return(c, false, state)
+    false => allocation_advance_rewrap(
+      c,
+      ck_unify_found(c, f),
+      unify_found_allocation(
+        c,
+        f,
+        ordered,
+        state,
+        pairs_allocated(ck_next_of(c), xs, ys, f, hf, hx, hy)
+      )
+    )
+  }
+}
+
+pub theorem fit_found_allocation(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  found: Option(List(Pair(Ty, Ty))),
+  spec: PairsSpec(xs, ys, found),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  hx: TypeListAllocated(ck_next_of(c), xs),
+  hy: TypeListAllocated(ck_next_of(c), ys)
+): AllocationAdvance(c, ck_fit_found(c, found)) {
+  match found: AllocationAdvance(c, ck_fit_found(c, found)) {
+    None => allocation_advance_return(c, false, state)
+    Some(f) => fit_some_allocation(
+      c,
+      xs,
+      ys,
+      f,
+      ck_members_repeat(c, ck_pairs_firsts(f)),
+      ordered,
+      state,
+      spec,
+      hx,
+      hy
+    )
+  }
+}
+
+pub theorem fit_c_allocation(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  e1: Bool,
+  e2: Bool,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  hx: TypeListAllocated(ck_next_of(c), xs),
+  hy: TypeListAllocated(ck_next_of(c), ys)
+): AllocationAdvance(c, ck_fit_c(c, xs, ys, e1, e2)) {
+  match e1: AllocationAdvance(c, ck_fit_c(c, xs, ys, e1, e2)) {
+    true => allocation_advance_return(c, false, state)
+    false => match e2: AllocationAdvance(c, ck_fit_c(c, xs, ys, false, e2)) {
+      true => allocation_advance_return(c, false, state)
+      false => allocation_advance_rewrap(
+        c,
+        ck_fit_found(c, ck_members_pairs(c, xs, ys)),
+        fit_found_allocation(
+          c,
+          xs,
+          ys,
+          ck_members_pairs(c, xs, ys),
+          pairs_spec(c, xs, xs, ys, (z: Ty, h: TyIn(xs, z)) => h),
+          ordered,
+          state,
+          hx,
+          hy
+        )
+      )
+    }
+  }
+}
+
+pub theorem fit_by_types_allocation(
+  c: Checker,
+  xs: List(Ty),
+  ys: List(Ty),
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  hx: TypeListAllocated(ck_next_of(c), xs),
+  hy: TypeListAllocated(ck_next_of(c), ys)
+): AllocationAdvance(c, ck_fit_by_types(c, xs, ys)) {
+  fit_c_allocation(
+    c,
+    xs,
+    ys,
+    Bool::or(ck_members_open(c, xs), ck_members_open(c, ys)),
+    Bool::or(ck_members_repeat(c, xs), ck_members_repeat(c, ys)),
+    ordered,
+    state,
+    hx,
+    hy
+  )
+}
+
+pub theorem wanted_allocated(
+  limit: Nat,
+  b: Ty,
+  hb: TypeAllocated(limit, b)
+): TypeListAllocated(limit, ty_wanted_members(b)) {
+  match b: TypeListAllocated(limit, ty_wanted_members(b)) {
+    TyInt(width) => AndIntro(hb, Trivial)
+    TyBool => AndIntro(hb, Trivial)
+    TyText => AndIntro(hb, Trivial)
+    TyUnit => AndIntro(hb, Trivial)
+    TyNever => AndIntro(hb, Trivial)
+    TyDecimal => AndIntro(hb, Trivial)
+    TyFloat => AndIntro(hb, Trivial)
+    TyParam(name, kind) => AndIntro(hb, Trivial)
+    TyVar(index) => AndIntro(hb, Trivial)
+    TyFn(params, result, kind) => AndIntro(hb, Trivial)
+    TyUnion(members) => AndIntro(hb, Trivial)
+    TyProduct(members) => hb
+    TyNamed(name, params) => AndIntro(hb, Trivial)
+    TyTagged(tags, inner) => AndIntro(hb, Trivial)
+    TyInfo(inner) => AndIntro(hb, Trivial)
+    TyBorrow(inner, mutable) => AndIntro(hb, Trivial)
+    TyPoly(gs, inner) => AndIntro(hb, Trivial)
+    TyApp(head, arg) => AndIntro(hb, Trivial)
+  }
+}
+
+pub theorem product_w_allocation(
+  c: Checker,
+  xs: List(Ty),
+  b: Ty,
+  w: Bool,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  hx: TypeListAllocated(ck_next_of(c), xs),
+  hb: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_product_w(c, TyProduct(xs), xs, b, w)) {
+  match w: AllocationAdvance(c, ck_product_w(c, TyProduct(xs), xs, b, w)) {
+    true => allocation_advance_or(
+      c,
+      (next: Checker) => ck_fit_by_types(next, xs, ty_wanted_members(b)),
+      ck_attempt_unify(c, TyProduct(xs), b),
+      allocation_advance_fixed(
+        c,
+        ck_attempt_unify(c, TyProduct(xs), b),
+        ck_attempt_unify_allocation(c, TyProduct(xs), b, ordered, state, hx, hb)
+      ),
+      And::left(And::left(attempt_unify_sub(c, TyProduct(xs), b)(ordered))),
+      (
+        next: Checker,
+        advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true,
+        next_state: CheckerAllocation(next),
+        next_ordered: CkOrdered(next)
+      ) => fit_by_types_allocation(
+        next,
+        xs,
+        ty_wanted_members(b),
+        next_ordered,
+        next_state,
+        type_list_allocated_weaken(xs, ck_next_of(c), ck_next_of(next), advanced, hx),
+        type_list_allocated_weaken(
+          ty_wanted_members(b),
+          ck_next_of(c),
+          ck_next_of(next),
+          advanced,
+          wanted_allocated(ck_next_of(c), b, hb)
+        )
+      )
+    )
+    false => allocation_advance_rewrap(
+      c,
+      ck_unify(c, TyProduct(xs), b),
+      allocation_advance_fixed(
+        c,
+        ck_unify(c, TyProduct(xs), b),
+        ck_unify_allocation(c, TyProduct(xs), b, ordered, state, hx, hb)
+      )
+    )
+  }
+}
+
+pub theorem product_allocation(
+  c: Checker,
+  xs: List(Ty),
+  b: Ty,
+  ordered: CkOrdered(c),
+  state: CheckerAllocation(c),
+  hx: TypeListAllocated(ck_next_of(c), xs),
+  hb: TypeAllocated(ck_next_of(c), b)
+): AllocationAdvance(c, ck_fits_product(c, TyProduct(xs), xs, b)) {
+  product_w_allocation(c, xs, b, ck_widen_of(c), ordered, state, hx, hb)
+}
+
+pub theorem allocation_advance_unwiden_on(
+  c: Checker,
+  w: Bool,
+  m: Mut1(Bool, Checker),
+  h: AllocationAdvance(ck_on(c), m)
+): AllocationAdvance(c, ck_unwiden_k(w, m)) {
+  match m: AllocationAdvance(c, ck_unwiden_k(w, m)) {
+    mut1(v, c2) => h
+  }
+}

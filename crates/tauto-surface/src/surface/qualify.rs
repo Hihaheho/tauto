@@ -47,10 +47,8 @@ use tauto_parol::Span;
 use super::program::{Handler, NOT_A_DECLARATION, Pattern, Stmt, Vis, parse_program_as_written};
 use super::{SurfaceTerm, TermKind};
 
-/// The module of the prelude, in a full name.
 pub const PRELUDE_MODULE: &str = "std::prelude";
 
-/// The separator of a full name.
 pub const SEPARATOR: &str = "::";
 
 /// Effects are named apart from the rest (an effect `test` and a theorem
@@ -79,14 +77,6 @@ fn same_tote(a: &str, b: &str) -> bool {
     a.contains(SEPARATOR) && b.contains(SEPARATOR) && tote(a) == tote(b)
 }
 
-/// Whether an import from the module `a` of the module `b` stays in one
-/// tote: both are files of one tote, or neither is a file of any (the files
-/// of a program read on their own, `a` and `b`).
-fn one_tote(a: &str, b: &str) -> bool {
-    same_tote(a, b) || (!a.contains(SEPARATOR) && !b.contains(SEPARATOR))
-}
-
-/// Whether a module is a file of the standard library.
 fn is_std(module: &str) -> bool {
     module
         .strip_prefix("std")
@@ -216,6 +206,119 @@ pub fn prelude_names() -> &'static HashSet<String> {
     })
 }
 
+/// The files of `std/prelude/` that are not core: a file sees their
+/// declarations only when it imports `std::prelude::<file>`. The kernel's
+/// prelude and the other files of `std/prelude/` (`Std`, `Text`, `Num`: what
+/// literals, tuples, lists and `perform show` produce or need) are core, seen
+/// without an import.
+pub const NONCORE_PRELUDE: &[&str] = &[
+    "Affine", "Classes", "Macro", "Ord", "Os", "Par", "Secret", "Shared",
+];
+
+fn prelude_file_module(file: &str) -> String {
+    format!("{PRELUDE_MODULE}{SEPARATOR}{file}")
+}
+
+/// The names a prelude text declares, and the modules it opens (by their
+/// full names): the top-level declarations (effects marked with `!`), the
+/// functions of modules (`Text::join`), and the modules themselves.
+fn prelude_text_names(text: &str, public_only: bool) -> (HashSet<String>, HashSet<String>) {
+    fn modules_of(s: &Stmt, at: &mut Vec<String>, out: &mut HashSet<String>) {
+        match s {
+            Stmt::Module { name, items, .. } => {
+                at.push(name.clone());
+                out.insert(at.join(SEPARATOR));
+                items.iter().for_each(|i| modules_of(i, at, out));
+                at.pop();
+            }
+            Stmt::Attributed { stmt, .. } => modules_of(stmt, at, out),
+            _ => {}
+        }
+    }
+    let mut decls = HashSet::new();
+    let mut mods = HashSet::new();
+    if let Ok(program) = super::program::parse_program_unresolved_at(text, 0) {
+        for s in &program.stmts {
+            // A declaration without `pub` is the file's own: no file that
+            // imports it sees the name, so it meets no name of theirs.
+            if !(public_only && matches!(s.vis(), Some(super::program::Vis::Private))) {
+                declared(s, &mut |n| {
+                    decls.insert(n.to_string());
+                });
+            }
+            modules_of(s, &mut Vec::new(), &mut mods);
+        }
+        decls.extend(super::modules::declared(&program.stmts));
+    }
+    (decls, mods)
+}
+
+/// The names only a non-core prelude file declares, each with the files
+/// (`Os`, …) that do: what a file sees only by importing
+/// `std::prelude::<file>`. A name the core declares (a type, a function, or a
+/// module such as `Text` whose functions other files add to) is not among
+/// them, but a function a non-core file adds to a core module (`Text::join`)
+/// is.
+pub fn hidden_prelude() -> &'static HashMap<String, Vec<String>> {
+    static HIDDEN: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    HIDDEN.get_or_init(|| {
+        let mut core_decls: HashSet<String> = BUILTIN_TYPES
+            .iter()
+            .chain(LANGUAGE_TYPES)
+            .chain(SORTS)
+            .map(|n| n.to_string())
+            .collect();
+        let mut core_mods: HashSet<String> = HashSet::new();
+        let core_texts = std::iter::once(crate::nibstd::KERNEL)
+            .chain(crate::nibstd::KERNEL_MODULES.iter().copied())
+            .chain(
+                crate::nibstd::PRELUDE_FILES
+                    .iter()
+                    .filter(|(path, _)| !NONCORE_PRELUDE.contains(&prelude_stem(path)))
+                    .map(|(_, text)| *text),
+            );
+        for text in core_texts {
+            let (d, m) = prelude_text_names(text, false);
+            core_decls.extend(d);
+            core_mods.extend(m);
+        }
+        let mut hidden: HashMap<String, Vec<String>> = HashMap::new();
+        let mut mod_names: Vec<(String, String)> = Vec::new();
+        for (path, text) in crate::nibstd::PRELUDE_FILES {
+            let stem = prelude_stem(path);
+            if !NONCORE_PRELUDE.contains(&stem) {
+                continue;
+            }
+            let (d, m) = prelude_text_names(text, true);
+            for n in d {
+                if !core_decls.contains(&n) {
+                    let files = hidden.entry(n).or_default();
+                    if !files.iter().any(|f| f == stem) {
+                        files.push(stem.to_string());
+                    }
+                }
+            }
+            mod_names.extend(m.into_iter().map(|m| (m, stem.to_string())));
+        }
+        // A module no declaration has the name of (`Ct`, `Pending`).
+        for (m, stem) in mod_names {
+            if core_decls.contains(&m) || core_mods.contains(&m) {
+                continue;
+            }
+            let files = hidden.entry(m).or_default();
+            if !files.iter().any(|f| *f == stem) {
+                files.push(stem);
+            }
+        }
+        hidden
+    })
+}
+
+fn prelude_stem(path: &str) -> &str {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.strip_suffix(".taut").unwrap_or(file)
+}
+
 /// The functions of the prelude's modules, by their full names
 /// (`U64::of_nat`, `Nat::lt`): the library prelude's and the kernel's.
 fn prelude_fns() -> &'static Vec<String> {
@@ -235,7 +338,6 @@ fn prelude_fns() -> &'static Vec<String> {
     })
 }
 
-/// The constructors of each type the prelude declares.
 fn prelude_ctors() -> &'static HashMap<String, HashMap<String, String>> {
     static CTORS: OnceLock<HashMap<String, HashMap<String, String>>> = OnceLock::new();
     CTORS.get_or_init(|| {
@@ -255,7 +357,33 @@ fn prelude_ctors() -> &'static HashMap<String, HashMap<String, String>> {
     })
 }
 
-/// Each type a top-level statement declares, with each of its constructors.
+/// The type of each field of the prelude's constructors, by their names.
+fn prelude_fields() -> &'static HashMap<String, Vec<Option<Shape>>> {
+    static FIELDS: OnceLock<HashMap<String, Vec<Option<Shape>>>> = OnceLock::new();
+    FIELDS.get_or_init(|| {
+        let mut out = HashMap::new();
+        // A name constructors of several types have (`Mk`) says no type here.
+        let mut shared = HashSet::new();
+        for text in [crate::nibstd::PRELUDE, crate::nibstd::KERNEL] {
+            if let Ok(program) = parse_program_as_written(text) {
+                for s in &program.stmts {
+                    field_types(
+                        s,
+                        &mut |_, c, tys| {
+                            if out.insert(c.to_string(), tys).is_some() {
+                                shared.insert(c.to_string());
+                            }
+                        },
+                        &|n| n.to_string(),
+                    );
+                }
+            }
+        }
+        out.retain(|c, _| !shared.contains(c));
+        out
+    })
+}
+
 fn ctors_of(s: &Stmt, out: &mut dyn FnMut(&str, &str)) {
     match s {
         Stmt::Struct(d) | Stmt::Enum(d) => {
@@ -277,6 +405,108 @@ fn type_head(t: &SurfaceTerm) -> Option<String> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// A type as far as this pass reads it: a parameter of a family (by its
+/// place) or a named type over its arguments, each known or not.
+#[derive(Debug, Clone)]
+enum Shape {
+    Param(usize),
+    Named(String, Vec<Option<Shape>>),
+}
+
+impl Shape {
+    fn head(&self) -> Option<&str> {
+        match self {
+            Shape::Named(h, _) => Some(h),
+            Shape::Param(_) => None,
+        }
+    }
+
+    /// The type with the family's arguments `args` put for its parameters.
+    fn instantiate(&self, args: &[Option<Shape>]) -> Option<Shape> {
+        match self {
+            Shape::Param(k) => args.get(*k).cloned().flatten(),
+            Shape::Named(h, xs) => Some(Shape::Named(
+                h.clone(),
+                xs.iter()
+                    .map(|x| x.as_ref().and_then(|x| x.instantiate(args)))
+                    .collect(),
+            )),
+        }
+    }
+
+    /// A field's type as written in its family's declaration: a parameter of
+    /// the family is its place in `params`; a name another field binds (a
+    /// dependent field) names no type here. `named` gives a type's name as
+    /// after this pass.
+    fn of_field(
+        t: &SurfaceTerm,
+        params: &[String],
+        bound: &[String],
+        named: &dyn Fn(&str) -> String,
+    ) -> Option<Shape> {
+        let (head, args) = match &*t.kind {
+            TermKind::App {
+                function,
+                arguments,
+            } => (&**function, arguments.as_slice()),
+            _ => (t, &[][..]),
+        };
+        let TermKind::Var(h) = &*head.kind else {
+            return None;
+        };
+        if bound.contains(h) {
+            return None;
+        }
+        if let Some(k) = params.iter().position(|p| p == h) {
+            return args.is_empty().then_some(Shape::Param(k));
+        }
+        Some(Shape::Named(
+            named(h),
+            args.iter()
+                .map(|a| Shape::of_field(a, params, bound, named))
+                .collect(),
+        ))
+    }
+}
+
+/// The type of each explicit field of the constructors `s` declares, by the
+/// constructor's name as written and its family's: `out(family, ctor, fields)`.
+fn field_types(
+    s: &Stmt,
+    out: &mut dyn FnMut(&str, &str, Vec<Option<Shape>>),
+    named: &dyn Fn(&str) -> String,
+) {
+    match s {
+        Stmt::Inductive(d) => {
+            let params: Vec<String> = d.params.iter().map(|(n, _)| n.clone()).collect();
+            for c in &d.constructors {
+                let mut bound: Vec<String> = Vec::new();
+                let mut fields = Vec::new();
+                for (k, (n, t)) in c.params.iter().enumerate() {
+                    if k >= c.implicit {
+                        fields.push(Shape::of_field(t, &params, &bound, named));
+                    }
+                    bound.push(n.clone());
+                }
+                out(&d.name, &c.name, fields);
+            }
+        }
+        Stmt::Struct(d) | Stmt::Enum(d) => {
+            for c in &d.constructors {
+                let fields = c
+                    .fields
+                    .iter()
+                    .map(|(_, t)| Shape::of_field(t, &d.generics, &[], named))
+                    .collect();
+                out(&d.name, &c.name, fields);
+            }
+        }
+        Stmt::Mutual { items, .. } => items.iter().for_each(|i| field_types(i, out, named)),
+        Stmt::Attributed { stmt, .. } => field_types(stmt, out, named),
+        _ => {}
     }
 }
 
@@ -449,6 +679,38 @@ fn declared_or_bound(s: &Stmt, out: &mut dyn FnMut(&str)) {
     }
 }
 
+/// How the file `here` imports the file `target`, both by module: a file of the
+/// standard library as `std::List`; a file of the same tote by its path from
+/// `here`'s directory, quoted (`"Setoid.taut"`, `"../src/Setoid.taut"`); a file
+/// of another tote, the dependency's name and the module path the dependency
+/// gives it: the path from `src` for a file of `src` (`compiler::compiler`)
+/// and the whole path for a file of an additional source
+/// (`compiler::proof::compiler`).
+fn import_spelling(here: &str, target: &str) -> String {
+    let parts = |m: &str| m.split(SEPARATOR).map(str::to_string).collect::<Vec<_>>();
+    let (h, t) = (parts(here), parts(target));
+    if is_std(target) || target.starts_with(PRELUDE_MODULE) {
+        return target.to_string();
+    }
+    if h.len() < 2 || t.len() < 2 || h[0] == t[0] {
+        let dir = &h[..h.len().saturating_sub(1)];
+        let common = dir.iter().zip(&t).take_while(|(a, b)| a == b).count();
+        let common = common.min(t.len() - 1);
+        let ups = dir.len() - common;
+        let path = std::iter::repeat_n("..".to_string(), ups)
+            .chain(t[common..].iter().cloned())
+            .collect::<Vec<_>>()
+            .join("/");
+        return format!("\"{path}.taut\"");
+    }
+    let rest = if t[1] == "src" && t.len() > 2 {
+        &t[2..]
+    } else {
+        &t[1..]
+    };
+    format!("{}{SEPARATOR}{}", t[0], rest.join(SEPARATOR))
+}
+
 /// The module of a file, by the parts of its path relative to the root the
 /// program is read from: each part without the file's extension, joined by
 /// `::`, which cannot be in a name written `_`.
@@ -515,7 +777,8 @@ pub fn files_seeing(
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
 ) -> (Vec<(String, Span)>, Vec<HashMap<String, String>>) {
-    qualify(files, modules, imports, below, false)
+    let (errors, seeing, _) = qualify(files, modules, imports, below, false);
+    (errors, seeing)
 }
 
 /// [`files_seeing`] before the macros are expanded, for the pass that runs
@@ -523,36 +786,43 @@ pub fn files_seeing(
 /// is kept as written. Written short, it would be read again as whatever the
 /// macros declare by that name (a grammar's terminal `Text`), and the full
 /// name is how a file says it means the prelude's whatever it declares.
+/// Also gives the names one import would make seen ([`MissingImport`]).
 pub fn files_before_macros(
     files: &mut [Vec<Stmt>],
     modules: &[String],
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
-) -> (Vec<(String, Span)>, Vec<HashMap<String, String>>) {
+) -> (
+    Vec<(String, Span)>,
+    Vec<HashMap<String, String>>,
+    Vec<MissingImport>,
+) {
     qualify(files, modules, imports, below, true)
 }
 
-/// The files each file reaches through its imports, the imports of those
-/// included, within what a tote imports for itself (see [`qualify`]).
+/// [`files_with_totes`] on the output of the macros. A name an expansion wrote carries the
+/// file of its macro or syntax ([`SurfaceTerm::origin`]) and means what it means there: the
+/// file of the call need not import the file that declares it, if that file does; every
+/// other occurrence is held to the imports of the file it is written in.
+/// Also gives the names one import would make seen ([`MissingImport`]).
+pub fn files_after_macros(
+    files: &mut [Vec<Stmt>],
+    modules: &[String],
+    imports: Option<&[Vec<usize>]>,
+    below: Option<&[HashSet<usize>]>,
+) -> (Vec<(String, Span)>, Vec<MissingImport>) {
+    let (errors, _, missing) = qualify(files, modules, imports, below, false);
+    (errors, missing)
+}
+
+/// The files each file sees through its imports: the files it imports
+/// directly. An import of an import is not seen.
 fn reaches(modules: &[String], imports: Option<&[Vec<usize>]>) -> Vec<HashSet<usize>> {
     (0..modules.len())
         .map(|i| {
-            let mut seen = HashSet::new();
-            let mut todo: Vec<usize> = imports.map_or(Vec::new(), |im| im[i].clone());
-            while let Some(j) = todo.pop() {
-                if j != i && seen.insert(j) {
-                    todo.extend(
-                        imports
-                            .map_or(&[][..], |im| &im[j][..])
-                            .iter()
-                            .filter(|&&k| {
-                                one_tote(&modules[i], &modules[j])
-                                    || one_tote(&modules[j], &modules[k])
-                            }),
-                    );
-                }
-            }
-            seen
+            imports.map_or_else(HashSet::new, |im| {
+                im[i].iter().copied().filter(|&j| j != i).collect()
+            })
         })
         .collect()
 }
@@ -563,7 +833,11 @@ fn qualify(
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
     keep_prelude: bool,
-) -> (Vec<(String, Span)>, Vec<HashMap<String, String>>) {
+) -> (
+    Vec<(String, Span)>,
+    Vec<HashMap<String, String>>,
+    Vec<MissingImport>,
+) {
     register_modules(modules);
     // A function of a module is named `M::f` like any declaration: the
     // modules are flattened first, so this pass tells it apart from another
@@ -583,6 +857,7 @@ fn qualify(
         files,
         prelude_fns().iter().map(|n| n.as_str()),
         &ctors,
+        imports,
     );
     let mut prelude = prelude_names().clone();
     prelude.extend(LANGUAGE_TYPES.iter().map(|n| n.to_string()));
@@ -590,7 +865,6 @@ fn qualify(
     // `Prop` is renamed to its full name, so another file's `Prop` still
     // means the sort, whatever else the importer reads.
     prelude.extend(SORTS.iter().map(|n| n.to_string()));
-    // The files that declare each name, and the full names already written.
     let mut owners: HashMap<String, Vec<usize>> = HashMap::new();
     let mut written: Vec<String> = Vec::new();
     // The language's types as the standard library declares them: they are
@@ -634,14 +908,8 @@ fn qualify(
             });
         }
     }
-    // The files each file reaches through its imports, the imports of those
-    // included. What a tote imports from another tote, the standard library
-    // included, is its own business: the tote's files reach it, but the files
-    // of the totes that import the tote do not (a library that reads
-    // `std::Text` for its proofs does not give its users the model's
-    // `text_len`, nor its constructor `text`, and a library that reads a
-    // dependency's `Node` does not give them that `Node`). The importer imports such
-    // a file itself to see it.
+    // The files each file sees: the files it imports directly, never what
+    // those import.
     let reach = reaches(modules, imports);
     // A file the program reads only because a file importing this one
     // reads it too: what this file's names mean does not depend on it.
@@ -707,22 +975,12 @@ fn qualify(
         Some(ty) => scoped(i, ty, bare(n)),
         None => format!("{}{SEPARATOR}{}", modules[i], bare(n)),
     };
-    // Every declaration of `n` in the file `i`, by its full name.
     let fulls = |i: usize, n: &str| -> Vec<String> {
         match shared[i].get(n) {
             Some(types) => types.iter().map(|ty| scoped(i, ty, n)).collect(),
             None => vec![full(i, n)],
         }
     };
-    // The files each file reaches through its imports, the imports of those
-    // included. What a tote imports from another tote, the standard library
-    // included, is its own business: the tote's files reach it, but the files
-    // of the totes that import the tote do not (a library that reads
-    // `std::Text` for its proofs does not give its users the model's
-    // `text_len`, nor its constructor `text`, and a library that reads a
-    // dependency's `Node` does not give them that `Node`). The importer imports such
-    // a file itself to see it.
-    let reach = reaches(modules, imports);
     // The bare names each file writes in a pattern: each binds a name unless
     // a constructor the file sees has it.
     let bound: Vec<HashSet<String>> = files.iter().map(|stmts| pattern_names(stmts)).collect();
@@ -753,7 +1011,6 @@ fn qualify(
                         .all(|&j| !reach[i].contains(&j) && !same_tote(&modules[i], &modules[j]))
             })
     };
-    // The names each file writes as a variable, its locals included.
     let uses: Vec<HashSet<String>> = files.iter().map(|stmts| var_names(stmts)).collect();
     // A name only the standard library declares, written by a file of the
     // program that does not reach that declaration: the file did not import
@@ -762,11 +1019,8 @@ fn qualify(
     // runs it as written, as it would were the library not read at all.
     let unreached = |i: usize, n: &str, owners_of: &[usize]| {
         imports.is_some()
-            && !is_std(&modules[i])
             && !owners_of.contains(&i)
-            && owners_of
-                .iter()
-                .all(|&j| is_std(&modules[j]) && !reach[i].contains(&j))
+            && owners_of.iter().all(|&j| !reach[i].contains(&j))
             && !prelude.contains(n)
     };
     let not_imported = |i: usize, n: &str, owners_of: &[usize]| {
@@ -799,11 +1053,12 @@ fn qualify(
         && written.is_empty()
         && !has_full_name(files, modules)
         && !any_not_imported()
+        // A non-core prelude name is seen only through its import.
+        && imports.is_none()
     {
         flattened.extend(record_bases(files));
-        return (flattened, vec![HashMap::new(); files.len()]);
+        return (flattened, vec![HashMap::new(); files.len()], Vec::new());
     }
-    // Each declaration by its full name, and what it is called after this pass.
     let mut by_full: HashMap<String, String> = HashMap::new();
     for (n, o) in &owners {
         for &i in o {
@@ -832,7 +1087,6 @@ fn qualify(
         let to = short(&n).to_string();
         by_full.insert(n, to);
     }
-    // The constructors of each type, by the names they have after this pass.
     let after = |i: usize, n: &str| match owners.get(n) {
         Some(o) if renamed(n, o) => full(i, n),
         _ => n.to_string(),
@@ -863,7 +1117,10 @@ fn qualify(
                     .strip_prefix(short(ty))
                     .and_then(|c| c.strip_prefix(SEPARATOR))
                     .unwrap_or(c);
-                ctors.entry(after(i, ty)).or_default().insert(c.to_string(), to);
+                ctors
+                    .entry(after(i, ty))
+                    .or_default()
+                    .insert(c.to_string(), to);
             });
         }
     }
@@ -896,6 +1153,22 @@ fn qualify(
             });
         }
     }
+    // The type of each field of the constructors, by the names they have
+    // after this pass.
+    let mut fields = prelude_fields().clone();
+    for (i, stmts) in files.iter().enumerate() {
+        for s in stmts.iter() {
+            field_types(
+                s,
+                &mut |ty, name, tys| {
+                    if let Some(to) = ctors.get(&after(i, ty)).and_then(|cs| cs.get(short(name))) {
+                        fields.insert(to.clone(), tys);
+                    }
+                },
+                &|n| after(i, n),
+            );
+        }
+    }
     let errors = std::cell::RefCell::new(redeclared(
         files,
         modules,
@@ -905,21 +1178,51 @@ fn qualify(
         &ctor_names,
     ));
     let mut seeing = Vec::new();
+    let missing = std::cell::RefCell::new(Vec::new());
     // The prelude's module functions the files of `std` model, by file.
     let modelled: Vec<HashSet<String>> = files
         .iter()
         .enumerate()
         .map(|(j, stmts)| models_in(j, stmts, modules))
         .collect();
-    for (i, stmts) in files.iter_mut().enumerate() {
+    // What each file's names mean, every file's first: a name a macro wrote is
+    // read as the file of its macro reads it ([`SurfaceTerm::origin`]).
+    let mut all_names: Vec<HashMap<String, Meaning>> = Vec::new();
+    let mut all_unseen: Vec<HashSet<String>> = Vec::new();
+    let mut all_plain: Vec<HashMap<String, String>> = Vec::new();
+    for i in 0..files.len() {
         let mut names: HashMap<String, Meaning> = HashMap::new();
         let mut unseen: HashSet<String> = HashSet::new();
+        let mut plain: HashMap<String, String> = HashMap::new();
         for (n, all) in &owners {
             if not_imported(i, n, all) {
-                names.insert(n.clone(), Meaning::NotImported(modules[all[0]].clone()));
+                names.insert(
+                    n.clone(),
+                    Meaning::NotImported(
+                        modules[all[0]].clone(),
+                        import_spelling(&modules[i], &modules[all[0]]),
+                        all.len() == 1,
+                    ),
+                );
                 continue;
             }
-            if !renamed(n, all) || own_language[i].contains(n) {
+            if !renamed(n, all) {
+                // A name that keeps its short name is still the declaration
+                // of the one file this one sees that declares it: a macro of
+                // this file that writes it means that one wherever it is
+                // expanded, the importer of the macro's file not importing it.
+                if imports.is_some() && !own_language[i].contains(n) {
+                    let mut visible = all
+                        .iter()
+                        .copied()
+                        .filter(|&j| (j == i || reach[i].contains(&j)) && !private_to(i, j, n));
+                    if let (Some(_), None) = (visible.next(), visible.next()) {
+                        plain.insert(n.clone(), n.clone());
+                    }
+                }
+                continue;
+            }
+            if own_language[i].contains(n) {
                 continue;
             }
             // A name only private declarations of other files have still
@@ -1038,6 +1341,19 @@ fn qualify(
                         unseen.insert(n.clone());
                         continue;
                     }
+                    // No import reaches a declaration of the name: it is not
+                    // visible here, whichever file of the program declares it.
+                    if imports.is_some() {
+                        names.insert(
+                            n.clone(),
+                            Meaning::NotImported(
+                                modules[o[0]].clone(),
+                                import_spelling(&modules[i], &modules[o[0]]),
+                                o.len() == 1,
+                            ),
+                        );
+                        continue;
+                    }
                     o.clone()
                 };
                 let mut others: Vec<String> = from.iter().flat_map(|&j| fulls(j, n)).collect();
@@ -1051,19 +1367,80 @@ fn qualify(
             };
             names.insert(n.clone(), meaning);
         }
+        // A prelude file that is not core is seen through its import only
+        // (`import std::prelude::Os`): a name only it declares, written
+        // without the import, is not visible; with the import, a file's own
+        // or imported declaration of the same name is ambiguous with it.
+        if imports.is_some() {
+            // What the file declares itself, a module by its name: its own, whatever the
+            // prelude file it does not import declares by that name.
+            let own: HashSet<&str> = owners
+                .iter()
+                .filter(|(_, o)| o.contains(&i))
+                .map(|(k, _)| k.split(SEPARATOR).next().unwrap_or(k))
+                .collect();
+            for (n, files) in hidden_prelude() {
+                let granted = files.iter().any(|f| {
+                    let module = prelude_file_module(f);
+                    reach[i].iter().any(|&j| modules[j] == module)
+                });
+                let prelude_full = format!("{PRELUDE_MODULE}{SEPARATOR}{}", bare(n));
+                match (names.get_mut(n), granted) {
+                    // The file imports the prelude file that declares it: a macro of
+                    // this file that writes it means that declaration wherever it is
+                    // expanded, the importer of the macro's file not importing it.
+                    (None, true) => {
+                        plain.insert(n.clone(), n.clone());
+                    }
+                    (None, false) if own.contains(n.as_str()) => {}
+                    (None, false) => {
+                        names.insert(
+                            n.clone(),
+                            Meaning::NotImported(
+                                prelude_file_module(&files[0]),
+                                prelude_file_module(&files[0]),
+                                true,
+                            ),
+                        );
+                    }
+                    (Some(Meaning::To(to)), true) if !to.starts_with("std::") => {
+                        let both = vec![std::mem::take(to), prelude_full];
+                        names.insert(n.clone(), Meaning::Ambiguous(both));
+                    }
+                    (Some(Meaning::Ambiguous(all)), true)
+                        if !all.iter().any(|a| a.starts_with("std::")) =>
+                    {
+                        all.push(prelude_full);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        all_names.push(names);
+        all_unseen.push(unseen);
+        all_plain.push(plain);
+    }
+    for (i, stmts) in files.iter_mut().enumerate() {
+        let names = &all_names[i];
+        let plain = std::mem::take(&mut all_plain[i]);
         let r = Renamer {
-            names: &names,
+            origins: &all_names,
+            origin: Default::default(),
+            names,
             by_full: &by_full,
             module_fns: &module_fns,
             ctors: &ctors,
             nullary: &nullary,
             args: &args,
-            unseen: &unseen,
+            fields: &fields,
+            unseen: &all_unseen[i],
             locals: Default::default(),
+            typed: Default::default(),
             returns: Default::default(),
             errors: &errors,
             sealed: None,
             seen: None,
+            missing: Some((&missing, i)),
             keep_prelude,
         };
         for s in stmts.iter_mut() {
@@ -1074,7 +1451,7 @@ fn qualify(
                 .iter()
                 .filter_map(|(n, m)| match m {
                     Meaning::To(to) => Some((n.clone(), to.clone())),
-                    Meaning::Ambiguous(_) | Meaning::NotImported(_) => None,
+                    Meaning::Ambiguous(_) | Meaning::NotImported(..) => None,
                 })
                 // A module function of the prelude that no file this one
                 // reaches models (`Text::of_nat` without `std::Text`) is the
@@ -1091,12 +1468,13 @@ fn qualify(
                         })
                         .map(|n| (n.clone(), format!("{PRELUDE_MODULE}{SEPARATOR}{n}"))),
                 )
+                .chain(plain)
                 .collect(),
         );
     }
     flattened.extend(errors.into_inner());
     flattened.extend(record_bases(files));
-    (flattened, seeing)
+    (flattened, seeing, missing.into_inner())
 }
 
 /// The name a base that is not a name is bound to: `@` keeps it from any
@@ -1300,7 +1678,6 @@ fn stmt_span(s: &Stmt) -> Span {
 /// `Nat`); anything else (an `Option` added or dropped, `i64` for
 /// `Ordering`) is a different function and takes a name of its own. Returns each model that differs.
 pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)> {
-    // The last part of a name, whatever modules are known yet.
     fn last(name: &str) -> &str {
         name.rsplit_once(SEPARATOR).map_or(name, |(_, n)| n)
     }
@@ -1324,19 +1701,15 @@ pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)
     // a truth value read as one.
     fn shape(t: &Option<SurfaceTerm>) -> Option<String> {
         const NUMBERS: &[&str] = &[
-            "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "nat", "I8", "I16", "I32",
-            "I64", "U8", "U16", "U32", "U64", "Nat",
+            "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "nat", "I8", "I16", "I32", "I64",
+            "U8", "U16", "U32", "U64", "Nat",
         ];
         let text = super::print::print_term(t.as_ref()?);
         let mut out = String::new();
         let mut word = String::new();
         let flush = |word: &mut String, out: &mut String| {
             let w = last(word);
-            out.push_str(if NUMBERS.contains(&w) {
-                "#number"
-            } else {
-                w
-            });
+            out.push_str(if NUMBERS.contains(&w) { "#number" } else { w });
             word.clear();
         };
         for c in text.chars() {
@@ -1353,7 +1726,11 @@ pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)
         Some(out)
     }
     fn signature(f: &super::program::FnDecl) -> Option<(Vec<String>, String)> {
-        let params = f.param_types.iter().map(shape).collect::<Option<Vec<_>>>()?;
+        let params = f
+            .param_types
+            .iter()
+            .map(shape)
+            .collect::<Option<Vec<_>>>()?;
         Some((params, shape(&f.result)?))
     }
     static BUILTINS: OnceLock<HashMap<String, (Vec<String>, String)>> = OnceLock::new();
@@ -1432,18 +1809,23 @@ pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(Str
     let errors = std::cell::RefCell::new(Vec::new());
     for (stmts, tote) in files.iter().zip(totes) {
         let r = Renamer {
+            origins: &[],
+            origin: Default::default(),
             names: &names,
             by_full: &by_full,
             module_fns: &module_fns,
             ctors: &ctors,
             nullary: &nullary,
             args: &HashMap::new(),
+            fields: &HashMap::new(),
             unseen: &nullary,
             locals: Default::default(),
+            typed: Default::default(),
             returns: Default::default(),
             errors: &errors,
             sealed: Some((&owner, tote.as_deref())),
             seen: None,
+            missing: None,
             keep_prelude: false,
         };
         // The walk renames nothing with empty tables; it runs on a copy so
@@ -1459,12 +1841,10 @@ pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(Str
 /// `sealed_visibility` reads it: the file, by its index (`PRELUDE_FILE` for
 /// the prelude), and the `pub` written before the declaration.
 pub struct Seen {
-    /// Functions, theorems, types, classes and effects (marked with `!`).
     names: HashMap<String, (usize, Vis)>,
     /// Each constructor, and what the kernel makes to take a type apart
     /// (`T::rec`), with its type.
     ctors: HashMap<String, (usize, Vis, String)>,
-    /// Each operation.
     effects: HashMap<String, (usize, Vis)>,
     /// Each field name, with every type that has it: a field of a struct or
     /// an enum, or a parameter of an inductive type's constructor.
@@ -1472,7 +1852,6 @@ pub struct Seen {
     modules: Vec<String>,
 }
 
-/// The file of the prelude's declarations in a [`Seen`].
 const PRELUDE_FILE: usize = usize::MAX;
 
 /// What the kernel makes for an inductive type that takes its values apart:
@@ -1618,18 +1997,23 @@ pub fn sealed_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String
     }
     for (i, stmts) in files.iter().enumerate() {
         let r = Renamer {
+            origins: &[],
+            origin: Default::default(),
             names: &names,
             by_full: &by_full,
             module_fns: &module_fns,
             ctors: &ctors,
             nullary: &nullary,
             args: &HashMap::new(),
+            fields: &HashMap::new(),
             unseen: &nullary,
             locals: Default::default(),
+            typed: Default::default(),
             returns: Default::default(),
             errors: &errors,
             sealed: None,
             seen: Some((&seen, i)),
+            missing: None,
             keep_prelude: false,
         };
         // The walk renames nothing with empty tables; it runs on a copy so
@@ -1661,7 +2045,6 @@ fn private_names(stmts: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-/// The names written alone in the patterns of `stmts`.
 fn pattern_names(stmts: &[Stmt]) -> HashSet<String> {
     fn of(p: &Pattern, out: &mut HashSet<String>) {
         match p {
@@ -1771,26 +2154,38 @@ fn ctors_with_fields(s: &Stmt, out: &mut HashSet<String>) {
     }
 }
 
+/// A name the file does not see that one file declares: `import spelling` in the
+/// file `file` makes it seen. `at` is where the name is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingImport {
+    pub file: usize,
+    pub at: Span,
+    pub spelling: String,
+}
+
 enum Meaning {
     To(String),
     Ambiguous(Vec<String>),
     /// Declared by this file of the standard library only, which the file
-    /// does not import.
-    NotImported(String),
+    /// does not import, with how the file imports it (`std::Os`,
+    /// `"Setoid.taut"`, `algebra::proof::Setoid`).
+    /// Whether one file declares it, so that one import makes it seen.
+    NotImported(String, String, bool),
 }
 
 struct Renamer<'a> {
-    /// What each renamed short name means in this file.
+    /// What the names of each file mean, by file: a name an expansion wrote means what it
+    /// means in the file of its macro or syntax ([`SurfaceTerm::origin`]).
+    origins: &'a [HashMap<String, Meaning>],
+    /// The file of the macro that wrote the name being read, if a macro wrote it.
+    origin: std::cell::Cell<Option<usize>>,
     names: &'a HashMap<String, Meaning>,
-    /// What each full name written in the source is called.
     by_full: &'a HashMap<String, String>,
     /// The functions of the modules of the program, by their full names
     /// (`Bytes::values`): a module's name is not a type's, even where a type
     /// has that name and is renamed.
     module_fns: &'a HashSet<String>,
-    /// The constructors of each type, by the names they are called.
     ctors: &'a HashMap<String, HashMap<String, String>>,
-    /// The constructors without fields, by the names they are called.
     nullary: &'a HashSet<String>,
     /// The type each explicit argument of a function or constructor is
     /// written with (its head, named as after this pass), by the name the
@@ -1800,15 +2195,19 @@ struct Renamer<'a> {
     /// The names this file binds in a pattern though another file, which
     /// it does not import, declares them.
     unseen: &'a HashSet<String>,
-    /// Names bound in the current lexical scope, newest last, each with the
-    /// head of the type it is written with.
-    locals: std::cell::RefCell<Vec<(String, Option<String>)>>,
+    /// The type of each field of a constructor, by the name it is called:
+    /// a pattern variable in a field of a matched value of a known type has
+    /// the field's type.
+    fields: &'a HashMap<String, Vec<Option<Shape>>>,
+    locals: std::cell::RefCell<Vec<(String, Option<Shape>)>>,
+    /// The pattern variables of the arm being read whose type the matched
+    /// value's type gives.
+    typed: std::cell::RefCell<Vec<(String, Shape)>>,
     errors: &'a std::cell::RefCell<Vec<(String, Span)>>,
-    /// For `sealed_externs`: the tote of each extern, and this file's tote.
     sealed: Option<(&'a HashMap<String, String>, Option<&'a str>)>,
-    /// For `sealed_visibility`: who declares each name, and the file read.
     seen: Option<(&'a Seen, usize)>,
-    /// The type the function being read is written to return.
+    /// Where the names one import would make seen are written, and the file being read.
+    missing: Option<(&'a std::cell::RefCell<Vec<MissingImport>>, usize)>,
     returns: std::cell::RefCell<Option<String>>,
     /// Whether a full name of the prelude is kept as written
     /// (`files_before_macros`).
@@ -1871,7 +2270,7 @@ impl Renamer<'_> {
         let means = match self.names.get(n) {
             Some(Meaning::Ambiguous(_)) => return Some(c.clone()),
             Some(Meaning::To(to)) => to.as_str(),
-            Some(Meaning::NotImported(_)) | None => n,
+            Some(Meaning::NotImported(..)) | None => n,
         };
         let other_ctor = means != c
             && self
@@ -1905,18 +2304,40 @@ impl Renamer<'_> {
             .cloned()
     }
 
-    /// Binds a name written with its type, read already.
     fn bind_typed(&self, name: &str, ty: &SurfaceTerm) {
-        let head = self.type_named(ty);
-        self.locals.borrow_mut().push((name.to_string(), head));
+        let shape = self.shape_named(ty);
+        self.locals.borrow_mut().push((name.to_string(), shape));
+    }
+
+    /// A written type term, read already, as a type over its arguments.
+    fn shape_named(&self, ty: &SurfaceTerm) -> Option<Shape> {
+        let head = self.type_named(ty)?;
+        let args = match &*ty.kind {
+            TermKind::App { arguments, .. } => {
+                arguments.iter().map(|a| self.shape_named(a)).collect()
+            }
+            _ => Vec::new(),
+        };
+        Some(Shape::Named(head, args))
+    }
+
+    /// The pattern variables of the arm just read are bound with the types
+    /// the matched value's type gives their fields.
+    fn bind_pattern_types(&self) {
+        let typed = std::mem::take(&mut *self.typed.borrow_mut());
+        let mut locals = self.locals.borrow_mut();
+        for (n, shape) in typed {
+            if let Some(l) = locals.iter_mut().rev().find(|(l, _)| *l == n) {
+                l.1 = Some(shape);
+            }
+        }
     }
 
     fn is_local(&self, n: &str) -> bool {
         self.locals.borrow().iter().any(|(l, _)| l == n)
     }
 
-    /// The type a matched value is written with: a local bound with its type.
-    fn type_of(&self, scrutinee: &SurfaceTerm) -> Option<String> {
+    fn type_of(&self, scrutinee: &SurfaceTerm) -> Option<Shape> {
         let TermKind::Var(n) = &*scrutinee.kind else {
             return None;
         };
@@ -1924,7 +2345,6 @@ impl Renamer<'_> {
         locals.iter().rev().find(|(l, _)| l == n)?.1.clone()
     }
 
-    /// An effect's name as it is called after this pass.
     fn effect(&self, n: &mut String, span: Span) {
         // `res(Pos)`: the effect, and each type its arguments name.
         if let Some((head, args)) = n.split_once('(') {
@@ -1963,7 +2383,6 @@ impl Renamer<'_> {
         *n = bare(&key).to_string();
     }
 
-    /// A global name as it is called after this pass.
     fn global(&self, n: &mut String, span: Span) {
         self.see(n, span);
         if self.keep_prelude
@@ -2013,9 +2432,18 @@ impl Renamer<'_> {
                 .all(|f| is_ctor(f) && module(f).as_deref() == Some(first.as_str()))
     }
 
-    /// What a short name means in this file.
     fn meaning(&self, n: &mut String, span: Span) {
-        match self.names.get(n.as_str()) {
+        // A name an expansion wrote means what it means in the file of its macro or
+        // syntax, which may import what this file does not. What that file does not
+        // see is read here, as this file reads it.
+        let names = match self.origin.get().and_then(|f| self.origins.get(f)) {
+            Some(there) => match there.get(n.as_str()) {
+                Some(Meaning::NotImported(..)) => self.names,
+                _ => there,
+            },
+            None => self.names,
+        };
+        match names.get(n.as_str()) {
             Some(Meaning::To(to)) => *n = to.clone(),
             Some(Meaning::Ambiguous(all)) => self.errors.borrow_mut().push((
                 msg!(
@@ -2034,19 +2462,28 @@ impl Renamer<'_> {
                 .to_string(),
                 span,
             )),
-            Some(Meaning::NotImported(module)) => self.errors.borrow_mut().push((
+            Some(Meaning::NotImported(module, spelling, one)) => {
+                self.errors.borrow_mut().push((
                 format!(
-                    "`{}` is declared by `{module}`, which this file does not import (what another file or a dependency imports does not reach this one); `import {module}` in this file",
+                    "`{}` is declared by `{module}`, which this file does not import (what another file or a dependency imports does not reach this one); `import {spelling}` in this file",
                     bare(n),
-                    module = written(module)
+                    module = written(module),
+                    spelling = spelling
                 ),
                 span,
-            )),
+                ));
+                if let (true, Some((missing, file))) = (*one, self.missing) {
+                    missing.borrow_mut().push(MissingImport {
+                        file,
+                        at: span,
+                        spelling: spelling.clone(),
+                    });
+                }
+            }
             None => {}
         }
     }
 
-    /// `sealed_visibility`: a name another file declares without `pub`.
     fn see(&self, n: &str, span: Span) {
         let Some((seen, here)) = self.seen else {
             return;
@@ -2129,7 +2566,6 @@ impl Renamer<'_> {
         ));
     }
 
-    /// `sealed_visibility`: a constructor written in a literal or a pattern.
     fn see_ctor(&self, n: &str, span: Span) {
         if let Some((seen, here)) = self.seen
             && let Some((file, vis, ty)) = seen.ctors.get(n)
@@ -2285,7 +2721,6 @@ impl Renamer<'_> {
         self.stmt(s);
     }
 
-    /// The uses in a statement; what it binds stays bound after it.
     fn stmt(&self, s: &mut Stmt) {
         match s {
             Stmt::Let {
@@ -2408,10 +2843,7 @@ impl Renamer<'_> {
             // function `nat` beside the type `nat` is `m::nat` after this
             // pass, and so is the function its macro runs.
             Stmt::Macro { function, span, .. } => self.global(function, *span),
-            Stmt::Return(None)
-            | Stmt::Import { .. }
-            | Stmt::Syntax { .. }
-            | Stmt::Other(..) => {}
+            Stmt::Return(None) | Stmt::Import { .. } | Stmt::Syntax { .. } | Stmt::Other(..) => {}
         }
     }
 
@@ -2454,7 +2886,9 @@ impl Renamer<'_> {
     /// constructor written by its short name is then that type's constructor
     /// of that name, whatever else declares the name, as the kernel accepts
     /// no other there.
-    fn pattern(&self, p: &mut Pattern, span: Span, bound: &mut Vec<String>, of: Option<&str>) {
+    fn pattern(&self, p: &mut Pattern, span: Span, bound: &mut Vec<String>, of: Option<&Shape>) {
+        let shape = of;
+        let of = shape.and_then(Shape::head);
         // The matched type is under a module a macro has yet to make (`m.T` of a `syntax!`): the
         // constructor is read once it is declared.
         if let Some(ty) = of
@@ -2465,7 +2899,7 @@ impl Renamer<'_> {
             && self
                 .names
                 .get(n.as_str())
-                .is_none_or(|m| !matches!(m, Meaning::NotImported(_)))
+                .is_none_or(|m| !matches!(m, Meaning::NotImported(..)))
             && self.pending_module_type(ty)
         {
             args.iter_mut()
@@ -2480,10 +2914,37 @@ impl Renamer<'_> {
         {
             if let Some(c) = self.ctor_of(ty, n) {
                 *n = c.clone();
+                // The type of each field, the matched type's arguments put for
+                // the family's parameters.
+                let fields: Vec<Option<Shape>> = match (self.fields.get(c), shape) {
+                    (Some(fs), Some(Shape::Named(_, targs))) => fs
+                        .iter()
+                        .map(|f| f.as_ref().and_then(|f| f.instantiate(targs)))
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 match p {
-                    Pattern::Ctor { args, .. } => args
-                        .iter_mut()
-                        .for_each(|a| self.pattern(a, span, bound, None)),
+                    Pattern::Ctor { args, .. } => {
+                        let args_len = args.len();
+                        for (k, a) in args.iter_mut().enumerate() {
+                            let field = (fields.len() == args_len)
+                                .then(|| fields.get(k).and_then(Option::as_ref))
+                                .flatten();
+                            // A name alone in a field is read as without a type (it binds
+                            // unless a constructor has it); a variable it binds has the
+                            // field's type.
+                            let before = bound.len();
+                            match a {
+                                Pattern::Bind(_) => self.pattern(a, span, bound, None),
+                                _ => self.pattern(a, span, bound, field),
+                            }
+                            if let (Some(shape), Pattern::Bind(n)) = (field, &*a)
+                                && bound[before..].contains(n)
+                            {
+                                self.typed.borrow_mut().push((n.clone(), shape.clone()));
+                            }
+                        }
+                    }
                     Pattern::Record { fields, .. } => fields
                         .iter_mut()
                         .for_each(|(_, a)| self.pattern(a, span, bound, None)),
@@ -2525,7 +2986,7 @@ impl Renamer<'_> {
                     Some(Meaning::To(to)) => is_ctor(to),
                     Some(Meaning::Ambiguous(all)) => all.iter().any(is_ctor),
                     // A constructor of a file not imported does not take the name.
-                    Some(Meaning::NotImported(_)) | None => false,
+                    Some(Meaning::NotImported(..)) | None => false,
                 };
                 if ctor || n.contains(SEPARATOR) {
                     self.global(n, span);
@@ -2679,6 +3140,14 @@ impl Renamer<'_> {
     /// constructor written there by its short name is then read as that
     /// type's (`ctor_wanted`).
     fn term_of(&self, t: &mut SurfaceTerm, of: Option<&str>) {
+        // The name the term itself writes is read where its macro is written; the terms
+        // inside it, each where its own name was written.
+        let outer = self.origin.replace(t.origin());
+        self.term_here(t, of);
+        self.origin.set(outer);
+    }
+
+    fn term_here(&self, t: &mut SurfaceTerm, of: Option<&str>) {
         let span = t.span;
         // `.` takes a field only: a declaration's name after it is written with `::`.
         // (A function of a module written `M::f` is reported where the modules are read.)
@@ -2789,7 +3258,11 @@ impl Renamer<'_> {
                 self.bind(params.iter());
                 self.term(body);
             }),
-            TermKind::Block(stmts) => self.scoped(|| stmts.iter_mut().for_each(|s| self.stmt(s))),
+            // A quote's statements bind as a block's do: its own `let tmp`
+            // is a local of the quote, not a global `tmp` of another file.
+            TermKind::Block(stmts) | TermKind::Quote { body: stmts, .. } => {
+                self.scoped(|| stmts.iter_mut().for_each(|s| self.stmt(s)))
+            }
             TermKind::Handle { body, handlers } => {
                 self.term(body);
                 for h in handlers {
@@ -2846,7 +3319,8 @@ impl Renamer<'_> {
                 for a in arms {
                     self.scoped(|| {
                         let mut bound = Vec::new();
-                        self.pattern(&mut a.pattern, a.body.span, &mut bound, of.as_deref());
+                        self.typed.borrow_mut().clear();
+                        self.pattern(&mut a.pattern, a.body.span, &mut bound, of.as_ref());
                         // An arm that is a name alone, where the matched
                         // value's type is not known here (the type, when it
                         // is, says what the name is); a name in a field
@@ -2860,6 +3334,7 @@ impl Renamer<'_> {
                         }
                         bound.extend(binder.iter().cloned());
                         self.bind(&bound);
+                        self.bind_pattern_types();
                         if let Some(g) = &mut a.guard {
                             self.term(g);
                         }
@@ -2900,7 +3375,6 @@ impl Renamer<'_> {
     }
 }
 
-/// Whether `t` is a name path: `M::f` written as one name, or fields over a name.
 fn is_path(t: &SurfaceTerm) -> bool {
     match &*t.kind {
         TermKind::Var(n) => n.contains(SEPARATOR),
@@ -2918,7 +3392,6 @@ fn dotted_text(t: &SurfaceTerm) -> String {
     }
 }
 
-/// `` `a` and `b` ``: the names of a message, each as code.
 fn names_and(all: &[String]) -> Message {
     let mut names = all
         .iter()
@@ -2929,19 +3402,6 @@ fn names_and(all: &[String]) -> Message {
     })
 }
 
-// `#(@b y, @a x)` as a value or a pattern: when every member has a label and no label is
-// written twice, the members stand in the order of the type's, by their labels.
-fn labelled_order(tags: &[String]) -> Option<Vec<usize>> {
-    let mut seen = tags.to_vec();
-    seen.sort();
-    seen.dedup();
-    if seen.len() != tags.len() {
-        return None;
-    }
-    let mut order: Vec<usize> = (0..tags.len()).collect();
-    order.sort_by(|a, b| tags[*a].cmp(&tags[*b]));
-    Some(order)
-}
 /// Whether `n` names the prelude's `base`: by its short name, which the prelude's own
 /// files and the checker's sugar read it by, or by its full name.
 fn names_prelude(n: &str, base: &str) -> bool {
@@ -2951,7 +3411,7 @@ fn names_prelude(n: &str, base: &str) -> bool {
             == Some(base)
 }
 
-/// The members of the product type of `items`, as one set: a member that is itself a
+/// The members of the product type of `items`, in the order written: a member that is itself a
 /// product `A × B` gives its members, and a member `Unit` gives none, so `(A × B) × C` is
 /// `A × B × C` and `A × Unit` is `A`. A `Pair(A, B)` written by its name is the inductive
 /// type `Pair`, one member: `Pair(A, B) × C` has the two members `Pair(A, B)` and `C`.
@@ -2968,25 +3428,20 @@ pub fn product_type_members(items: &[SurfaceTerm]) -> Vec<SurfaceTerm> {
     out
 }
 
-/// Whether `t` is the unit value `#()`.
 fn is_unit_value(t: &SurfaceTerm) -> bool {
     match &*t.kind {
         TermKind::App {
             function,
             arguments,
-        } => {
-            arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple")
-        }
+        } => arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple"),
         TermKind::Var(n) => names_prelude(n, "Star"),
         _ => false,
     }
 }
 
 /// `#(…)` with its members put as its type's: a member that is itself a written `#(…)`
-/// gives its members, a member `#()` gives none, and when every member has a label and no
-/// label is written twice, the members stand in the order of their labels. So
-/// `#(#(a, b), c)` is `#(a, b, c)`, `#(a, #())` is `a`, `#(#(), #())` is `#()`, and
-/// `#(@b y, @a x)` is `#(@a x, @b y)`. Only `#(…)` is a product: a `Pair { fst, snd }`
+/// gives its members and a member `#()` gives none, in the order written. So
+/// `#(#(a, b), c)` is `#(a, b, c)`, `#(a, #())` is `a`, and `#(#(), #())` is `#()`. Only `#(…)` is a product: a `Pair { fst, snd }`
 /// written by its name is the inductive `Pair`, one member, and is left as it is.
 /// `None` where nothing changes.
 pub fn flatten_pair_value(t: &SurfaceTerm) -> Option<SurfaceTerm> {
@@ -3005,21 +3460,9 @@ pub fn flatten_pair_value(t: &SurfaceTerm) -> Option<SurfaceTerm> {
     };
     let mut members = Vec::new();
     let mut changed = false;
-    items.iter().for_each(|i| spread(i, &mut members, &mut changed));
-    if members.len() >= 2
-        && let Some(tags) = members
-            .iter()
-            .map(|m| match &*m.kind {
-                TermKind::Tagged { tag, .. } => Some(tag.clone()),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()
-        && let Some(order) = labelled_order(&tags)
-        && order.windows(2).any(|w| w[0] > w[1])
-    {
-        members = order.into_iter().map(|i| members[i].clone()).collect();
-        changed = true;
-    }
+    items
+        .iter()
+        .for_each(|i| spread(i, &mut members, &mut changed));
     if !changed {
         return None;
     }
@@ -3032,35 +3475,11 @@ pub fn flatten_pair_value(t: &SurfaceTerm) -> Option<SurfaceTerm> {
 }
 
 /// The pattern `#(…)` with its members put as its type's, as [`flatten_pair_value`] puts a
-/// value: `#(p, #())` is `p`, `#(#(p, q), r)` is `#(p, q, r)`, and `#(@b x, @a y)` is
-/// `#(@a y, @b x)`. A `Pair { fst, snd }` pattern written by its name matches the inductive
+/// value: `#(p, #())` is `p`, `#(#(p, q), r)` is `#(p, q, r)`. A `Pair { fst, snd }` pattern written by its name matches the inductive
 /// `Pair` and is left as it is. `None` where nothing changes.
 pub fn flatten_pair_pattern(p: &Pattern) -> Option<Pattern> {
     fn unit(p: &Pattern) -> bool {
         matches!(p, Pattern::Ctor { name, args } if args.is_empty() && names_prelude(name, "Star"))
-    }
-    // The labelled members stand first, by their labels, as in the type: a label names
-    // its member wherever it is written, so `#(@b x, @a y)` is `#(@a y, @b x)`. The
-    // members without labels keep their written order after them, for the checker to
-    // take by position.
-    fn by_labels(members: &mut [Pattern]) -> bool {
-        let key = |m: &Pattern| -> (u8, String) {
-            let mut tags = Vec::new();
-            let mut inner = m;
-            while let Some((tag, q)) = inner.label() {
-                tags.push(tag);
-                inner = q;
-            }
-            match tags.iter().min() {
-                Some(tag) => (0, tag.to_string()),
-                None => (1, String::new()),
-            }
-        };
-        let out_of_order = members.windows(2).any(|w| key(&w[0]) > key(&w[1]));
-        if out_of_order {
-            members.sort_by_cached_key(|m| key(m));
-        }
-        out_of_order
     }
     // `#(…)` as written: a member that is `#(…)` gives its members, one that is `#()` none.
     if let Pattern::Tuple(items) = p {
@@ -3076,8 +3495,9 @@ pub fn flatten_pair_pattern(p: &Pattern) -> Option<Pattern> {
         }
         let mut members = Vec::new();
         let mut changed = false;
-        items.iter().for_each(|q| spread(q, &mut members, &mut changed));
-        changed |= by_labels(&mut members);
+        items
+            .iter()
+            .for_each(|q| spread(q, &mut members, &mut changed));
         if !changed {
             return None;
         }
@@ -3185,22 +3605,30 @@ pub fn tuple_pattern_as_pairs(p: &Pattern, pair: &str) -> Pattern {
     }
     match p {
         Pattern::Tuple(items) => {
-            let mut items: Vec<Pattern> =
-                items.iter().map(|q| tuple_pattern_as_pairs(q, pair)).collect();
+            let mut items: Vec<Pattern> = items
+                .iter()
+                .map(|q| tuple_pattern_as_pairs(q, pair))
+                .collect();
             let Some(last) = items.pop() else {
                 return Pattern::Ctor {
                     name: format!("{PRELUDE_MODULE}{SEPARATOR}Star"),
                     args: Vec::new(),
                 };
             };
-            items.into_iter().rev().fold(last, |snd, fst| Pattern::Record {
-                name: pair.to_string(),
-                fields: vec![("fst".into(), fst), ("snd".into(), snd)],
-            })
+            items
+                .into_iter()
+                .rev()
+                .fold(last, |snd, fst| Pattern::Record {
+                    name: pair.to_string(),
+                    fields: vec![("fst".into(), fst), ("snd".into(), snd)],
+                })
         }
         Pattern::Ctor { name, args } => Pattern::Ctor {
             name: name.clone(),
-            args: args.iter().map(|q| tuple_pattern_as_pairs(q, pair)).collect(),
+            args: args
+                .iter()
+                .map(|q| tuple_pattern_as_pairs(q, pair))
+                .collect(),
         },
         Pattern::Record { name, fields } => Pattern::Record {
             name: name.clone(),
@@ -3233,7 +3661,9 @@ pub fn lower_tuples(s: &mut Stmt, pair: &str) {
                     for h in handlers {
                         match h {
                             Handler::Return { pattern: p, .. } => lower(p),
-                            Handler::Operation { patterns, .. } => patterns.iter_mut().for_each(lower),
+                            Handler::Operation { patterns, .. } => {
+                                patterns.iter_mut().for_each(lower)
+                            }
                         }
                     }
                 }
@@ -3304,8 +3734,9 @@ pub fn sort_labelled_tuples(stmts: &mut [Stmt]) {
 
 /// The prelude read as its own files, before any module is known: a name the reader writes with
 /// the prelude's module (`std::prelude::Star` of the pattern `#()`) is the prelude's short
-/// name, and a product type `A × B` is `Pair(A, B)`, in an instance's head and a law too, so that
-/// `instance Ord(A × B)` names the type its functions are of.
+/// name, and a product type `A × B` is `Pair(A, B)`, in a law too. An instance whose head is a
+/// product, `instance Ord(A × B)`, keeps its products and `#(…)` as written: it is the
+/// instance for the product `Prod`, not for the `Pair` written by its name.
 pub fn lower_prelude_sugar(stmts: &mut [Stmt]) {
     lower_prelude(stmts, true)
 }
@@ -3359,7 +3790,7 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
             return;
         }
         if let TermKind::Product(items) = &*t.kind {
-            // One set of members: nested products give theirs, `Unit` gives none.
+            // The members in the order written: nested products give theirs, `Unit` gives none.
             let mut items = product_type_members(items);
             if items.len() < 2 {
                 *t = items
@@ -3367,9 +3798,6 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
                     .unwrap_or_else(|| SurfaceTerm::var("Unit", t.span));
                 return;
             }
-            // The members in one order, as the checker puts them: labels, then the
-            // written types.
-            items.sort_by_cached_key(super::print::product_member_key_of);
             items.iter_mut().for_each(pairs);
             let last = items.pop().expect("two or more");
             let span = t.span;
@@ -3424,6 +3852,12 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
         }
     }
     for s in stmts {
+        // An instance for the product `A × B` keeps its products and `#(…)` as written:
+        // its head is the product, not the `Pair` written by its name, and the checker
+        // reads them as it reads a program's (`Prod`, `prod_mk`).
+        let product_instance =
+            matches!(s, Stmt::Instance(i) if matches!(&*i.head.kind, TermKind::Product(_)));
+        LOWER_PRODUCTS.with(|p| p.set(products && !product_instance));
         super::walk::roots(s, &mut |t| term(t));
         lower_nested(s, &mut |s| match s {
             Stmt::Instance(i) => {
@@ -3433,7 +3867,8 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
             Stmt::Class(c) => laws(&mut c.laws),
             _ => {}
         });
-    }    LOWER_PRODUCTS.with(|p| p.set(before));
+    }
+    LOWER_PRODUCTS.with(|p| p.set(before));
 }
 
 /// `f` on `s` and on each statement of a `mutual` or a `module` in it.

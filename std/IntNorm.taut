@@ -1,6 +1,9 @@
+import "Int.taut"
 import "IntLaws.taut"
 import "NatNorm.taut"
+import "Rewrite.taut"
 import "Tactic.taut"
+import std::prelude::Macro
 
 // Reflection for the equations of `Int`'s commutative ring, on top of
 // `NatNorm.taut`. Each variable `x` of an `IntExpr` is read as the
@@ -223,8 +226,6 @@ module Int {
   }
 }
 
-// ---- the macro ----------------------------------------------------------------------
-
 // `int_norm!()`, for a goal `l = r` at type Int whose sides are made of
 // `Int::add`, `Int::sub`, `Int::mul`, `Int::neg`, `int_of_nat` of a numeral, and
 // anything else (which is a variable of the equation): reflection, as
@@ -259,7 +260,7 @@ module Tac {
     e: SynExpr,
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     // A numeral where `Int` is expected (`0`, `3`) is `IntOfNat` of it, so a constant.
     match Syn::nat_text(e) {
       Some(n) => {
@@ -270,7 +271,6 @@ module Tac {
     }
   }
 
-  // Whether `e` is a numeral.
   pub fn is_numeral(e: SynExpr): Bool {
     match Syn::nat_text(e) {
       Some(_) => true
@@ -283,7 +283,7 @@ module Tac {
     e: SynExpr,
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     match Syn::app_parts(e) {
       None => Tac::ie_var(e, vars)
       Some(p) => match Syn::name_of((p: SynExpr)) {
@@ -336,7 +336,7 @@ module Tac {
     a: SynExpr,
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     match Syn::nat_text(a) {
       Some(n) => {
         let k := ExNat(n, at)
@@ -355,7 +355,7 @@ module Tac {
     e: SynExpr,
     vars: List(SynExpr),
     at: SynSpan
-  ): List(SynExpr) × SynExpr ! {macro_error, Div} {
+  ): SynExpr × List(SynExpr) ! {macro_error, Div} {
     match Syn::nat_text(e) {
       Some(n) => {
         let k := ExNat(n, at)
@@ -407,7 +407,7 @@ module Tac {
 
   // A natural variable `t`: the Int variable `int_of_nat(t)`, at `2 i` among
   // the natural ones.
-  pub fn ie_nat_var(t: SynExpr, vars: List(SynExpr)): List(SynExpr) × SynExpr {
+  pub fn ie_nat_var(t: SynExpr, vars: List(SynExpr)): SynExpr × List(SynExpr) {
     let e := quote { IntOfNat($t) }
     let x := Tac::ie_var(e, vars)
     match Tac::nn_index(e, (x: List(SynExpr)), 0) {
@@ -419,7 +419,7 @@ module Tac {
     }
   }
 
-  pub fn ie_var(e: SynExpr, vars: List(SynExpr)): List(SynExpr) × SynExpr {
+  pub fn ie_var(e: SynExpr, vars: List(SynExpr)): SynExpr × List(SynExpr) {
     match Tac::nn_index(e, vars, 0) {
       Some(i) => {
         let n := Tac::nn_nat(i)

@@ -6,8 +6,6 @@ module List {
   // Lists beyond the basics of `Base.taut`: folds, searches, zips, and the
   // lemmas that relate them. Predicates are `(A) -> Bool`.
 
-  // ---- functions --------------------------------------------------------------
-
   pub fn filter<A>(p: (A) -> Bool, l: List(A)): List(A) {
     match l: List(A) {
       Nil => Nil
@@ -44,7 +42,6 @@ module List {
     }
   }
 
-  // The first element satisfying `p`.
   pub fn find<A>(p: (A) -> Bool, l: List(A)): Option(A) {
     match l: Option(A) {
       Nil => None
@@ -67,7 +64,6 @@ module List {
     }
   }
 
-  // `0, 1, …, n - 1`.
   pub fn range(n: Nat): List(Nat) {
     match n: List(Nat) {
       Zero => Nil
@@ -75,7 +71,6 @@ module List {
     }
   }
 
-  // `start, start + 1, …, start + n - 1`.
   pub fn range_from(start: Nat, n: Nat): List(Nat) {
     map((i: Nat) => Nat::add(start, i), range(n))
   }
@@ -104,7 +99,6 @@ module List {
     }
   }
 
-  // The lists of `ls` one after another.
   pub fn concat<A>(ls: List(List(A))): List(A) {
     match ls: List(A) {
       Nil => Nil
@@ -144,10 +138,11 @@ module List {
   }
 
   pub fn unzip<A, B>(l: List(Pair(A, B))): Pair(List(A), List(B)) {
-    Pair { fst: map((p: Pair(A, B)) => match p: A { Pair { fst: a, snd: _ } => a }, l), snd: map((p: Pair(A, B)) => match p: B { Pair { fst: _, snd: b } => b }, l) }
+    Pair {
+      fst: map((p: Pair(A, B)) => match p: A { Pair { fst: a, snd: _ } => a }, l),
+      snd: map((p: Pair(A, B)) => match p: B { Pair { fst: _, snd: b } => b }, l)
+    }
   }
-
-  // ---- lemmas -----------------------------------------------------------------
 
   pub theorem append_nil<A: Type>(l: List(A)): append(l, Nil) = l {
     match l: append(l, Nil) = l {
@@ -169,10 +164,7 @@ module List {
     }
   }
 
-  pub theorem length_map<A: Type, B: Type>(
-    f: (A) -> B,
-    l: List(A)
-  ): length(map(f, l)) = length(l) {
+  pub theorem length_map<A: Type, B: Type>(f: (A) -> B, l: List(A)): length(map(f, l)) = length(l) {
     match l: length(map(f, l)) = length(l) {
       Nil => Refl
       Cons(h, t) => Eq::congr(Succ, length_map(f, t))
@@ -265,26 +257,17 @@ module List {
     }
   }
 
-  pub theorem length_reverse<A: Type>(
-    l: List(A)
-  ): length(reverse(l)) = length(l) {
+  pub theorem length_reverse<A: Type>(l: List(A)): length(reverse(l)) = length(l) {
     match l: length(reverse(l)) = length(l) {
       Nil => Refl
       Cons(h, t) => Eq::trans(
         Eq::congr(⟦length(□)⟧, reverse_cons(h, t)),
-        Eq::trans(
-          length_append(reverse(t), Cons(h, Nil)),
-          Eq::congr(Succ, length_reverse(t))
-        )
+        Eq::trans(length_append(reverse(t), Cons(h, Nil)), Eq::congr(Succ, length_reverse(t)))
       )
     }
   }
 
-  // The first `n` elements and the rest make up the list again.
-  pub theorem take_drop<A: Type>(
-    n: Nat,
-    l: List(A)
-  ): append(take(n, l), drop(n, l)) = l {
+  pub theorem take_drop<A: Type>(n: Nat, l: List(A)): append(take(n, l), drop(n, l)) = l {
     match n: append(take(n, l), drop(n, l)) = l {
       Zero => Refl
       Succ(k) => match l: append(take(Succ(k), l), drop(Succ(k), l)) = l {
@@ -340,23 +323,38 @@ module List {
   ): filter(p, append(l, m)) = append(filter(p, l), filter(p, m)) {
     match l: filter(p, append(l, m)) = append(filter(p, l), filter(p, m)) {
       Nil => Refl
-      Cons(h, t) => match p(h): filter(p, append(Cons(h, t), m)) = append(filter(p, Cons(h, t)), filter(p, m)) {
-        false => ⊢ filter(p, append(t, m)) = append(filter(p, t), filter(p, m)) from filter_append(p, t, m)
-        true => ⊢ Cons(h, filter(p, append(t, m))) = append(Cons(h, filter(p, t)), filter(p, m)) from Eq::congr(⟦Cons(h, □)⟧, filter_append(p, t, m))
+      Cons(h, t) => match p(
+        h
+      ): filter(p, append(Cons(h, t), m)) = append(filter(p, Cons(h, t)), filter(p, m)) {
+        false => ⊢ filter(
+          p,
+          append(t, m)
+        ) = append(filter(p, t), filter(p, m)) from filter_append(p, t, m)
+        true => ⊢ Cons(
+          h,
+          filter(p, append(t, m))
+        ) = append(
+          Cons(h, filter(p, t)),
+          filter(p, m)
+        ) from Eq::congr(⟦Cons(h, □)⟧, filter_append(p, t, m))
       }
     }
   }
 
-  // What `take_while` keeps and `drop_while` leaves make up the list again.
   pub theorem take_drop_while<A: Type>(
     p: (A) -> Bool,
     l: List(A)
   ): append(take_while(p, l), drop_while(p, l)) = l {
     match l: append(take_while(p, l), drop_while(p, l)) = l {
       Nil => Refl
-      Cons(h, t) => match p(h): append(take_while(p, Cons(h, t)), drop_while(p, Cons(h, t))) = Cons(h, t) {
+      Cons(h, t) => match p(
+        h
+      ): append(take_while(p, Cons(h, t)), drop_while(p, Cons(h, t))) = Cons(h, t) {
         false => ⊢ append(Nil, Cons(h, t)) = Cons(h, t) from Refl
-        true => ⊢ append(Cons(h, take_while(p, t)), drop_while(p, t)) = Cons(h, t) from Eq::congr(⟦Cons(h, □)⟧, take_drop_while(p, t))
+        true => ⊢ append(
+          Cons(h, take_while(p, t)),
+          drop_while(p, t)
+        ) = Cons(h, t) from Eq::congr(⟦Cons(h, □)⟧, take_drop_while(p, t))
       }
     }
   }

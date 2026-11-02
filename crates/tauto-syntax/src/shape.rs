@@ -7,29 +7,30 @@
 
 use crate::tables::{NtKind, Production, Sym, Tables};
 
-/// One item of a repetition or option (`build_ast`'s `element`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Element {
-    /// The one value of the item, as it is.
     Item,
     /// A node of the type `ty` and constructor `ctor`, of the values whose `keep` is true
     /// (the clipped terminals are not kept).
-    Node { ty: u32, ctor: u32, keep: Vec<bool> },
+    Node {
+        ty: u32,
+        ctor: u32,
+        keep: Vec<bool>,
+    },
 }
 
-/// What a production's node becomes when it closes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shape {
-    /// A node of the type `ty` and constructor `ctor`, of the values whose `keep` is true.
-    Node { ty: u32, ctor: u32, keep: Vec<bool> },
+    Node {
+        ty: u32,
+        ctor: u32,
+        keep: Vec<bool>,
+    },
     /// The first value, as it is: a token non-terminal that builds no type, and the start
     /// symbol an LR generator adds.
     Pass,
-    /// An option that holds the item made of the values.
     Some(Element),
-    /// An option that holds nothing.
     None,
-    /// The end of a repetition: no items.
     Empty,
     /// One more item of a repetition. LL(k): the repetition is right recursive, its tail the
     /// last value and the item the values before it. LALR(1): it is left recursive, its head
@@ -40,7 +41,6 @@ pub enum Shape {
 }
 
 impl Tables {
-    /// What each production's node becomes, by production.
     pub fn shapes(&self) -> Vec<Shape> {
         (0..self.productions.len())
             .map(|p| self.shape(p as u32))
@@ -102,7 +102,6 @@ impl Tables {
     }
 }
 
-/// The item of `prod` made of its symbols from `skip` on.
 fn element(prod: &Production, skip: usize, ty: i64, ctor: u32) -> Element {
     if ty >= 0 {
         Element::Node {

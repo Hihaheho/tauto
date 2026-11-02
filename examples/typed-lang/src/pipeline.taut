@@ -1,0 +1,31 @@
+import "core.taut"
+import "lower.taut"
+import "syntax.taut"
+
+pub fn decision_ty(t: Term, d: Check(t)): Option(Ty) {
+  match d: Option(Ty) {
+    Accepted(ty, derivation, unique) => Some(ty)
+    Rejected(refute) => None
+  }
+}
+
+// 型検査器: `mode!` が作った `check` の答えを、型の `Option` にしたもの。
+pub fn check_ty(t: Term): Option(Ty) {
+  decision_ty(t, check(t))
+}
+
+// 検査を通ったものだけを評価する。
+pub fn run_if_typed(r: Option(Ty), t: Term): Option(Val) {
+  match r: Option(Val) {
+    None => None
+    Some(ty) => eval(t)
+  }
+}
+
+pub fn run_term(t: Term): Option(Val) {
+  run_if_typed(check_ty(t), t)
+}
+
+pub fn run_tree(e: tl::Expr::I): Option(Val) {
+  run_term(lower_expr(e))
+}

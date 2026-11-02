@@ -44,7 +44,6 @@ pub enum Socket {
 }
 
 impl Socket {
-    /// Sets the read timeout of the socket itself.
     pub fn set_read_timeout(&self, t: Option<Duration>) -> std::io::Result<()> {
         match self {
             Socket::Tcp(c) => c.set_read_timeout(t),
@@ -53,7 +52,6 @@ impl Socket {
         }
     }
 
-    /// Sets the write timeout of the socket itself.
     pub fn set_write_timeout(&self, t: Option<Duration>) -> std::io::Result<()> {
         match self {
             Socket::Tcp(c) => c.set_write_timeout(t),
@@ -62,7 +60,6 @@ impl Socket {
         }
     }
 
-    /// Another handle to the same socket, as `TcpStream::try_clone`.
     pub fn try_clone(&self) -> std::io::Result<Socket> {
         Ok(match self {
             Socket::Tcp(c) => Socket::Tcp(c.try_clone()?),
@@ -496,7 +493,6 @@ pub fn os_tcp_write_vec(
     Ok(Some(()))
 }
 
-/// `os_tcp_read_vec` as `Bytes`, as the prelude's extern takes it.
 pub fn os_tcp_read(
     id: u64,
     max: u64,
@@ -505,7 +501,6 @@ pub fn os_tcp_read(
     os_tcp_read_vec(id, max, deadline).map(|b| b.map(Into::into))
 }
 
-/// `os_tcp_write_vec` of `Bytes`, as the prelude's extern takes it.
 pub fn os_tcp_write(
     id: u64,
     bytes: crate::stdlib::Bytes,
@@ -663,7 +658,6 @@ mod tests {
         let c = os_tcp_connect_vec(l[1].clone(), after(5000))
             .unwrap()
             .unwrap();
-        // A peer that sends nothing does not hold the read past its deadline.
         assert!(os_tcp_read_vec(n(&c[0]), 8, after(-1)).unwrap().is_none());
         os_tcp_close(n(&c[0]));
         os_tcp_unlisten(n(&l[0]));

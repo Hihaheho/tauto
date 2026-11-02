@@ -1,4 +1,6 @@
+import "Base.taut"
 import "Nat.taut"
+import std::prelude::Ord
 
 // Reflection for the equations of the natural numbers' commutative semiring:
 // an expression of `+`, `*`, numerals and variables is read as a `NatExpr`, both
@@ -18,7 +20,6 @@ pub(open) inductive NatExpr: Type =>
 }
 
 module Ne {
-  // The value of variable `i`; the variables not in the list are 0.
   pub fn env_get(env: List(Nat), i: Nat): Nat {
     match env: Nat {
       Nil => Zero
@@ -38,8 +39,6 @@ module Ne {
     }
   }
 }
-
-// ---- monomials: the variables of a product, in order ------------------------------
 
 module Nm {
   pub fn eval(env: List(Nat), m: List(Nat)): Nat {
@@ -70,8 +69,6 @@ module Nm {
       Cons(v, r) => Nm::ins(v, Nm::mul(r, b))
     }
   }
-
-  // ---- monomials compared ----------------------------------------------------------
 
   pub fn cmp_at(e: Bool, l: Bool, r: Ordering): Ordering {
     match e: Ordering {
@@ -110,10 +107,7 @@ module Nm {
     h: Nm::cmp_at(e, l, r) = Equal
   ): Cons(x, xs) = Cons(y, ys) {
     match e: Cons(x, xs) = Cons(y, ys) {
-      true => Eq::trans(
-        Eq::congr(⟦Cons(□, xs)⟧, he(Refl)),
-        Eq::congr(⟦Cons(y, □)⟧, hr(h))
-      )
+      true => Eq::trans(Eq::congr(⟦Cons(□, xs)⟧, he(Refl)), Eq::congr(⟦Cons(y, □)⟧, hr(h)))
       false => match l: Cons(x, xs) = Cons(y, ys) {
         true => False::elim(less_ne_equal(h))
         false => False::elim(greater_ne_equal(h))
@@ -145,8 +139,6 @@ module Nm {
     }
   }
 }
-
-// ---- polynomials: a sum of monomials with coefficients, in order --------------------
 
 // `c` times the product `m`.
 pub(open) inductive NmTerm: Type {
@@ -240,8 +232,6 @@ module Ne {
   }
 }
 
-// ---- the normal form has the value of the expression ----------------------------------
-
 module Nm {
   pub theorem ins_at_sound(
     env: List(Nat),
@@ -331,16 +321,27 @@ module Np {
           Nat::mul_add_distrib_right(c, d, Nm::eval(env, m))
         ),
         Eq::trans(
-          Nat::add_assoc(Nat::mul(c, Nm::eval(env, m)), Nat::mul(d, Nm::eval(env, m)), Np::eval(env, p2)),
+          Nat::add_assoc(
+            Nat::mul(c, Nm::eval(env, m)),
+            Nat::mul(d, Nm::eval(env, m)),
+            Np::eval(env, p2)
+          ),
           Eq::congr(
-            ⟦Nat::add(Nat::mul(c, Nm::eval(env, m)), Nat::add(Nat::mul(d, Nm::eval(env, □)), Np::eval(env, p2)))⟧,
+            ⟦Nat::add(
+              Nat::mul(c, Nm::eval(env, m)),
+              Nat::add(Nat::mul(d, Nm::eval(env, □)), Np::eval(env, p2))
+            )⟧,
             same(Refl)
           )
         )
       )
       Greater => Eq::trans(
         Eq::congr(⟦Nat::add(Nat::mul(d, Nm::eval(env, n)), □)⟧, ih),
-        Nat::add_swap_left(Nat::mul(d, Nm::eval(env, n)), Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p2))
+        Nat::add_swap_left(
+          Nat::mul(d, Nm::eval(env, n)),
+          Nat::mul(c, Nm::eval(env, m)),
+          Np::eval(env, p2)
+        )
       )
     }
   }
@@ -351,7 +352,10 @@ module Np {
     m: List(Nat),
     p: List(NmTerm)
   ): Np::eval(env, Np::ins(c, m, p)) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p)) {
-    match p: Np::eval(env, Np::ins(c, m, p)) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p)) {
+    match p: Np::eval(
+      env,
+      Np::ins(c, m, p)
+    ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p)) {
       Nil => Refl
       Cons(u, p2) => match u: Np::eval(
         env,
@@ -388,7 +392,9 @@ module Np {
           Np::ins_sound(env, c, m, Np::add(r, q)),
           Eq::trans(
             Eq::congr(⟦Nat::add(Nat::mul(c, Nm::eval(env, m)), □)⟧, Np::add_sound(env, r, q)),
-            Eq::sym(Nat::add_assoc(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, r), Np::eval(env, q)))
+            Eq::sym(
+              Nat::add_assoc(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, r), Np::eval(env, q))
+            )
           )
         )
       }
@@ -397,7 +403,6 @@ module Np {
 }
 
 module Nat {
-  // `(c * d) * (x * y)` is `(c * x) * (d * y)`.
   pub theorem mul_mul4(
     c: Nat,
     d: Nat,
@@ -406,10 +411,7 @@ module Nat {
   ): mul(mul(c, d), mul(x, y)) = mul(mul(c, x), mul(d, y)) {
     Eq::trans(
       mul_assoc(c, d, mul(x, y)),
-      Eq::trans(
-        Eq::congr(⟦mul(c, □)⟧, mul_swap(d, x, y)),
-        Eq::sym(mul_assoc(c, x, mul(d, y)))
-      )
+      Eq::trans(Eq::congr(⟦mul(c, □)⟧, mul_swap(d, x, y)), Eq::sym(mul_assoc(c, x, mul(d, y))))
     )
   }
 }
@@ -420,7 +422,10 @@ module Np {
     c: Nat,
     m: List(Nat),
     q: List(NmTerm)
-  ): Np::eval(env, Np::mul_mono(c, m, q)) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, q)) {
+  ): Np::eval(
+    env,
+    Np::mul_mono(c, m, q)
+  ) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, q)) {
     match q: Np::eval(
       env,
       Np::mul_mono(c, m, q)
@@ -444,7 +449,10 @@ module Np {
               ),
               Eq::trans(
                 Eq::congr(
-                  ⟦Nat::add(Nat::mul(Nat::mul(c, Nm::eval(env, m)), Nat::mul(d, Nm::eval(env, n))), □)⟧,
+                  ⟦Nat::add(
+                    Nat::mul(Nat::mul(c, Nm::eval(env, m)), Nat::mul(d, Nm::eval(env, n))),
+                    □
+                  )⟧,
                   Np::mul_mono_sound(env, c, m, r)
                 ),
                 Eq::sym(
@@ -508,7 +516,10 @@ module Np {
 }
 
 module Ne {
-  pub theorem norm_sound(env: List(Nat), e: NatExpr): Ne::eval(env, e) = Np::eval(env, Ne::norm(e)) {
+  pub theorem norm_sound(
+    env: List(Nat),
+    e: NatExpr
+  ): Ne::eval(env, e) = Np::eval(env, Ne::norm(e)) {
     match e: Ne::eval(env, e) = Np::eval(env, Ne::norm(e)) {
       NeConst(n) => Eq::sym(Np::const_sound(env, n))
       NeVar(i) => Eq::sym(
@@ -536,7 +547,6 @@ module Ne {
 }
 
 module Nat {
-  // The sides are equal when their normal forms are the same term.
   pub theorem norm_eq(
     env: List(Nat),
     a: NatExpr,
@@ -546,6 +556,225 @@ module Nat {
     Eq::trans(
       Ne::norm_sound(env, a),
       Eq::trans(Eq::congr(⟦Np::eval(env, □)⟧, same), Eq::sym(Ne::norm_sound(env, b)))
+    )
+  }
+}
+
+// Inequalities of the same semiring: `Np::le_chk(p, q)` says that every term of the normal
+// form `p` is matched by a term of `q` with the same monomial and a coefficient that is not
+// smaller (the terms are in the same order, so one walk along both lists is enough). The
+// check is not complete (`a <= b` for `a` and `b` that only the hypotheses relate is out of
+// reach), but when it says yes, the value of `p` is at most the value of `q` for every
+// value of the variables (`Nat::norm_le`). As for `Nat::norm_eq`, the theorem is the whole
+// trust; `nat_le!` in `Tactic.taut` only finds the `NatExpr`s and the values of the variables.
+
+module Nat {
+  pub theorem le_add_right(a: Nat, b: Nat): a <= a + b = true {
+    match b: a <= a + b = true {
+      Zero => Nat::le_refl(a)
+      Succ(k) => Nat::le_trans(a, a + k, Succ(a + k), Nat::le_add_right(a, k), Nat::le_succ(a + k))
+    }
+  }
+
+  pub theorem le_add_left(a: Nat, b: Nat): b <= a + b = true {
+    match b: b <= a + b = true {
+      Zero => Refl
+      Succ(k) => Nat::le_add_left(a, k)
+    }
+  }
+
+  // `a + c <= b + c`.
+  pub theorem le_add_mono_left(a: Nat, b: Nat, c: Nat, h: a <= b = true): a + c <= b + c = true {
+    match c: a + c <= b + c = true {
+      Zero => h
+      Succ(k) => Nat::le_add_mono_left(a, b, k, h)
+    }
+  }
+
+  // `a + c <= a + d`.
+  pub theorem le_add_mono_right(a: Nat, c: Nat, d: Nat, h: c <= d = true): a + c <= a + d = true {
+    Eq::subst(
+      (z: Nat) => a + c <= z = true,
+      Nat::add_comm(d, a),
+      Eq::subst(
+        (z: Nat) => z <= d + a = true,
+        Nat::add_comm(c, a),
+        Nat::le_add_mono_left(c, d, a, h)
+      )
+    )
+  }
+}
+
+module Nat {
+  pub theorem le_add_mono(
+    a: Nat,
+    b: Nat,
+    c: Nat,
+    d: Nat,
+    h1: a <= b = true,
+    h2: c <= d = true
+  ): a + c <= b + d = true {
+    Nat::le_trans(
+      a + c,
+      b + c,
+      b + d,
+      Nat::le_add_mono_left(a, b, c, h1),
+      Nat::le_add_mono_right(b, c, d, h2)
+    )
+  }
+
+  // `c * x <= d * x`.
+  pub theorem le_mul_mono_left(c: Nat, d: Nat, x: Nat, h: c <= d = true): c * x <= d * x = true {
+    match x: c * x <= d * x = true {
+      Zero => Refl
+      Succ(k) => Nat::le_add_mono(c * k, d * k, c, d, Nat::le_mul_mono_left(c, d, k, h), h)
+    }
+  }
+}
+
+module Np {
+  pub fn le_at(o: Ordering, b: Bool, e: Bool, g: Bool): Bool {
+    match o: Bool {
+      Less => false
+      Equal => match b: Bool {
+        true => e
+        false => false
+      }
+      Greater => g
+    }
+  }
+
+  pub fn le_chk(p: List(NmTerm), q: List(NmTerm)): Bool {
+    match q: Bool {
+      Nil => match p: Bool {
+        Nil => true
+        Cons(t, p2) => false
+      }
+      Cons(u, q2) => match p: Bool {
+        Nil => true
+        Cons(t, p2) => match t: Bool {
+          Nt(c, m) => match u: Bool {
+            Nt(d, n) => Np::le_at(Nm::cmp(m, n), c <= d, Np::le_chk(p2, q2), Np::le_chk(p, q2))
+          }
+        }
+      }
+    }
+  }
+
+  pub theorem le_at_sound(
+    env: List(Nat),
+    o: Ordering,
+    b: Bool,
+    e: Bool,
+    g: Bool,
+    c: Nat,
+    d: Nat,
+    m: List(Nat),
+    n: List(Nat),
+    p2: List(NmTerm),
+    q2: List(NmTerm),
+    hc: Nm::cmp(m, n) = o,
+    hb: (b = true) -> (c <= d = true),
+    he: (e = true) -> (Np::eval(env, p2) <= Np::eval(env, q2) = true),
+    hg: (g = true) -> (Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, q2) = true),
+    h: Np::le_at(o, b, e, g) = true
+  ): Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, Cons(Nt(d, n), q2)) = true {
+    match o: Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, Cons(Nt(d, n), q2)) = true {
+      Less => False::elim(false_ne_true(h))
+      Equal => match b: Np::eval(
+        env,
+        Cons(Nt(c, m), p2)
+      ) <= Np::eval(env, Cons(Nt(d, n), q2)) = true {
+        true => Eq::subst(
+          (z: List(Nat)) => Np::eval(
+            env,
+            Cons(Nt(c, m), p2)
+          ) <= Np::eval(env, Cons(Nt(d, z), q2)) = true,
+          Nm::cmp_sound(m, n, hc),
+          Nat::le_add_mono(
+            Nat::mul(c, Nm::eval(env, m)),
+            Nat::mul(d, Nm::eval(env, m)),
+            Np::eval(env, p2),
+            Np::eval(env, q2),
+            Nat::le_mul_mono_left(c, d, Nm::eval(env, m), hb(Refl)),
+            he(h)
+          )
+        )
+        false => False::elim(false_ne_true(h))
+      }
+      Greater => Nat::le_trans(
+        Np::eval(env, Cons(Nt(c, m), p2)),
+        Np::eval(env, q2),
+        Np::eval(env, Cons(Nt(d, n), q2)),
+        hg(h),
+        Nat::le_add_left(Nat::mul(d, Nm::eval(env, n)), Np::eval(env, q2))
+      )
+    }
+  }
+
+  pub theorem le_chk_sound(
+    env: List(Nat),
+    p: List(NmTerm),
+    q: List(NmTerm),
+    h: Np::le_chk(p, q) = true
+  ): Np::eval(env, p) <= Np::eval(env, q) = true {
+    match q: Np::eval(env, p) <= Np::eval(env, q) = true {
+      Nil => match p: Np::eval(env, p) <= Zero = true {
+        Nil => Refl
+        Cons(t, p2) => False::elim(false_ne_true(h))
+      }
+      Cons(u, q2) => match p: Np::eval(env, p) <= Np::eval(env, Cons(u, q2)) = true {
+        Nil => Refl
+        Cons(t, p2) => match t: Np::eval(env, Cons(t, p2)) <= Np::eval(env, Cons(u, q2)) = true {
+          Nt(c, m) => match u: Np::eval(
+            env,
+            Cons(Nt(c, m), p2)
+          ) <= Np::eval(env, Cons(u, q2)) = true {
+            Nt(d, n) => Np::le_at_sound(
+              env,
+              Nm::cmp(m, n),
+              c <= d,
+              Np::le_chk(p2, q2),
+              Np::le_chk(Cons(Nt(c, m), p2), q2),
+              c,
+              d,
+              m,
+              n,
+              p2,
+              q2,
+              Refl,
+              (x: c <= d = true) => x,
+              (x: Np::le_chk(p2, q2) = true) => Np::le_chk_sound(env, p2, q2, x),
+              (x: Np::le_chk(Cons(Nt(c, m), p2), q2) = true) => Np::le_chk_sound(
+                env,
+                Cons(Nt(c, m), p2),
+                q2,
+                x
+              ),
+              h
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+module Nat {
+  pub theorem norm_le(
+    env: List(Nat),
+    a: NatExpr,
+    b: NatExpr,
+    ok: Np::le_chk(Ne::norm(a), Ne::norm(b)) = true
+  ): Ne::eval(env, a) <= Ne::eval(env, b) = true {
+    Eq::subst(
+      (z: Nat) => z <= Ne::eval(env, b) = true,
+      Eq::sym(Ne::norm_sound(env, a)),
+      Eq::subst(
+        (z: Nat) => Np::eval(env, Ne::norm(a)) <= z = true,
+        Eq::sym(Ne::norm_sound(env, b)),
+        Np::le_chk_sound(env, Ne::norm(a), Ne::norm(b), ok)
+      )
     )
   }
 }

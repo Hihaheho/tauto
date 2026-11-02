@@ -13,13 +13,11 @@ use tauto_rt::{Text, stdlib, tcp, tls_host};
 use crate::builtins::Known;
 use crate::value::{R, Value, fail};
 
-/// What a request answers, as plain data.
 pub enum Reply {
     Unit,
     Text(String),
     Texts(Vec<String>),
     Bytes(Vec<u8>),
-    /// A product's members, in its order.
     Product(Vec<Reply>),
     Some(Box<Reply>),
     None,
@@ -55,7 +53,6 @@ impl Reply {
 
 pub type Job = Box<dyn FnOnce() -> Reply + Send>;
 
-/// Runs the request on a thread of its own; its reply goes to `tx` with `id`.
 pub fn start(job: Job, id: u64, tx: std::sync::mpsc::Sender<(u64, Reply)>) {
     std::thread::spawn(move || {
         let reply =
@@ -72,10 +69,15 @@ pub fn start(job: Job, id: u64, tx: std::sync::mpsc::Sender<(u64, Reply)>) {
     });
 }
 
-/// The builtins that are requests of this kind.
 pub const NAMES: &[&str] = &[
     "Os::list_dir",
     "Os::run",
+    "Os::child_spawn",
+    "Os::child_read",
+    "Os::child_write",
+    "Os::child_close_stdin",
+    "Os::child_wait",
+    "Os::child_close",
     "Os::fetch",
     "Os::resolve",
     "Os::tcp_listen",
@@ -141,7 +143,6 @@ fn text_list(k: &Known, v: &Value) -> R<Vec<String>> {
         .collect()
 }
 
-/// The request a builtin makes of its arguments.
 pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
     let text = |i: usize| a[i].as_text().map(|t| t.to_string());
     Ok(match name {
@@ -186,6 +187,63 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
                 result(r, |(items, out)| {
                     Reply::Product(vec![Reply::Bytes(out.to_vec()), Reply::Texts(texts(items))])
                 })
+            })
+        }
+        "Os::child_spawn" => {
+            let (program, args, dir) = (text(0)?, text_list(k, &a[1])?, text(2)?);
+            let (env, stdin, modes) =
+                (text_list(k, &a[3])?, bytes_of(&a[4])?, text_list(k, &a[5])?);
+            Box::new(move || {
+                let r = tauto_rt::child::os_child_spawn_vec(
+                    program.into(),
+                    args.into_iter().map(Text::from).collect(),
+                    dir.into(),
+                    env.into_iter().map(Text::from).collect(),
+                    Bytes::from(stdin),
+                    modes.into_iter().map(Text::from).collect(),
+                );
+                result(r, |v| Reply::Texts(texts(v)))
+            })
+        }
+        "Os::child_read" => {
+            let (id, which, max, d) = (
+                u64_of(&a[0])?,
+                u64_of(&a[1])?,
+                u64_of(&a[2])?,
+                deadline(k, &a[3])?,
+            );
+            Box::new(move || {
+                timed(
+                    tauto_rt::child::os_child_read_vec(id, which, max, d),
+                    Reply::Bytes,
+                )
+            })
+        }
+        "Os::child_write" => {
+            let (id, b) = (u64_of(&a[0])?, bytes_of(&a[1])?);
+            Box::new(move || {
+                result(tauto_rt::child::os_child_write(id, Bytes::from(b)), |()| {
+                    Reply::Unit
+                })
+            })
+        }
+        "Os::child_close_stdin" => {
+            let id = u64_of(&a[0])?;
+            Box::new(move || result(tauto_rt::child::os_child_close_stdin(id), |()| Reply::Unit))
+        }
+        "Os::child_wait" => {
+            let (id, d) = (u64_of(&a[0])?, deadline(k, &a[1])?);
+            Box::new(move || {
+                timed(tauto_rt::child::os_child_wait_vec(id, d), |v| {
+                    Reply::Texts(texts(v))
+                })
+            })
+        }
+        "Os::child_close" => {
+            let id = u64_of(&a[0])?;
+            Box::new(move || {
+                tauto_rt::child::os_child_close(id);
+                Reply::Unit
             })
         }
         "Os::resolve" => {

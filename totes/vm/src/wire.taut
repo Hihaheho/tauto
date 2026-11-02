@@ -1,4 +1,13 @@
 import "compile.taut"
+import "../../scan/src/scan.taut"
+import "cps.taut"
+import "mval.taut"
+import "syntab.taut"
+import std::Int
+import std::prelude::Shared
+import std::Base
+import std::Float
+import std::Array
 
 // The continuation-passing form of a program as Rust writes it
 // (`crates/tauto-vm/src/wire.rs`): numbers in decimal separated by spaces, each node a tag
@@ -30,7 +39,6 @@ pub fn w_tokens(fuel: Nat, bs: List(Nat)): Option(List(WTok)) {
         w_tokens(f, rest)
       } else {
         if Nat::eq(b, 116) {
-          // `t`, the length, a space, then the bytes.
           match w_number(rest, 0, false) {
             None => None
             Some(r) => match r {
@@ -72,7 +80,6 @@ pub fn w_number(bs: List(Nat), acc: Nat, seen: Bool): Option(Pair(Nat, List(Nat)
   }
 }
 
-// The tokens left, and whether everything read so far was well formed.
 pub(open) inductive WS: Type {
   Ws(tokens: List(WTok), ok: Bool): WS
 }
@@ -322,8 +329,6 @@ pub fn w_options(n: Nat, s: WS): Pair(List(Option(Nat)), WS) {
   }
 }
 
-// ---- a runtime syntax parser (`crates/tauto-vm/src/syntax.rs`) -------------------------
-
 pub fn w_bools(n: Nat, s: WS): Pair(List(Bool), WS) {
   match n {
     Zero => Pair { fst: Nil, snd: s }
@@ -468,7 +473,10 @@ pub fn w_syn_looks(n: Nat, s: WS): Pair(List(Option(SynLook)), WS) {
           Pair { fst: xs, snd: s3 } => match w_syn_transitions(m_nth_nat(xs, 2), s3) {
             Pair { fst: ts, snd: s4 } => match w_syn_looks(m, s4) {
               Pair { fst: rest, snd: s5 } => Pair {
-                fst: Cons(Some(SynLook { prod0: m_nth_nat(xs, 0), k: m_nth_nat(xs, 1), transitions: ts }), rest),
+                fst: Cons(
+                  Some(SynLook { prod0: m_nth_nat(xs, 0), k: m_nth_nat(xs, 1), transitions: ts }),
+                  rest
+                ),
                 snd: s5
               }
             }
@@ -489,7 +497,10 @@ pub fn w_syn_actions(n: Nat, s: WS): Pair(List(SynAction), WS) {
     Succ(m) => match w_nats(3, s) {
       Pair { fst: xs, snd: s2 } => match w_syn_actions(m, s2) {
         Pair { fst: rest, snd: s3 } => Pair {
-          fst: Cons(SynAction { terminal: m_nth_nat(xs, 0), kind: m_nth_nat(xs, 1), arg: m_nth_nat(xs, 2) }, rest),
+          fst: Cons(
+            SynAction { terminal: m_nth_nat(xs, 0), kind: m_nth_nat(xs, 1), arg: m_nth_nat(xs, 2) },
+            rest
+          ),
           snd: s3
         }
       }
@@ -541,7 +552,11 @@ pub fn w_syn_tables(lr: Bool, s: WS): WSynTables {
   match w_nat(s) {
     Pair { fst: n, snd: s2 } => if lr {
       match w_syn_states(n, s2) {
-        Pair { fst: states, snd: s3 } => WSynTables { looks: Nil(Option(SynLook)), states: states, rest: s3 }
+        Pair { fst: states, snd: s3 } => WSynTables {
+          looks: Nil(Option(SynLook)),
+          states: states,
+          rest: s3
+        }
       }
     } else {
       match w_syn_looks(n, s2) {
@@ -807,10 +822,12 @@ mutual {
                       } else {
                         match w_nat(s2) {
                           Pair { fst: id, snd: s3 } => match w_bool(s3) {
-                            Pair { fst: r#shared, snd: s4 } => match w_cps(f, s4) {
-                              Pair { fst: init, snd: s5 } => Pair {
-                                fst: CDefine(id, r#shared, init),
-                                snd: s5
+                            Pair { fst: r#shared, snd: s4 } => match w_bool(s4) {
+                              Pair { fst: drop, snd: s5 } => match w_cps(f, s5) {
+                                Pair { fst: init, snd: s6 } => Pair {
+                                  fst: CDefine(id, r#shared, drop, init),
+                                  snd: s6
+                                }
                               }
                             }
                           }
@@ -960,12 +977,17 @@ mutual {
     }
   }
 
-  // `n` arms of a `match`: each a pattern, a guard and a body.
   pub fn w_arms(fuel: Nat, n: Nat, s: WS): Pair(Pair(List(CPat), Pair(List(Cps), List(Cps))), WS) {
     match fuel {
-      Zero => Pair { fst: Pair { fst: Nil(CPat), snd: Pair { fst: Nil(Cps), snd: Nil(Cps) } }, snd: w_bad(s) }
+      Zero => Pair {
+        fst: Pair { fst: Nil(CPat), snd: Pair { fst: Nil(Cps), snd: Nil(Cps) } },
+        snd: w_bad(s)
+      }
       Succ(f) => match n {
-        Zero => Pair { fst: Pair { fst: Nil(CPat), snd: Pair { fst: Nil(Cps), snd: Nil(Cps) } }, snd: s }
+        Zero => Pair {
+          fst: Pair { fst: Nil(CPat), snd: Pair { fst: Nil(Cps), snd: Nil(Cps) } },
+          snd: s
+        }
         Succ(m) => match w_pat(f, s) {
           Pair { fst: p, snd: s2 } => match w_cps(f, s2) {
             Pair { fst: g, snd: s3 } => match w_cps(f, s3) {

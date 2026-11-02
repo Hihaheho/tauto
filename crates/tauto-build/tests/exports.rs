@@ -7,7 +7,11 @@ fn generate(
 ) -> Result<(String, String, Vec<String>), String> {
     let dir = std::env::temp_dir().join(format!("tauto-exports-{}-{name}", std::process::id()));
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("Tauto.eure"), format!("package {{ name = \"exports\"\n version = \"0.1.0\"\n sources = [\"src\"] }}\nrust {{ {exports} }}\n")).unwrap();
+    std::fs::write(
+        dir.join("Tauto.eure"),
+        format!("package {{ name = \"exports\"\n version = \"0.1.0\" }}\nrust {{ {exports} }}\n"),
+    )
+    .unwrap();
     std::fs::write(dir.join("src/main.taut"), source).unwrap();
     let result = tauto_build::generate(&PathBuf::from(&dir).join("Tauto.eure"), None);
     std::fs::remove_dir_all(dir).unwrap();
@@ -96,10 +100,7 @@ fn Valid(b: Option(Box), n: Nat): Prop {
 theorem box_zero(): Valid(Some(Box::Mk(Zero)), Zero) { Refl }
 "#;
     generate("logical-constructor", "exports = []", source).unwrap();
-    let invalid = source.replace(
-        r#"Zero) { Refl }"#,
-        r#"Succ(Zero)) { Refl }"#,
-    );
+    let invalid = source.replace(r#"Zero) { Refl }"#, r#"Succ(Zero)) { Refl }"#);
     let err = generate("logical-constructor-invalid", "exports = []", &invalid).unwrap_err();
     assert!(
         err.contains("box_zero") && !err.contains("`Valid` is not defined"),
@@ -268,7 +269,8 @@ fn nonresuming_entries_are_additive_to_the_selected_callback_facade() {
 #[test]
 fn uniffi_exports_wrap_the_facade() {
     tauto_messages::install();
-    let source = r#"
+    let source = r#"import std::prelude::Affine
+
 fn greet(name: Text, times: i64): Text { if times > 0 { name } else { "nobody" } }
 fn first(names: Vec(Text)): Option(Text) { None }
 fn twice(n: i64): i64 { n + n }

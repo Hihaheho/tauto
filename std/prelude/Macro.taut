@@ -9,7 +9,6 @@ pub(open) struct SynSpan { id: u64 }
 // The scopes a name carries (hygiene); empty outside macros.
 pub(open) struct SynCtx { scopes: List(u64) }
 
-// A token of a syntax's text, with where it is and the scopes it carries.
 pub(open) struct SynToken { text: Text, span: SynSpan, ctx: SynCtx }
 
 // A token of a syntax's text as the functions registered with `syntax s … with fmt f, tokens g`
@@ -33,7 +32,6 @@ pub(open) struct SynHighlight { start: u64, end: u64, kind: Text }
 // code a tool shows (`macro.error` for a macro's own).
 pub(open) struct SynDiag { message: Text, at: u64, expected: List(Text), code: Text }
 
-// A name with the scopes it carries.
 pub(open) struct SynIdent { name: Text, ctx: SynCtx, span: SynSpan }
 
 // A binder: a name or an atom of a `Judgement`, and the type when written.
@@ -76,9 +74,7 @@ pub(open) enum SynExpr {
   ExMacroCall(SynIdent, Text, SynSpan)
   // A call whose argument is an expression (an untyped or a typed macro).
   ExMacroExpr(SynIdent, SynExpr, SynSpan)
-  // `?name`: a term not written yet.
   ExHole(Text, SynSpan)
-  // `#()`: the unit.
   ExUnit(SynSpan)
 }
 
@@ -245,7 +241,6 @@ module Syn {
     }
   }
 
-  // A number token as an expression; anything but digits is the macro's error.
   pub fn nat(t: SynToken): SynExpr ! {macro_error, Div} {
     if Text::len(t.text) > 0 && Syn::all_digits(t.text, 0) {
       ExNat(t.text, t.span)
@@ -286,7 +281,6 @@ module Syn {
 // of it is checked again, so nothing here is trusted.
 
 module Judgement {
-  // A variable of the context: its atom, the name it has, and its type.
   pub(open) struct Binder { atom: u64, name: Text, ty: SynExpr }
 
   // How the term uses a variable of the context: `moved`, `borrowed`,
@@ -325,16 +319,27 @@ module Syn {
   // The hole of the goal of the K-th arm, from 1.
   pub fn hole(k: u64, at: SynSpan): SynExpr { ExHole(concat("arm", Text::of_u64(k)), at) }
 
+  // `Nat::add` and `Nat::mul` as the operators `+` and `*` they are written as: the same
+  // functions, so a name is compared by this.
+  pub fn op_name(name: Text): Text {
+    if name == "Nat::add" {
+      "+"
+    } else {
+      if name == "Nat::mul" { "*" } else { name }
+    }
+  }
+
   // Whether two expressions are written the same, apart from where they are and
   // the scopes their names carry: what a tactic compares goals by. A name is
-  // compared by its text and an atom by its number; a form with binders, by its
+  // compared by its text (`Nat::add` and `Nat::mul` are `+` and `*`, which are the
+  // same functions) and an atom by its number; a form with binders, by its
   // binders' names and types and its body. Only names, atoms, numerals, texts,
   // booleans, applications, function types, functions `x => …`, `∃` and holes
   // are compared; two expressions of any other form are not the same.
   pub fn same(a: SynExpr, b: SynExpr): Bool {
     match a {
       ExVar(x) => match b {
-        ExVar(y) => x.name == y.name
+        ExVar(y) => Syn::op_name(x.name) == Syn::op_name(y.name)
         ExAtom(_, _) => false
         ExNat(_, _) => false
         ExText(_, _) => false
@@ -708,10 +713,10 @@ module Syn {
       }
       Cons(p, pr) => match qs {
         Nil => false
-        Cons(q, qr) => Syn::same_name(p.name, q.name) && Syn::same(p.ty, q.ty) && Syn::same_params(
-          pr,
-          qr
-        )
+        Cons(q, qr) => Syn::same_name(
+          p.name,
+          q.name
+        ) && Syn::same(p.ty, q.ty) && Syn::same_params(pr, qr)
       }
     }
   }
@@ -913,64 +918,64 @@ module Syn {
           ExApp(g, ys, _) => if Syn::same(f, g) && Syn::same_length(xs, ys) {
             match Syn::diff_all(xs, ys, None) {
               Some(d) => d
-              None => Some(#(@before a, @after b))
+              None => Some(#(@after b, @before a))
             }
           } else {
-            Some(#(@before a, @after b))
+            Some(#(@after b, @before a))
           }
-          ExVar(_) => Some(#(@before a, @after b))
-          ExAtom(_, _) => Some(#(@before a, @after b))
-          ExNat(_, _) => Some(#(@before a, @after b))
-          ExText(_, _) => Some(#(@before a, @after b))
-          ExBool(_, _) => Some(#(@before a, @after b))
-          ExPi(_, _, _, _) => Some(#(@before a, @after b))
-          ExLam(_, _, _) => Some(#(@before a, @after b))
-          ExIf(_, _, _, _) => Some(#(@before a, @after b))
-          ExField(_, _, _) => Some(#(@before a, @after b))
-          ExBlock(_, _) => Some(#(@before a, @after b))
-          ExPerform(_, _, _) => Some(#(@before a, @after b))
-          ExHandle(_, _, _) => Some(#(@before a, @after b))
-          ExBudget(_, _, _) => Some(#(@before a, @after b))
-          ExBudgetMemory(_, _, _) => Some(#(@before a, @after b))
-          ExMatch(_, _, _, _, _) => Some(#(@before a, @after b))
-          ExRecord(_, _, _) => Some(#(@before a, @after b))
-          ExBorrow(_, _, _) => Some(#(@before a, @after b))
-          ExUnion(_, _) => Some(#(@before a, @after b))
-          ExTagged(_, _, _) => Some(#(@before a, @after b))
-          ExExists(_, _, _, _) => Some(#(@before a, @after b))
-          ExFnKind(_, _, _) => Some(#(@before a, @after b))
-          ExBorrowLam(_, _, _) => Some(#(@before a, @after b))
-          ExMacroCall(_, _, _) => Some(#(@before a, @after b))
-          ExMacroExpr(_, _, _) => Some(#(@before a, @after b))
-          ExHole(_, _) => Some(#(@before a, @after b))
-          ExUnit(_) => Some(#(@before a, @after b))
+          ExVar(_) => Some(#(@after b, @before a))
+          ExAtom(_, _) => Some(#(@after b, @before a))
+          ExNat(_, _) => Some(#(@after b, @before a))
+          ExText(_, _) => Some(#(@after b, @before a))
+          ExBool(_, _) => Some(#(@after b, @before a))
+          ExPi(_, _, _, _) => Some(#(@after b, @before a))
+          ExLam(_, _, _) => Some(#(@after b, @before a))
+          ExIf(_, _, _, _) => Some(#(@after b, @before a))
+          ExField(_, _, _) => Some(#(@after b, @before a))
+          ExBlock(_, _) => Some(#(@after b, @before a))
+          ExPerform(_, _, _) => Some(#(@after b, @before a))
+          ExHandle(_, _, _) => Some(#(@after b, @before a))
+          ExBudget(_, _, _) => Some(#(@after b, @before a))
+          ExBudgetMemory(_, _, _) => Some(#(@after b, @before a))
+          ExMatch(_, _, _, _, _) => Some(#(@after b, @before a))
+          ExRecord(_, _, _) => Some(#(@after b, @before a))
+          ExBorrow(_, _, _) => Some(#(@after b, @before a))
+          ExUnion(_, _) => Some(#(@after b, @before a))
+          ExTagged(_, _, _) => Some(#(@after b, @before a))
+          ExExists(_, _, _, _) => Some(#(@after b, @before a))
+          ExFnKind(_, _, _) => Some(#(@after b, @before a))
+          ExBorrowLam(_, _, _) => Some(#(@after b, @before a))
+          ExMacroCall(_, _, _) => Some(#(@after b, @before a))
+          ExMacroExpr(_, _, _) => Some(#(@after b, @before a))
+          ExHole(_, _) => Some(#(@after b, @before a))
+          ExUnit(_) => Some(#(@after b, @before a))
         }
-        ExVar(_) => Some(#(@before a, @after b))
-        ExAtom(_, _) => Some(#(@before a, @after b))
-        ExNat(_, _) => Some(#(@before a, @after b))
-        ExText(_, _) => Some(#(@before a, @after b))
-        ExBool(_, _) => Some(#(@before a, @after b))
-        ExPi(_, _, _, _) => Some(#(@before a, @after b))
-        ExLam(_, _, _) => Some(#(@before a, @after b))
-        ExIf(_, _, _, _) => Some(#(@before a, @after b))
-        ExField(_, _, _) => Some(#(@before a, @after b))
-        ExBlock(_, _) => Some(#(@before a, @after b))
-        ExPerform(_, _, _) => Some(#(@before a, @after b))
-        ExHandle(_, _, _) => Some(#(@before a, @after b))
-        ExBudget(_, _, _) => Some(#(@before a, @after b))
-        ExBudgetMemory(_, _, _) => Some(#(@before a, @after b))
-        ExMatch(_, _, _, _, _) => Some(#(@before a, @after b))
-        ExRecord(_, _, _) => Some(#(@before a, @after b))
-        ExBorrow(_, _, _) => Some(#(@before a, @after b))
-        ExUnion(_, _) => Some(#(@before a, @after b))
-        ExTagged(_, _, _) => Some(#(@before a, @after b))
-        ExExists(_, _, _, _) => Some(#(@before a, @after b))
-        ExFnKind(_, _, _) => Some(#(@before a, @after b))
-        ExBorrowLam(_, _, _) => Some(#(@before a, @after b))
-        ExMacroCall(_, _, _) => Some(#(@before a, @after b))
-        ExMacroExpr(_, _, _) => Some(#(@before a, @after b))
-        ExHole(_, _) => Some(#(@before a, @after b))
-        ExUnit(_) => Some(#(@before a, @after b))
+        ExVar(_) => Some(#(@after b, @before a))
+        ExAtom(_, _) => Some(#(@after b, @before a))
+        ExNat(_, _) => Some(#(@after b, @before a))
+        ExText(_, _) => Some(#(@after b, @before a))
+        ExBool(_, _) => Some(#(@after b, @before a))
+        ExPi(_, _, _, _) => Some(#(@after b, @before a))
+        ExLam(_, _, _) => Some(#(@after b, @before a))
+        ExIf(_, _, _, _) => Some(#(@after b, @before a))
+        ExField(_, _, _) => Some(#(@after b, @before a))
+        ExBlock(_, _) => Some(#(@after b, @before a))
+        ExPerform(_, _, _) => Some(#(@after b, @before a))
+        ExHandle(_, _, _) => Some(#(@after b, @before a))
+        ExBudget(_, _, _) => Some(#(@after b, @before a))
+        ExBudgetMemory(_, _, _) => Some(#(@after b, @before a))
+        ExMatch(_, _, _, _, _) => Some(#(@after b, @before a))
+        ExRecord(_, _, _) => Some(#(@after b, @before a))
+        ExBorrow(_, _, _) => Some(#(@after b, @before a))
+        ExUnion(_, _) => Some(#(@after b, @before a))
+        ExTagged(_, _, _) => Some(#(@after b, @before a))
+        ExExists(_, _, _, _) => Some(#(@after b, @before a))
+        ExFnKind(_, _, _) => Some(#(@after b, @before a))
+        ExBorrowLam(_, _, _) => Some(#(@after b, @before a))
+        ExMacroCall(_, _, _) => Some(#(@after b, @before a))
+        ExMacroExpr(_, _, _) => Some(#(@after b, @before a))
+        ExHole(_, _) => Some(#(@after b, @before a))
+        ExUnit(_) => Some(#(@after b, @before a))
       }
     }
   }
@@ -989,7 +994,7 @@ module Syn {
         Cons(y, yr) => match Syn::diff(x, y) {
           None => Syn::diff_all(xr, yr, found)
           Some(#(@after r, @before l)) => match found {
-            None => Syn::diff_all(xr, yr, Some(#(@before l, @after r)))
+            None => Syn::diff_all(xr, yr, Some(#(@after r, @before l)))
             Some(#(@after r0, @before l0)) => if Syn::same(l, l0) && Syn::same(r, r0) {
               Syn::diff_all(xr, yr, found)
             } else {
@@ -1014,7 +1019,6 @@ module Syn {
     }
   }
 
-  // The function and the arguments of an application.
   pub fn app_parts(e: SynExpr): Option(List(SynExpr) × SynExpr) {
     match e {
       ExApp(f, xs, _) => Some(#(xs, f))
@@ -1047,7 +1051,6 @@ module Syn {
     }
   }
 
-  // The digits an expression is, when it is a number.
   pub fn nat_text(e: SynExpr): Option(Text) {
     match e {
       ExNat(n, _) => Some(n)
@@ -1080,7 +1083,6 @@ module Syn {
     }
   }
 
-  // The name an expression is, when it is one.
   pub fn name_of(e: SynExpr): Option(Text) {
     match e {
       ExVar(x) => Some(x.name)
@@ -1113,7 +1115,6 @@ module Syn {
     }
   }
 
-  // The name an expression is, with the scopes it carries, when it is one.
   pub fn ident_of(e: SynExpr): Option(SynIdent) {
     match e {
       ExVar(x) => Some(x)
@@ -1146,7 +1147,6 @@ module Syn {
     }
   }
 
-  // The `inductive` a statement is, when it is one.
   pub fn inductive_of(s: SynStmt): Option(SynInductive) {
     match s {
       StInductive(d) => Some(d)
@@ -1167,7 +1167,6 @@ module Syn {
     }
   }
 
-  // The parameters and the result of a function type.
   pub fn pi_parts(e: SynExpr): Option(List(SynParam) × SynExpr) {
     match e {
       ExPi(ps, r, _, _) => Some(#(ps, r))
@@ -1225,7 +1224,6 @@ module Judgement {
   pub fn span(c: Judgement): SynSpan { c.span }
   pub fn usage(c: Judgement): List(Use) { c.usage }
 
-  // The judgement `ty : Type`, for any type `ty` in the context of `c`.
   pub fn ty_of(c: Judgement, ty: SynExpr): Judgement {
     Judgement {
       term: ty
@@ -1239,7 +1237,6 @@ module Judgement {
     }
   }
 
-  // The judgement `ty : Type`.
   pub fn type_of(c: Judgement): Judgement {
     Judgement {
       term: c.ty
@@ -1341,7 +1338,6 @@ module Judgement {
     }
   }
 
-  // The type of the first parameter of a function type.
   pub fn param_type(c: Judgement, ty: SynExpr): SynExpr {
     match ty {
       ExPi(ps, _, _, _) => match ps {
@@ -1377,7 +1373,6 @@ module Judgement {
     }
   }
 
-  // The result of a function type of one parameter.
   pub fn result_type(c: Judgement, ty: SynExpr): SynExpr {
     match ty {
       ExPi(ps, r, _, _) => match ps {
@@ -1500,7 +1495,7 @@ module Syn {
   // Reads a text as the syntax whose grammar has this hash. Each syntax gets
   // its own `<syntax>_parse` over this one.
   extern {
-    fn parse<T>(r#syntax: Text, sha: Text, t: Text): Result(T, SynDiag)
+    fn parse<T>(syntax: Text, sha: Text, t: Text): Result(T, SynDiag)
     // What fills a `$name` or a `$(e)` in an expression of a `quote`: a SynExpr
     // as it is, a SynIdent as the variable it names.
     fn expr_of<T>(x: T): SynExpr

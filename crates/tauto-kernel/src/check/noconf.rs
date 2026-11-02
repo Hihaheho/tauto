@@ -69,7 +69,6 @@ impl Kernel {
         let this = app(var(family), pvars.clone());
         let ty_sort = var("Type");
 
-        // Which arguments of each constructor get an equation.
         let mut inj: Vec<Vec<usize>> = Vec::new();
         for c in &ind.ctors {
             let mut ctx: Ctx = ind.params.clone();
@@ -92,7 +91,6 @@ impl Kernel {
             (0..c.recs.len()).map(|i| format!("{tag}h'{i}")).collect()
         };
 
-        // I.nc
         let nc_ty = pi_all(
             &ind.params,
             pi(
@@ -154,7 +152,6 @@ impl Kernel {
         names.extend(["P".into(), "x".into(), "y".into()]);
         let nc_val = lams(&names, body);
 
-        // I.nc_diag
         let nc_at = |x: &T, y: &T| -> T {
             let mut args = pvars.clone();
             args.extend([var("P"), x.clone(), y.clone()]);
@@ -200,7 +197,6 @@ impl Kernel {
         names.extend(["P".into(), "x".into()]);
         let diag_val = lams(&names, app(rec.clone(), args));
 
-        // I.noconf
         let noconf_ty = pi_all(
             &ind.params,
             pi(

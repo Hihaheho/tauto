@@ -5,6 +5,7 @@
 //! the library the macro runs in.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use tauto_parol::Span;
@@ -13,7 +14,7 @@ use super::node::Node;
 use super::origin::{EXPANSION_BASE, SpanMap};
 use super::scope::{self, scopes_of, split};
 use super::syn::Lower;
-use crate::eval::{Host, MACRO_BUILTINS, RunError, call_function};
+use crate::eval::{Host, RunError, call_function};
 use tauto_message::{Message, msg};
 
 /// The built-in `include_text!`, which the reader replaces by the file's text before
@@ -21,15 +22,15 @@ use tauto_message::{Message, msg};
 /// call of it that a macro writes is an error.
 pub const INCLUDE_TEXT: &str = "include_text";
 
-/// The macros the reader knows by name: `include_text!`, `syntax!` and `inductive_syntax!`.
 pub const BUILTINS: [&str; 3] = [INCLUDE_TEXT, "syntax", "inductive_syntax"];
 use crate::generated::{declared, fix as generates_fix, mismatch};
 use crate::rows::{RowReport, check_program_rows};
-use crate::surface::{Generates, Handler, Pattern, Program, Stmt, SurfaceTerm, SyntaxLit, TermKind, walk};
+use crate::surface::{
+    Generates, Handler, Pattern, Program, Stmt, SurfaceTerm, SyntaxLit, TermKind, walk,
+};
 use crate::syntax::Syntaxes;
 use crate::types::{Ty, TypeReport, check_program, prelude};
 
-/// The limits of an expansion.
 #[derive(Debug, Clone)]
 pub struct Limits {
     pub call_steps: u64,
@@ -53,7 +54,6 @@ impl Default for Limits {
     }
 }
 
-/// Expansion limits and the read-only checking service for typed macros.
 #[derive(Debug, Clone)]
 pub struct Options {
     pub limits: Limits,
@@ -67,7 +67,6 @@ impl std::ops::Deref for Options {
     }
 }
 
-/// One run of a macro.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expansion {
     /// From 1; also the number of the scope the expansion's names get.
@@ -83,7 +82,6 @@ pub struct Expansion {
     /// The span of the root of what a syntax macro made (0 when there is no such node):
     /// a type error names the node as written, `lc!(\`…\`)`.
     pub root: u32,
-    /// The syntax read and its text.
     pub syntax: String,
     pub text: String,
     pub steps: u64,
@@ -92,13 +90,11 @@ pub struct Expansion {
     pub captures: Vec<String>,
     /// What the macro was given, for `tauto macro inspect`: the syntax's tree, or the judgement of a `Judgement`.
     pub input: String,
-    /// What it made, as source.
     pub output: String,
 }
 
 pub struct Output {
     pub stmts: Vec<Stmt>,
-    /// The same statements by file, in the same order.
     pub files: Vec<Vec<Stmt>>,
     pub errors: Vec<(String, Span)>,
     /// Edits that answer an error, by where the error is.
@@ -107,7 +103,6 @@ pub struct Output {
     pub expansions: Vec<Expansion>,
     /// `macro_warn`s: message, code, where.
     pub warnings: Vec<(String, Span)>,
-    /// The syntax literals that were read.
     pub literals: Vec<crate::syntax::LiteralUse>,
     /// The functions registered for syntaxes (`with fmt f, tokens g`).
     pub registrations: Vec<crate::syntax::Registration>,
@@ -139,6 +134,47 @@ pub fn expand_files_in(
     seeing: Vec<HashMap<String, String>>,
     modules: Vec<String>,
 ) -> Output {
+    expand_files_resuming(files, opts, seeing, modules, None, None).0
+}
+
+/// What the expansion of the first files of a program left: the expansion of a program whose
+/// first files are given the same goes on from it ([`expand_files_resuming`]).
+#[derive(Clone)]
+pub struct Saved {
+    files: usize,
+    by_file: Vec<Vec<Stmt>>,
+    done_ends: Vec<usize>,
+    syntaxes: Syntaxes,
+    macros: HashMap<String, Reg>,
+    done: Vec<Stmt>,
+    lib: Option<Rc<Lib>>,
+    spans: SpanMap,
+    expansions: Vec<Expansion>,
+    errors: Vec<(String, Span)>,
+    fixes: Vec<(Span, crate::surface::Fix)>,
+    warnings: Vec<(String, Span)>,
+    typed_macros: HashMap<String, bool>,
+}
+
+impl Saved {
+    /// How many files were expanded.
+    pub fn files(&self) -> usize {
+        self.files
+    }
+}
+
+/// [`expand_files_in`], going on from `from` when it is given: the first `from.files()` of
+/// `files` are taken to be the files `from` expanded, given as they were then, with the same
+/// `seeing`, `modules` and checker (the caller makes sure of that), and are not read again.
+/// With `save_before`, what the expansion left before that file is returned too.
+pub fn expand_files_resuming(
+    files: Vec<Vec<Stmt>>,
+    opts: &Options,
+    seeing: Vec<HashMap<String, String>>,
+    modules: Vec<String>,
+    from: Option<Saved>,
+    save_before: Option<usize>,
+) -> (Output, Option<Saved>) {
     let checker = opts.checker.clone();
     let mut e = Expander {
         checker,
@@ -160,21 +196,46 @@ pub fn expand_files_in(
         file_expanded: false,
         elab_prefix: Vec::new(),
         attr_before: Vec::new(),
+        typed_macros: HashMap::new(),
     };
     let mut by_file = Vec::new();
-    for (i, stmts) in files.into_iter().enumerate() {
+    let mut first = 0;
+    if let Some(s) = from {
+        first = s.files;
+        by_file = s.by_file;
+        e.done_ends = s.done_ends;
+        e.syntaxes = s.syntaxes;
+        e.macros = s.macros;
+        e.done = s.done;
+        e.lib = s.lib;
+        e.spans = s.spans;
+        e.expansions = s.expansions;
+        e.errors = s.errors;
+        e.fixes = s.fixes;
+        e.warnings = s.warnings;
+        e.typed_macros = s.typed_macros;
+    }
+    let mut saved = None;
+    for (i, stmts) in files.into_iter().enumerate().skip(first) {
+        if save_before == Some(i) {
+            saved = Some(e.save(&by_file));
+        }
         e.file = i;
-        e.lib = None;
+        e.syntaxes.file = Some(i);
         e.file_steps = 0;
         e.file_expanded = false;
+        e.checker.begin_file(i);
         let stmts = e.file(stmts);
         by_file.push(stmts.clone());
         e.done.extend(stmts);
         e.done_ends.push(e.done.len());
     }
+    if save_before == Some(by_file.len()) {
+        saved = Some(e.save(&by_file));
+    }
     e.errors.extend(std::mem::take(&mut e.syntaxes.errors));
     e.fixes.extend(std::mem::take(&mut e.syntaxes.fixes));
-    Output {
+    let out = Output {
         stmts: e.done,
         files: by_file,
         errors: e.errors,
@@ -184,19 +245,20 @@ pub fn expand_files_in(
         warnings: e.warnings,
         literals: e.syntaxes.uses.into_inner(),
         registrations: e.syntaxes.registrations,
-    }
+    };
+    (out, saved)
 }
 
 mod elab;
 mod step;
 mod typed;
 
+#[derive(Clone)]
 struct Reg {
     function: String,
     file: usize,
 }
 
-/// What a macro function's type says.
 #[derive(Clone)]
 enum Input {
     Syntax(String),
@@ -230,12 +292,15 @@ struct Lib {
     program: Program,
     report: TypeReport,
     rows: RowReport,
-    /// The first thing wrong with these files, if anything.
     problem: Option<String>,
     /// The functions left out because they did not check, with why.
     left_out: Vec<(String, Message)>,
-    /// Whether what the kernel accepts was extracted into it.
-    extracted: bool,
+    /// Whether what the kernel accepts was extracted into it, or found not to be extractable.
+    /// A library saved with the expansion ([`Saved`]) is shared with the expansions that go on
+    /// from it; the files before it are the same in each, so each would find the same.
+    extracted: std::cell::Cell<bool>,
+    /// The file it was built for: it holds the files before that one.
+    built_for: usize,
 }
 
 struct Expander<'o> {
@@ -249,10 +314,9 @@ struct Expander<'o> {
     done_ends: Vec<usize>,
     syntaxes: Syntaxes,
     macros: HashMap<String, Reg>,
-    /// The statements of the files before this one, expanded.
     done: Vec<Stmt>,
     file: usize,
-    lib: Option<Lib>,
+    lib: Option<Rc<Lib>>,
     spans: SpanMap,
     expansions: Vec<Expansion>,
     errors: Vec<(String, Span)>,
@@ -262,8 +326,10 @@ struct Expander<'o> {
     file_expanded: bool,
     /// The declarations before the one a typed macro is in, for `elab_*`.
     elab_prefix: Vec<Stmt>,
-    /// This file's declarations before the attribute being expanded.
     attr_before: Vec<Stmt>,
+    /// Whether each macro of an earlier file takes a judgement: its function
+    /// reads the same in every later file.
+    typed_macros: HashMap<String, bool>,
 }
 
 enum Made {
@@ -272,15 +338,37 @@ enum Made {
 }
 
 impl Expander<'_> {
-    /// What `name`, a global the expansion of the last of `scopes` wrote,
-    /// means in the file of its macro, when that is another name.
-    fn macro_sees(&self, scopes: &[u64], name: &str) -> Option<String> {
+    /// What the expansion has left so far, with the files it made (`by_file`).
+    fn save(&self, by_file: &[Vec<Stmt>]) -> Saved {
+        Saved {
+            files: by_file.len(),
+            by_file: by_file.to_vec(),
+            done_ends: self.done_ends.clone(),
+            syntaxes: self.syntaxes.clone(),
+            macros: self.macros.clone(),
+            done: self.done.clone(),
+            lib: self.lib.clone(),
+            spans: self.spans.clone(),
+            expansions: self.expansions.clone(),
+            errors: self.errors.clone(),
+            fixes: self.fixes.clone(),
+            warnings: self.warnings.clone(),
+            typed_macros: self.typed_macros.clone(),
+        }
+    }
+
+    /// Where `name`, a global the expansion of the last of `scopes` wrote,
+    /// comes from: the file of its macro, and what that file means by the
+    /// name when that is another name. The name is read as that file reads
+    /// it, not as the file of the call does.
+    pub(super) fn macro_sees(&self, scopes: &[u64], name: &str) -> Option<(usize, Option<String>)> {
         let id = *scopes.iter().max()?;
         let made = self
             .expansions
             .get(usize::try_from(id).ok()?.checked_sub(1)?)?;
         let reg = self.macros.get(&made.macro_name)?;
-        self.seeing.get(reg.file)?.get(name).cloned()
+        let seen = self.seeing.get(reg.file).and_then(|s| s.get(name)).cloned();
+        Some((reg.file, seen))
     }
 
     fn error(&mut self, code: &str, message: impl Into<Message>, at: Span) {
@@ -290,7 +378,6 @@ impl Expander<'_> {
 
     fn file(&mut self, stmts: Vec<Stmt>) -> Vec<Stmt> {
         let mut stmts = self.syntaxes.declare_all(stmts);
-        // `macro` declarations.
         let mut kept = Vec::new();
         for s in stmts.drain(..) {
             if let Stmt::Macro {
@@ -308,15 +395,6 @@ impl Expander<'_> {
                         span,
                     );
                 } else {
-                    // The function under the name its file gave it, when the
-                    // names were made full (`nat::nat`, a function `nat` of
-                    // the file `nat`).
-                    let function = self
-                        .seeing
-                        .get(self.file)
-                        .and_then(|s| s.get(&function))
-                        .cloned()
-                        .unwrap_or(function);
                     self.macros.insert(
                         name,
                         Reg {
@@ -370,9 +448,6 @@ impl Expander<'_> {
         self.errors.extend(errors);
     }
 
-    // -----------------------------------------------------------------------
-    // Walking
-
     fn stmts(&mut self, stmts: Vec<Stmt>) -> Vec<Stmt> {
         let mut out = Vec::new();
         for s in stmts {
@@ -408,7 +483,6 @@ impl Expander<'_> {
     }
 
     fn roots(&mut self, s: &mut Stmt) {
-        // Nested statement lists are the statements of a `mutual`/`module`.
         if let Stmt::Mutual { items, .. } | Stmt::Module { items, .. } = s {
             let inner = std::mem::take(items);
             *items = self.stmts(inner);
@@ -435,9 +509,6 @@ impl Expander<'_> {
         }
         walk::children(t, &mut |c| self.term(c));
     }
-
-    // -----------------------------------------------------------------------
-    // Calls
 
     fn expr_call(&mut self, t: &SurfaceTerm) -> Option<SurfaceTerm> {
         match self.call(t, None)? {
@@ -626,7 +697,6 @@ impl Expander<'_> {
         }
     }
 
-    /// The files of `done`, each with its module when it is known.
     fn done_files(&self) -> Vec<(Option<&str>, &[Stmt])> {
         let mut start = 0;
         self.done_ends
@@ -676,13 +746,37 @@ impl Expander<'_> {
     /// left out: as extraction writes them, so that a macro's function can
     /// call a function written in the kernel's language (`Nat` literals,
     /// `Succ`, `the`). Done once a macro needs a function that was left out.
+    /// A library that holds `function`, when the files before this one do.
+    /// A library built for an earlier file is used again when it holds the
+    /// function: the function and what it calls are in the files before that
+    /// one, and read the same in every later library.
+    pub(super) fn library_holding(&mut self, function: &str) {
+        self.library();
+        if self
+            .lib
+            .as_ref()
+            .is_some_and(|l| l.built_for != self.file && !l.report.schemes.contains_key(function))
+        {
+            self.lib = None;
+            self.library();
+        }
+    }
+
+    /// The library of every file before this one.
+    pub(super) fn current_library(&mut self) {
+        if self.lib.as_ref().is_some_and(|l| l.built_for != self.file) {
+            self.lib = None;
+        }
+        self.library();
+    }
+
     fn library_with_kernel(&mut self) {
-        if self.lib.as_ref().is_some_and(|l| l.extracted) {
+        if self.lib.as_ref().is_some_and(|l| l.extracted.get()) {
             return;
         }
         let Some(Ok(text)) = self.checker.executable(&self.done) else {
             if let Some(lib) = &mut self.lib {
-                lib.extracted = true;
+                lib.extracted.set(true);
             }
             return;
         };
@@ -697,7 +791,7 @@ impl Expander<'_> {
             Ok(p) if fits => p.stmts,
             _ => {
                 if let Some(lib) = &mut self.lib {
-                    lib.extracted = true;
+                    lib.extracted.set(true);
                 }
                 return;
             }
@@ -742,20 +836,21 @@ impl Expander<'_> {
             .or_else(|| program.errors.first().map(|(m, _)| m.clone()));
         let report = report.with_prelude();
         let rows = check_program_rows(&program);
-        self.lib = Some(Lib {
+        self.lib = Some(Rc::new(Lib {
             program,
             report,
             rows,
             problem,
             left_out,
-            extracted,
-        });
+            extracted: std::cell::Cell::new(extracted),
+            built_for: self.file,
+        }));
     }
 
     /// What the function of a macro takes and makes, and whether it may run.
     fn registration(&mut self, name: &str, at: Span) -> Option<Info> {
-        self.library();
         let function = self.macros[name].function.clone();
+        self.library_holding(&function);
         if self
             .lib
             .as_ref()
@@ -890,17 +985,6 @@ impl Expander<'_> {
                     function = &function,
                     path = path.join(" -> "),
                     why = why
-                ),
-            );
-        }
-        if let Some(path) = unreachable_builtin(&lib.program, &function) {
-            return fail(
-                self,
-                "macro.not_allowed_builtin",
-                msg!(
-                    "macro-builtin-reached",
-                    function = &function,
-                    path = path.join(" -> ")
                 ),
             );
         }
@@ -1219,7 +1303,7 @@ impl Expander<'_> {
         let mut captures = Vec::new();
         let made = {
             let spans = &mut self.spans;
-            let mut fresh = |written: u32| spans.fresh(written, id);
+            let mut fresh = |written: u32| spans.fresh(written, id, t.span.start);
             let mut lower = Lower {
                 scope: u64::from(id),
                 fresh: &mut fresh,
@@ -1567,7 +1651,6 @@ fn fit_library(
     (stmts, program, report, left_out)
 }
 
-/// The expansion a span belongs to, when it is one made by an expansion.
 fn origin_expansion(spans: &SpanMap, span: Span) -> Option<u32> {
     if span.start < EXPANSION_BASE {
         return None;
@@ -1580,9 +1663,9 @@ fn origin_expansion(spans: &SpanMap, span: Span) -> Option<u32> {
 /// with that one's reason, and a constructor of an `inductive` written in
 /// executable code is shown with the one the executable code has.
 ///
-/// TODO(messages): the reasons are the text of the checker of executable
+/// The reasons are the text of the checker of executable
 /// code (`tauto-nibcheck`), read here for `is not a constructor`, `does not
-/// fit` and `is not defined`; compare ids once its errors are messages.
+/// fit` and `is not defined` by that text, because its errors are not messages.
 fn explain_left_out(
     left_out: Vec<(String, String)>,
     done: &[Stmt],
@@ -1797,7 +1880,6 @@ fn ctor_families<'a>(
     out
 }
 
-/// The number of constructor fields, excluding the family's parameters.
 fn ctor_arities<'a>(
     stmts: impl Iterator<Item = &'a Stmt>,
 ) -> std::collections::HashMap<String, usize> {
@@ -1871,49 +1953,6 @@ fn kernel_prelude() -> &'static [Stmt] {
     })
 }
 
-/// A path from `function` to a builtin a macro may not call, when there is one.
-fn unreachable_builtin(program: &Program, function: &str) -> Option<Vec<String>> {
-    let mut fns: HashMap<&str, &crate::surface::FnDecl> = HashMap::new();
-    let mut externs: HashSet<&str> = HashSet::new();
-    for s in prelude().stmts.iter().chain(&program.stmts) {
-        match s {
-            Stmt::Fn(f) => {
-                fns.insert(&f.name, f);
-            }
-            Stmt::Extern { fns: es, .. } => externs.extend(es.iter().map(|f| f.name.as_str())),
-            _ => {}
-        }
-    }
-    let allows = |n: &str| {
-        MACRO_BUILTINS.iter().any(|a| match a.strip_suffix('*') {
-            Some(p) => n.starts_with(p),
-            None => *a == n,
-        })
-    };
-    let mut seen = HashSet::new();
-    let mut stack = vec![vec![function.to_string()]];
-    while let Some(path) = stack.pop() {
-        let here = path.last().expect("a path has a name").clone();
-        if !seen.insert(here.clone()) {
-            continue;
-        }
-        let Some(f) = fns.get(here.as_str()) else {
-            continue;
-        };
-        for n in free_names_of(f) {
-            let mut next = path.clone();
-            next.push(n.clone());
-            if externs.contains(n.as_str()) && !allows(&n) {
-                return Some(next);
-            }
-            if fns.contains_key(n.as_str()) {
-                stack.push(next);
-            }
-        }
-    }
-    None
-}
-
 /// A function of the library that `function` reaches whose declared row does
 /// not hold what it performs, with the call path and the row checker's reason.
 /// The macro stage runs the function, so it holds the same rows a run does.
@@ -1965,7 +2004,7 @@ fn row_error_reached(
 /// The names the body of `f` uses that nothing inside it binds: a parameter, a
 /// `let`, a pattern variable, a λ parameter or a handler's variable hides a
 /// function of the same spelling, as it does where the function runs.
-fn free_names_of(f: &crate::surface::FnDecl) -> Vec<String> {
+pub fn free_names_of(f: &crate::surface::FnDecl) -> Vec<String> {
     let mut body = f.body.clone();
     let mut bound: Vec<String> = f.params.clone();
     let mut out = Vec::new();
@@ -2110,7 +2149,6 @@ fn free_names_in(t: &mut SurfaceTerm, bound: &mut Vec<String>, out: &mut Vec<Str
     }
 }
 
-/// The bytes a declaration was written in.
 fn stmt_range(s: &Stmt) -> Option<(u32, u32)> {
     let span = match s {
         Stmt::Fn(f) => Span::new(f.span.start, f.body.span.end.max(f.span.end)),

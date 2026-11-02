@@ -1,4 +1,14 @@
 import "datas_frame.taut"
+import std::Base
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas.taut"
+import "kind_sound.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub fn written_context(
   c: Checker
@@ -194,8 +204,8 @@ pub theorem frame_arity_k_ok_context(
   given: Nat,
   span: TySpan,
   constructor: Bool
-): CkContextFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
-  match Constructor: CkContextFrame(c, frame_arity_k(c, n, given, span, Constructor)) {
+): CkContextFrame(c, frame_arity_k(c, n, given, span, constructor)) {
+  match constructor: CkContextFrame(c, frame_arity_k(c, n, given, span, constructor)) {
     true => frame_arity_decl_ok_context(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => (ordinary => Refl)
   }
@@ -328,13 +338,13 @@ pub theorem frame_app_nested_ok_context(
   span: TySpan,
   after: List(Ty),
   inner: Ty
-): CkContextFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
-  match inner: CkContextFrame(c, frame_app_nested(c, span, MkAfter, inner)) {
+): CkContextFrame(c, frame_app_nested(c, span, after, inner)) {
+  match inner: CkContextFrame(c, frame_app_nested(c, span, after, inner)) {
     TyNamed(n, before) => context_return(
       c,
-      TyNamed(n, List::append(before, MkAfter)),
-      ck_arity(c, n, list_len(List::append(before, MkAfter)), span),
-      ck_arity_frame_context(c, n, list_len(List::append(before, MkAfter)), span)
+      TyNamed(n, List::append(before, after)),
+      ck_arity(c, n, list_len(List::append(before, after)), span),
+      ck_arity_frame_context(c, n, list_len(List::append(before, after)), span)
     )
     TyInt(width) => (ordinary => Refl)
     TyBool => (ordinary => Refl)
@@ -1058,14 +1068,14 @@ mutual {
         Eq::sym(frame_unf_SkSyntaxLit(name, body, c, generics, span, under_borrow)),
         context_invalid(c, span)
       )
-      SkStep(tactic, arg, call_start, CallEnd, before, arms) => Eq::subst(
+      SkStep(tactic, arg, call_start, call_end, before, arms) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkContextFrame(c, z),
         Eq::sym(
           frame_unf_SkStep(
             tactic,
             arg,
             call_start,
-            CallEnd,
+            call_end,
             before,
             arms,
             c,

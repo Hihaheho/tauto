@@ -28,7 +28,6 @@ module Text {
     List::nth(bytes(t), i)
   }
 
-  // The byte at `i`; 0 past the end.
   pub fn byte_value(t: Text, i: Nat): Nat {
     match byte(t, i): Nat {
       None => Zero
@@ -54,7 +53,6 @@ module Text {
     }
   }
 
-  // The slice, or "" when there is none.
   pub fn slice_or_empty(t: Text, start: Nat, end: Nat): Text {
     match slice(t, start, end): Text {
       None => ""
@@ -122,12 +120,15 @@ module Nat {
       Zero => acc
       Succ(f) => match Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)) == 0: List(Nat) {
         true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), acc)
-        false => digits(f, Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), acc))
+        false => digits(
+          f,
+          Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)),
+          Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), acc)
+        )
       }
     }
   }
 
-  // Whether `n` is from `lo` to `hi`.
   pub fn between(lo: Nat, hi: Nat, n: Nat): Bool {
     lo <= n && n <= hi
   }
@@ -153,7 +154,12 @@ module Text {
     match c < 128: Text {
       true => Text::Mk([c])
       false => match c < 2048: Text {
-        true => Text::Mk(Cons(Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)))
+        true => Text::Mk(
+          Cons(
+            Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192),
+            Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+          )
+        )
         false => match 55296 <= c && c < 57344: Text {
           true => Text::Mk(Nil)
           false => match c < 65536: Text {
@@ -161,7 +167,14 @@ module Text {
               Cons(
                 Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224),
                 Cons(
-                  Nat::add(Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), 128),
+                  Nat::add(
+                    Nat::rem_nz(
+                      Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)),
+                      64,
+                      Nat::ne_zero(64, Refl)
+                    ),
+                    128
+                  ),
                   Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
                 )
               )
@@ -171,9 +184,23 @@ module Text {
                 Cons(
                   Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240),
                   Cons(
-                    Nat::add(Nat::rem_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)), 128),
+                    Nat::add(
+                      Nat::rem_nz(
+                        Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)),
+                        64,
+                        Nat::ne_zero(64, Refl)
+                      ),
+                      128
+                    ),
                     Cons(
-                      Nat::add(Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), 128),
+                      Nat::add(
+                        Nat::rem_nz(
+                          Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)),
+                          64,
+                          Nat::ne_zero(64, Refl)
+                        ),
+                        128
+                      ),
                       Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
                     )
                   )
@@ -231,10 +258,24 @@ pub fn utf8_valid(bs: List(Nat)): Bool {
           false => match r2: Bool {
             Nil => false
             Cons(c2, r3) => match Nat::between(224, 239, b): Bool {
-              true => Nat::between(utf8_second_min(b), utf8_second_max(b), c1) && (utf8_continuation(c2) && utf8_valid(r3))
+              true => Nat::between(
+                utf8_second_min(b),
+                utf8_second_max(b),
+                c1
+              ) && (utf8_continuation(c2) && utf8_valid(r3))
               false => match r3: Bool {
                 Nil => false
-                Cons(c3, r4) => Nat::between(240, 244, b) && (Nat::between(utf8_second_min(b), utf8_second_max(b), c1) && (utf8_continuation(c2) && (utf8_continuation(c3) && utf8_valid(r4))))
+                Cons(c3, r4) => Nat::between(
+                  240,
+                  244,
+                  b
+                ) && (
+                  Nat::between(
+                    utf8_second_min(b),
+                    utf8_second_max(b),
+                    c1
+                  ) && (utf8_continuation(c2) && (utf8_continuation(c3) && utf8_valid(r4)))
+                )
               }
             }
           }
@@ -289,9 +330,7 @@ module Text {
     Refl
   }
 
-  pub theorem of_utf8_past_max(): of_utf8(
-    [244, 144, 128, 128]
-  ) = None {
+  pub theorem of_utf8_past_max(): of_utf8([244, 144, 128, 128]) = None {
     Refl
   }
 }

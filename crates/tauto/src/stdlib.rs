@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tauto_message::{msg, Message};
+use tauto_message::{Message, msg};
 
 /// The directory the standard library's files are read from.
 pub const ROOT: &str = "/<tauto-std>";
@@ -104,6 +104,18 @@ pub const FILES: &[(&str, &str)] = &[
         "WellFounded.taut",
         include_str!("../../../std/WellFounded.taut"),
     ),
+    // The files of the prelude that are not core
+    // (`docs/design/visibility.md`「prelude」): `import std::prelude::Os`
+    // reads an empty file, and a file that imports it sees the names of
+    // `std/prelude/Os.taut`.
+    ("prelude/Affine.taut", ""),
+    ("prelude/Classes.taut", ""),
+    ("prelude/Macro.taut", ""),
+    ("prelude/Ord.taut", ""),
+    ("prelude/Os.taut", ""),
+    ("prelude/Par.taut", ""),
+    ("prelude/Secret.taut", ""),
+    ("prelude/Shared.taut", ""),
 ];
 
 /// The file the module import `import std::List` names, or why it names none.
@@ -111,13 +123,17 @@ pub const FILES: &[(&str, &str)] = &[
 /// [`import_target`].
 pub fn import_path(name: &str) -> Result<PathBuf, String> {
     match name.strip_prefix("std::") {
-        Some(module) if FILES.iter().any(|(f, _)| *f == format!("{module}.taut")) => {
-            Ok(Path::new(ROOT).join(format!("{module}.taut")))
+        Some(module) => {
+            let file = format!("{}.taut", module.replace("::", "/"));
+            if FILES.iter().any(|(f, _)| *f == file) {
+                Ok(Path::new(ROOT).join(file))
+            } else {
+                Err(import_error(
+                    name,
+                    msg!("tauto-import-no-std-module", module = module),
+                ))
+            }
         }
-        Some(module) => Err(import_error(
-            name,
-            msg!("tauto-import-no-std-module", module = module),
-        )),
         None => Err(import_error(
             name,
             msg!(
@@ -129,8 +145,8 @@ pub fn import_path(name: &str) -> Result<PathBuf, String> {
 }
 
 /// The file an import in `from` names: `import std::List` from the standard
-/// library, `import text::Utf8` (`Utf8.taut`) from a source root of
-/// the dependency `text` in the `dependencies` of `from`'s tote, and a quoted
+/// library, `import text::Utf8` (`Utf8.taut`) from the `src` of
+/// the dependency `text` (`import text::proof::Utf8` from its additional source `proof`) in the `dependencies` of `from`'s tote, and a quoted
 /// path (not `module`) relative to `from`, whatever it is spelled like.
 pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, String> {
     if !module {
@@ -185,12 +201,24 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, S
     }
     let stem = module.replace("::", "/");
     let mut hits = Vec::new();
-    for source in &found.package.sources {
-        for ext in ["taut", "tauto"] {
-            let path = dir.join(source).join(format!("{stem}.{ext}"));
-            if path.is_file() {
-                hits.push(path);
-            }
+    // A file of `src` is named by its path from `src`; one of an additional
+    // source by its path from the tote's root, which starts with the source.
+    for ext in ["taut", "tauto"] {
+        let path = dir
+            .join(crate::manifest::DEFAULT_SOURCE)
+            .join(format!("{stem}.{ext}"));
+        if path.is_file() {
+            hits.push(path);
+        }
+        let path = dir.join(format!("{stem}.{ext}"));
+        if path.is_file()
+            && found
+                .package
+                .additional_sources
+                .iter()
+                .any(|source| path.starts_with(dir.join(source)))
+        {
+            hits.push(path);
         }
     }
     match hits.len() {
@@ -202,7 +230,7 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, S
                 dependency = dependency,
                 module = module,
                 stem = stem.as_str(),
-                sources = found.package.sources.join(", ")
+                sources = found.package.source_paths().join(", ")
             ),
         )),
         _ => Err(import_error(
@@ -276,7 +304,6 @@ pub fn module_of(name: &str) -> Option<&'static str> {
     })
 }
 
-/// The text of a standard library file, by the path [`import_path`] gives.
 pub fn text(path: &Path) -> Option<&'static str> {
     let name = path.strip_prefix(ROOT).ok()?.to_str()?;
     FILES.iter().find(|(f, _)| *f == name).map(|(_, t)| *t)

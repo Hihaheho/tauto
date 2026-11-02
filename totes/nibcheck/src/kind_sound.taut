@@ -2,6 +2,14 @@ import "union_sound.taut"
 import "product_sound.taut"
 import "datas.taut"
 import std::Text
+import std::Base
+import std::Map
+import std::MapLaws
+import std::MapText
+import std::Row
+import "ty.taut"
+import "ty_eq.taut"
+import std::prelude::Ord
 
 // The kinds `datas_kind` gives are sound (`docs/design/self-host.md`
 // 「層 3：種（`src/kind_sound.taut`）」): once the declarations are summarized,
@@ -9,8 +17,6 @@ import std::Text
 // of `declared(D)`, of `floor(D)` and of each argument no field mentions. These are the equations
 // of `kind(T)` in `docs/design/ownership.md` as inequalities, so the kinds are
 // above their least solution, the kinds the document means.
-
-// ----- the order of kinds -----
 
 pub def KLe(a: Kind, b: Kind): Prop := kind_join(a, b) = b
 
@@ -556,8 +562,6 @@ pub theorem kle_copy(a: Kind): KLe(KindCopy, a) {
   }
 }
 
-// ----- the kind of a list -----
-
 pub fn dkl_pick(d: Datas, t: Ty, acc: Kind, p: Bool): Kind {
   match p: Kind {
     true => kind_join(acc, datas_kind(d, t))
@@ -1075,8 +1079,6 @@ pub theorem apply_le(
   }(ha)
 }
 
-// ----- text membership -----
-
 pub fn te_k(o: Ordering): Bool {
   match o: Bool {
     Less => false
@@ -1168,8 +1170,6 @@ pub theorem lht_complete<x: Text, xs: List(
     MemThere(b, t, m2) => bool_or_right(Text::eq(b, x), list_has_text(t, x), lht_complete(m2))
   }
 }
-
-// ----- the kind of a field, at arguments -----
 
 pub fn ha_k(holds: List(Text), n: Text, b: Bool): List(Text) {
   match b: List(Text) {
@@ -1300,7 +1300,7 @@ pub fn fkl_pick(
   p: Bool
 ): Pair(Kind, List(Text)) {
   match p: Pair(Kind, List(Text)) {
-    true => kind_pair_join(acc, field_kind(d, t, gs, (acc: List(Text))))
+    true => kind_pair_join(acc, field_kind(d, t, gs, acc.snd))
     false => acc
   }
 }
@@ -1341,11 +1341,11 @@ pub theorem fkl_unf(
 }
 
 pub fn pfst(p: Pair(Kind, List(Text))): Kind {
-  (p: Kind)
+  p.fst
 }
 
 pub fn psnd(p: Pair(Kind, List(Text))): List(Text) {
-  (p: List(Text))
+  p.snd
 }
 
 pub fn dgen(data: Data): List(Text) {
@@ -1359,8 +1359,6 @@ pub fn dholds(data: Data): List(Text) {
 pub fn dbase(data: Data): Kind {
   data.base
 }
-
-// ----- what a field holds only grows -----
 
 pub theorem fkp_grow(
   n: Text,
@@ -1500,7 +1498,6 @@ mutual {
     }
   }
 
-  // What a field holds only grows.
   pub theorem fk_grow(
     d: Datas,
     t: Ty,
@@ -2406,8 +2403,6 @@ mutual {
   }
 }
 
-// ----- the fields of a declaration -----
-
 pub fn fty(f: DataField): Ty {
   f.ty
 }
@@ -2650,8 +2645,6 @@ pub theorem ctors_ok(
   }
 }
 
-// ----- the arguments of an instance -----
-
 pub fn opt_is_some(o: Option(Ty)): Bool {
   match o: Bool {
     Some(x) => true
@@ -2667,8 +2660,6 @@ pub theorem none_ne_some(x: Ty, e: None(Ty) = Some(x)): False {
   false_ne_true(Eq::congr(opt_is_some, e))
 }
 
-// Looking up `n` after inserting `g`: what was inserted, at `g`, or what was
-// there before.
 pub theorem get_insert_k(
   m: Ordmap(Text, Ty),
   g: Text,
@@ -2750,7 +2741,6 @@ pub theorem get_insert(
   get_insert_k(m, g, a, n, om, Ordmap::compare_text(n, g), Refl)
 }
 
-// The keys of an instance are generics.
 pub theorem inst_keys(
   gs: List(Text),
   args: List(Ty),
@@ -2785,7 +2775,6 @@ pub theorem inst_keys(
   }
 }
 
-// Every generic has an argument.
 pub fn args_cover(gs: List(Text), args: List(Ty)): Bool {
   match gs: Bool {
     Nil => true
@@ -2942,8 +2931,6 @@ pub theorem inst_env_at(
     }
   }
 }
-
-// ----- the kind of a declared type -----
 
 pub fn drec(data: Data): Bool {
   data.recursive

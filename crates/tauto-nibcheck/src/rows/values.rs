@@ -152,7 +152,6 @@ pub(super) fn assumed_rows(f: &Callable) -> Vec<String> {
         .collect()
 }
 
-/// Whether the type parameter `var` occurs in `value`.
 fn mentions(value: &Latent, var: &str) -> bool {
     match value {
         Latent::Named(n, args) => n == var || args.iter().any(|a| mentions(a, var)),
@@ -503,10 +502,19 @@ impl Analysis<'_> {
         expected: Option<&Latent>,
         span: Span,
     ) -> Latent {
-        let (mut types, rows) =
+        let (mut types, rows, values) =
             self.construction_substitution(signature, arguments, locals, expected);
-        for (param, arg) in signature.params.iter().zip(arguments) {
-            self.check_term(arg, &substitute(param, &types, &rows), locals);
+        // An argument read against the type it is checked against is
+        // checked as the value it was read as: reading it again would read
+        // a nested construction once more at every level.
+        for ((param, arg), (actual, read_as)) in signature.params.iter().zip(arguments).zip(&values)
+        {
+            let expected = substitute(param, &types, &rows);
+            if *read_as == expected {
+                self.check_value_of(arg, actual, &expected, locals);
+            } else {
+                self.check_term(arg, &expected, locals);
+            }
         }
         self.callable_bounds(signature, &rows, span);
         // A parameter that neither the arguments nor the context give, and
@@ -522,7 +530,6 @@ impl Analysis<'_> {
         substitute(&signature.result, &types, &rows)
     }
 
-    /// The types a construction's arguments are checked against.
     pub(super) fn construction_params(
         &mut self,
         signature: &Callable,
@@ -530,7 +537,8 @@ impl Analysis<'_> {
         locals: &Locals,
         expected: Option<&Latent>,
     ) -> Vec<Latent> {
-        let (types, rows) = self.construction_substitution(signature, arguments, locals, expected);
+        let (types, rows, _) =
+            self.construction_substitution(signature, arguments, locals, expected);
         signature
             .params
             .iter()
@@ -544,8 +552,18 @@ impl Analysis<'_> {
         arguments: &[SurfaceTerm],
         locals: &Locals,
         expected: Option<&Latent>,
-    ) -> (HashMap<String, Latent>, HashMap<String, Row>) {
-        let (mut types, mut rows) = self.call_substitution(signature, arguments, locals);
+    ) -> (
+        HashMap<String, Latent>,
+        HashMap<String, Row>,
+        Vec<(Latent, Latent)>,
+    ) {
+        let (mut types, mut rows, values) = self.call_substitution_values(
+            signature,
+            arguments,
+            locals,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         let vars: Vec<_> = signature
             .generics
             .iter()
@@ -578,7 +596,7 @@ impl Analysis<'_> {
                 }
             }
         }
-        (types, rows)
+        (types, rows, values)
     }
 
     /// Whether a type from the context writes out every callable contract
@@ -1149,6 +1167,28 @@ impl Analysis<'_> {
         }
     }
 
+    /// As `check_term`, for an argument already read as `actual`.
+    fn check_value_of(
+        &mut self,
+        term: &SurfaceTerm,
+        actual: &Latent,
+        expected: &Latent,
+        locals: &Locals,
+    ) {
+        if self.has_callable(expected, &mut HashSet::new()) {
+            if let TermKind::Var(name) = &*term.kind
+                && self
+                    .constructor_signature_at(term, name, Some(expected))
+                    .is_none()
+                && let Some(why) = self.unresolved(name, locals)
+            {
+                self.diagnostic(why, term.span);
+                return;
+            }
+            self.check_value(actual, expected, term.span, 0);
+        }
+    }
+
     pub(super) fn check_term(&mut self, term: &SurfaceTerm, expected: &Latent, locals: &Locals) {
         if self.has_callable(expected, &mut HashSet::new()) {
             // A name the program does not have says so, not that its
@@ -1430,7 +1470,6 @@ impl Analysis<'_> {
         rows: &mut HashMap<String, Row>,
         depth: usize,
     ) {
-        // Only the variables are solved: with none, there is nothing to find.
         if vars.is_empty() {
             return;
         }
@@ -1636,6 +1675,25 @@ impl Analysis<'_> {
         context_types: &HashMap<String, Latent>,
         context_rows: &HashMap<String, Row>,
     ) -> (HashMap<String, Latent>, HashMap<String, Row>) {
+        let (types, rows, _) =
+            self.call_substitution_values(f, arguments, locals, context_types, context_rows);
+        (types, rows)
+    }
+
+    /// As `call_substitution_in`, with the value each argument was read as.
+    fn call_substitution_values(
+        &mut self,
+        f: &Callable,
+        arguments: &[SurfaceTerm],
+        locals: &Locals,
+        context_types: &HashMap<String, Latent>,
+        context_rows: &HashMap<String, Row>,
+    ) -> (
+        HashMap<String, Latent>,
+        HashMap<String, Row>,
+        Vec<(Latent, Latent)>,
+    ) {
+        let mut values = Vec::new();
         let mut types: HashMap<String, Latent> = HashMap::new();
         let mut rows = HashMap::new();
         let vars: Vec<_> = f.generics.iter().map(|(n, _)| n.clone()).collect();
@@ -1681,12 +1739,13 @@ impl Analysis<'_> {
             let context = substitute(expected, &given, context_rows);
             let actual = self.value_of(argument, locals, Some(&context));
             self.constrain(expected, &actual, &vars, &mut types, &mut rows, 0);
+            values.push((actual, context));
         }
         self.inferring.truncate(inferring);
         for var in least {
             rows.insert(var, Row::new());
         }
-        (types, rows)
+        (types, rows, values)
     }
 
     pub(super) fn check_call(
@@ -1899,7 +1958,6 @@ fn alpha_renamed(actual: &Callable, expected: &Callable) -> Option<Callable> {
     Some(renamed)
 }
 
-// `name` is the constructor written bare or as `Data::Ctor`.
 fn names_constructor(name: &str, data: &str, ctor: &str) -> bool {
     name == ctor
         || name

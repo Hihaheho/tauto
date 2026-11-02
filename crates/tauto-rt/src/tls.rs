@@ -20,7 +20,6 @@ use rustls::server::{ClientHello, ResolvesServerCert, WebPkiClientVerifier};
 use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
-/// One certificate the server can present.
 pub struct ServerCert {
     /// The SNI names it answers. Empty: the default, for a hello that names
     /// no server or a name no other certificate has.
@@ -40,13 +39,9 @@ pub struct ServerOptions {
     pub client_roots: Option<Vec<u8>>,
 }
 
-/// The roots a client trusts.
 pub enum Roots {
-    /// The system's.
     System,
-    /// The system's and these (PEM).
     SystemAnd(Vec<u8>),
-    /// These alone (PEM).
     Only(Vec<u8>),
 }
 
@@ -194,7 +189,6 @@ pub fn client_config(options: &ClientOptions) -> Result<Arc<ClientConfig>, Strin
     Ok(Arc::new(config))
 }
 
-/// An established TLS session over `S`.
 pub struct TlsStream<S: Read + Write> {
     pub(crate) conn: rustls::Connection,
     pub(crate) sock: S,
@@ -246,7 +240,6 @@ pub(crate) fn client<S: Read + Write>(
     })
 }
 
-/// Answers a client's handshake on `sock`.
 pub fn accept<S: Read + Write>(config: Arc<ServerConfig>, sock: S) -> Result<TlsStream<S>, String> {
     let t = server(config, sock)?;
     handshake(t.conn, t.sock)
@@ -264,12 +257,10 @@ pub fn connect<S: Read + Write>(
 }
 
 impl<S: Read + Write> TlsStream<S> {
-    /// The protocol ALPN chose, if any.
     pub fn alpn(&self) -> Option<&[u8]> {
         self.conn.alpn_protocol()
     }
 
-    /// On a server, the SNI name the client sent.
     pub fn server_name(&self) -> Option<&str> {
         match &self.conn {
             rustls::Connection::Server(c) => c.server_name(),
@@ -326,7 +317,6 @@ impl<S: Read + Write> TlsStream<S> {
         self.sock.flush()
     }
 
-    /// The stream underneath, to shut it down or close it.
     pub fn get_mut(&mut self) -> &mut S {
         &mut self.sock
     }

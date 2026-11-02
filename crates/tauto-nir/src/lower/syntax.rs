@@ -1,4 +1,3 @@
-//! Validate the native runtime parser boundary before code generation.
 use super::*;
 use tauto_syntax::{FieldTy, Payload, Tables, TypeDef};
 impl Lowerer<'_> {

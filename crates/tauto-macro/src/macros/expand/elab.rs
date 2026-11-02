@@ -18,17 +18,14 @@ type R<T> = Result<T, String>;
 
 pub struct ElabEnv {
     pub checker: Arc<dyn TypedChecker>,
-    /// The declarations before the one the macro is in.
     pub prefix: Vec<Stmt>,
     /// The scope of the expansion the macro runs in, which lowering flips.
     pub scope: u64,
     pub ctors: HashSet<String>,
-    /// Each constructor with the constructors of its type.
     pub families: HashMap<String, Vec<String>>,
     pub arities: HashMap<String, usize>,
 }
 
-/// A `Judgement` as the pieces `elab_*` needs.
 struct Parts<'n> {
     term: &'n Node,
     ty: &'n Node,
@@ -37,9 +34,15 @@ struct Parts<'n> {
 }
 
 fn parts(n: &Node) -> R<Parts<'_>> {
-    let field = |name: &str| n.named(name).ok_or_else(|| format!("a Judgement has a {name}"));
+    let field = |name: &str| {
+        n.named(name)
+            .ok_or_else(|| format!("a Judgement has a {name}"))
+    };
     let mut ctx = Vec::new();
-    for b in field("ctx")?.as_list().ok_or("a Judgement has a ctx list")? {
+    for b in field("ctx")?
+        .as_list()
+        .ok_or("a Judgement has a ctx list")?
+    {
         let atom = b
             .named("atom")
             .and_then(Node::as_int)

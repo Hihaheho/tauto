@@ -3,9 +3,18 @@
 // lines), checked against the reference tables.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "bytes.taut"
+import "cc.taut"
+import "emit.taut"
+import "list.taut"
+import "model.taut"
+import "nfa.taut"
+import "par.taut"
+import "rx.taut"
+import "sdfa.taut"
+import "../../text/src/text.taut"
 import std::Text
-
-// ---------------------------------------------------------------- the patterns of a mode
+import std::prelude::Affine
 
 pub fn sc_snoc(xs: List(Text), x: Text): List(Text) {
   match xs {
@@ -117,7 +126,6 @@ pub fn sc_push_all(&mut b: Buf, xs: List(Text)): Unit {
   }
 }
 
-// The pattern of a block comment from its start and end.
 pub fn sc_block_comment(s: Text, e: Text): Text {
   if s == "/\\*" && e == "\\*/" {
     "/\\*/?([^/]|[^*]/)*\\*/"
@@ -223,8 +231,6 @@ pub fn sc_rule_context(m: MModel, terminal: u64): Text {
   Text::concat("rule ", text_join(sc_rule_names(m.prods, m.nts, terminal), ", "))
 }
 
-// The patterns of the scanner
-// number `state`, in order, with their terminals.
 pub fn sc_patterns(m: MModel, state: u64, sc: PScanner): List(SPat) {
   var out: List(SPat) := Nil
   if not(sc.auto_newline_off) {
@@ -313,8 +319,6 @@ pub fn md_count_texts(xs: List(Text)): u64 {
     Cons(x, rest) => 1 + md_count_texts(rest)
   }
 }
-
-// ---------------------------------------------------------------- the tables
 
 pub fn sc_words_u(xs: List(u64)): List(Text) {
   match xs {
@@ -610,8 +614,6 @@ pub fn sc_lines(m: MModel): List(Text) {
 pub fn text_of_buf(b: Buf): Text {
   Text::of(b)
 }
-
-// ---------------------------------------------------------------- the states of the scanner
 
 // The automaton of a regular expression that a terminal with `%capture` or
 // `%validate` is cut into, in the words of `states(…)`.

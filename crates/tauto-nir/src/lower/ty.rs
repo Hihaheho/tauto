@@ -1,5 +1,3 @@
-//! Types, data declarations and unions.
-
 use std::collections::HashSet;
 
 use tauto::surface::SurfaceTerm;
@@ -111,6 +109,7 @@ impl<'a> Lowerer<'a> {
                     ("Ref", 1)
                     | ("Weak", 1)
                     | ("Mutex", 1)
+                    | ("MutexGuard", 1)
                     | ("Atomic", 0)
                     | ("Bytes", 0)
                     | ("Pending", 1)
@@ -259,7 +258,6 @@ impl<'a> Lowerer<'a> {
         Ty::Union(id)
     }
 
-    /// The type of a term, as Rust spells it.
     pub fn ety(&mut self, t: &SurfaceTerm) -> Ty {
         match self.types.term(t) {
             Some(ty) => {
@@ -270,7 +268,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// How a name of type `t` is used as a value.
     pub fn use_of(&self, t: &TTy) -> Use {
         match t {
             TTy::Borrow(inner, _) => match &**inner {
@@ -305,8 +302,9 @@ impl<'a> Lowerer<'a> {
             Ty::Int(_) | Ty::Bool | Ty::Unit | Ty::Float | Ty::Float32 | Ty::Never => {
                 Some(Use::Copy)
             }
-            // A `Pending` is taken once (it can hold a thread's result).
-            Ty::Std(n, _) => (n != "Pending").then_some(Use::Clone),
+            // A `Pending` is taken once (it can hold a thread's result), a guard is
+            // the one holder of a lock.
+            Ty::Std(n, _) => (n != "Pending" && n != "MutexGuard").then_some(Use::Clone),
             Ty::Fn(f) => f.kind.dup().then_some(Use::Clone),
             Ty::Option(a) => self.dup_use(a),
             Ty::Product(ms) => {
@@ -356,8 +354,6 @@ impl<'a> Lowerer<'a> {
             _ => None,
         }
     }
-
-    // ---- data ----------------------------------------------------------
 
     pub fn build_datas(&mut self) -> R<()> {
         if self.rc_enabled {
@@ -775,12 +771,13 @@ impl<'a> Lowerer<'a> {
                 })
             }
             TTy::Union(ts) => ts.iter().any(|t| self.reaches(t, owner, seen, env)),
+            // A product holds its members in place.
+            TTy::Product(ts) => ts.iter().any(|t| self.reaches(t, owner, seen, env)),
             TTy::Tagged(_, t) => self.reaches(t, owner, seen, env),
             _ => false,
         }
     }
 
-    /// A constructor by name.
     pub fn ctor_ref(&self, name: &str) -> Option<CtorRef> {
         self.ctor_ref_in(name, None)
     }
@@ -826,7 +823,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// The field types of a constructor as the program writes them.
     fn field_terms(&self, data: &str, ctor: usize) -> Vec<SurfaceTerm> {
         for s in &self.program.stmts {
             if let Stmt::Struct(d) | Stmt::Enum(d) = s
@@ -982,7 +978,6 @@ pub(crate) fn set_fn_tier(t: &mut Ty, tier: Tier) {
     }
 }
 
-/// Whether the type names one of `names`.
 fn mentions_any(t: &TTy, names: &HashSet<&str>) -> bool {
     match t {
         TTy::Named(n, args) => {

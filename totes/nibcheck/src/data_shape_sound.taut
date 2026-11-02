@@ -1,5 +1,12 @@
 import "rules_data_shape.taut"
 import "registration_body_sound.taut"
+import std::Base
+import "checker.taut"
+import "datas_registration.taut"
+import "diagnostic_sound.taut"
+import "types_decl.taut"
+import "unify_sound.taut"
+import "../../surface/src/surface.taut"
 
 pub theorem empty_data_ctor_step(
   k: SurfaceDataCtor,
@@ -8,8 +15,8 @@ pub theorem empty_data_ctor_step(
   clean: ctors_have_fields(Cons(k, rest)) = false
 ): EmptyDataConstructors(Cons(k, rest)) {
   match k: EmptyDataConstructors(Cons(k, rest)) {
-    surface_data_ctor_mk(name, fields) => match fields: EmptyDataConstructors(
-      Cons(surface_data_ctor_mk(name, fields), rest)
+    SurfaceDataCtorMk(name, fields) => match fields: EmptyDataConstructors(
+      Cons(SurfaceDataCtorMk(name, fields), rest)
     ) {
       Nil => EmptyDataConstructorsCons(name, rest, tail(clean))
       Cons(first, more) => False::elim(true_ne_false(clean))

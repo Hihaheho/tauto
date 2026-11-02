@@ -1,4 +1,8 @@
 import "operations.taut"
+import "builtins.taut"
+import "mval.taut"
+import std::Int
+import std::Base
 
 // The machine `tauto run --backend vm` runs. `compile.taut` writes its code from the
 // lowering every backend shares; `step` runs one instruction. Each instruction holds the
@@ -15,7 +19,6 @@ import "operations.taut"
 
 pub(open) inductive MStep: Type {
   MstepNext(s: MState): MStep
-  // The program and every task have ended.
   MstepDone: MStep
   MstepExit(code: Int): MStep
   // The host shows `shown` by `name`, then goes on with `s`.
@@ -27,8 +30,6 @@ pub(open) inductive MStep: Type {
   MstepSleep(until: Int, cx: MCx): MStep
   MstepError(message: Text): MStep
 }
-
-// ---- the state ------------------------------------------------------------------------
 
 pub fn p_fns(p: MProgram): List(MFn) {
   match p {
@@ -131,8 +132,6 @@ pub fn m_apply_binds(slots: List(MVal), binds: List(Pair(Nat, MVal))): List(MVal
   }
 }
 
-// ---- patterns ---------------------------------------------------------------------------
-
 mutual {
   // The bindings of the pattern, when the value fits it. A field of a borrow is matched
   // as a borrow of the field.
@@ -194,7 +193,6 @@ mutual {
     }
   }
 
-  // The fields of the data a borrow names, from field `i`.
   pub fn m_fit_ref(
     ctors: List(MCtor),
     cx: MCx,
@@ -215,8 +213,6 @@ mutual {
     }
   }
 }
-
-// ---- calls and returns --------------------------------------------------------------------
 
 pub fn m_enter(p: MProgram, f: Nat, args: List(MVal), fr: List(MFrame), cx: MCx): MStep {
   match List::nth(p_fns(p), f) {
@@ -281,8 +277,6 @@ pub fn m_tail_frames(fr: List(MFrame)): Option(List(MFrame)) {
   }
 }
 
-// ---- tasks ------------------------------------------------------------------------------------
-
 pub fn m_raised(cx: MCx, s: Nat): Bool {
   match cx_obj(cx, s) {
     Some(o) => match o {
@@ -321,7 +315,6 @@ pub fn m_tick_timers(cx: MCx, ts: List(Nat)): Pair(List(Nat), MCx) {
   }
 }
 
-// The first timer to run out.
 pub fn m_first_timer(cx: MCx, ts: List(Nat), best: Option(Int)): Option(Int) {
   match ts {
     Nil => best
@@ -337,7 +330,6 @@ pub fn m_first_timer(cx: MCx, ts: List(Nat), best: Option(Int)): Option(Int) {
   }
 }
 
-// The first task that may run, and the others in order.
 pub fn m_pick(cx: MCx, ts: List(MTask)): Option(Pair(MTask, List(MTask))) {
   match ts {
     Nil => None
@@ -399,7 +391,6 @@ pub fn m_wake(cx: MCx, now: Int): MStep {
   m_switch(cx_set_now(cx, now))
 }
 
-// The running task has ended with `v`.
 pub fn m_finish(v: MVal, cx: MCx): MStep {
   match cx_result(cx) {
     None => m_switch(cx_done(cx))
@@ -414,8 +405,6 @@ pub fn m_finish(v: MVal, cx: MCx): MStep {
     }
   }
 }
-
-// ---- returns ------------------------------------------------------------------------------------
 
 // The end of a block: `v` goes to the frame below.
 pub fn m_ret(p: MProgram, v: MVal, slots: List(MVal), fr: List(MFrame), cx: MCx): MStep {
@@ -456,7 +445,6 @@ pub fn m_ret(p: MProgram, v: MVal, slots: List(MVal), fr: List(MFrame), cx: MCx)
   }
 }
 
-// Returns `v` from the running function.
 pub fn m_return(v: MVal, fr: List(MFrame), cx: MCx): MStep {
   match fr {
     Nil => m_finish(v, cx)
@@ -466,8 +454,6 @@ pub fn m_return(v: MVal, fr: List(MFrame), cx: MCx): MStep {
     }
   }
 }
-
-// ---- effects ------------------------------------------------------------------------------------
 
 // Where an arm answers: the index of the `handle`'s frame, the arm's body, the slot its
 // continuation goes to (plus one; 0 for none), and its bindings.
@@ -652,9 +638,6 @@ pub fn m_unhandled(
   }
 }
 
-// ---- budgets ------------------------------------------------------------------------------------
-
-// The indices of the budgets' frames, innermost first.
 pub fn m_budgets(fuel: Nat, fr: List(MFrame), at: Nat): List(Nat) {
   match fuel {
     Zero => Nil
@@ -669,7 +652,6 @@ pub fn m_budgets(fuel: Nat, fr: List(MFrame), at: Nat): List(Nat) {
   }
 }
 
-// Whether the budget of the frame has run out.
 pub fn m_budget_out(cx: MCx, f: Option(MFrame)): Bool {
   match f {
     Some(fr0) => match fr0 {
@@ -703,7 +685,6 @@ pub fn m_contains(xs: List(Nat), x: Nat): Bool {
   }
 }
 
-// A step of the budgets `bs`.
 pub fn m_spend(fr: List(MFrame), bs: List(Nat), at: Nat): List(MFrame) {
   match fr {
     Nil => Nil
@@ -845,8 +826,6 @@ pub fn m_timer(ms: MVal, now: MVal, cx: MCx): MOut {
   }
 }
 
-// ---- one instruction --------------------------------------------------------------------------------
-
 pub fn step_parts(
   p: MProgram,
   MkCode: MCode,
@@ -876,6 +855,15 @@ pub fn step_parts(
       Cons(v, rest) => match cx_temp(cx, v) {
         Pair { fst: r, snd: cx2 } => m_go(k, m_set(slots, i, r), rest, fr, cx2)
       }
+    }
+    McClear(i, boxed, k) => match m_owned(cx, boxed, m_nth_or_unit(slots, i)) {
+      MvGuard(mx, c) => match st {
+        Nil => m_bad()
+        Cons(top, rest) => if m_holds_guard(1000, Cons(top, Nil), c) {
+          m_go(k, slots, st, fr, cx)
+        } else { m_go(k, slots, st, fr, m_release(cx, mx, c)) }
+      }
+      _ => m_go(k, slots, st, fr, cx)
     }
     McAssign(i, path, through, k) => match st {
       Nil => m_bad()
@@ -1147,7 +1135,6 @@ pub fn mrun(p: MProgram, fuel: Nat, s: MState): MStep {
   }
 }
 
-// The host's answer on top of the stack.
 pub fn m_answer(s: MState, v: MVal): MState {
   match s {
     Mstate(MkCode, slots, st, fr, cx) => Mstate(MkCode, slots, Cons(v, st), fr, cx)

@@ -16,7 +16,8 @@ fn source() -> String {
 }
 theorem slow(): p(1000000000000) = 0 { Refl }
 theorem after(): Eq(Nat, 1, 1) { Refl }
-"#.to_string()
+"#
+    .to_string()
 }
 
 #[test]

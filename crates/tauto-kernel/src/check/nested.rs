@@ -150,7 +150,6 @@ impl Kernel {
         }
     }
 
-    /// `c(…)`, or a bare name that is a constructor.
     fn as_ctor<'p>(&self, p: &'p Pattern) -> Option<(String, &'p [Pattern])> {
         match p {
             Pattern::Ctor { name, args } => Some((name.clone(), args.as_slice())),
@@ -342,7 +341,6 @@ impl Kernel {
     }
 }
 
-/// How many leading columns of a group are the constructor's fields.
 fn fields_of(group: &[Row]) -> usize {
     group[0]
         .cols

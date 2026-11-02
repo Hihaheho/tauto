@@ -198,7 +198,6 @@ impl Batch {
     }
 }
 
-/// `s` as an Eure text.
 pub fn quote(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -230,8 +229,8 @@ pub fn batch(bytes: &[u8], object_format: &str) -> Result<Batch, String> {
     let mut events = Vec::with_capacity(items.len());
     for (i, id) in items.into_iter().enumerate() {
         let what = format!("{BATCH_FILE}: events[{i}]");
-        // TODO(messages): an error that already names the event, in the
-        // chosen language, is not named again; this reads the written text.
+        // An error that already names the event, in the chosen language, is not
+        // named again; the written text is read for that.
         let event = event(&doc, id, &what, object_format).map_err(|e| {
             if e.starts_with(&what) {
                 e

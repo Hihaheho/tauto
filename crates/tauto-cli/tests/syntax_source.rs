@@ -71,18 +71,24 @@ Start: 'a';
 ```) => struct Start, fn parse
 "#;
     fs::write(dir.join("src/nested/grammar.taut"), source).unwrap();
-    fs::write(dir.join("extra.taut"), r#"pub fn extra(): i64 { 1 }"#).unwrap();
+    fs::create_dir_all(dir.join("extra")).unwrap();
+    fs::create_dir_all(dir.join("legacy")).unwrap();
+    fs::write(dir.join("legacy/old.nib"), r#"syntax = broken"#).unwrap();
+    fs::write(dir.join("extra/extra.taut"), r#"pub fn extra(): i64 { 1 }"#).unwrap();
     // Both malformed syntax and a legacy extension outside sources must be ignored.
     fs::write(dir.join("outside/broken.taut"), r#"syntax = broken"#).unwrap();
     fs::write(dir.join("outside/old.nib"), r#"syntax = broken"#).unwrap();
     fs::write(
         dir.join("Tauto.eure"),
-        "package { name = \"test\" sources = [\"src\", \"extra.taut\"] }",
+        "package { name = \"test\" additional-sources = [\"extra\"] }",
     )
     .unwrap();
     assert_eq!(
         tauto::program::package_source_files(&dir).unwrap(),
-        vec![dir.join("extra.taut"), dir.join("src/nested/grammar.taut")]
+        vec![
+            dir.join("extra/extra.taut"),
+            dir.join("src/nested/grammar.taut")
+        ]
     );
     let path = dir.to_str().unwrap();
     let out = run(&["syntax", "source", path, "tiny"]);
@@ -97,22 +103,10 @@ Start: 'a';
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("src/nested/grammar.taut"), "{err}");
     assert!(err.contains("tables of syntax tiny are missing"), "{err}");
-    // An explicit file source does not scan sibling files or directories.
-    fs::write(
-        dir.join("Tauto.eure"),
-        "package { name = \"test\" sources = [\"extra.taut\"] }",
-    )
-    .unwrap();
-    let out = run(&["syntax", "gen", "--check", path]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
     // Invalid selected inputs must not silently fall back to recursive discovery.
     for manifest in [
-        "package { name = \"test\" sources = [\"missing\"] }",
-        "package { name = \"test\" sources = [\"outside/old.nib\"] }",
+        "package { name = \"test\" additional-sources = [\"missing\"] }",
+        "package { name = \"test\" additional-sources = [\"legacy\"] }",
         "not a manifest",
     ] {
         fs::write(dir.join("Tauto.eure"), manifest).unwrap();

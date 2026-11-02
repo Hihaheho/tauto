@@ -1,11 +1,12 @@
 import "rules_ty.taut"
+import std::Map
+import std::Text
+import "checker.taut"
+import "ty.taut"
 
 // The unifier of `src/checker.taut` against the rules of `rules_ty.taut`
 // (`docs/design/self-host.md`「層 2：`ck_unify`（`src/unify_sound.taut`）」).
 
-// ----- resolving -----
-
-// The arm of `ty_resolve_in` for `TyVar(i)`, with what `s` has for `i`.
 pub fn ty_resolve_var(j: Nat, s: Ordmap(Nat, Ty), i: Nat, o: Option(Ty)): Ty {
   match o: Ty {
     Some(x) => ty_resolve_in(j, s, x)
@@ -152,8 +153,6 @@ pub theorem ty_resolve_list_eq(
 ): TyEqList(s, ok, ts, ty_resolve_list_in(k, s, ts)) {
   And::right(ty_resolve_at(k, s, ok))(ts)
 }
-
-// ----- a larger substitution -----
 
 // What is the same type under `s` is under a substitution that binds more,
 // and with more uses of rigid types allowed.

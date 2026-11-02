@@ -92,7 +92,6 @@ instance ToText(Text) {
   fn to_text(&a: Text): Text { a }
 }
 
-// `[1, 2]`
 instance<A> ToText(List(A)) where ToText(A) {
   fn to_text(&a: List(A)): Text {
     concat("[", concat(Text::items(&a), "]"))
@@ -116,7 +115,6 @@ module Text {
   }
 }
 
-// `None`, `Some(1)`
 instance<A> ToText(Option(A)) where ToText(A) {
   fn to_text(&a: Option(A)): Text {
     match a {
@@ -126,10 +124,18 @@ instance<A> ToText(Option(A)) where ToText(A) {
   }
 }
 
-// `(1, a)`
 instance<A, B> ToText(Pair(A, B)) where ToText(A), ToText(B) {
   fn to_text(&a: Pair(A, B)): Text {
     concat("(", concat(ToText::to_text(&a.fst), concat(", ", concat(ToText::to_text(&a.snd), ")"))))
+  }
+}
+
+// The members joined by ` × `, as a product is shown: `1 × 2 × 3`.
+instance<A, B> ToText(A × B) where ToText(A), ToText(B) {
+  fn to_text(&a: A × B): Text {
+    match a {
+      #(x, y) => concat(ToText::to_text(&x), concat(" × ", ToText::to_text(&y)))
+    }
   }
 }
 
@@ -164,7 +170,6 @@ module List {
   }
 }
 
-// The elements as text, `sep` between them.
 pub fn join<A>(xs: List(A), sep: Text): Text where ToText(A) {
   match xs {
     Nil => ""

@@ -138,7 +138,6 @@ impl Workspace {
 struct Runtime {
     /// Where its `rlib`s are, by the names Cargo gave them.
     dir: PathBuf,
-    /// `tauto-rt`'s own.
     lib: PathBuf,
     /// Its metadata, when its `rlib` holds only a stub of it.
     meta: Option<PathBuf>,
@@ -240,6 +239,7 @@ fn build_runtime(
         .env("CARGO_TARGET_DIR", ws.join("target"))
         .env("CARGO_BUILD_BUILD_DIR", ws.join("target"))
         .env("CARGO_TERM_COLOR", "never");
+    crate::cargo::offline_if_requested(&mut cmd);
     if !features.is_empty() {
         cmd.arg("--features").arg(features.join(","));
     }

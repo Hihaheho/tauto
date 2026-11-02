@@ -21,12 +21,9 @@ use tauto_rt::Nat;
 pub enum Atom {
     /// A checkpoint's digest; an index is named by its root's.
     Checkpoint(Sha256),
-    /// The SHA-256 of a source tree.
     Content(Sha256),
     Project(Sha256),
-    /// A package revision, as an index writes it.
     Revision(String),
-    /// A Git commit of an index, in its spelled form.
     Commit(String),
     /// Where an index is read from: its URL and branch.
     Origin(String, String),
@@ -98,7 +95,6 @@ impl Atoms {
     }
 }
 
-/// A number of the facts as the core's `nat`.
 pub fn nat(n: u64) -> Nat {
     Nat::from_u64(n)
 }

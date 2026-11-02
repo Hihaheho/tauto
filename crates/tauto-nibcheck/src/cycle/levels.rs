@@ -4,6 +4,5 @@
 //! references. Users never write numbers: a level is a name, and the checker
 //! only ever compares two of them.
 
-/// The level of one mutable storage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LevelVar(pub u32);

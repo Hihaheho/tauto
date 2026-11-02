@@ -250,7 +250,6 @@ pub(super) fn every_instance(program: &mut Program, per_file: &mut [Vec<Stmt>]) 
     program.errors.extend(errors);
 }
 
-/// One entry of [`every_instance`].
 fn read_entry(entry: &mut String, generics: &HashMap<String, Vec<String>>) -> Result<(), String> {
     if let Some(rest) = entry.strip_prefix('∀') {
         let Some((names, written)) = rest.split_once('.') else {
@@ -323,7 +322,6 @@ pub(super) fn index_generics(program: &Program) -> HashMap<String, HashSet<Strin
     out
 }
 
-/// A type argument as a term, the way it would be written.
 fn surface_of(t: &Ty, span: Span) -> Option<SurfaceTerm> {
     match t {
         Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Decimal | Ty::Float | Ty::Float32 => {
@@ -341,7 +339,6 @@ fn surface_of(t: &Ty, span: Span) -> Option<SurfaceTerm> {
     }
 }
 
-/// A written type argument (`Pos`, `Vec(i64)`) as a term.
 fn parse_argument(text: &str, span: Span) -> Option<SurfaceTerm> {
     let text = text.trim();
     // A name may be a path: the checker writes a type of a module as
@@ -405,7 +402,6 @@ fn label(effect: &str, args: &[SurfaceTerm]) -> String {
     format!("{effect}@{}", args.join(","))
 }
 
-/// `t` with each name in `map` replaced, where it stands as a term.
 fn replace_vars(t: &mut SurfaceTerm, map: &HashMap<String, SurfaceTerm>) {
     walk::term(t, &mut |x| {
         if let TermKind::Var(n) = &*x.kind
@@ -421,7 +417,6 @@ fn freshen(s: &mut Stmt) {
     walk::stmt(s, &mut |t| t.freshen());
 }
 
-/// The generic names a type mentions.
 fn params_in(t: &Ty, out: &mut HashSet<String>) {
     match t {
         Ty::Param(p, _) => {
@@ -443,13 +438,11 @@ fn params_in(t: &Ty, out: &mut HashSet<String>) {
     }
 }
 
-/// The identifiers of a written type argument.
 fn idents(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
         .filter(|s| !s.is_empty())
 }
 
-/// The top-level functions, by name.
 fn functions(stmts: &[Stmt]) -> HashMap<String, FnDecl> {
     let mut out = HashMap::new();
     for s in stmts {
@@ -582,14 +575,10 @@ struct Expander<'a> {
     indexed: HashSet<String>,
     fns: HashMap<String, FnDecl>,
     effects: HashMap<String, EffectDecl>,
-    /// For each function, its generics that are effect indices.
     relevant: HashMap<String, Vec<String>>,
-    /// The copies to make: name, and the function and arguments.
     queue: Vec<(String, (String, Vec<SurfaceTerm>))>,
     made: HashMap<String, Stmt>,
-    /// Each copy's original.
     copies: HashMap<String, String>,
-    /// Each effect instance: its original and its declaration.
     labels: HashMap<String, (String, Stmt)>,
 }
 
@@ -760,7 +749,6 @@ impl<'a> Expander<'a> {
         out
     }
 
-    /// The type arguments recorded at `id`, with the generics in `given`.
     fn arguments(
         &self,
         id: crate::surface::TermId,
@@ -815,7 +803,6 @@ impl<'a> Expander<'a> {
         name
     }
 
-    /// The name of the copy of `f` at its index generics `args`.
     fn copy_name(&mut self, f: &str, args: Vec<SurfaceTerm>) -> String {
         let name = label(f, &args);
         if !self.copies.contains_key(&name) && !self.in_prelude.contains(&name) {
@@ -1129,7 +1116,6 @@ impl<'a> Expander<'a> {
         out
     }
 
-    /// The copy of a function at its index generics.
     fn instance(
         &mut self,
         name: &str,

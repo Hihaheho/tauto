@@ -8,7 +8,10 @@ pub use tauto_surface::macros::quote;
 pub use tauto_surface::macros::scope;
 pub use tauto_surface::macros::syn;
 
-pub use expand::{Expansion, Options, Output, expand_files, expand_files_in, expand_files_seeing};
+pub use expand::{
+    Expansion, Options, Output, expand_files, expand_files_in, expand_files_limited,
+    expand_files_seeing,
+};
 pub use node::Node;
 pub use origin::{EXPANSION_BASE, SpanMap};
 pub use scope::resolve;

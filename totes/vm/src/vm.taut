@@ -4,8 +4,6 @@ import std::Base
 // runs the bytecode, and the compiler. `proof/vm.taut` proves that the machine runs the
 // compiled program to the value the reference semantics `Eval` gives.
 
-// ---- the language -----------------------------------------------------------
-
 pub(open) inductive Val: Type {
   VNat(n: Nat): Val
   VPair(a: Val, b: Val): Val
@@ -104,8 +102,6 @@ pub(open) inductive Eval(prog: List(Expr)): (List(Val), Expr, Val) -> Prop {
   ): Eval(prog, env, XCall(f, a), v)
 }
 
-// ---- the bytecode -----------------------------------------------------------
-
 // Each instruction holds the code after it, so a function body is one `Bytecode` and no
 // address is computed. `c_branch` and `c_call` run a block that ends in `c_ret`, which
 // returns to the code saved in the frame.
@@ -135,7 +131,6 @@ pub(open) inductive State: Type {
   StateMk(code: Bytecode, env: List(Val), st: List(Val), frames: List(Frame)): State
 }
 
-// Applies a binary operation on numbers to the two values on top of the stack.
 pub fn step_nat2(
   op: (Nat, Nat) -> Nat,
   k: Bytecode,
@@ -287,9 +282,6 @@ pub fn run(prog: List(Bytecode), fuel: Nat, s: State): Option(State) {
   }
 }
 
-// ---- the compiler -----------------------------------------------------------
-
-// The code of `e` followed by `k`.
 pub fn comp(e: Expr, k: Bytecode): Bytecode {
   match e: Bytecode {
     XVar(i) => CLoad(i, k)

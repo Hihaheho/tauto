@@ -18,9 +18,7 @@ fn dir(name: &str) -> PathBuf {
 fn tote(root: &Path, name: &str, dependencies: &[&str], files: &[(&str, &str)]) -> PathBuf {
     let d = root.join(name);
     fs::create_dir_all(d.join("src")).unwrap();
-    let mut manifest = format!(
-        "package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}}\n"
-    );
+    let mut manifest = format!("package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n}}\n");
     if !dependencies.is_empty() {
         manifest.push_str("\ndependencies {\n");
         for dependency in dependencies {
@@ -75,7 +73,11 @@ fn a_tote_uses_its_dependency() {
         &root,
         "b",
         &["a"],
-        &[("main.taut", r#"perform show("x", a_one() + 1)"#)],
+        &[(
+            "main.taut",
+            r#"import a::a
+perform show("x", a_one() + 1)"#,
+        )],
     );
     assert_eq!(run(&load_tote(&b).unwrap()).unwrap(), ["x = 2"]);
 }
@@ -92,8 +94,8 @@ fn a_dependency_keeps_the_prelude_constructor_its_dependent_declares_too() {
         &[],
         &[(
             "lib.taut",
-            "fn two(): Nat { match Some(2) { Some(n) => n, None => 0 } }\n\n\
-             fn three(): Nat {\n  let o := Some(3)\n  perform show(\"lib\", 0)\n  match o { Some(n) => n, None => 0 }\n}\n",
+            "pub fn two(): Nat { match Some(2) { Some(n) => n, None => 0 } }\n\n\
+             pub fn three(): Nat {\n  let o := Some(3)\n  perform show(\"lib\", 0)\n  match o { Some(n) => n, None => 0 }\n}\n",
         )],
     );
     let app = tote(
@@ -102,7 +104,7 @@ fn a_dependency_keeps_the_prelude_constructor_its_dependent_declares_too() {
         &["lib"],
         &[(
             "main.taut",
-            "enum Piece { Whole(Nat), Some }\n\n\
+            "import lib::lib\n\nenum Piece { Whole(Nat), Some }\n\n\
              fn tag(p: Piece): Nat { match p { Whole(n) => n, Some => 7 } }\n\n\
              perform show(\"two\", two())\n\
              perform show(\"three\", three())\n\
@@ -131,7 +133,11 @@ fn a_dependencys_main_is_not_read() {
         &root,
         "b",
         &["a"],
-        &[("main.taut", r#"perform show("b", a_one())"#)],
+        &[(
+            "main.taut",
+            r#"import a::a
+perform show("b", a_one())"#,
+        )],
     );
     let loaded = load_tote(&b).unwrap();
     assert_eq!(run(&loaded).unwrap(), ["b = 1"]);
@@ -140,6 +146,7 @@ fn a_dependencys_main_is_not_read() {
 
 #[test]
 fn a_tote_that_is_not_listed_is_not_seen() {
+    tauto_messages::install();
     let root = dir("not-listed");
     tote(
         &root,
@@ -151,14 +158,22 @@ fn a_tote_that_is_not_listed_is_not_seen() {
         &root,
         "c",
         &[],
-        &[("main.taut", r#"perform show("x", a_one())"#)],
+        &[(
+            "main.taut",
+            r#"import a::a
+perform show("x", a_one())"#,
+        )],
     );
-    let err = run(&load_tote(&c).unwrap()).unwrap_err();
-    assert!(err.starts_with("type error"), "{err}");
+    let err = load_tote(&c).err().unwrap();
+    assert!(
+        err.contains("a is not a dependency of this file's tote"),
+        "{err}"
+    );
 }
 
 #[test]
 fn totes_that_depend_on_each_other_are_an_error() {
+    tauto_messages::install();
     let root = dir("cycle");
     tote(&root, "a", &["b"], &[]);
     tote(&root, "b", &["a"], &[]);
@@ -172,7 +187,7 @@ fn the_name_is_the_directorys() {
     let x = tote(&root, "x", &[], &[]);
     fs::write(
         x.join("Tauto.eure"),
-        "package {\n  name = \"y\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"y\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     let err = load_tote(&x).err().unwrap();
@@ -185,11 +200,12 @@ fn the_name_is_the_directorys() {
 
 #[test]
 fn an_unknown_key_is_an_error() {
+    tauto_messages::install();
     let root = dir("unknown");
     let a = tote(&root, "a", &[], &[]);
     fs::write(
         a.join("Tauto.eure"),
-        "package {\n  name = \"a\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n  foo = 1\n}\n",
+        "package {\n  name = \"a\"\n  version = \"0.1.0\"\n  foo = 1\n}\n",
     )
     .unwrap();
     assert_eq!(
@@ -234,7 +250,12 @@ fn files_are_read_in_path_order_with_main_last() {
         &[
             ("b.taut", r#"pub fn b_one(): i64 { 1 }"#),
             ("a.taut", r#"pub fn a_one(): i64 { 1 }"#),
-            ("main.taut", r#"perform show("x", a_one() + b_one())"#),
+            (
+                "main.taut",
+                r#"import "a.taut"
+import "b.taut"
+perform show("x", a_one() + b_one())"#,
+            ),
         ],
     );
     let loaded = load_tote(&a).unwrap();
@@ -411,13 +432,9 @@ fn both_source_extensions_run_as_tote_entries() {
         let root = dir(&format!("entry-{extension}"));
         let source = format!("main.{extension}");
         let a = tote(&root, "a", &[], &[(&source, r#"perform show("x", 7)"#)]);
-        // Explicit manifest paths and directory discovery accept the same extensions.
-        for sources in ["src".to_owned(), format!("src/{source}")] {
-            fs::write(
-                a.join("Tauto.eure"),
-                format!("package {{ name = \"a\" sources = [\"{sources}\"] }}"),
-            )
-            .unwrap();
+        // The default `src` accepts both extensions.
+        for manifest in ["package { name = \"a\" }"] {
+            fs::write(a.join("Tauto.eure"), manifest).unwrap();
             assert_eq!(run(&load_tote(&a).unwrap()).unwrap(), ["x = 7"]);
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_tauto"))
                 // The messages below are the English ones, whatever the language here.
@@ -466,7 +483,12 @@ pub fn value(): i64 { 9 }"#,
                 r#"import "helper.tauto"
 perform show("value", helper())"#,
             ),
-            ("helper.tauto", r#"pub fn helper(): i64 { value() }"#),
+            (
+                "helper.tauto",
+                r#"import a::value
+
+pub fn helper(): i64 { value() }"#,
+            ),
         ],
     );
     let loaded = load_tote(&app).unwrap();
@@ -487,6 +509,7 @@ perform show("value", helper())"#,
 /// it: a dependency that declares one is refused unless the project trusts it.
 #[test]
 fn a_dependencys_extern_needs_the_projects_trust() {
+    tauto_messages::install();
     let root = dir("trust-extern");
     tote(
         &root,
@@ -501,7 +524,7 @@ fn a_dependencys_extern_needs_the_projects_trust() {
         &root,
         "b",
         &["a"],
-        &[("main.taut", "perform show(\"x\", one())\n")],
+        &[("main.taut", "import a::a\n\nperform show(\"x\", one())\n")],
     );
     let refused = load_tote(&b).err().expect("an untrusted extern is refused");
     assert!(
@@ -538,6 +561,7 @@ fn the_projects_own_extern_needs_no_trust() {
 /// around them, never the extern itself, even when the project trusts it.
 #[test]
 fn an_extern_is_called_only_inside_its_tote() {
+    tauto_messages::install();
     let root = dir("sealed-extern");
     tote(
         &root,
@@ -555,7 +579,7 @@ fn an_extern_is_called_only_inside_its_tote() {
         &["a"],
         &[(
             "main.taut",
-            "fn get(): Text { fetch(\"x\") }\n\nperform show(\"x\", one())\n",
+            "import a::a\n\nfn get(): Text { fetch(\"x\") }\n\nperform show(\"x\", one())\n",
         )],
     );
     let manifest = b.join("Tauto.eure");
@@ -571,7 +595,7 @@ fn an_extern_is_called_only_inside_its_tote() {
 
     fs::write(
         b.join("src/main.taut"),
-        "fn get(): Text { leak(\"x\") }\n\nperform show(\"x\", one())\n",
+        "import a::a\n\nfn get(): Text { leak(\"x\") }\n\nperform show(\"x\", one())\n",
     )
     .unwrap();
     let errors = match load_tote(&b) {
@@ -586,7 +610,7 @@ fn an_extern_is_called_only_inside_its_tote() {
     // A local of the same name is not the extern.
     fs::write(
         b.join("src/main.taut"),
-        "fn get(leak: u64): u64 { leak }\n\nperform show(\"x\", one())\n",
+        "import a::a\n\nfn get(leak: u64): u64 { leak }\n\nperform show(\"x\", one())\n",
     )
     .unwrap();
     let loaded = load_tote(&b).unwrap();

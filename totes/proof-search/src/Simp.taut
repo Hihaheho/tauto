@@ -1,3 +1,6 @@
+import std::prelude::Macro
+import std::prelude::Shared
+
 // Explicit equations and a pure, bounded rewrite plan. The generated proof is
 // checked again by the ordinary proof-step boundary.
 pub(open) struct ProofSimpRule { equation: SynExpr, left: SynExpr, right: SynExpr }
@@ -138,14 +141,14 @@ pub fn proof_simp_rules(
         Ok(c) => c
       }
       let parts := match Syn::app_parts(Judgement::term(Elab::whnf(Judgement::type_of(checked)))) {
-        None => Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)")
+        None => Syn::error(at, "simp_only!: each rule must prove left = right")
         Some(p) => p
       }
       let name := match Syn::name_of((parts: SynExpr)) {
-        None => Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)")
+        None => Syn::error(at, "simp_only!: each rule must prove left = right")
         Some(n) => n
       }
-      if name != "Eq" { Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)") } else {
+      if name != "Eq" { Syn::error(at, "simp_only!: each rule must prove left = right") } else {
         match (parts: List(SynExpr)) {
           Cons(_, Cons(l, Cons(r, Nil))) => if proof_simp_supported(l) && proof_simp_supported(r) {
             Cons(
@@ -153,7 +156,7 @@ pub fn proof_simp_rules(
               proof_simp_rules(rest, ctx, left - 1, at)
             )
           } else { Syn::error(at, "simp_only!: equation sides must be application trees") }
-          _ => Syn::error(at, "simp_only!: each rule must prove Eq(A, left, right)")
+          _ => Syn::error(at, "simp_only!: each rule must prove left = right")
         }
       }
     }

@@ -14,13 +14,13 @@ fn an_argument_used_three_times_is_reduced_once() {
         nested = format!("m({nested})");
     }
     let source = format!(
-r#"fn m(n: Nat): Nat {{
+        r#"fn m(n: Nat): Nat {{
   n + n - n
 }}
 theorem r#shared(): Eq(Nat, {}, 3) {{ Refl }}
 "#,
-nested
-);
+        nested
+    );
     let dir = std::env::temp_dir().join(format!("tauto-sharing-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("main.taut");

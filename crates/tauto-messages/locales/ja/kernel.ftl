@@ -51,6 +51,7 @@ kernel-gave-up-unfolded = { $seconds } 秒検査して打ち切った (最も多
 kernel-unfolded-times = `{ $name }` { $count } 回
 kernel-out-of-steps = 簡約を { $steps } 歩進めて打ち切った
 kernel-out-of-steps-in = 簡約を { $steps } 歩進めて、`{ $name }` を展開したところで打ち切った (最も多く展開したもの: { $top })。宣言の上限は `budget` で上げる
+kernel-file-time-limit = { $file } の検査が { $seconds } 秒を超えたので打ち切った。もっと時間が要るなら、Tauto.eure の check.slow にそのファイルをより大きな上限で書く
 kernel-ran-out-of-time = 検査していない: `{ $name }` が時間切れになった
 kernel-past-u128 =
     { $message }
@@ -186,8 +187,8 @@ kernel-field-depends = `{ $name }` の型がほかのフィールドに依存し
 kernel-ascribe-mismatch = `{ $have }` は `{ $want }` でも、その成分を持つ直積でもない
 kernel-product-not-pair = `{ $have }` は `{ $want }` に合わない：直積（`#(…)` や `A × B`）は名前で書いた `Pair` ではなく、`Pair` も直積ではない
 kernel-ascribe-no-member = `{ $product }` に型 `{ $member }` の成分はない
-kernel-ascribe-clash = 型 `{ $member }` の成分が二つ以上ある。ラベル（`@x { $member }`）で見分ける
-kernel-tuple-pattern-ambiguous = `{ $product }` には型 `{ $member }` の成分が二つ以上あり、`#(…)` は位置で成分を決められない。ラベル（`#(@a x, @b y)`）か型注釈で書く
+kernel-ascribe-clash = 直積の二つの成分が型 `{ $member }` を持つので、成分を型で対応づけられない。成分を位置で（同じ順に）書くか、ラベル（`@x { $member }`）で見分ける
+kernel-ascribe-open = `{ $have }` と `{ $want }` は、どちらにも型変数が現れないときだけ、成分の型で対応づけられる。成分を同じ順に位置で書くか、それぞれにラベル（`@x T`）を付ける
 kernel-eq-no-deq = `==` は `{ $ty }` ではなく、`Nat`、`Bool`、`Text` か決定可能な等価性を持つ型に対して使う。帰納型はソートの後に `=> fn { $head }_beq, theorem { $head }_beq_refl, theorem { $head }_beq_sound, theorem { $head }_deq` を挙げるとそれを持つ
 kernel-eq-type-open = `=` の両辺とも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。`Eq(T, a, b)` と書く
 kernel-if-type-open = この `if` の枝のどちらも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。型を書く: `match c: T {"{"} true => a  false => b {"}"}`
@@ -196,8 +197,13 @@ kernel-eq-not-declared = ここでの `==` は `{ $name }` だが、それは宣
 kernel-match-arm-goal = このアームのゴールは `{ $written }` ではなく `{ $computed }` である
 kernel-rec-without-call = `{ $name }` が呼び出しなしで使われている。再帰は照合される値のフィールドに対する呼び出しでなければならない
 kernel-rec-arity = `{ $name }` は構造的でない。再帰呼び出しはすべての引数を渡す (ここでは { $given } 個、期待されるのは { $expected } 個)
-kernel-rec-not-smaller = `{ $name }` は構造的でない。`{ $function }` はパラメータ `{ $param }` に対して match するので、`{ $param }` への引数はここで照合される値の一部 (フィールド、アームで照合したフィールドのフィールド、すべての引数に適用した関数型のフィールド、アームのコンストラクタとして書いたアームで照合した部分) でなければならないが、`{ $argument }` はそうではない。別のパラメータに対する再帰は `decreasing_by` でそれを名指す
-kernel-rec-not-smaller-group = `{ $name }` は構造的でない。`{ $function }` はパラメータ `{ $param }` に対して match するので、`{ $param }` への引数はここで照合される値の一部 (フィールド、アームで照合したフィールドのフィールド、すべての引数に適用した関数型のフィールド、アームのコンストラクタとして書いたアームで照合した部分) でなければならないが、`{ $argument }` はそうではない。別のパラメータに対する再帰は `decreasing_by` でそれを名指す。`{ $part }` はグループの別の型の一部であり、その部分を通る再帰は、その型に対して match する関数をこれと共に一つの `mutual {"{"} … {"}"}` ブロックに書く
+kernel-rec-not-smaller = `{ $name }` は構造的でない。`{ $function }` はパラメータ `{ $param }` に対して match するので、`{ $param }` への引数はここで照合される値の一部 (フィールド、アームで照合したフィールドのフィールド、すべての引数に適用した関数型のフィールド、アームのコンストラクタとして書いたアームで照合した部分) でなければならないが、`{ $argument }` はそうではない。{ $hint }
+kernel-rec-not-smaller-group = `{ $name }` は構造的でない。`{ $function }` はパラメータ `{ $param }` に対して match するので、`{ $param }` への引数はここで照合される値の一部 (フィールド、アームで照合したフィールドのフィールド、すべての引数に適用した関数型のフィールド、アームのコンストラクタとして書いたアームで照合した部分) でなければならないが、`{ $argument }` はそうではない。`{ $part }` はグループの別の型の一部であり、その部分を通る再帰は、その型に対して match する関数をこれと共に一つの `mutual {"{"} … {"}"}` ブロックに書く。{ $hint }
+kernel-rec-hint-swapped = `{ $part }` は `{ $param }` の一部だが、この呼び出しは `{ $other }` に渡している。`{ $param }` に渡すこと。引数はパラメータの順に並べる。たとえば `{ $suggestion }`
+kernel-rec-hint-stuck = この呼び出しの引数はどれもパラメータ自身で、小さくならない。`{ $param }` の一部を引数に渡すこと
+kernel-rec-hint-part = `{ $param }` には、`{ $param }` に対する `match` のパターンで束縛した変数 (値のフィールド) を渡すこと
+kernel-rec-hint-by-one = 再帰が、この呼び出しで変わる `{ $param }` に対するものなら、結果の型の後ろに `decreasing_by { $param }` と書き、本体で `{ $param }` に match する (整礎な尺度は、最初のパラメータに対する `decreasing_by measure(f)`)
+kernel-rec-hint-by-many = 再帰が、この呼び出しで変わるパラメータ ({ $params }) のどれかに対するものなら、結果の型の後ろに `decreasing_by { $first }` のように名指し、本体でそれに match する (整礎な尺度は、最初のパラメータに対する `decreasing_by measure(f)`)
 kernel-rec-changes-later = `{ $name }` が後のパラメータを変えている
 kernel-rec-changes-earlier = `{ $name }` が前のパラメータを変えている
 kernel-rec-fixed-one = `{ $name }` は構造的でない。再帰は照合されるパラメータ `{ $param }` に対するもので、`{ $param }` の型は { $fixed } に依存するので、再帰呼び出しはそれを変えずに渡す
@@ -217,7 +223,7 @@ kernel-class-skipped = 証明言語のクラスではない: { $why }
 kernel-class-one-param = 種 `Type` のパラメータを一つ持つ
 kernel-class-defined = クラス `{ $name }` はすでに定義されている
 kernel-class-method-effects = `{ $name }` は作用を行う
-kernel-class-effects-laws = { $class }.{ $method } は作用を行うので、{ $class } は法則を持てない
+kernel-class-effects-laws = { $class }::{ $method } は作用を行うので、{ $class } は法則を持てない
 kernel-class-method-generics = `{ $name }` はジェネリクスを持つ
 kernel-class-method-untyped = `{ $name }` は型のないパラメータを持つ
 kernel-instance-not-class-skipped = `{ $name }` は証明言語のクラスではない

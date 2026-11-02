@@ -106,6 +106,7 @@ impl Drop for Tm {
         let mut next = Vec::new();
         take(self, &mut next);
         while let Some(r) = next.pop() {
+            poll_deadline();
             if let Ok(mut t) = Rc::try_unwrap(r) {
                 take(&mut t, &mut next);
             }
@@ -114,7 +115,6 @@ impl Drop for Tm {
 }
 
 impl Tm {
-    /// The parts of a `Pi`.
     fn pi_parts(&self) -> Option<(Hint, R, R)> {
         match self {
             Pi(h, a, b) => Some((h.clone(), a.clone(), b.clone())),
@@ -178,6 +178,7 @@ fn inst_at_rc(t: &Tm, d: usize, v: &R) -> Tm {
 
 /// `None` when `t` does not change.
 fn inst_tm(t: &Tm, d: usize, v: &R) -> Option<Tm> {
+    poll_deadline();
     match t {
         BVar(i) if *i == d => Some((**v).clone()),
         BVar(i) if *i > d => Some(BVar(i - 1)),
@@ -204,10 +205,115 @@ fn inst_rc(t: &R, d: usize, v: &R) -> Option<R> {
 }
 
 thread_local! {
+    /// The deadline of the declaration being checked (`Core::start_budget`),
+    /// for the loops that run without taking a step of reduction.
+    static DEADLINE: std::cell::Cell<Option<crate::clock::Instant>> = const { std::cell::Cell::new(None) };
+    /// How often [`poll_deadline`] was called, to read the clock only now and then.
+    static POLLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Whether [`poll_deadline`] saw the deadline pass.
+    static PASSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes the passing of the deadline from a loop that takes no step of
+/// reduction (copying or substituting in a term, dropping one, reading a
+/// numeral), which [`Core::spend`] would never count. It only records the
+/// fact: it changes no term and no table. `Core::spend` and
+/// `Core::timed_out` then end the reduction the way a deadline reached by
+/// counting steps does (`budget.out`), so the declaration is rejected with
+/// the existing budget error. Without a deadline, or before it, nothing
+/// happens, so no result is different.
+fn poll_deadline() {
+    let n = POLLS.with(|p| {
+        let n = p.get().wrapping_add(1);
+        p.set(n);
+        n
+    });
+    if n % 1024 == 0
+        && let Some(d) = DEADLINE.with(|d| d.get())
+        && crate::clock::Instant::now() >= d
+    {
+        PASSED.with(|p| p.set(true));
+    }
+}
+
+/// A hasher for the tables keyed by a node's address (a `usize`). Only
+/// `HashMap` lookups use it: a table's answers do not depend on how its keys
+/// are hashed (the hash only chooses where a key is stored, and equal keys
+/// always hash alike), so swapping the hasher changes how fast the table is,
+/// never what it holds or returns. It multiplies the key by an odd constant
+/// and folds the well-mixed high bits of the product into the low ones;
+/// addresses are aligned, so their low bits alone would collide.
+#[derive(Default, Clone, Copy)]
+struct AddrHasher(u64);
+
+impl std::hash::Hasher for AddrHasher {
+    fn finish(&self) -> u64 {
+        self.0 ^ (self.0 >> 32)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.write_u64(*b as u64);
+        }
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.write_u64(n as u64);
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0 ^ n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+type AddrBuild = std::hash::BuildHasherDefault<AddrHasher>;
+
+/// A table of nodes by address, held weakly (see [`sweep`]).
+#[derive(Clone)]
+struct NodeTable<V> {
+    entries: HashMap<usize, (Weak<Tm>, V), AddrBuild>,
+    /// The size at which [`sweep`] next looks for the entries whose node is gone.
+    sweep_at: usize,
+}
+
+/// The size of a [`NodeTable`] below which [`sweep`] does not run.
+const SWEEP_FROM: usize = 4096;
+
+impl<V> Default for NodeTable<V> {
+    fn default() -> Self {
+        NodeTable {
+            entries: HashMap::default(),
+            sweep_at: SWEEP_FROM,
+        }
+    }
+}
+
+impl<V> std::ops::Deref for NodeTable<V> {
+    type Target = HashMap<usize, (Weak<Tm>, V), AddrBuild>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl<V> std::ops::DerefMut for NodeTable<V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.entries
+    }
+}
+
+impl<V> NodeTable<V> {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.sweep_at = SWEEP_FROM;
+    }
+}
+
+thread_local! {
     /// [`loose`] of the nodes seen, by address. Each entry holds a weak
     /// reference to its node, so the address is not reused while the entry
     /// is there.
-    static LOOSE: std::cell::RefCell<HashMap<usize, (Weak<Tm>, usize)>> = Default::default();
+    static LOOSE: std::cell::RefCell<NodeTable<usize>> = Default::default();
 }
 
 /// One more than the largest index of a variable `t` leaves unbound (0 when
@@ -218,6 +324,7 @@ fn loose(t: &R) -> usize {
     if let Some(n) = LOOSE.with(|m| m.borrow().get(&key).map(|e| e.1)) {
         return n;
     }
+    poll_deadline();
     let n = match &**t {
         BVar(i) => i + 1,
         Pi(_, a, b) => loose(a).max(loose(b).saturating_sub(1)),
@@ -238,15 +345,21 @@ fn loose(t: &R) -> usize {
 /// what the node points to is freed once nothing else uses it, so a long
 /// computation does not keep every node it met. Nothing can ask about a
 /// node that is gone, so dropping its entry loses no answer. Run when the
-/// table reaches a power of two, so the cost per insertion stays constant.
-fn sweep<V>(m: &mut HashMap<usize, (Weak<Tm>, V)>) {
-    let n = m.len();
-    if n >= 4096 && n.is_power_of_two() {
-        m.retain(|_, (node, _)| node.strong_count() > 0);
+/// table has doubled since it last ran (counted from what it kept), so the
+/// cost per insertion stays constant: a run at every size that is a power of
+/// two would walk the whole table again for each insertion while the table
+/// hovers at one, and a deep reduction inserts at every level it returns
+/// through. The walk reads the clock, as its length is the table's.
+fn sweep<V>(m: &mut NodeTable<V>) {
+    if m.entries.len() >= m.sweep_at {
+        m.entries.retain(|_, (node, _)| {
+            poll_deadline();
+            node.strong_count() > 0
+        });
+        m.sweep_at = m.entries.len().saturating_mul(2).max(SWEEP_FROM);
     }
 }
 
-/// Forgets what [`loose`] saw.
 fn forget_loose() {
     LOOSE.with(|m| m.borrow_mut().clear());
 }
@@ -262,7 +375,6 @@ fn share2(a: &R, b: &R, a2: Option<R>, b2: Option<R>) -> Option<(R, R)> {
     ))
 }
 
-/// The body of a binder with its variable replaced by `v`.
 fn inst(body: &Tm, v: &Tm) -> Tm {
     inst_at(body, 0, v)
 }
@@ -495,11 +607,9 @@ struct Global {
 
 #[derive(Debug, Clone)]
 struct RecArg {
-    /// Which argument of the constructor.
     arg: usize,
     /// How many binders the argument abstracts.
     ys: usize,
-    /// The family of the group it lands in.
     fam: usize,
     /// Its indices, over the group's parameters, the constructor's
     /// arguments and the binders (bound in that order, outermost first).
@@ -527,7 +637,6 @@ struct IndInfo {
     k_like: Option<Vec<Tm>>,
 }
 
-/// The types of the names the named checker has declared.
 pub(super) type Declared<'a> = &'a dyn Fn(&str) -> Option<T>;
 
 /// The atoms a question of the named checker is asked over: its context's
@@ -543,7 +652,6 @@ struct Open<'a> {
     /// always in order: a `match` puts the variables of a pattern after
     /// those whose types it rewrites to mention them.)
     visible: usize,
-    /// The types of the variables read so far.
     types: Vec<(u64, Tm)>,
     opaque: Vec<(u64, T)>,
     /// The names the binders entered while typing are shown under.
@@ -591,7 +699,6 @@ impl<'a> Open<'a> {
         FVar(x)
     }
 
-    /// The name or the part an atom stands for.
     fn back(&self, x: u64) -> Option<TermKind> {
         if let Some((_, n)) = self.named.iter().find(|(y, _)| *y == x) {
             return Some(TermKind::Var(n.clone()));
@@ -652,7 +759,9 @@ pub(super) struct Spent {
 #[derive(Clone)]
 pub(super) struct Core {
     globals: HashMap<Rc<str>, Global>,
-    inds: HashMap<Rc<str>, IndInfo>,
+    /// Behind `Rc` so that [`Core::iota`], which looks one up at every
+    /// eliminator step, shares it instead of copying its constructors.
+    inds: HashMap<Rc<str>, Rc<IndInfo>>,
     /// Constructor → (family it builds, place among its constructors).
     ctors: HashMap<Rc<str>, (Rc<str>, usize)>,
     /// Eliminator → (family, whether it is `_rec`).
@@ -660,7 +769,6 @@ pub(super) struct Core {
     /// The quotient's constants declared so far, each without a value and
     /// with the type [`quot_type`] gives it (`Core::quot_iota`).
     quot: HashSet<Rc<str>>,
-    /// The types of the atoms in scope.
     lctx: HashMap<u64, Tm>,
     next: u64,
     /// Applications of the same name found not convertible argument by
@@ -685,7 +793,7 @@ pub(super) struct Core {
     /// out of time (`Kernel::set_timeout`).
     budget: Budget,
     /// What nodes reduced to, for the declaration in hand (`whnf_shared`).
-    shared: HashMap<usize, (Weak<Tm>, Tm)>,
+    shared: NodeTable<Tm>,
     /// `Nat::eq`, `Nat::lt`, `Nat::div_nz` and `Nat::rem_nz` are unfolded, not computed
     /// (a test compares the two).
     numeric_off: bool,
@@ -722,7 +830,6 @@ struct Track {
 
 type HoleIn = (u64, Tm, Vec<(u64, Hint)>);
 
-/// Why a term does not type, and where (the path of [`Track`]).
 #[derive(Debug)]
 pub(super) struct Fault {
     why: Why,
@@ -733,14 +840,12 @@ pub(super) struct Fault {
 #[derive(Debug)]
 enum Why {
     Said(&'static str),
-    /// The term's type is `found`, not `expected`.
     Mismatch {
         expected: Tm,
         found: Tm,
     },
     /// An atom of no type: a part the core could not read.
     Unread(u64),
-    /// Applied, but its type is not a function type.
     NotFunction,
     /// A function where `expected` (not a function type) is expected.
     NoPi(Tm),
@@ -763,11 +868,8 @@ impl From<Box<Fault>> for Message {
 /// What the named checker asks of a term.
 #[derive(Clone, Copy)]
 pub(super) enum Ask<'a> {
-    /// Its type.
     Infer,
-    /// That it is a type, and its sort.
     Sort,
-    /// That it has this type.
     Check(&'a T),
 }
 
@@ -900,7 +1002,7 @@ impl Core {
             conv_unfolded: Vec::new(),
             defs: HashMap::new(),
             budget: Budget::default(),
-            shared: HashMap::new(),
+            shared: NodeTable::default(),
             numeric_off: false,
             lazy_iota: false,
             track: None,
@@ -1032,8 +1134,6 @@ impl Core {
     pub(super) fn add_inductive(&mut self, fams: &[FamSpec], np: usize, out: Sort) -> Res<()> {
         self.add_inductive_inner(fams, np, out)
     }
-
-    // ---- reading the surface AST ----------------------------------------
 
     /// A closed surface term: every name is a binder of the term, a sort,
     /// or a global already in the core.
@@ -1186,8 +1286,6 @@ impl Core {
         })
     }
 
-    // ---- atoms ------------------------------------------------------------
-
     fn fresh(&mut self, ty: Tm) -> u64 {
         self.next += 1;
         self.lctx.insert(self.next, ty);
@@ -1284,8 +1382,6 @@ impl Core {
         })
     }
 
-    // ---- reduction and conversion ------------------------------------------
-
     fn nf(&mut self, t: &Tm) -> Tm {
         let w = self.whnf(t);
         match &w {
@@ -1338,12 +1434,12 @@ impl Core {
     /// is only ever found by `n` itself. The entries of nodes that are gone
     /// are dropped as the table grows, with what they reduced to.
     fn remember(&mut self, n: R, w: Tm) {
+        poll_deadline();
         let key = Rc::as_ptr(&n) as usize;
         self.shared.insert(key, (Rc::downgrade(&n), w));
         sweep(&mut self.shared);
     }
 
-    /// What `n` was found to reduce to, when it was.
     fn recall(&self, n: &R) -> Option<Tm> {
         self.shared
             .get(&(Rc::as_ptr(n) as usize))
@@ -1498,11 +1594,26 @@ impl Core {
             b.out = true;
             b.out_of_steps = true;
         }
+        if !b.out && b.deadline.is_some() && PASSED.with(|p| p.get()) {
+            b.out = true;
+        }
         if !b.out
             && b.steps % 1024 == 0
             && b.deadline
                 .is_some_and(|d| crate::clock::Instant::now() >= d)
         {
+            b.out = true;
+        }
+        b.out
+    }
+
+    /// Whether the deadline has passed, for the loops that take no step of
+    /// reduction: they stop early once it is, and the declaration is rejected
+    /// (`budget.out`), as when [`Self::spend`] sees the deadline.
+    fn timed_out(&mut self) -> bool {
+        poll_deadline();
+        let b = &mut self.budget;
+        if !b.out && b.deadline.is_some() && PASSED.with(|p| p.get()) {
             b.out = true;
         }
         b.out
@@ -1520,6 +1631,8 @@ impl Core {
             limit,
             ..Budget::default()
         };
+        DEADLINE.with(|d| d.set(deadline));
+        PASSED.with(|p| p.set(false));
     }
 
     /// The reduction `other` did, as the declaration in hand's.
@@ -1527,14 +1640,16 @@ impl Core {
         self.budget = std::mem::take(&mut other.budget);
     }
 
-    /// Whether the declaration in hand has run out of time.
     pub(super) fn budget_out(&self) -> bool {
-        self.budget.out
+        self.budget.out || (self.budget.deadline.is_some() && PASSED.with(|p| p.get()))
     }
 
     /// The reduction the declaration in hand did; the count starts again.
     pub(super) fn end_budget(&mut self) -> Spent {
+        let passed = self.budget.deadline.is_some() && PASSED.with(|p| p.get());
         let b = std::mem::take(&mut self.budget);
+        DEADLINE.with(|d| d.set(None));
+        PASSED.with(|p| p.set(false));
         self.shared.clear();
         forget_loose();
         let mut top: Vec<(String, u64)> = b
@@ -1546,7 +1661,7 @@ impl Core {
         top.truncate(3);
         Spent {
             steps: b.steps,
-            out: b.out,
+            out: b.out || passed,
             out_of_steps: b.out_of_steps,
             reached_in: b
                 .last_unfold
@@ -1675,6 +1790,9 @@ impl Core {
     fn numeral_of(&mut self, mut w: Tm) -> Option<u128> {
         let mut more: u128 = 0;
         loop {
+            if self.timed_out() {
+                return None;
+            }
             match &w {
                 Lit(k) => return k.checked_add(more),
                 Const(c) if &**c == "Zero" => return Some(more),
@@ -1716,6 +1834,9 @@ impl Core {
         let mut plus = false;
         let mut t = t.clone();
         loop {
+            if self.timed_out() {
+                return None;
+            }
             if let (Const(c), args) = spine_rc(&t)
                 && &**c == "+"
                 && let [x, y] = args.as_slice()
@@ -1763,6 +1884,25 @@ impl Core {
             v = b.clone();
         }
         matches!(spine_rc(&v), (Const(h), args) if &**h == "+" && args.len() == 2)
+    }
+
+    /// The operator `+`, `*` or `-` that `c` is: the operator itself, or a
+    /// name defined as it on its two parameters in order (`Nat::add(a, b)`
+    /// is `a + b`). Two such applications to convertible operands are
+    /// convertible without unfolding the name.
+    fn arith_op(&self, c: &str) -> Option<&'static str> {
+        let op = |c: &str| ["+", "*", "-"].into_iter().find(|o| *o == c);
+        if let Some(o) = op(c) {
+            return Some(o);
+        }
+        let v = self.globals.get(c)?.value.clone()?;
+        let Lam(_, b) = &*v else { return None };
+        let Lam(_, b) = &**b else { return None };
+        let (Const(h), args) = spine_rc(b) else {
+            return None;
+        };
+        let in_order = matches!(args.as_slice(), [x, y] if **x == BVar(1) && **y == BVar(0));
+        if in_order { op(h) } else { None }
     }
 
     /// `Nat::eq`, `Nat::lt`, `Nat::sub`, `Nat::div_nz` or `Nat::rem_nz` of the prelude
@@ -1871,7 +2011,7 @@ impl Core {
             }
         };
         let (_, j) = self.ctors.get(&cname)?.clone();
-        let c = ind.ctors.get(j)?.clone();
+        let c = ind.ctors.get(j)?;
         if c.name != cname || cargs.len() != cnp + c.nargs {
             return None;
         }
@@ -2021,7 +2161,6 @@ impl Core {
         Some(same)
     }
 
-    /// Whether `ty` is a proposition (a type in `Prop`).
     fn is_prop(&mut self, ty: &Tm) -> bool {
         match self.infer(ty) {
             Ok(s) => self.whnf(&s) == Sort(Sort::Prop),
@@ -2148,7 +2287,6 @@ impl Core {
         }
     }
 
-    /// The value of a name at the head of `t`, applied to its arguments.
     fn unfold_head(&mut self, t: &Tm) -> Option<Tm> {
         if self.spend() {
             return None;
@@ -2259,7 +2397,6 @@ impl Core {
         out
     }
 
-    /// The height of the name with a value at the head of `t`.
     fn head_height(&mut self, t: &Tm) -> Option<u32> {
         let Const(c) = spine_rc(t).0 else { return None };
         let c = c.clone();
@@ -2307,7 +2444,6 @@ impl Core {
         }
     }
 
-    /// `f(t)` with `self.conv_binders` one more.
     fn under_binder<X>(&mut self, f: impl FnOnce(&mut Self) -> X) -> X {
         self.conv_binders += 1;
         let r = f(self);
@@ -2388,14 +2524,16 @@ impl Core {
         {
             return k == j && self.conv_plain(&x, &y);
         }
-        // `+`, `*` and `-` of convertible operands are convertible. Asked
+        // `+`, `*` and `-` of convertible operands are convertible, also when
+        // one side names the operator (`Nat::add(x, y)` against `x + y`). Asked
         // before a step of `Core::arith`, which lays open a `Succ` for each
         // unit of a numeral operand: `x + n` against `y + n` would otherwise
         // be compared `Succ` by `Succ`, `n` deep. Saying no decides nothing.
         if let ((Const(f), xs), (Const(g), ys)) = (spine_rc(a), spine_rc(b))
-            && f == g
-            && matches!(&**f, "+" | "*" | "-")
-            && xs.len() == ys.len()
+            && let (Some(p), Some(q)) = (self.arith_op(f), self.arith_op(g))
+            && p == q
+            && xs.len() == 2
+            && ys.len() == 2
             && xs.iter().zip(&ys).all(|(x, y)| self.conv_node(x, y))
         {
             return true;
@@ -2514,8 +2652,6 @@ impl Core {
             _ => self.conv(&a, &b),
         }
     }
-
-    // ---- typing ------------------------------------------------------------
 
     fn fault(&self, why: Why) -> Box<Fault> {
         let (at, bound) = match &self.track {
@@ -2718,8 +2854,6 @@ impl Core {
         }
     }
 
-    // ---- questions of the named checker --------------------------------------
-
     /// The atom of the context's `i`-th variable, its type read the first
     /// time.
     fn local(&self, o: &mut Open<'_>, i: usize) -> u64 {
@@ -2785,7 +2919,6 @@ impl Core {
         x
     }
 
-    /// Whether `a` and `b` are convertible in `ctx`.
     pub(super) fn conv_in(&mut self, ctx: &Ctx, a: &T, b: &T) -> bool {
         self.ask(ctx, &[a, b], |c, t, _| c.conv(&t[0], &t[1]))
     }
@@ -3109,8 +3242,6 @@ impl Core {
         }
     }
 
-    // ---- declarations -----------------------------------------------------
-
     fn fresh_name(&self, name: &str) -> Res<()> {
         if self.globals.contains_key(name) {
             return fail(msg!("kernel-core-already-defined", name = name));
@@ -3294,7 +3425,6 @@ impl Core {
                 ctors: Vec::new(),
             });
         }
-        // Constructors of the declared families.
         let mut taken: Vec<Rc<str>> = names.clone();
         for (k, f) in specs.iter().enumerate() {
             for (cname, cty) in &f.ctors {
@@ -3428,7 +3558,6 @@ impl Core {
                 },
                 _ => false,
             };
-        // Register the constructors, the eliminators and how they reduce.
         for m in members.iter().take(specs.len()) {
             for (j, c) in m.ctors.iter().enumerate() {
                 let mut ty = apps(
@@ -3506,7 +3635,7 @@ impl Core {
             }
             self.inds.insert(
                 m.name.clone(),
-                IndInfo {
+                Rc::new(IndInfo {
                     params: np,
                     indices: m.indices,
                     group: group_names.clone(),
@@ -3514,7 +3643,7 @@ impl Core {
                     ctors,
                     alias: m.alias.clone(),
                     k_like,
-                },
+                }),
             );
         }
         Ok(())
@@ -3617,7 +3746,6 @@ impl Core {
     /// per member, one minor premise per constructor of the group.
     fn eliminator(&mut self, members: &[Member], params: &[u64], k: usize, ms: Sort) -> Tm {
         let pvars: Vec<Tm> = params.iter().map(|x| FVar(*x)).collect();
-        // `∀ indices (t: the member's type). body(indices, t)`.
         let over_major = |core: &mut Core, m: &Member, body: &dyn Fn(&[Tm], &Tm) -> Tm| -> Tm {
             let mut walk = m.index_tel.clone();
             let mut is = Vec::new();
@@ -3704,7 +3832,6 @@ struct Member {
     /// `∀ indices. Sort`, over the parameters (atoms).
     index_tel: Tm,
     indices: usize,
-    /// A nested member stands for `J(args)`.
     alias: Option<(Rc<str>, Vec<Tm>)>,
     ctors: Vec<Ctor>,
 }
@@ -3768,7 +3895,6 @@ mod tests {
     use super::super::{Kernel, Stmt, T, parse_program};
     use super::*;
 
-    /// A kernel with the prelude declared.
     fn kernel() -> Kernel {
         let mut k = Kernel::new();
         let prelude = super::super::kernel_prelude().unwrap();
@@ -3875,6 +4001,97 @@ mod tests {
         assert!(c.end_budget().steps < 100);
     }
 
+    /// The bound of loose variables computed with no table at all.
+    fn loose_plain(t: &Tm) -> usize {
+        match t {
+            BVar(i) => i + 1,
+            Pi(_, a, b) => loose_plain(a).max(loose_plain(b).saturating_sub(1)),
+            Lam(_, b) => loose_plain(b).saturating_sub(1),
+            App(f, a) => loose_plain(f).max(loose_plain(a)),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn the_memo_of_loose_agrees_with_the_plain_walk() {
+        let shared: R = Rc::new(app(BVar(3), BVar(0)));
+        let terms = [
+            Lit(1),
+            BVar(0),
+            BVar(7),
+            app(BVar(2), Lit(4)),
+            Lam(Hint::named("_"), Rc::new(app(BVar(0), BVar(4)))),
+            Pi(Hint::named("_"), shared.clone(), shared.clone()),
+            apps(konst("f"), [BVar(1), (*shared).clone(), BVar(5)]),
+        ];
+        for t in terms {
+            let r = Rc::new(t);
+            // The first call fills the memo, the second reads it.
+            assert_eq!(loose(&r), loose_plain(&r));
+            assert_eq!(loose(&r), loose_plain(&r));
+        }
+        forget_loose();
+    }
+
+    #[test]
+    fn the_address_hasher_keeps_every_key_apart() {
+        let mut m: HashMap<usize, usize, AddrBuild> = HashMap::default();
+        for i in 0..10_000usize {
+            m.insert(i * 16, i);
+        }
+        assert_eq!(m.len(), 10_000);
+        for i in 0..10_000usize {
+            assert_eq!(m.get(&(i * 16)), Some(&i));
+        }
+    }
+
+    #[test]
+    fn iota_shares_the_inductive_and_gives_the_same_term() {
+        let mut k = kernel();
+        let c = &mut k.core;
+        c.start_budget(None, None);
+        let nat = c.inds.get("Nat").unwrap().clone();
+        let before = Rc::strong_count(&nat);
+        let t = apps(
+            konst("Nat::rec"),
+            [
+                Sort(Sort::ty(0)),
+                Lit(0),
+                Lam(
+                    Hint::named("_"),
+                    Rc::new(Lam(
+                        Hint::named("_"),
+                        Rc::new(app(konst("Succ"), app(konst("Succ"), BVar(0)))),
+                    )),
+                ),
+                Lit(3),
+            ],
+        );
+        let _ = c.whnf(&t);
+        // The lookup of `iota` took no copy of the inductive that stays.
+        assert_eq!(Rc::strong_count(&nat), before);
+        c.end_budget();
+    }
+
+    #[test]
+    fn a_passed_deadline_seen_by_a_loop_without_steps_ends_the_budget() {
+        let mut k = kernel();
+        let c = &mut k.core;
+        c.start_budget(None, Some(crate::clock::Instant::now()));
+        let r: R = Rc::new(app(BVar(0), BVar(1)));
+        for _ in 0..4096 {
+            let _ = inst_tm(&r, 0, &Rc::new(Lit(0)));
+        }
+        assert!(c.budget_out());
+        assert!(c.end_budget().out);
+        c.start_budget(None, None);
+        for _ in 0..4096 {
+            let _ = inst_tm(&r, 0, &Rc::new(Lit(0)));
+        }
+        assert!(!c.budget_out());
+        assert!(!c.end_budget().out);
+    }
+
     fn accepts(src: &str) {
         let mut k = kernel();
         let (ty, body) = read(&mut k, src);
@@ -3894,13 +4111,13 @@ mod tests {
     fn proofs_are_checked() {
         accepts(&r#"theorem t(A: Prop, a: A): A { a }"#.to_string());
         accepts(&r#"theorem t(): 2 + 2 = 4 { Refl(Nat, 4) }"#.to_string());
-        accepts(&r#"theorem t(n: Nat): n + 2 = Succ(Succ(n)) { Refl(Nat, Succ(Succ(n))) }"#.to_string());
+        accepts(
+            &r#"theorem t(n: Nat): n + 2 = Succ(Succ(n)) { Refl(Nat, Succ(Succ(n))) }"#.to_string(),
+        );
         rejects(&r#"theorem t(): 2 + 2 = 5 { Refl(Nat, 4) }"#.to_string());
         rejects(&r#"theorem t(A: Prop, B: Prop, a: A): B { a }"#.to_string());
         rejects(&r#"theorem t(): False { Trivial }"#.to_string());
-        // Large elimination: `Nat::rec` computes by iota, on numerals too.
         accepts(&r#"theorem t(): Nat::rec(k => Nat, 0, k => ih => Succ(Succ(ih)), 3) = 6 { Refl(Nat, 6) }"#.to_string());
-        // `Eq::rec` reduces on a variable proof once the indices agree.
         accepts(&r#"theorem t(e: Eq(Nat, 1, 1)): Eq::rec(Nat, 1, y => p => Nat, 7, 1, e) = 7 { Refl(Nat, 7) }"#.to_string());
     }
 
@@ -3910,10 +4127,13 @@ mod tests {
         // before unfolding it; remembering the pairs that failed keeps that
         // from being exponential.
         let mut k = kernel();
-        let defs = parse_program(&r#"fn double(n: Nat): Nat { match n: Nat { Zero => Zero
+        let defs = parse_program(
+            &r#"fn double(n: Nat): Nat { match n: Nat { Zero => Zero
  Succ(m) => Succ(Succ(double(m))) } }
 fn add2(a: Nat, b: Nat): Nat { match a: Nat { Zero => b
- Succ(m) => Succ(add2(m, b)) } }"#.to_string())
+ Succ(m) => Succ(add2(m, b)) } }"#
+                .to_string(),
+        )
         .unwrap();
         for e in k.declare(&defs, false) {
             assert!(!e.failed(), "{e:?}");
@@ -4025,7 +4245,7 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn a_table_forgets_the_nodes_that_are_gone() {
-        let mut m: HashMap<usize, (Weak<Tm>, ())> = HashMap::new();
+        let mut m: NodeTable<()> = NodeTable::default();
         let kept = Rc::new(Lit(0));
         m.insert(Rc::as_ptr(&kept) as usize, (Rc::downgrade(&kept), ()));
         let mut gone = Vec::new();
@@ -4040,19 +4260,44 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
     }
 
     #[test]
+    fn a_table_that_kept_its_nodes_is_not_walked_again_until_it_doubles() {
+        let mut m: NodeTable<()> = NodeTable::default();
+        let nodes: Vec<R> = (0..SWEEP_FROM).map(|i| Rc::new(Lit(i as u128))).collect();
+        for n in &nodes {
+            m.insert(Rc::as_ptr(n) as usize, (Rc::downgrade(n), ()));
+        }
+        sweep(&mut m);
+        assert_eq!(m.len(), SWEEP_FROM);
+        assert_eq!(m.sweep_at, 2 * SWEEP_FROM);
+        // Inserting again under a key it has (as `remember` does) walks nothing.
+        m.insert(
+            Rc::as_ptr(&nodes[0]) as usize,
+            (Rc::downgrade(&nodes[0]), ()),
+        );
+        sweep(&mut m);
+        assert_eq!(m.sweep_at, 2 * SWEEP_FROM);
+    }
+
+    #[test]
     fn names_are_read_by_their_binders() {
         // A binder named like a sort or `_` is just a binder here: names are
         // resolved by their binders, not by their spelling.
         rejects(&r#"theorem t(Type: Prop): Type { Nat }"#.to_string());
-        rejects(&r#"theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { _ => _ => h => h }"#.to_string());
-        rejects(&r#"theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { a => b => h => h }"#.to_string());
+        rejects(
+            &r#"theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { _ => _ => h => h }"#.to_string(),
+        );
+        rejects(
+            &r#"theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { a => b => h => h }"#.to_string(),
+        );
     }
 
     #[test]
     fn a_redex_types_its_argument() {
-        // `(fun x => 0)(Ω)` with an ill-typed argument.
-        rejects(&r#"theorem t(): Nat { (x => 0)(Trivial(Trivial)) }
-"#.to_string());
+        rejects(
+            &r#"theorem t(): Nat { (x => 0)(Trivial(Trivial)) }
+"#
+            .to_string(),
+        );
         accepts(&r#"theorem t(): Nat { (x => 0)(Trivial) }"#.to_string());
     }
 
@@ -4118,57 +4363,77 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn inductive_declarations_are_read_again() {
-        inductive(&r#"inductive L(A: Type): Type {
+        inductive(
+            &r#"inductive L(A: Type): Type {
   Nil: L(A)
   Cons(h: A, t: L(A)): L(A)
-}"#.to_string())
+}"#
+            .to_string(),
+        )
         .unwrap();
-        inductive(&r#"inductive V(A: Type): (Nat) -> Type {
+        inductive(
+            &r#"inductive V(A: Type): (Nat) -> Type {
   Vnil: V(A, 0)
   Vcons(n: Nat, h: A, t: V(A, n)): V(A, Succ(n))
-}"#.to_string())
+}"#
+            .to_string(),
+        )
         .unwrap();
-        // The field `I` is what the constructor returns.
         assert!(
-            inductive(&r#"inductive I: Type1 {
+            inductive(
+                &r#"inductive I: Type1 {
   C(I: Type): I
-}"#.to_string())
+}"#
+                .to_string()
+            )
             .is_err()
         );
-        // A non-uniform parameter in a recursive argument.
         assert!(
-            inductive(&r#"inductive L(A: Type): Type {
+            inductive(
+                &r#"inductive L(A: Type): Type {
   Z(a: A): L(A)
   C(x: L(Nat)): L(A)
-}"#.to_string())
+}"#
+                .to_string()
+            )
             .unwrap_err()
             .to_string()
             .contains("parameters")
         );
-        // Negative and nested-negative occurrences, a too large argument.
         assert!(
-            inductive(&r#"inductive B: Type {
+            inductive(
+                &r#"inductive B: Type {
   Mk(f: (B) -> Nat): B
-}"#.to_string())
+}"#
+                .to_string()
+            )
             .is_err()
         );
         assert!(
-            inductive(&r#"inductive B: Type {
+            inductive(
+                &r#"inductive B: Type {
   Mk(f: Eq(Type, B, B)): B
-}"#.to_string())
+}"#
+                .to_string()
+            )
             .is_err()
         );
         assert!(
-            inductive(&r#"inductive U: Type {
+            inductive(
+                &r#"inductive U: Type {
   Mk(T: Type): U
-}"#.to_string())
+}"#
+                .to_string()
+            )
             .is_err()
         );
-        // A constructor of another family.
         assert!(
-            inductive(&r#"inductive O: Type {
+            inductive(
+                &r#"inductive O: Type {
   Mk: Nat
-}"#.to_string())
+}"#
+                .to_string()
+            )
             .is_err()
         );
     }

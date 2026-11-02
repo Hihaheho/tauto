@@ -18,7 +18,6 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
     let out = unsafe { std::slice::from_raw_parts_mut(dest, len) };
     STATE.with(|s| {
         for b in out {
-            // xorshift64*
             let mut x = s.get();
             x ^= x >> 12;
             x ^= x << 25;

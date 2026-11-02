@@ -33,34 +33,72 @@ impl Drop for Fixture {
     }
 }
 
+fn parse(out: &Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "{e}: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    })
+}
+
 #[test]
-fn package_sources_are_not_tests_and_order_is_stable() {
+fn tests_are_found_in_any_source_file_in_stable_order() {
     let d = Fixture::new("package");
     d.write(
         "Tauto.eure",
-        "package { name = \"calc\"\nversion = \"0.1.0\"\nsources = [\"src\"] }",
+        "package { name = \"calc\"\nversion = \"0.1.0\" additional-sources = [\"proof\"] }",
     );
-    d.write("src/main.taut", r#"this is not a test entry"#);
-    d.write("tests/z.taut", r#"perform show("answer", 6 * 7)"#);
+    d.write("src/main.taut", "let answer: i64 := 6 * 7\n");
     d.write(
-        "tests/a.taut",
-        r#"theorem identity(n: Nat): n = n { Refl(Nat, n) }"#,
+        "src/z.taut",
+        "perform test(\"answer\", () => expect(6 * 7 == 42, \"no\"))\n",
+    );
+    d.write(
+        "src/deep/a.taut",
+        "theorem identity(n: Nat): n = n { Refl(Nat, n) }\nperform test(\"one\", () => expect(true, \"no\"))\nperform test(\"two\", () => expect(true, \"no\"))\n",
+    );
+    d.write(
+        "proof/p.taut",
+        "perform test(\"extra\", () => expect(true, \"no\"))\n",
+    );
+    // Outside the sources, a file is not searched.
+    d.write(
+        "examples/e.taut",
+        "perform test(\"example\", () => expect(false, \"no\"))\n",
     );
     let out = d.run(&["--json"]);
-    assert!(
-        out.status.success(),
-        "{} {}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+    assert!(out.status.success(), "{}", parse(&out));
+    let json = parse(&out);
+    let names: Vec<_> = json["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "proof/p.taut::extra",
+            "src/deep/a.taut::one",
+            "src/deep/a.taut::two",
+            "src/z.taut::answer"
+        ]
     );
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    // A test file's theorems count as proved tests, before the file's run.
-    assert_eq!(json["passed"], 3);
-    assert_eq!(json["tests"][0]["name"], "tests/a.taut::identity");
-    assert_eq!(json["tests"][0]["status"], "proved");
-    assert_eq!(json["tests"][1]["name"], "tests/a.taut");
-    assert_eq!(json["tests"][2]["name"], "tests/z.taut");
+    assert_eq!(json["passed"], 4);
     assert_eq!(out.stdout, d.run(&["--json"]).stdout);
+    let one = d.run(&["--filter", "answer", "--json"]);
+    assert_eq!(parse(&one)["passed"], 1);
+}
+
+#[test]
+fn a_file_with_no_test_is_not_run() {
+    let d = Fixture::new("no-test");
+    d.write("bad.taut", "let x: i64 := true\n");
+    assert_eq!(d.run(&[]).status.code(), Some(1));
+    let out = d.run(&["--json"]);
+    assert_eq!(parse(&out)["empty"], true);
 }
 
 #[test]
@@ -68,74 +106,29 @@ fn incomplete_and_runtime_failure_are_failures() {
     let d = Fixture::new("fail");
     d.write(
         "hole.taut",
-        r#"theorem unfinished(n: Nat): n = n { ?proof }"#,
+        "theorem unfinished(n: Nat): n = n { ?proof }\nperform test(\"t\", () => expect(true, \"no\"))\n",
     );
     d.write(
         "bad.taut",
-        r#"let x: i64 := true
-perform show("x", x)"#,
+        "let x: i64 := true\nperform test(\"t\", () => expect(true, \"no\"))\n",
     );
     let out = d.run(&["--json"]);
     assert_eq!(out.status.code(), Some(1));
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(json["failed"], 2);
+    assert_eq!(parse(&out)["failed"], 2);
 }
 
 #[test]
-fn cases_reuse_expected_type_errors_and_runtime_assertions() {
-    let d = Fixture::new("cases");
-    d.write(
-        "calc.eure",
-        r#"@ cases.value
-source = "perform show(\"answer\", 6 * 7)"
-shows = ["answer = 42"]
-@ cases.reject
-source = "let x: i64 := true"
-types = "error: "
-"#,
-    );
-    let out = d.run(&["--json"]);
-    assert!(
-        out.status.success(),
-        "{} {}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(json["passed"], 2);
-    let one = d.run(&["--filter", "reject", "--json"]);
-    let json: serde_json::Value = serde_json::from_slice(&one.stdout).unwrap();
-    assert_eq!(json["passed"], 1);
-    assert_eq!(d.run(&["--filter", "absent"]).status.code(), Some(1));
-}
-
-#[test]
-fn empty_unsupported_and_bad_options_do_not_pass() {
+fn empty_and_bad_options_do_not_pass() {
     let d = Fixture::new("empty");
     assert_eq!(d.run(&[]).status.code(), Some(1));
     assert_eq!(d.run(&["--filter"]).status.code(), Some(2));
     assert_eq!(d.run(&["--unknown"]).status.code(), Some(2));
+    // Eure case files are not tests.
     d.write(
-        "later.eure",
-        r#"source = "perform show(\"x\", 1)"
-compiles = true
-"#,
+        "calc.eure",
+        "source = \"perform show(\\\"answer\\\", 6 * 7)\"\nshows = [\"answer = 42\"]\n",
     );
     assert_eq!(d.run(&[]).status.code(), Some(1));
-}
-
-#[test]
-fn case_files_cannot_escape_scratch_directory() {
-    let d = Fixture::new("traversal");
-    d.write(
-        "escape.eure",
-        r#"files { "../outside.taut" = "perform show(\"x\", 1)" }
-shows = []
-"#,
-    );
-    let out = d.run(&[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("relative path"));
 }
 
 #[cfg(unix)]
@@ -147,80 +140,40 @@ fn discovery_rejects_symlink_cycles() {
 }
 
 #[test]
-fn nonzero_exit_and_vacuous_case_fail() {
+fn nonzero_exit_fails() {
     let d = Fixture::new("exit");
-    d.write("exit.taut", r#"perform exit(7)"#);
     d.write(
-        "empty.eure",
-        r#"source = "let x := 1"
-"#,
+        "exit.taut",
+        "import std::prelude::Os\n\nperform test(\"t\", () => expect(true, \"no\"))\nperform exit(7)\n",
     );
     let out = d.run(&["--json"]);
     assert_eq!(out.status.code(), Some(1));
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(json["failed"], 2);
-}
-
-#[test]
-fn fixture_cannot_overwrite_shared_tables() {
-    let d = Fixture::new("tables");
-    d.write("macro/.tauto-syntax/sentinel.tables", "original");
-    d.write(
-        "escape.eure",
-        "files { \".tauto-syntax/sentinel.tables\" = \"overwrite\" }\nshows = []\n",
-    );
-    let out = d.run(&[]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("shared syntax tables"));
-    assert_eq!(
-        fs::read_to_string(d.0.join("macro/.tauto-syntax/sentinel.tables")).unwrap(),
-        "original"
-    );
-}
-
-#[test]
-fn empty_checks_and_nonzero_show_cases_do_not_pass() {
-    let d = Fixture::new("assertions");
-    d.write(
-        "empty.eure",
-        r#"source = "theorem bad(): Zero = Zero { ?todo }"
-checks {}
-"#,
-    );
-    d.write(
-        "exit.eure",
-        r#"source = "perform exit(7)"
-shows = []
-"#,
-    );
-    let out = d.run(&["--json"]);
-    assert_eq!(out.status.code(), Some(1));
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(json["failed"], 2);
+    assert_eq!(parse(&out)["failed"], 1);
     assert!(String::from_utf8_lossy(&out.stdout).contains("program exited with 7"));
 }
 
 #[test]
-fn ambiguous_or_ignored_case_inputs_are_rejected() {
-    let d = Fixture::new("ambiguous");
+fn a_file_argument_runs_that_file() {
+    let d = Fixture::new("file");
     d.write(
-        "both.eure",
-        r#"source = "let x := 1"
-files { "main.nib" = "let x := 2" }
-shows = []
-"#,
+        "one.taut",
+        "perform test(\"t\", () => expect(true, \"no\"))\n",
     );
     d.write(
-        "unused.eure",
-        r#"source = "let x := 1"
-entry = "ignored.taut"
-shows = []
-"#,
+        "two.taut",
+        "perform test(\"u\", () => expect(false, \"no\"))\n",
     );
-    let out = d.run(&["--json"]);
-    assert_eq!(out.status.code(), Some(1));
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(json["failed"], 2);
+    let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
+        .env("TAUTO_LANG", "en")
+        .arg("test")
+        .arg(d.0.join("one.taut"))
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let json = parse(&out);
+    assert_eq!(json["tests"][0]["name"], "one.taut::t");
+    assert_eq!(json["passed"], 1);
 }
 
 #[test]
@@ -228,7 +181,7 @@ fn test_bodies_can_print() {
     let d = Fixture::new("print");
     d.write(
         "print.taut",
-        "perform test(\"prints\", () => print(\"hi\\n\"))\nperform test(\"fails\", () => { print(\"hi\\n\"); expect(false, \"no\") })\n",
+        "import std::prelude::Os\n\nperform test(\"prints\", () => print(\"hi\\n\"))\nperform test(\"fails\", () => { print(\"hi\\n\"); expect(false, \"no\") })\n",
     );
     for backend in [
         &[][..],

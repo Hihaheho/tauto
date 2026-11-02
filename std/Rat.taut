@@ -1,3 +1,4 @@
+import "Base.taut"
 import "Int.taut"
 import "UInt.taut"
 
@@ -18,7 +19,6 @@ module Rat {
     }
   }
 
-  // The denominator itself, at least 1.
   pub fn den(x: Rat): Nat {
     match x: Nat {
       Mk(n, d) => Succ(d)
@@ -56,7 +56,12 @@ module Rat {
   pub fn reduce(n: Int, d: Nat): Rat {
     match Nat::eq(gcd(400, d, Int::abs_nat(n)), 0) eqn hg: Rat {
       true => Rat::Mk(n, d - 1)
-      false => reduce_by(n, d, gcd(400, d, Int::abs_nat(n)), Nat::ne_zero(gcd(400, d, Int::abs_nat(n)), hg))
+      false => reduce_by(
+        n,
+        d,
+        gcd(400, d, Int::abs_nat(n)),
+        Nat::ne_zero(gcd(400, d, Int::abs_nat(n)), hg)
+      )
     }
   }
 
@@ -68,12 +73,10 @@ module Rat {
     )
   }
 
-  // `g` divides both `d` and `n`.
   pub fn divides(n: Int, d: Nat, g: Nat, hg: ¬(g = 0)): Bool {
     Nat::eq(Nat::rem_nz(d, g, hg), 0) && Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0)
   }
 
-  // `c` when `o`, else `x`.
   pub fn pick_by(o: Bool, x: Rat, c: Rat): Rat {
     match o: Rat {
       false => x
@@ -104,7 +107,6 @@ module Rat {
     Int::eq(num(x), 0)
   }
 
-  // `1 / x` of an `x` that is not zero.
   pub fn inv(x: Rat, h: is_zero(x) = false): Rat {
     match num(x): Rat {
       IntOfNat(n) => Rat::Mk(IntOfNat(den(x)), n - 1)
@@ -135,12 +137,10 @@ module Rat {
     }
   }
 
-  // `|x - y|`.
   pub fn dist(x: Rat, y: Rat): Rat {
     abs(sub(x, y))
   }
 
-  // `2^k` and `2^-k`.
   pub fn pow2(k: Nat): Rat {
     of_nat(Nat::pow2(k))
   }
@@ -149,10 +149,7 @@ module Rat {
     Rat::Mk(1, Nat::pow2(k) - 1)
   }
 
-  pub theorem examples(): eq(
-    add(frac(1, 1), frac(1, 2)),
-    frac(5, 5)
-  ) = true {
+  pub theorem examples(): eq(add(frac(1, 1), frac(1, 2)), frac(5, 5)) = true {
     Refl
   }
 
@@ -162,7 +159,6 @@ module Rat {
 }
 
 module Int {
-  // `|n|`.
   pub fn abs_nat(n: Int): Nat {
     match n: Nat {
       IntOfNat(k) => k

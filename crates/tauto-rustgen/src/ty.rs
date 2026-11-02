@@ -1,5 +1,3 @@
-//! The Rust spelling of NIR types.
-
 use quote::quote;
 use tauto_nir::{FnTy, Tier, Ty, Width};
 
@@ -287,7 +285,6 @@ impl Gen<'_> {
         quote!(tauto_rt::cps::OCb<'a, (#tuple), #ret>)
     }
 
-    /// A borrowed function (`&f`).
     pub(crate) fn fn_ref_ty(&self, f: &FnTy) -> Rs {
         if f.tier == Tier::O {
             let ps: Vec<Rs> = f.params.iter().map(|p| self.ty(p)).collect();

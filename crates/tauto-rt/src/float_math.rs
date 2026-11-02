@@ -492,7 +492,6 @@ mod rem_pio2_large {
         let mut q: [f64; 20] = [0.; 20];
         let mut iq: [i32; 20] = [0; 20];
 
-        /* initialize jk*/
         let jk = INIT_JK[prec];
         let jp = jk;
 
@@ -513,7 +512,6 @@ mod rem_pio2_large {
             j += 1;
         }
 
-        /* compute q[0],q[1],...q[jk] */
         for i in 0..=jk {
             fw = 0f64;
             for j in 0..=jx {
@@ -525,7 +523,6 @@ mod rem_pio2_large {
         let mut jz = jk;
 
         'recompute: loop {
-            /* distill q[] into iq[] reversingly */
             let mut i = 0i32;
             z = q[jz];
             for j in (1..=jz).rev() {
@@ -535,7 +532,6 @@ mod rem_pio2_large {
                 i += 1;
             }
 
-            /* compute n */
             z = scalbn(z, q0); /* actual value of z */
             z -= 8.0 * floor(z * 0.125); /* trim off integer >= 8 */
             n = z as i32;
@@ -554,11 +550,9 @@ mod rem_pio2_large {
             }
 
             if ih > 0 {
-                /* q > 0.5 */
                 n += 1;
                 let mut carry = 0i32;
                 for i in 0..jz {
-                    /* compute 1-q */
                     let j = iq[i];
                     if carry == 0 {
                         if j != 0 {
@@ -589,21 +583,18 @@ mod rem_pio2_large {
                 }
             }
 
-            /* check if recomputation is needed */
             if z == 0. {
                 let mut j = 0;
                 for i in (jk..=jz - 1).rev() {
                     j |= iq[i];
                 }
                 if j == 0 {
-                    /* need recomputation */
                     let mut k = 1;
                     while iq[jk - k] == 0 {
                         k += 1; /* k = no. of terms needed */
                     }
 
                     for i in (jz + 1)..=(jz + k) {
-                        /* add q[jz+1] to q[jz+k] */
                         f[jx + i] = IPIO2[jv + i] as f64;
                         fw = 0f64;
                         for j in 0..=jx {
@@ -619,7 +610,6 @@ mod rem_pio2_large {
             break;
         }
 
-        /* chop off zero terms */
         if z == 0. {
             jz -= 1;
             q0 -= 24;
@@ -628,7 +618,6 @@ mod rem_pio2_large {
                 q0 -= 24;
             }
         } else {
-            /* break z into 24-bit if necessary */
             z = scalbn(z, -q0);
             if z >= x1p24 {
                 fw = (x1p_24 * z) as i32 as f64;
@@ -641,14 +630,12 @@ mod rem_pio2_large {
             }
         }
 
-        /* convert integer "bit" chunk to floating-point value */
         fw = scalbn(1., q0);
         for i in (0..=jz).rev() {
             q[i] = fw * (iq[i] as f64);
             fw *= x1p_24;
         }
 
-        /* compute PIo2[0,...,jp]*q[jz,...,0] */
         for i in (0..=jz).rev() {
             fw = 0f64;
             let mut k = 0;
@@ -659,7 +646,6 @@ mod rem_pio2_large {
             fq[jz - i] = fw;
         }
 
-        /* compress fq[] into y[] */
         match prec {
             0 => {
                 fw = 0f64;
@@ -673,7 +659,6 @@ mod rem_pio2_large {
                 for i in (0..=jz).rev() {
                     fw += fq[i];
                 }
-                // TODO: drop excess precision here once double_t is used
                 fw = fw as f64;
                 y[0] = if ih == 0 { fw } else { -fw };
                 fw = fq[0] - fw;
@@ -683,7 +668,6 @@ mod rem_pio2_large {
                 y[1] = if ih == 0 { fw } else { -fw };
             }
             3 => {
-                /* painful */
                 for i in (1..=jz).rev() {
                     fw = fq[i - 1] + fq[i];
                     fq[i] += fq[i - 1] - fw;
@@ -734,11 +718,6 @@ mod rem_pio2 {
     // #if FLT_EVAL_METHOD==0 || FLT_EVAL_METHOD==1
     // #define EPS DBL_EPSILON
     const EPS: f64 = 2.2204460492503131e-16;
-    // #elif FLT_EVAL_METHOD==2
-    // #define EPS LDBL_EPSILON
-    // #endif
-
-    // TODO: Support FLT_EVAL_METHOD?
 
     const TO_INT: f64 = 1.5 / EPS;
     /// 53 bits of 2/pi
@@ -872,11 +851,7 @@ mod rem_pio2 {
             /* |x| ~< 2^20*(pi/2), medium size */
             return medium(x, ix);
         }
-        /*
-         * all other (large) arguments
-         */
         if ix >= 0x7ff00000 {
-            /* x is inf or NaN */
             let y0 = x - x;
             let y1 = y0;
             return (0, y0, y1);
@@ -976,7 +951,6 @@ mod sin {
             return k_sin(x, 0.0, 0);
         }
 
-        /* sin(Inf or NaN) is NaN */
         if ix >= 0x7ff00000 {
             return x - x;
         }
@@ -1057,7 +1031,6 @@ mod cos {
             return k_cos(x, 0.0);
         }
 
-        /* cos(Inf or NaN) is NaN */
         if ix >= 0x7ff00000 {
             return x - x;
         }
@@ -1140,7 +1113,6 @@ mod tan {
             return k_tan(x, 0.0, 0);
         }
 
-        /* tan(Inf or NaN) is NaN */
         if ix >= 0x7ff00000 {
             return x - x;
         }
@@ -1254,7 +1226,6 @@ mod exp {
         sign = (hx >> 31) as i32;
         hx &= 0x7fffffff; /* high word of |x| */
 
-        /* special cases */
         if hx >= 0x4086232b {
             /* if |x| >= 708.39... */
             if x.is_nan() {
@@ -1407,7 +1378,6 @@ mod expm1 {
         t = 3.0 - r1 * hfx;
         let mut e = hxs * ((r1 - t) / (6.0 - x * t));
         if k == 0 {
-            /* c is 0 */
             return x - (x * e - hxs);
         }
         e = x * (e - c) - c;
@@ -1558,7 +1528,6 @@ mod log {
     const LG6: f64 = 1.531383769920937332e-01; /* 3FC39A09 D078C69F */
     const LG7: f64 = 1.479819860511658591e-01; /* 3FC2F112 DF3E5244 */
 
-    /// The natural logarithm of `x` (f64).
     pub fn log(mut x: f64) -> f64 {
         let x1p54 = f64::from_bits(0x4350000000000000); // 0x1p54 === 2 ^ 54
 
@@ -1639,7 +1608,6 @@ mod log2 {
     const LG6: f64 = 1.531383769920937332e-01; /* 3FC39A09 D078C69F */
     const LG7: f64 = 1.479819860511658591e-01; /* 3FC2F112 DF3E5244 */
 
-    /// The base 2 logarithm of `x` (f64).
     pub fn log2(mut x: f64) -> f64 {
         let x1p54 = f64::from_bits(0x4350000000000000); // 0x1p54 === 2 ^ 54
 
@@ -1752,7 +1720,6 @@ mod log10 {
     const LG6: f64 = 1.531383769920937332e-01; /* 3FC39A09 D078C69F */
     const LG7: f64 = 1.479819860511658591e-01; /* 3FC2F112 DF3E5244 */
 
-    /// The base 10 logarithm of `x` (f64).
     pub fn log10(mut x: f64) -> f64 {
         let x1p54 = f64::from_bits(0x4350000000000000); // 0x1p54 === 2 ^ 54
 
@@ -1810,7 +1777,6 @@ mod log10 {
         t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
         r = t2 + t1;
 
-        /* See log2.c for details. */
         /* hi+lo = f - hfsq + s*(hfsq+R) ~ log(1+f) */
         hi = f - hfsq;
         ui = hi.to_bits();
@@ -1933,7 +1899,6 @@ mod pow {
     const IVLN2_H: f64 = 1.44269502162933349609e+00; /* 0x3ff71547_60000000 =24b 1/ln2*/
     const IVLN2_L: f64 = 1.92596299112661746887e-08; /* 0x3e54ae0b_f85ddf44 =1/ln2 tail*/
 
-    /// Returns `x` to the power of `y` (f64).
     pub fn pow(x: f64, y: f64) -> f64 {
         let t1: f64;
         let t2: f64;
@@ -1994,10 +1959,7 @@ mod pow {
         }
 
         if ly == 0 {
-            /* special value of y */
             if iy == 0x7ff00000 {
-                /* y is +-inf */
-
                 return if ((ix - 0x3ff00000) | (lx as i32)) == 0 {
                     /* (-1)**+-inf is 1 */
                     1.0
@@ -2011,19 +1973,15 @@ mod pow {
             }
 
             if iy == 0x3ff00000 {
-                /* y is +-1 */
                 return if hy >= 0 { x } else { 1.0 / x };
             }
 
             if hy == 0x40000000 {
-                /* y is 2 */
                 return x * x;
             }
 
             if hy == 0x3fe00000 {
-                /* y is 0.5 */
                 if hx >= 0 {
-                    /* x >= +0 */
                     return sqrt(x);
                 }
             }
@@ -2031,13 +1989,10 @@ mod pow {
 
         let mut ax: f64 = fabs(x);
         if lx == 0 {
-            /* special value of x */
             if ix == 0x7ff00000 || ix == 0 || ix == 0x3ff00000 {
-                /* x is +-0,+-inf,+-1 */
                 let mut z: f64 = ax;
 
                 if hy < 0 {
-                    /* z = (1/|x|) */
                     z = 1.0 / z;
                 }
 
@@ -2066,9 +2021,7 @@ mod pow {
             }
         }
 
-        /* |y| is HUGE */
         if iy > 0x41e00000 {
-            /* if |y| > 2**31 */
             if iy > 0x43f00000 {
                 /* if |y| > 2**64, must o/uflow */
                 if ix <= 0x3fefffff {
@@ -2105,11 +2058,9 @@ mod pow {
             t1 = with_set_low_word(u + v, 0);
             t2 = v - (t1 - u);
         } else {
-            // double ss,s2,s_h,s_l,t_h,t_l;
             let mut n: i32 = 0;
 
             if ix < 0x00100000 {
-                /* take care subnormal number */
                 ax *= TWO53;
                 n -= 53;
                 ix = get_high_word(ax) as i32;
@@ -2118,14 +2069,11 @@ mod pow {
             n += (ix >> 20) - 0x3ff;
             j = ix & 0x000fffff;
 
-            /* determine interval */
             let k: i32;
             ix = j | 0x3ff00000; /* normalize ix */
             if j <= 0x3988E {
-                /* |x|<sqrt(3/2) */
                 k = 0;
             } else if j < 0xBB67A {
-                /* |x|<sqrt(3)   */
                 k = 1;
             } else {
                 k = 0;
@@ -2140,7 +2088,6 @@ mod pow {
             let ss: f64 = u * v;
             let s_h = with_set_low_word(ss, 0);
 
-            /* t_h=ax+bp[k] High */
             let t_h: f64 = with_set_high_word(
                 0.0,
                 ((ix as u32 >> 1) | 0x20000000) + 0x00080000 + ((k as u32) << 18),
@@ -2148,7 +2095,6 @@ mod pow {
             let t_l: f64 = ax - (t_h - BP[k as usize]);
             let s_l: f64 = v * ((u - s_h * t_h) - s_h * t_l);
 
-            /* compute log(ax) */
             let s2: f64 = ss * ss;
             let mut r: f64 =
                 s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
@@ -2180,12 +2126,9 @@ mod pow {
         let z: f64 = p_l + p_h;
         let mut j: i32 = (z.to_bits() >> 32) as i32;
         let i: i32 = z.to_bits() as i32;
-        // let (j, i): (i32, i32) = ((z.to_bits() >> 32) as i32, z.to_bits() as i32);
 
         if j >= 0x40900000 {
-            /* z >= 1024 */
             if (j - 0x40900000) | i != 0 {
-                /* if z > 1024 */
                 return s * HUGE * HUGE; /* overflow */
             }
 
@@ -2193,11 +2136,7 @@ mod pow {
                 return s * HUGE * HUGE; /* overflow */
             }
         } else if (j & 0x7fffffff) >= 0x4090cc00 {
-            /* z <= -1075 */
-            // FIXME: instead of abs(j) use unsigned j
-
             if (((j as u32) - 0xc090cc00) | (i as u32)) != 0 {
-                /* z < -1075 */
                 return s * TINY * TINY; /* underflow */
             }
 
@@ -2206,7 +2145,6 @@ mod pow {
             }
         }
 
-        /* compute 2**(p_h+p_l) */
         let i: i32 = j & (0x7fffffff as i32);
         k = (i >> 20) - 0x3ff;
         let mut n: i32 = 0;
@@ -2236,7 +2174,6 @@ mod pow {
         j += n << 20;
 
         if (j >> 20) <= 0 {
-            /* subnormal output */
             z = scalbn(z, n);
         } else {
             z = with_set_high_word(z, j as u32);
@@ -2264,9 +2201,6 @@ mod cbrt {
      *
      * Optimized by Bruce D. Evans.
      */
-    /* cbrt(x)
-     * Return cube root of x
-     */
 
     const B1: u32 = 715094163; /* B1 = (1023-1023/3-0.03306235651)*2**20 */
     const B2: u32 = 696219795; /* B2 = (1023-1023/3-54/3-0.03306235651)*2**20 */
@@ -2278,9 +2212,6 @@ mod cbrt {
     const P3: f64 = -0.758397934778766047437; /* 0xbfe844cb, 0xbee751d9 */
     const P4: f64 = 0.145996192886612446982; /* 0x3fc2b000, 0xd4e4edd7 */
 
-    // Cube root (f64)
-    ///
-    /// Computes the cube root of the argument.
     pub fn cbrt(x: f64) -> f64 {
         let x1p54 = f64::from_bits(0x4350000000000000); // 0x1p54 === 2 ^ 54
 
@@ -2312,7 +2243,6 @@ mod cbrt {
          * division rounds towards minus infinity; this is also efficient.
          */
         if hx < 0x00100000 {
-            /* zero or subnormal? */
             ui = (x * x1p54).to_bits();
             hx = (ui >> 32) as u32 & 0x7fffffff;
             if hx == 0 {
@@ -2446,9 +2376,7 @@ mod atan {
         }
 
         let id = if ix < 0x3fdc_0000 {
-            /* |x| < 0.4375 */
             if ix < 0x3e40_0000 {
-                /* |x| < 2^-27 */
                 if ix < 0x0010_0000 {
                     /* raise underflow for subnormal x */
                     let _ = x as f32;
@@ -2461,22 +2389,17 @@ mod atan {
         } else {
             x = fabs(x);
             if ix < 0x3ff30000 {
-                /* |x| < 1.1875 */
                 if ix < 0x3fe60000 {
-                    /* 7/16 <= |x| < 11/16 */
                     x = (2. * x - 1.) / (2. + x);
                     0
                 } else {
-                    /* 11/16 <= |x| < 19/16 */
                     x = (x - 1.) / (x + 1.);
                     1
                 }
             } else if ix < 0x40038000 {
-                /* |x| < 2.4375 */
                 x = (x - 1.5) / (1. + 1.5 * x);
                 2
             } else {
-                /* 2.4375 <= |x| < 2^66 */
                 x = -1. / x;
                 3
             }
@@ -2559,14 +2482,12 @@ mod atan2 {
         let mut iy = (y.to_bits() >> 32) as u32;
         let ly = y.to_bits() as u32;
         if ((ix.wrapping_sub(0x3ff00000)) | lx) == 0 {
-            /* x = 1.0 */
             return atan(y);
         }
         let m = ((iy >> 31) & 1) | ((ix >> 30) & 2); /* 2*sign(x)+sign(y) */
         ix &= 0x7fffffff;
         iy &= 0x7fffffff;
 
-        /* when y = 0 */
         if (iy | ly) == 0 {
             return match m {
                 0 | 1 => y, /* atan(+-0,+anything)=+-0 */
@@ -2574,11 +2495,9 @@ mod atan2 {
                 _ => -PI,   /* atan(-0,-anything) =-PI */
             };
         }
-        /* when x = 0 */
         if (ix | lx) == 0 {
             return if m & 1 != 0 { -PI / 2.0 } else { PI / 2.0 };
         }
-        /* when x is INF */
         if ix == 0x7ff00000 {
             if iy == 0x7ff00000 {
                 return match m {
@@ -2596,14 +2515,12 @@ mod atan2 {
                 };
             }
         }
-        /* |y/x| > 0x1p64 */
         if ix.wrapping_add(64 << 20) < iy || iy == 0x7ff00000 {
             return if m & 1 != 0 { -PI / 2.0 } else { PI / 2.0 };
         }
 
         /* z = atan(|y/x|) without spurious underflow */
         let z = if (m & 2 != 0) && iy.wrapping_add(64 << 20) < ix {
-            /* |y/x| < 0x1p-64, x<0 */
             0.0
         } else {
             atan(fabs(y / x))
@@ -2717,12 +2634,10 @@ mod asin {
                 return x + x * comp_r(x * x);
             }
         }
-        /* 1 > |x| >= 0.5 */
         z = (1.0 - fabs(x)) * 0.5;
         s = sqrt(z);
         r = comp_r(z);
         if ix >= 0x3fef3333 {
-            /* if |x| > 0.975 */
             x = PIO2_HI - (2. * (s + s * r) - PIO2_LO);
         } else {
             let f: f64;
@@ -2828,19 +2743,16 @@ mod acos {
         /* |x| < 0.5 */
         if ix < 0x3fe00000 {
             if ix <= 0x3c600000 {
-                /* |x| < 2**-57 */
                 return PIO2_HI + x1p_120f;
             }
             return PIO2_HI - (x - (PIO2_LO - x * r(x * x)));
         }
-        /* x < -0.5 */
         if (hx >> 31) != 0 {
             z = (1.0 + x) * 0.5;
             s = sqrt(z);
             w = r(z) * s - PIO2_LO;
             return 2. * (PIO2_HI - (s + w));
         }
-        /* x > 0.5 */
         z = (1.0 - x) * 0.5;
         s = sqrt(z);
         // Set the low 4 bytes to zero
@@ -2862,12 +2774,7 @@ mod sinh {
     //         = x + x^3/6 + o(x^5)
     //
 
-    /// The hyperbolic sine of `x` (f64).
     pub fn sinh(x: f64) -> f64 {
-        // union {double f; uint64_t i;} u = {.f = x};
-        // uint32_t w;
-        // double t, h, absx;
-
         let mut uf: f64 = x;
         let mut ui: u64 = f64::to_bits(uf);
         let w: u32;
@@ -2931,7 +2838,7 @@ mod cosh {
                 let _ = x + x1p120;
                 return 1.;
             }
-            let t = expm1(x); // exponential minus 1
+            let t = expm1(x);
             return 1. + t * t / (2. * (1. + t));
         }
 
@@ -2968,7 +2875,6 @@ mod tanh {
         let sign: bool;
         let mut t: f64;
 
-        /* x = |x| */
         sign = ui >> 63 != 0;
         ui &= !1 / 2;
         uf = f64::from_bits(ui);
@@ -2994,7 +2900,6 @@ mod tanh {
             t = expm1(-2.0 * x);
             t = -t / (t + 2.0);
         } else {
-            /* |x| is subnormal */
             /* note: the branch above would not raise underflow in [0x1p-1023,0x1p-1022) */
             let _ = x as f32;
             t = x;

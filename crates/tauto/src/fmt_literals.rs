@@ -1,205 +1,317 @@
-//! `tauto fmt` inside the syntax literals of a file: a literal of a syntax that registers a
-//! `fmt` function (`syntax s … with fmt f = …`) is laid out by that function. Everything else in
-//! the file, and the literals of the other syntaxes, are left to [`crate::fmt`].
+//! `tauto fmt` inside the text of a syntax: a literal of a syntax that registers a `fmt` function
+//! (`syntax s … with fmt f = …`) is laid out by that function, and so is the body of a fenced block
+//! (```` ```s ````) in a comment. Both are found in the syntax tree of the file alone
+//! ([`crate::surface::lexical`] and [`crate::surface::fence`]), wherever they are: in ordinary
+//! code, in a `quote`, in a macro, in a function nothing uses, and in code that does not check or
+//! expand. Only when one of them could be laid out is the program read, for the functions and
+//! the grammars. Everything else in the file, and the literals of the other syntaxes, are left to
+//! [`crate::fmt`].
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
 use tauto_message::msg;
 
 use crate::fmt::WIDTH;
 use crate::registered::Library;
+use crate::surface::fence::{Fence, fences};
+use crate::surface::{LitForm, LitSite, Stmt, lexical};
 use crate::syntax::Role;
 
-/// The text of the file at `path` with the bodies of its literals laid out, and why some were
-/// not. The file is read with its imports, so a file that does not load has nothing laid out and
-/// the reason is the error.
+type TablesOf = HashMap<String, Rc<tauto_syntax::Tables>>;
+
+/// The text of the file at `path` with the bodies of its literals and comment fences laid out,
+/// and why some were not. A file that does not parse, or whose imports do not load, has nothing
+/// laid out, and the reason is a warning; so is each literal and fence that is left as written.
+/// A program that does not check or expand still has its literals laid out: only the functions
+/// the syntaxes register are run. The line ends of the file are kept.
 pub fn format_literals(path: &Path, source: &str) -> Result<(String, Vec<String>), String> {
-    if !source.contains('`') {
-        return Ok((source.to_string(), Vec::new()));
+    let lex = lexical(source);
+    if let Some(why) = &lex.error {
+        let message = msg!("tauto-fmt-parse-failed", why = why.as_str());
+        return Ok((source.to_string(), vec![warn(source, path, 0, &message)]));
     }
-    let dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
-    let loaded = crate::syntax::with_search_dirs(dirs, || {
-        crate::program::load_with_text(path, Some(source))
-    })?;
-    if !loaded.registrations.iter().any(|r| r.role == Role::Fmt) {
-        return Ok((source.to_string(), Vec::new()));
-    }
-    if let Some((message, _)) = loaded.program.errors.first() {
-        return Err(message.clone());
-    }
-    let own = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let file = loaded
-        .files
-        .iter()
-        .find(|f| f.path.canonicalize().unwrap_or_else(|_| f.path.clone()) == own)
-        .ok_or_else(|| msg!("tauto-fmt-not-read").to_string())?;
-    let library = Library::open(&loaded.program, &loaded.registrations)?;
-    let mut found: Vec<(usize, usize, &crate::syntax::LiteralUse)> = loaded
+    let mut sites: Vec<Site<'_>> = lex
         .literals
         .iter()
-        .filter(|u| library.has(&u.syntax, Role::Fmt) && u.lit.error.is_none())
-        .filter_map(|u| {
-            let (a, b) = (u.lit.span.start, u.lit.span.end);
-            (file.base <= a && b <= file.base + source.len() as u32).then_some((
-                (a - file.base) as usize,
-                (b - file.base) as usize,
-                u,
-            ))
-        })
+        .filter(|s| !s.grammar && s.lit.name.is_some())
+        .map(Site::Lit)
         .collect();
-    found.sort_by_key(|(a, b, _)| (*a, *b));
-    found.dedup_by_key(|(a, b, _)| (*a, *b));
-    let mut edits: Vec<(usize, usize, String)> = Vec::new();
-    let mut warnings = Vec::new();
-    let mut last_end = 0;
-    for (a, b, u) in found {
-        if a < last_end {
-            continue;
-        }
-        let Some(whole) = source.get(a..b) else {
-            continue;
-        };
-        let Some(body_at) = ((u.lit.start - file.base) as usize).checked_sub(a) else {
-            continue;
-        };
-        let Some(parts) = split(whole, body_at) else {
-            continue;
-        };
-        let column = source[..a]
-            .rsplit('\n')
-            .next()
-            .map_or(0, |l| l.chars().count());
-        let used = match parts.shape {
-            Shape::Block => parts.indent.chars().count(),
-            _ => column + parts.head.chars().count(),
-        };
-        let width = WIDTH.saturating_sub(used).max(20) as u64;
-        match library.format(&u.syntax, &u.tables, &u.lit.text, width) {
-            Ok(None) => {}
-            Ok(Some(laid)) => match parts.rebuild(&laid) {
-                Some(raw) if raw != whole => {
-                    edits.push((a, b, raw));
-                    last_end = b;
-                }
-                Some(_) => {}
-                None => warnings.push(at(
-                    source,
-                    path,
-                    a,
-                    &u.syntax,
-                    &msg!("tauto-fmt-does-not-fit").to_string(),
-                )),
-            },
-            Err(why) => warnings.push(at(source, path, a, &u.syntax, &why)),
+    let found = fences(source, &lex.comments);
+    sites.extend(found.iter().map(Site::Fence));
+    if sites.is_empty() {
+        return Ok((source.to_string(), Vec::new()));
+    }
+    sites.sort_by_key(Site::at);
+    let dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
+    crate::syntax::with_search_dirs(dirs, || laid_out(path, source, sites))
+}
+
+enum Site<'a> {
+    Lit(&'a LitSite),
+    Fence(&'a Fence),
+}
+
+impl Site<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Site::Lit(s) => s.lit.name.as_deref().unwrap_or_default(),
+            Site::Fence(f) => &f.name,
         }
     }
+
+    fn at(&self) -> usize {
+        match self {
+            Site::Lit(s) => s.lit.span.start as usize,
+            Site::Fence(f) => f.opening.0,
+        }
+    }
+}
+
+fn laid_out(
+    path: &Path,
+    source: &str,
+    sites: Vec<Site<'_>>,
+) -> Result<(String, Vec<String>), String> {
+    let unchanged = || Ok((source.to_string(), Vec::new()));
+    let loaded = match crate::program::load_with_text(path, Some(source)) {
+        Ok(loaded) => loaded,
+        Err(why) => {
+            let message = msg!("tauto-fmt-load-failed", why = why.as_str());
+            return Ok((source.to_string(), vec![warn(source, path, 0, &message)]));
+        }
+    };
+    // The syntaxes that name a `fmt` function, whether or not the declaration could be read.
+    let mut declared = Vec::new();
+    for file in &loaded.files {
+        if let Ok(program) = crate::surface::parse_program_unresolved_at(&file.text, file.base) {
+            grammars(&program.stmts, &mut declared);
+        }
+    }
+    let names: HashSet<&str> = declared
+        .iter()
+        .filter(|d| d.fmt)
+        .map(|d| d.name.as_str())
+        .collect();
+    let sites: Vec<Site<'_>> = sites
+        .into_iter()
+        .filter(|s| names.contains(s.name()))
+        .collect();
+    if sites.is_empty() {
+        return unchanged();
+    }
+    let library = match Library::open_lenient(&loaded.program, &loaded.registrations) {
+        Ok(library) => library,
+        Err(why) => {
+            let message = msg!("tauto-fmt-load-failed", why = why.as_str());
+            return Ok((source.to_string(), vec![warn(source, path, 0, &message)]));
+        }
+    };
+    let mut tables: TablesOf = HashMap::new();
+    let mut failed: HashMap<String, String> = HashMap::new();
+    for u in &loaded.literals {
+        tables
+            .entry(u.syntax.clone())
+            .or_insert_with(|| u.tables.clone());
+    }
+    for d in &declared {
+        if d.fmt && !tables.contains_key(&d.name) {
+            match crate::syntax::load_tables(&d.grammar) {
+                Ok(t) => {
+                    tables.insert(d.name.clone(), t);
+                }
+                Err(why) => {
+                    failed.insert(d.name.clone(), why);
+                }
+            }
+        }
+    }
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut warnings = Vec::new();
+    for site in sites {
+        let name = site.name().to_string();
+        let left = |why: &str| warn(source, path, site.at(), &literal_left(&name, why));
+        let Some(t) = tables.get(&name) else {
+            let why = failed
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| msg!("surface-not-a-syntax", name = name.as_str()).to_string());
+            warnings.push(left(&why));
+            continue;
+        };
+        if !library.has(&name, Role::Fmt) {
+            warnings.push(left(&msg!("tauto-fmt-not-usable").to_string()));
+            continue;
+        }
+        let target = match target(source, &site) {
+            Ok(target) => target,
+            Err(why) => {
+                warnings.push(left(&why));
+                continue;
+            }
+        };
+        let width = WIDTH.saturating_sub(target.used).max(20) as u64;
+        match library.format(&name, t, &target.text, width) {
+            Ok(None) => {}
+            Ok(Some(laid)) => match target.rebuild(&laid) {
+                Some(raw) if raw != source[target.range.0..target.range.1] => {
+                    edits.push((target.range.0, target.range.1, raw));
+                }
+                Some(_) => {}
+                None => warnings.push(left(&msg!("tauto-fmt-does-not-fit").to_string())),
+            },
+            Err(why) => warnings.push(left(&why)),
+        }
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
     let mut out = source.to_string();
-    for (a, b, raw) in edits.into_iter().rev() {
+    for (a, b, raw) in edits {
         out.replace_range(a..b, &raw);
     }
     Ok((out, warnings))
 }
 
-fn at(source: &str, path: &Path, offset: usize, syntax: &str, why: &str) -> String {
+struct Declared {
+    name: String,
+    grammar: String,
+    fmt: bool,
+}
+
+fn grammars(stmts: &[Stmt], out: &mut Vec<Declared>) {
+    for s in stmts {
+        match s {
+            Stmt::Syntax {
+                name,
+                grammar,
+                uses,
+                ..
+            } => out.push(Declared {
+                name: name.clone(),
+                grammar: grammar.text.clone(),
+                fmt: uses.iter().any(|u| u.role == "fmt"),
+            }),
+            Stmt::Module { items, .. } => grammars(items, out),
+            _ => {}
+        }
+    }
+}
+
+fn literal_left(syntax: &str, why: &str) -> String {
+    msg!("tauto-fmt-literal-left", syntax = syntax, why = why).to_string()
+}
+
+fn warn(source: &str, path: &Path, offset: usize, message: &impl std::fmt::Display) -> String {
     let before = &source[..offset];
     let line = before.matches('\n').count() + 1;
     let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
-    let message = msg!("tauto-fmt-literal-left", syntax = syntax, why = why);
     format!("{}:{line}:{col}: {message}", path.display())
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Shape {
-    /// `` name`text` ``.
-    Line,
-    /// `` name<`text`> ``.
-    Delimited,
-    /// A fenced block.
-    Block,
+/// What is laid out: its text as the syntax reads it, the bytes of the file that stand for it,
+/// and how the laid-out text goes back into them.
+struct Target<'a> {
+    text: String,
+    range: (usize, usize),
+    used: usize,
+    how: How<'a>,
 }
 
-/// A literal as written, cut at its body.
-struct Parts<'a> {
-    shape: Shape,
-    /// Up to the first byte of the body.
-    head: &'a str,
-    /// From the end of the body.
-    tail: &'a str,
-    /// For a block: the white space before the closing fence, which the body's lines lose.
-    indent: &'a str,
+enum How<'a> {
+    Lit {
+        site: &'a LitSite,
+        eol: &'static str,
+    },
+    Fence(&'a Fence),
 }
 
-/// Cuts a literal written as `whole` where its body starts, `body_at` bytes in.
-fn split(whole: &str, body_at: usize) -> Option<Parts<'_>> {
-    let head = whole.get(..body_at)?;
-    if head.ends_with('\n') {
-        // The closing fence is the trailing run of backticks, and the white space on its line.
-        let ticks = whole.len() - whole.trim_end_matches('`').len();
-        let fenced = &whole[..whole.len() - ticks];
-        let line = fenced.rfind('\n').map_or(0, |i| i + 1);
-        let indent = &fenced[line..];
-        if line < body_at || !indent.chars().all(|c| c == ' ' || c == '\t') {
+fn eol_after(source: &str, at: usize) -> &'static str {
+    match source[at..].find('\n') {
+        Some(i) if source[..at + i].ends_with('\r') => "\r\n",
+        _ => "\n",
+    }
+}
+
+/// The text of a site as its syntax reads it, with the line ends of the file as `\n`. A block
+/// whose lines are less indented than its closing fence, or whose closing fence does not start a
+/// line, is refused with the reason.
+fn target<'a>(source: &str, site: &Site<'a>) -> Result<Target<'a>, String> {
+    match *site {
+        Site::Fence(f) => {
+            if !f.closed {
+                return Err(msg!("tauto-fmt-fence-unclosed").to_string());
+            }
+            Ok(Target {
+                text: f.text(source),
+                range: f.body,
+                used: f.prefix.chars().count(),
+                how: How::Fence(f),
+            })
+        }
+        Site::Lit(s) => {
+            if let Some((why, _)) = &s.lit.error {
+                return Err(why.clone());
+            }
+            if matches!(s.form, LitForm::Block(_)) && !s.own_line {
+                return Err(msg!("tauto-fmt-block-inline").to_string());
+            }
+            let start = s.lit.span.start as usize;
+            let column = |at: usize| {
+                source[..at]
+                    .rsplit('\n')
+                    .next()
+                    .map_or(0, |l| l.chars().count())
+            };
+            let used = match s.form {
+                LitForm::Block(_) => s.indent.chars().count(),
+                _ => column(s.body.start as usize),
+            };
+            Ok(Target {
+                text: s.lit.text.replace("\r\n", "\n"),
+                range: (s.body.start as usize, s.body.end as usize),
+                used,
+                how: How::Lit {
+                    site: s,
+                    eol: eol_after(source, start),
+                },
+            })
+        }
+    }
+}
+
+impl Target<'_> {
+    /// The bytes that stand for the body when its text is `laid`, or `None` when the form
+    /// cannot hold it: a one-line literal with a line break or a backtick, a delimited one with
+    /// its closing, a block with a run of its fence's backticks.
+    fn rebuild(&self, laid: &str) -> Option<String> {
+        let (site, eol) = match &self.how {
+            How::Lit { site, eol } => (site, eol),
+            How::Fence(f) => return f.render(laid),
+        };
+        if laid.contains('\r') {
             return None;
         }
-        return Some(Parts {
-            shape: Shape::Block,
-            head,
-            tail: &whole[line..],
-            indent,
-        });
-    }
-    let close = whole.rfind('`')?;
-    if close < body_at {
-        return None;
-    }
-    let shape = if head.len() >= 2 && head[..head.len() - 1].ends_with('<') {
-        Shape::Delimited
-    } else {
-        Shape::Line
-    };
-    Some(Parts {
-        shape,
-        head,
-        tail: &whole[close..],
-        indent: "",
-    })
-}
-
-impl Parts<'_> {
-    /// The literal with `laid` (the text, without the fence's indentation) as its body, or
-    /// `None` when the form cannot hold it.
-    fn rebuild(&self, laid: &str) -> Option<String> {
-        let body = match self.shape {
-            Shape::Line => {
-                if laid.contains(['`', '\n', '\r']) {
-                    return None;
-                }
-                laid.to_string()
+        match site.form {
+            LitForm::Text => (!laid.contains(['`', '\n'])).then(|| laid.to_string()),
+            LitForm::Delim(n) => {
+                let close = format!("`{}", ">".repeat(n));
+                (!laid.contains(&close)).then(|| laid.replace('\n', eol))
             }
-            Shape::Delimited => {
-                if laid.contains('`') {
-                    return None;
-                }
-                laid.to_string()
-            }
-            Shape::Block => {
-                let ticks = self.tail.trim_start_matches([' ', '\t']).len();
-                if laid.contains(&"`".repeat(ticks)) {
+            LitForm::Block(n) => {
+                if laid.contains(&"`".repeat(n)) {
                     return None;
                 }
                 let mut body = String::new();
                 for line in laid.split_inclusive('\n') {
+                    // A line of white space only is an empty line.
                     if !line.trim().is_empty() {
-                        body.push_str(self.indent);
+                        body.push_str(&site.indent);
+                        body.push_str(line.trim_end_matches('\n'));
                     }
-                    body.push_str(line);
+                    body.push_str(eol);
                 }
-                if !body.is_empty() && !body.ends_with('\n') {
-                    body.push('\n');
-                }
-                body
+                Some(body)
             }
-        };
-        Some(format!("{}{}{}", self.head, body, self.tail))
+        }
     }
 }

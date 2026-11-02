@@ -1,8 +1,11 @@
 import "tables.taut"
 import "../../llk/src/llk.taut"
+import "../../scan/src/scan.taut"
+import "../../text/src/text.taut"
 import std::Array
 import std::Stack
 import std::Text
+import std::Base
 
 // The syntax of Tauto, read from the parser and scanner tables of
 // `crates/tauto-parol` (`tables.taut`), in the proof language (`docs/design/self-host.md`). `README.md`
@@ -33,8 +36,6 @@ pub fn syntax_has_name(names: List(Text), name: Text): Bool {
   }
 }
 
-// For each non-terminal, in order, whether its name is among the declared
-// ones.
 pub fn syntax_flags_of(non_terminals: List(Text), declared: List(Text)): List(Bool) {
   match non_terminals: List(Bool) {
     Nil => Nil
@@ -46,7 +47,6 @@ pub fn syntax_names(t: Text): Array(Text) {
   Array::of_list(text_split(t, " "))
 }
 
-// The tables from the texts of `tables.taut`.
 pub fn syntax_tables_read(
   scan_meta: Text,
   scan_classes: Text,
@@ -93,8 +93,6 @@ pub fn syntax_name(names: Array(Text), i: Nat): Text {
 pub fn syntax_flag(flags: Array(Bool), i: Nat): Bool {
   Array::get_or(flags, i, false)
 }
-
-// ---- the tree ------------------------------------------------------------------
 
 pub(open) inductive CstKind: Type {
   CstNonTerminal(non_terminal: Nat): CstKind
@@ -296,15 +294,11 @@ pub fn cst_build_in(
   }
 }
 
-// The tree of the events on `events`, the last on top.
 pub fn cst_build(&t: SyntaxTables, keep: Bool, &mut events: Stack(LlkEvent)): Option(CstNode) {
   var frames: Stack(CstFrame) := Stack::new()
   cst_build_in(Stack::len(&events) + 1, &t, keep, &mut events, &mut frames, None)
 }
 
-// ---- the dump ------------------------------------------------------------------
-
-// The nodes, each at `depth`, before `rest`.
 pub fn cst_at_depth(
   nodes: List(CstNode),
   depth: Nat,
@@ -316,7 +310,6 @@ pub fn cst_at_depth(
   }
 }
 
-// A node's line: its depth, its kind, its start and its end.
 pub fn cst_line(node: CstNode, depth: Nat): Text {
   Text::concat_all(
     Cons(
@@ -360,8 +353,6 @@ pub fn cst_dump(node: CstNode, size: Nat): Text {
   Text::concat_all(List::reverse(cst_dump_in(size, Cons(Pair { fst: node, snd: 0 }, Nil), Nil)))
 }
 
-// ---- parsing -------------------------------------------------------------------
-
 // The events of the parse of `source` are left on `events`, the last on top.
 pub fn syntax_events(&t: SyntaxTables, source: Text, &mut events: Stack(LlkEvent)): Bool {
   let tokens := llk_tokens(t.llk, scan_all(t.scan, source), Text::len(source))
@@ -371,7 +362,6 @@ pub fn syntax_events(&t: SyntaxTables, source: Text, &mut events: Stack(LlkEvent
   }
 }
 
-// The tree of `source`, or `None` when it is not a program of the grammar.
 pub fn syntax_parse(&t: SyntaxTables, source: Text): Option(CstNode) {
   var events: Stack(LlkEvent) := Stack::new()
   match syntax_events(&t, source, &mut events): Option(CstNode) {

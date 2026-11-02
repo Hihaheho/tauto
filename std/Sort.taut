@@ -1,6 +1,9 @@
 import "Row.taut"
 import "List.taut"
 import "MapLaws.taut"
+import "Base.taut"
+import "Map.taut"
+import std::prelude::Ord
 
 // Insertion sort by a comparator `cmp`, and its proofs. The comparator is an
 // argument, as in `Map::taut`; the theorems about the order assume
@@ -11,7 +14,6 @@ import "MapLaws.taut"
 // `a` is not after `b`.
 pub def SortLe(A: Type, cmp: (A, A) -> Ordering, a: A, b: A): Prop := (cmp(a, b) = Greater) -> False
 
-// `a` is not after any element of `l`.
 pub fn sort_all_le<A>(cmp: (A, A) -> Ordering, a: A, l: List(A)): Prop {
   match l: Prop {
     Nil => True
@@ -48,8 +50,6 @@ module List {
   }
 }
 
-// ---- the order ----------------------------------------------------------------
-
 pub theorem sort_le_trans<A: Type>(
   cmp: (A, A) -> Ordering,
   w: OrdmapLaw(A, cmp),
@@ -80,7 +80,6 @@ pub theorem sort_le_trans<A: Type>(
   )
 }
 
-// Of two elements one is not after the other.
 pub theorem sort_le_total<A: Type>(
   cmp: (A, A) -> Ordering,
   w: OrdmapLaw(A, cmp),
@@ -136,8 +135,6 @@ pub theorem sort_le_of_less<A: Type>(
 ): SortLe(A, cmp, a, b) {
   (f: cmp(a, b) = Greater) => less_ne_greater(Eq::trans(Eq::sym(e), f))
 }
-
-// ---- insertion ----------------------------------------------------------------
 
 pub theorem sort_insert_all_le<A: Type>(
   cmp: (A, A) -> Ordering,
@@ -221,8 +218,6 @@ pub theorem sort_sorts<A: Type>(
     Cons(h, t) => sort_insert_sorted(cmp, w, h, List::sort(cmp, t), sort_sorts(cmp, w, t))
   }
 }
-
-// ---- what the sort keeps ------------------------------------------------------
 
 pub theorem sort_mem_cons<A: Type>(
   x: A,
@@ -369,9 +364,16 @@ pub theorem sort_insert_sub<A: Type>(
 ): Sub(A, List::insert_sorted(cmp, x, l), Cons(x, l)) {
   match l: Sub(A, List::insert_sorted(cmp, x, l), Cons(x, l)) {
     Nil => (e: A) => (m: Mem(A, e, List::insert_sorted(cmp, x, Nil))) => m
-    Cons(h, t) => (e: A) => (
-      m: Mem(A, e, List::insert_sorted(cmp, x, Cons(h, t)))
-    ) => sort_mem_case_inv(cmp, x, h, t, cmp(x, h), e, sort_insert_sub(cmp, x, t), m)
+    Cons(h, t) => (e: A) => (m: Mem(A, e, List::insert_sorted(cmp, x, Cons(h, t)))) => sort_mem_case_inv(
+      cmp,
+      x,
+      h,
+      t,
+      cmp(x, h),
+      e,
+      sort_insert_sub(cmp, x, t),
+      m
+    )
   }
 }
 
@@ -388,7 +390,6 @@ pub theorem sort_insert_sup<A: Type>(
   }
 }
 
-// Inserting keeps the elements, and adds `x`.
 pub theorem sort_insert_equiv<A: Type>(
   cmp: (A, A) -> Ordering,
   x: A,
@@ -400,7 +401,6 @@ pub theorem sort_insert_equiv<A: Type>(
   )
 }
 
-// The sort keeps exactly the elements.
 pub theorem sort_equiv<A: Type>(
   cmp: (A, A) -> Ordering,
   l: List(A)
@@ -457,8 +457,6 @@ pub theorem sort_length<A: Type>(
   }
 }
 
-// ---- sorted lists stay as they are --------------------------------------------
-
 pub theorem sort_insert_head_case<A: Type>(
   cmp: (A, A) -> Ordering,
   w: OrdmapLaw(A, cmp),
@@ -484,7 +482,6 @@ pub theorem sort_insert_head_case<A: Type>(
   }
 }
 
-// Inserting an element that is not after any of them puts it in front.
 pub theorem sort_insert_head<A: Type>(
   cmp: (A, A) -> Ordering,
   w: OrdmapLaw(A, cmp),
@@ -517,25 +514,16 @@ pub theorem sort_of_sorted<A: Type>(
   match l: List::sort(cmp, l) = l {
     Nil => Refl
     Cons(h, t) => Eq::trans(
-      Eq::congr(
-        ⟦List::insert_sorted(cmp, h, □)⟧,
-        sort_of_sorted(cmp, w, t, And::right(s))
-      ),
+      Eq::congr(⟦List::insert_sorted(cmp, h, □)⟧, sort_of_sorted(cmp, w, t, And::right(s))),
       sort_insert_head(cmp, w, h, t, And::left(s))
     )
   }
 }
 
-// ---- an example ---------------------------------------------------------------
-
-pub theorem sort_example(): List::sort(
-  Ordmap::compare_nat,
-  [3, 1, 2, 1]
-) = [1, 1, 2, 3] {
+pub theorem sort_example(): List::sort(Ordmap::compare_nat, [3, 1, 2, 1]) = [1, 1, 2, 3] {
   Refl
 }
 
-// Numbers sorted by `Ordmap::compare_nat` come out in order, with nothing assumed.
 pub theorem sort_nat_sorts(
   l: List(Nat)
 ): sort_sorted(Ordmap::compare_nat, List::sort(Ordmap::compare_nat, l)) {

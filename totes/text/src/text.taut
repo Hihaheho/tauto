@@ -1,4 +1,6 @@
 import std::Text
+import std::Base
+import std::prelude::Affine
 
 // Text tools (`docs/design/self-host.md`) in the proof language
 // (`docs/design/self-host.md`「text と unicode（`totes/text`、`totes/unicode`）」). Positions are UTF-8 bytes, as in `std/Text.taut`.
@@ -17,7 +19,6 @@ pub fn text_backslash(): Text {
   "\\"
 }
 
-// One character by its code point; "" for a number that is not a character.
 pub fn text_code_point(c: Nat): Text {
   Text::utf8_of_code_point(c)
 }
@@ -30,7 +31,6 @@ pub fn text_list_reverse<A>(xs: List(A)): List(A) {
   List::reverse(xs)
 }
 
-// The parts with `sep` between each two.
 pub fn text_join_parts(parts: List(Text), sep: Text): List(Text) {
   match parts: List(Text) {
     Nil => Nil
@@ -45,7 +45,6 @@ pub fn text_join(parts: List(Text), sep: Text): Text {
   Text::concat_all(text_join_parts(parts, sep))
 }
 
-// Whether `prefix` is in `t` from byte `at`.
 pub fn text_starts_with(t: Text, prefix: Text, at: Nat): Bool {
   match Text::slice(t, at, Nat::add(at, Text::len(prefix))): Bool {
     None => false
@@ -64,12 +63,10 @@ pub fn text_find_in(k: Nat, t: Text, needle: Text, at: Nat): Option(Nat) {
   }
 }
 
-// The positions `at` to `last`.
 pub fn text_find_from(t: Text, needle: Text, at: Nat, last: Nat): Option(Nat) {
   text_find_in(Nat::sub(Succ(last), at), t, needle, at)
 }
 
-// The first byte position of `needle` in `t` that is `from` or after.
 pub fn text_find(t: Text, needle: Text, r#from: Nat): Option(Nat) {
   match Bool::or(
     Nat::lt(Text::len(t), Text::len(needle)),
@@ -233,7 +230,6 @@ pub fn text_char_count(t: Text): Nat {
   text_char_count_in(Text::len(t), t, 0, 0)
 }
 
-// The value of a decimal digit's byte.
 pub fn text_digit(b: Nat): Option(Nat) {
   match Bool::and(Nat::le(48, b), Nat::le(b, 57)): Option(Nat) {
     true => Some(Nat::sub(b, 48))
@@ -303,8 +299,6 @@ pub fn text_numbers_in(
 pub fn text_number_list(t: Text): List(Nat) {
   text_numbers_in(Text::len(t), t, 0, 0, false, Nil)
 }
-
-// ---- what the proofs say ----------------------------------------------------
 
 pub theorem text_split_example(): text_split("a,b", ",") = Cons("a", Cons("b", Nil)) {
   Refl

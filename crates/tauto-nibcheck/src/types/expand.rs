@@ -42,7 +42,6 @@ fn prelude_names() -> &'static (HashSet<String>, HashSet<String>) {
     })
 }
 
-/// Some constraint is of a class (not a structural predicate).
 fn constrained(where_: &[Constraint]) -> bool {
     where_
         .iter()
@@ -72,6 +71,13 @@ fn needs_expansion(program: &Program) -> Option<bool> {
         let mut s = s.clone();
         walk::stmt(&mut s, &mut |t| match &*t.kind {
             TermKind::Var(n) if fns.contains(n) && !own.contains(n.as_str()) => found = true,
+            // `C::m`, a method of a class of the prelude, is one name.
+            TermKind::Var(n)
+                if n.rsplit_once("::")
+                    .is_some_and(|(c, _)| classes.contains(c)) =>
+            {
+                found = true
+            }
             TermKind::Field { base, .. } if matches!(&*base.kind, TermKind::Var(c) if classes.contains(c)) => {
                 found = true
             }
@@ -174,11 +180,12 @@ struct Expander<'a> {
     spans: HashMap<((TermId, bool), usize), SurfaceTerm>,
 }
 
-/// The name an instance's head gives its functions.
 fn head_name(head: &SurfaceTerm) -> String {
     match &*head.kind {
         TermKind::Var(n) => n.clone(),
         TermKind::App { function, .. } => head_name(function),
+        // An instance for the product `A × B` is keyed by `Prod`.
+        TermKind::Product(_) => "Prod".to_string(),
         _ => String::new(),
     }
 }
@@ -289,7 +296,6 @@ impl Expander<'_> {
         self.go(&mut f.body);
     }
 
-    /// A method's type with `with` for the class's parameter.
     fn method_type(&mut self, class: &ClassDecl, m: &FnDecl, with: &SurfaceTerm) -> SurfaceTerm {
         let mut params = Vec::new();
         // The method's own type generics make the dictionary polymorphic:
@@ -435,7 +441,6 @@ impl Expander<'_> {
         })
     }
 
-    /// The function a call goes to, and the arguments it is given besides.
     fn call_target(
         &mut self,
         function: &SurfaceTerm,
@@ -473,7 +478,6 @@ impl Expander<'_> {
         out
     }
 
-    /// The method as a value, as the evidence gives it.
     fn method_value(&mut self, class: &ClassDecl, m: &FnDecl, ev: &Ev) -> SurfaceTerm {
         match ev {
             Ev::Assume(_, g) => self.var(format!("{}::{}@{g}", class.name, m.name)),

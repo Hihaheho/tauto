@@ -191,7 +191,6 @@ pub fn explain(
             msg!("totebag-observed-it"),
             vec![small(&obs.first)],
         );
-        // The checkpoints of `o` holding the observation.
         let covering: Vec<_> = items(&s.checkpoints)
             .into_iter()
             .filter(|c| obs.born <= c.sequence)

@@ -54,7 +54,7 @@ mod universe;
 mod wf;
 
 pub use incremental::{Checker, Declared, chain_state, fingerprint};
-pub use roles::{Checked, Family, Role, Signature};
+pub use roles::{Checked, CtorSite, Family, Role, Signature};
 pub use sugar::{Records, guard_chain, record_sugar};
 
 const PRELUDE: &str = include_str!("prelude.taut");
@@ -227,7 +227,6 @@ fn says(m: &Message, ids: &[&str]) -> bool {
             .any(|(_, v)| matches!(v, Value::Message(inner) if says(inner, ids)))
 }
 
-/// The messages that say a name is not defined.
 const NOT_DEFINED: &[&str] = &[
     "kernel-not-defined",
     "kernel-not-defined-hint",
@@ -240,10 +239,8 @@ const NOT_DEFINED: &[&str] = &[
     "kernel-implicit-not-defined",
 ];
 
-/// The messages that say two types do not match.
 const TYPE_MISMATCH: &[&str] = &["kernel-mismatch", "kernel-core-type-mismatch"];
 
-/// The messages that say a name used did not check.
 const USES_FAILED: &[&str] = &["kernel-uses-failed", "kernel-uses-failed-then"];
 
 /// The messages that start by saying a term is not one of the kernel's.
@@ -275,6 +272,13 @@ struct Global {
 }
 
 type Ctx = Vec<(String, T)>;
+
+#[derive(Clone)]
+struct FileLimit {
+    file: String,
+    limit: std::time::Duration,
+    deadline: crate::clock::Instant,
+}
 
 #[derive(Clone)]
 pub struct Kernel {
@@ -319,7 +323,6 @@ pub struct Kernel {
     matched: Vec<(String, T)>,
     /// The independent re-check of every accepted declaration.
     core: core::Core,
-    /// The holes met while checking the declaration in hand.
     holes: Vec<HoleGoal>,
     /// Proofs checked before (`check/cache.rs`); none unless checking files.
     cache: Option<cache::Cache>,
@@ -341,6 +344,10 @@ pub struct Kernel {
     /// The declarations generated for a decidable equality, by the family that lists them, as
     /// they checked: extraction writes them after the family, as if they were in its file.
     pub derived: Vec<(String, Vec<crate::surface::Stmt>)>,
+    /// Whether to note the constructors that patterns' short names are read as
+    /// (`record_ctor_sites`), and what was noted.
+    record_sites: bool,
+    ctor_sites: Vec<CtorSite>,
     /// The classes and instances of the proof language (`check/classes.rs`).
     classes: classes::Registry,
     /// The level-polymorphic declarations and the instances made of them
@@ -350,6 +357,11 @@ pub struct Kernel {
     level_depth: usize,
     /// How long one declaration may take (`Kernel::set_timeout`).
     timeout: Option<std::time::Duration>,
+    /// The file being declared, and when its time is up (`Kernel::set_file_limit`).
+    file_limit: Option<FileLimit>,
+    /// Theorems with proofs are declared by their statements only
+    /// (`declare_prefix`).
+    statement_only: bool,
     /// How many steps of reduction one declaration may take
     /// (`Kernel::set_step_limit`).
     step_limit: Option<u64>,
@@ -357,16 +369,13 @@ pub struct Kernel {
     budgets: HashMap<String, u64>,
     /// Why nothing more is checked: a declaration ran out of time.
     gave_up: Option<String>,
-    /// Whether the declaration in hand took its proof from the cache.
     from_cache: bool,
-    /// The time each declaration took, in order.
     timings: Vec<Timing>,
     /// The effects and the functions with effects read in proofs
     /// (`check/effects.rs`).
     effects: effects::Effects,
 }
 
-/// How long a declaration took to check, and the reduction it did.
 #[derive(Debug, Clone)]
 pub struct Timing {
     pub name: String,
@@ -421,66 +430,138 @@ fn declared_name(stmt: &Stmt) -> Option<String> {
 /// macro reads is asked after the declarations before it, and the lemmas the
 /// macro makes are then placed before that declaration; and a declaration
 /// written after one that uses it moves ahead of it in the order below.
-/// The declarations are declared one at a time whether a kernel is kept or
-/// not, so the kernel (its fresh names included) is the same either way.
+/// A kept kernel also serves a prefix that has more declarations among its own
+/// (those a later declaration moved ahead of), as long as none of the kept
+/// declarations failed. Theorems are declared by their statements, and the
+/// limits of the check (`Kernel::set_timeout`, `Kernel::set_file_limit`) apply
+/// to each declaration; one that runs out of time is an error.
 /// They are declared in the order a whole file's check reads them
 /// (`order::dependency_order`), so a declaration that uses one written after
 /// it in the prefix checks here as it does there.
 fn declare_prefix(prefix: &[Stmt]) -> Result<Kernel, String> {
-    /// How many kernels are kept.
     const KEPT: usize = 8;
     let ordered = order::dependency_order(prefix);
     let prefix = &ordered[..];
     thread_local! {
-        /// Most recently used last.
-        static KEPT_KERNELS: std::cell::RefCell<Vec<(Vec<Stmt>, Kernel)>> =
+        /// The statements declared, in the order declared, the kernel after
+        /// them, and whether none of them failed. Most recently used last.
+        static KEPT_KERNELS: std::cell::RefCell<Vec<(Vec<Stmt>, Kernel, bool)>> =
             const { std::cell::RefCell::new(Vec::new()) };
     }
+    /// Which statements of `prefix` are the kept ones `kept`, when `kept` are
+    /// some of them in the same order, and whether every statement of `prefix`
+    /// before the last of them is one of them.
+    fn contained(kept: &[Stmt], prefix: &[Stmt]) -> Option<(Vec<bool>, bool)> {
+        let mut taken = vec![false; prefix.len()];
+        let mut next = 0;
+        for (i, stmt) in prefix.iter().enumerate() {
+            if next < kept.len() && kept[next] == *stmt {
+                taken[i] = true;
+                next += 1;
+            }
+        }
+        if next < kept.len() {
+            return None;
+        }
+        let last = taken.iter().rposition(|t| *t).map_or(0, |i| i + 1);
+        let initial = taken[..last].iter().all(|t| *t);
+        Some((taken, initial))
+    }
+    // A kept kernel serves when its statements are some of `prefix` in the
+    // same order, and either they are an initial segment of it or none of them
+    // failed: a statement that failed might have used one that `prefix` places
+    // before it, and one that did not fail used only what was declared.
     let last = KEPT_KERNELS.with(|cell| {
         let mut kept = cell.borrow_mut();
-        let at = kept
-            .iter()
-            .enumerate()
-            .filter(|(_, (stmts, _))| {
-                stmts.len() <= prefix.len() && stmts[..] == prefix[..stmts.len()]
-            })
-            .max_by_key(|(_, (stmts, _))| stmts.len())
-            .map(|(i, _)| i)?;
+        let mut best: Option<(usize, Vec<bool>)> = None;
+        for (i, (stmts, _, clean)) in kept.iter().enumerate() {
+            if stmts.len() > prefix.len() {
+                continue;
+            }
+            let Some((taken, initial)) = contained(stmts, prefix) else {
+                continue;
+            };
+            if !(initial || *clean) {
+                continue;
+            }
+            if best
+                .as_ref()
+                .is_none_or(|(b, _)| kept[*b].0.len() < stmts.len())
+            {
+                best = Some((i, taken));
+            }
+        }
+        let (at, taken) = best?;
         let entry = kept.remove(at);
-        let found = (entry.0.len(), entry.1.clone());
+        let found = (entry.0.clone(), entry.1.clone(), entry.2, taken);
         kept.push(entry);
         Some(found)
     });
-    let kept_already = last
-        .as_ref()
-        .is_some_and(|(known, _)| *known == prefix.len());
-    let (known, mut kernel) = match last {
-        Some(last) => last,
+    let (mut declared, mut kernel, mut clean, taken) = match last {
+        Some((declared, kernel, clean, taken)) => (declared, kernel, clean, Some(taken)),
         None => {
             let mut kernel = Kernel::new();
             declare_prelude(&mut kernel)?;
-            (0, kernel)
+            (Vec::new(), kernel, true, None)
         }
     };
-    for stmt in &prefix[known..] {
-        kernel.declare(
+    let kept_already = taken.as_ref().is_some_and(|t| t.iter().all(|x| *x));
+    let (timeout, file_limit) = PREFIX_LIMITS.with(|l| l.borrow().clone());
+    kernel.timeout = timeout;
+    kernel.file_limit = file_limit;
+    kernel.gave_up = None;
+    // The theorems of a prefix are declared by their statements: whatever
+    // uses them reads the statement, and the proofs are checked where the
+    // theorems are, in the check of the whole file.
+    kernel.statement_only = true;
+    for (i, stmt) in prefix.iter().enumerate() {
+        if taken.as_ref().is_some_and(|t| t[i]) {
+            continue;
+        }
+        let entries = kernel.declare(
             &Program {
                 stmts: vec![stmt.clone()],
                 errors: Vec::new(),
             },
             false,
         );
+        if kernel.gave_up.is_some() {
+            let message = entries
+                .iter()
+                .find_map(|e| match &e.verdict {
+                    Verdict::Failed(d) => Some(d.message.to_string()),
+                    _ => None,
+                })
+                .or_else(|| kernel.gave_up.clone())
+                .unwrap_or_default();
+            return Err(message);
+        }
+        if entries
+            .iter()
+            .any(|e| matches!(e.verdict, Verdict::Failed(_)))
+        {
+            clean = false;
+        }
+        declared.push(stmt.clone());
     }
+    kernel.statement_only = false;
     if !kept_already {
         KEPT_KERNELS.with(|cell| {
             let mut kept = cell.borrow_mut();
             if kept.len() == KEPT {
                 kept.remove(0);
             }
-            kept.push((prefix.to_vec(), kernel.clone()));
+            kept.push((declared, kernel.clone(), clean));
         });
     }
     Ok(kernel)
+}
+
+thread_local! {
+    /// The limits of the declarations of a prefix, as the kernel of the check
+    /// in this thread has them (`Kernel::set_timeout`, `Kernel::set_file_limit`).
+    static PREFIX_LIMITS: std::cell::RefCell<(Option<std::time::Duration>, Option<FileLimit>)> =
+        const { std::cell::RefCell::new((None, None)) };
 }
 
 pub fn check_in(prefix: &[Stmt], decl: &Stmt) -> Result<Vec<Entry>, String> {
@@ -607,7 +688,7 @@ impl Kernel {
 
     /// `t` with each `Eq(T, a, b)` written `a = b`, as a goal is shown and
     /// written back: reading `a = b` again finds `T` from its sides.
-    pub(crate) fn eqs_written(t: &T) -> T {
+    pub fn eqs_written(t: &T) -> T {
         fn go(t: &mut T) {
             if let TermKind::App {
                 function,
@@ -699,7 +780,6 @@ impl Elaborator {
         ))
     }
 
-    /// The term checked against a type.
     pub fn check(&mut self, t: &SurfaceTerm, ty: &SurfaceTerm) -> Result<SurfaceTerm, String> {
         let (ty, _) = self.infer(ty)?;
         let shaped = self.kernel.shape(t).map_err(|e| e.message.to_string())?;
@@ -717,14 +797,12 @@ impl Elaborator {
         Ok(self.kernel.calls_written(&e))
     }
 
-    /// Whether the two terms are definitionally equal.
     pub fn defeq(&mut self, a: &SurfaceTerm, b: &SurfaceTerm) -> Result<bool, String> {
         let (a, _) = self.infer(a)?;
         let (b, _) = self.infer(b)?;
         Ok(self.kernel.conv(&self.ctx, &a, &b))
     }
 
-    /// The term reduced to weak head normal form.
     pub fn whnf(&mut self, t: &SurfaceTerm) -> Result<SurfaceTerm, String> {
         let (e, _) = self.infer(t)?;
         let e = self.kernel.whnf(&self.ctx, &e);
@@ -744,7 +822,6 @@ impl Elaborator {
     }
 }
 
-/// An entry and the file it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileEntry {
     pub file: std::path::PathBuf,
@@ -758,7 +835,6 @@ pub struct ExpansionInfo {
     pub macro_name: String,
     pub kind: &'static str,
     pub parent: Option<u32>,
-    /// Where the call was written.
     pub at: Option<(std::path::PathBuf, usize, usize)>,
     pub steps: u64,
     pub captures: Vec<String>,
@@ -868,6 +944,14 @@ impl Kernel {
         self.elaborated.as_deref().unwrap_or_default()
     }
 
+    /// Notes, for each pattern in the arms of the declarations checked from now on, the
+    /// constructor its short name was read as (`Checked::ctor_sites`). Extraction
+    /// writes that constructor; the checker's own typing is not repeated. A cached
+    /// declaration keeps them with its terms.
+    pub fn record_ctor_sites(&mut self) {
+        self.record_sites = true;
+    }
+
     pub fn use_cache(&mut self) {
         self.cache = cache::Cache::from_env();
     }
@@ -876,6 +960,20 @@ impl Kernel {
     /// rejected, and the declarations after it are not checked.
     pub fn set_timeout(&mut self, limit: Option<std::time::Duration>) {
         self.timeout = limit;
+        PREFIX_LIMITS.with(|l| l.borrow_mut().0 = limit);
+    }
+
+    /// Gives up on the declarations of one file that take longer than `limit`
+    /// together, counted from now: the declaration in hand is rejected and
+    /// nothing after it is checked. `file` names the file in the message;
+    /// `None` lifts the limit.
+    pub fn set_file_limit(&mut self, file: Option<(&str, std::time::Duration)>) {
+        self.file_limit = file.map(|(file, limit)| FileLimit {
+            file: file.to_string(),
+            limit,
+            deadline: crate::clock::Instant::now() + limit,
+        });
+        PREFIX_LIMITS.with(|l| l.borrow_mut().1 = self.file_limit.clone());
     }
 
     /// Gives up on a declaration whose check takes more than `limit` steps of
@@ -891,7 +989,6 @@ impl Kernel {
         self.budgets.insert(name.to_string(), steps);
     }
 
-    /// The time each declaration checked so far took, in order.
     pub fn timings(&self) -> &[Timing] {
         &self.timings
     }
@@ -928,11 +1025,15 @@ impl Kernel {
             deq_listed: HashMap::new(),
             deq_why: HashMap::new(),
             derived: Vec::new(),
+            record_sites: false,
+            ctor_sites: Vec::new(),
             classes: Default::default(),
             templates: HashMap::new(),
             level_instances: Default::default(),
             level_depth: 0,
             timeout: None,
+            file_limit: None,
+            statement_only: false,
             step_limit: Some(core::DEFAULT_STEP_LIMIT),
             budgets: HashMap::new(),
             gave_up: None,
@@ -1040,6 +1141,24 @@ impl Kernel {
                 }
                 continue;
             }
+            if let Some(limit) = &self.file_limit
+                && crate::clock::Instant::now() >= limit.deadline
+            {
+                // The time of the file is up before this declaration starts.
+                let message = msg!(
+                    "kernel-file-time-limit",
+                    file = limit.file.as_str(),
+                    seconds = limit.limit.as_secs_f64().to_string()
+                );
+                if let Some(name) = declared_name(stmt) {
+                    self.gave_up = Some(msg!("kernel-ran-out-of-time", name = &name).to_string());
+                    entries.push(Entry {
+                        verdict: Verdict::Failed(Diagnostic::new(message, None)),
+                        name,
+                    });
+                }
+                continue;
+            }
             if let Some(name) = declared_name(stmt)
                 && let Some((message, span)) = overused.remove(&name)
             {
@@ -1066,8 +1185,19 @@ impl Kernel {
                 Some(steps) => Some(steps),
                 None => self.step_limit,
             };
-            self.core
-                .start_budget(limit, self.timeout.map(|limit| started + limit));
+            let declaration_deadline = self.timeout.map(|limit| started + limit);
+            // The time of the file is up first when its deadline is the earlier.
+            let by_file = match (&self.file_limit, declaration_deadline) {
+                (Some(f), Some(d)) => f.deadline <= d,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            let deadline = match (&self.file_limit, declaration_deadline) {
+                (Some(f), Some(d)) => Some(f.deadline.min(d)),
+                (Some(f), None) => Some(f.deadline),
+                (None, d) => d,
+            };
+            self.core.start_budget(limit, deadline);
             self.from_cache = false;
             if let Some(name) = self.template_of(stmt) {
                 self.check_template(&name, builtin, &mut entries);
@@ -1124,6 +1254,12 @@ impl Kernel {
                         ),
                         None => msg!("kernel-out-of-steps", steps = steps),
                     }
+                } else if let Some(f) = self.file_limit.as_ref().filter(|_| by_file) {
+                    msg!(
+                        "kernel-file-time-limit",
+                        file = f.file.as_str(),
+                        seconds = f.limit.as_secs_f64().to_string()
+                    )
                 } else if spent.top.is_empty() {
                     msg!("kernel-gave-up", seconds = limit)
                 } else {
@@ -1167,7 +1303,6 @@ impl Kernel {
         entries
     }
 
-    /// Checks one statement of [`Kernel::declare`], adding its entries.
     fn declare_one(&mut self, stmt: &Stmt, builtin: bool, entries: &mut Vec<Entry>) {
         // The equation of an `opaque fn` is checked with the function
         // unfolding; after it, the function no longer unfolds.
@@ -1285,6 +1420,9 @@ impl Kernel {
     }
 
     fn theorem(&mut self, t: &TheoremDecl, builtin: bool) -> Verdict {
+        if self.statement_only && !builtin && t.body.is_some() {
+            return self.theorem_checked_before(t, BTreeSet::new());
+        }
         let key = if builtin || t.body.is_none() {
             None
         } else {
@@ -1727,7 +1865,6 @@ impl Kernel {
     /// The functions (or theorems) of a `mutual` block, each defined by a
     /// `match`; their calls to each other become eliminator recursion.
     fn function_group(&mut self, items: &[Stmt], span: Span) -> Vec<Entry> {
-        // (name, params, result, body)
         type Decl = (String, usize, Vec<(String, T)>, T, T);
         let mut decls: Vec<Decl> = Vec::new();
         for s in items {
@@ -1771,8 +1908,17 @@ impl Kernel {
         }
         let names: Vec<&str> = decls.iter().map(|d| d.0.as_str()).collect();
         let key = self.key(&format!("{items:?}"), &names);
+        let base = self
+            .record_sites
+            .then(|| cache::place_base(&format!("{items:?}")));
+        let mark = self.ctor_sites.len();
+        let mut cached_sites = None;
         let before = key.as_ref().and_then(|k| {
-            let terms = self.cache.as_ref()?.get_terms(k, span)?;
+            let cache = self.cache.as_ref()?;
+            let terms = cache.get_terms(k, span)?;
+            if let Some(base) = base {
+                cached_sites = Some(cache.get_sites(k, base)?);
+            }
             (terms.len() == decls.len()).then_some(terms)
         });
         let mut hit = before.is_some();
@@ -1905,6 +2051,12 @@ impl Kernel {
                     && !self.core.budget_out()
                 {
                     cache.put_terms(key, &lams.iter().collect::<Vec<_>>());
+                    if let Some(base) = base {
+                        cache.put_sites(key, &self.ctor_sites[mark..], base);
+                    }
+                }
+                if hit && let Some(sites) = cached_sites {
+                    self.ctor_sites.extend(sites);
                 }
                 let mut out = Vec::new();
                 for ((name, implicit, params, ..), (st, lam)) in
@@ -2073,8 +2225,17 @@ impl Kernel {
             return Verdict::Skipped(msg!("kernel-type-not-kernel").to_string());
         }
         let key = self.key(&format!("{f:?}"), &[f.name.as_str()]);
+        let base = self
+            .record_sites
+            .then(|| cache::place_base(&format!("{f:?}")));
+        let mark = self.ctor_sites.len();
+        let mut cached_sites = None;
         let before = key.as_ref().and_then(|k| {
-            let mut terms = self.cache.as_ref()?.get_terms(k, f.body.span)?;
+            let cache = self.cache.as_ref()?;
+            let mut terms = cache.get_terms(k, f.body.span)?;
+            if let Some(base) = base {
+                cached_sites = Some(cache.get_sites(k, base)?);
+            }
             (terms.len() == 1).then(|| terms.pop()).flatten()
         });
         let mut hit = before.is_some();
@@ -2089,6 +2250,15 @@ impl Kernel {
             && !self.core.budget_out()
         {
             cache.put_terms(key, &[lam]);
+            if let Some(base) = base {
+                cache.put_sites(key, &self.ctor_sites[mark..], base);
+            }
+        }
+        if hit
+            && checked.is_some()
+            && let Some(sites) = cached_sites
+        {
+            self.ctor_sites.extend(sites);
         }
         if let Some(lam) = checked
             && self.core.set_value(&f.name, &lam).is_ok()
@@ -2173,7 +2343,6 @@ impl Kernel {
         }
     }
 
-    /// A declaration that did not check and that `t` mentions.
     fn uses_failed(&self, t: &T) -> Option<String> {
         let mut found = None;
         visit_vars(t, &mut |n| {
@@ -2213,8 +2382,6 @@ impl Kernel {
             _ => {}
         }
     }
-
-    // ---- shapes ---------------------------------------------------------
 
     /// `(x: A, y: B) -> T` as nested `Pi`.
     fn telescope(&mut self, params: &[(String, T)], result: &T) -> Result<T, Diagnostic> {
@@ -2290,7 +2457,6 @@ impl Kernel {
         }
     }
 
-    /// `d` as the kernel reads it under `ctx`.
     fn kernel_type(&mut self, ctx: &[(String, T)], d: &T) -> Result<T, Diagnostic> {
         let mut typing: Ctx = self.defining.clone();
         typing.extend(ctx.iter().cloned());
@@ -2511,8 +2677,6 @@ impl Kernel {
             _ => t.clone(),
         })
     }
-
-    // ---- names and substitution ----------------------------------------
 
     fn fresh_name(&mut self, base: &str) -> String {
         self.fresh += 1;
@@ -2815,8 +2979,6 @@ impl Kernel {
         }
     }
 
-    // ---- reduction and conversion --------------------------------------
-
     /// `t` in weak head normal form, as the core reduces it.
     /// `t` in weak head normal form, stopping at a product `Prod(A, B)`: the checker tells a
     /// product from a `Pair` written by its name, and only the core sees the `Pair` a product
@@ -3027,8 +3189,6 @@ impl Kernel {
     fn subtype(&mut self, ctx: &Ctx, a: &T, b: &T) -> bool {
         self.core.subtype_in(ctx, a, b)
     }
-
-    // ---- typing ---------------------------------------------------------
 
     // Terms are typed by the core (`Core::type_in`). What is here is the
     // named checker's reading of its answer: the holes met, and a diagnostic
@@ -3305,7 +3465,6 @@ impl Kernel {
         }
     }
 
-    /// `t` is a type; which sort it lives in.
     fn expect_type(&mut self, ctx: &Ctx, t: &T) -> Result<Sort, Diagnostic> {
         let typed = self.ask_core(ctx, t, Ask::Sort)?;
         Ok(typed.sort.expect("a sort"))
@@ -3315,7 +3474,6 @@ impl Kernel {
         self.ask_core(ctx, t, Ask::Check(expected)).map(|_| ())
     }
 
-    /// The mismatch of `found` with `expected` at `span`, with its parts.
     fn mismatch_diag(&mut self, ctx: &Ctx, expected: &T, found: &T, span: Span) -> Diagnostic {
         let message = self.mismatch(ctx, expected, found);
         let (e, f) = (self.whnf(ctx, expected), self.whnf(ctx, found));
@@ -3425,8 +3583,6 @@ fn dom_has_meta(t: &T) -> bool {
     free_vars(t).iter().any(|v| v.starts_with('?'))
 }
 
-// ---- helpers ----------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Sort {
     Prop,
@@ -3439,7 +3595,6 @@ impl Sort {
         Sort::Type(Level::konst(n))
     }
 
-    /// The sort of this sort.
     fn next(&self) -> Option<Sort> {
         match self {
             Sort::Prop => Some(Sort::ty(0)),
@@ -3516,7 +3671,6 @@ fn level_of(t: &T) -> Option<Level> {
     }
 }
 
-/// `level` written as a term.
 fn level_term(level: &Level, span: Span) -> T {
     let nat = |n: u32| T::new(TermKind::Nat(n.to_string()), span);
     let mut parts: Vec<T> = Vec::new();
@@ -3637,7 +3791,6 @@ fn pattern_binders(p: &crate::surface::Pattern, out: &mut Vec<String>) {
     }
 }
 
-/// `p` with its binder `from` named `to`.
 fn rename_pattern_binder(p: &mut crate::surface::Pattern, from: &str, to: &str) {
     use crate::surface::Pattern;
     match p {
@@ -3959,7 +4112,6 @@ fn kind_name(kind: &TermKind) -> &'static str {
 /// The longest term a mismatch shows in full.
 const SHOWN_LIMIT: usize = 300;
 
-/// `s` cut to `SHOWN_LIMIT` characters, saying how much was left out.
 fn shorten(s: &str) -> String {
     let n = s.chars().count();
     if n <= SHOWN_LIMIT {
@@ -4030,11 +4182,11 @@ fn describe_in(t: &T, shown: &mut HashMap<String, String>, outer: u8) -> String 
                 let b = describe_in(&arguments[1], shown, prec + 1);
                 paren(outer > prec, format!("{a} {op} {b}"))
             }
-            // `Eq(T, a, b)` as a program writes it, `a = b`, looser than
+            // `a = b` as a program writes it (`eqs_written`), looser than
             // every other operator.
-            TermKind::Var(eq) if eq == "Eq" && arguments.len() == 3 => {
-                let a = describe_in(&arguments[1], shown, 1);
-                let b = describe_in(&arguments[2], shown, 1);
+            TermKind::Var(eq) if eq == "=" && arguments.len() == 2 => {
+                let a = describe_in(&arguments[0], shown, 1);
+                let b = describe_in(&arguments[1], shown, 1);
                 paren(outer > 0, format!("{a} = {b}"))
             }
             _ => {
@@ -4251,7 +4403,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn overflowing_level_expressions_are_not_sorts() {
         let span = Span { start: 0, end: 0 };
@@ -4295,17 +4446,6 @@ theorem t(): Cons(Nat, 1, pad(2)) = Cons(Nat, 1, Nil(Nat)) { Refl(Seq(Nat), Cons
             other => panic!("expected a failure, got {other:?}"),
         }
     }
-
-
-
-
-
-
-
-
-
-
-
 
     #[test]
     fn the_kernel_prelude_is_checked_and_assumes_only_quot_sound() {
@@ -4380,24 +4520,6 @@ theorem t(): grow(16) = More(1, More(2, More(3, Stop))) { Refl }"#;
         assert!(steps < 100_000, "{steps} steps");
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     #[test]
     fn a_text_literal_without_text_names_the_missing_import() {
         let src = "theorem t(): Eq(Nat, 0, 0) { the(Nat, \"a\") }";
@@ -4410,28 +4532,8 @@ theorem t(): grow(16) = More(1, More(2, More(3, Stop))) { Refl }"#;
         }
     }
 
-
-
-
     // Each of these would prove `False` with no axiom if a name could stand
     // for two things.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 /// A source read as one file of a program is, for the unit tests: the
@@ -4504,7 +4606,6 @@ pub(crate) fn names_param(f: &FnDecl, y: &T) -> bool {
     matches!(&*y.kind, TermKind::Var(v) if f.params.contains(v))
 }
 
-/// Whether the free name `n` occurs in `t`.
 fn mentions(t: &T, n: &str) -> bool {
     let mut names = HashSet::new();
     free_names(t, &mut Vec::new(), &mut names);

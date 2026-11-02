@@ -18,9 +18,7 @@ fn tote(root: &Path, name: &str, more: &str, files: &[(&str, &str)]) -> PathBuf 
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(
         d.join("Tauto.eure"),
-        format!(
-            "package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}}\n{more}"
-        ),
+        format!("package {{\n  name = \"{name}\"\n  version = \"0.1.0\"\n}}\n{more}"),
     )
     .unwrap();
     for (file, text) in files {
@@ -71,14 +69,20 @@ fn greet(root: &Path) -> PathBuf {
         &[
             (
                 "src/greet.taut",
-                r#"fn greeting(name: Text): Text {
+                r#"import std::prelude::Shared
+
+pub fn greeting(name: Text): Text {
   concat("hi ", name)
 }
 "#,
             ),
             (
                 "cmd/hi.taut",
-                r#"fn each_name(names: List(Text)): Unit ! {stdout} {
+                r#"import std::prelude::Os
+import std::prelude::Shared
+import "../src/greet.taut"
+
+fn each_name(names: List(Text)): Unit ! {stdout} {
   match names {
     Nil => #()
     Cons(n, rest) => {
@@ -93,7 +97,10 @@ each_name(perform argv())
             ),
             (
                 "cmd/cat.taut",
-                r#"match perform argv() {
+                r#"import std::prelude::Os
+import std::prelude::Shared
+
+match perform argv() {
   Cons(path, _) => match read_file(path) {
     Ok(t) => print(t)
     Err(e) => {
@@ -202,7 +209,10 @@ fn a_dependencys_externs_need_the_projects_trust() {
             ),
             (
                 "cmd/leak.taut",
-                r#"print(leak("x"))
+                r#"import std::prelude::Os
+import "../src/ext.taut"
+
+print(leak("x"))
 "#,
             ),
         ],
@@ -227,7 +237,9 @@ fn two_totes_giving_one_name_are_chosen_between() {
         "commands {\n  hi {\n    main = \"cmd/hi.taut\"\n    about = \"Another hi\"\n  }\n}\n",
         &[(
             "cmd/hi.taut",
-            r#"print("other\n")
+            r#"import std::prelude::Os
+
+print("other\n")
 "#,
         )],
     );
@@ -272,7 +284,9 @@ fn the_projects_own_command_runs_and_wins() {
         ),
         &[(
             "cmd/hi.taut",
-            r#"print("other\n")
+            r#"import std::prelude::Os
+
+print("other\n")
 "#,
         )],
     );
@@ -305,7 +319,9 @@ fn a_built_in_name_is_never_a_totes_command() {
         "commands {\n  test {\n    main = \"cmd/test.taut\"\n    about = \"Would be tauto test\"\n  }\n}\n",
         &[(
             "cmd/test.taut",
-            r#"print("other\n")
+            r#"import std::prelude::Os
+
+print("other\n")
 "#,
         )],
     );
@@ -351,13 +367,15 @@ fn check_reads_each_command_as_it_runs() {
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     fs::write(
         greet.join("cmd/hi.taut"),
-        r#"print(greeting(1))
+        r#"import std::prelude::Os
+import "../src/greet.taut"
+print(greeting(1))
 "#,
     )
     .unwrap();
     let out = tauto(&greet, &["check", "--tote", "."]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(stdout(&out).contains("cmd/hi.taut:1:"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("cmd/hi.taut:3:"), "{}", stdout(&out));
     // A main among the sources would be read by every dependent.
     let inside = GREET.replace("cmd/hi.taut", "src/greet.taut");
     tote(&r, "greet", &inside, &[]);

@@ -1,5 +1,9 @@
 import std::List
 import "url.taut"
+import "bytes.taut"
+import "percent.taut"
+import std::Base
+import std::Text
 
 // Parsing (URL Standard, "URL parsing") for the URLs this library handles.
 // Each part of the input is cut out, then brought to its normal form by a
@@ -7,13 +11,10 @@ import "url.taut"
 // normal form this library cannot compute is refused (`None`), never given
 // another meaning.
 
-// ---- the input ------------------------------------------------------------------
-
 pub fn is_tab_or_newline(b: Nat): Bool {
   Bool::or(Nat::eq(b, 9), Bool::or(Nat::eq(b, 10), Nat::eq(b, 13)))
 }
 
-// A C0 control or space.
 pub fn is_c0_or_space(b: Nat): Bool {
   Nat::lt(b, 33)
 }
@@ -36,8 +37,6 @@ pub fn preprocess(l: List(Nat)): List(Nat) {
     List::reverse(drop_c0_space(List::reverse(drop_c0_space(l))))
   )
 }
-
-// ---- hosts ----------------------------------------------------------------------
 
 // U+0000, tab, newline, carriage return, space, `#`, `/`, `:`, `<`, `>`, `?`,
 // `@`, `[`, `\`, `]`, `^`, `|`.
@@ -206,8 +205,6 @@ pub fn host_of(special: Bool, h: List(Nat)): Option(List(Nat)) {
   }
 }
 
-// ---- ports ----------------------------------------------------------------------
-
 pub fn port_value(default: Option(Nat), v: Nat): Option(Option(Nat)) {
   match Nat::lt(v, 65536): Option(Option(Nat)) {
     false => None
@@ -248,8 +245,6 @@ pub fn default_port(s: List(Nat)): Option(Nat) {
     NotSpecial => None
   }
 }
-
-// ---- paths ----------------------------------------------------------------------
 
 pub fn is_dot_byte(l: List(Nat)): Option(List(Nat)) {
   // `.` or `%2e`, and what follows it.
@@ -315,7 +310,6 @@ pub fn walk_step(stack: List(List(Nat)), e: List(Nat), last: Bool): List(List(Na
   }
 }
 
-// After `.` (`k` = 0) or `..`.
 pub fn walk_dots(k: Nat, stack: List(List(Nat)), last: Bool): List(List(Nat)) {
   match k: List(List(Nat)) {
     Zero => push_last(stack, last)
@@ -335,9 +329,6 @@ pub fn path_of(base: List(List(Nat)), l: List(Nat)): List(List(Nat)) {
   List::reverse(walk(List::reverse(base), split_all(47, l)))
 }
 
-// ---- the parts ------------------------------------------------------------------
-
-// What follows the scheme: the part before `?`, the query and the fragment.
 pub(open) inductive Tail: Type {
   MkTail(hier: List(Nat), query: Option(List(Nat)), fragment: Option(List(Nat))): Tail
 }
@@ -445,7 +436,6 @@ pub fn with_host(user: List(Nat), pass: List(Nat), pt: Option(Nat), o: Option(Li
   }
 }
 
-// The authority, from the bytes between `//` and the path.
 pub fn authority_of(special: Bool, default: Option(Nat), a: List(Nat)): Option(Authority) {
   authority_cut(special, default, a, rcut(64, a))
 }
@@ -516,8 +506,6 @@ pub fn first_is_space(l: List(Nat)): Bool {
   }
 }
 
-// ---- absolute URLs --------------------------------------------------------------
-
 pub fn mk(
   scheme: List(Nat),
   ap: Option(Pair(Authority, List(List(Nat)))),
@@ -577,7 +565,6 @@ pub fn parse_after_scheme(s: List(Nat), rest: List(Nat)): Option(Url) {
   }
 }
 
-// The scheme of the input and what follows its `:`.
 pub fn scheme_of(l: List(Nat)): Option(Pair(List(Nat), List(Nat))) {
   scheme_cut(cut(58, l))
 }

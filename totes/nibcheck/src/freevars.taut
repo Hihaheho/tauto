@@ -1,5 +1,8 @@
 import "checker.taut"
 import "../../surface/src/surface.taut"
+import std::Base
+import std::Text
+import "datas.taut"
 
 // The names a term refers to that it does not bind (`free_vars`, `used_vars`
 // and `pattern_names` of `lin.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
@@ -18,7 +21,7 @@ mutual {
     match k: Option(Pair(Text, List(Text))) {
       SkVar(n) => Some(Pair { fst: n, snd: Cons(n, Nil) })
       SkField(base, name) => match lin_place(base): Option(Pair(Text, List(Text))) {
-        Some(p) => Some(Pair { fst: (p: Text), snd: List::append((p: List(Text)), Cons(name, Nil)) })
+        Some(p) => Some(Pair { fst: p.fst, snd: List::append(p.snd, Cons(name, Nil)) })
         None => None
       }
       _ => None
@@ -415,11 +418,10 @@ mutual {
   }
 }
 
-// The roots of the places the terms borrow (`&x`, `&mut x.f`).
 pub fn borrow_root(t: SurfaceTerm): Option(Text) {
   match t.kind: Option(Text) {
     SkBorrow(m, x) => match lin_place(x): Option(Text) {
-      Some(p) => Some((p: Text))
+      Some(p) => Some(p.fst)
       None => None
     }
     _ => None

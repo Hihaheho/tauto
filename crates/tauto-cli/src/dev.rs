@@ -14,10 +14,8 @@ use tauto::eval::{RunError, RunOptions};
 
 use crate::{RunArgs, i18n, locate_in, parse_run_args};
 
-/// How often the files are looked at.
 const POLL: Duration = Duration::from_millis(250);
 
-/// What the program runs on.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     Vm,
@@ -95,7 +93,6 @@ fn on_deep_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-/// Starts a run of the program on its own thread.
 fn spawn(
     run: &Arc<(RunArgs, Backend, Vec<String>)>,
     stop: &Arc<AtomicBool>,
@@ -239,7 +236,6 @@ fn walk(dir: &Path, out: &mut BTreeMap<PathBuf, Option<SystemTime>>) {
     }
 }
 
-/// The files added, removed or written since `before`.
 fn changes(
     before: &BTreeMap<PathBuf, Option<SystemTime>>,
     now: &BTreeMap<PathBuf, Option<SystemTime>>,

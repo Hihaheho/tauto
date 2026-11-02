@@ -23,7 +23,8 @@ fn a_file_outside_the_checkout_imports_std_by_name() {
     tauto_messages::install();
     let path = file(
         "nat",
-        r#"import std::Nat
+        r#"import std::Base
+import std::Nat
 theorem t(): Nat::max(Zero, Zero) = Zero { Refl }
 "#,
     );
@@ -98,10 +99,7 @@ fn checking_a_text_literal_takes_no_stack_in_proportion_to_its_length() {
 fn a_constructor_named_like_a_builtin_type_does_not_depend_on_import_order() {
     tauto_messages::install();
     for name in ["std-import-uint-then-tactic", "std-import-tactic-then-uint"] {
-        let path = file(
-            name,
-            case_inputs::fixture_static("inputs/tauto.eure", name),
-        );
+        let path = file(name, case_inputs::fixture_static("inputs/tauto.eure", name));
         let report = check_report(&path, None).unwrap();
         assert_eq!(report.status(), Status::Ok, "{name}");
     }
@@ -139,6 +137,17 @@ fn every_std_file_comes_with_tauto() {
         .filter(|p| p.extension().is_some_and(|e| e == "taut"))
         .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
         .collect();
+    // The prelude's core files (`Num`, `Std`, `Text`) every program has; the
+    // others are imported as `std::prelude::NAME`.
+    on_disk.extend(
+        std::fs::read_dir(std.join("prelude"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "taut"))
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .filter(|name| !["Num.taut", "Std.taut", "Text.taut"].contains(&name.as_str()))
+            .map(|name| format!("prelude/{name}")),
+    );
     on_disk.sort();
     let mut embedded: Vec<String> = tauto::stdlib::FILES
         .iter()
@@ -163,12 +172,13 @@ fn a_tote_imports_std_by_name() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
         root.join("Tauto.eure"),
-        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     std::fs::write(
         root.join("src/main.taut"),
-        r#"import std::Nat
+        r#"import std::Base
+import std::Nat
 fn main(): Nat { Nat::max(1, 2) }
 "#,
     )
@@ -187,7 +197,7 @@ fn a_tote_reports_a_file_that_imports_no_std_module_as_its_entry_file_does() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
         root.join("Tauto.eure"),
-        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     for (name, fixture) in [
@@ -223,13 +233,14 @@ fn a_dependency_need_not_be_in_a_directory_of_its_name() {
     for (d, manifest, src) in [
         (
             &app,
-            "package {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\ndependencies {\n  lib { path = \"../checkout\" }\n}\n",
-            r#"fn main(): Nat { lib_one() }
+            "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\ndependencies {\n  lib { path = \"../checkout\" }\n}\n",
+            r#"import lib::lib
+fn main(): Nat { lib_one() }
 "#,
         ),
         (
             &lib,
-            "package {\n  name = \"lib\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+            "package {\n  name = \"lib\"\n  version = \"0.1.0\"\n}\n",
             r#"pub fn lib_one(): Nat { 1 }
 "#,
         ),
@@ -251,12 +262,12 @@ fn app_with_lib(name: &str, main: &str) -> PathBuf {
     std::fs::create_dir_all(lib.join("src")).unwrap();
     std::fs::write(
         app.join("Tauto.eure"),
-        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\ndependencies {\n  lib { path = \"../checkout\" }\n}\n",
+        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\ndependencies {\n  lib { path = \"../checkout\" }\n}\n",
     )
     .unwrap();
     std::fs::write(
         lib.join("Tauto.eure"),
-        "package {\n  name = \"lib\"\n  version = \"0.1.0\"\n  sources = [\"src\"]\n}\n",
+        "package {\n  name = \"lib\"\n  version = \"0.1.0\"\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -294,7 +305,10 @@ fn a_missing_module_of_a_dependency_is_an_error() {
 #[test]
 fn a_name_from_std_that_is_not_imported_says_which_module_has_it() {
     tauto_messages::install();
-    let path = file("hint", "theorem t(): Nat::max(Zero, Zero) = Zero { Refl }\n");
+    let path = file(
+        "hint",
+        "theorem t(): Nat::max(Zero, Zero) = Zero { Refl }\n",
+    );
     let report = check_report(&path, None).unwrap();
     let text = report
         .entries
@@ -318,7 +332,7 @@ fn importing_std_nat_div_keeps_nat_mod_lt_the_one_of_std_nat() {
     // imported it read that one where it wrote `std::Nat`'s.
     let path = file(
         "nat-div",
-        "import std::UInt\nimport std::NatDiv\n\ntheorem m(c: Nat): Nat::lt(Nat::rem_nz(c, 256, Nat::ne_zero_of_pos(256, Refl)), 256) = true {\n  Nat::mod_lt(c, 256, Refl)\n}\n",
+        "import std::Base\nimport std::Nat\nimport std::UInt\nimport std::NatDiv\n\ntheorem m(c: Nat): Nat::lt(Nat::rem_nz(c, 256, Nat::ne_zero_of_pos(256, Refl)), 256) = true {\n  Nat::mod_lt(c, 256, Refl)\n}\n",
     );
     let report = check_report(&path, None).unwrap();
     assert_eq!(report.status(), Status::Ok);
@@ -355,7 +369,9 @@ fn a_std_file_loaded_by_path_and_by_name_says_where_each_definition_is() {
     let dir = dir("twice");
     std::fs::create_dir_all(dir.join("std")).unwrap();
     for (name, text) in tauto::stdlib::FILES {
-        std::fs::write(dir.join("std").join(name), text).unwrap();
+        let target = dir.join("std").join(name);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, text).unwrap();
     }
     let path = dir.join("main.taut");
     std::fs::write(&path, "import \"std/Base.taut\"\nimport std::Text\n").unwrap();
@@ -366,7 +382,10 @@ fn a_std_file_loaded_by_path_and_by_name_says_where_each_definition_is() {
         "{text}"
     );
     assert!(text.contains("import std::Base"), "{text}");
-    assert!(text.contains("Base.taut:15:3: `std::Base::Bool::or`"), "{text}");
+    assert!(
+        text.contains("Base.taut:15:3: `std::Base::Bool::or`"),
+        "{text}"
+    );
 }
 
 /// The inputs these tests read, copied from the shared case files.
@@ -374,21 +393,31 @@ fn a_std_file_loaded_by_path_and_by_name_says_where_each_definition_is() {
 mod case_inputs {
     pub fn fixture_static(file: &str, name: &str) -> &'static str {
         match (file, name) {
-        ("inputs/tauto.eure", "std-import-order-greet") => r#"pub fn greet(s: Text): Text { Text::concat(s, "!") }
-"#,
-        ("inputs/tauto.eure", "std-import-uint-then-tactic") => r#"import std::UInt
+            ("inputs/tauto.eure", "std-import-order-greet") => {
+                r#"pub fn greet(s: Text): Text { Text::concat(s, "!") }
+"#
+            }
+            ("inputs/tauto.eure", "std-import-uint-then-tactic") => {
+                r#"import std::Base
+import std::UInt
 import std::Tactic
 theorem t(a: Nat): Nat::add(a, 0) = a { Refl }
-"#,
-        ("inputs/tauto.eure", "std-import-order-main") => r#"import std::Text
+"#
+            }
+            ("inputs/tauto.eure", "std-import-order-main") => {
+                r#"import std::Text
 import "greet.taut"
 perform show("greeting", greet("tote"))
-"#,
-        ("inputs/tauto.eure", "std-import-tactic-then-uint") => r#"import std::Tactic
+"#
+            }
+            ("inputs/tauto.eure", "std-import-tactic-then-uint") => {
+                r#"import std::Base
+import std::Tactic
 import std::UInt
 theorem t(a: Nat): Nat::add(a, 0) = a { Refl }
-"#,
-        _ => panic!("no copied input {file}/{name}"),
+"#
+            }
+            _ => panic!("no copied input {file}/{name}"),
         }
     }
     #[allow(dead_code)]

@@ -216,7 +216,10 @@ fn the_server_answers_about_names() {
     assert_eq!(d["result"]["range"]["start"]["line"], line);
 
     // A local of the second function: its type is the checker's.
-    let h = ask("textDocument/hover", json!({"position": at(2, "m = n", 0)}));
+    let h = ask(
+        "textDocument/hover",
+        json!({"position": at(2, "m := n", 0)}),
+    );
     let text = h["result"]["contents"]["value"].as_str().unwrap();
     assert!(text.contains("let m"), "{text}");
     assert!(text.contains("type: `i64`"), "{text}");
@@ -224,18 +227,18 @@ fn the_server_answers_about_names() {
     // Its uses, and a rename.
     let r = ask(
         "textDocument/references",
-        json!({"position": at(2, "m = n", 0),
+        json!({"position": at(2, "m := n", 0),
         "context": {"includeDeclaration": true}}),
     );
     assert_eq!(r["result"].as_array().unwrap().len(), 2, "{r}");
     let p = ask(
         "textDocument/prepareRename",
-        json!({"position": at(2, "m = n", 0)}),
+        json!({"position": at(2, "m := n", 0)}),
     );
     assert_eq!(p["result"]["placeholder"], "m");
     let r = ask(
         "textDocument/rename",
-        json!({"position": at(2, "m = n", 0), "newName": "next"}),
+        json!({"position": at(2, "m := n", 0), "newName": "next"}),
     );
     let edits = r["result"]["changes"][&uri]
         .as_array()
@@ -245,7 +248,7 @@ fn the_server_answers_about_names() {
     // A rename that would capture is an error with a reason.
     let r = ask(
         "textDocument/rename",
-        json!({"position": at(2, "m = n", 0), "newName": "n"}),
+        json!({"position": at(2, "m := n", 0), "newName": "n"}),
     );
     assert!(r["error"]["message"].as_str().unwrap().contains("n"), "{r}");
     // So is a name the server cannot find the declaration of.
@@ -327,10 +330,10 @@ theorem t(n: Nat): n = n {
     assert_eq!(action["kind"], "quickfix", "{actions}");
     let edit = &action["edit"]["changes"][&uri][0];
     assert_eq!(edit["newText"], "⊢ n = n", "{actions}");
-    // The range is the arm's `⊢ …` up to the `=>`, on the fourth line.
+    // The range is the arm's `⊢ …` up to the `from`, on the fourth line.
     assert_eq!(edit["range"]["start"]["line"], 3, "{actions}");
     assert_eq!(edit["range"]["start"]["character"], 4, "{actions}");
-    assert_eq!(edit["range"]["end"]["character"], 25, "{actions}");
+    assert_eq!(edit["range"]["end"]["character"], 17, "{actions}");
 
     send(json!({"jsonrpc":"2.0","id":3,"method":"shutdown"}));
     let _ = read(&mut out);

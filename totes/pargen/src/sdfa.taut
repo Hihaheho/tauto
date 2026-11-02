@@ -4,16 +4,19 @@
 // subsets were found in.
 //
 // Derived from parol and scnr2 by Jörg Singer (MIT OR Apache-2.0); see NOTICE.
+import "bytes.taut"
+import "cc.taut"
+import "list.taut"
+import "nfa.taut"
+import "rx.taut"
 import std::Text
+import std::prelude::Affine
 
-// A transition on the class `cc`.
 pub(open) struct SdTr { cc: u64, to: u64 }
 
 // A state: transitions sorted by class, and the patterns it accepts
 // (sorted by priority, then terminal).
 pub(open) struct SdSt { trans: List(SdTr), acc: List(SPat) }
-
-// ---------------------------------------------------------------- leaves
 
 pub fn sd_has_leaf(leaves: List(RHir), h: RHir): Bool {
   match leaves {
@@ -157,8 +160,6 @@ pub fn sd_convert(a: Nfa, cc: CcOut): Nfa {
   Nfa { states: fwd, n: a.n, start: a.start, end: a.end }
 }
 
-// ---------------------------------------------------------------- the patterns accepted
-
 pub fn sd_before(a: SPat, b: SPat): Bool {
   a.priority < b.priority || (a.priority == b.priority && a.terminal < b.terminal)
 }
@@ -191,12 +192,9 @@ pub fn sd_truncate(xs: List(SPat)): List(SPat) {
   }
 }
 
-// What a state accepts with pattern `p` added.
 pub fn sd_add_pat(xs: List(SPat), p: SPat): List(SPat) {
   sd_truncate(sd_insert_pat(xs, p))
 }
-
-// ---------------------------------------------------------------- subset construction
 
 pub fn sd_nst_get(&v: Vec(NSt), i: u64): NSt {
   let &x := Vec::index(&v, i)
@@ -333,7 +331,6 @@ pub fn sd_concat_ids(a: List(u64), b: List(u64)): List(u64) {
   }
 }
 
-// The accepted patterns of a subset.
 pub fn sd_accepts(&states: Vec(NSt), subset: List(u64)): List(SPat) {
   var out: List(SPat) := Nil
   var rest := subset
@@ -403,7 +400,6 @@ pub fn sd_rev_sts(xs: List(SdSt)): List(SdSt) {
   out
 }
 
-// The subset construction: the DFA before it is made minimal.
 pub fn sd_subset(a: Nfa): List(SdSt) {
   let states := sd_vec_of_states(a.states)
   var closures: Vec(List(u64)) := Vec::new()
@@ -488,8 +484,6 @@ pub fn sd_some(xs: List(u64)): Bool {
     Cons(x, rest) => true
   }
 }
-
-// ---------------------------------------------------------------- the minimal DFA
 
 pub fn sd_hex(n: u64): Text {
   if n < 16 {
@@ -627,7 +621,6 @@ pub fn sd_nat_set(&mut v: Vec(u64), i: u64, x: u64): Unit {
   }
 }
 
-// A state with the signature it has among the groups of a partition.
 pub(open) struct SdSig { sig: List(u64), state: u64 }
 
 // -1, 0 or 1 as `a` is before, the same as, or after `b` (`Vec` order).
@@ -679,7 +672,6 @@ pub fn sd_groups_get(&v: Vec(List(u64)), i: u64): List(u64) {
   x
 }
 
-// The minimal DFA by partition refinement.
 pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
   var states: Vec(SdSt) := Vec::new()
   var rest0 := dfa
@@ -816,7 +808,6 @@ pub fn sd_minimize(dfa: List(SdSt)): List(SdSt) {
                 }
               }
             }
-            // Split the sorted states where the signature changes.
             var current: List(u64) := Nil
             var current_sig: List(u64) := Nil
             var started := false

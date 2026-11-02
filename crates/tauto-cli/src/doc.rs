@@ -264,7 +264,6 @@ fn declarations(stmts: &[Stmt], out: &mut Vec<Declaration>) {
                 (t.name.clone(), kind, theorem(t, kind), t.span.start, axiom)
             }
             Stmt::Inductive(d) => {
-                // Without parentheses when there are no parameters.
                 let parens = |ps: &[(String, SurfaceTerm)]| {
                     if ps.is_empty() {
                         String::new()

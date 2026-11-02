@@ -19,11 +19,8 @@ pub(super) struct ClassInfo {
 }
 
 pub(super) struct InstanceInfo {
-    /// The instance's generics, and the kind each is bounded by.
     pub generics: Vec<(Param, Kind)>,
-    /// The type the instance is for, over its generics.
     pub head: Ty,
-    /// The `where` of the instance: a class and the generic it constrains.
     pub preds: Vec<(String, Param)>,
 }
 
@@ -58,6 +55,9 @@ pub(super) fn replace(t: &SurfaceTerm, name: &str, with: &SurfaceTerm) -> Surfac
     t
 }
 
+/// The name an instance for the product `A × B` is keyed by, as the checker keys it.
+const PRODUCT: &str = "Prod";
+
 /// The type constructor at the head of a type, as the instance table keys it.
 fn constructor(t: &Ty) -> Option<String> {
     match t {
@@ -65,6 +65,9 @@ fn constructor(t: &Ty) -> Option<String> {
         Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Float | Ty::Float32 | Ty::Decimal | Ty::Unit => {
             Some(t.to_string())
         }
+        // The product `A × B`: one instance for every product, its members the first and
+        // the product of the rest.
+        Ty::Product(_) => Some(PRODUCT.to_string()),
         _ => None,
     }
 }
@@ -210,7 +213,7 @@ impl Checker {
                 if m.effects.as_ref().is_some_and(|e| !e.is_empty()) {
                     self.error(
                         format!(
-                            "{}.{} performs effects, so {} cannot have laws",
+                            "{}::{} performs effects, so {} cannot have laws",
                             c.name, m.name, c.name
                         ),
                         m.span,
@@ -319,6 +322,12 @@ impl Checker {
                             && !arguments[..n].iter().any(|b| b.kind == a.kind))
                     })
             }
+            // The product of two distinct generics, `A × B`.
+            TermKind::Product(members) => match members.as_slice() {
+                [a, b] => matches!((&*a.kind, &*b.kind), (TermKind::Var(x), TermKind::Var(y))
+                    if x != y && i.generics.contains(x) && i.generics.contains(y)),
+                _ => false,
+            },
             _ => false,
         };
         if !shape_ok {
@@ -562,13 +571,11 @@ impl Checker {
     }
 }
 
-/// Why a constraint has no evidence.
 pub(crate) enum Unresolved {
     /// The type is not known by the end of the check.
     Undetermined,
     /// A type parameter that the function does not assume the class of.
     Assumption(String),
-    /// No instance for the type.
     NoInstance(String),
 }
 
@@ -625,6 +632,15 @@ impl Checker {
                     found.insert(g.id(), a.clone());
                 }
             }
+        }
+        // `A × B` on a product: `A` is its first member and `B` the product of the
+        // rest, as `A × B × C` is `A × (B × C)`.
+        if let (Ty::Product(params), Ty::Product(args)) = (&instance.head, &t)
+            && let ([Ty::Param(a, _), Ty::Param(b, _)], [first, rest @ ..]) =
+                (params.as_slice(), args.as_slice())
+        {
+            found.insert(a.id(), first.clone());
+            found.insert(b.id(), super::product(rest.to_vec()));
         }
         let args: Vec<Ty> = instance
             .generics

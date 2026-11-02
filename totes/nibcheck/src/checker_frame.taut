@@ -1,4 +1,15 @@
 import "prepare_sound.taut"
+import std::Map
+import std::MapLaws
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "fits_sound.taut"
+import "join_sound.taut"
+import "kind_sound.taut"
+import "summary_state.taut"
+import "ty.taut"
+import "unify_sound.taut"
 
 // Expression checking can extend the substitution, but keeps the data environment.
 pub def CkRunFrame<A: Type>(c: Checker, m: Mut1(A, Checker)): Prop :=
@@ -98,6 +109,14 @@ pub theorem ck_fits_run_frame(
 ): CkRunFrame(c, ck_fits(c, a, b)) {
   run_frame_grows(c, ck_fits(c, a, b), And::left(ck_fits_ok(c, a, b)(ordered)))
 }
+pub theorem ck_fits_wide_run_frame(
+  c: Checker,
+  a: Ty,
+  b: Ty,
+  ordered: CkOrdered(c)
+): CkRunFrame(c, ck_fits_wide(c, a, b)) {
+  run_frame_grows(c, ck_fits_wide(c, a, b), And::left(ck_fits_wide_ok(c, a, b)(ordered)))
+}
 pub theorem ck_attempt_fits_run_frame(
   c: Checker,
   a: Ty,
@@ -150,7 +169,7 @@ pub fn run_expect(c: Checker, a: Ty, b: Ty, span: TySpan, what: Text): Mut1(Unit
     Bool,
     Unit,
     (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
-    ck_fits(c, a, b)
+    ck_fits_wide(c, a, b)
   )
 }
 pub theorem run_expect_unf(
@@ -176,8 +195,8 @@ pub theorem ck_expect_run_frame(
       Unit,
       c,
       (fits: Bool, next: Checker) => run_expect_after(next, a, b, span, what, fits),
-      ck_fits(c, a, b),
-      ck_fits_run_frame(c, a, b, ordered),
+      ck_fits_wide(c, a, b),
+      ck_fits_wide_run_frame(c, a, b, ordered),
       fits => next => onext => run_expect_after_frame(next, a, b, span, what, fits, onext)
     )
   )

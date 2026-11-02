@@ -2,6 +2,17 @@ import "signature_frame.taut"
 import "written_error_sound.taut"
 import "registration_error_sound.taut"
 import "../../surface/src/surface.taut"
+import std::List
+import std::Map
+import std::Text
+import "checker.taut"
+import "datas_frame.taut"
+import "decl_names_sound.taut"
+import "error_frame.taut"
+import "ty.taut"
+import "types_decl.taut"
+import "types_run.taut"
+import "unify_sound.taut"
 
 pub theorem signature_wrap_if_frame_errors(
   c: Checker,
@@ -195,8 +206,8 @@ pub theorem ck_sig_params_frame_errors(
   c: Checker,
   borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
-): CkErrorFrame(c, ck_sig_params(Pts, c, borrows, map)) {
-  match Pts: CkErrorFrame(c, ck_sig_params(Pts, c, borrows, map)) {
+): CkErrorFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  match pts: CkErrorFrame(c, ck_sig_params(pts, c, borrows, map)) {
     Nil => (clean_errors => clean_errors)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
