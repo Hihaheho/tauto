@@ -104,18 +104,22 @@ pub const FILES: &[(&str, &str)] = &[
         "WellFounded.taut",
         include_str!("../../../std/WellFounded.taut"),
     ),
-    // The files of the prelude that are not core
-    // (`docs/design/visibility.md`「prelude」): `import std::prelude::Os`
-    // reads an empty file, and a file that imports it sees the names of
-    // `std/prelude/Os.taut`.
+    ("asm.taut", include_str!("../../../std/asm.taut")),
+    // The files of the prelude (`docs/design/visibility.md`「prelude」):
+    // `import std::prelude::Os` reads an empty file, and a file that imports
+    // it sees the names of `std/prelude/Os.taut`. A file sees the core ones
+    // (`Std`, `Text`, `Num`) without the import, unless its tote has no prelude.
     ("prelude/Affine.taut", ""),
     ("prelude/Classes.taut", ""),
     ("prelude/Macro.taut", ""),
+    ("prelude/Num.taut", ""),
     ("prelude/Ord.taut", ""),
     ("prelude/Os.taut", ""),
     ("prelude/Par.taut", ""),
     ("prelude/Secret.taut", ""),
     ("prelude/Shared.taut", ""),
+    ("prelude/Std.taut", ""),
+    ("prelude/Text.taut", ""),
 ];
 
 /// The file the module import `import std::List` names, or why it names none.

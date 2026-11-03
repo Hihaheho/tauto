@@ -79,8 +79,8 @@ pub struct Expansion {
     /// Where the call was written (an expansion's own span when it is in the
     /// output of another).
     pub call: Span,
-    /// The span of the root of what a syntax macro made (0 when there is no such node):
-    /// a type error names the node as written, `lc!(\`…\`)`.
+    /// The span of the root expression made by the macro (0 for statements).
+    /// Syntax diagnostics and proof presentation can identify its source call.
     pub root: u32,
     pub syntax: String,
     pub text: String,
@@ -568,19 +568,18 @@ impl Expander<'_> {
             }
         }
         // The declaration is checked first; the macro reads it, and the declarations before
-        // it, through `elab_*`. One that does not check is left to report its own errors.
+        // it, through `elab_*`. One that does not check is left to report its own errors, and so
+        // is a prefix that does not check. A declaration the kernel does not declare (a `struct`
+        // or `enum` of the language) has no verdict and is given to the macro as written.
         let mut before = self.done.clone();
         before.extend(std::mem::take(&mut self.attr_before));
         let prefix = crate::surface::modules::resolve_in_prelude(before.clone()).0;
-        let verdict = self
-            .checker
-            .check_in(&prefix, &decl)
-            .ok()
-            .and_then(|e| e.into_iter().last())
-            .map(|e| e.verdict);
+        let Ok(entries) = self.checker.check_in(&prefix, &decl) else {
+            return vec![decl];
+        };
         if matches!(
-            verdict,
-            Some(crate::macros::checker::Verdict::Failed(_)) | None
+            entries.into_iter().last().map(|e| e.verdict),
+            Some(crate::macros::checker::Verdict::Failed(_))
         ) {
             return vec![decl];
         }
@@ -1353,7 +1352,7 @@ impl Expander<'_> {
             parent,
             call: t.span,
             root: match &made {
-                Made::Expr(e) if !matches!(info.input, Input::Expr) => e.span.start,
+                Made::Expr(e) => e.span.start,
                 _ => 0,
             },
             syntax,

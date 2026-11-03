@@ -1,0 +1,143 @@
+import std::Base
+import std::prelude::Shared
+import std::prelude::Par
+import "../src/codec.taut"
+import "../src/flow.taut"
+import "../src/api.taut"
+
+// Assets `a`, `b`, `c` (numbers by name); `sum = a + b`; `sign` is 1 when `sum` is positive;
+// `twice = 2 * sign`. `runs` counts the computations.
+
+fn Val(): AssetKind(Text, i64) {
+  make_asset_kind("Val", Codec::of_text(), Codec::of_i64(), (x: i64, y: i64) => x == y)
+}
+
+fn bump(c: Ref(i64)): Unit { Ref::set(c, Ref::get(c) + 1) }
+
+fn Sum(runs: Ref(i64)): Query(i64) {
+  make_query("sum", Nil, (db: Db) => {
+    let x := Db::asset(db, Val(), "a")
+    let y := Db::asset(db, Val(), "b")
+    bump(runs)
+    x + y
+  }, Codec::of_i64())
+}
+
+fn Sign(runs: Ref(i64)): Query(i64) {
+  make_query("sign", Nil, (db: Db) => {
+    let s := Db::query(db, Sum(runs))
+    bump(runs)
+    if s > 0 { 1 } else { 0 }
+  }, Codec::of_i64())
+}
+
+fn Twice(runs: Ref(i64)): Query(i64) {
+  make_query("twice", Nil, (db: Db) => {
+    let s := Db::query(db, Sign(runs))
+    bump(runs)
+    2 * s
+  }, Codec::of_i64())
+}
+
+fn is_value(a: Answer(i64), x: i64): Bool {
+  match a {
+    Value(v) => v == x
+    Error(e) => false
+    Suspended => false
+    Cycle(ks) => false
+    Cancelled => false
+    DependenciesRemoved(ks) => false
+  }
+}
+
+fn is_suspended(a: Answer(i64)): Bool {
+  match a {
+    Value(v) => false
+    Error(e) => false
+    Suspended => true
+    Cycle(ks) => false
+    Cancelled => false
+    DependenciesRemoved(ks) => false
+  }
+}
+
+fn both(rt: Runtime, a: i64, b: i64, d: Durability): Unit ! {Div} {
+  resolve_asset(rt, Val(), "a", a, d)
+  resolve_asset(rt, Val(), "b", b, d)
+}
+
+perform test("a query computes from its assets", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Volatile)
+  expect(is_value(run(rt, Sum(runs)), 5) && Ref::get(runs) == 1, "5, one run")
+})
+
+perform test("a second read is cached", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Volatile)
+  run(rt, Twice(runs))
+  expect(is_value(run(rt, Twice(runs)), 2) && Ref::get(runs) == 3, "three runs")
+})
+
+perform test("an asset change recomputes what read it", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Volatile)
+  run(rt, Sum(runs))
+  resolve_asset(rt, Val(), "a", 10, Volatile)
+  expect(is_value(run(rt, Sum(runs)), 13) && Ref::get(runs) == 2, "13, two runs")
+})
+
+perform test("resolving the same value changes nothing", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Volatile)
+  run(rt, Sum(runs))
+  resolve_asset(rt, Val(), "a", 2, Volatile)
+  expect(is_value(run(rt, Sum(runs)), 5) && Ref::get(runs) == 1, "one run")
+})
+
+perform test("early cutoff stops at an unchanged output", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Volatile)
+  run(rt, Twice(runs))
+  // sum and sign run again; sign is still 1, so twice does not.
+  resolve_asset(rt, Val(), "a", 7, Volatile)
+  expect(is_value(run(rt, Twice(runs)), 2) && Ref::get(runs) == 5, "five runs")
+})
+
+perform test("a missing asset suspends", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  resolve_asset(rt, Val(), "a", 2, Volatile)
+  let first := run(rt, Sum(runs))
+  let waits := pending_assets_of(rt, Val())
+  resolve_asset(rt, Val(), "b", 1, Volatile)
+  expect(is_suspended(first), "suspended")
+  expect(List::length(waits) == 1, "one pending")
+  expect(is_value(run(rt, Sum(runs)), 3) && has_pending_assets(rt) == false, "3")
+})
+
+perform test("an invalidated asset suspends until resolved", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Volatile)
+  run(rt, Sum(runs))
+  invalidate_asset(rt, Val(), "b")
+  let mid := run(rt, Sum(runs))
+  resolve_asset(rt, Val(), "b", 4, Volatile)
+  expect(is_suspended(mid) && is_value(run(rt, Sum(runs)), 6), "suspended, then 6")
+})
+
+perform test("a durable query skips checking after a volatile change", () => {
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  both(rt, 2, 3, Stable)
+  resolve_asset(rt, Val(), "c", 0, Volatile)
+  run(rt, Sum(runs))
+  resolve_asset(rt, Val(), "c", 1, Volatile)
+  expect(is_value(run(rt, Sum(runs)), 5) && Ref::get(runs) == 1, "one run")
+})

@@ -1,0 +1,1088 @@
+import std::Base
+import std::Data
+import std::prelude::Ord
+import std::prelude::Shared
+import std::prelude::Par
+import whale::Revision
+import whale::Graph
+import "codec.taut"
+
+// Incremental computation: queries whose results are cached, and assets set from outside.
+//
+// A query is a computation the runtime runs when it is asked for and caches. While it runs it
+// reads other queries and assets through the database `Db`, and the runtime records what it
+// read and when. A query is computed again only when something it read changed since; a query
+// computed again to the same output does not count as changed, so what read it is not computed
+// again (early cutoff).
+//
+// An asset is an input from outside (a file's text, a configuration): a leaf of the graph. The
+// host resolves it (`resolve_asset`), or a locator the host registers loads it when it is first
+// read. A query that reads an asset that is not loaded yet stops: `run` answers `Suspended`,
+// `pending_assets` lists what to load, and the host resolves it and asks again.
+//
+// Every key is a text: a query's is its name and encoded arguments, an asset's its kind and
+// encoded key (`query_key`, `asset_node_key`). Outputs and asset values are kept encoded
+// (`codec.taut`), which is also what `save` writes to disk (`store.taut`).
+
+// How often an asset changes. A query is as durable as the least durable thing it read, and a
+// change at a durability only makes the queries that durable or less check what they read.
+pub(open) enum Durability {
+  Volatile
+  Transient
+  Stable
+  Static
+}
+
+pub fn durability_level(d: Durability): Nat {
+  match d {
+    Volatile => 0
+    Transient => 1
+    Stable => 2
+    Static => 3
+  }
+}
+
+// The level queries are put at; whale lowers it to the least durable thing a query read.
+fn query_level(): Nat { 3 }
+
+// An asset in the graph: loading, loaded, or failed to load (the error is the asset's value for
+// the queries that read it).
+pub(open) enum Load {
+  Loading
+  Loaded(Text)
+  LoadFailed(Text)
+}
+
+// What the graph keeps at a key.
+pub(open) enum Slot {
+  // An asset.
+  AssetSlot(Load)
+  // A query's cached output, or the error it ended with; both encoded.
+  Memo(Result(Text, Text))
+  // A query that was invalidated: computed again when next read.
+  Cleared
+}
+
+// Why a computation stopped before it ended.
+pub(open) enum Stop {
+  // It read an asset that is loading.
+  Wait(Text)
+  // It read itself; the keys from the outer one to the one read again.
+  Loop(List(Text))
+  // It ended with an error, its own or one of something it read.
+  Bail(Text)
+  // It cancelled itself (`cancel`). Not cached.
+  Cancel
+  // What it read was removed while it ran.
+  Gone(List(Text))
+}
+
+// Stops the running computation; why is in `stop` of the runtime.
+pub effect halt(): Never resume 0
+
+// What a query can ask of the runtime while it runs. The functions of `api.taut` (`query`,
+// `asset`, `fail`, …) call these.
+pub struct Db {
+  query_fn: (Text, Runner) -> Result(Text, Text) ! {halt, Div},
+  asset_fn: (Text, Text, Text, Bool) -> Option(Result(Text, Text)) ! {halt, Div},
+  fail_fn: (Text) -> Never ! {halt},
+  cancel_fn: () -> Never ! {halt},
+  keys_fn: (Text) -> List(Text) ! {halt, Div}
+}
+
+// How to compute a query again, and how to compare two of its outputs (early cutoff).
+pub struct Runner {
+  run: (Db) -> Text ! {halt, Div},
+  same: (Text, Text) -> Bool ! {Div}
+}
+
+pub fn runner(run: (Db) -> Text ! {halt, Div}, same: (Text, Text) -> Bool ! {Div}): Runner {
+  Runner { run: run, same: same }
+}
+
+// What a locator answers for an asset: its value now, with how often it changes; or that the
+// host loads it later (`resolve_asset`).
+pub(open) enum Located {
+  LocNow(Text, Durability)
+  LocPending
+}
+
+// An asset kind: how to compare two of its values, and the locator the host registered.
+pub struct Kind {
+  same: (Text, Text) -> Bool ! {Div},
+  locate: Option((Db, Text) -> Located ! {halt, Div})
+}
+
+// What happened, for a tracer.
+pub(open) enum Event {
+  // A query was asked for (also when it is cached).
+  QueryStart(Text)
+  // A cached result was used.
+  CacheHit(Text)
+  // A query ran; whether its output changed.
+  Ran(Text, Bool)
+  // A query stopped before it ended.
+  Stopped(Text)
+  // A cycle was found.
+  CycleFound(List(Text))
+  // An asset was resolved; whether its value changed.
+  AssetResolved(Text, Bool)
+  // An asset was invalidated.
+  AssetInvalidated(Text)
+  // A query was invalidated by hand.
+  QueryInvalidated(Text)
+  // A locator ran for an asset.
+  Located(Text)
+}
+
+// The keys a computation read so far, newest first.
+struct Frame { deps: List(Text) }
+
+pub struct Runtime {
+  // Every asset and every cached query, with what each query read and when. Whale keeps the
+  // revisions, the durability of each key and whether a cached result is still valid.
+  graph: Ref(Whale(Text, Slot)),
+  // How to compute each query again, by key, for the queries run in this process.
+  runners: Ref(Runners),
+  // The asset kinds seen in this process, by kind.
+  kinds: Ref(Kinds),
+  // Assets read from disk (`load`) whose value the host has not confirmed yet.
+  unconfirmed: Ref(List(Text)),
+  // The queries being computed or checked, innermost first.
+  active: Ref(List(Text)),
+  // Assets that a query read while they were loading, oldest first.
+  waiting: Ref(List(Text)),
+  // For an asset whose kind keys it by some of its fields (`keys`), the whole key as written, by
+  // asset key: what `list_asset_keys`, the pending assets and the locator are given.
+  spelled: Ref(List(Text × Text)),
+  // One frame for each computation running, innermost first.
+  frames: Ref(List(Frame)),
+  stop: Ref(Stop),
+  // Whether two errors count as the same (early cutoff for errors). The default says no.
+  same_error: (Text, Text) -> Bool ! {Div},
+  tracer: (Event) -> Unit ! {Div}
+}
+
+// A runtime with the default comparison of errors (always different) and no tracer.
+pub fn new_runtime(): Runtime {
+  build_runtime((a: Text, b: Text) => false, (e: Event) => #())
+}
+
+// A runtime with a comparison of errors and a tracer (`QueryRuntimeBuilder`).
+pub fn build_runtime(
+  same_error: (Text, Text) -> Bool ! {Div},
+  tracer: (Event) -> Unit ! {Div}
+): Runtime {
+  Runtime {
+    graph: Ref::new(Whale::new(4)),
+    runners: Ref::new(NoRunner),
+    kinds: Ref::new(NoKind),
+    unconfirmed: Ref::new(Nil),
+    active: Ref::new(Nil),
+    waiting: Ref::new(Nil),
+    spelled: Ref::new(Nil),
+    frames: Ref::new(Nil),
+    stop: Ref::new(Cancel),
+    same_error: same_error,
+    tracer: tracer
+  }
+}
+
+fn trace(rt: Runtime, e: Event): Unit ! {Div} { (rt.tracer)(e) }
+
+// ---- keys ---------------------------------------------------------------------------------
+
+// The key of the query `name` with encoded arguments `args`.
+pub fn query_key(name: Text, args: List(Text)): Text ! {Div} {
+  concat("q", concat(field(name), fields(args)))
+}
+
+// The key of the asset of kind `kind` with encoded key `key`.
+pub fn asset_node_key(kind: Text, key: Text): Text {
+  concat("a", concat(field(kind), field(key)))
+}
+
+// The key of the set of keys of an asset kind (`list_asset_keys`).
+fn kind_set_key(kind: Text): Text { concat("s", field(kind)) }
+
+pub fn is_asset_key(k: Text): Bool {
+  match Text::byte(k, 0) {
+    None => false
+    Some(b) => U64::of_u8(b) == 97
+  }
+}
+
+pub fn is_query_key(k: Text): Bool {
+  match Text::byte(k, 0) {
+    None => false
+    Some(b) => U64::of_u8(b) == 113
+  }
+}
+
+// The kind and the encoded key of an asset key.
+pub fn asset_parts(k: Text): Option(Text × Text) ! {Div} {
+  match Text::slice(k, 1, Text::len(k)) {
+    None => None
+    Some(rest) => match read_fields(rest) {
+      Some(l) => match l {
+        Cons(kind, t) => match t {
+          Cons(key, u) => match u {
+            Nil => Some(#(kind, key))
+            Cons(x, v) => None
+          }
+          Nil => None
+        }
+        Nil => None
+      }
+      None => None
+    }
+  }
+}
+
+// ---- lists of keys ------------------------------------------------------------------------
+
+fn has_key(l: List(Text), k: Text): Bool ! {Div} {
+  match l {
+    Nil => false
+    Cons(x, t) => if x == k { true } else { has_key(t, k) }
+  }
+}
+
+fn drop_key(l: List(Text), k: Text): List(Text) ! {Div} {
+  match l {
+    Nil => Nil
+    Cons(x, t) => if x == k { drop_key(t, k) } else { Cons(x, drop_key(t, k)) }
+  }
+}
+
+fn append_key(l: List(Text), k: Text): List(Text) ! {Div} {
+  match l {
+    Nil => Cons(k, Nil)
+    Cons(x, t) => Cons(x, append_key(t, k))
+  }
+}
+
+fn reverse_onto(l: List(Text), acc: List(Text)): List(Text) ! {Div} {
+  match l {
+    Nil => acc
+    Cons(x, t) => reverse_onto(t, Cons(x, acc))
+  }
+}
+
+// The active keys from the outermost down to `k`, then `k` again.
+fn cycle_of(active: List(Text), k: Text, acc: List(Text)): List(Text) ! {Div} {
+  match active {
+    Nil => append_key(acc, k)
+    Cons(x, t) => if x == k { Cons(x, append_key(acc, k)) } else { cycle_of(t, k, Cons(x, acc)) }
+  }
+}
+
+// The runners by key, and the kinds by name.
+enum Runners {
+  NoRunner
+  OneRunner(Text, Runner, Runners)
+}
+
+enum Kinds {
+  NoKind
+  OneKind(Text, Kind, Kinds)
+}
+
+fn lookup_runner(l: Runners, k: Text): Option(Runner) ! {Div} {
+  match l {
+    NoRunner => None
+    OneRunner(x, r, t) => if x == k { Some(r) } else { lookup_runner(t, k) }
+  }
+}
+
+fn put_runner(l: Runners, k: Text, r: Runner): Runners ! {Div} {
+  OneRunner(k, r, drop_runner(l, k))
+}
+
+fn drop_runner(l: Runners, k: Text): Runners ! {Div} {
+  match l {
+    NoRunner => NoRunner
+    OneRunner(x, q, t) => if x == k { t } else { OneRunner(x, q, drop_runner(t, k)) }
+  }
+}
+
+fn lookup_kind(l: Kinds, k: Text): Option(Kind) ! {Div} {
+  match l {
+    NoKind => None
+    OneKind(x, c, t) => if x == k { Some(c) } else { lookup_kind(t, k) }
+  }
+}
+
+fn put_kind(l: Kinds, k: Text, c: Kind): Kinds ! {Div} {
+  OneKind(k, c, drop_kind(l, k))
+}
+
+fn drop_kind(l: Kinds, k: Text): Kinds ! {Div} {
+  match l {
+    NoKind => NoKind
+    OneKind(x, d, t) => if x == k { t } else { OneKind(x, d, drop_kind(t, k)) }
+  }
+}
+
+// ---- the graph ----------------------------------------------------------------------------
+
+fn node_at(rt: Runtime, k: Text): Option(Node(Text, Slot)) {
+  Whale::get(Ref::get(rt.graph), k)
+}
+
+fn graph_clock(w: Whale(Text, Slot)): Nat { Revision::get(Whale::revision(w), 0) }
+
+// Puts `k` with `x`, reading `ids`, as a change at `level`. `false` when one of `ids` is gone.
+fn put_changed(rt: Runtime, k: Text, x: Slot, level: Nat, ids: List(Text)): Bool {
+  match Whale::register(Ref::get(rt.graph), k, x, level, ids) {
+    Done(p) => {
+      Ref::set(rt.graph, pfst(p))
+      true
+    }
+    Absent(ks) => false
+  }
+}
+
+// The sentinel of a kind's set of keys changes: what listed the keys reads them again.
+fn touch_kind_set(rt: Runtime, kind: Text): Unit {
+  put_changed(rt, kind_set_key(kind), Cleared, query_level(), Nil)
+  #()
+}
+
+// Puts an asset's state as a change at `level`; a new key also changes its kind's set.
+fn put_asset(rt: Runtime, k: Text, l: Load, level: Nat): Unit ! {Div} {
+  let fresh := match node_at(rt, k) {
+    None => true
+    Some(n) => false
+  }
+  put_changed(rt, k, AssetSlot(l), level, Nil)
+  if fresh {
+    match asset_parts(k) {
+      None => #()
+      Some(p) => match p {
+        #(kind, key) => touch_kind_set(rt, kind)
+      }
+    }
+  } else { #() }
+}
+
+// ---- running queries ----------------------------------------------------------------------
+
+// What a computation saw of a key: its value and when it last changed.
+struct Seen { value: Result(Text, Text), changed_at: Nat }
+
+fn wait_for(rt: Runtime, k: Text): Unit ! {Div} {
+  let w := Ref::get(rt.waiting)
+  if has_key(w, k) { #() } else { Ref::set(rt.waiting, append_key(w, k)) }
+}
+
+fn halt_with(rt: Runtime, s: Stop): Never ! {halt} {
+  Ref::set(rt.stop, s)
+  perform halt()
+}
+
+// Notes that the running computation read `k`.
+fn record(rt: Runtime, k: Text): Unit {
+  match Ref::get(rt.frames) {
+    Nil => #()
+    Cons(f, t) => Ref::set(rt.frames, Cons(Frame { deps: Cons(k, f.deps) }, t))
+  }
+}
+
+// Runs `body` as a computation of its own, with a frame for what it reads. The keys it read,
+// oldest first, and its result; a stop other than an error goes on to the caller.
+fn in_frame(
+  rt: Runtime,
+  body: () -> Text ! {halt, Div}
+): Result(Text, Text) × List(Text) ! {halt, Div} {
+  let outer := Ref::get(rt.frames)
+  Ref::set(rt.frames, Cons(Frame { deps: Nil }, outer))
+  let value := handle { Ok(body()) } with {
+    halt() => match Ref::get(rt.stop) {
+      Bail(e) => Err(e)
+      Wait(k) => {
+        Ref::set(rt.frames, outer)
+        perform halt()
+      }
+      Loop(ks) => {
+        Ref::set(rt.frames, outer)
+        perform halt()
+      }
+      Cancel => {
+        Ref::set(rt.frames, outer)
+        perform halt()
+      }
+      Gone(ks) => {
+        Ref::set(rt.frames, outer)
+        perform halt()
+      }
+    }
+    return v => v
+  }
+  let frame := match Ref::get(rt.frames) {
+    Nil => Frame { deps: Nil }
+    Cons(f, t) => f
+  }
+  Ref::set(rt.frames, outer)
+  #(value, reverse_onto(frame.deps, Nil))
+}
+
+// ---- assets -------------------------------------------------------------------------------
+
+// Notes the whole key `whole` of the asset `k`, whose kind keys it by `key`; nothing when the two
+// are the same.
+fn spell_key(rt: Runtime, k: Text, key: Text, whole: Text): Unit ! {Div} {
+  if key == whole { #() } else {
+    Ref::set(rt.spelled, Cons(#(k, whole), drop_spelling(Ref::get(rt.spelled), k)))
+  }
+}
+
+fn drop_spelling(l: List(Text × Text), k: Text): List(Text × Text) ! {Div} {
+  match l {
+    Nil => Nil
+    Cons(p, t) => match p {
+      #(a, b) => if a == k { drop_spelling(t, k) } else { Cons(p, drop_spelling(t, k)) }
+    }
+  }
+}
+
+// The whole key of the asset `k`, whose kind keys it by `key`.
+fn spelling(
+  rt: Runtime,
+  k: Text,
+  key: Text
+): Text ! {Div} { spelled_in(Ref::get(rt.spelled), k, key) }
+
+fn spelled_in(l: List(Text × Text), k: Text, key: Text): Text ! {Div} {
+  match l {
+    Nil => key
+    Cons(p, t) => match p {
+      #(a, b) => if a == k { b } else { spelled_in(t, k, key) }
+    }
+  }
+}
+
+// Notes the whole key of an asset the host names, for `api.taut`.
+pub fn note_spelling(rt: Runtime, kind: Text, key: Text, whole: Text): Unit ! {Div} {
+  spell_key(rt, asset_node_key(kind, key), key, whole)
+}
+
+// The kind and the whole key of the asset `k`.
+pub fn asset_spelled(rt: Runtime, k: Text): Option(Text × Text) ! {Div} {
+  match asset_parts(k) {
+    None => None
+    Some(p) => match p {
+      #(kind, key) => Some(#(kind, spelling(rt, k, key)))
+    }
+  }
+}
+
+fn kind_of(rt: Runtime, kind: Text): Option(Kind) ! {Div} { lookup_kind(Ref::get(rt.kinds), kind) }
+
+// Registers an asset kind's comparison, keeping a locator registered before.
+pub fn note_kind(rt: Runtime, kind: Text, same: (Text, Text) -> Bool ! {Div}): Unit ! {Div} {
+  match kind_of(rt, kind) {
+    Some(c) => #()
+    None => Ref::set(
+      rt.kinds,
+      put_kind(Ref::get(rt.kinds), kind, Kind { same: same, locate: None })
+    )
+  }
+}
+
+pub fn set_locator(
+  rt: Runtime,
+  kind: Text,
+  same: (Text, Text) -> Bool ! {Div},
+  f: (Db, Text) -> Located ! {halt, Div}
+): Unit ! {Div} {
+  Ref::set(rt.kinds, put_kind(Ref::get(rt.kinds), kind, Kind { same: same, locate: Some(f) }))
+}
+
+fn same_load(rt: Runtime, kind: Text, a: Load, b: Load): Bool ! {Div} {
+  match a {
+    Loading => false
+    Loaded(x) => match b {
+      Loaded(y) => match kind_of(rt, kind) {
+        Some(c) => (c.same)(x, y)
+        None => x == y
+      }
+      Loading => false
+      LoadFailed(f) => false
+    }
+    LoadFailed(e) => match b {
+      LoadFailed(f) => (rt.same_error)(e, f)
+      Loading => false
+      Loaded(y) => false
+    }
+  }
+}
+
+// Sets an asset from outside (`resolve_asset`, `resolve_asset_error`) or from a locator that
+// read `ids`. A value the asset already has (by its kind's comparison) at the same durability
+// is not a change; it confirms an asset read from disk. `true` when it changed.
+fn set_asset(rt: Runtime, k: Text, l: Load, d: Durability, ids: List(Text)): Bool ! {Div} {
+  Ref::set(rt.waiting, drop_key(Ref::get(rt.waiting), k))
+  Ref::set(rt.unconfirmed, drop_key(Ref::get(rt.unconfirmed), k))
+  let kind := match asset_parts(k) {
+    None => ""
+    Some(p) => match p {
+      #(a, b) => a
+    }
+  }
+  let level := durability_level(d)
+  let same := match node_at(rt, k) {
+    None => false
+    Some(n) => match Node::data(n) {
+      AssetSlot(old) => if Node::durability(
+        n
+      ) == level { same_load(rt, kind, old, l) } else { false }
+      Memo(m) => false
+      Cleared => false
+    }
+  }
+  if same {
+    let g := Ref::get(rt.graph)
+    match Whale::confirm_unchanged(g, k, ids) {
+      Done(g2) => Ref::set(rt.graph, g2)
+      Absent(ks) => #()
+    }
+    trace(rt, AssetResolved(k, false))
+    false
+  } else {
+    // A query as durable as the old value read it, so the change counts at that level too.
+    match node_at(rt, k) {
+      None => #()
+      Some(n) => if level < Node::durability(n) {
+        Ref::set(rt.graph, Whale::bump(Ref::get(rt.graph), Node::durability(n)))
+      } else { #() }
+    }
+    let fresh := match node_at(rt, k) {
+      None => true
+      Some(n) => false
+    }
+    put_changed(rt, k, AssetSlot(l), level, ids)
+    if fresh {
+      touch_kind_set(rt, kind)
+    } else { #() }
+    trace(rt, AssetResolved(k, true))
+    true
+  }
+}
+
+// Runs the locator of an asset's kind, if there is one: `None` when there is none.
+fn run_locator(rt: Runtime, k: Text): Option(Located × List(Text)) ! {halt, Div} {
+  match asset_parts(k) {
+    None => None
+    Some(p) => match p {
+      #(kind, key) => match kind_of(rt, kind) {
+        None => None
+        Some(c) => match c.locate {
+          None => None
+          Some(f) => {
+            trace(rt, Located(k))
+            let active := Ref::get(rt.active)
+            if has_key(active, k) { halt_with(rt, Loop(cycle_of(active, k, Nil))) } else {
+              Ref::set(rt.active, Cons(k, active))
+              let answer := Ref::new(LocPending)
+              let r := in_frame(
+                rt,
+                () => {
+                  Ref::set(answer, f(db_of(rt), spelling(rt, k, key)))
+                  ""
+                }
+              )
+              Ref::set(rt.active, active)
+              match r {
+                #(v, deps) => match v {
+                  Ok(x) => Some(#(Ref::get(answer), deps))
+                  Err(e) => {
+                    // A locator that fails sets the asset to the error.
+                    set_asset(rt, k, LoadFailed(e), Volatile, deps)
+                    Some(#(LocPending, Nil))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Whether the asset `k` holds what a locator would give now: an asset a locator read queries
+// for is checked like a query. Assets the host resolves are current until the host says
+// otherwise, except those read from disk and not confirmed yet.
+fn asset_current(rt: Runtime, k: Text, n: Node(Text, Slot)): Bool ! {halt, Div} {
+  if has_key(Ref::get(rt.unconfirmed), k) { false } else {
+    match Node::deps(n) {
+      Nil => true
+      Cons(d, t) => {
+        let g := Ref::get(rt.graph)
+        Whale::verified_at(g, k, Whale::revision(g)) || unchanged(rt, Node::deps(n))
+      }
+    }
+  }
+}
+
+// Brings the asset `k` up to date: runs its locator when it has one and the asset is not
+// current. An asset read from disk that has no locator waits for the host.
+fn refresh_asset(rt: Runtime, k: Text): Unit ! {halt, Div} {
+  let current := match node_at(rt, k) {
+    None => false
+    Some(n) => asset_current(rt, k, n)
+  }
+  if current { #() } else {
+    match run_locator(rt, k) {
+      Some(p) => match p {
+        #(l, deps) => match l {
+          LocNow(v, d) => {
+            set_asset(rt, k, Loaded(v), d, deps)
+            #()
+          }
+          LocPending => {
+            match node_at(rt, k) {
+              None => put_asset(rt, k, Loading, 0)
+              Some(n) => #()
+            }
+            wait_for(rt, k)
+          }
+        }
+      }
+      None => match node_at(rt, k) {
+        None => {
+          put_asset(rt, k, Loading, 0)
+          wait_for(rt, k)
+        }
+        Some(n) => if has_key(Ref::get(rt.unconfirmed), k) { wait_for(rt, k) } else { #() }
+      }
+    }
+  }
+}
+
+// The asset `k` now: `None` while it is loading (or waits for the host to confirm it).
+fn asset_now(rt: Runtime, k: Text): Option(Seen) ! {halt, Div} {
+  refresh_asset(rt, k)
+  if has_key(Ref::get(rt.unconfirmed), k) { None } else {
+    match node_at(rt, k) {
+      None => None
+      Some(n) => match Node::data(n) {
+        AssetSlot(l) => match l {
+          Loading => None
+          Loaded(v) => Some(Seen { value: Ok(v), changed_at: Node::changed_at(n) })
+          LoadFailed(e) => Some(Seen { value: Err(e), changed_at: Node::changed_at(n) })
+        }
+        Memo(m) => None
+        Cleared => None
+      }
+    }
+  }
+}
+
+// ---- queries ------------------------------------------------------------------------------
+
+// The query `k`, checked or computed in the current revision.
+fn refresh(rt: Runtime, k: Text, r: Runner): Seen ! {halt, Div} {
+  let active := Ref::get(rt.active)
+  if has_key(active, k) {
+    let ks := cycle_of(active, k, Nil)
+    trace(rt, CycleFound(ks))
+    halt_with(rt, Loop(ks))
+  } else {
+    Ref::set(rt.runners, put_runner(Ref::get(rt.runners), k, r))
+    trace(rt, QueryStart(k))
+    Ref::set(rt.active, Cons(k, active))
+    let s := current(rt, k, r)
+    Ref::set(rt.active, active)
+    s
+  }
+}
+
+fn current(rt: Runtime, k: Text, r: Runner): Seen ! {halt, Div} {
+  match node_at(rt, k) {
+    None => compute(rt, k, r)
+    Some(n) => match Node::data(n) {
+      Memo(v) => if still_valid(rt, k, n) {
+        trace(rt, CacheHit(k))
+        Seen { value: v, changed_at: Node::changed_at(n) }
+      } else { compute(rt, k, r) }
+      AssetSlot(l) => compute(rt, k, r)
+      Cleared => compute(rt, k, r)
+    }
+  }
+}
+
+// Whether the cached result at `k` holds: verified in this revision, or nothing it read
+// changed since (each brought up to date first). Marks it verified when it holds.
+fn still_valid(rt: Runtime, k: Text, n: Node(Text, Slot)): Bool ! {halt, Div} {
+  let g := Ref::get(rt.graph)
+  if Whale::verified_at(g, k, Whale::revision(g)) || unchanged(rt, Node::deps(n)) {
+    let g2 := Ref::get(rt.graph)
+    Ref::set(rt.graph, Whale::mark_verified(g2, k, Whale::revision(g2)))
+    true
+  } else { false }
+}
+
+// Whether none of `deps` changed since the computation read it, checked in the order the
+// computation read them. Each is brought up to date before it is looked at. A query with no
+// runner in this process (read from disk) is checked through what it read; when that does not
+// hold it cannot be computed here, so it counts as changed.
+fn unchanged(rt: Runtime, deps: List(Dep(Text))): Bool ! {halt, Div} {
+  match deps {
+    Nil => true
+    Cons(d, t) => {
+      let k := dep_id(d)
+      let ok := if is_asset_key(k) {
+        refresh_asset(rt, k)
+        if has_key(Ref::get(rt.unconfirmed), k) {
+          // Read from disk and not confirmed: the reader waits with it.
+          halt_with(rt, Wait(k))
+        } else { true }
+      } else if is_query_key(k) {
+        match lookup_runner(Ref::get(rt.runners), k) {
+          Some(r) => {
+            refresh(rt, k, r)
+            true
+          }
+          None => match node_at(rt, k) {
+            None => false
+            Some(n) => match Node::data(n) {
+              Memo(v) => revalidate(rt, k, n)
+              AssetSlot(l) => false
+              Cleared => false
+            }
+          }
+        }
+      } else { true }
+      if ok && dep_fresh(Whale::nodes(Ref::get(rt.graph)), d) { unchanged(rt, t) } else { false }
+    }
+  }
+}
+
+// A cached query with no runner: valid when what it read is unchanged.
+fn revalidate(rt: Runtime, k: Text, n: Node(Text, Slot)): Bool ! {halt, Div} {
+  let active := Ref::get(rt.active)
+  if has_key(active, k) { false } else {
+    Ref::set(rt.active, Cons(k, active))
+    let ok := still_valid(rt, k, n)
+    Ref::set(rt.active, active)
+    ok
+  }
+}
+
+fn same_result(rt: Runtime, r: Runner, a: Result(Text, Text), b: Result(Text, Text)): Bool ! {Div} {
+  match a {
+    Ok(x) => match b {
+      Ok(y) => (r.same)(x, y)
+      Err(f) => false
+    }
+    Err(e) => match b {
+      Ok(y) => false
+      Err(f) => (rt.same_error)(e, f)
+    }
+  }
+}
+
+// Runs the query `k` and writes the result to the graph. A result the same as the cached one
+// keeps its `changed_at` (early cutoff); the query gets the least durability of what it read.
+// An error ends it with `Err`, cached like an output; any other stop goes on to the caller.
+fn compute(rt: Runtime, k: Text, r: Runner): Seen ! {halt, Div} {
+  let p := in_frame(rt, () => (r.run)(db_of(rt)))
+  match p {
+    #(value, deps) => {
+      let g := Ref::get(rt.graph)
+      let old := match Whale::get(g, k) {
+        None => None
+        Some(n) => match Node::data(n) {
+          Memo(m) => Some(m)
+          AssetSlot(l) => None
+          Cleared => None
+        }
+      }
+      // The comparison may diverge, which whale's may not, so it runs here.
+      let changed := match old {
+        None => true
+        Some(m) => if same_result(rt, r, m, value) { false } else { true }
+      }
+      let w := if changed {
+        match Whale::register(g, k, Memo(value), query_level(), deps) {
+          Done(q) => Done(pfst(q))
+          Absent(ks) => Absent(ks)
+        }
+      } else { Whale::confirm_unchanged(g, k, deps) }
+      match w {
+        Done(g3) => {
+          Ref::set(rt.graph, g3)
+          trace(rt, Ran(k, changed))
+          match Whale::get(g3, k) {
+            Some(n) => Seen { value: value, changed_at: Node::changed_at(n) }
+            None => Seen { value: value, changed_at: graph_clock(g3) }
+          }
+        }
+        Absent(ks) => {
+          trace(rt, Stopped(k))
+          halt_with(rt, Gone(ks))
+        }
+      }
+    }
+  }
+}
+
+// ---- the database -------------------------------------------------------------------------
+
+fn query_in(rt: Runtime, k: Text, r: Runner): Result(Text, Text) ! {halt, Div} {
+  let s := refresh(rt, k, r)
+  record(rt, k)
+  s.value
+}
+
+// The asset `k` for a running query; `wait` says whether a loading asset stops it (`asset`)
+// or reads as `None` (`asset_state`).
+fn asset_in(
+  rt: Runtime,
+  kind: Text,
+  key: Text,
+  whole: Text,
+  wait: Bool
+): Option(Result(Text, Text)) ! {halt, Div} {
+  let k := asset_node_key(kind, key)
+  spell_key(rt, k, key, whole)
+  let s := asset_now(rt, k)
+  record(rt, k)
+  match s {
+    Some(x) => Some(x.value)
+    None => {
+      wait_for(rt, k)
+      if wait { halt_with(rt, Wait(k)) } else { None }
+    }
+  }
+}
+
+// The encoded keys of an asset kind in the graph; the reader reads the kind's set, so it is
+// computed again when a key is added or removed.
+fn keys_in(rt: Runtime, kind: Text): List(Text) ! {halt, Div} {
+  let s := kind_set_key(kind)
+  match node_at(rt, s) {
+    None => touch_kind_set(rt, kind)
+    Some(n) => #()
+  }
+  record(rt, s)
+  keys_of_kind(rt, Whale::keys(Ref::get(rt.graph)), kind)
+}
+
+fn keys_of_kind(rt: Runtime, ks: List(Text), kind: Text): List(Text) ! {Div} {
+  match ks {
+    Nil => Nil
+    Cons(k, t) => if is_asset_key(k) {
+      match asset_parts(k) {
+        None => keys_of_kind(rt, t, kind)
+        Some(p) => match p {
+          #(a, b) => if a == kind { Cons(spelling(rt, k, b), keys_of_kind(rt, t, kind)) } else {
+            keys_of_kind(rt, t, kind)
+          }
+        }
+      }
+    } else { keys_of_kind(rt, t, kind) }
+  }
+}
+
+// The handle a query computes with.
+fn db_of(rt: Runtime): Db {
+  Db {
+    query_fn: (k: Text, r: Runner) => query_in(rt, k, r),
+    asset_fn: (kind: Text, key: Text, whole: Text, wait: Bool) => asset_in(
+      rt,
+      kind,
+      key,
+      whole,
+      wait
+    ),
+    fail_fn: (e: Text) => halt_with(rt, Bail(e)),
+    cancel_fn: () => halt_with(rt, Cancel),
+    keys_fn: (kind: Text) => keys_in(rt, kind)
+  }
+}
+
+// ---- asking from outside ------------------------------------------------------------------
+
+// The result of asking for a query from outside, encoded.
+pub(open) enum Asked {
+  AskOutput(Text)
+  // The query (or something it read) ended with this error.
+  AskFailure(Text)
+  // Assets it read are loading; `pending_assets` lists them.
+  AskWaiting
+  // The keys of a dependency cycle, from the outer one back to itself.
+  AskLooped(List(Text))
+  AskCancelled
+  // Something it read was removed while it ran.
+  AskRemoved(List(Text))
+}
+
+// The outcome of the query `k`, and the revision at which its result last changed.
+pub fn ask(rt: Runtime, k: Text, r: Runner): Asked × Nat ! {Div} {
+  let p := handle {
+    let s := refresh(rt, k, r)
+    match s.value {
+      Ok(v) => #(AskOutput(v), s.changed_at)
+      Err(e) => #(AskFailure(e), s.changed_at)
+    }
+  } with {
+    halt() => match Ref::get(rt.stop) {
+      Wait(a) => #(AskWaiting, 0)
+      Loop(ks) => #(AskLooped(ks), 0)
+      Bail(e) => #(AskFailure(e), 0)
+      Cancel => #(AskCancelled, 0)
+      Gone(ks) => #(AskRemoved(ks), 0)
+    }
+    return v => v
+  }
+  Ref::set(rt.active, Nil)
+  Ref::set(rt.frames, Nil)
+  p
+}
+
+// When the cached result of `k` last changed, if it is cached.
+pub fn changed_at_key(rt: Runtime, k: Text): Option(Nat) {
+  match node_at(rt, k) {
+    None => None
+    Some(n) => match Node::data(n) {
+      Memo(m) => Some(Node::changed_at(n))
+      AssetSlot(l) => None
+      Cleared => None
+    }
+  }
+}
+
+// Assets that a query read while they were loading, oldest first, as keys.
+pub fn pending_keys(rt: Runtime): List(Text) { Ref::get(rt.waiting) }
+
+pub fn has_pending_assets(rt: Runtime): Bool {
+  match Ref::get(rt.waiting) {
+    Nil => false
+    Cons(k, t) => true
+  }
+}
+
+// Sets the asset `k`.
+pub fn resolve_key(rt: Runtime, k: Text, l: Load, d: Durability): Unit ! {Div} {
+  set_asset(rt, k, l, d, Nil)
+  #()
+}
+
+// Marks an asset as loading again: what read it waits until it is resolved. The change counts
+// at every durability.
+pub fn invalidate_asset_key(rt: Runtime, k: Text): Unit ! {Div} {
+  trace(rt, AssetInvalidated(k))
+  Ref::set(rt.unconfirmed, drop_key(Ref::get(rt.unconfirmed), k))
+  wait_for(rt, k)
+  put_asset(rt, k, Loading, query_level())
+}
+
+// Forgets an asset; what read it is computed again and waits until it is resolved again.
+pub fn remove_asset_key(rt: Runtime, k: Text): Unit ! {Div} {
+  Ref::set(rt.spelled, drop_spelling(Ref::get(rt.spelled), k))
+  Ref::set(rt.waiting, drop_key(Ref::get(rt.waiting), k))
+  Ref::set(rt.unconfirmed, drop_key(Ref::get(rt.unconfirmed), k))
+  match node_at(rt, k) {
+    None => #()
+    Some(n) => {
+      let g := Whale::bump(Ref::get(rt.graph), query_level())
+      Ref::set(rt.graph, pfst(Whale::remove(g, k)))
+      match asset_parts(k) {
+        None => #()
+        Some(p) => match p {
+          #(kind, key) => touch_kind_set(rt, kind)
+        }
+      }
+    }
+  }
+}
+
+// Invalidates the query `k`: what read it is computed again, and so is `k`.
+pub fn invalidate_key(rt: Runtime, k: Text): Unit ! {Div} {
+  trace(rt, QueryInvalidated(k))
+  put_changed(rt, k, Cleared, query_level(), Nil)
+  #()
+}
+
+// Forgets the query `k` and how to compute it.
+pub fn remove_key(rt: Runtime, k: Text): Unit ! {Div} {
+  trace(rt, QueryInvalidated(k))
+  Ref::set(rt.runners, drop_runner(Ref::get(rt.runners), k))
+  let g := Whale::bump(Ref::get(rt.graph), query_level())
+  Ref::set(rt.graph, pfst(Whale::remove(g, k)))
+}
+
+// Forgets `k` only when nothing reads it (garbage collection); whether it did.
+pub fn remove_if_unused(rt: Runtime, k: Text): Bool ! {Div} {
+  let p := Whale::remove_if_unused(Ref::get(rt.graph), k)
+  match p {
+    #(g, o) => match o {
+      None => false
+      Some(n) => {
+        Ref::set(rt.graph, g)
+        Ref::set(rt.runners, drop_runner(Ref::get(rt.runners), k))
+        true
+      }
+    }
+  }
+}
+
+// Every key in the graph: queries, assets and the sets of kinds.
+pub fn graph_keys(rt: Runtime): List(Text) { Whale::keys(Ref::get(rt.graph)) }
+
+fn clear_all(rt: Runtime, ks: List(Text)): Unit ! {Div} {
+  match ks {
+    Nil => #()
+    Cons(k, t) => {
+      if is_query_key(k) {
+        let g := Ref::get(rt.graph)
+        Ref::set(rt.graph, pfst(Whale::remove(g, k)))
+      } else { #() }
+      clear_all(rt, t)
+    }
+  }
+}
+
+// Forgets every cached query.
+pub fn clear_cache(rt: Runtime): Unit ! {Div} {
+  clear_all(rt, Whale::keys(Ref::get(rt.graph)))
+  Ref::set(rt.runners, NoRunner)
+}
+
+// ---- the database's operations, for `api.taut` ----------------------------------------------
+
+pub fn db_query(
+  db: Db,
+  k: Text,
+  r: Runner
+): Result(Text, Text) ! {halt, Div} { (db.query_fn)(k, r) }
+
+pub fn db_asset(
+  db: Db,
+  kind: Text,
+  key: Text,
+  whole: Text,
+  wait: Bool
+): Option(Result(Text, Text)) ! {halt, Div} {
+  (db.asset_fn)(kind, key, whole, wait)
+}
+
+pub fn db_fail(db: Db, e: Text): Never ! {halt} { (db.fail_fn)(e) }
+
+pub fn db_cancel(db: Db): Never ! {halt} { (db.cancel_fn)() }
+
+pub fn db_keys(db: Db, kind: Text): List(Text) ! {halt, Div} { (db.keys_fn)(kind) }
+
+// ---- the graph, for `store.taut` -------------------------------------------------------------
+
+pub fn current_graph(rt: Runtime): Whale(Text, Slot) { Ref::get(rt.graph) }
+
+// Puts a graph read from disk in place of the runtime's; `assets` are unconfirmed.
+pub fn restore_graph(rt: Runtime, w: Whale(Text, Slot), assets: List(Text)): Unit {
+  Ref::set(rt.graph, w)
+  Ref::set(rt.unconfirmed, assets)
+  Ref::set(rt.waiting, Nil)
+}

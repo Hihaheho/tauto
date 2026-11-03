@@ -32,12 +32,14 @@ function u32xor(a,b){return typeof a==='number'&&typeof b==='number'?(a^b)>>>0:N
 function u32shl(a,b){return typeof a==='number'&&typeof b==='number'?(a<<(b%32))>>>0:Number(BigInt.asUintN(32,big(a)<<(big(b)%32n)));}
 function u32shr(a,b){return typeof a==='number'&&typeof b==='number'?a>>>(b%32):Number(big(a)>>(big(b)%32n));}
 function compare(a,b) {
-    const x = Array.from(a, c => c.codePointAt(0));
-    const y = Array.from(b, c => c.codePointAt(0));
-    for (let i = 0; i < Math.min(x.length,y.length); i++) {
-        if (x[i] !== y[i]) return x[i] < y[i] ? -1n : 1n;
+    // Walk scalar values, not UTF-16 code units, without allocating arrays.
+    let i=0,j=0;
+    while(i<a.length&&j<b.length){
+        const x=a.codePointAt(i),y=b.codePointAt(j);
+        if(x!==y)return x<y?-1n:1n;
+        i+=x>0xffff?2:1;j+=y>0xffff?2:1;
     }
-    return x.length < y.length ? -1n : x.length > y.length ? 1n : 0n;
+    return i<a.length?1n:j<b.length?-1n:0n;
 }
 function field(v,name,index) {if(v?.project){const part=v.project(index??name,false);try{return dereference(part,true);}finally{part.release();}}const obj=unref(v);const i=index??obj.names.indexOf(name);return copyValue(unref(obj.fields[i]));}
 function equal(a,b) {

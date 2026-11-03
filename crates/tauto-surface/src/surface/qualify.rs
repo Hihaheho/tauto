@@ -54,6 +54,8 @@ pub const SEPARATOR: &str = "::";
 /// Effects are named apart from the rest (an effect `test` and a theorem
 /// `test` are two names): an effect's name is kept with this mark before it.
 const EFFECT: &str = "!";
+/// Marks, in the names a file uses, the name of a macro or a syntax it calls.
+const CALLED: &str = "\u{1}";
 
 /// What the kernel makes for an inductive type `T`, named `T::rec`, …: it
 /// is renamed with `T`.
@@ -312,6 +314,61 @@ pub fn hidden_prelude() -> &'static HashMap<String, Vec<String>> {
         }
         hidden
     })
+}
+
+/// The names the core files of the library's prelude (`Std`, `Text`, `Num`, the files not in
+/// [`NONCORE_PRELUDE`]) declare and the kernel's prelude does not, each with the files that
+/// do: what a file of a tote without the prelude (`package { prelude = false }`) sees only by
+/// importing `std::prelude::<file>`. The language's types and sorts are not among them.
+pub fn core_prelude() -> &'static HashMap<String, Vec<String>> {
+    static CORE: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    CORE.get_or_init(|| {
+        let mut kernel: HashSet<String> = BUILTIN_TYPES
+            .iter()
+            .chain(LANGUAGE_TYPES)
+            .chain(SORTS)
+            .map(|n| n.to_string())
+            .collect();
+        for text in std::iter::once(crate::nibstd::KERNEL)
+            .chain(crate::nibstd::KERNEL_MODULES.iter().copied())
+        {
+            let (d, m) = prelude_text_names(text, false);
+            kernel.extend(d);
+            kernel.extend(m);
+        }
+        let mut core: HashMap<String, Vec<String>> = HashMap::new();
+        for (path, text) in crate::nibstd::PRELUDE_FILES {
+            let stem = prelude_stem(path);
+            if NONCORE_PRELUDE.contains(&stem) {
+                continue;
+            }
+            let (d, m) = prelude_text_names(text, true);
+            for n in d.into_iter().chain(m) {
+                if kernel.contains(&n) {
+                    continue;
+                }
+                let files = core.entry(n).or_default();
+                if !files.iter().any(|f| f == stem) {
+                    files.push(stem.to_string());
+                }
+            }
+        }
+        core
+    })
+}
+
+/// The item an import list names a name of the prelude by: a constructor's type
+/// (`Option` of `Some`), a module's name for its function (`List` of `List::map`), an effect
+/// without its mark, any other name itself.
+fn prelude_item(n: &str) -> String {
+    let b = bare(n);
+    if n.starts_with(EFFECT) {
+        return b.to_string();
+    }
+    if let Some((ty, _)) = prelude_ctors().iter().find(|(ty, cs)| *ty != b && cs.contains_key(b)) {
+        return ty.clone();
+    }
+    b.split(SEPARATOR).next().unwrap_or(b).to_string()
 }
 
 fn prelude_stem(path: &str) -> &str {
@@ -679,6 +736,19 @@ fn declared_or_bound(s: &Stmt, out: &mut dyn FnMut(&str)) {
     }
 }
 
+/// How the file `here` writes the import of the file `target`, by their indices,
+/// from the paths the program is read from and the dependencies of their totes.
+pub type Spell<'a> = &'a dyn Fn(usize, usize) -> String;
+
+/// How the file `here` imports the file `target`: by `spell` when the program
+/// is read from files, else by their modules ([`import_spelling`]).
+fn spelling(spell: Option<Spell>, modules: &[String], here: usize, target: usize) -> String {
+    match spell {
+        Some(spell) => spell(here, target),
+        None => import_spelling(&modules[here], &modules[target]),
+    }
+}
+
 /// How the file `here` imports the file `target`, both by module: a file of the
 /// standard library as `std::List`; a file of the same tote by its path from
 /// `here`'s directory, quoted (`"Setoid.taut"`, `"../src/Setoid.taut"`); a file
@@ -777,7 +847,8 @@ pub fn files_seeing(
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
 ) -> (Vec<(String, Span)>, Vec<HashMap<String, String>>) {
-    let (errors, seeing, _) = qualify(files, modules, imports, below, false);
+    let (errors, seeing, _) =
+        qualify(files, modules, imports, below, false, None, None, &mut Vec::new());
     (errors, seeing)
 }
 
@@ -792,12 +863,42 @@ pub fn files_before_macros(
     modules: &[String],
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
+    spell: Option<Spell>,
 ) -> (
     Vec<(String, Span)>,
     Vec<HashMap<String, String>>,
     Vec<MissingImport>,
 ) {
-    qualify(files, modules, imports, below, true)
+    qualify(files, modules, imports, below, true, spell, None, &mut Vec::new())
+}
+
+/// [`files_before_macros`], with `lists[i]` the imports of the file `i`: an import with a list
+/// brings only what it lists. The lists are checked after the macros
+/// ([`files_after_macros_listed`]).
+pub fn files_before_macros_listed(
+    files: &mut [Vec<Stmt>],
+    modules: &[String],
+    imports: Option<&[Vec<usize>]>,
+    below: Option<&[HashSet<usize>]>,
+    spell: Option<Spell>,
+    lists: &[Vec<ImportList>],
+    bare: &[bool],
+    quoted: &Quoted,
+) -> (
+    Vec<(String, Span)>,
+    Vec<HashMap<String, String>>,
+    Vec<MissingImport>,
+) {
+    qualify(
+        files,
+        modules,
+        imports,
+        below,
+        true,
+        spell,
+        Some((lists, bare, quoted)),
+        &mut Vec::new(),
+    )
 }
 
 /// [`files_with_totes`] on the output of the macros. A name an expansion wrote carries the
@@ -810,9 +911,308 @@ pub fn files_after_macros(
     modules: &[String],
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
+    spell: Option<Spell>,
 ) -> (Vec<(String, Span)>, Vec<MissingImport>) {
-    let (errors, _, missing) = qualify(files, modules, imports, below, false);
+    let (errors, _, missing) =
+        qualify(files, modules, imports, below, false, spell, None, &mut Vec::new());
     (errors, missing)
+}
+
+/// The names the quotes of each file write, as the pass before the macros reads them: the pass
+/// after them holds the file's import lists to them too.
+pub type Quoted = std::cell::RefCell<Vec<Vec<(String, Span)>>>;
+
+/// The title of the edit that writes an import's list of the names the file uses through it;
+/// `tauto lint --fix` applies the edits with it.
+pub const IMPORT_FIX_TITLE: &str = "Write the list of what the import brings";
+
+/// The title of the edit that takes away an import through which the file uses nothing;
+/// `tauto lint --fix` applies it when the file checks as well without the import.
+pub const UNUSED_IMPORT_FIX_TITLE: &str = "Remove the import";
+
+/// An `import` of a file, as [`files_after_macros_listed`] holds the file to it.
+#[derive(Debug, Clone)]
+pub struct ImportList {
+    /// The imported file, by its index among the files; `None` when it is not one of them.
+    pub target: Option<usize>,
+    /// The import as written after `import`: `std::Text`, `"value.taut"`.
+    pub spelling: String,
+    /// The names written in its list, if it has one.
+    pub names: Option<Vec<(String, Span)>>,
+    /// The whole `import` statement.
+    pub span: Span,
+}
+
+/// [`files_after_macros`], with `lists[i]` the imports of the file `i`. An import with a list
+/// brings only the names it lists, a type with its constructors: a name the file uses through it
+/// and does not list, a listed name the file does not use and a listed name the imported file does
+/// not declare for other files are errors. Returns the errors and, for every import through which
+/// the file uses a name, the edit that writes its list ([`IMPORT_FIX_TITLE`]), by the span of the
+/// import.
+pub fn files_after_macros_listed(
+    files: &mut [Vec<Stmt>],
+    modules: &[String],
+    imports: Option<&[Vec<usize>]>,
+    below: Option<&[HashSet<usize>]>,
+    spell: Option<Spell>,
+    lists: &[Vec<ImportList>],
+    bare: &[bool],
+    quoted: &Quoted,
+) -> (
+    Vec<(String, Span)>,
+    Vec<MissingImport>,
+    Vec<(Span, super::Fix)>,
+) {
+    let mut fixes = Vec::new();
+    let (errors, _, missing) = qualify(
+        files,
+        modules,
+        imports,
+        below,
+        false,
+        spell,
+        Some((lists, bare, quoted)),
+        &mut fixes,
+    );
+    (errors, missing, fixes)
+}
+
+/// Whether `module` is a file of the prelude (`std::prelude::Os`) that declares `item`: the
+/// prelude's names are read as the prelude's, not as that file's, so a list keeps them as written.
+fn prelude_declares(module: &str, item: &str) -> bool {
+    let Some(file) = module
+        .strip_prefix(PRELUDE_MODULE)
+        .and_then(|r| r.strip_prefix(SEPARATOR))
+    else {
+        return false;
+    };
+    let declares = |n: &str| {
+        hidden_prelude()
+            .get(n)
+            .is_some_and(|fs| fs.iter().any(|f| f == file))
+    };
+    declares(item)
+        || declares(&format!("{EFFECT}{item}"))
+        || prelude_names().contains(item)
+        || prelude_names().contains(&format!("{EFFECT}{item}"))
+}
+
+/// The import lists of the file `i`, held to the names it used through each import (`used`, as the
+/// renaming read them). A use is held to the item a list names it by: a constructor's or a
+/// generated name's type (`Value` of `Vtext`, of `Value::rec`), a module's name for its function
+/// (`List` of `List::map`), an effect without its mark, any other name itself.
+#[allow(clippy::too_many_arguments)]
+fn check_import_lists(
+    bare_file: bool,
+    i: usize,
+    files: &[Vec<Stmt>],
+    modules: &[String],
+    owners: &HashMap<String, Vec<usize>>,
+    reach: &[HashSet<usize>],
+    private: &[HashSet<String>],
+    ctor_type: &[HashMap<String, String>],
+    language: &HashSet<String>,
+    lists: &[ImportList],
+    used: &[(String, Span)],
+    errors: &mut Vec<(String, Span)>,
+    fixes: &mut Vec<(Span, super::Fix)>,
+) {
+    // The item, the name as read and where it is used, by the imported file.
+    let mut by_file: HashMap<usize, Vec<(String, String, Span)>> = HashMap::new();
+    for (n, span) in used {
+        // A macro or a syntax the file calls: the file it reaches that declares it.
+        if let Some(called) = n.strip_prefix(CALLED) {
+            let declares = |j: usize| {
+                files[j].iter().any(|s| match s {
+                    Stmt::Macro { name, .. } | Stmt::Syntax { name, .. } => name == called,
+                    _ => false,
+                })
+                    || owners.get(called).is_some_and(|o| o.contains(&j) && !private[j].contains(called))
+            };
+            // The file's own macro is its own.
+            let own = files[i].iter().any(|s| {
+                matches!(s, Stmt::Macro { name, .. } | Stmt::Syntax { name, .. } if name == called)
+            }) || owners.get(called).is_some_and(|o| o.contains(&i));
+            if !own
+                && let Some(j) = reach[i].iter().copied().find(|&j| declares(j))
+            {
+                by_file
+                    .entry(j)
+                    .or_default()
+                    .push((called.to_string(), called.to_string(), *span));
+            }
+            continue;
+        }
+        let effect = n.starts_with(EFFECT);
+        let b = bare(n);
+        // A full name: the file whose module it starts with, the longest one.
+        let by_module = reach[i]
+            .iter()
+            .copied()
+            .filter_map(|j| {
+                let rest = b
+                    .strip_prefix(modules[j].as_str())
+                    .and_then(|r| r.strip_prefix(SEPARATOR))?;
+                Some((modules[j].len(), j, rest.to_string()))
+            })
+            .max_by_key(|(len, _, _)| *len);
+        let (j, rel) = match by_module {
+            Some((_, j, rest)) => (j, rest),
+            None => {
+                let Some(o) = owners.get(n.as_str()) else {
+                    // A name of the prelude the file sees only through the import of its
+                    // file (`std::prelude::Os`) is held to that import.
+                    let files_of = hidden_prelude().get(n.as_str()).or_else(|| {
+                        bare_file
+                            .then(core_prelude)
+                            .and_then(|c| c.get(n.as_str()))
+                    });
+                    let from = files_of
+                        .and_then(|fs| {
+                            reach[i].iter().copied().find(|&j| {
+                                fs.iter().any(|f| modules[j] == prelude_file_module(f))
+                            })
+                        })
+                        // A type of the language a file it reaches declares (`Text` of
+                        // `std::Text`).
+                        .or_else(|| {
+                            reach[i].iter().copied().find(|&j| {
+                                language.contains(&format!("{}{SEPARATOR}{b}", modules[j]))
+                            })
+                        });
+                    if let Some(j) = from {
+                        by_file
+                            .entry(j)
+                            .or_default()
+                            .push((prelude_item(n), b.to_string(), *span));
+                    }
+                    continue;
+                };
+                // The file's own declaration is its own.
+                if o.contains(&i) {
+                    continue;
+                }
+                let mut from = o
+                    .iter()
+                    .copied()
+                    .filter(|&j| reach[i].contains(&j) && !private[j].contains(n.as_str()));
+                match (from.next(), from.next()) {
+                    (Some(j), None) => (j, b.to_string()),
+                    _ => continue,
+                }
+            }
+        };
+        let item = if effect {
+            rel.clone()
+        } else if let Some(ty) = ctor_type[j].get(&rel) {
+            ty.clone()
+        } else {
+            rel.split(SEPARATOR).next().unwrap_or(&rel).to_string()
+        };
+        by_file
+            .entry(j)
+            .or_default()
+            .push((item, b.to_string(), *span));
+    }
+    // What the imported file declares for other files, by the item a list names it with, and
+    // its macros and syntaxes, which this pass does not see used.
+    let exported = |j: usize, item: &str| {
+        let public = |k: &str| {
+            owners.get(k).is_some_and(|o| o.contains(&j)) && !private[j].contains(k)
+        };
+        public(item)
+            || public(&format!("{EFFECT}{item}"))
+            || owners.iter().any(|(k, o)| {
+                o.contains(&j)
+                    && k.strip_prefix(item)
+                        .is_some_and(|r| r.starts_with(SEPARATOR))
+            })
+    };
+    // A macro or a syntax, whose calls the macros read, and a type of the language the file
+    // declares (`Text` of `std::Text`), which a file sees whatever it imports: kept as listed.
+    let macro_named = |j: usize, item: &str| {
+        language.contains(&format!("{}{SEPARATOR}{item}", modules[j]))
+            || prelude_declares(&modules[j], item)
+            || files[j].iter().any(|s| match s {
+                Stmt::Macro { name, .. } => name == item,
+                Stmt::Syntax { name, .. } => name == item,
+                _ => false,
+            })
+    };
+    for import in lists {
+        let Some(j) = import.target else {
+            continue;
+        };
+        let used_here = by_file.get(&j).map(Vec::as_slice).unwrap_or(&[]);
+        let mut wanted: Vec<String> = used_here.iter().map(|(item, _, _)| item.clone()).collect();
+        let mut found: Vec<(String, Span)> = Vec::new();
+        if let Some(names) = &import.names {
+            for (item, name, span) in used_here {
+                if !names.iter().any(|(l, _)| l == item) {
+                    found.push((
+                        msg!(
+                            "surface-import-not-listed",
+                            name = name.as_str(),
+                            item = item.as_str(),
+                            spelling = import.spelling.as_str()
+                        )
+                        .to_string(),
+                        *span,
+                    ));
+                }
+            }
+            for (l, span) in names {
+                if macro_named(j, l) {
+                    // A macro or a syntax is kept as listed: its calls are read by the macros.
+                    wanted.push(l.clone());
+                } else if !exported(j, l) {
+                    found.push((
+                        msg!(
+                            "surface-import-listed-unknown",
+                            name = l.as_str(),
+                            spelling = import.spelling.as_str()
+                        )
+                        .to_string(),
+                        *span,
+                    ));
+                } else if !used_here.iter().any(|(item, _, _)| item == l) {
+                    found.push((
+                        msg!(
+                            "surface-import-listed-unused",
+                            name = l.as_str(),
+                            spelling = import.spelling.as_str()
+                        )
+                        .to_string(),
+                        *span,
+                    ));
+                }
+            }
+        }
+        wanted.sort();
+        wanted.dedup();
+        // An import through which the file uses nothing is taken away; `tauto lint --fix`
+        // checks the file again without it and keeps it if it is needed after all.
+        if wanted.is_empty() {
+            fixes.push((
+                import.span,
+                super::Fix {
+                    title: UNUSED_IMPORT_FIX_TITLE.into(),
+                    span: import.span,
+                    text: String::new(),
+                },
+            ));
+        } else {
+            let fix = super::Fix {
+                title: IMPORT_FIX_TITLE.into(),
+                span: import.span,
+                text: format!("import {} {{ {} }}", import.spelling, wanted.join(", ")),
+            };
+            // The edit is the fix of the import and of each error its list has.
+            fixes.push((import.span, fix.clone()));
+            fixes.extend(found.iter().map(|(_, at)| (*at, fix.clone())));
+        }
+        errors.extend(found);
+    }
 }
 
 /// The files each file sees through its imports: the files it imports
@@ -833,12 +1233,20 @@ fn qualify(
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
     keep_prelude: bool,
+    spell: Option<Spell>,
+    lists: Option<(&[Vec<ImportList>], &[bool], &Quoted)>,
+    fixes: &mut Vec<(Span, super::Fix)>,
 ) -> (
     Vec<(String, Span)>,
     Vec<HashMap<String, String>>,
     Vec<MissingImport>,
 ) {
     register_modules(modules);
+    let (lists, no_prelude, quoted) = match lists {
+        Some((lists, no_prelude, quoted)) => (Some(lists), no_prelude, Some(quoted)),
+        None => (None, &[][..], None),
+    };
+    let bare_at = |i: usize| no_prelude.get(i).copied().unwrap_or(false);
     // A function of a module is named `M::f` like any declaration: the
     // modules are flattened first, so this pass tells it apart from another
     // file's `M::f` and the prelude's.
@@ -1083,6 +1491,7 @@ fn qualify(
     for n in written {
         by_full.insert(n.clone(), bare(&n).to_string());
     }
+    let language_full: HashSet<String> = language.iter().cloned().collect();
     for n in language {
         let to = short(&n).to_string();
         by_full.insert(n, to);
@@ -1187,11 +1596,57 @@ fn qualify(
         .collect();
     // What each file's names mean, every file's first: a name a macro wrote is
     // read as the file of its macro reads it ([`SurfaceTerm::origin`]).
+    // What each file's imports with lists bring of each file, by the items of the lists; a
+    // file imported without a list at least once brings everything (no entry).
+    let brings: Vec<HashMap<usize, HashSet<String>>> = (0..files.len())
+        .map(|i| {
+            let mut out: HashMap<usize, HashSet<String>> = HashMap::new();
+            let mut whole: HashSet<usize> = HashSet::new();
+            for import in lists.and_then(|l| l.get(i)).into_iter().flatten() {
+                let Some(j) = import.target else {
+                    continue;
+                };
+                match &import.names {
+                    Some(names) => out
+                        .entry(j)
+                        .or_default()
+                        .extend(names.iter().map(|(n, _)| n.clone())),
+                    None => {
+                        whole.insert(j);
+                    }
+                }
+            }
+            out.retain(|j, _| !whole.contains(j));
+            out
+        })
+        .collect();
+    // Whether the file `i` imports `j` with lists none of which brings the name `n` of `j`:
+    // a constructor's or a generated name's type, a module's function's module, an effect.
+    let unlisted = |i: usize, j: usize, n: &str| {
+        let Some(items) = brings[i].get(&j) else {
+            return false;
+        };
+        let b = bare(n);
+        let item = if n.starts_with(EFFECT) {
+            b.to_string()
+        } else if let Some(ty) = ctor_type[j].get(b) {
+            ty.clone()
+        } else {
+            b.split(SEPARATOR).next().unwrap_or(b).to_string()
+        };
+        !items.contains(&item)
+    };
     let mut all_names: Vec<HashMap<String, Meaning>> = Vec::new();
     let mut all_unseen: Vec<HashSet<String>> = Vec::new();
     let mut all_plain: Vec<HashMap<String, String>> = Vec::new();
+    // The names each file declares that this pass renames, with the full
+    // name each declaration takes: where a name is ambiguous to read (a
+    // non-core prelude name the file imports and declares too), the
+    // declaration is still the file's own.
+    let mut all_declares: Vec<HashMap<String, String>> = Vec::new();
     for i in 0..files.len() {
         let mut names: HashMap<String, Meaning> = HashMap::new();
+        let mut declares: HashMap<String, String> = HashMap::new();
         let mut unseen: HashSet<String> = HashSet::new();
         let mut plain: HashMap<String, String> = HashMap::new();
         for (n, all) in &owners {
@@ -1200,7 +1655,7 @@ fn qualify(
                     n.clone(),
                     Meaning::NotImported(
                         modules[all[0]].clone(),
-                        import_spelling(&modules[i], &modules[all[0]]),
+                        spelling(spell, modules, i, all[0]),
                         all.len() == 1,
                     ),
                 );
@@ -1232,11 +1687,23 @@ fn qualify(
                 .copied()
                 .filter(|&j| !private_to(i, j, n))
                 .collect();
+            // An import with a list brings only what it lists: a file it does not bring the
+            // name from does not take it. Where no file brings it, the name is kept to the files
+            // that declare it, and the list's check says which list to write it in.
+            let brought: Vec<usize> = seen
+                .iter()
+                .copied()
+                .filter(|&j| !unlisted(i, j, n))
+                .collect();
+            let seen = if brought.is_empty() { seen } else { brought };
             let o = if seen.is_empty() { all } else { &seen };
             let meaning = if o.contains(&i) {
                 // The file's own, unless types of the file share the name.
                 match fulls(i, n).as_slice() {
-                    [one] => Meaning::To(one.clone()),
+                    [one] => {
+                        declares.insert(n.clone(), one.clone());
+                        Meaning::To(one.clone())
+                    }
                     all => Meaning::Ambiguous(all.to_vec()),
                 }
             } else {
@@ -1348,7 +1815,7 @@ fn qualify(
                             n.clone(),
                             Meaning::NotImported(
                                 modules[o[0]].clone(),
-                                import_spelling(&modules[i], &modules[o[0]]),
+                                spelling(spell, modules, i, o[0]),
                                 o.len() == 1,
                             ),
                         );
@@ -1379,10 +1846,23 @@ fn qualify(
                 .filter(|(_, o)| o.contains(&i))
                 .map(|(k, _)| k.split(SEPARATOR).next().unwrap_or(k))
                 .collect();
-            for (n, files) in hidden_prelude() {
+            // A file of a tote without the prelude sees the core prelude's names the same way.
+            let core = bare_at(i).then(core_prelude).into_iter().flatten();
+            for (n, files) in hidden_prelude().iter().chain(core) {
+                // A core name a file this one reaches declares (the standard library's model
+                // of a builtin) means that declaration, as it does where the prelude is seen.
+                if !hidden_prelude().contains_key(n) && names.contains_key(n) {
+                    continue;
+                }
+                // An import with a list brings only what it lists.
                 let granted = files.iter().any(|f| {
                     let module = prelude_file_module(f);
-                    reach[i].iter().any(|&j| modules[j] == module)
+                    reach[i].iter().any(|&j| {
+                        modules[j] == module
+                            && brings[i]
+                                .get(&j)
+                                .is_none_or(|items| items.contains(&prelude_item(n)))
+                    })
                 });
                 let prelude_full = format!("{PRELUDE_MODULE}{SEPARATOR}{}", bare(n));
                 match (names.get_mut(n), granted) {
@@ -1393,6 +1873,23 @@ fn qualify(
                         plain.insert(n.clone(), n.clone());
                     }
                     (None, false) if own.contains(n.as_str()) => {}
+                    // A declaration of that name the file's imports bring (`U64` of
+                    // `import "UInt.taut" { U64 }`) is the one the name means.
+                    (None, false)
+                        if owners.get(n).is_some_and(|all| {
+                            all.iter().any(|&j| {
+                                reach[i].contains(&j)
+                                    && !private_to(i, j, n)
+                                    && !unlisted(i, j, n)
+                            })
+                        }) => {}
+                    // A constructor the file sees by that name (`I64` of a type `Width`)
+                    // is read as that constructor, as it is where the prelude file is
+                    // imported.
+                    (None, false)
+                        if std::iter::once(i)
+                            .chain(reach[i].iter().copied())
+                            .any(|j| ctor_type[j].contains_key(n.as_str())) => {}
                     (None, false) => {
                         names.insert(
                             n.clone(),
@@ -1419,7 +1916,11 @@ fn qualify(
         all_names.push(names);
         all_unseen.push(unseen);
         all_plain.push(plain);
+        all_declares.push(declares);
     }
+    // The global names each file writes, as read, when its import lists are checked.
+    let used: Vec<std::cell::RefCell<Vec<(String, Span)>>> =
+        (0..files.len()).map(|_| Default::default()).collect();
     for (i, stmts) in files.iter_mut().enumerate() {
         let names = &all_names[i];
         let plain = std::mem::take(&mut all_plain[i]);
@@ -1441,7 +1942,11 @@ fn qualify(
             sealed: None,
             seen: None,
             missing: Some((&missing, i)),
+            declares: Some(&all_declares[i]),
             keep_prelude,
+            here: i,
+            used: lists.map(|_| &used[i]),
+            quoting: Default::default(),
         };
         for s in stmts.iter_mut() {
             r.top(s);
@@ -1472,7 +1977,40 @@ fn qualify(
                 .collect(),
         );
     }
-    flattened.extend(errors.into_inner());
+    // Before the macros, only the names the quotes write are kept: the macros turn a quote into
+    // the syntax it builds, and its names are read where the macro is expanded.
+    if let Some(quoted) = quoted {
+        let mut quoted = quoted.borrow_mut();
+        quoted.resize(files.len(), Vec::new());
+        for (q, u) in quoted.iter_mut().zip(&used) {
+            if keep_prelude {
+                *q = u.take();
+            } else {
+                u.borrow_mut().extend(q.iter().cloned());
+            }
+        }
+    }
+    let mut errors = errors.into_inner();
+    if let Some(lists) = lists.filter(|_| !keep_prelude) {
+        for (i, file_lists) in lists.iter().enumerate().take(files.len()) {
+            check_import_lists(
+                bare_at(i),
+                i,
+                files,
+                modules,
+                &owners,
+                &reach,
+                &private,
+                &ctor_type,
+                &language_full,
+                file_lists,
+                &used[i].borrow(),
+                &mut errors,
+                fixes,
+            );
+        }
+    }
+    flattened.extend(errors);
     flattened.extend(record_bases(files));
     (flattened, seeing, missing.into_inner())
 }
@@ -1826,7 +2364,11 @@ pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(Str
             sealed: Some((&owner, tote.as_deref())),
             seen: None,
             missing: None,
+            declares: None,
             keep_prelude: false,
+            here: 0,
+            used: None,
+            quoting: Default::default(),
         };
         // The walk renames nothing with empty tables; it runs on a copy so
         // that it only reads.
@@ -2014,7 +2556,11 @@ pub fn sealed_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String
             sealed: None,
             seen: Some((&seen, i)),
             missing: None,
+            declares: None,
             keep_prelude: false,
+            here: i,
+            used: None,
+            quoting: Default::default(),
         };
         // The walk renames nothing with empty tables; it runs on a copy so
         // that it only reads.
@@ -2209,12 +2755,70 @@ struct Renamer<'a> {
     /// Where the names one import would make seen are written, and the file being read.
     missing: Option<(&'a std::cell::RefCell<Vec<MissingImport>>, usize)>,
     returns: std::cell::RefCell<Option<String>>,
+    /// The full names the file's own declarations take, by their short
+    /// names; `None` where this walk renames no declaration.
+    declares: Option<&'a HashMap<String, String>>,
     /// Whether a full name of the prelude is kept as written
     /// (`files_before_macros`).
     keep_prelude: bool,
+    /// The file being read.
+    here: usize,
+    /// Where the global names this file writes itself are kept, as read,
+    /// when its import lists are checked ([`check_import_lists`]).
+    used: Option<&'a std::cell::RefCell<Vec<(String, Span)>>>,
+    /// How many quotes the name being read is in.
+    quoting: std::cell::Cell<u32>,
 }
 
 impl Renamer<'_> {
+    /// Keeps `n`, a global name as read, for the import lists: a name an
+    /// expansion wrote counts for the file of its macro, not this one.
+    fn record(&self, n: &str, span: Span) {
+        if let Some(used) = self.used
+            && self.origin.get().is_none_or(|f| f == self.here)
+            && (!self.keep_prelude || self.quoting.get() > 0)
+        {
+            used.borrow_mut().push((n.to_string(), span));
+        }
+    }
+
+    /// Keeps the names the laws of a class or an instance write, for the import lists: the laws
+    /// are read by their own pass, so this reads a copy and keeps nothing else of it.
+    fn record_laws(&self, laws: &[super::program::LawDecl]) {
+        if self.used.is_none() || laws.is_empty() {
+            return;
+        }
+        let errors = self.errors.borrow().len();
+        let missing = self.missing.map(|(m, _)| m.borrow().len());
+        for l in laws {
+            let mut d = l.theorem.clone();
+            self.scoped(|| {
+                for (n, t) in &mut d.params {
+                    self.term(t);
+                    self.bind_typed(n, t);
+                }
+                self.term(&mut d.ty);
+                if let Some(b) = &mut d.body {
+                    self.term(b);
+                }
+            });
+        }
+        self.errors.borrow_mut().truncate(errors);
+        if let (Some((m, _)), Some(n)) = (self.missing, missing) {
+            m.borrow_mut().truncate(n);
+        }
+    }
+
+    /// Keeps the name of a macro or a syntax the file calls, read before the macros run.
+    fn record_call(&self, n: &str, span: Span) {
+        if let Some(used) = self.used
+            && self.keep_prelude
+            && self.origin.get().is_none_or(|f| f == self.here)
+        {
+            used.borrow_mut().push((format!("{CALLED}{n}"), span));
+        }
+    }
+
     fn scoped(&self, f: impl FnOnce()) {
         let depth = self.locals.borrow().len();
         f();
@@ -2374,16 +2978,23 @@ impl Renamer<'_> {
         self.see(&format!("{EFFECT}{n}"), span);
         let mut key = format!("{EFFECT}{n}");
         if n.contains(SEPARATOR) {
+            self.record(&key, span);
             if let Some(to) = self.by_full.get(&key) {
                 *n = to.clone();
             }
             return;
         }
         self.meaning(&mut key, span);
+        self.record(&key, span);
         *n = bare(&key).to_string();
     }
 
     fn global(&self, n: &mut String, span: Span) {
+        self.global_here(n, span);
+        self.record(n, span);
+    }
+
+    fn global_here(&self, n: &mut String, span: Span) {
         self.see(n, span);
         if self.keep_prelude
             && n.strip_prefix(PRELUDE_MODULE)
@@ -2656,6 +3267,10 @@ impl Renamer<'_> {
     fn rename_decl(&self, n: &mut String) {
         if let Some(Meaning::To(to)) = self.names.get(n.as_str()) {
             *n = to.clone();
+        } else if let Some(to) = self.declares.and_then(|d| d.get(n.as_str())) {
+            // Ambiguous where it is written, the name is still the file's own
+            // where it is declared.
+            *n = to.clone();
         }
     }
 
@@ -2796,6 +3411,7 @@ impl Renamer<'_> {
                 for m in &mut c.methods {
                     self.scoped(|| self.function(m));
                 }
+                self.record_laws(&c.laws);
             }),
             Stmt::Instance(inst) => self.scoped(|| {
                 self.global(&mut inst.class, inst.span);
@@ -2808,11 +3424,15 @@ impl Renamer<'_> {
                 for m in &mut inst.methods {
                     self.scoped(|| self.function(m));
                 }
+                self.record_laws(&inst.laws);
             }),
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
                 items.iter_mut().for_each(|i| self.stmt(i))
             }
-            Stmt::Attributed { arg, stmt, .. } => {
+            Stmt::Attributed {
+                name, arg, stmt, span, ..
+            } => {
+                self.record_call(name, *span);
                 self.term(arg);
                 self.stmt(stmt);
             }
@@ -2914,6 +3534,7 @@ impl Renamer<'_> {
         {
             if let Some(c) = self.ctor_of(ty, n) {
                 *n = c.clone();
+                self.record(c, span);
                 // The type of each field, the matched type's arguments put for
                 // the family's parameters.
                 let fields: Vec<Option<Shape>> = match (self.fields.get(c), shape) {
@@ -3161,6 +3782,7 @@ impl Renamer<'_> {
             ));
         }
         if self.module_fn(t) {
+            self.record(&dotted_text(t), span);
             return;
         }
         // A full name written with `::`: `std::Text::text`, `Shape::Circle`.
@@ -3171,7 +3793,10 @@ impl Renamer<'_> {
             TermKind::Var(n) => match of
                 .and_then(|ty| self.ctor_wanted(ty, n).or_else(|| self.sort_wanted(ty, n)))
             {
-                Some(c) => *n = c,
+                Some(c) => {
+                    self.record(&c, span);
+                    *n = c
+                }
                 None => self.name(n, span),
             },
             TermKind::App {
@@ -3260,8 +3885,11 @@ impl Renamer<'_> {
             }),
             // A quote's statements bind as a block's do: its own `let tmp`
             // is a local of the quote, not a global `tmp` of another file.
-            TermKind::Block(stmts) | TermKind::Quote { body: stmts, .. } => {
-                self.scoped(|| stmts.iter_mut().for_each(|s| self.stmt(s)))
+            TermKind::Block(stmts) => self.scoped(|| stmts.iter_mut().for_each(|s| self.stmt(s))),
+            TermKind::Quote { body: stmts, .. } => {
+                self.quoting.set(self.quoting.get() + 1);
+                self.scoped(|| stmts.iter_mut().for_each(|s| self.stmt(s)));
+                self.quoting.set(self.quoting.get() - 1);
             }
             TermKind::Handle { body, handlers } => {
                 self.term(body);
@@ -3346,6 +3974,7 @@ impl Renamer<'_> {
                 }
             }
             TermKind::Step(s) => {
+                self.record_call(&s.tactic, s.call);
                 self.term(&mut s.arg);
                 if let Some(b) = &mut s.before {
                     self.term(b);
@@ -3369,6 +3998,10 @@ impl Renamer<'_> {
                 if !matches!(&*base.kind, TermKind::Var(b) if !self.is_local(b)) {
                     self.term(base);
                 }
+            }
+            TermKind::MacroCall { name, arg } => {
+                self.record_call(name, span);
+                self.term(arg);
             }
             _ => super::walk::children(t, &mut |c| self.term(c)),
         }

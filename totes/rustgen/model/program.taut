@@ -1,0 +1,233 @@
+import "syntax.taut" { rs, rs::Definition::I }
+import "core.taut" {
+  RsCallable,
+  RsDefinition,
+  RsEvent,
+  RsExpr,
+  RsOutcome,
+  RsRuntime,
+  RsStore,
+  RsUse,
+  RsValue
+}
+import "source_context.taut" {
+  RsSourceCall,
+  RsSourceControl,
+  RsSourceField,
+  RsSourceFunction,
+  RsSourceLocal,
+  RsSourceSignature,
+  RsSourceType,
+  rs_source_functions,
+  rs_source_local_id,
+  rs_source_local_type,
+  rs_source_scope_good,
+  rs_source_type,
+  rs_source_type_spelling
+}
+import "source_forms.taut" { rs_source_block, rs_source_id, rs_source_path, rs_source_unit_type }
+import "source_construct.taut" { rs_source_local_types }
+import "source.taut" { RsRepresents }
+import "semantics.taut" { RsApply }
+import "../../../std/Base.taut" { List }
+import "../../../std/Text.taut" { Text }
+
+pub fn rs_source_spelling_at(sig: RsSourceSignature, ty: Nat): rs::Ty::I {
+  match rs_source_type(sig, ty): rs::Ty::I {
+    None => rs_source_unit_type()
+    Some(declaration) => rs_source_type_spelling(declaration)
+  }
+}
+
+pub fn rs_source_param(sig: RsSourceSignature, local: RsSourceLocal): rs::Param::I {
+  rs::Param::I::Mk(
+    Some("mut"),
+    rs_source_id(rs_source_local_id(local)),
+    ":",
+    rs_source_spelling_at(sig, rs_source_local_type(local))
+  )
+}
+
+pub fn rs_source_params_rest(
+  sig: RsSourceSignature,
+  locals: List(RsSourceLocal)
+): List(rs::Params_Rep1::I) {
+  match locals: List(rs::Params_Rep1::I) {
+    Nil => Nil
+    Cons(local, rest) => Cons(
+      rs::Params_Rep1::I::Mk(",", rs_source_param(sig, local)),
+      rs_source_params_rest(sig, rest)
+    )
+  }
+}
+
+pub fn rs_source_params(sig: RsSourceSignature, locals: List(RsSourceLocal)): rs::Params::I {
+  match locals: rs::Params::I {
+    Nil => rs::Params::I::Mk(None)
+    Cons(local, rest) => rs::Params::I::Mk(
+      Some(
+        rs::Params_Opt1::I::Mk(rs_source_param(sig, local), rs_source_params_rest(sig, rest), None)
+      )
+    )
+  }
+}
+
+pub fn rs_source_function(
+  sig: RsSourceSignature,
+  name: Text,
+  generics: rs::Generics::I,
+  params: List(RsSourceLocal),
+  result: Nat,
+  body: rs::Expr::I
+): rs::Function::I {
+  rs::Function::I::Mk(
+    "fn",
+    name,
+    generics,
+    "(",
+    rs_source_params(sig, params),
+    ")",
+    "->",
+    rs_source_spelling_at(sig, result),
+    rs_source_block(Nil, body)
+  )
+}
+
+pub fn rs_source_type_value(sig: RsSourceSignature, ty: Nat): RsSourceType {
+  match rs_source_type(sig, ty): RsSourceType {
+    None => RsSourceTypeOf(rs_source_unit_type(), RsCopy, None, Nil, None)
+    Some(declaration) => declaration
+  }
+}
+
+// Type parameters and lifetimes have no runtime instructions. A signature
+// records their resolved layout and ABI; the Rust checker checks the source
+// declaration, including all its generic bounds.
+pub(open) inductive RsSourceDefinition(
+  sig: RsSourceSignature
+): (Nat, RsDefinition, rs::Function::I) -> Prop {
+  RsSourceDefinitionOf<index: Nat, name: Text, ty: Nat, spelling: rs::Ty::I, target: Option(
+    Nat
+  ), fields: List(
+    RsSourceField
+  ), params: List(
+    RsSourceLocal
+  ), result: Nat, body: RsExpr, syntax: rs::Expr::I>(
+    generics: rs::Generics::I,
+    declared: List::nth(
+      rs_source_functions(sig),
+      index
+    ) = Some(RsSourceFunctionOf(rs_source_path(Cons(name, Nil)), ty)),
+    function_type: rs_source_type(
+      sig,
+      ty
+    ) = Some(
+      RsSourceTypeOf(
+        spelling,
+        RsCopy,
+        target,
+        fields,
+        Some(RsSourceCallOf(RsFn, rs_source_local_types(params), result))
+      )
+    ),
+    result_type: rs_source_type(sig, result) = Some(rs_source_type_value(sig, result)),
+    scope_valid: rs_source_scope_good(sig, params) = true,
+    contents: RsRepresents(sig, params, RsSourceControlOf(result, Nil), body, result, syntax)
+  ): RsSourceDefinition(
+    sig,
+    index,
+    RsDef(List::length(params), body),
+    rs_source_function(sig, name, generics, params, result, syntax)
+  )
+}
+
+pub(open) inductive RsSourceBodies(
+  sig: RsSourceSignature
+): (Nat, List(RsDefinition), List(rs::Item::I)) -> Prop {
+  RsSourceBodiesNil<index: Nat>(
+    complete: index = List::length(rs_source_functions(sig))
+  ): RsSourceBodies(sig, index, Nil, Nil)
+  RsSourceBodiesFunction<index: Nat, definition: RsDefinition, syntax: rs::Function::I, definitions: List(
+    RsDefinition
+  ), items: List(
+    rs::Item::I
+  )>(
+    visibility: Option(Text),
+    contents: RsSourceDefinition(sig, index, definition, syntax),
+    following: RsSourceBodies(sig, Succ(index), definitions, items)
+  ): RsSourceBodies(
+    sig,
+    index,
+    Cons(definition, definitions),
+    Cons(rs::Item::I::Mk(None, visibility, Function_I(syntax)), items)
+  )
+  RsSourceBodiesData<index: Nat, definitions: List(
+    RsDefinition
+  ), items: List(
+    rs::Item::I
+  )>(
+    data: rs::Data::I,
+    derive: Option(Text),
+    visibility: Option(Text),
+    following: RsSourceBodies(sig, index, definitions, items)
+  ): RsSourceBodies(
+    sig,
+    index,
+    definitions,
+    Cons(rs::Item::I::Mk(derive, visibility, Data_I(data)), items)
+  )
+  RsSourceBodiesAlias<index: Nat, definitions: List(
+    RsDefinition
+  ), items: List(
+    rs::Item::I
+  )>(
+    alias: rs::Alias::I,
+    visibility: Option(Text),
+    following: RsSourceBodies(sig, index, definitions, items)
+  ): RsSourceBodies(
+    sig,
+    index,
+    definitions,
+    Cons(rs::Item::I::Mk(None, visibility, Alias_I(alias)), items)
+  )
+}
+
+// Static data/alias declarations are interpreted by the signature. This
+// relation checks every executable body against the same function table.
+pub(open) inductive RsSourceProgram(
+  sig: RsSourceSignature
+): (rs::Program::I, List(RsDefinition)) -> Prop {
+  RsSourceProgramOf<items: List(
+    rs::Item::I
+  ), definitions: List(
+    RsDefinition
+  )>(
+    bodies: RsSourceBodies(sig, 0, definitions, items)
+  ): RsSourceProgram(sig, rs::Program::I::Mk(items), definitions)
+}
+
+pub(open) inductive RsProgramRuns(
+  sig: RsSourceSignature,
+  rt: RsRuntime
+): (
+  rs::Program::I,
+  Nat,
+  List(RsValue),
+  RsStore,
+  RsOutcome(RsValue),
+  RsStore,
+  List(RsEvent)
+) -> Prop {
+  RsProgramRan<syntax: rs::Program::I, definitions: List(
+    RsDefinition
+  ), entry: Nat, args: List(
+    RsValue
+  ), heap: RsStore, out: RsOutcome(
+    RsValue
+  ), next: RsStore, trace: List(
+    RsEvent
+  )>(
+    linked: RsSourceProgram(sig, syntax, definitions),
+    invoked: RsApply(definitions, rt, RsGlobal(entry), args, heap, out, next, trace)
+  ): RsProgramRuns(sig, rt, syntax, entry, args, heap, out, next, trace)
+}

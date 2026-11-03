@@ -1,0 +1,140 @@
+import "../../../std/Text.taut" { Text }
+import "../../../std/Int.taut" { Int }
+
+// Names are resolved and generic functions are instantiated before execution.
+pub(open) inductive RsUse: Type {
+  RsCopy: RsUse
+  RsMove: RsUse
+}
+
+pub(open) inductive RsBorrow: Type {
+  RsShared: RsBorrow
+  RsUnique: RsBorrow
+}
+
+pub(open) inductive RsCallable: Type {
+  RsFn: RsCallable
+  RsFnMut: RsCallable
+  RsFnOnce: RsCallable
+}
+
+pub(open) inductive RsLiteral: Type {
+  RsNatural(value: Nat): RsLiteral
+  RsUnit: RsLiteral
+  RsBool(value: Bool): RsLiteral
+  RsInteger(value: Int, signed: Bool, bits: Nat): RsLiteral
+  RsStr(value: Text): RsLiteral
+  RsText(value: Text): RsLiteral
+  RsFloat(bits: Nat, single: Bool): RsLiteral
+}
+
+pub(open) inductive RsPlace: Type {
+  RsLocal(index: Nat): RsPlace
+  RsField(base: RsPlace, field: Nat): RsPlace
+  RsDeref(base: RsPlace): RsPlace
+}
+
+mutual {
+  pub(open) inductive RsExpr: Type {
+    RsLit(value: RsLiteral): RsExpr
+    RsRead(mode: RsUse, place: RsPlace): RsExpr
+    RsRef(kind: RsBorrow, place: RsPlace): RsExpr
+    RsAggregate(tag: Nat, is_copy: Bool, fields: List(RsExpr)): RsExpr
+    RsLet(value: RsExpr, body: RsExpr): RsExpr
+    RsSeq(first: RsExpr, second: RsExpr): RsExpr
+    RsWrite(place: RsPlace, value: RsExpr): RsExpr
+    RsIf(cond: RsExpr, yes: RsExpr, no: RsExpr): RsExpr
+    RsMatchPlace(place: RsPlace, arms: List(RsArm)): RsExpr
+    RsMatch(scrut: RsExpr, arms: List(RsArm)): RsExpr
+    RsCall(callee: RsExpr, args: List(RsExpr)): RsExpr
+    RsFunction(index: Nat): RsExpr
+    RsLambda(kind: RsCallable, arity: Nat, captures: List(RsExpr), body: RsExpr): RsExpr
+    RsLoop(label: Nat, body: RsExpr): RsExpr
+    RsBreak(label: Nat, value: RsExpr): RsExpr
+    RsContinue(label: Nat): RsExpr
+    RsReturn(value: RsExpr): RsExpr
+    RsPrimitive(name: Text, args: List(RsExpr)): RsExpr
+    RsFuture(captures: List(RsExpr), body: RsExpr): RsExpr
+    RsAwait(future: RsExpr): RsExpr
+  }
+  pub(open) inductive RsArm: Type {
+    RsCase(pattern: RsPattern, guard: RsExpr, body: RsExpr): RsArm
+  }
+  pub(open) inductive RsPattern: Type {
+    RsIgnore: RsPattern
+    RsBind(mode: RsUse): RsPattern
+    RsDerefPattern(kind: RsBorrow, body: RsPattern): RsPattern
+    RsBindReference(kind: RsBorrow): RsPattern
+    RsConstant(value: RsLiteral): RsPattern
+    RsConstructor(tag: Nat, fields: List(RsPattern)): RsPattern
+  }
+}
+
+pub(open) inductive RsAddress: Type {
+  RsAddr(root: Nat, fields: List(Nat)): RsAddress
+}
+
+// Handles carry identity; duplicating one does not duplicate its allocation.
+mutual {
+  pub(open) inductive RsValue: Type {
+    RsScalar(value: RsLiteral): RsValue
+    RsData(tag: Nat, is_copy: Bool, fields: List(RsValue)): RsValue
+    RsReference(kind: RsBorrow, address: RsAddress): RsValue
+    RsGlobal(index: Nat): RsValue
+    RsClosure(kind: RsCallable, arity: Nat, captures: List(Nat), body: RsExpr): RsValue
+    RsSuspended(captures: List(Nat), body: RsExpr): RsValue
+    RsHandle(index: Nat): RsValue
+    RsUninitialized: RsValue
+  }
+}
+
+// A moved value is absent. Store cells are not renumbered when one is moved.
+pub(open) inductive RsStore: Type {
+  RsHeap(cells: List(Option(RsValue))): RsStore
+}
+
+pub(open) inductive RsOutcome(A: Type): Type {
+  RsDone(value: A): RsOutcome(A)
+  RsReturned(value: RsValue): RsOutcome(A)
+  RsBroken(label: Nat, value: RsValue): RsOutcome(A)
+  RsContinued(label: Nat): RsOutcome(A)
+  RsPanic: RsOutcome(A)
+  RsExit(code: Int): RsOutcome(A)
+  RsAbort: RsOutcome(A)
+}
+
+pub(open) inductive RsEvent: Type {
+  RsExternal(name: Text, args: List(RsValue), result: RsValue): RsEvent
+  RsFailure(name: Text): RsEvent
+}
+
+pub(open) inductive RsDefinition: Type {
+  RsDef(arity: Nat, body: RsExpr): RsDefinition
+}
+
+// The boundary is instantiated with the selected runtime and host contracts.
+// A runtime operation may fail; lack of a result is not a successful evaluation.
+pub(open) inductive RsResult(A: Type): Type {
+  RsResultOf(outcome: RsOutcome(A), store: RsStore, trace: List(RsEvent)): RsResult(A)
+  RsStuck: RsResult(A)
+}
+
+pub(open) inductive RsRuntime: Type {
+  RsRuntimeOf(
+    invoke: (Text, List(RsValue), RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop
+  ): RsRuntime
+}
+
+pub fn rs_invoke(
+  rt: RsRuntime,
+  name: Text,
+  args: List(RsValue),
+  heap: RsStore,
+  out: RsOutcome(RsValue),
+  next: RsStore,
+  trace: List(RsEvent)
+): Prop {
+  match rt: Prop {
+    RsRuntimeOf(invoke) => invoke(name, args, heap, out, next, trace)
+  }
+}

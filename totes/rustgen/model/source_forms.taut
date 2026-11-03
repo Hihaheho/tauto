@@ -1,0 +1,605 @@
+import "syntax.taut" {
+  rs,
+  rs::Atom::I,
+  rs::BindingPat::I,
+  rs::CtorPatternTail::I,
+  rs::Pattern::I,
+  rs::Statement::I,
+  rs::Suffix::I,
+  rs::Ty::I
+}
+import "core.taut" { RsBorrow }
+import "../../../std/Base.taut" { List, Nat }
+import "../../../std/Text.taut" { Text }
+import "../../../std/Int.taut" { Int }
+
+pub fn rs_source_atom(atom: rs::Atom::I): rs::Expr::I {
+  rs::Expr::I::Mk(atom, Nil)
+}
+
+pub fn rs_source_path_rest(parts: List(Text)): List(rs::Path_Rep1::I) {
+  match parts: List(rs::Path_Rep1::I) {
+    Nil => Nil
+    Cons(part, rest) => Cons(rs::Path_Rep1::I::Mk("::", part), rs_source_path_rest(rest))
+  }
+}
+
+pub fn rs_source_path(parts: List(Text)): rs::Path::I {
+  match parts: rs::Path::I {
+    Nil => rs::Path::I::Mk("", Nil, None)
+    Cons(part, rest) => rs::Path::I::Mk(part, rs_source_path_rest(rest), None)
+  }
+}
+
+pub fn rs_source_name(name: Text): rs::Expr::I {
+  rs_source_atom(Path_I(rs_source_path(Cons(name, Nil))))
+}
+
+pub fn rs_source_id(index: Nat): Text {
+  Text::concat("v", Text::of_nat(index))
+}
+
+pub fn rs_source_label(index: Nat): Text {
+  Text::concat("'l", Text::of_nat(index))
+}
+
+pub fn rs_source_group(expr: rs::Expr::I): rs::Expr::I {
+  rs_source_atom(Group_I(rs::Group::I::Mk("(", expr, ")")))
+}
+
+pub fn rs_source_unit(): rs::Expr::I {
+  rs_source_atom(Unit_I(rs::Unit::I::Mk("(", ")")))
+}
+
+pub fn rs_source_args_rest(args: List(rs::Expr::I)): List(rs::Arguments_Rep1::I) {
+  match args: List(rs::Arguments_Rep1::I) {
+    Nil => Nil
+    Cons(arg, rest) => Cons(rs::Arguments_Rep1::I::Mk(",", arg), rs_source_args_rest(rest))
+  }
+}
+
+pub fn rs_source_args(args: List(rs::Expr::I)): rs::Arguments::I {
+  match args: rs::Arguments::I {
+    Nil => rs::Arguments::I::Mk("(", None, ")")
+    Cons(arg, rest) => rs::Arguments::I::Mk(
+      "(",
+      Some(rs::Arguments_Opt1::I::Mk(arg, rs_source_args_rest(rest), None)),
+      ")"
+    )
+  }
+}
+
+pub fn rs_source_call(callee: rs::Expr::I, args: List(rs::Expr::I)): rs::Expr::I {
+  rs::Expr::I::Mk(
+    Group_I(rs::Group::I::Mk("(", callee, ")")),
+    Cons(Arguments_I(rs_source_args(args)), Nil)
+  )
+}
+
+pub fn rs_source_native(path: rs::Path::I, args: List(rs::Expr::I)): rs::Expr::I {
+  rs::Expr::I::Mk(Path_I(path), Cons(Arguments_I(rs_source_args(args)), Nil))
+}
+
+pub fn rs_source_block(statements: List(rs::Statement::I), tail: rs::Expr::I): rs::Block::I {
+  rs::Block::I::Mk("{", statements, Some(tail), "}")
+}
+
+pub fn rs_source_block_expr(block: rs::Block::I): rs::Expr::I {
+  rs_source_atom(Block_I(block))
+}
+
+pub fn rs_source_bind(id: Nat, ty: Option(rs::Ty::I), init: rs::Expr::I): rs::Statement::I {
+  let annotation: Option(rs::Binding_Opt1::I) := match ty: Option(rs::Binding_Opt1::I) {
+    None => None
+    Some(written) => Some(rs::Binding_Opt1::I::Mk(":", written))
+  }
+  Binding_I(rs::Binding::I::Mk("let", Some("mut"), rs_source_id(id), annotation, "=", init, ";"))
+}
+
+pub fn rs_source_discard(expr: rs::Expr::I): rs::Statement::I {
+  Discard_I(rs::Discard::I::Mk(expr, ";"))
+}
+
+pub fn rs_source_let(
+  id: Nat,
+  ty: Option(rs::Ty::I),
+  init: rs::Expr::I,
+  body: rs::Expr::I
+): rs::Expr::I {
+  rs_source_block_expr(rs_source_block(Cons(rs_source_bind(id, ty, init), Nil), body))
+}
+
+pub fn rs_source_seq(first: rs::Expr::I, second: rs::Expr::I): rs::Expr::I {
+  rs_source_block_expr(rs_source_block(Cons(rs_source_discard(first), Nil), second))
+}
+
+pub fn rs_source_reference(kind: RsBorrow, place: rs::Expr::I): rs::Expr::I {
+  let mutability: Option(Text) := match kind: Option(Text) {
+    RsShared => None
+    RsUnique => Some("mut")
+  }
+  rs_source_atom(Borrow_I(rs::Borrow::I::Mk("(", "&", mutability, place, ")")))
+}
+
+pub fn rs_source_deref(place: rs::Expr::I): rs::Expr::I {
+  rs_source_atom(Unary_I(rs::Unary::I::Mk("(", Star_I("*"), place, ")")))
+}
+
+pub fn rs_source_field(base: rs::Expr::I, field: Nat): rs::Expr::I {
+  rs::Expr::I::Mk(
+    Group_I(rs::Group::I::Mk("(", base, ")")),
+    Cons(Member_I(rs::Member::I::Mk(".", Number_I(Text::of_nat(field)))), Nil)
+  )
+}
+
+pub fn rs_source_write(place: rs::Expr::I, value: rs::Expr::I): rs::Expr::I {
+  rs_source_block_expr(
+    rs_source_block(Cons(Write_I(rs::Write::I::Mk(place, "=", value, ";")), Nil), rs_source_unit())
+  )
+}
+
+pub fn rs_source_if(cond: rs::Expr::I, yes: rs::Expr::I, no: rs::Expr::I): rs::Expr::I {
+  rs_source_atom(
+    Conditional_I(
+      rs::Conditional::I::Mk(
+        "if",
+        "(",
+        cond,
+        ")",
+        rs_source_block(Nil, yes),
+        "else",
+        rs_source_block(Nil, no)
+      )
+    )
+  )
+}
+
+pub fn rs_source_loop(label: Nat, body: rs::Expr::I): rs::Expr::I {
+  rs_source_atom(
+    Repetition_I(
+      rs::Repetition::I::Mk(
+        Some(rs::Repetition_Opt1::I::Mk(rs_source_label(label), ":")),
+        "loop",
+        rs_source_block(Nil, body)
+      )
+    )
+  )
+}
+
+pub fn rs_source_break(label: Nat, value: rs::Expr::I): rs::Expr::I {
+  rs_source_block_expr(
+    rs_source_block(
+      Cons(
+        Break_I(rs::Break::I::Mk("break", Some(rs_source_label(label)), "(", value, ")", ";")),
+        Nil
+      ),
+      rs_source_unit()
+    )
+  )
+}
+
+pub fn rs_source_continue(label: Nat): rs::Expr::I {
+  rs_source_block_expr(
+    rs_source_block(
+      Cons(Continue_I(rs::Continue::I::Mk("continue", Some(rs_source_label(label)), ";")), Nil),
+      rs_source_unit()
+    )
+  )
+}
+
+pub fn rs_source_return(value: rs::Expr::I): rs::Expr::I {
+  rs_source_block_expr(
+    rs_source_block(Cons(Return_I(rs::Return::I::Mk("return", value, ";")), Nil), rs_source_unit())
+  )
+}
+
+pub fn rs_source_suffix(signed: Bool, bits: Nat): Text {
+  Text::concat(if signed { "i" } else { "u" }, Text::of_nat(bits))
+}
+
+pub fn rs_source_positive(value: Nat, signed: Bool, bits: Nat): rs::Expr::I {
+  rs_source_atom(Number_I(Text::concat(Text::of_nat(value), rs_source_suffix(signed, bits))))
+}
+
+pub fn rs_source_integer(value: Int, signed: Bool, bits: Nat): rs::Expr::I {
+  match value: rs::Expr::I {
+    IntOfNat(n) => rs_source_positive(n, signed, bits)
+    IntNegSucc(n) => rs_source_atom(
+      Unary_I(rs::Unary::I::Mk("(", Minus_I("-"), rs_source_positive(Succ(n), signed, bits), ")"))
+    )
+  }
+}
+
+pub fn rs_source_hex_digit(digit: Nat): Nat {
+  if Nat::lt(digit, 10) { 48 + digit } else { 87 + digit }
+}
+
+pub fn rs_source_quote_bytes(bytes: List(Nat)): List(Nat) {
+  match bytes: List(Nat) {
+    Nil => Nil
+    Cons(byte, rest) => if Nat::eq(byte, 34) || Nat::eq(byte, 92) {
+      Cons(92, Cons(byte, rs_source_quote_bytes(rest)))
+    } else if Nat::lt(byte, 32) || Nat::eq(byte, 127) {
+      Cons(
+        92,
+        Cons(
+          120,
+          Cons(
+            rs_source_hex_digit(Nat::div_nz(byte, 16, Nat::ne_zero(16, Refl))),
+            Cons(
+              rs_source_hex_digit(Nat::rem_nz(byte, 16, Nat::ne_zero(16, Refl))),
+              rs_source_quote_bytes(rest)
+            )
+          )
+        )
+      )
+    } else { Cons(byte, rs_source_quote_bytes(rest)) }
+  }
+}
+
+pub fn rs_source_string(value: Text): rs::Expr::I {
+  rs_source_atom(
+    StringLit_I(
+      Text::Mk(Cons(34, List::append(rs_source_quote_bytes(Text::bytes(value)), Cons(34, Nil))))
+    )
+  )
+}
+
+pub fn rs_source_bool(value: Bool): rs::Expr::I {
+  match value: rs::Expr::I {
+    true => rs_source_atom(KwTrue_I("true"))
+    false => rs_source_atom(KwFalse_I("false"))
+  }
+}
+
+pub fn rs_source_named_field(base: rs::Expr::I, field: Text): rs::Expr::I {
+  rs::Expr::I::Mk(
+    Group_I(rs::Group::I::Mk("(", base, ")")),
+    Cons(Member_I(rs::Member::I::Mk(".", rs::Field::I::Name_I(field))), Nil)
+  )
+}
+
+pub fn rs_source_selected_field(base: rs::Expr::I, index: Nat, name: Option(Text)): rs::Expr::I {
+  match name: rs::Expr::I {
+    None => rs_source_field(base, index)
+    Some(written) => rs_source_named_field(base, written)
+  }
+}
+
+pub fn rs_source_await(future: rs::Expr::I): rs::Expr::I {
+  rs::Expr::I::Mk(
+    Group_I(rs::Group::I::Mk("(", future, ")")),
+    Cons(Await_I(rs::Await::I::Mk(".", "await")), Nil)
+  )
+}
+
+pub fn rs_source_selection(scrutinee: rs::Expr::I, arms: List(rs::Arm::I)): rs::Expr::I {
+  rs_source_atom(Selection_I(rs::Selection::I::Mk("match", "(", scrutinee, ")", "{", arms, "}")))
+}
+
+pub fn rs_source_arm(pattern: rs::Pattern::I, guard: rs::Expr::I, body: rs::Expr::I): rs::Arm::I {
+  rs::Arm::I::Mk(pattern, Some(rs::Arm_Opt1::I::Mk("if", guard)), "=>", body, ",")
+}
+
+pub fn rs_source_wild(): rs::Pattern::I {
+  Wild_I("_")
+}
+
+pub fn rs_source_binding_pattern(id: Nat): rs::Pattern::I {
+  BindingPat_I(MutPat_I(rs::MutPat::I::Mk("mut", rs_source_id(id))))
+}
+
+pub fn rs_source_reference_pattern(kind: RsBorrow, id: Nat): rs::Pattern::I {
+  let mutability: Option(Text) := match kind: Option(Text) {
+    RsShared => None
+    RsUnique => Some("mut")
+  }
+  BindingPat_I(RefPat_I(rs::RefPat::I::Mk("ref", mutability, rs_source_id(id))))
+}
+
+pub fn rs_source_type_path_rest(parts: List(Text)): List(rs::TypePath_Rep1::I) {
+  match parts: List(rs::TypePath_Rep1::I) {
+    Nil => Nil
+    Cons(part, rest) => Cons(rs::TypePath_Rep1::I::Mk("::", part), rs_source_type_path_rest(rest))
+  }
+}
+
+pub fn rs_source_type_name(parts: List(Text)): rs::Ty::I {
+  let path: rs::TypePath::I := match parts: rs::TypePath::I {
+    Nil => rs::TypePath::I::Mk("", Nil, None)
+    Cons(part, rest) => rs::TypePath::I::Mk(part, rs_source_type_path_rest(rest), None)
+  }
+  rs::Ty::I::TypePath_I(path)
+}
+
+pub fn rs_source_unit_type(): rs::Ty::I {
+  TupleTy_I(rs::TupleTy::I::Mk("(", rs::Types::I::Mk(None), ")"))
+}
+
+pub fn rs_source_str_type(lifetime: Option(Text)): rs::Ty::I {
+  RefTy_I(rs::RefTy::I::Mk("&", lifetime, None, rs_source_type_name(Cons("str", Nil))))
+}
+
+pub fn rs_source_statements(
+  first: List(rs::Statement::I),
+  second: List(rs::Statement::I),
+  tail: rs::Expr::I
+): rs::Expr::I {
+  rs_source_block_expr(rs_source_block(List::append(first, second), tail))
+}
+
+pub fn rs_source_pattern_rest(patterns: List(rs::Pattern::I)): List(rs::ConstructorArgs_Rep1::I) {
+  match patterns: List(rs::ConstructorArgs_Rep1::I) {
+    Nil => Nil
+    Cons(pattern, rest) => Cons(
+      rs::ConstructorArgs_Rep1::I::Mk(",", pattern),
+      rs_source_pattern_rest(rest)
+    )
+  }
+}
+
+pub fn rs_source_pattern_args(patterns: List(rs::Pattern::I)): rs::ConstructorArgs::I {
+  let fields: Option(
+    rs::ConstructorArgs_Opt1::I
+  ) := match patterns: Option(rs::ConstructorArgs_Opt1::I) {
+    Nil => None
+    Cons(pattern, rest) => Some(
+      rs::ConstructorArgs_Opt1::I::Mk(pattern, rs_source_pattern_rest(rest), None)
+    )
+  }
+  rs::ConstructorArgs::I::Mk("(", fields, ")")
+}
+
+pub fn rs_source_qualified_pattern_rest(parts: List(Text)): List(rs::QualifiedCtorPattern_Rep1::I) {
+  match parts: List(rs::QualifiedCtorPattern_Rep1::I) {
+    Nil => Nil
+    Cons(part, rest) => Cons(
+      rs::QualifiedCtorPattern_Rep1::I::Mk("::", part),
+      rs_source_qualified_pattern_rest(rest)
+    )
+  }
+}
+
+pub fn rs_source_named_pattern(
+  family: List(Text),
+  variant: Text,
+  fields: Option(rs::CtorPatternFields::I)
+): rs::Pattern::I {
+  let parts: List(Text) := List::append(family, Cons(variant, Nil))
+  match parts: rs::Pattern::I {
+    Nil => rs_source_wild()
+    Cons(root, rest) => match rest: rs::Pattern::I {
+      Nil => match fields: rs::Pattern::I {
+        None => BindingPat_I(rs::BindingPat::I::Name_I(root))
+        Some(field_syntax) => match field_syntax: rs::Pattern::I {
+          ConstructorArgs_I(args) => ConstructorPat_I(
+            rs::ConstructorPat::I::Mk(root, ConstructorArgs_I(args))
+          )
+          RecordPatternArgs_I(args) => ConstructorPat_I(
+            rs::ConstructorPat::I::Mk(root, RecordPatternArgs_I(args))
+          )
+        }
+      }
+      Cons(next, remaining) => ConstructorPat_I(
+        rs::ConstructorPat::I::Mk(
+          root,
+          QualifiedCtorPattern_I(
+            rs::QualifiedCtorPattern::I::Mk(
+              "::",
+              next,
+              rs_source_qualified_pattern_rest(remaining),
+              fields
+            )
+          )
+        )
+      )
+    }
+  }
+}
+
+pub fn rs_source_constructor_pattern(
+  family: List(Text),
+  variant: Text,
+  patterns: List(rs::Pattern::I)
+): rs::Pattern::I {
+  rs_source_named_pattern(
+    family,
+    variant,
+    Some(rs::CtorPatternFields::I::ConstructorArgs_I(rs_source_pattern_args(patterns)))
+  )
+}
+
+pub fn rs_source_deref_pattern(kind: RsBorrow, pattern: rs::Pattern::I): rs::Pattern::I {
+  let mutability: Option(Text) := match kind: Option(Text) {
+    RsShared => None
+    RsUnique => Some("mut")
+  }
+  ReferencePat_I(
+    rs::ReferencePat::I::Mk("&", mutability, rs::GroupPattern::I::Mk("(", pattern, ")"))
+  )
+}
+
+pub fn rs_source_tuple_expr_rest(exprs: List(rs::Expr::I)): List(rs::Tuple_Rep1::I) {
+  match exprs: List(rs::Tuple_Rep1::I) {
+    Nil => Nil
+    Cons(expr, rest) => Cons(rs::Tuple_Rep1::I::Mk(",", expr), rs_source_tuple_expr_rest(rest))
+  }
+}
+
+pub fn rs_source_tuple(exprs: List(rs::Expr::I)): rs::Expr::I {
+  match exprs: rs::Expr::I {
+    Nil => rs_source_unit()
+    Cons(first, rest) => {
+      let tail: Option(rs::Tuple_Opt1::I) := match rest: Option(rs::Tuple_Opt1::I) {
+        Nil => None
+        Cons(second, remaining) => Some(
+          rs::Tuple_Opt1::I::Mk(second, rs_source_tuple_expr_rest(remaining), None)
+        )
+      }
+      rs_source_atom(Tuple_I(rs::Tuple::I::Mk("(", first, ",", tail, ")")))
+    }
+  }
+}
+
+pub fn rs_source_tuple_pattern_rest(
+  patterns: List(rs::Pattern::I)
+): List(rs::TuplePattern_Rep1::I) {
+  match patterns: List(rs::TuplePattern_Rep1::I) {
+    Nil => Nil
+    Cons(pattern, rest) => Cons(
+      rs::TuplePattern_Rep1::I::Mk(",", pattern),
+      rs_source_tuple_pattern_rest(rest)
+    )
+  }
+}
+
+pub fn rs_source_tuple_pattern(patterns: List(rs::Pattern::I)): rs::Pattern::I {
+  match patterns: rs::Pattern::I {
+    Nil => UnitPattern_I(rs::UnitPattern::I::Mk("(", ")"))
+    Cons(first, rest) => {
+      let tail: Option(rs::TuplePattern_Opt1::I) := match rest: Option(rs::TuplePattern_Opt1::I) {
+        Nil => None
+        Cons(second, remaining) => Some(
+          rs::TuplePattern_Opt1::I::Mk(second, rs_source_tuple_pattern_rest(remaining), None)
+        )
+      }
+      TuplePattern_I(rs::TuplePattern::I::Mk("(", first, ",", tail, ")"))
+    }
+  }
+}
+
+pub fn rs_source_record_fields(
+  names: List(Text),
+  exprs: List(rs::Expr::I)
+): List(rs::Initializer::I) {
+  match names: List(rs::Initializer::I) {
+    Nil => Nil
+    Cons(name, rest) => match exprs: List(rs::Initializer::I) {
+      Nil => Nil
+      Cons(expr, remaining) => Cons(
+        rs::Initializer::I::Mk(name, ":", expr),
+        rs_source_record_fields(rest, remaining)
+      )
+    }
+  }
+}
+
+pub fn rs_source_record_rest(fields: List(rs::Initializer::I)): List(rs::Initializers_Rep1::I) {
+  match fields: List(rs::Initializers_Rep1::I) {
+    Nil => Nil
+    Cons(field, rest) => Cons(rs::Initializers_Rep1::I::Mk(",", field), rs_source_record_rest(rest))
+  }
+}
+
+pub fn rs_source_record(
+  path: rs::Path::I,
+  names: List(Text),
+  exprs: List(rs::Expr::I)
+): rs::Expr::I {
+  let fields: Option(
+    rs::Initializers_Opt1::I
+  ) := match rs_source_record_fields(names, exprs): Option(rs::Initializers_Opt1::I) {
+    Nil => None
+    Cons(field, rest) => Some(
+      rs::Initializers_Opt1::I::Mk(field, rs_source_record_rest(rest), None)
+    )
+  }
+  rs_source_atom(
+    Record_I(rs::Record::I::Mk("(", path, "{", rs::Initializers::I::Mk(fields), "}", ")"))
+  )
+}
+
+pub fn rs_source_record_pattern_fields(
+  names: List(Text),
+  patterns: List(rs::Pattern::I)
+): List(rs::RecordPatternField::I) {
+  match names: List(rs::RecordPatternField::I) {
+    Nil => Nil
+    Cons(name, rest) => match patterns: List(rs::RecordPatternField::I) {
+      Nil => Nil
+      Cons(pattern, remaining) => Cons(
+        rs::RecordPatternField::I::Mk(name, ":", pattern),
+        rs_source_record_pattern_fields(rest, remaining)
+      )
+    }
+  }
+}
+
+pub fn rs_source_record_pattern_rest(
+  fields: List(rs::RecordPatternField::I)
+): List(rs::RecordPatternArgs_Rep1::I) {
+  match fields: List(rs::RecordPatternArgs_Rep1::I) {
+    Nil => Nil
+    Cons(field, rest) => Cons(
+      rs::RecordPatternArgs_Rep1::I::Mk(",", field),
+      rs_source_record_pattern_rest(rest)
+    )
+  }
+}
+
+pub fn rs_source_record_pattern(
+  family: List(Text),
+  variant: Text,
+  names: List(Text),
+  patterns: List(rs::Pattern::I)
+): rs::Pattern::I {
+  let fields: Option(
+    rs::RecordPatternArgs_Opt1::I
+  ) := match rs_source_record_pattern_fields(
+    names,
+    patterns
+  ): Option(rs::RecordPatternArgs_Opt1::I) {
+    Nil => None
+    Cons(field, rest) => Some(
+      rs::RecordPatternArgs_Opt1::I::Mk(field, rs_source_record_pattern_rest(rest), None)
+    )
+  }
+  rs_source_named_pattern(
+    family,
+    variant,
+    Some(
+      rs::CtorPatternFields::I::RecordPatternArgs_I(rs::RecordPatternArgs::I::Mk("{", fields, "}"))
+    )
+  )
+}
+
+pub fn rs_source_integer_suffix(value: Int, suffix: Text): rs::Expr::I {
+  match value: rs::Expr::I {
+    IntOfNat(n) => rs_source_atom(rs::Atom::I::Number_I(Text::concat(Text::of_nat(n), suffix)))
+    IntNegSucc(n) => rs_source_atom(
+      Unary_I(
+        rs::Unary::I::Mk(
+          "(",
+          rs::UnaryOp::I::Minus_I("-"),
+          rs_source_atom(rs::Atom::I::Number_I(Text::concat(Text::of_nat(Succ(n)), suffix))),
+          ")"
+        )
+      )
+    )
+  }
+}
+
+pub fn rs_source_word_suffix(signed: Bool): Text {
+  if signed { "isize" } else { "usize" }
+}
+
+pub fn rs_source_binary(op: rs::Op::I, left: rs::Expr::I, right: rs::Expr::I): rs::Expr::I {
+  rs_source_atom(Binary_I(rs::Binary::I::Mk("(", left, op, right, ")")))
+}
+
+pub fn rs_source_not(expr: rs::Expr::I): rs::Expr::I {
+  rs_source_atom(Unary_I(rs::Unary::I::Mk("(", rs::UnaryOp::I::NeverTy_I("!"), expr, ")")))
+}
+
+pub fn rs_source_float_type(single: Bool): rs::Ty::I {
+  rs_source_type_name(Cons(if single { "f32" } else { "f64" }, Nil))
+}
+
+pub fn rs_source_float(bits: Nat, single: Bool): rs::Expr::I {
+  let type_name: Text := if single { "f32" } else { "f64" }
+  let suffix: Text := if single { "u32" } else { "u64" }
+  rs_source_native(
+    rs_source_path(Cons(type_name, Cons("from_bits", Nil))),
+    Cons(rs_source_atom(rs::Atom::I::Number_I(Text::concat(Text::of_nat(bits), suffix))), Nil)
+  )
+}

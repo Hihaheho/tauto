@@ -17,6 +17,8 @@
 //! checks the source declarations; extraction and the runtime backend are
 //! responsible for preserving their behavior in executable code.
 
+mod dependent;
+
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -606,12 +608,13 @@ pub const EXTRACTED_END: &str = "// tauto:extracted-end\n";
 /// because they use those laws are erased and do not prevent extraction.
 pub fn extract_files(roots: &[PathBuf]) -> Result<String, String> {
     let input = crate::read::check_files_for_extraction(roots, true, false)?;
-    extract_checked(&input, false, roots).map(|(text, _, _)| text)
+    extract_checked(&input, false, roots).map(|(text, _, _, _)| text)
 }
 
 pub(crate) struct Extracted {
     pub texts: Vec<(PathBuf, String)>,
     pub total: HashSet<String>,
+    pub protected: HashSet<String>,
     /// For each file read again to run, whether each declaration its macros
     /// made, in order, runs as written. The text keeps the macro calls, so
     /// they make their declarations again; one the kernel read is in
@@ -624,6 +627,46 @@ pub(crate) struct Extracted {
     /// file of theirs is read again to run: where the tables of a syntax
     /// they declare are, which an extracted `syn_parse` reads at run time.
     pub syntax_dirs: Vec<PathBuf>,
+}
+
+/// The original files have already passed visibility checking. Generated
+/// representations need an additional boundary check after their types exist.
+pub(crate) fn dependent_visibility(
+    loaded: &crate::program::Loaded,
+    protected: &HashSet<String>,
+) -> Vec<(String, tauto_parol::Span)> {
+    use crate::surface::Vis;
+    if protected.is_empty() {
+        return Vec::new();
+    }
+    let mut files = loaded.kernel_files.clone();
+    fn open_original(s: &mut Stmt, protected: &HashSet<String>) {
+        let generated = |n: &str| {
+            protected.contains(n) || protected.contains(crate::surface::qualify::short(n))
+        };
+        match s {
+            Stmt::Fn(f) if !generated(&f.name) => f.vis = Vis::Pub,
+            Stmt::Struct(d) | Stmt::Enum(d) if !generated(&d.name) => d.vis = Vis::Open,
+            Stmt::Inductive(i) => i.vis = Vis::Open,
+            Stmt::Theorem(t) | Stmt::Def(t) => t.vis = Vis::Pub,
+            Stmt::Effect(e) => e.vis = Vis::Open,
+            Stmt::Class(c) => c.vis = Vis::Pub,
+            Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => {
+                items.iter_mut().for_each(|s| open_original(s, protected))
+            }
+            _ => {}
+        }
+    }
+    let empty = HashSet::new();
+    for (file, stmts) in loaded.files.iter().zip(&mut files) {
+        let protected = if file.path == Path::new(EXTRACTED_PATH) {
+            protected
+        } else {
+            &empty
+        };
+        stmts.iter_mut().for_each(|s| open_original(s, protected));
+    }
+    crate::surface::qualify::sealed_visibility(&files, &crate::program::module_names(&loaded.files))
 }
 
 /// Whether `s` is a declaration a macro made: its span is one of an
@@ -651,7 +694,7 @@ fn is_prelude_marker(path: &Path) -> bool {
 
 pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
     let input = crate::read::check_files_for_extraction(roots, true, true)?;
-    let (text, mut runtime, total) = extract_checked(&input, true, roots)?;
+    let (text, mut runtime, total, protected) = extract_checked(&input, true, roots)?;
     // The non-core prelude files `extracted.taut` imports (its leading
     // `import std::prelude::X` lines), as the files the loader reads for them.
     let prelude_files: Vec<PathBuf> = crate::surface::parse_program_unresolved_at(&text, 0)
@@ -795,6 +838,7 @@ pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
     Ok(Extracted {
         texts: runtime,
         total,
+        protected,
         generated,
         imports,
         syntax_dirs,
@@ -893,6 +937,7 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
     std_names.own = own;
     std_names.std = std;
     let mut ex = Extractor {
+        dependent: None,
         checked: &checked,
         generated: HashSet::new(),
         out: String::from(HELPERS),
@@ -1066,12 +1111,21 @@ fn extract_checked(
     input: &crate::read::ExtractionInput,
     mixed: bool,
     roots: &[PathBuf],
-) -> Result<(String, Vec<(PathBuf, String)>, HashSet<String>), String> {
+) -> Result<
+    (
+        String,
+        Vec<(PathBuf, String)>,
+        HashSet<String>,
+        HashSet<String>,
+    ),
+    String,
+> {
     let checked = &input.checked;
     let mut problems = Vec::new();
     let unproved = unproved_laws(&checked);
     let generated = generated_nib_names(input);
-    let unused = unused_imported(input, roots);
+    let read_time = read_time_functions(input);
+    let unused = unused_imported(input, roots, &read_time);
     for e in &checked.entries {
         match &e.entry.verdict {
             // What `inductive_syntax!` makes for Nib (the tree `<syntax>.parse` reads, the reader and
@@ -1130,14 +1184,16 @@ fn extract_checked(
         return Err(problems.join("\n"));
     }
     let std = StdNames::new(&input.sources);
+    let lowered = dependent::lower(input, roots, &std)?;
     let mut ex = Extractor {
+        dependent: None,
         checked: &checked,
         generated: generated.clone(),
         out: String::from(HELPERS),
         fresh: 0,
         mixed,
         needed: if mixed {
-            reachable(input, roots)?
+            reachable(input, roots, &read_time)?
         } else {
             HashSet::new()
         },
@@ -1162,6 +1218,37 @@ fn extract_checked(
     if checked.families.contains_key("I64") {
         ex.out.push_str(&sint_helpers());
     }
+    if let Some(lowered) = lowered {
+        ex.out.push_str(&lowered.text);
+        ex.total.extend(lowered.total.iter().cloned());
+        ex.written.extend(lowered.exports.iter().cloned());
+        ex.needed.extend(lowered.functions.iter().cloned());
+        ex.refined_takers
+            .extend(lowered.functions.difference(&lowered.exports).cloned());
+        for name in &lowered.functions {
+            if let Some(sig) = checked.signatures.get(name) {
+                let arity = checked
+                    .arities
+                    .get(name)
+                    .copied()
+                    .unwrap_or(sig.params.len());
+                if sig
+                    .params
+                    .get(sig.implicit..arity)
+                    .is_some_and(|params| params.contains(&Role::Proof))
+                {
+                    ex.proof_takers.insert(name.clone());
+                }
+            }
+        }
+        for family in &lowered.families {
+            if let Some(f) = checked.families.get(family) {
+                ex.refined_takers.extend(f.ctors.iter().cloned());
+                ex.refined_takers.insert(family.clone());
+            }
+        }
+        ex.dependent = Some(lowered);
+    }
     for (file, stmts) in &input.sources {
         ex.file(file, stmts)?;
     }
@@ -1170,6 +1257,16 @@ fn extract_checked(
         ex.runtime_files()?;
     }
     let (out, renamed) = legal_names(&ex.out);
+    let protected = ex
+        .dependent
+        .as_ref()
+        .map(|d| {
+            d.protected
+                .iter()
+                .map(|n| renamed.get(n).cloned().unwrap_or_else(|| n.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     let out = with_prelude_imports(&out, &ex.std.own);
     let total = ex
         .total
@@ -1182,6 +1279,7 @@ fn extract_checked(
         format!("{EXTRACTED_BEGIN}{text}\n{EXTRACTED_END}"),
         ex.runtime,
         total,
+        protected,
     ))
 }
 
@@ -1390,6 +1488,7 @@ fn runtime_source(
     runtime: &HashSet<String>,
     std: &StdNames,
     written: &HashSet<String>,
+    called: &HashSet<String>,
     ctors: Ctors,
 ) -> String {
     let Ctors {
@@ -1417,12 +1516,14 @@ fn runtime_source(
         base: u32,
         stmts: &[Stmt],
         runtime: &HashSet<String>,
+        macro_fns: &HashSet<String>,
     ) {
         for s in stmts {
             if executable(s, runtime) {
                 continue;
             }
             let span = match s {
+                Stmt::Fn(f) if macro_fns.contains(f.name.as_str()) => continue,
                 Stmt::Fn(f) => f.span,
                 // An effect the proofs read is declared once, where it is
                 // extracted, so that the code that runs handles that effect.
@@ -1461,9 +1562,27 @@ fn runtime_source(
     // was checked with, so that its names mean what they meant then. A
     // macro call that makes statements is erased: what it made is in the
     // expanded statements, and calling it again would declare it twice.
+    // The function of a `macro fn` whose macro an expression still calls is kept
+    // as written: the program read again to run registers the macro from it and
+    // expands those calls.
+    let mut macro_fns: HashSet<String> = HashSet::new();
+    let mut syntaxes = Vec::new();
     if let Ok(written) = crate::surface::parse_program_unresolved_at(text, base) {
         for stmt in &written.stmts {
             match stmt {
+                Stmt::Syntax {
+                    inductive: false,
+                    span,
+                    ..
+                } => syntaxes.push(*span),
+                Stmt::Macro { name, function, .. } if called.contains(name) => {
+                    macro_fns.insert(function.clone());
+                }
+                // A `macro fn` no expression calls is erased with its keyword:
+                // erasing only the function would leave `macro` alone.
+                Stmt::Macro { function, span, .. } if !runtime.contains(function) => {
+                    blank(&mut bytes, *span, base)
+                }
                 Stmt::Called { span, .. } => blank(&mut bytes, *span, base),
                 Stmt::Attributed { stmt, span, .. } => {
                     // The declaration an attribute is given stays as written
@@ -1484,7 +1603,22 @@ fn runtime_source(
             }
         }
     }
-    erase(&mut bytes, text.as_bytes(), base, stmts, runtime);
+    erase(
+        &mut bytes,
+        text.as_bytes(),
+        base,
+        stmts,
+        runtime,
+        &macro_fns,
+    );
+    // A native syntax and its generated parser share a source span. Erasing
+    // an unused parser must not erase the grammar that declares its input types.
+    for span in syntaxes {
+        let r = range(span, base);
+        if let (Some(to), Some(from)) = (bytes.get_mut(r.clone()), text.as_bytes().get(r)) {
+            to.copy_from_slice(from);
+        }
+    }
     // An `include_text!` that is kept is written as the literal it was read
     // as: the source is read again without the file it was in. The literal
     // has no line break, so the lines after it stay where they were.
@@ -2013,17 +2147,61 @@ fn words(text: &str, base: u32, start: u32, end: u32) -> Vec<(u32, &str)> {
     out
 }
 
+// The functions needed while the runtime source is read again: macros still
+// called by its expressions and the tools its native syntaxes register.
+fn read_time_functions(input: &crate::read::ExtractionInput) -> HashSet<String> {
+    let written: Vec<_> = input
+        .sources
+        .iter()
+        .filter(|(_, stmts)| stmts.iter().any(|s| executable(s, &input.checked.runtime)))
+        .filter_map(|(file, stmts)| {
+            crate::surface::parse_program_unresolved_at(&file.text, file.base)
+                .ok()
+                .map(|p| (stmts, p))
+        })
+        .collect();
+    let mut called = HashSet::new();
+    for (_, program) in &written {
+        for mut stmt in program.stmts.clone() {
+            crate::surface::walk::stmt(&mut stmt, &mut |term| {
+                if let TermKind::MacroCall { name, .. } = &*term.kind {
+                    called.insert(name.clone());
+                }
+            });
+        }
+    }
+    let mut needed = input.registered.clone();
+    for (stmts, program) in &written {
+        for stmt in &program.stmts {
+            if let Stmt::Macro { name, span, .. } = stmt
+                && called.contains(name)
+            {
+                for stmt in *stmts {
+                    if let Stmt::Fn(f) = stmt
+                        && span.start <= f.span.start
+                        && f.span.end <= span.end
+                    {
+                        needed.insert(f.name.clone());
+                    }
+                }
+            }
+        }
+    }
+    needed
+}
+
 // Proof-only helper functions are checked but need no executable representation.
 fn reachable(
     input: &crate::read::ExtractionInput,
     roots: &[PathBuf],
+    read_time: &HashSet<String>,
 ) -> Result<HashSet<String>, String> {
     let checked = &input.checked;
     let exports: HashSet<_> = roots
         .iter()
         .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
         .collect();
-    let mut needed = HashSet::new();
+    let mut needed = read_time.clone();
     let mut candidates = HashSet::new();
     let mut unsupported = HashSet::new();
     let mut dependencies = std::collections::HashMap::<String, HashSet<String>>::new();
@@ -2075,6 +2253,7 @@ fn reachable(
                 _ => None,
             } {
                 let mut probe = Extractor {
+                    dependent: None,
                     checked,
                     generated: HashSet::new(),
                     out: String::new(),
@@ -2166,7 +2345,11 @@ fn reachable(
 /// The functions declared in imported files that are not reached from the
 /// files named on the command line. Everything in the named files is
 /// extracted, and an error there is still reported.
-fn unused_imported(input: &crate::read::ExtractionInput, roots: &[PathBuf]) -> HashSet<String> {
+fn unused_imported(
+    input: &crate::read::ExtractionInput,
+    roots: &[PathBuf],
+    read_time: &HashSet<String>,
+) -> HashSet<String> {
     let named: HashSet<_> = roots
         .iter()
         .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
@@ -2195,7 +2378,7 @@ fn unused_imported(input: &crate::read::ExtractionInput, roots: &[PathBuf]) -> H
         });
     }
     let mut imported = std::collections::HashMap::<String, Stmt>::new();
-    let mut needed = HashSet::new();
+    let mut needed = read_time.clone();
     for (file, stmts) in &input.sources {
         let mut flat = Vec::new();
         flatten(stmts, &mut flat);
@@ -2231,6 +2414,7 @@ fn unused_imported(input: &crate::read::ExtractionInput, roots: &[PathBuf]) -> H
 }
 
 struct Extractor<'a> {
+    dependent: Option<dependent::Lowered>,
     checked: &'a Checked,
     generated: HashSet<String>,
     out: String,
@@ -2413,6 +2597,21 @@ impl Extractor<'_> {
             .filter(|n| !self.unused.contains(*n))
             .cloned()
             .collect();
+        // The macros the files read again still call in an expression: their
+        // calls are expanded again there, so their `macro fn`s stay.
+        let mut called: HashSet<String> = HashSet::new();
+        for (file, _) in &self.pending {
+            if let Ok(written) = crate::surface::parse_program_unresolved_at(&file.text, file.base)
+            {
+                for mut s in written.stmts {
+                    crate::surface::walk::stmt(&mut s, &mut |t| {
+                        if let TermKind::MacroCall { name, .. } = &*t.kind {
+                            called.insert(name.clone());
+                        }
+                    });
+                }
+            }
+        }
         for (file, stmts) in std::mem::take(&mut self.pending) {
             let source = runtime_source(
                 &file.text,
@@ -2421,6 +2620,7 @@ impl Extractor<'_> {
                 &kept,
                 &self.std,
                 &self.written,
+                &called,
                 Ctors {
                     struct_of: &|c| self.struct_fields(c).map(|(family, _)| family),
                     struct_fields: &|c| self.struct_fields(c),
@@ -2446,6 +2646,52 @@ impl Extractor<'_> {
         stmts: &[Stmt],
         problems: &mut Vec<String>,
     ) {
+        if let Some(d) = &self.dependent {
+            for statement in stmts {
+                if !executable(statement, &self.checked.runtime) {
+                    continue;
+                }
+                let mut statement = statement.clone();
+                crate::surface::walk::stmt(&mut statement, &mut |t| {
+                    if let TermKind::Match { arms, .. } = &*t.kind {
+                        fn forbidden_pattern(
+                            p: &Pattern,
+                            checked: &Checked,
+                            families: &HashSet<String>,
+                        ) -> bool {
+                            let (name, children): (&str, Vec<&Pattern>) = match p {
+                                Pattern::Bind(n) => (n, Vec::new()),
+                                Pattern::Ctor { name, args } => (name, args.iter().collect()),
+                                Pattern::Record { name, fields } => {
+                                    (name, fields.iter().map(|(_, p)| p).collect())
+                                }
+                                Pattern::Tuple(ps) => ("", ps.iter().collect()),
+                                _ => ("", Vec::new()),
+                            };
+                            families.iter().any(|f| {
+                                f == name
+                                    || checked
+                                        .families
+                                        .get(f)
+                                        .is_some_and(|f| f.ctors.iter().any(|c| c == name))
+                            }) || children
+                                .into_iter()
+                                .any(|p| forbidden_pattern(p, checked, families))
+                        }
+                        if arms
+                            .iter()
+                            .any(|a| forbidden_pattern(&a.pattern, self.checked, &d.families))
+                        {
+                            problems.push(format!(
+                                "{}: {}",
+                                file.path.display(),
+                                msg!("tauto-extract-opaque-dependent-pattern")
+                            ));
+                        }
+                    }
+                });
+            }
+        }
         let runtime = &self.checked.runtime;
         let refined_takers = &self.refined_takers;
         // A function by the parameters a call writes; a constructor by its
@@ -2489,11 +2735,6 @@ impl Extractor<'_> {
                         (n.clone(), "tauto-extract-unchecked-takes-refined")
                     }
                     TermKind::Record { name, .. }
-                        if !runtime.contains(name) && refined_takers.contains(name) =>
-                    {
-                        (name.clone(), "tauto-extract-unchecked-refined-field")
-                    }
-                    TermKind::Record { name, .. }
                         if !runtime.contains(name)
                             && self
                                 .checked
@@ -2502,6 +2743,11 @@ impl Extractor<'_> {
                                 .is_some_and(|(ctor, _)| takes_proof(ctor)) =>
                     {
                         (name.clone(), "tauto-extract-unchecked-proof-field")
+                    }
+                    TermKind::Record { name, .. }
+                        if !runtime.contains(name) && refined_takers.contains(name) =>
+                    {
+                        (name.clone(), "tauto-extract-unchecked-refined-field")
                     }
                     _ => return,
                 };
@@ -2537,6 +2783,13 @@ impl Extractor<'_> {
     }
 
     fn inductive(&mut self, path: &Path, i: &InductiveDecl) -> Result<(), String> {
+        if self
+            .dependent
+            .as_ref()
+            .is_some_and(|d| d.families.contains(&i.name))
+        {
+            return Ok(());
+        }
         let Some(fam) = self.checked.families.get(&i.name) else {
             return fail(path, msg!("tauto-extract-did-not-check", name = &i.name));
         };
@@ -2737,7 +2990,18 @@ impl Extractor<'_> {
     }
 
     fn function(&mut self, path: &Path, f: &FnDecl) -> Result<(), String> {
-        if (self.mixed && !self.needed.contains(&f.name)) || self.unused.contains(&f.name) {
+        if self
+            .dependent
+            .as_ref()
+            .is_some_and(|d| d.functions.contains(&f.name))
+        {
+            return Ok(());
+        }
+        if if self.mixed {
+            !self.needed.contains(&f.name)
+        } else {
+            self.unused.contains(&f.name)
+        } {
             return Ok(());
         }
         let mut stripped = f.clone();
@@ -4897,7 +5161,7 @@ perform show("value", twice(2))
         let input = crate::read::check_files_for_extraction(&roots, false, true).unwrap();
         std::fs::write(&source, r#"fn twice(n: Nat): Nat { twice(n) }"#).unwrap();
         std::fs::remove_file(&included).unwrap();
-        let (text, runtime, total) = extract_checked(&input, true, &roots).unwrap();
+        let (text, runtime, total, _) = extract_checked(&input, true, &roots).unwrap();
         assert!(total.contains("twice"));
         assert!(text.contains("+ 1"), "{text}");
         assert!(

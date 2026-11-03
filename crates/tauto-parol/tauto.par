@@ -590,8 +590,13 @@ MutualItem: [ Visibility ] MutualMember ;
 MutualMember: InductiveDecl | FnDecl | TheoremDecl ;
 // `import "Std.taut"`: the declarations of another file, found relative to
 // this one and checked once. `import std::List` names a file of the standard
-// library that comes with tauto, wherever the importing file is.
-ImportDecl: KwImport ( Text | Ident ) ;
+// library that comes with tauto, wherever the importing file is. With a list,
+// `import std::List { List, map }`, it brings only the names the list writes,
+// a type with its constructors.
+ImportDecl: KwImport ( Text | Ident ) [ ImportList ] ;
+ImportList: LBrace ImportNames RBrace ;
+ImportNames: { MemberSep } [ Ident ImportNamesTail ] ;
+ImportNamesTail: [ MemberSep { MemberSep } [ Ident ImportNamesTail ] ] ;
 // `def RenOk(xi: (Nat) -> Nat, g: List(Ty), d: List(Ty)): Prop := ∀ i: Nat. …`: a
 // definition whose body is a type (a proposition or a type former), which
 // the expression grammar cannot write.

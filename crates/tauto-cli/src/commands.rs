@@ -47,6 +47,7 @@ pub(crate) const BUILT_IN: &[&str] = &[
     "lock",
     "lsp",
     "macro",
+    "proof",
     "proof-status",
     "publish-crates",
     "remove",

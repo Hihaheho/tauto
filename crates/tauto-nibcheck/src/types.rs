@@ -1167,7 +1167,7 @@ static PRELUDE: OnceLock<Program> = OnceLock::new();
 
 pub fn prelude() -> &'static Program {
     PRELUDE.get_or_init(|| {
-        let program = expand_classes(
+        let program = expand::expand_prelude(
             prelude_source().clone(),
             crate::surface::PRELUDE_BASE + (1 << 30),
         );

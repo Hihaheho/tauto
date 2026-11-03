@@ -1,0 +1,111 @@
+import "syntax.taut" { rs }
+import "core.taut" { RsLiteral, RsUse }
+import "source_context.taut" {
+  RsSourceSignature,
+  RsSourceType,
+  rs_source_type,
+  rs_source_word_bits
+}
+import "source_forms.taut" {
+  rs_source_bool,
+  rs_source_float,
+  rs_source_float_type,
+  rs_source_integer,
+  rs_source_integer_suffix,
+  rs_source_str_type,
+  rs_source_string,
+  rs_source_suffix,
+  rs_source_type_name,
+  rs_source_unit,
+  rs_source_unit_type,
+  rs_source_word_suffix
+}
+import "integer.taut" { rs_integer_fits, rs_power_two }
+import "../../../std/Text.taut" { Text, utf8_valid }
+import "../../../std/Int.taut" { Int }
+
+pub fn rs_source_float_width(single: Bool): Nat { if single { 32 } else { 64 } }
+
+// The source relation consumes static signatures, not a Rust inference engine.
+// The same signatures fix each local's use and each foreign call's ABI.
+pub(open) inductive RsSourceLiteral(sig: RsSourceSignature): (RsLiteral, Nat, rs::Expr::I) -> Prop {
+  RsSourceUnit<ty: Nat>(
+    declared: rs_source_type(
+      sig,
+      ty
+    ) = Some(RsSourceTypeOf(rs_source_unit_type(), RsCopy, None, Nil, None))
+  ): RsSourceLiteral(sig, RsUnit, ty, rs_source_unit())
+  RsSourceBool<b: Bool, ty: Nat>(
+    declared: rs_source_type(
+      sig,
+      ty
+    ) = Some(RsSourceTypeOf(rs_source_type_name(Cons("bool", Nil)), RsCopy, None, Nil, None))
+  ): RsSourceLiteral(sig, RsBool(b), ty, rs_source_bool(b))
+  RsSourceInteger<i: Int, signed: Bool, bits: Nat, ty: Nat>(
+    width: (
+      Nat::eq(
+        bits,
+        8
+      ) || Nat::eq(bits, 16) || Nat::eq(bits, 32) || Nat::eq(bits, 64) || Nat::eq(bits, 128)
+    ) = true,
+    valid: rs_integer_fits(i, signed, bits) = true,
+    declared: rs_source_type(
+      sig,
+      ty
+    ) = Some(
+      RsSourceTypeOf(
+        rs_source_type_name(Cons(rs_source_suffix(signed, bits), Nil)),
+        RsCopy,
+        None,
+        Nil,
+        None
+      )
+    )
+  ): RsSourceLiteral(sig, RsInteger(i, signed, bits), ty, rs_source_integer(i, signed, bits))
+  RsSourceStr<value: Text, ty: Nat, lifetime: Option(
+    Text
+  )>(
+    valid: utf8_valid(Text::bytes(value)) = true,
+    declared: rs_source_type(
+      sig,
+      ty
+    ) = Some(RsSourceTypeOf(rs_source_str_type(lifetime), RsCopy, None, Nil, None))
+  ): RsSourceLiteral(sig, RsStr(value), ty, rs_source_string(value))
+  RsSourceWordInteger<i: Int, signed: Bool, ty: Nat>(
+    width: (Nat::eq(rs_source_word_bits(sig), 32) || Nat::eq(rs_source_word_bits(sig), 64)) = true,
+    valid: rs_integer_fits(i, signed, rs_source_word_bits(sig)) = true,
+    declared: rs_source_type(
+      sig,
+      ty
+    ) = Some(
+      RsSourceTypeOf(
+        rs_source_type_name(Cons(rs_source_word_suffix(signed), Nil)),
+        RsCopy,
+        None,
+        Nil,
+        None
+      )
+    )
+  ): RsSourceLiteral(
+    sig,
+    RsInteger(i, signed, rs_source_word_bits(sig)),
+    ty,
+    rs_source_integer_suffix(i, rs_source_word_suffix(signed))
+  )
+
+  RsSourceFloat<bits: Nat, single: Bool, ty: Nat>(
+    valid: Nat::lt(bits, rs_power_two(rs_source_float_width(single))) = true,
+    declared: rs_source_type(
+      sig,
+      ty
+    ) = Some(RsSourceTypeOf(rs_source_float_type(single), RsCopy, None, Nil, None))
+  ): RsSourceLiteral(sig, RsFloat(bits, single), ty, rs_source_float(bits, single))
+
+}
+
+pub(open) inductive RsSourceMember(A: Type): (A, List(A)) -> Prop {
+  RsSourceHere<x: A, xs: List(A)>: RsSourceMember(A, x, Cons(x, xs))
+  RsSourceThere<x: A, y: A, xs: List(
+    A
+  )>(present: RsSourceMember(A, x, xs)): RsSourceMember(A, x, Cons(y, xs))
+}

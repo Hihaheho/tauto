@@ -1,0 +1,74 @@
+import std::Base
+import std::Data
+import std::prelude::Ord
+import "../src/Graph.taut"
+
+// The scenarios of `examples/basic.taut`, run by the evaluator.
+
+fn put(w: Whale(Nat, Nat), k: Nat, dur: Nat, ids: List(Nat)): Whale(Nat, Nat) {
+  match Whale::register(w, k, Zero, dur, ids): Whale(Nat, Nat) {
+    Done(p) => pfst(p)
+    Absent(ks) => w
+  }
+}
+
+fn same(w: Whale(Nat, Nat), k: Nat, ids: List(Nat)): Whale(Nat, Nat) {
+  match Whale::confirm_unchanged(w, k, ids): Whale(Nat, Nat) {
+    Done(v) => v
+    Absent(ks) => w
+  }
+}
+
+fn two(): Whale(Nat, Nat) {
+  put(put(Whale::new(3), 0, 0, Nil), 1, 0, Cons(0, Nil))
+}
+
+fn chain(): Whale(Nat, Nat) {
+  put(two(), 2, 0, Cons(1, Nil))
+}
+
+perform test(
+  "a node and its reader are valid",
+  () => expect(Bool::and(Whale::valid(two(), 0), Whale::valid(two(), 1)), "valid")
+)
+
+perform test(
+  "writing the input invalidates the reader",
+  () => expect(not(Whale::valid(put(two(), 0, 0, Nil), 1)), "invalid")
+)
+
+perform test(
+  "confirm_unchanged makes the reader valid again",
+  () => expect(Whale::valid(same(put(two(), 0, 0, Nil), 1, Cons(0, Nil)), 1), "valid again")
+)
+
+perform test(
+  "early cutoff",
+  () => expect(Whale::valid(same(put(chain(), 0, 0, Nil), 1, Cons(0, Nil)), 2), "cut off")
+)
+
+perform test(
+  "a stable reader of a volatile input is volatile",
+  () => expect(
+    not(Whale::valid(put(put(put(Whale::new(3), 0, 0, Nil), 1, 2, Cons(0, Nil)), 0, 0, Nil), 1)),
+    "volatile"
+  )
+)
+
+perform test(
+  "a stable change does not touch a reader of other stable nodes",
+  () => expect(
+    Whale::valid(
+      put(put(put(put(Whale::new(3), 0, 2, Nil), 1, 2, Nil), 2, 2, Cons(1, Nil)), 0, 2, Nil),
+      2
+    ),
+    "kept"
+  )
+)
+
+perform test(
+  "a cycle is found",
+  () => expect(Whale::has_cycle(put(two(), 0, 0, Cons(1, Nil)), 0), "cycle")
+)
+
+perform test("a chain has no cycle", () => expect(not(Whale::has_cycle(chain(), 2)), "no cycle"))

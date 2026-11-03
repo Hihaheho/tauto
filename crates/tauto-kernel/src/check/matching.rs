@@ -146,6 +146,18 @@ pub(super) struct FnSpec<'a> {
     pub body: &'a SurfaceTerm,
 }
 
+impl FnSpec<'_> {
+    /// How many leading parameters a call may leave out: the generics and the
+    /// records of `where` after them, which a recursive call passes unchanged.
+    fn left_out(&self) -> usize {
+        let records = self.params[self.implicit.min(self.params.len())..]
+            .iter()
+            .take_while(|(n, _)| n.starts_with(crate::surface::DICT))
+            .count();
+        self.implicit + records
+    }
+}
+
 /// What a recursive call needs to know about the function it calls.
 #[derive(Clone)]
 pub(super) struct FnInfo {
@@ -639,10 +651,12 @@ impl Kernel {
                 specs.iter().map(|_| Rc::default()).collect();
             let tails: Vec<&[SurfaceTerm]> = tails.iter().map(|t| t.as_slice()).collect();
             let noted = self.ctor_sites.len();
+            let app_noted = self.application_sites.len();
             let out = self.compile_group_in(specs, &tails, &gens, &wants);
             let mut more = false;
             if out.is_err() {
                 self.ctor_sites.truncate(noted);
+                self.application_sites.truncate(app_noted);
                 for (g, w) in gens.iter_mut().zip(&wants) {
                     for n in w.borrow().iter() {
                         if !g.contains(n) {
@@ -725,16 +739,10 @@ impl Kernel {
                         _ => None,
                     })
                     .collect();
-                // The records a call leaves out are passed unchanged, like the
-                // generics.
-                let records = params[specs[s].implicit.min(params.len())..]
-                    .iter()
-                    .take_while(|(n, _)| n.starts_with(crate::surface::DICT))
-                    .count();
                 let info = FnInfo {
                     params: params.iter().map(|(n, _)| n.clone()).collect(),
                     alias: false,
-                    implicit: specs[s].implicit + records,
+                    implicit: specs[s].left_out(),
                     xpos: h.xpos,
                     idx_params,
                     pre: h.pre.clone(),
@@ -3926,7 +3934,7 @@ impl Kernel {
         }
         let params: Vec<&String> = spec.params.iter().map(|(n, _)| n).collect();
         let full = spec.params.len();
-        let implicit = spec.implicit;
+        let implicit = spec.left_out();
         let mut found = false;
         let mut rebuilt = false;
         for arm in h.arms {

@@ -1,0 +1,855 @@
+import std::Base
+import std::Nat
+import std::Ord
+import std::prelude::Ord
+import std::List
+import std::Data
+import "Revision.taut"
+import "Graph.taut"
+import "Laws.taut"
+
+// `Whale::has_cycle` answers whether a node reads itself through a chain of reads.
+
+inductive Mem(A: Type): (A, List(A)) -> Prop {
+  MemHere(x: A, t: List(A)): Mem(A, x, Cons(x, t))
+  MemThere(x: A, y: A, t: List(A), m: Mem(A, x, t)): Mem(A, x, Cons(y, t))
+}
+
+// A chain of `n` reads from `a` to `b`, where `reads(a)` is what `a` reads.
+inductive Walk(K: Type, reads: (K) -> List(K)): (K, K, Nat) -> Prop {
+  WalkHere(a: K): Walk(K, reads, a, a, Zero)
+  WalkStep(
+    a: K,
+    i: K,
+    b: K,
+    n: Nat,
+    m: Mem(K, i, reads(a)),
+    w: Walk(K, reads, i, b, n)
+  ): Walk(K, reads, a, b, Succ(n))
+}
+
+// `k` reads `i`, and `i` reads `k` back through `n` reads.
+inductive Cycle(K: Type, reads: (K) -> List(K), k: K): Prop {
+  Mk(i: K, n: Nat, m: Mem(K, i, reads(k)), w: Walk(K, reads, i, k, n)): Cycle(K, reads, k)
+}
+
+inductive AnyIn(A: Type, p: (A) -> Bool, l: List(A)): Prop {
+  Mk(x: A, m: Mem(A, x, l), h: p(x) = true): AnyIn(A, p, l)
+}
+
+inductive WalkTo(K: Type, reads: (K) -> List(K), a: K, b: K): Prop {
+  Mk(n: Nat, w: Walk(K, reads, a, b, n)): WalkTo(K, reads, a, b)
+}
+
+fn graph_reads<K, T>(ns: List(K × Node(K, T))): (K) -> List(K) where Ord(K) {
+  (a: K) => reads_of(ns, a)
+}
+
+theorem bool_or_true(a: Bool, b: Bool, h: Bool::or(a, b) = true): a = true ∨ b = true {
+  match a: a = true ∨ b = true {
+    true => OrInl(Refl)
+    false => OrInr(h)
+  }
+}
+
+theorem any_cons<A>(
+  p: (A) -> Bool,
+  x: A,
+  t: List(A),
+  ih: (List::any(p, t) = true) -> AnyIn(A, p, t),
+  e: Bool::or(p(x), List::any(p, t)) = true
+): AnyIn(A, p, Cons(x, t)) {
+  Or::elim(
+    bool_or_true(p(x), List::any(p, t), e),
+    (hx: p(x) = true) => AnyIn::Mk(x, MemHere(x, t), hx),
+    (ht: List::any(p, t) = true) => match ih(ht): AnyIn(A, p, Cons(x, t)) {
+      Mk(y, m, hy) => AnyIn::Mk(y, MemThere(y, x, t, m), hy)
+    }
+  )
+}
+
+// Something in `l` passes `p` when `List::any` says so.
+theorem any_mem<A>(p: (A) -> Bool, l: List(A), e: List::any(p, l) = true): AnyIn(A, p, l) {
+  match l: AnyIn(A, p, l) {
+    Nil => False::elim(false_ne_true(e))
+    Cons(x, t) => any_cons(p, x, t, (et: List::any(p, t) = true) => any_mem(p, t, et), e)
+  }
+}
+
+theorem bool_or_true_right(a: Bool): Bool::or(a, true) = true {
+  match a: Bool::or(a, true) = true {
+    true => Refl
+    false => Refl
+  }
+}
+
+theorem mem_any<A>(
+  p: (A) -> Bool,
+  x: A,
+  l: List(A),
+  m: Mem(A, x, l),
+  h: p(x) = true
+): List::any(p, l) = true {
+  match m: List::any(p, l) = true {
+    MemHere(y, t) => ⊢ List::any(
+      p,
+      Cons(y, t)
+    ) = true from Eq::congr((b: Bool) => Bool::or(b, List::any(p, t)), h)
+    MemThere(y, z, t, m2) => ⊢ List::any(
+      p,
+      Cons(z, t)
+    ) = true from Eq::trans(
+      Eq::congr((b: Bool) => Bool::or(p(z), b), mem_any(p, y, t, m2, h)),
+      bool_or_true_right(p(z))
+    )
+  }
+}
+
+theorem walk_zero<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  t: K,
+  e: key_eq(k, t) = true
+): WalkTo(K, graph_reads(ns), k, t) where Ord(K) {
+  WalkTo::Mk(
+    Zero,
+    Eq::subst((z: K) => Walk(K, graph_reads(ns), k, z, Zero), Key::eq_sound(k, t, e), WalkHere(k))
+  )
+}
+
+theorem reaches_step<K, T>(
+  ns: List(K × Node(K, T)),
+  t: K,
+  k: K,
+  f: Nat,
+  ih: ∀ i: K. (reaches(ns, t, i, f) = true) -> WalkTo(K, graph_reads(ns), i, t),
+  e: Bool::or(key_eq(k, t), List::any((i: K) => reaches(ns, t, i, f), reads_of(ns, k))) = true
+): WalkTo(K, graph_reads(ns), k, t) where Ord(K) {
+  Or::elim(
+    bool_or_true(key_eq(k, t), List::any((i: K) => reaches(ns, t, i, f), reads_of(ns, k)), e),
+    (h1: key_eq(k, t) = true) => walk_zero(ns, k, t, h1),
+    (h2: List::any((i: K) => reaches(ns, t, i, f), reads_of(ns, k)) = true) => match any_mem((i: K) => reaches(ns, t, i, f), reads_of(ns, k), h2): WalkTo(K, graph_reads(ns), k, t) {
+      Mk(i, m, hi) => match ih(i)(hi): WalkTo(K, graph_reads(ns), k, t) {
+        Mk(n, w) => WalkTo::Mk(Succ(n), WalkStep(k, i, t, n, m, w))
+      }
+    }
+  )
+}
+
+// When `reaches` says yes, there is a chain of reads.
+theorem reaches_sound<K, T>(
+  ns: List(K × Node(K, T)),
+  t: K,
+  fuel: Nat,
+  k: K,
+  e: reaches(ns, t, k, fuel) = true
+): WalkTo(K, graph_reads(ns), k, t) where Ord(K) {
+  match fuel: WalkTo(K, graph_reads(ns), k, t) {
+    Zero => walk_zero(ns, k, t, e)
+    Succ(f) => reaches_step(
+      ns,
+      t,
+      k,
+      f,
+      (i: K) => (hi: reaches(ns, t, i, f) = true) => reaches_sound(ns, t, f, i, hi),
+      e
+    )
+  }
+}
+
+// When `Whale::has_cycle` says yes, `k` reads itself through a chain of reads.
+theorem has_cycle_sound<K, T>(
+  w: Whale(K, T),
+  k: K,
+  h: Whale::has_cycle(w, k) = true
+): Cycle(K, graph_reads(Whale::nodes(w)), k) where Ord(K) {
+  match any_mem(
+    (i: K) => reaches(Whale::nodes(w), k, i, List::length(Whale::nodes(w))),
+    reads_of(Whale::nodes(w), k),
+    h
+  ): Cycle(K, graph_reads(Whale::nodes(w)), k) {
+    Mk(i, m, hi) => {
+      let hr: reaches(Whale::nodes(w), k, i, List::length(Whale::nodes(w))) = true := hi
+      match reaches_sound(
+        Whale::nodes(w),
+        k,
+        List::length(Whale::nodes(w)),
+        i,
+        hr
+      ): Cycle(K, graph_reads(Whale::nodes(w)), k) {
+        Mk(n, wk) => Cycle::Mk(i, n, m, wk)
+      }
+    }
+  }
+}
+
+theorem reaches_self<K, T>(
+  ns: List(K × Node(K, T)),
+  b: K,
+  fuel: Nat
+): reaches(ns, b, b, fuel) = true where Ord(K) {
+  match fuel: reaches(ns, b, b, fuel) = true {
+    Zero => Key::eq_refl(b)
+    Succ(f) => Eq::congr(
+      (c: Bool) => Bool::or(c, List::any((i: K) => reaches(ns, b, i, f), reads_of(ns, b))),
+      Key::eq_refl(b)
+    )
+  }
+}
+
+// A chain of at most `fuel` reads is found by `reaches`.
+theorem walk_reaches<K, T>(
+  ns: List(K × Node(K, T)),
+  a: K,
+  t: K,
+  n: Nat,
+  wk: Walk(K, graph_reads(ns), a, t, n),
+  fuel: Nat,
+  h: Nat::le(n, fuel) = true
+): reaches(ns, t, a, fuel) = true where Ord(K) {
+  match wk: reaches(ns, t, a, fuel) = true {
+    WalkHere(b) => ⊢ reaches(ns, b, b, fuel) = true from reaches_self(ns, b, fuel)
+    WalkStep(b, i, c, m0, mm, w2) => ⊢ reaches(
+      ns,
+      c,
+      b,
+      fuel
+    ) = true from match fuel: reaches(ns, c, b, fuel) = true {
+      Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(m0)), h)))
+      Succ(f) => Eq::trans(
+        Eq::congr(
+          (y: Bool) => Bool::or(key_eq(b, c), y),
+          mem_any(
+            (j: K) => reaches(ns, c, j, f),
+            i,
+            reads_of(ns, b),
+            mm,
+            walk_reaches(ns, i, c, m0, w2, f, h)
+          )
+        ),
+        bool_or_true_right(key_eq(b, c))
+      )
+    }
+  }
+}
+
+// A cycle through at most as many reads as there are nodes is found.
+theorem has_cycle_complete_bounded<K, T>(
+  w: Whale(K, T),
+  k: K,
+  i: K,
+  n: Nat,
+  m: Mem(K, i, reads_of(Whale::nodes(w), k)),
+  wk: Walk(K, graph_reads(Whale::nodes(w)), i, k, n),
+  hn: Nat::le(n, List::length(Whale::nodes(w))) = true
+): Whale::has_cycle(w, k) = true where Ord(K) {
+  mem_any(
+    (j: K) => reaches(Whale::nodes(w), k, j, List::length(Whale::nodes(w))),
+    i,
+    reads_of(Whale::nodes(w), k),
+    m,
+    walk_reaches(Whale::nodes(w), i, k, n, wk, List::length(Whale::nodes(w)), hn)
+  )
+}
+
+// ---- every cycle is found ---------------------------------------------------
+
+// A cycle may go round more than once. Cut out the repeats and what is left steps from
+// distinct nodes, each of which has an entry, so there are no more steps than entries.
+
+pub theorem bool_and_true(a: Bool, b: Bool, h: Bool::and(a, b) = true): a = true ∧ b = true {
+  match a: a = true ∧ b = true {
+    true => AndIntro(Refl, h)
+    false => False::elim(false_ne_true(h))
+  }
+}
+
+module Key {
+  theorem eq_flip_at<K>(
+    a: K,
+    b: K,
+    h: key_eq(a, b) = false,
+    c: Bool,
+    hc: key_eq(b, a) = c
+  ): c = false where Ord(K) {
+    match c: c = false {
+      true => False::elim(
+        true_ne_false(
+          Eq::trans(
+            Eq::sym(Key::eq_refl(a)),
+            Eq::subst((z: K) => key_eq(a, z) = false, Key::eq_sound(b, a, hc), h)
+          )
+        )
+      )
+      false => Refl
+    }
+  }
+
+  theorem eq_flip_false<K>(a: K, b: K, h: key_eq(a, b) = false): key_eq(b, a) = false where Ord(K) {
+    Eq::trans(Refl, Key::eq_flip_at(a, b, h, key_eq(b, a), Refl))
+  }
+}
+
+theorem mem_nil<A>(x: A, m: Mem(A, x, Nil)): False {
+  match m: False {
+  }
+}
+
+fn distinct<K>(vs: List(K)): Bool where Ord(K) {
+  match vs: Bool {
+    Nil => true
+    Cons(x, t) => Bool::and(not(key_in(x, t)), distinct(t))
+  }
+}
+
+pub fn is_none<A>(o: Option(A)): Bool {
+  match o: Bool {
+    None => true
+    Some(a) => false
+  }
+}
+
+pub fn present<K, T>(ns: List(K × Node(K, T)), v: K): Bool where Ord(K) {
+  not(is_none(nodes_get(ns, v)))
+}
+
+fn all_present<K, T>(ns: List(K × Node(K, T)), vs: List(K)): Bool where Ord(K) {
+  match vs: Bool {
+    Nil => true
+    Cons(x, t) => Bool::and(present(ns, x), all_present(ns, t))
+  }
+}
+
+fn drop_pick<K>(x: K, r: List(K), b: Bool): List(K) {
+  match b: List(K) {
+    true => r
+    false => Cons(x, r)
+  }
+}
+
+fn drop_key<K>(vs: List(K), k: K): List(K) where Ord(K) {
+  match vs: List(K) {
+    Nil => Nil
+    Cons(x, t) => drop_pick(x, drop_key(t, k), key_eq(x, k))
+  }
+}
+
+theorem drop_absent_cons<K>(
+  y: K,
+  r: List(K),
+  k: K,
+  ih: (key_in(k, r) = false) -> drop_key(r, k) = r,
+  h: key_eq(y, k) = false ∧ key_in(k, r) = false
+): drop_key(Cons(y, r), k) = Cons(y, r) where Ord(K) {
+  Eq::trans(
+    Eq::congr((b: Bool) => drop_pick(y, drop_key(r, k), b), And::left(h)),
+    Eq::congr((l: List(K)) => Cons(y, l), ih(And::right(h)))
+  )
+}
+
+theorem drop_absent<K>(t: List(K), k: K, e: key_in(k, t) = false): drop_key(t, k) = t where Ord(K) {
+  match t: drop_key(t, k) = t {
+    Nil => Refl
+    Cons(y, r) => drop_absent_cons(
+      y,
+      r,
+      k,
+      (hr: key_in(k, r) = false) => drop_absent(r, k, hr),
+      Bool::or_false_split(key_eq(y, k), key_in(k, r), e)
+    )
+  }
+}
+
+theorem len_drop_at<K>(
+  x: K,
+  t: List(K),
+  k: K,
+  ih: (distinct(t) = true) -> Nat::le(List::length(t), Succ(List::length(drop_key(t, k)))) = true,
+  hd: not(key_in(x, t)) = true ∧ distinct(t) = true,
+  b: Bool,
+  hb: key_eq(x, k) = b
+): Nat::le(
+  Succ(List::length(t)),
+  Succ(List::length(drop_pick(x, drop_key(t, k), b)))
+) = true where Ord(K) {
+  match b: Nat::le(
+    Succ(List::length(t)),
+    Succ(List::length(drop_pick(x, drop_key(t, k), b)))
+  ) = true {
+    true => Eq::subst(
+      (l: List(K)) => Nat::le(Succ(List::length(t)), Succ(List::length(l))) = true,
+      Eq::sym(
+        drop_absent(
+          t,
+          k,
+          Eq::subst(
+            (z: K) => key_in(z, t) = false,
+            Key::eq_sound(x, k, hb),
+            Bool::not_true(key_in(x, t), And::left(hd))
+          )
+        )
+      ),
+      Nat::le_refl(Succ(List::length(t)))
+    )
+    false => ih(And::right(hd))
+  }
+}
+
+// Dropping one key from a list without repeats shortens it by at most one.
+theorem len_drop<K>(
+  vs: List(K),
+  k: K,
+  hd: distinct(vs) = true
+): Nat::le(List::length(vs), Succ(List::length(drop_key(vs, k)))) = true where Ord(K) {
+  match vs: Nat::le(List::length(vs), Succ(List::length(drop_key(vs, k)))) = true {
+    Nil => Refl
+    Cons(x, t) => len_drop_at(
+      x,
+      t,
+      k,
+      (ht: distinct(t) = true) => len_drop(t, k, ht),
+      bool_and_true(not(key_in(x, t)), distinct(t), hd),
+      key_eq(x, k),
+      Refl
+    )
+  }
+}
+
+theorem in_drop_at<K>(
+  y: K,
+  r: List(K),
+  k: K,
+  x: K,
+  ih: (key_in(x, r) = false) -> key_in(x, drop_key(r, k)) = false,
+  h: key_eq(y, x) = false ∧ key_in(x, r) = false,
+  b: Bool
+): key_in(x, drop_pick(y, drop_key(r, k), b)) = false where Ord(K) {
+  match b: key_in(x, drop_pick(y, drop_key(r, k), b)) = false {
+    true => ih(And::right(h))
+    false => Eq::trans(
+      Eq::congr((c: Bool) => Bool::or(c, key_in(x, drop_key(r, k))), And::left(h)),
+      ih(And::right(h))
+    )
+  }
+}
+
+theorem in_drop<K>(
+  t: List(K),
+  k: K,
+  x: K,
+  e: key_in(x, t) = false
+): key_in(x, drop_key(t, k)) = false where Ord(K) {
+  match t: key_in(x, drop_key(t, k)) = false {
+    Nil => Refl
+    Cons(y, r) => in_drop_at(
+      y,
+      r,
+      k,
+      x,
+      (hr: key_in(x, r) = false) => in_drop(r, k, x, hr),
+      Bool::or_false_split(key_eq(y, x), key_in(x, r), e),
+      key_eq(y, k)
+    )
+  }
+}
+
+theorem distinct_drop_at<K>(
+  x: K,
+  t: List(K),
+  k: K,
+  ih: (distinct(t) = true) -> distinct(drop_key(t, k)) = true,
+  hd: not(key_in(x, t)) = true ∧ distinct(t) = true,
+  b: Bool
+): distinct(drop_pick(x, drop_key(t, k), b)) = true where Ord(K) {
+  match b: distinct(drop_pick(x, drop_key(t, k), b)) = true {
+    true => ih(And::right(hd))
+    false => Eq::trans(
+      Eq::congr(
+        (c: Bool) => Bool::and(not(c), distinct(drop_key(t, k))),
+        in_drop(t, k, x, Bool::not_true(key_in(x, t), And::left(hd)))
+      ),
+      ih(And::right(hd))
+    )
+  }
+}
+
+theorem distinct_drop<K>(
+  vs: List(K),
+  k: K,
+  hd: distinct(vs) = true
+): distinct(drop_key(vs, k)) = true where Ord(K) {
+  match vs: distinct(drop_key(vs, k)) = true {
+    Nil => Refl
+    Cons(x, t) => distinct_drop_at(
+      x,
+      t,
+      k,
+      (ht: distinct(t) = true) => distinct_drop(t, k, ht),
+      bool_and_true(not(key_in(x, t)), distinct(t), hd),
+      key_eq(x, k)
+    )
+  }
+}
+
+theorem present_drop_at<K, T>(
+  k1: K,
+  m: Node(K, T),
+  rest: List(K × Node(K, T)),
+  x: K,
+  t: List(K),
+  ih: (all_present(Cons(#(k1, m), rest), t) = true) -> all_present(rest, drop_key(t, k1)) = true,
+  hp: present(Cons(#(k1, m), rest), x) = true ∧ all_present(Cons(#(k1, m), rest), t) = true,
+  b: Bool,
+  hb: key_eq(x, k1) = b
+): all_present(rest, drop_pick(x, drop_key(t, k1), b)) = true where Ord(K) {
+  match b: all_present(rest, drop_pick(x, drop_key(t, k1), b)) = true {
+    true => ih(And::right(hp))
+    false => Eq::trans(
+      Eq::congr(
+        (c: Bool) => Bool::and(c, all_present(rest, drop_key(t, k1))),
+        Eq::trans(
+          Eq::sym(
+            Eq::congr(
+              (c: Bool) => not(is_none(nodes_hit(m, nodes_get(rest, x), c))),
+              Key::eq_flip_false(x, k1, hb)
+            )
+          ),
+          And::left(hp)
+        )
+      ),
+      ih(And::right(hp))
+    )
+  }
+}
+
+theorem present_drop<K, T>(
+  k1: K,
+  m: Node(K, T),
+  rest: List(K × Node(K, T)),
+  vs: List(K),
+  hp: all_present(Cons(#(k1, m), rest), vs) = true
+): all_present(rest, drop_key(vs, k1)) = true where Ord(K) {
+  match vs: all_present(rest, drop_key(vs, k1)) = true {
+    Nil => Refl
+    Cons(x, t) => present_drop_at(
+      k1,
+      m,
+      rest,
+      x,
+      t,
+      (ht: all_present(Cons(#(k1, m), rest), t) = true) => present_drop(k1, m, rest, t, ht),
+      bool_and_true(present(Cons(#(k1, m), rest), x), all_present(Cons(#(k1, m), rest), t), hp),
+      key_eq(x, k1),
+      Refl
+    )
+  }
+}
+
+theorem pigeon_cons<K, T>(
+  k1: K,
+  m: Node(K, T),
+  rest: List(K × Node(K, T)),
+  vs: List(K),
+  hd: distinct(vs) = true,
+  hp: all_present(Cons(#(k1, m), rest), vs) = true,
+  ih: ∀ us: List(
+    K
+  ). (
+    distinct(us) = true
+  ) -> (all_present(rest, us) = true) -> Nat::le(List::length(us), List::length(rest)) = true
+): Nat::le(List::length(vs), Succ(List::length(rest))) = true where Ord(K) {
+  Nat::le_trans(
+    List::length(vs),
+    Succ(List::length(drop_key(vs, k1))),
+    Succ(List::length(rest)),
+    len_drop(vs, k1, hd),
+    ih(drop_key(vs, k1))(distinct_drop(vs, k1, hd))(present_drop(k1, m, rest, vs, hp))
+  )
+}
+
+// Keys without repeats that all have entries are no more than the entries.
+theorem pigeon<K, T>(
+  ns: List(K × Node(K, T)),
+  vs: List(K),
+  hd: distinct(vs) = true,
+  hp: all_present(ns, vs) = true
+): Nat::le(List::length(vs), List::length(ns)) = true where Ord(K) {
+  match ns: Nat::le(List::length(vs), List::length(ns)) = true {
+    Nil => match vs: Nat::le(List::length(vs), Zero) = true {
+      Nil => Refl
+      Cons(x, t) => False::elim(false_ne_true(hp))
+    }
+    Cons(e, rest) => match e: Nat::le(List::length(vs), List::length(Cons(e, rest))) = true {
+      #(k1, m) => pigeon_cons(
+        k1,
+        m,
+        rest,
+        vs,
+        hd,
+        hp,
+        (us: List(K)) => (du: distinct(us) = true) => (pu: all_present(rest, us) = true) => pigeon(
+          rest,
+          us,
+          du,
+          pu
+        )
+      )
+    }
+  }
+}
+
+// A chain of reads from `a` to `t` that steps from the nodes `vs`, in order.
+inductive SPath(K: Type, reads: (K) -> List(K)): (K, K, List(K)) -> Prop {
+  SpHere(a: K): SPath(K, reads, a, a, Nil)
+  SpStep(
+    a: K,
+    i: K,
+    t: K,
+    vs: List(K),
+    m: Mem(K, i, reads(a)),
+    p: SPath(K, reads, i, t, vs)
+  ): SPath(K, reads, a, t, Cons(a, vs))
+}
+
+theorem cut_step<K>(
+  reads: (K) -> List(K),
+  c: K,
+  i: K,
+  t: K,
+  vs: List(K),
+  m: Mem(K, i, reads(c)),
+  p: SPath(K, reads, i, t, vs),
+  a: K,
+  ih: (
+    key_in(a, vs) = true
+  ) -> (distinct(vs) = true) -> ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true,
+  hd: Bool::and(not(key_in(c, vs)), distinct(vs)) = true,
+  b: Bool,
+  hb: key_eq(c, a) = b,
+  h: Bool::or(b, key_in(a, vs)) = true
+): ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true where Ord(K) {
+  match b: ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true {
+    true => ExIntro(
+      Cons(c, vs),
+      AndIntro(
+        Eq::subst(
+          (z: K) => SPath(K, reads, z, t, Cons(c, vs)),
+          Key::eq_sound(c, a, hb),
+          SpStep(c, i, t, vs, m, p)
+        ),
+        hd
+      )
+    )
+    false => ih(h)(And::right(bool_and_true(not(key_in(c, vs)), distinct(vs), hd)))
+  }
+}
+
+// A path without repeats through `a` gives one from `a` on, still without repeats.
+theorem cut<K>(
+  reads: (K) -> List(K),
+  b: K,
+  t: K,
+  vs: List(K),
+  p: SPath(K, reads, b, t, vs),
+  a: K,
+  h: key_in(a, vs) = true,
+  hd: distinct(vs) = true
+): ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true where Ord(K) {
+  match p: ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true {
+    SpHere(c) => ⊢ ∃ us: List(
+      K
+    ). SPath(K, reads, a, c, us) ∧ distinct(us) = true from False::elim(false_ne_true(h))
+    SpStep(c, i, t2, vs0, m, p0) => ⊢ ∃ us: List(
+      K
+    ). SPath(K, reads, a, t2, us) ∧ distinct(us) = true from {
+      let hd0: Bool::and(not(key_in(c, vs0)), distinct(vs0)) = true := hd
+      cut_step(
+        reads,
+        c,
+        i,
+        t2,
+        vs0,
+        m,
+        p0,
+        a,
+        (hi: key_in(a, vs0) = true) => (di: distinct(vs0) = true) => cut(
+          reads,
+          i,
+          t2,
+          vs0,
+          p0,
+          a,
+          hi,
+          the(distinct(vs0) = true, di)
+        ),
+        hd0,
+        key_eq(c, a),
+        Refl,
+        h
+      )
+    }
+  }
+}
+
+theorem simplify_pick<K>(
+  reads: (K) -> List(K),
+  b: K,
+  i: K,
+  c: K,
+  m: Mem(K, i, reads(b)),
+  vs: List(K),
+  p: SPath(K, reads, i, c, vs),
+  d: distinct(vs) = true,
+  o: Bool,
+  ho: key_in(b, vs) = o
+): ∃ us: List(K). SPath(K, reads, b, c, us) ∧ distinct(us) = true where Ord(K) {
+  match o: ∃ us: List(K). SPath(K, reads, b, c, us) ∧ distinct(us) = true {
+    true => cut(reads, i, c, vs, p, b, ho, d)
+    false => ExIntro(
+      Cons(b, vs),
+      AndIntro(
+        SpStep(b, i, c, vs, m, p),
+        Eq::trans(Eq::congr((y: Bool) => Bool::and(not(y), distinct(vs)), ho), d)
+      )
+    )
+  }
+}
+
+// Any chain of reads can be cut down to one that steps from no node twice.
+theorem simplify<K>(
+  reads: (K) -> List(K),
+  a: K,
+  t: K,
+  n: Nat,
+  w: Walk(K, reads, a, t, n)
+): ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true where Ord(K) {
+  match w: ∃ us: List(K). SPath(K, reads, a, t, us) ∧ distinct(us) = true {
+    WalkHere(b) => ⊢ ∃ us: List(
+      K
+    ). SPath(
+      K,
+      reads,
+      b,
+      b,
+      us
+    ) ∧ distinct(us) = true from ExIntro(the(List(K), Nil), AndIntro(SpHere(b), Refl))
+    WalkStep(b, i, c, n0, m, w0) => ⊢ ∃ us: List(
+      K
+    ). SPath(
+      K,
+      reads,
+      b,
+      c,
+      us
+    ) ∧ distinct(
+      us
+    ) = true from match simplify(
+      reads,
+      i,
+      c,
+      n0,
+      w0
+    ): ∃ us: List(K). SPath(K, reads, b, c, us) ∧ distinct(us) = true {
+      ExIntro(vs, h) => simplify_pick(
+        reads,
+        b,
+        i,
+        c,
+        m,
+        vs,
+        And::left(h),
+        And::right(h),
+        key_in(b, vs),
+        Refl
+      )
+    }
+  }
+}
+
+theorem spath_walk<K>(
+  reads: (K) -> List(K),
+  a: K,
+  t: K,
+  vs: List(K),
+  p: SPath(K, reads, a, t, vs)
+): Walk(K, reads, a, t, List::length(vs)) {
+  match p: Walk(K, reads, a, t, List::length(vs)) {
+    SpHere(b) => ⊢ Walk(K, reads, b, b, List::length(the(List(K), Nil))) from WalkHere(b)
+    SpStep(b, i, c, vs0, m, p0) => ⊢ Walk(
+      K,
+      reads,
+      b,
+      c,
+      List::length(Cons(b, vs0))
+    ) from WalkStep(b, i, c, List::length(vs0), m, spath_walk(reads, i, c, vs0, p0))
+  }
+}
+
+theorem present_of_reads<K, T>(
+  ns: List(K × Node(K, T)),
+  c: K,
+  i: K,
+  o: Option(Node(K, T)),
+  m: Mem(K, i, dep_ids_in(o))
+): not(is_none(o)) = true {
+  match o: not(is_none(o)) = true {
+    None => False::elim(mem_nil(i, m))
+    Some(n) => Refl
+  }
+}
+
+// A node that reads something has an entry.
+theorem sources_present<K, T>(
+  ns: List(K × Node(K, T)),
+  a: K,
+  t: K,
+  vs: List(K),
+  p: SPath(K, graph_reads(ns), a, t, vs)
+): all_present(ns, vs) = true where Ord(K) {
+  match p: all_present(ns, vs) = true {
+    SpHere(b) => ⊢ all_present(ns, the(List(K), Nil)) = true from Refl
+    SpStep(b, i, c, vs0, m, p0) => ⊢ all_present(
+      ns,
+      Cons(b, vs0)
+    ) = true from Eq::trans(
+      Eq::congr(
+        (y: Bool) => Bool::and(y, all_present(ns, vs0)),
+        present_of_reads(ns, b, i, nodes_get(ns, b), m)
+      ),
+      sources_present(ns, i, c, vs0, p0)
+    )
+  }
+}
+
+// Every cycle is found: `Whale::has_cycle` says yes exactly when `k` reads itself through
+// some chain of reads (with `has_cycle_sound`).
+theorem has_cycle_complete<K, T>(
+  w: Whale(K, T),
+  k: K,
+  c: Cycle(K, graph_reads(Whale::nodes(w)), k)
+): Whale::has_cycle(w, k) = true where Ord(K) {
+  match c: Whale::has_cycle(w, k) = true {
+    Mk(i, n, m, wk) => match simplify(
+      graph_reads(Whale::nodes(w)),
+      i,
+      k,
+      n,
+      wk
+    ): Whale::has_cycle(w, k) = true {
+      ExIntro(vs, h) => has_cycle_complete_bounded(
+        w,
+        k,
+        i,
+        List::length(vs),
+        m,
+        spath_walk(graph_reads(Whale::nodes(w)), i, k, vs, And::left(h)),
+        pigeon(
+          Whale::nodes(w),
+          vs,
+          And::right(h),
+          sources_present(Whale::nodes(w), i, k, vs, And::left(h))
+        )
+      )
+    }
+  }
+}

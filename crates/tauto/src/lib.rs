@@ -33,6 +33,7 @@ pub use tauto_surface::nibstd;
 pub mod phases;
 pub mod program;
 pub mod project;
+pub mod proof;
 pub mod registered;
 pub mod report;
 pub mod stdlib;

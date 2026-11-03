@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use tauto_parol::Span;
 use tauto_syntax::sha256_hex;
 
-use super::{CtorSite, Kernel, T};
+use super::{ApplicationSite, CtorSite, Kernel, T};
 use crate::surface::{TermKind, TheoremDecl};
 
 /// The source of the checker: a change to it is a change to every key. Every
@@ -38,6 +38,7 @@ const CHECKER: &[&str] = &[
     include_str!("../check.rs"),
     include_str!("cache.rs"),
     include_str!("core.rs"),
+    include_str!("derivation.rs"),
     include_str!("implicit.rs"),
     include_str!("inductive.rs"),
     include_str!("matching.rs"),
@@ -174,6 +175,46 @@ impl Cache {
             text.push_str(&format!("{start}\t{end}\t{}\t{}\n", s.written, s.resolved));
         }
         self.write(&format!("{key}.sites"), text);
+    }
+
+    pub(super) fn get_applications(&self, key: &str, base: u32) -> Option<Vec<ApplicationSite>> {
+        let text = std::fs::read_to_string(self.dir.join(format!("{key}.calls"))).ok()?;
+        let mut lines = text.lines();
+        if lines.next() != Some("calls") {
+            return None;
+        }
+        lines
+            .map(|line| {
+                let mut fields = line.split('\t');
+                let start = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
+                let end = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
+                let callee = fields.next()?.to_string();
+                let written = fields.next()?.parse().ok()?;
+                let omitted = fields.next()?.parse().ok()?;
+                if fields.next().is_some() {
+                    return None;
+                }
+                Some(ApplicationSite {
+                    span: Span { start, end },
+                    callee,
+                    written,
+                    omitted,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn put_applications(&self, key: &str, sites: &[ApplicationSite], base: u32) {
+        let mut text = String::from("calls\n");
+        for site in sites {
+            let start = i64::from(site.span.start) - i64::from(base);
+            let end = i64::from(site.span.end) - i64::from(base);
+            text.push_str(&format!(
+                "{start}\t{end}\t{}\t{}\t{}\n",
+                site.callee, site.written, site.omitted
+            ));
+        }
+        self.write(&format!("{key}.calls"), text);
     }
 
     /// Records that the proof with this key passed checking, and the globals

@@ -1,0 +1,476 @@
+import std::Base
+import std::Text
+import text::text
+
+// A diagnostic as an annotated snippet of source: a header with the severity and the message,
+// the place as `path:line:column`, the lines of source the place covers with their numbers in a
+// gutter, carets under the place with a label after them, and notes below
+// (`docs/design/check.md`「出力」; `tests/snippet.taut` has examples).
+// Positions are UTF-8 bytes; the column of the header counts characters. On the terminal a tab
+// takes four columns and is shown as four spaces, a wide character two, and a control character
+// or a combining mark none. With `color`, the parts are painted with ANSI escapes.
+
+// ---- numbers -----------------------------------------------------------------------------
+
+pub fn snippet_min(a: Nat, b: Nat): Nat {
+  if a <= b { a } else { b }
+}
+
+pub fn snippet_max(a: Nat, b: Nat): Nat {
+  if a <= b { b } else { a }
+}
+
+pub fn snippet_between(lo: Nat, hi: Nat, c: Nat): Bool {
+  lo <= c && c <= hi
+}
+
+// ---- widths on the terminal --------------------------------------------------------------
+
+// Hangul Jamo, the CJK blocks from the radicals to Yi, and the Hangul syllables.
+pub fn snippet_wide_cjk(c: Nat): Bool {
+  snippet_between(
+    4352,
+    4447,
+    c
+  ) || snippet_between(11904, 42191, c) || snippet_between(44032, 55203, c)
+}
+
+// The compatibility ideographs, the vertical and small forms, the fullwidth forms, the
+// pictographs, and the supplementary ideographic planes.
+pub fn snippet_wide_other(c: Nat): Bool {
+  snippet_between(
+    63744,
+    64255,
+    c
+  ) || snippet_between(65040, 65049, c) || snippet_between(65072, 65135, c) || snippet_wide_more(c)
+}
+
+pub fn snippet_wide_more(c: Nat): Bool {
+  snippet_between(
+    65280,
+    65376,
+    c
+  ) || snippet_between(
+    65504,
+    65510,
+    c
+  ) || snippet_between(127744, 129791, c) || snippet_between(131072, 262141, c)
+}
+
+pub fn snippet_wide(c: Nat): Bool {
+  snippet_wide_cjk(c) || snippet_wide_other(c)
+}
+
+// Combining marks, zero-width spaces and joiners, and variation selectors.
+pub fn snippet_zero_width(c: Nat): Bool {
+  snippet_between(768, 879, c) || snippet_between(8203, 8207, c) || snippet_between(65024, 65039, c)
+}
+
+pub fn snippet_control(c: Nat): Bool {
+  c < 32 || c == 127
+}
+
+// The columns the character `c` takes.
+pub fn snippet_char_width(c: Nat): Nat {
+  if c == 9 { 4 } else if snippet_control(
+    c
+  ) { 0 } else if snippet_zero_width(c) { 0 } else if snippet_wide(c) { 2 } else { 1 }
+}
+
+// The columns the characters from byte `i` to byte `stop` take, added to `w`; `k` bounds the
+// steps.
+pub fn snippet_width_in(k: Nat, t: Text, i: Nat, stop: Nat, w: Nat): Nat {
+  match k: Nat {
+    Zero => w
+    Succ(k2) => if stop <= i { w } else {
+      match text_decode(t, i): Nat {
+        None => snippet_width_in(k2, t, i + 1, stop, w + 1)
+        Some(#(@code code, @len len)) => snippet_width_in(
+          k2,
+          t,
+          i + len,
+          stop,
+          w + snippet_char_width(code)
+        )
+      }
+    }
+  }
+}
+
+pub fn snippet_width(t: Text, i: Nat, stop: Nat): Nat {
+  snippet_width_in(stop - i, t, i, stop, 0)
+}
+
+// How one character is shown: a tab as four spaces, a control character as nothing.
+pub fn snippet_shown_char(t: Text, i: Nat, len: Nat, code: Nat): Text {
+  if code == 9 { "    " } else if snippet_control(
+    code
+  ) { "" } else { Text::slice_or_empty(t, i, i + len) }
+}
+
+// The characters from byte `i` to byte `stop` as shown, last first, onto `parts`.
+pub fn snippet_shown_in(k: Nat, t: Text, i: Nat, stop: Nat, parts: List(Text)): List(Text) {
+  match k: List(Text) {
+    Zero => parts
+    Succ(k2) => if stop <= i { parts } else {
+      match text_decode(t, i): List(Text) {
+        None => snippet_shown_in(k2, t, i + 1, stop, parts)
+        Some(#(@code code, @len len)) => snippet_shown_in(
+          k2,
+          t,
+          i + len,
+          stop,
+          Cons(snippet_shown_char(t, i, len, code), parts)
+        )
+      }
+    }
+  }
+}
+
+pub fn snippet_shown(t: Text, i: Nat, stop: Nat): Text {
+  Text::concat_all(List::reverse(snippet_shown_in(stop - i, t, i, stop, Nil)))
+}
+
+// ---- lines -------------------------------------------------------------------------------
+
+// The byte where the line holding byte `at` starts; `k` bounds the steps back.
+pub fn snippet_line_start_in(k: Nat, t: Text, at: Nat): Nat {
+  match k: Nat {
+    Zero => at
+    Succ(k2) => match at: Nat {
+      Zero => 0
+      Succ(before) => if Text::byte_value(
+        t,
+        before
+      ) == 10 { at } else { snippet_line_start_in(k2, t, before) }
+    }
+  }
+}
+
+pub fn snippet_line_start(t: Text, at: Nat): Nat {
+  snippet_line_start_in(at, t, at)
+}
+
+// The first newline from byte `i`, or the end of `t`; `k` bounds the steps.
+pub fn snippet_line_end_in(k: Nat, t: Text, i: Nat): Nat {
+  match k: Nat {
+    Zero => i
+    Succ(k2) => if Text::byte_value(t, i) == 10 { i } else { snippet_line_end_in(k2, t, i + 1) }
+  }
+}
+
+// The byte where the line holding byte `at` ends, before its newline.
+pub fn snippet_line_end(t: Text, at: Nat): Nat {
+  snippet_line_end_in(Text::len(t) - at, t, at)
+}
+
+// The number of the line holding byte `at`, counting the newlines from byte `i` onto `n`.
+pub fn snippet_line_number_in(k: Nat, t: Text, i: Nat, at: Nat, n: Nat): Nat {
+  match k: Nat {
+    Zero => n
+    Succ(k2) => if at <= i { n } else if Text::byte_value(t, i) == 10 {
+      snippet_line_number_in(k2, t, i + 1, at, n + 1)
+    } else { snippet_line_number_in(k2, t, i + 1, at, n) }
+  }
+}
+
+pub fn snippet_line_number(t: Text, at: Nat): Nat {
+  snippet_line_number_in(at, t, 0, at, 1)
+}
+
+// The first byte from `i` that is not a space or a tab, or `stop`.
+pub fn snippet_indent_end_in(k: Nat, t: Text, i: Nat, stop: Nat): Nat {
+  match k: Nat {
+    Zero => i
+    Succ(k2) => if stop <= i { stop } else if Text::byte_value(
+      t,
+      i
+    ) == 32 || Text::byte_value(t, i) == 9 {
+      snippet_indent_end_in(k2, t, i + 1, stop)
+    } else { i }
+  }
+}
+
+pub fn snippet_indent_end(t: Text, i: Nat, stop: Nat): Nat {
+  snippet_indent_end_in(stop - i, t, i, stop)
+}
+
+// ---- painting ----------------------------------------------------------------------------
+
+// `t` in the ANSI style `style` when `color`, else as it is.
+pub fn snippet_paint(color: Bool, style: Text, t: Text): Text {
+  if color {
+    Text::concat_all(
+      Cons(
+        text_code_point(27),
+        Cons("[", Cons(style, Cons("m", Cons(t, Cons(text_code_point(27), Cons("[0m", Nil))))))
+      )
+    )
+  } else { t }
+}
+
+// Red for an error, yellow for the rest.
+pub fn snippet_style(severity: Text): Text {
+  if text_starts_with(severity, "error", 0) { "1;31" } else { "1;33" }
+}
+
+pub fn snippet_blue(): Text {
+  "1;34"
+}
+
+// ---- the parts ---------------------------------------------------------------------------
+
+pub fn snippet_pad(n: Nat): Text {
+  text_repeat(" ", n)
+}
+
+// Each line followed by a newline.
+pub fn snippet_lines_of(lines: List(Text)): Text {
+  match lines: Text {
+    Nil => ""
+    Cons(line, rest) => Text::concat(Text::concat(line, text_newline()), snippet_lines_of(rest))
+  }
+}
+
+// `severity: message`; the lines of the message after its first follow as they are.
+pub fn snippet_header(color: Bool, style: Text, severity: Text, message: Text): Text {
+  match text_lines(message): Text {
+    Nil => Text::concat(snippet_paint(color, style, severity), text_newline())
+    Cons(first, rest) => Text::concat_all(
+      Cons(
+        snippet_paint(color, style, severity),
+        Cons(
+          snippet_paint(color, "1", Text::concat(": ", first)),
+          Cons(text_newline(), Cons(snippet_lines_of(rest), Nil))
+        )
+      )
+    )
+  }
+}
+
+// " " and `t`, or nothing for an empty `t`, so that no line ends in a space.
+pub fn snippet_after_bar(t: Text): Text {
+  if Text::len(t) == 0 { "" } else { Text::concat(" ", t) }
+}
+
+// A line of the gutter without a number: `width` spaces, " |", then `rest`.
+pub fn snippet_bar(color: Bool, width: Nat, rest: Text): Text {
+  Text::concat_all(
+    Cons(
+      snippet_pad(width),
+      Cons(
+        snippet_paint(color, snippet_blue(), " |"),
+        Cons(snippet_after_bar(rest), Cons(text_newline(), Nil))
+      )
+    )
+  )
+}
+
+// A line of source: its number right-aligned in `width` columns, " |", then the line as shown.
+pub fn snippet_numbered(color: Bool, width: Nat, n: Nat, shown: Text): Text {
+  let number := Text::of_nat(n)
+  Text::concat_all(
+    Cons(
+      snippet_pad(width - Text::len(number)),
+      Cons(
+        snippet_paint(color, snippet_blue(), Text::concat(number, " |")),
+        Cons(snippet_after_bar(shown), Cons(text_newline(), Nil))
+      )
+    )
+  )
+}
+
+pub fn snippet_label(color: Bool, style: Text, label: Text): Text {
+  if Text::len(label) == 0 { "" } else { Text::concat(" ", snippet_paint(color, style, label)) }
+}
+
+// `indent` spaces, then `n` carets (one at least), then the label.
+pub fn snippet_marks(color: Bool, style: Text, indent: Nat, n: Nat, label: Text): Text {
+  Text::concat_all(
+    Cons(
+      snippet_pad(indent),
+      Cons(
+        snippet_paint(color, style, text_repeat("^", snippet_max(1, n))),
+        Cons(snippet_label(color, style, label), Nil)
+      )
+    )
+  )
+}
+
+// The lines between the first and the last of a place over several lines: the one line
+// when there is one, `...` for more.
+pub fn snippet_middle(t: Text, next: Nat, first: Nat, last: Nat, width: Nat, color: Bool): Text {
+  if last - first == 2 {
+    snippet_numbered(color, width, first + 1, snippet_shown(t, next, snippet_line_end(t, next)))
+  } else if 2 < last - first {
+    Text::concat(snippet_paint(color, snippet_blue(), "..."), text_newline())
+  } else { "" }
+}
+
+// The lines of the place from byte `s` to byte `e`, on lines `first` to `last`, with the
+// carets under it. Over several lines, the carets run from the start to the end of the first
+// line, and on the last line from its first character that is not a space to the end.
+pub fn snippet_body(
+  t: Text,
+  s: Nat,
+  e: Nat,
+  first: Nat,
+  last: Nat,
+  width: Nat,
+  style: Text,
+  label: Text,
+  color: Bool
+): Text {
+  let start := snippet_line_start(t, s)
+  let end := snippet_line_end(t, s)
+  let top := snippet_numbered(color, width, first, snippet_shown(t, start, end))
+  if first == last {
+    Text::concat(
+      top,
+      snippet_bar(
+        color,
+        width,
+        snippet_marks(color, style, snippet_width(t, start, s), snippet_width(t, s, e), label)
+      )
+    )
+  } else {
+    let start2 := snippet_line_start(t, e)
+    let lead := snippet_indent_end(t, start2, e)
+    Text::concat_all(
+      Cons(
+        top,
+        Cons(
+          snippet_bar(
+            color,
+            width,
+            snippet_marks(color, style, snippet_width(t, start, s), snippet_width(t, s, end), "")
+          ),
+          Cons(
+            snippet_middle(t, end + 1, first, last, width, color),
+            Cons(
+              snippet_numbered(
+                color,
+                width,
+                last,
+                snippet_shown(t, start2, snippet_line_end(t, e))
+              ),
+              Cons(
+                snippet_bar(
+                  color,
+                  width,
+                  snippet_marks(
+                    color,
+                    style,
+                    snippet_width(t, start2, lead),
+                    snippet_width(t, lead, e),
+                    label
+                  )
+                ),
+                Nil
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+}
+
+pub fn snippet_note_lines(color: Bool, width: Nat, lines: List(Text)): Text {
+  match lines: Text {
+    Nil => ""
+    Cons(line, rest) => Text::concat(
+      Text::concat_all(
+        Cons(
+          snippet_pad(width),
+          Cons(
+            snippet_paint(color, snippet_blue(), " ="),
+            Cons(" ", Cons(line, Cons(text_newline(), Nil)))
+          )
+        )
+      ),
+      snippet_note_lines(color, width, rest)
+    )
+  }
+}
+
+// One line ` = …` for each line of `notes`; nothing when it is empty.
+pub fn snippet_notes(color: Bool, width: Nat, notes: Text): Text {
+  if Text::len(notes) == 0 { "" } else { snippet_note_lines(color, width, text_lines(notes)) }
+}
+
+// ---- the entry points --------------------------------------------------------------------
+
+// The diagnostic at the bytes `start` to `end` of `source`, the text of the file `path`. A
+// place past the end is taken at the end; an empty place gets one caret. A place that ends
+// just after a newline ends on the line before it.
+pub fn snippet_render(
+  source: Text,
+  start: Nat,
+  end: Nat,
+  path: Text,
+  severity: Text,
+  message: Text,
+  label: Text,
+  notes: Text,
+  color: Bool
+): Text {
+  let size := Text::len(source)
+  let s := snippet_min(start, size)
+  let e0 := snippet_max(s, snippet_min(end, size))
+  let e := if s < e0 && Text::byte_value(source, e0 - 1) == 10 { e0 - 1 } else { e0 }
+  let first := snippet_line_number(source, s)
+  let last := snippet_line_number(source, e)
+  let width := Text::len(Text::of_nat(last))
+  let column := text_char_count_from(source, snippet_line_start(source, s), s, 0) + 1
+  let style := snippet_style(severity)
+  let place := Text::concat_all(
+    Cons(path, Cons(":", Cons(Text::of_nat(first), Cons(":", Cons(Text::of_nat(column), Nil)))))
+  )
+  Text::concat_all(
+    Cons(
+      snippet_header(color, style, severity, message),
+      Cons(
+        snippet_pad(width),
+        Cons(
+          snippet_paint(color, snippet_blue(), "-->"),
+          Cons(
+            " ",
+            Cons(
+              place,
+              Cons(
+                text_newline(),
+                Cons(
+                  snippet_bar(color, width, ""),
+                  Cons(
+                    snippet_body(source, s, e, first, last, width, style, label, color),
+                    Cons(snippet_notes(color, width, notes), Nil)
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+}
+
+// A diagnostic of the file `path` as a whole, without a place in it.
+pub fn snippet_render_file(
+  path: Text,
+  severity: Text,
+  message: Text,
+  notes: Text,
+  color: Bool
+): Text {
+  Text::concat_all(
+    Cons(
+      snippet_header(color, snippet_style(severity), severity, message),
+      Cons(
+        snippet_paint(color, snippet_blue(), "-->"),
+        Cons(" ", Cons(path, Cons(text_newline(), Cons(snippet_notes(color, 0, notes), Nil))))
+      )
+    )
+  )
+}

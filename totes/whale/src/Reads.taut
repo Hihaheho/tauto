@@ -1,0 +1,675 @@
+import std::Base
+import std::Nat
+import std::Ord
+import std::prelude::Ord
+import std::List
+import std::Data
+import "Revision.taut"
+import "Graph.taut"
+import "Laws.taut"
+import "Cycle.taut"
+
+// What a write records about the nodes it reads: each read as of now, the durability no
+// more than asked for nor than any read node's, and a level above every read node's.
+
+theorem cons_ne_nil<A>(x: A, t: List(A), e: Cons(x, t) = Nil): False {
+  match e: False {
+  }
+}
+
+fn min_pick(a: Nat, b: Nat, o: Bool): Nat {
+  match o: Nat {
+    false => b
+    true => a
+  }
+}
+
+theorem nat_min_pick_le(
+  a: Nat,
+  b: Nat,
+  o: Bool,
+  h: Nat::lt(a, b) = o
+): Nat::le(min_pick(a, b, o), a) = true ∧ Nat::le(min_pick(a, b, o), b) = true {
+  match o: Nat::le(min_pick(a, b, o), a) = true ∧ Nat::le(min_pick(a, b, o), b) = true {
+    false => AndIntro(nat_not_lt_le(a, b, h), Nat::le_refl(b))
+    true => AndIntro(
+      Nat::le_refl(a),
+      Nat::le_trans(a, Succ(a), b, Nat::le_succ(a), Eq::trans(Eq::sym(Nat::lt_le_succ(a, b)), h))
+    )
+  }
+}
+
+theorem nat_min_le_left(a: Nat, b: Nat): Nat::le(Nat::min(a, b), a) = true {
+  And::left(nat_min_pick_le(a, b, Nat::lt(a, b), Refl))
+}
+
+theorem nat_min_le_right(a: Nat, b: Nat): Nat::le(Nat::min(a, b), b) = true {
+  And::right(nat_min_pick_le(a, b, Nat::lt(a, b), Refl))
+}
+
+// ---- from `resolve_reads` to what it gives ----------------------------------------
+
+theorem resolve_if_holds<K>(
+  m: List(K),
+  f: Resolved(K),
+  p: (Resolved(K)) -> Prop,
+  hm: (m = Nil) -> p(
+    Resolved::Mk(resolved_deps(f), resolved_durability(f), Succ(resolved_level(f)))
+  )
+): holds(resolve_if(m, f), p) {
+  match m: holds(resolve_if(m, f), p) {
+    Nil => hm(Refl)
+    Cons(k, ks) => Trivial
+  }
+}
+
+// ---- each read is as of now -------------------------------------------------
+
+module Found {
+  theorem fresh_at<K, T>(
+    ns: List(K × Node(K, T)),
+    k: K,
+    rest: Resolved(K),
+    ih: deps_fresh(ns, resolved_deps(rest)) = true,
+    o: Option(Node(K, T)),
+    hk: nodes_get(ns, k) = o
+  ): deps_fresh(ns, resolved_deps(resolve_one(k, o, rest))) = true where Ord(K) {
+    match o: deps_fresh(ns, resolved_deps(resolve_one(k, o, rest))) = true {
+      None => ih
+      Some(n) => Eq::trans(
+        Eq::congr(
+          (y: Bool) => Bool::and(y, deps_fresh(ns, resolved_deps(rest))),
+          Eq::trans(
+            Eq::congr((z: Option(Node(K, T))) => fresh_by(changed_of(z), Node::changed_at(n)), hk),
+            Nat::le_refl(Node::changed_at(n))
+          )
+        ),
+        ih
+      )
+    }
+  }
+
+  theorem fresh<K, T>(
+    ns: List(K × Node(K, T)),
+    ids: List(K),
+    dur: Nat
+  ): deps_fresh(ns, resolved_deps(resolve_found(ns, ids, dur))) = true where Ord(K) {
+    match ids: deps_fresh(ns, resolved_deps(resolve_found(ns, ids, dur))) = true {
+      Nil => Refl
+      Cons(k, rest) => Found::fresh_at(
+        ns,
+        k,
+        resolve_found(ns, rest, dur),
+        Found::fresh(ns, rest, dur),
+        nodes_get(ns, k),
+        Refl
+      )
+    }
+  }
+}
+
+// Every read a write records is unchanged in the graph it read.
+theorem resolve_fresh<K, T>(
+  w: Whale(K, T),
+  dur: Nat,
+  ids: List(K)
+): holds(
+  resolve_reads(w, dur, ids),
+  (r: Resolved(K)) => deps_fresh(Whale::nodes(w), resolved_deps(r)) = true
+) where Ord(K) {
+  resolve_if_holds(
+    missing_ids(Whale::nodes(w), ids),
+    resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur)),
+    (r: Resolved(K)) => deps_fresh(Whale::nodes(w), resolved_deps(r)) = true,
+    (e: missing_ids(Whale::nodes(w), ids) = Nil) => Found::fresh(
+      Whale::nodes(w),
+      ids,
+      Revision::clamp(Whale::revision(w), dur)
+    )
+  )
+}
+
+// ---- the reads are what was asked ------------------------------------------
+
+module Found {
+  theorem ids_at<K, T>(
+    ns: List(K × Node(K, T)),
+    k: K,
+    rest: List(K),
+    dur: Nat,
+    ih: (missing_ids(ns, rest) = Nil) -> dep_ids(resolved_deps(resolve_found(ns, rest, dur))) = rest,
+    o: Option(Node(K, T)),
+    hm: missing_pick(k, o, missing_ids(ns, rest)) = Nil
+  ): dep_ids(
+    resolved_deps(resolve_one(k, o, resolve_found(ns, rest, dur)))
+  ) = Cons(k, rest) where Ord(K) {
+    match o: dep_ids(
+      resolved_deps(resolve_one(k, o, resolve_found(ns, rest, dur)))
+    ) = Cons(k, rest) {
+      None => False::elim(cons_ne_nil(k, missing_ids(ns, rest), hm))
+      Some(n) => Eq::congr((l: List(K)) => Cons(k, l), ih(hm))
+    }
+  }
+
+  theorem ids<K, T>(
+    ns: List(K × Node(K, T)),
+    ids: List(K),
+    dur: Nat,
+    e: missing_ids(ns, ids) = Nil
+  ): dep_ids(resolved_deps(resolve_found(ns, ids, dur))) = ids where Ord(K) {
+    match ids: dep_ids(resolved_deps(resolve_found(ns, ids, dur))) = ids {
+      Nil => Refl
+      Cons(k, rest) => {
+        let ek: missing_pick(k, nodes_get(ns, k), missing_ids(ns, rest)) = Nil := e
+        Found::ids_at(
+          ns,
+          k,
+          rest,
+          dur,
+          (er: missing_ids(ns, rest) = Nil) => Found::ids(ns, rest, dur, er),
+          nodes_get(ns, k),
+          ek
+        )
+      }
+    }
+  }
+}
+
+// A write records exactly the keys it was told to read, in order.
+pub theorem resolve_ids<K, T>(
+  w: Whale(K, T),
+  dur: Nat,
+  ids: List(K)
+): holds(
+  resolve_reads(w, dur, ids),
+  (r: Resolved(K)) => dep_ids(resolved_deps(r)) = ids
+) where Ord(K) {
+  resolve_if_holds(
+    missing_ids(Whale::nodes(w), ids),
+    resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur)),
+    (r: Resolved(K)) => dep_ids(resolved_deps(r)) = ids,
+    (e: missing_ids(Whale::nodes(w), ids) = Nil) => Found::ids(
+      Whale::nodes(w),
+      ids,
+      Revision::clamp(Whale::revision(w), dur),
+      e
+    )
+  )
+}
+
+// ---- durability -------------------------------------------------------------
+
+fn durable_one<K, T>(o: Option(Node(K, T)), d: Nat): Bool {
+  match o: Bool {
+    None => true
+    Some(n) => Nat::le(d, Node::durability(n))
+  }
+}
+
+// `d` is no more than the durability of any node of `ids`.
+fn durable_reads<K, T>(ns: List(K × Node(K, T)), ids: List(K), d: Nat): Bool where Ord(K) {
+  match ids: Bool {
+    Nil => true
+    Cons(k, rest) => Bool::and(durable_one(nodes_get(ns, k), d), durable_reads(ns, rest, d))
+  }
+}
+
+theorem true_and_true(a: Bool, b: Bool, ha: a = true, hb: b = true): Bool::and(a, b) = true {
+  Eq::trans(Eq::congr((y: Bool) => Bool::and(y, b), ha), hb)
+}
+
+theorem durable_one_mono<K, T>(
+  o: Option(Node(K, T)),
+  d: Nat,
+  d2: Nat,
+  h: Nat::le(d2, d) = true,
+  hd: durable_one(o, d) = true
+): durable_one(o, d2) = true {
+  match o: durable_one(o, d2) = true {
+    None => Refl
+    Some(n) => Nat::le_trans(d2, d, Node::durability(n), h, hd)
+  }
+}
+
+theorem durable_mono<K, T>(
+  ns: List(K × Node(K, T)),
+  ids: List(K),
+  d: Nat,
+  d2: Nat,
+  h: Nat::le(d2, d) = true,
+  e: durable_reads(ns, ids, d) = true
+): durable_reads(ns, ids, d2) = true where Ord(K) {
+  match ids: durable_reads(ns, ids, d2) = true {
+    Nil => Refl
+    Cons(k, rest) => true_and_true(
+      durable_one(nodes_get(ns, k), d2),
+      durable_reads(ns, rest, d2),
+      durable_one_mono(
+        nodes_get(ns, k),
+        d,
+        d2,
+        h,
+        And::left(bool_and_true(durable_one(nodes_get(ns, k), d), durable_reads(ns, rest, d), e))
+      ),
+      durable_mono(
+        ns,
+        rest,
+        d,
+        d2,
+        h,
+        And::right(bool_and_true(durable_one(nodes_get(ns, k), d), durable_reads(ns, rest, d), e))
+      )
+    )
+  }
+}
+
+module Found {
+  theorem dur_at<K, T>(
+    ns: List(K × Node(K, T)),
+    k: K,
+    rest: List(K),
+    d0: Nat,
+    ih_le: Nat::le(resolved_durability(resolve_found(ns, rest, d0)), d0) = true,
+    ih: durable_reads(ns, rest, resolved_durability(resolve_found(ns, rest, d0))) = true,
+    o: Option(Node(K, T)),
+    hk: nodes_get(ns, k) = o
+  ): Nat::le(
+    resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0))),
+    d0
+  ) = true ∧ durable_reads(
+    ns,
+    Cons(k, rest),
+    resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0)))
+  ) = true where Ord(K) {
+    match o: Nat::le(
+      resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0))),
+      d0
+    ) = true ∧ durable_reads(
+      ns,
+      Cons(k, rest),
+      resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0)))
+    ) = true {
+      None => AndIntro(
+        ih_le,
+        true_and_true(
+          durable_one(nodes_get(ns, k), resolved_durability(resolve_found(ns, rest, d0))),
+          durable_reads(ns, rest, resolved_durability(resolve_found(ns, rest, d0))),
+          Eq::congr(
+            (z: Option(Node(K, T))) => durable_one(
+              z,
+              resolved_durability(resolve_found(ns, rest, d0))
+            ),
+            hk
+          ),
+          ih
+        )
+      )
+      Some(n) => AndIntro(
+        Nat::le_trans(
+          Nat::min(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n)),
+          resolved_durability(resolve_found(ns, rest, d0)),
+          d0,
+          nat_min_le_left(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n)),
+          ih_le
+        ),
+        true_and_true(
+          durable_one(
+            nodes_get(ns, k),
+            Nat::min(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n))
+          ),
+          durable_reads(
+            ns,
+            rest,
+            Nat::min(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n))
+          ),
+          Eq::trans(
+            Eq::congr(
+              (z: Option(Node(K, T))) => durable_one(
+                z,
+                Nat::min(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n))
+              ),
+              hk
+            ),
+            nat_min_le_right(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n))
+          ),
+          durable_mono(
+            ns,
+            rest,
+            resolved_durability(resolve_found(ns, rest, d0)),
+            Nat::min(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n)),
+            nat_min_le_left(resolved_durability(resolve_found(ns, rest, d0)), Node::durability(n)),
+            ih
+          )
+        )
+      )
+    }
+  }
+
+  theorem dur<K, T>(
+    ns: List(K × Node(K, T)),
+    ids: List(K),
+    d0: Nat
+  ): Nat::le(
+    resolved_durability(resolve_found(ns, ids, d0)),
+    d0
+  ) = true ∧ durable_reads(
+    ns,
+    ids,
+    resolved_durability(resolve_found(ns, ids, d0))
+  ) = true where Ord(K) {
+    match ids: Nat::le(
+      resolved_durability(resolve_found(ns, ids, d0)),
+      d0
+    ) = true ∧ durable_reads(ns, ids, resolved_durability(resolve_found(ns, ids, d0))) = true {
+      Nil => AndIntro(Nat::le_refl(d0), Refl)
+      Cons(k, rest) => Found::dur_at(
+        ns,
+        k,
+        rest,
+        d0,
+        And::left(Found::dur(ns, rest, d0)),
+        And::right(Found::dur(ns, rest, d0)),
+        nodes_get(ns, k),
+        Refl
+      )
+    }
+  }
+}
+
+// A write's durability is no more than asked for, and no more than the durability of any
+// node it reads.
+theorem resolve_durability<K, T>(
+  w: Whale(K, T),
+  dur: Nat,
+  ids: List(K)
+): holds(
+  resolve_reads(w, dur, ids),
+  (r: Resolved(K)) => Nat::le(
+    resolved_durability(r),
+    dur
+  ) = true ∧ durable_reads(Whale::nodes(w), ids, resolved_durability(r)) = true
+) where Ord(K) {
+  resolve_if_holds(
+    missing_ids(Whale::nodes(w), ids),
+    resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur)),
+    (r: Resolved(K)) => Nat::le(
+      resolved_durability(r),
+      dur
+    ) = true ∧ durable_reads(Whale::nodes(w), ids, resolved_durability(r)) = true,
+    (e: missing_ids(Whale::nodes(w), ids) = Nil) => AndIntro(
+      Nat::le_trans(
+        resolved_durability(
+          resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur))
+        ),
+        Revision::clamp(Whale::revision(w), dur),
+        dur,
+        And::left(Found::dur(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur))),
+        nat_min_le_left(dur, Revision::stable(Whale::revision(w)))
+      ),
+      And::right(Found::dur(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur)))
+    )
+  )
+}
+
+// ---- levels -----------------------------------------------------------------
+
+fn below_one<K, T>(o: Option(Node(K, T)), l: Nat): Bool {
+  match o: Bool {
+    None => true
+    Some(n) => Nat::lt(Node::level(n), l)
+  }
+}
+
+// Every node of `ids` has a level below `l`.
+fn below_reads<K, T>(ns: List(K × Node(K, T)), ids: List(K), l: Nat): Bool where Ord(K) {
+  match ids: Bool {
+    Nil => true
+    Cons(k, rest) => Bool::and(below_one(nodes_get(ns, k), l), below_reads(ns, rest, l))
+  }
+}
+
+theorem below_one_mono<K, T>(
+  o: Option(Node(K, T)),
+  l: Nat,
+  l2: Nat,
+  h: Nat::le(l, l2) = true,
+  hb: below_one(o, Succ(l)) = true
+): below_one(o, Succ(l2)) = true {
+  match o: below_one(o, Succ(l2)) = true {
+    None => Refl
+    Some(n) => Nat::le_trans(Node::level(n), l, l2, hb, h)
+  }
+}
+
+theorem below_mono<K, T>(
+  ns: List(K × Node(K, T)),
+  ids: List(K),
+  l: Nat,
+  l2: Nat,
+  h: Nat::le(l, l2) = true,
+  e: below_reads(ns, ids, Succ(l)) = true
+): below_reads(ns, ids, Succ(l2)) = true where Ord(K) {
+  match ids: below_reads(ns, ids, Succ(l2)) = true {
+    Nil => Refl
+    Cons(k, rest) => true_and_true(
+      below_one(nodes_get(ns, k), Succ(l2)),
+      below_reads(ns, rest, Succ(l2)),
+      below_one_mono(
+        nodes_get(ns, k),
+        l,
+        l2,
+        h,
+        And::left(
+          bool_and_true(below_one(nodes_get(ns, k), Succ(l)), below_reads(ns, rest, Succ(l)), e)
+        )
+      ),
+      below_mono(
+        ns,
+        rest,
+        l,
+        l2,
+        h,
+        And::right(
+          bool_and_true(below_one(nodes_get(ns, k), Succ(l)), below_reads(ns, rest, Succ(l)), e)
+        )
+      )
+    )
+  }
+}
+
+module Found {
+  theorem level_at<K, T>(
+    ns: List(K × Node(K, T)),
+    k: K,
+    rest: List(K),
+    d0: Nat,
+    ih: below_reads(ns, rest, Succ(resolved_level(resolve_found(ns, rest, d0)))) = true,
+    o: Option(Node(K, T)),
+    hk: nodes_get(ns, k) = o
+  ): below_reads(
+    ns,
+    Cons(k, rest),
+    Succ(resolved_level(resolve_one(k, o, resolve_found(ns, rest, d0))))
+  ) = true where Ord(K) {
+    match o: below_reads(
+      ns,
+      Cons(k, rest),
+      Succ(resolved_level(resolve_one(k, o, resolve_found(ns, rest, d0))))
+    ) = true {
+      None => true_and_true(
+        below_one(nodes_get(ns, k), Succ(resolved_level(resolve_found(ns, rest, d0)))),
+        below_reads(ns, rest, Succ(resolved_level(resolve_found(ns, rest, d0)))),
+        Eq::congr(
+          (z: Option(Node(K, T))) => below_one(
+            z,
+            Succ(resolved_level(resolve_found(ns, rest, d0)))
+          ),
+          hk
+        ),
+        ih
+      )
+      Some(n) => true_and_true(
+        below_one(
+          nodes_get(ns, k),
+          Succ(Nat::max(resolved_level(resolve_found(ns, rest, d0)), Node::level(n)))
+        ),
+        below_reads(
+          ns,
+          rest,
+          Succ(Nat::max(resolved_level(resolve_found(ns, rest, d0)), Node::level(n)))
+        ),
+        Eq::trans(
+          Eq::congr(
+            (z: Option(Node(K, T))) => below_one(
+              z,
+              Succ(Nat::max(resolved_level(resolve_found(ns, rest, d0)), Node::level(n)))
+            ),
+            hk
+          ),
+          nat_le_max_right(resolved_level(resolve_found(ns, rest, d0)), Node::level(n))
+        ),
+        below_mono(
+          ns,
+          rest,
+          resolved_level(resolve_found(ns, rest, d0)),
+          Nat::max(resolved_level(resolve_found(ns, rest, d0)), Node::level(n)),
+          nat_le_max_left(resolved_level(resolve_found(ns, rest, d0)), Node::level(n)),
+          ih
+        )
+      )
+    }
+  }
+
+  theorem level<K, T>(
+    ns: List(K × Node(K, T)),
+    ids: List(K),
+    d0: Nat
+  ): below_reads(ns, ids, Succ(resolved_level(resolve_found(ns, ids, d0)))) = true where Ord(K) {
+    match ids: below_reads(ns, ids, Succ(resolved_level(resolve_found(ns, ids, d0)))) = true {
+      Nil => Refl
+      Cons(k, rest) => Found::level_at(
+        ns,
+        k,
+        rest,
+        d0,
+        Found::level(ns, rest, d0),
+        nodes_get(ns, k),
+        Refl
+      )
+    }
+  }
+}
+
+// A write's level is above the level of every node it reads.
+theorem resolve_level<K, T>(
+  w: Whale(K, T),
+  dur: Nat,
+  ids: List(K)
+): holds(
+  resolve_reads(w, dur, ids),
+  (r: Resolved(K)) => below_reads(Whale::nodes(w), ids, resolved_level(r)) = true
+) where Ord(K) {
+  resolve_if_holds(
+    missing_ids(Whale::nodes(w), ids),
+    resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur)),
+    (r: Resolved(K)) => below_reads(Whale::nodes(w), ids, resolved_level(r)) = true,
+    (e: missing_ids(Whale::nodes(w), ids) = Nil) => Found::level(
+      Whale::nodes(w),
+      ids,
+      Revision::clamp(Whale::revision(w), dur)
+    )
+  )
+}
+
+// ---- registering ------------------------------------------------------------
+
+pub theorem register_from<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  o: Outcome(K, Resolved(K)),
+  q: (Resolved(K)) -> Prop,
+  hq: holds(o, q),
+  p: (Whale(K, T) × Written) -> Prop,
+  hp: ∀ res: Resolved(K). (q(res)) -> p(write_changed(w, k, x, res))
+): holds(register_with(w, k, x, o), p) where Ord(K) {
+  match o: holds(register_with(w, k, x, o), p) {
+    Absent(ks) => Trivial
+    Done(res) => hp(res)(hq)
+  }
+}
+
+// A registration's durability is no more than asked for, nor than any node it reads.
+theorem register_durability<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => Nat::le(
+    written_durability(psnd(p)),
+    dur
+  ) = true ∧ durable_reads(Whale::nodes(w), ids, written_durability(psnd(p))) = true
+) where Ord(K) {
+  register_from(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (r: Resolved(K)) => Nat::le(
+      resolved_durability(r),
+      dur
+    ) = true ∧ durable_reads(Whale::nodes(w), ids, resolved_durability(r)) = true,
+    resolve_durability(w, dur, ids),
+    (p: Whale(K, T) × Written) => Nat::le(
+      written_durability(psnd(p)),
+      dur
+    ) = true ∧ durable_reads(Whale::nodes(w), ids, written_durability(psnd(p))) = true,
+    (res: Resolved(K)) => (t: Nat::le(resolved_durability(res), dur) = true ∧ durable_reads(Whale::nodes(w), ids, resolved_durability(res)) = true) => t
+  )
+}
+
+// A registration's level is above every node it reads.
+theorem register_level<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => below_reads(Whale::nodes(w), ids, written_level(psnd(p))) = true
+) where Ord(K) {
+  register_from(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (r: Resolved(K)) => below_reads(Whale::nodes(w), ids, resolved_level(r)) = true,
+    resolve_level(w, dur, ids),
+    (p: Whale(K, T) × Written) => below_reads(Whale::nodes(w), ids, written_level(psnd(p))) = true,
+    (res: Resolved(K)) => (t: below_reads(Whale::nodes(w), ids, resolved_level(res)) = true) => t
+  )
+}
+
+theorem dep_ids_core<K, T>(
+  o: Option(Node(K, T))
+): Option::map(
+  (n: Node(K, T)) => Node::dep_ids(n),
+  o
+) = Option::map((n: Node(K, T)) => Node::dep_ids(n), core_of(o)) {
+  match o: Option::map(
+    (n: Node(K, T)) => Node::dep_ids(n),
+    o
+  ) = Option::map((n: Node(K, T)) => Node::dep_ids(n), core_of(o)) {
+    None => Refl
+    Some(n) => match n: Option::map(
+      (q: Node(K, T)) => Node::dep_ids(q),
+      Some(n)
+    ) = Option::map((q: Node(K, T)) => Node::dep_ids(q), core_of(Some(n))) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}

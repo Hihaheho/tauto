@@ -78,6 +78,7 @@ pub fn analyze(path: &Path, source: &str, runs_alone: bool) -> Result<Vec<Warnin
             path: rel,
             module,
             span,
+            ..
         } = s
         else {
             continue;

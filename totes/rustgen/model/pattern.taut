@@ -1,0 +1,326 @@
+import "core.taut" { RsAddress, RsBorrow, RsLiteral, RsPattern, RsStore, RsUse, RsValue }
+import "store.taut" { rs_alloc, rs_can_copy, rs_load, rs_peek, rs_reference_kind, rs_save }
+import "../../../std/Base.taut" { List }
+import "../../../std/Int.taut" { Int }
+import "../../../std/Text.taut" { Text }
+
+pub fn rs_literal_eq(a: RsLiteral, b: RsLiteral): Bool {
+  match a: Bool {
+    RsStr(x) => match b: Bool {
+      RsStr(y) => Text::eq(x, y)
+      RsNatural(y) => false
+      RsUnit => false
+      RsBool(y) => false
+      RsInteger(y, s, w) => false
+      RsText(y) => false
+      RsFloat(y, s) => false
+    }
+    RsNatural(x) => false
+    RsUnit => match b: Bool {
+      RsStr(y) => false
+      RsNatural(y) => false
+      RsUnit => true
+      RsBool(y) => false
+      RsInteger(y, s, w) => false
+      RsText(y) => false
+      RsFloat(y, s) => false
+    }
+    RsBool(x) => match b: Bool {
+      RsStr(y) => false
+      RsNatural(y) => false
+      RsUnit => false
+      RsBool(y) => Bool::eq(x, y)
+      RsInteger(y, s, w) => false
+      RsText(y) => false
+      RsFloat(y, s) => false
+    }
+    RsInteger(x, sx, wx) => match b: Bool {
+      RsStr(y) => false
+      RsNatural(y) => false
+      RsUnit => false
+      RsBool(y) => false
+      RsInteger(y, sy, wy) => Int::eq(x, y) && Bool::eq(sx, sy) && Nat::eq(wx, wy)
+      RsText(y) => false
+      RsFloat(y, s) => false
+    }
+    RsText(x) => match b: Bool {
+      RsStr(y) => false
+      RsNatural(y) => false
+      RsUnit => false
+      RsBool(y) => false
+      RsInteger(y, s, w) => false
+      RsText(y) => Text::eq(x, y)
+      RsFloat(y, s) => false
+    }
+    RsFloat(x, sx) => match b: Bool {
+      RsStr(y) => false
+      RsNatural(y) => false
+      RsUnit => false
+      RsBool(y) => false
+      RsInteger(y, s, w) => false
+      RsText(y) => false
+      RsFloat(y, sy) => Nat::eq(x, y) && Bool::eq(sx, sy)
+    }
+  }
+}
+
+pub fn rs_scalar_eq(lit: RsLiteral, value: RsValue): Bool {
+  match value: Bool {
+    RsScalar(other) => rs_literal_eq(lit, other)
+    RsData(tag, is_copy, fields) => false
+    RsReference(kind, address) => false
+    RsGlobal(index) => false
+    RsClosure(kind, arity, captures, body) => false
+    RsSuspended(captures, body) => false
+    RsHandle(index) => false
+    RsUninitialized => false
+  }
+}
+
+pub(open) inductive RsMatchMode: Type {
+  RsPreview: RsMatchMode
+  RsCommit: RsMatchMode
+}
+
+pub fn rs_pattern_move(mode: RsMatchMode, heap: RsStore, addr: RsAddress): Option(RsStore) {
+  match mode: Option(RsStore) {
+    RsPreview => Some(heap)
+    RsCommit => rs_save(heap, addr, RsUninitialized)
+  }
+}
+
+pub fn rs_child_address(addr: RsAddress, field: Nat): RsAddress {
+  match addr: RsAddress {
+    RsAddr(root, fields) => RsAddr(root, List::append(fields, Cons(field, Nil)))
+  }
+}
+
+pub fn rs_match_leaf(
+  mode: RsMatchMode,
+  heap: RsStore,
+  pattern: RsPattern,
+  addr: RsAddress
+): Option(List(RsValue) × RsStore) {
+  match pattern: Option(List(RsValue) × RsStore) {
+    RsIgnore => match rs_peek(heap, addr): Option(List(RsValue) × RsStore) {
+      None => None
+      Some(value) => Some(#(Nil, heap))
+    }
+    RsBind(kind) => match rs_load(heap, addr): Option(List(RsValue) × RsStore) {
+      None => None
+      Some(value) => match kind: Option(List(RsValue) × RsStore) {
+        RsCopy => if rs_can_copy(value) { Some(#(Cons(value, Nil), heap)) } else { None }
+        RsMove => match rs_pattern_move(mode, heap, addr): Option(List(RsValue) × RsStore) {
+          None => None
+          Some(next) => Some(#(Cons(value, Nil), next))
+        }
+      }
+    }
+    RsBindReference(kind) => match rs_load(heap, addr): Option(List(RsValue) × RsStore) {
+      None => None
+      Some(value) => Some(#(Cons(RsReference(kind, addr), Nil), heap))
+    }
+    RsConstant(lit) => match rs_load(heap, addr): Option(List(RsValue) × RsStore) {
+      None => None
+      Some(value) => if rs_scalar_eq(lit, value) { Some(#(Nil, heap)) } else { None }
+    }
+    RsConstructor(tag, pats) => None
+    RsDerefPattern(kind, body) => None
+  }
+}
+
+// Preview bindings are loans used only by the guard. Commit records each
+// move at its source, leaving ignored fields for the scrutinee's destruction.
+mutual {
+  pub fn rs_match_at(
+    mode: RsMatchMode,
+    heap: RsStore,
+    pattern: RsPattern,
+    addr: RsAddress
+  ): Option(List(RsValue) × RsStore) {
+    match pattern: Option(List(RsValue) × RsStore) {
+      RsDerefPattern(kind, body) => match rs_load(heap, addr): Option(List(RsValue) × RsStore) {
+        None => None
+        Some(value) => match rs_reference_kind(kind, value): Option(List(RsValue) × RsStore) {
+          None => None
+          Some(target) => rs_match_at(mode, heap, body, target)
+        }
+      }
+      RsIgnore => rs_match_leaf(mode, heap, RsIgnore, addr)
+      RsBind(kind) => rs_match_leaf(mode, heap, RsBind(kind), addr)
+      RsBindReference(kind) => rs_match_leaf(mode, heap, RsBindReference(kind), addr)
+      RsConstant(lit) => rs_match_leaf(mode, heap, RsConstant(lit), addr)
+      RsConstructor(tag, pats) => match rs_peek(heap, addr): Option(List(RsValue) × RsStore) {
+        None => None
+        Some(value) => match value: Option(List(RsValue) × RsStore) {
+          RsData(other, is_copy, fields) => if Nat::eq(
+            tag,
+            other
+          ) && Nat::eq(List::length(pats), List::length(fields)) {
+            rs_match_fields_at(mode, heap, pats, addr, 0)
+          } else { None }
+          RsScalar(lit) => None
+          RsReference(kind, target) => None
+          RsGlobal(index) => None
+          RsClosure(kind, arity, captures, body) => None
+          RsSuspended(captures, body) => None
+          RsHandle(index) => None
+          RsUninitialized => None
+        }
+      }
+    }
+  }
+  pub fn rs_match_fields_at(
+    mode: RsMatchMode,
+    heap: RsStore,
+    pats: List(RsPattern),
+    addr: RsAddress,
+    index: Nat
+  ): Option(List(RsValue) × RsStore) {
+    match pats: Option(List(RsValue) × RsStore) {
+      Nil => Some(#(Nil, heap))
+      Cons(pat, rest) => match rs_match_at(
+        mode,
+        heap,
+        pat,
+        rs_child_address(addr, index)
+      ): Option(List(RsValue) × RsStore) {
+        None => None
+        Some(#(bindings, h1)) => match rs_match_fields_at(
+          mode,
+          h1,
+          rest,
+          addr,
+          Succ(index)
+        ): Option(List(RsValue) × RsStore) {
+          None => None
+          Some(#(trailing, h2)) => Some(#(List::append(bindings, trailing), h2))
+        }
+      }
+    }
+  }
+}
+
+pub(open) inductive RsGuardBinding: Type {
+  RsGuardView(address: RsAddress): RsGuardBinding
+  RsGuardReference(kind: RsBorrow, address: RsAddress): RsGuardBinding
+}
+
+pub(open) inductive RsGuardScope: Type {
+  RsGuardScopeOf(bindings: List(RsAddress), temporaries: List(Nat), store: RsStore): RsGuardScope
+}
+
+pub fn rs_guard_leaf(
+  heap: RsStore,
+  pattern: RsPattern,
+  addr: RsAddress
+): Option(List(RsGuardBinding)) {
+  match rs_match_leaf(RsPreview, heap, pattern, addr): Option(List(RsGuardBinding)) {
+    None => None
+    Some(ignored) => match pattern: Option(List(RsGuardBinding)) {
+      RsIgnore => Some(Nil)
+      RsConstant(lit) => Some(Nil)
+      RsBind(mode) => Some(Cons(RsGuardView(addr), Nil))
+      RsBindReference(kind) => Some(Cons(RsGuardReference(kind, addr), Nil))
+      RsConstructor(tag, fields) => None
+      RsDerefPattern(kind, body) => None
+    }
+  }
+}
+
+mutual {
+  pub fn rs_guard_plan(
+    heap: RsStore,
+    pattern: RsPattern,
+    addr: RsAddress
+  ): Option(List(RsGuardBinding)) {
+    match pattern: Option(List(RsGuardBinding)) {
+      RsIgnore => rs_guard_leaf(heap, RsIgnore, addr)
+      RsConstant(lit) => rs_guard_leaf(heap, RsConstant(lit), addr)
+      RsBind(mode) => rs_guard_leaf(heap, RsBind(mode), addr)
+      RsBindReference(kind) => rs_guard_leaf(heap, RsBindReference(kind), addr)
+      RsDerefPattern(kind, body) => match rs_load(heap, addr): Option(List(RsGuardBinding)) {
+        None => None
+        Some(value) => match rs_reference_kind(kind, value): Option(List(RsGuardBinding)) {
+          None => None
+          Some(target) => rs_guard_plan(heap, body, target)
+        }
+      }
+      RsConstructor(tag, patterns) => match rs_peek(heap, addr): Option(List(RsGuardBinding)) {
+        None => None
+        Some(value) => match value: Option(List(RsGuardBinding)) {
+          RsData(other, is_copy, fields) => if Nat::eq(
+            tag,
+            other
+          ) && Nat::eq(List::length(patterns), List::length(fields)) {
+            rs_guard_fields(heap, patterns, addr, 0)
+          } else { None }
+          RsScalar(lit) => None
+          RsReference(kind, target) => None
+          RsGlobal(index) => None
+          RsClosure(kind, arity, captures, body) => None
+          RsSuspended(captures, body) => None
+          RsHandle(index) => None
+          RsUninitialized => None
+        }
+      }
+    }
+  }
+  pub fn rs_guard_fields(
+    heap: RsStore,
+    patterns: List(RsPattern),
+    addr: RsAddress,
+    index: Nat
+  ): Option(List(RsGuardBinding)) {
+    match patterns: Option(List(RsGuardBinding)) {
+      Nil => Some(Nil)
+      Cons(pattern, rest) => match rs_guard_plan(
+        heap,
+        pattern,
+        rs_child_address(addr, index)
+      ): Option(List(RsGuardBinding)) {
+        None => None
+        Some(first) => match rs_guard_fields(
+          heap,
+          rest,
+          addr,
+          Succ(index)
+        ): Option(List(RsGuardBinding)) {
+          None => None
+          Some(following) => Some(List::append(first, following))
+        }
+      }
+    }
+  }
+}
+
+pub fn rs_guard_install(heap: RsStore, bindings: List(RsGuardBinding)): RsGuardScope {
+  match bindings: RsGuardScope {
+    Nil => RsGuardScopeOf(Nil, Nil, heap)
+    Cons(binding, rest) => match binding: RsGuardScope {
+      RsGuardView(addr) => match rs_guard_install(heap, rest): RsGuardScope {
+        RsGuardScopeOf(remaining, scratch, next) => RsGuardScopeOf(
+          Cons(addr, remaining),
+          scratch,
+          next
+        )
+      }
+      RsGuardReference(kind, addr) => match rs_alloc(heap, RsReference(kind, addr)): RsGuardScope {
+        #(slot, h1) => match rs_guard_install(h1, rest): RsGuardScope {
+          RsGuardScopeOf(remaining, scratch, next) => RsGuardScopeOf(
+            Cons(RsAddr(slot, Nil), remaining),
+            Cons(slot, scratch),
+            next
+          )
+        }
+      }
+    }
+  }
+}
+
+pub fn rs_guard_prepare(heap: RsStore, pattern: RsPattern, addr: RsAddress): Option(RsGuardScope) {
+  match rs_guard_plan(heap, pattern, addr): Option(RsGuardScope) {
+    None => None
+    Some(bindings) => Some(rs_guard_install(heap, bindings))
+  }
+}

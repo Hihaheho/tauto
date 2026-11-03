@@ -12,7 +12,6 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{Ty, TypeReport, check_program_in, prelude, prelude_report};
-use crate::surface::PRELUDE_BASE;
 use crate::surface::walk;
 use crate::surface::{EffectDecl, FnDecl, Handler, Program, Stmt, SurfaceTerm, TermKind};
 use tauto_parol::Span;
@@ -216,13 +215,12 @@ fn prelude_touched() -> &'static HashSet<String> {
 /// of `res`, becomes the bare `res` they read so, and a bare entry of an
 /// operation with type arguments is an error, since it does not say which
 /// instance it means.
-pub(super) fn every_instance(program: &mut Program, per_file: &mut [Vec<Stmt>]) {
-    let generics = if program
-        .stmts
-        .first()
-        .and_then(stmt_span)
-        .is_some_and(|sp| sp.start >= PRELUDE_BASE)
-    {
+pub(super) fn every_instance(
+    program: &mut Program,
+    per_file: &mut [Vec<Stmt>],
+    is_prelude: bool,
+) {
+    let generics = if is_prelude {
         typed_generics(&[program])
     } else {
         typed_generics(&[prelude(), program])
@@ -460,16 +458,12 @@ fn functions(stmts: &[Stmt]) -> HashMap<String, FnDecl> {
 /// `program` with its indexed effects expanded (see the module's comment).
 /// A program that does not check is left as it is, for the checker to report
 /// on; what the expansion cannot do is added to its errors.
-pub fn expand_indices(program: &mut Program, per_file: &mut [Vec<Stmt>]) {
-    every_instance(program, per_file);
-    // The prelude is expanded as a program of its own, checked against
-    // itself; it keeps the functions it copies, which a program's calls copy
-    // into the program.
-    let is_prelude = program
-        .stmts
-        .first()
-        .and_then(stmt_span)
-        .is_some_and(|sp| sp.start >= PRELUDE_BASE);
+///
+/// `is_prelude` says that `program` is the prelude itself: it is expanded as
+/// a program of its own, checked against itself; it keeps the functions it
+/// copies, which a program's calls copy into the program.
+pub fn expand_indices(program: &mut Program, per_file: &mut [Vec<Stmt>], is_prelude: bool) {
+    every_instance(program, per_file, is_prelude);
     let mut indexed = indexed_effects(program);
     if !is_prelude {
         if indexed.is_empty() && !touches_indexed(program) {

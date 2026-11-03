@@ -46,6 +46,10 @@
 //! - **`explicit-implicit`.** A call of a theorem or a constructor this file
 //!   declares does not write out the implicit arguments when every one of
 //!   them is determined by first-order matching on the explicit ones.
+//! - **`import-list`.** An import writes the list of the names it brings
+//!   (`import std::Text { Text, concat }`), so the file's dependencies read
+//!   from its imports. `tauto lint --fix` writes each list from the names the
+//!   file uses through the import, as name resolution reads them.
 
 use tauto_message::msg;
 use tauto_parol::Span;
@@ -89,8 +93,30 @@ pub fn lint(source: &str) -> Result<Vec<Finding>, String> {
     }
     for s in &program.stmts {
         raw_locals(s, source, &mut out);
+        import_list(s, &mut out);
     }
     Ok(out)
+}
+
+/// `import-list`: an import writes the list of the names it brings.
+fn import_list(s: &Stmt, out: &mut Vec<Finding>) {
+    if let Stmt::Import {
+        path,
+        module,
+        names: None,
+        span,
+    } = s
+    {
+        let spelling = if *module {
+            path.clone()
+        } else {
+            crate::surface::print::quoted(path)
+        };
+        out.push(Finding {
+            message: msg!("tauto-lint-import-list", import = spelling.as_str()).to_string(),
+            span: *span,
+        });
+    }
 }
 
 /// The tactics a step of `std/` and `meta/` calls: `std/Tactic.taut`.

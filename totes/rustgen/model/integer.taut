@@ -1,0 +1,101 @@
+import "core.taut" { RsEvent, RsLiteral, RsOutcome, RsResult, RsStore, RsValue }
+import "../../../std/Base.taut" { Nat }
+import "../../../std/Int.taut" { Int }
+import "../../../std/Text.taut" { Text }
+
+pub fn rs_power_two(bits: Nat): Nat {
+  match bits: Nat {
+    Zero => 1
+    Succ(rest) => Nat::mul(2, rs_power_two(rest))
+  }
+}
+
+pub fn rs_integer_fits(value: Int, signed: Bool, bits: Nat): Bool {
+  match bits: Bool {
+    Zero => false
+    Succ(rest) => if signed {
+      let bound: Int := IntOfNat(rs_power_two(rest))
+      Int::le(Int::neg(bound), value) && Int::lt(value, bound)
+    } else {
+      Int::le(IntOfNat(0), value) && Int::lt(value, IntOfNat(rs_power_two(bits)))
+    }
+  }
+}
+
+pub fn rs_checked_integer(value: Int, signed: Bool, bits: Nat, heap: RsStore): RsResult(RsValue) {
+  if rs_integer_fits(value, signed, bits) {
+    RsResultOf(RsDone(RsScalar(RsInteger(value, signed, bits))), heap, Nil)
+  } else { RsResultOf(RsPanic, heap, Cons(RsFailure("integer-overflow"), Nil)) }
+}
+
+// These operations describe the checked integer helpers, independently of
+// the host's integer representation or build profile.
+pub fn rs_integer_binary(name: Text, a: RsLiteral, b: RsLiteral, heap: RsStore): RsResult(RsValue) {
+  match a: RsResult(RsValue) {
+    RsInteger(x, sx, wx) => match b: RsResult(RsValue) {
+      RsInteger(y, sy, wy) => if not(Bool::eq(sx, sy) && Nat::eq(wx, wy)) {
+        RsStuck
+      } else if not(rs_integer_fits(x, sx, wx) && rs_integer_fits(y, sy, wy)) {
+        RsStuck
+      } else if Text::eq(name, "add") {
+        rs_checked_integer(Int::add(x, y), sx, wx, heap)
+      } else if Text::eq(name, "sub") {
+        rs_checked_integer(Int::sub(x, y), sx, wx, heap)
+      } else if Text::eq(name, "mul") {
+        rs_checked_integer(Int::mul(x, y), sx, wx, heap)
+      } else if Text::eq(name, "lt") {
+        RsResultOf(RsDone(RsScalar(RsBool(Int::lt(x, y)))), heap, Nil)
+      } else if Text::eq(name, "le") {
+        RsResultOf(RsDone(RsScalar(RsBool(Int::le(x, y)))), heap, Nil)
+      } else if Text::eq(name, "eq") {
+        RsResultOf(RsDone(RsScalar(RsBool(Int::eq(x, y)))), heap, Nil)
+      } else { RsStuck }
+      RsNatural(y) => RsStuck
+      RsUnit => RsStuck
+      RsBool(y) => RsStuck
+      RsStr(y) => RsStuck
+      RsText(y) => RsStuck
+      RsFloat(y, sy) => RsStuck
+    }
+    RsNatural(x) => RsStuck
+    RsUnit => RsStuck
+    RsBool(x) => RsStuck
+    RsStr(x) => RsStuck
+    RsText(x) => RsStuck
+    RsFloat(x, sx) => RsStuck
+  }
+}
+
+pub fn rs_integer_neg(value: RsLiteral, heap: RsStore): RsResult(RsValue) {
+  match value: RsResult(RsValue) {
+    RsInteger(x, signed, bits) => if signed && rs_integer_fits(x, signed, bits) {
+      rs_checked_integer(Int::neg(x), signed, bits, heap)
+    } else { RsStuck }
+    RsNatural(x) => RsStuck
+    RsUnit => RsStuck
+    RsBool(x) => RsStuck
+    RsStr(x) => RsStuck
+    RsText(x) => RsStuck
+    RsFloat(x, sx) => RsStuck
+  }
+}
+
+// The native nat representation is unbounded. Its checked subtraction
+// reports an error when the result would be negative.
+pub fn rs_natural_binary(name: Text, x: Nat, y: Nat, heap: RsStore): RsResult(RsValue) {
+  if Text::eq(name, "add") {
+    RsResultOf(RsDone(RsScalar(RsNatural(Nat::add(x, y)))), heap, Nil)
+  } else if Text::eq(name, "mul") {
+    RsResultOf(RsDone(RsScalar(RsNatural(Nat::mul(x, y)))), heap, Nil)
+  } else if Text::eq(name, "sub") {
+    if Nat::lt(x, y) {
+      RsResultOf(RsPanic, heap, Cons(RsFailure("integer-overflow"), Nil))
+    } else { RsResultOf(RsDone(RsScalar(RsNatural(Nat::sub(x, y)))), heap, Nil) }
+  } else if Text::eq(name, "lt") {
+    RsResultOf(RsDone(RsScalar(RsBool(Nat::lt(x, y)))), heap, Nil)
+  } else if Text::eq(name, "le") {
+    RsResultOf(RsDone(RsScalar(RsBool(not(Nat::lt(y, x))))), heap, Nil)
+  } else if Text::eq(name, "eq") {
+    RsResultOf(RsDone(RsScalar(RsBool(Nat::eq(x, y)))), heap, Nil)
+  } else { RsStuck }
+}

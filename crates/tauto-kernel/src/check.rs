@@ -30,6 +30,8 @@ mod core;
 pub use core::selfhost;
 use core::{Ask, Failed, Failure, Met, Typed};
 mod deq;
+mod derivation;
+pub use derivation::{Derivation, InferenceRule, ProofInspector, ProofReduction};
 #[cfg(test)]
 mod differential;
 mod effects;
@@ -54,7 +56,7 @@ mod universe;
 mod wf;
 
 pub use incremental::{Checker, Declared, chain_state, fingerprint};
-pub use roles::{Checked, CtorSite, Family, Role, Signature};
+pub use roles::{ApplicationSite, BoundaryType, Checked, CtorSite, Family, Role, Signature};
 pub use sugar::{Records, guard_chain, record_sugar};
 
 const PRELUDE: &str = include_str!("prelude.taut");
@@ -329,6 +331,8 @@ pub struct Kernel {
     /// The terms the bodies elaborated to, by declaration, when asked for
     /// (`record_elaborated`).
     elaborated: Option<Vec<(String, T)>>,
+    derivations: Option<Vec<(String, Derivation)>>,
+    derivation_names: HashSet<String>,
     /// What a syntax macro's output was written as, by the span of its root node.
     shown: HashMap<u32, String>,
     /// The decidable equalities of the types declared so far are generated
@@ -348,6 +352,7 @@ pub struct Kernel {
     /// (`record_ctor_sites`), and what was noted.
     record_sites: bool,
     ctor_sites: Vec<CtorSite>,
+    application_sites: Vec<ApplicationSite>,
     /// The classes and instances of the proof language (`check/classes.rs`).
     classes: classes::Registry,
     /// The level-polymorphic declarations and the instances made of them
@@ -699,7 +704,8 @@ impl Kernel {
             {
                 let mut sides = arguments[1..].to_vec();
                 sides.iter_mut().for_each(go);
-                *t = T::app("=", sides, t.span);
+                let written = T::app("=", sides, t.span);
+                *t = t.with_kind((*written.kind).clone(), t.span);
                 return;
             }
             crate::surface::walk::children(t, &mut go);
@@ -932,6 +938,17 @@ impl Kernel {
 }
 
 impl Kernel {
+    /// Records the final core check of each body, including incomplete proofs.
+    /// Cached proofs cannot provide a derivation.
+    pub fn record_derivations(&mut self, names: &[&str]) {
+        self.derivations = Some(Vec::new());
+        self.derivation_names = names.iter().map(|n| n.to_string()).collect();
+    }
+
+    pub fn derivations(&self) -> &[(String, Derivation)] {
+        self.derivations.as_deref().unwrap_or_default()
+    }
+
     /// Keeps the term each body elaborates to, for `elaborated`. A proof
     /// taken from the cache is not elaborated, so do not use both.
     pub fn record_elaborated(&mut self) {
@@ -946,8 +963,9 @@ impl Kernel {
 
     /// Notes, for each pattern in the arms of the declarations checked from now on, the
     /// constructor its short name was read as (`Checked::ctor_sites`). Extraction
-    /// writes that constructor; the checker's own typing is not repeated. A cached
-    /// declaration keeps them with its terms.
+    /// writes that constructor; the checker's own typing is not repeated. Also records
+    /// the implicit slots of source applications (`Checked::application_sites`).
+    /// A cached declaration keeps both kinds of notes with its terms.
     pub fn record_ctor_sites(&mut self) {
         self.record_sites = true;
     }
@@ -1019,6 +1037,8 @@ impl Kernel {
             holes: Vec::new(),
             cache: None,
             elaborated: None,
+            derivations: None,
+            derivation_names: HashSet::new(),
             shown: HashMap::new(),
             deq_started: false,
             seal_after: HashMap::new(),
@@ -1027,6 +1047,7 @@ impl Kernel {
             derived: Vec::new(),
             record_sites: false,
             ctor_sites: Vec::new(),
+            application_sites: Vec::new(),
             classes: Default::default(),
             templates: HashMap::new(),
             level_instances: Default::default(),
@@ -1563,7 +1584,7 @@ impl Kernel {
                     let lam = self.lambda_of(&t.params, body)?;
                     let lam = self.shape(&lam)?;
                     let lam = self.elab(&Vec::new(), &lam, Some(&statement))?;
-                    self.check(&Vec::new(), &lam, &statement)?;
+                    self.check_body(&t.name, &lam, &statement)?;
                     Ok::<_, Diagnostic>(lam)
                 })();
                 self.current = None;
@@ -1646,6 +1667,28 @@ impl Kernel {
             },
             checked,
         )
+    }
+
+    fn check_body(&mut self, name: &str, lam: &T, statement: &T) -> Result<(), Diagnostic> {
+        if !self.derivation_names.contains(name) {
+            return self.check(&Vec::new(), lam, statement);
+        }
+        let globals = &self.globals;
+        let declared = |n: &str| globals.get(n).map(|g| g.ty.clone());
+        let typed = self
+            .core
+            .derivation_in(&Vec::new(), lam, statement, &declared, &[name])
+            .map_err(|f| self.diagnose(&Vec::new(), lam, *f))?;
+        for m in &typed.holes {
+            self.met_hole(&Vec::new(), m)?;
+        }
+        if let Some(tree) = typed.derivation {
+            self.derivations
+                .as_mut()
+                .unwrap()
+                .push((name.to_string(), tree));
+        }
+        Ok(())
     }
 
     /// A sort's name, or `_`, cannot name a declaration.
@@ -1912,12 +1955,15 @@ impl Kernel {
             .record_sites
             .then(|| cache::place_base(&format!("{items:?}")));
         let mark = self.ctor_sites.len();
+        let app_mark = self.application_sites.len();
         let mut cached_sites = None;
+        let mut cached_apps = None;
         let before = key.as_ref().and_then(|k| {
             let cache = self.cache.as_ref()?;
             let terms = cache.get_terms(k, span)?;
             if let Some(base) = base {
                 cached_sites = Some(cache.get_sites(k, base)?);
+                cached_apps = Some(cache.get_applications(k, base)?);
             }
             (terms.len() == decls.len()).then_some(terms)
         });
@@ -1973,13 +2019,13 @@ impl Kernel {
                 .collect();
             let compiled = self.compile_group(&specs)?;
             let mut lams = Vec::new();
-            for (((_, _, params, _, _), c), statement) in
+            for (((name, _, params, _, _), c), statement) in
                 decls.iter().zip(&compiled).zip(&statements)
             {
                 let lam = self.lambda_of(params, c)?;
                 let lam = self.shape(&lam)?;
                 let lam = self.elab(&Vec::new(), &lam, Some(statement))?;
-                self.check(&Vec::new(), &lam, statement)?;
+                self.check_body(name, &lam, statement)?;
                 if !self.holes.is_empty() {
                     return err(msg!("kernel-mutual-hole"), span);
                 }
@@ -2053,10 +2099,13 @@ impl Kernel {
                     cache.put_terms(key, &lams.iter().collect::<Vec<_>>());
                     if let Some(base) = base {
                         cache.put_sites(key, &self.ctor_sites[mark..], base);
+                        cache.put_applications(key, &self.application_sites[app_mark..], base);
                     }
                 }
                 if hit && let Some(sites) = cached_sites {
                     self.ctor_sites.extend(sites);
+                    self.application_sites
+                        .extend(cached_apps.unwrap_or_default());
                 }
                 let mut out = Vec::new();
                 for ((name, implicit, params, ..), (st, lam)) in
@@ -2229,12 +2278,15 @@ impl Kernel {
             .record_sites
             .then(|| cache::place_base(&format!("{f:?}")));
         let mark = self.ctor_sites.len();
+        let app_mark = self.application_sites.len();
         let mut cached_sites = None;
+        let mut cached_apps = None;
         let before = key.as_ref().and_then(|k| {
             let cache = self.cache.as_ref()?;
             let mut terms = cache.get_terms(k, f.body.span)?;
             if let Some(base) = base {
                 cached_sites = Some(cache.get_sites(k, base)?);
+                cached_apps = Some(cache.get_applications(k, base)?);
             }
             (terms.len() == 1).then(|| terms.pop()).flatten()
         });
@@ -2252,6 +2304,7 @@ impl Kernel {
             cache.put_terms(key, &[lam]);
             if let Some(base) = base {
                 cache.put_sites(key, &self.ctor_sites[mark..], base);
+                cache.put_applications(key, &self.application_sites[app_mark..], base);
             }
         }
         if hit
@@ -2259,6 +2312,8 @@ impl Kernel {
             && let Some(sites) = cached_sites
         {
             self.ctor_sites.extend(sites);
+            self.application_sites
+                .extend(cached_apps.unwrap_or_default());
         }
         if let Some(lam) = checked
             && self.core.set_value(&f.name, &lam).is_ok()

@@ -137,15 +137,13 @@ fn every_std_file_comes_with_tauto() {
         .filter(|p| p.extension().is_some_and(|e| e == "taut"))
         .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
         .collect();
-    // The prelude's core files (`Num`, `Std`, `Text`) every program has; the
-    // others are imported as `std::prelude::NAME`.
+    // The files of the prelude, imported as `std::prelude::NAME`.
     on_disk.extend(
         std::fs::read_dir(std.join("prelude"))
             .unwrap()
             .map(|e| e.unwrap().path())
             .filter(|p| p.extension().is_some_and(|e| e == "taut"))
             .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
-            .filter(|name| !["Num.taut", "Std.taut", "Text.taut"].contains(&name.as_str()))
             .map(|name| format!("prelude/{name}")),
     );
     on_disk.sort();

@@ -70,6 +70,11 @@ pub struct Package {
     /// a file under `src` by its path from `src` (`src/compiler.taut` is
     /// `compiler::compiler`).
     pub additional_sources: Vec<String>,
+    /// `prelude = false`: the files of the tote see no name of the library's prelude
+    /// (`std/prelude/`) without importing its file (`import std::prelude::Std`); the
+    /// kernel's prelude stays seen. The standard library declares the prelude, so it
+    /// does not see it before its own files.
+    pub no_prelude: bool,
 }
 
 /// The default source directory every tote has, not written in `Tauto.eure`.
@@ -297,6 +302,10 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                         "additional-sources" => {
                             out.package.additional_sources = list_of(&doc, v).map_err(&fail)?;
                         }
+                        "prelude" => match &doc.node(v).content {
+                            NodeValue::Primitive(P::Bool(b)) => out.package.no_prelude = !*b,
+                            _ => return Err(fail(msg!("tauto-manifest-prelude").to_string())),
+                        },
                         other => {
                             return Err(msg!("tauto-manifest-unknown-key", key = other).to_string());
                         }

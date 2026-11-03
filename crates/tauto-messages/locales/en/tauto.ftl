@@ -140,6 +140,7 @@ tauto-manifest-unknown-trust-key = unknown trust key { $key } in Tauto.eure
 tauto-manifest-not-command-name = { $name } is not a command name (lowercase letters, digits and -, starting with a letter)
 tauto-manifest-unknown-js-key = unknown javascript key { $key } in Tauto.eure
 tauto-manifest-executor = rust.executor is "threads" or "tokio", not { $value }
+tauto-manifest-prelude = package.prelude is true or false
 tauto-manifest-uniffi = rust.uniffi is true or false
 tauto-manifest-unknown-nonresuming-key = unknown rust.nonresuming key { $key }
 tauto-manifest-bad-tote-name = { $name } is not a tote name (lowercase letters, digits and -, starting with a letter)
@@ -234,3 +235,6 @@ tauto-summary-skipped = ; { $skipped } skipped, { $imported } from imports
 tauto-summary-warnings = ; { $count } warnings
 tauto-summary-axioms-none = ; axioms: none
 tauto-summary-axioms = ; axioms: { $list }
+
+tauto-extract-opaque-dependent-pattern = an opaque dependent value cannot be matched outside checked code
+tauto-lint-import-list = import-list: `import { $import }` writes no list of the names it brings; `tauto lint --fix` writes it

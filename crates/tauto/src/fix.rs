@@ -185,8 +185,9 @@ fn edits(
     out
 }
 
-/// `text` with `edits` made, each on the text as it was.
-fn apply(text: &str, edits: &[Edit]) -> Option<String> {
+/// `text` with `edits` made, each on the text as it was; `None` when one of them
+/// is not on the text. `tauto lint --fix` writes its edits with it too.
+pub fn apply(text: &str, edits: &[Edit]) -> Option<String> {
     let mut sorted: Vec<&Edit> = edits.iter().collect();
     // From the end, so that the places before stay; insertions at one place
     // in the order they are listed.
@@ -223,6 +224,9 @@ fn apply(text: &str, edits: &[Edit]) -> Option<String> {
 /// does not leave fewer errors, or brings an error, is taken back and not
 /// made again. The rounds end when no edit is left to make.
 pub fn fix(path: &Path) -> Result<Outcome, String> {
+    // Each round reads the program again with one file changed: what the
+    // files before it expanded to is kept between the rounds.
+    let _kept = KeepExpansions::on();
     // The files edited are those of the tote of `path`, or, outside a tote, those
     // under its directory: a dependency is not edited.
     let entry = crate::program::canonical_path(path);
@@ -425,4 +429,185 @@ pub fn unified_diff(name: &str, old: &str, new: &str) -> String {
         }
     }
     out
+}
+
+/// The edits with a title in `titles` that reading the program of `path`, with the texts held
+/// in memory, gives in that file; each with the place it was written at, one for each place, none
+/// that `refused` holds or that writes what is already there. An edit that takes a statement
+/// away takes the end of its line with it.
+fn lint_edits(
+    path: &Path,
+    texts: &BTreeMap<PathBuf, String>,
+    titles: &[&str],
+    refused: &BTreeSet<(PathBuf, String, String)>,
+) -> Result<Vec<Edit>, String> {
+    let source = |p: &Path| texts.get(p).map(|t| Ok(t.clone()));
+    let loaded = crate::program::load_with_source(path, &source)?;
+    let here = crate::program::canonical_path(path);
+    let Some(file) = loaded
+        .files
+        .iter()
+        .find(|f| crate::program::canonical_path(&f.path) == here)
+    else {
+        return Ok(Vec::new());
+    };
+    // A span a macro made is where it was written.
+    let written = |mut offset: u32| {
+        while let Some((w, _)) = loaded.spans.origin(offset) {
+            offset = w;
+        }
+        offset
+    };
+    let end = file.base as usize + file.text.len();
+    let mut out: Vec<Edit> = loaded
+        .fixes
+        .iter()
+        .map(|(_, f)| f)
+        .filter(|f| titles.contains(&f.title.as_str()))
+        .map(|f| (written(f.span.start), written(f.span.end), f))
+        .filter(|&(start, stop, _)| file.base <= start && start <= stop && stop as usize <= end)
+        .filter_map(|(start, stop, f)| {
+            let mut span = f.span;
+            span.start = start - file.base;
+            span.end = stop - file.base;
+            if f.text.is_empty() && file.text[span.end as usize..].starts_with('\n') {
+                span.end += 1;
+            }
+            let edit = Edit {
+                file: here.clone(),
+                span,
+                text: f.text.clone(),
+                title: f.title.clone(),
+            };
+            let now = &file.text[span.start as usize..span.end as usize];
+            (now != edit.text && !refused.contains(&lint_key(&edit, &file.text))).then_some(edit)
+        })
+        .collect();
+    out.sort_by_key(|e| (e.span.start, e.span.end));
+    out.dedup_by_key(|e| (e.span.start, e.span.end));
+    Ok(out)
+}
+
+/// What tells an edit of `tauto lint --fix` apart across rounds: the file, what is written and
+/// what it writes over (one import taken away is not another).
+fn lint_key(edit: &Edit, text: &str) -> (PathBuf, String, String) {
+    let over = text
+        .get(edit.span.start as usize..edit.span.end as usize)
+        .unwrap_or_default();
+    (edit.file.clone(), edit.title.clone(), format!("{}\u{0}{over}", edit.text))
+}
+
+/// The edits `tauto lint --fix` makes: the list an import writes of the names the file uses
+/// through it, the removal of an import through which it uses nothing, and the list a
+/// declaration writes of what it makes (`=> fn a, theorem b`).
+pub const LINT_FIXES: &[&str] = &[
+    crate::surface::qualify::IMPORT_FIX_TITLE,
+    crate::surface::qualify::UNUSED_IMPORT_FIX_TITLE,
+    crate::generated::FIX_TITLE,
+];
+
+/// Whether an edit of `tauto lint --fix` stays: a program that checked still checks; a program
+/// that did not check gets no new error and has fewer errors, so an edit that leaves the
+/// errors as they were (a list that still does not check) is not written.
+fn no_worse(before: &State, after: &Result<State, String>) -> bool {
+    match after {
+        Ok(after) if before.count() == 0 => after.count() == 0,
+        Ok(after) => after.count() < before.count() && after.new_since(before).is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// `tauto lint --fix`: the edits with a title in `titles` that reading the program of `path`
+/// gives in that file, made round by round in memory as [`fix`] makes its own. A round stays
+/// when the program has no more errors and none it did not have; else each of its edits is
+/// tried alone, and one that brings an error is taken back and not made again (an import that
+/// is needed after all stays). The rounds end when no edit is left to make.
+pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, String> {
+    let _kept = KeepExpansions::on();
+    let here = crate::program::canonical_path(path);
+    let text = std::fs::read_to_string(&here).map_err(|e| format!("{}: {e}", here.display()))?;
+    let original: BTreeMap<PathBuf, String> = [(here.clone(), text.clone())].into();
+    let mut texts = original.clone();
+    let mut state = check(path, &texts)?;
+    let errors_before = state.count();
+    let mut refused = BTreeSet::new();
+    let (mut applied, mut reverted) = (Vec::new(), Vec::new());
+    // Each round makes an edit or refuses one; the bound keeps edits that undo each other
+    // from going on.
+    for _ in 0..200 {
+        let round = lint_edits(path, &texts, titles, &refused)?;
+        if round.is_empty() {
+            break;
+        }
+        let made = |these: &[Edit]| -> (Option<BTreeMap<PathBuf, String>>, Result<State, String>) {
+            match apply(&texts[&here], these) {
+                Some(t) => {
+                    let mut next = texts.clone();
+                    next.insert(here.clone(), t);
+                    let checked = check(path, &next);
+                    (Some(next), checked)
+                }
+                None => (None, Err("an edit is outside its file".to_string())),
+            }
+        };
+        let (next, checked) = made(&round);
+        if let (Some(next), true) = (&next, no_worse(&state, &checked)) {
+            for edit in round {
+                let at = crate::report::line_col(&texts[&here], edit.span.start as usize);
+                applied.push((edit, at));
+            }
+            texts = next.clone();
+            state = checked?;
+            continue;
+        }
+        // One edit at a time, on what stayed.
+        for edit in round {
+            let (next, checked) = made(std::slice::from_ref(&edit));
+            if let (Some(next), true) = (next, no_worse(&state, &checked)) {
+                let at = crate::report::line_col(&texts[&here], edit.span.start as usize);
+                applied.push((edit, at));
+                texts = next;
+                state = checked?;
+                // The other edits were made on the text before this one: they are read again.
+                break;
+            }
+            refused.insert(lint_key(&edit, &texts[&here]));
+            reverted.push(Reverted {
+                before: state.count(),
+                after: checked.as_ref().ok().map(State::count),
+                new_errors: match &checked {
+                    Ok(a) => a.new_since(&state),
+                    Err(e) => vec![e.clone()],
+                },
+                edit,
+            });
+        }
+    }
+    Ok(Outcome {
+        fixed: texts,
+        original,
+        applied,
+        reverted,
+        unfixed: Vec::new(),
+        errors_before,
+        errors_after: state.count(),
+    })
+}
+
+/// Keeps what the program's files expanded to between the checks of one fix,
+/// and restores the thread's setting afterwards.
+struct KeepExpansions(bool);
+
+impl KeepExpansions {
+    fn on() -> Self {
+        let before = crate::program::keeps_expansions();
+        crate::program::keep_expansions(true);
+        KeepExpansions(before)
+    }
+}
+
+impl Drop for KeepExpansions {
+    fn drop(&mut self) {
+        crate::program::keep_expansions(self.0);
+    }
 }

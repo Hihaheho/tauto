@@ -33,7 +33,7 @@ After editing the declaration's grammar:
 ```sh
 bash scripts/generate-tauto-parol.sh
 bash scripts/generate-grammar-tables.sh
-tauto fmt --fill-generated totes/grammar/src/grammar.taut
+tauto lint --fix totes/grammar/src/grammar.taut
 bash scripts/generate-syntax-tables.sh
 ```
 

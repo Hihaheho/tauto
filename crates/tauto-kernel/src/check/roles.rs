@@ -22,8 +22,9 @@ pub enum Role {
     Value,
 }
 
-/// The parameters of a declaration, in order, and how many leading ones a
-/// call may leave out.
+/// The flattened telescope of a declaration's type and its implicit prefix.
+/// `Checked::arities` separates declared parameters from a returned function's
+/// parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
     pub params: Vec<Role>,
@@ -53,7 +54,30 @@ pub struct CtorSite {
     pub resolved: String,
 }
 
+/// Implicit slots inserted into a source application by elaboration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationSite {
+    pub span: tauto_parol::Span,
+    pub callee: String,
+    pub written: usize,
+    pub omitted: usize,
+}
+
+/// A closed value type at an executable boundary. Equal identities were
+/// compared by the core's conversion, not by the spelling of source types.
+#[derive(Debug, Clone)]
+pub struct BoundaryType {
+    pub id: usize,
+    pub ty: T,
+    pub arguments: Vec<BoundaryType>,
+}
+
 pub struct Checked {
+    /// Declared parameter counts, excluding parameters of a returned function.
+    pub arities: HashMap<String, usize>,
+    /// Declared parameters followed by the entire result type. Open and erased
+    /// types have no executable boundary.
+    pub boundary_types: HashMap<String, Vec<Option<BoundaryType>>>,
     /// Executable declarations excluded from the proof environment.
     pub runtime: HashSet<String>,
     pub files: Vec<PathBuf>,
@@ -70,6 +94,7 @@ pub struct Checked {
     /// The declarations a decidable equality generated, by the family that lists them.
     pub derived: Vec<(String, Vec<crate::surface::Stmt>)>,
     pub ctor_sites: Vec<CtorSite>,
+    pub application_sites: Vec<ApplicationSite>,
 }
 
 pub fn checked_entries(
@@ -144,7 +169,37 @@ pub fn checked_entries(
             signatures.insert(name, sig);
         }
     }
+    let mut boundary_types = HashMap::new();
+    {
+        let mut identities = Vec::new();
+        let mut names: Vec<_> = signatures.keys().cloned().collect();
+        names.sort();
+        for name in names {
+            if kernel.ctors.contains_key(&name) || kernel.recs.contains_key(&name) {
+                continue;
+            }
+            if let Some(g) = kernel.globals.get(&name)
+                && g.value.is_some()
+            {
+                let ty = g.ty.clone();
+                let arity = g.params;
+                boundary_types.insert(name, kernel.boundary_types_of(&ty, arity, &mut identities));
+            }
+        }
+    }
+    let arities = signatures
+        .keys()
+        .filter_map(|name| {
+            kernel
+                .globals
+                .get(name)
+                .and_then(|g| g.params)
+                .map(|arity| (name.clone(), arity))
+        })
+        .collect();
     Checked {
+        arities,
+        boundary_types,
         runtime: HashSet::new(),
         files,
         entries: out,
@@ -155,10 +210,85 @@ pub fn checked_entries(
         derived: std::mem::take(&mut kernel.derived),
         classes: kernel.classes.class_names(),
         ctor_sites: std::mem::take(&mut kernel.ctor_sites),
+        application_sites: std::mem::take(&mut kernel.application_sites),
     }
 }
 
 impl Kernel {
+    fn boundary_types_of(
+        &mut self,
+        ty: &T,
+        arity: Option<usize>,
+        identities: &mut Vec<T>,
+    ) -> Vec<Option<BoundaryType>> {
+        let mut ctx: Ctx = Vec::new();
+        let mut out = Vec::new();
+        let mut t = ty.clone();
+        loop {
+            let w = self.whnf(&ctx, &t);
+            if arity == Some(out.len()) {
+                out.push(self.closed_boundary_type(&ctx, &w, identities));
+                return out;
+            }
+            let TermKind::Pi { params, result, .. } = &*w.kind else {
+                out.push(self.closed_boundary_type(&ctx, &w, identities));
+                return out;
+            };
+            let (name, domain) = &params[0];
+            out.push(self.closed_boundary_type(&ctx, domain, identities));
+            ctx.push((name.clone().unwrap_or_else(|| "_".into()), domain.clone()));
+            t = if params.len() == 1 {
+                (**result).clone()
+            } else {
+                T::new(
+                    TermKind::Pi {
+                        params: params[1..].to_vec(),
+                        result: result.clone(),
+                        effects: None,
+                    },
+                    w.span,
+                )
+            };
+        }
+    }
+
+    fn closed_boundary_type(
+        &mut self,
+        ctx: &Ctx,
+        ty: &T,
+        identities: &mut Vec<T>,
+    ) -> Option<BoundaryType> {
+        if ctx.iter().any(|(n, _)| super::occurs(ty, n)) || self.role(ctx, ty) != Role::Value {
+            return None;
+        }
+        let id = match identities
+            .iter()
+            .position(|other| self.conv(&Vec::new(), ty, other))
+        {
+            Some(id) => id,
+            None => {
+                let id = identities.len();
+                identities.push(ty.clone());
+                id
+            }
+        };
+        let ty = self.whnf(&Vec::new(), ty);
+        let mut arguments = Vec::new();
+        if let TermKind::App {
+            arguments: args, ..
+        } = &*ty.kind
+        {
+            for arg in args {
+                if self.expect_type(&Vec::new(), arg).is_ok()
+                    && let Some(arg) = self.closed_boundary_type(&Vec::new(), arg, identities)
+                {
+                    arguments.push(arg);
+                }
+            }
+        }
+        Some(BoundaryType { id, ty, arguments })
+    }
+
     fn signature_of(&mut self, ty: &T) -> Signature {
         let mut ctx: Ctx = Vec::new();
         let mut params = Vec::new();

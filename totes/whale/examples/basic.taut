@@ -1,0 +1,124 @@
+import std::Base
+import std::Data
+import std::prelude::Ord
+import "../src/Revision.taut"
+import "../src/Graph.taut"
+
+// Nodes are named by numbers and carry no data (0). There are three durability levels:
+// 0 for what the user edits, 2 for what almost never changes.
+
+fn put(w: Whale(Nat, Nat), k: Nat, dur: Nat, ids: List(Nat)): Whale(Nat, Nat) {
+  match Whale::register(w, k, Zero, dur, ids): Whale(Nat, Nat) {
+    Done(p) => pfst(p)
+    Absent(ks) => w
+  }
+}
+
+fn same(w: Whale(Nat, Nat), k: Nat, ids: List(Nat)): Whale(Nat, Nat) {
+  match Whale::confirm_unchanged(w, k, ids): Whale(Nat, Nat) {
+    Done(v) => v
+    Absent(ks) => w
+  }
+}
+
+fn absent_ids<A>(o: Outcome(Nat, A)): List(Nat) {
+  match o: List(Nat) {
+    Done(a) => Nil
+    Absent(ks) => ks
+  }
+}
+
+// `b` reads `a`.
+def two(): Whale(Nat, Nat) := put(put(Whale::new(3), 0, 0, Nil), 1, 0, Cons(0, Nil))
+
+theorem two_valid(): Bool::and(Whale::valid(two(), 0), Whale::valid(two(), 1)) = true {
+  Refl
+}
+
+// Writing `a` again makes `b` invalid.
+def edited(): Whale(Nat, Nat) := put(two(), 0, 0, Nil)
+
+theorem edited_b_invalid(): Whale::valid(edited(), 1) = false {
+  Refl
+}
+
+// `b` is computed again and comes out the same: valid again.
+theorem edited_b_confirmed(): Whale::valid(same(edited(), 1, Cons(0, Nil)), 1) = true {
+  Refl
+}
+
+// Early cutoff: `c` reads `b`, which reads `a`. After `a` changes and `b` comes out the
+// same, `c` is still valid without being computed again.
+def chain(): Whale(Nat, Nat) := put(two(), 2, 0, Cons(1, Nil))
+
+theorem chain_cutoff(): Whale::valid(same(put(chain(), 0, 0, Nil), 1, Cons(0, Nil)), 2) = true {
+  Refl
+}
+
+// `a` is edited a few times at level 0, `b` reads it, then `a` is written at level 2. The
+// write is a change for `b`, though the counter of level 2 is far behind that of level 0.
+def restable(): Whale(
+  Nat,
+  Nat
+) := put(put(put(put(two(), 0, 0, Nil), 0, 0, Nil), 1, 0, Cons(0, Nil)), 0, 2, Nil)
+
+theorem restable_b_invalid(): Whale::valid(restable(), 1) = false {
+  Refl
+}
+
+// Durability: `cfg` is stable and `doc` volatile; `cfg_len` reads only `cfg`, so it stays
+// verified when `doc` changes.
+def inputs(): Whale(
+  Nat,
+  Nat
+) := put(put(put(Whale::new(3), 10, 2, Nil), 11, 0, Nil), 12, 2, Cons(10, Nil))
+
+theorem stable_reader(): Whale::verified_at(
+  put(inputs(), 11, 0, Nil),
+  12,
+  Whale::revision(put(inputs(), 11, 0, Nil))
+) = true {
+  Refl
+}
+
+// A node that reads a volatile node is volatile, whatever it asks for.
+theorem durability_capped(): Option::map(
+  (n: Node(Nat, Nat)) => Node::durability(n),
+  Whale::get(put(inputs(), 13, 2, Cons(11, Cons(10, Nil))), 13)
+) = Some(0) {
+  Refl
+}
+
+// Reading a node that does not exist is refused, with its key.
+theorem missing_dep(): absent_ids(
+  Whale::register(two(), 5, Zero, 0, Cons(0, Cons(9, Nil)))
+) = Cons(9, Nil) {
+  Refl
+}
+
+// The reverse edges follow what each node reads.
+theorem dependents_of_a(): Option::map(
+  (n: Node(Nat, Nat)) => Node::dependents(n),
+  Whale::get(chain(), 0)
+) = Some(Cons(1, Nil)) {
+  Refl
+}
+
+// `a` cannot be collected while `b` reads it; removing `b` first frees it.
+theorem collect(): Whale::keys(pfst(Whale::remove_if_unused(Whale::remove(two(), 1).fst, 0))) = Nil {
+  Refl
+}
+
+theorem collect_refused(): Whale::keys(
+  pfst(Whale::remove_if_unused(two(), 0))
+) = Cons(0, Cons(1, Nil)) {
+  Refl
+}
+
+// A cycle: `a` is registered again to read `b`, which reads `a`.
+theorem cycle(): Bool::and(
+  Whale::has_cycle(put(two(), 0, 0, Cons(1, Nil)), 0),
+  not(Whale::has_cycle(chain(), 2))
+) = true {
+  Refl
+}

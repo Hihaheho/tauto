@@ -25,5 +25,5 @@ fn importing_std_array_checks_its_listed_equality() {
     );
     let _ = fs::remove_dir_all(&root);
     assert!(out.status.success(), "{text}");
-    assert!(!text.contains("FAILED"), "{text}");
+    assert!(text.ends_with("ok\n") && !text.contains("error"), "{text}");
 }

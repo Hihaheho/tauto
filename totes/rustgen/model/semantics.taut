@@ -1,0 +1,1000 @@
+import "core.taut" {
+  RsAddress,
+  RsArm,
+  RsBorrow,
+  RsCallable,
+  RsDefinition,
+  RsEvent,
+  RsExpr,
+  RsLiteral,
+  RsOutcome,
+  RsPattern,
+  RsPlace,
+  RsRuntime,
+  RsStore,
+  RsUse,
+  RsValue,
+  rs_invoke
+}
+import "store.taut" {
+  rs_address,
+  rs_alloc,
+  rs_alloc_values,
+  rs_can_copy,
+  rs_cell,
+  rs_load,
+  rs_peek,
+  rs_roots,
+  rs_save,
+  rs_store_cell
+}
+import "pattern.taut" { RsGuardScope, RsMatchMode, rs_guard_prepare, rs_match_at }
+import "control.taut" {
+  RsAbnormal,
+  RsBorrowCallable,
+  RsCallCleanupOrder,
+  RsDrop,
+  RsFinish,
+  RsFinishValues,
+  RsFunctionOutcome,
+  RsPermutation,
+  RsRuntimeOutcome,
+  rs_abnormal,
+  rs_call_store,
+  rs_forget,
+  rs_returned,
+  rs_trace
+}
+import "../../../std/Base.taut" { List }
+import "../../../std/Int.taut" { Int }
+
+pub def RsCopyable(value: RsValue): Prop := rs_can_copy(value) = true
+
+// Finite evaluation derivations do not impose an execution-depth bound.
+// Each premise receives the store left by the preceding premise.
+mutual {
+  pub(open) inductive RsEval(
+    program: List(RsDefinition),
+    rt: RsRuntime
+  ): (List(RsAddress), RsExpr, RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+    RsEvalLiteral<env: List(
+      RsAddress
+    ), lit: RsLiteral, heap: RsStore>: RsEval(
+      program,
+      rt,
+      env,
+      RsLit(lit),
+      heap,
+      RsDone(RsScalar(lit)),
+      heap,
+      Nil
+    )
+    RsEvalFunction<env: List(
+      RsAddress
+    ), index: Nat, heap: RsStore>: RsEval(
+      program,
+      rt,
+      env,
+      RsFunction(index),
+      heap,
+      RsDone(RsGlobal(index)),
+      heap,
+      Nil
+    )
+    RsEvalCopy<env: List(
+      RsAddress
+    ), place: RsPlace, heap: RsStore, addr: RsAddress, value: RsValue>(
+      address: rs_address(env, heap, place) = Some(addr),
+      loaded: rs_load(heap, addr) = Some(value),
+      copyable: RsCopyable(value)
+    ): RsEval(program, rt, env, RsRead(RsCopy, place), heap, RsDone(value), heap, Nil)
+    RsEvalMove<env: List(
+      RsAddress
+    ), place: RsPlace, heap: RsStore, addr: RsAddress, value: RsValue, next: RsStore>(
+      address: rs_address(env, heap, place) = Some(addr),
+      loaded: rs_load(heap, addr) = Some(value),
+      moved: rs_save(heap, addr, RsUninitialized) = Some(next)
+    ): RsEval(program, rt, env, RsRead(RsMove, place), heap, RsDone(value), next, Nil)
+    RsEvalReference<env: List(
+      RsAddress
+    ), place: RsPlace, kind: RsBorrow, heap: RsStore, addr: RsAddress, value: RsValue>(
+      address: rs_address(env, heap, place) = Some(addr),
+      loaded: rs_load(heap, addr) = Some(value)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsRef(kind, place),
+      heap,
+      RsDone(RsReference(kind, addr)),
+      heap,
+      Nil
+    )
+    RsEvalAggregate<env: List(
+      RsAddress
+    ), tag: Nat, is_copy: Bool, fields: List(
+      RsExpr
+    ), heap: RsStore, values: List(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEvals(program, rt, env, fields, heap, RsDone(values), next, trace)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsAggregate(tag, is_copy, fields),
+      heap,
+      RsDone(RsData(tag, is_copy, values)),
+      next,
+      trace
+    )
+    RsEvalAggregateStop<env: List(
+      RsAddress
+    ), tag: Nat, is_copy: Bool, fields: List(
+      RsExpr
+    ), heap: RsStore, out: RsOutcome(
+      List(RsValue)
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEvals(program, rt, env, fields, heap, out, next, trace),
+      abnormal: RsAbnormal(List(RsValue), out)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsAggregate(tag, is_copy, fields),
+      heap,
+      rs_abnormal(out),
+      next,
+      trace
+    )
+    RsEvalLet<env: List(
+      RsAddress
+    ), init: RsExpr, body: RsExpr, heap: RsStore, v: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), slot: Nat, h2: RsStore, out: RsOutcome(
+      RsValue
+    ), h3: RsStore, t2: List(
+      RsEvent
+    ), cleaned: RsOutcome(
+      RsValue
+    ), h4: RsStore, t3: List(
+      RsEvent
+    )>(
+      initial: RsEval(program, rt, env, init, heap, RsDone(v), h1, t1),
+      allocated: rs_alloc(h1, v) = #(slot, h2),
+      evaluated: RsEval(program, rt, Cons(RsAddr(slot, Nil), env), body, h2, out, h3, t2),
+      cleanup: RsFinish(rt, Cons(slot, Nil), h3, out, cleaned, h4, t3)
+    ): RsEval(program, rt, env, RsLet(init, body), heap, cleaned, h4, rs_trace(t1, t2, t3))
+    RsEvalLetStop<env: List(
+      RsAddress
+    ), init: RsExpr, body: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      initial: RsEval(program, rt, env, init, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsLet(init, body), heap, out, next, trace)
+    RsEvalSequence<env: List(
+      RsAddress
+    ), first: RsExpr, second: RsExpr, heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), dropped: RsValue, h2: RsStore, t2: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h3: RsStore, t3: List(
+      RsEvent
+    )>(
+      initial: RsEval(program, rt, env, first, heap, RsDone(value), h1, t1),
+      drop: RsDrop(rt, false, value, h1, RsDone(dropped), h2, t2),
+      following: RsEval(program, rt, env, second, h2, out, h3, t3)
+    ): RsEval(program, rt, env, RsSeq(first, second), heap, out, h3, rs_trace(t1, t2, t3))
+    RsEvalSequenceStop<env: List(
+      RsAddress
+    ), first: RsExpr, second: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      initial: RsEval(program, rt, env, first, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsSeq(first, second), heap, out, next, trace)
+    RsEvalSequenceDropPanic<env: List(
+      RsAddress
+    ), first: RsExpr, second: RsExpr, heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      initial: RsEval(program, rt, env, first, heap, RsDone(value), h1, t1),
+      drop: RsDrop(rt, false, value, h1, RsPanic, h2, t2)
+    ): RsEval(program, rt, env, RsSeq(first, second), heap, RsPanic, h2, List::append(t1, t2))
+    RsEvalIfTrue<env: List(
+      RsAddress
+    ), cond: RsExpr, yes: RsExpr, no: RsExpr, heap: RsStore, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      condition: RsEval(program, rt, env, cond, heap, RsDone(RsScalar(RsBool(true))), h1, t1),
+      selected: RsEval(program, rt, env, yes, h1, out, h2, t2)
+    ): RsEval(program, rt, env, RsIf(cond, yes, no), heap, out, h2, List::append(t1, t2))
+    RsEvalIfFalse<env: List(
+      RsAddress
+    ), cond: RsExpr, yes: RsExpr, no: RsExpr, heap: RsStore, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      condition: RsEval(program, rt, env, cond, heap, RsDone(RsScalar(RsBool(false))), h1, t1),
+      selected: RsEval(program, rt, env, no, h1, out, h2, t2)
+    ): RsEval(program, rt, env, RsIf(cond, yes, no), heap, out, h2, List::append(t1, t2))
+    RsEvalIfStop<env: List(
+      RsAddress
+    ), cond: RsExpr, yes: RsExpr, no: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      condition: RsEval(program, rt, env, cond, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsIf(cond, yes, no), heap, out, next, trace)
+    RsEvalPrimitive<env: List(
+      RsAddress
+    ), name: Text, args: List(
+      RsExpr
+    ), heap: RsStore, values: List(
+      RsValue
+    ), h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      arguments: RsEvals(program, rt, env, args, heap, RsDone(values), h1, t1),
+      invoked: rs_invoke(rt, name, values, h1, out, h2, t2),
+      valid: RsRuntimeOutcome(out)
+    ): RsEval(program, rt, env, RsPrimitive(name, args), heap, out, h2, List::append(t1, t2))
+    RsEvalPrimitiveStop<env: List(
+      RsAddress
+    ), name: Text, args: List(
+      RsExpr
+    ), heap: RsStore, out: RsOutcome(
+      List(RsValue)
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      arguments: RsEvals(program, rt, env, args, heap, out, next, trace),
+      abnormal: RsAbnormal(List(RsValue), out)
+    ): RsEval(program, rt, env, RsPrimitive(name, args), heap, rs_abnormal(out), next, trace)
+    RsEvalCall<env: List(
+      RsAddress
+    ), callee: RsExpr, args: List(
+      RsExpr
+    ), heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), values: List(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h3: RsStore, t3: List(
+      RsEvent
+    ), final: RsOutcome(
+      RsValue
+    ), h4: RsStore, t4: List(
+      RsEvent
+    )>(
+      function: RsEval(program, rt, env, callee, heap, RsDone(value), h1, t1),
+      arguments: RsEvals(program, rt, env, args, h1, RsDone(values), h2, t2),
+      applied: RsApply(program, rt, value, values, h2, out, h3, t3),
+      cleanup: RsFinishValues(rt, Cons(value, Nil), h3, out, final, h4, t4)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsCall(callee, args),
+      heap,
+      final,
+      h4,
+      List::append(rs_trace(t1, t2, t3), t4)
+    )
+    RsEvalCalleeStop<env: List(
+      RsAddress
+    ), callee: RsExpr, args: List(
+      RsExpr
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      function: RsEval(program, rt, env, callee, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsCall(callee, args), heap, out, next, trace)
+    RsEvalCallArgsStop<env: List(
+      RsAddress
+    ), callee: RsExpr, args: List(
+      RsExpr
+    ), heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      List(RsValue)
+    ), h2: RsStore, t2: List(
+      RsEvent
+    ), final: RsOutcome(
+      RsValue
+    ), h3: RsStore, t3: List(
+      RsEvent
+    )>(
+      function: RsEval(program, rt, env, callee, heap, RsDone(value), h1, t1),
+      arguments: RsEvals(program, rt, env, args, h1, out, h2, t2),
+      abnormal: RsAbnormal(List(RsValue), out),
+      cleanup: RsFinishValues(rt, Cons(value, Nil), h2, rs_abnormal(out), final, h3, t3)
+    ): RsEval(program, rt, env, RsCall(callee, args), heap, final, h3, rs_trace(t1, t2, t3))
+    RsEvalReturn<env: List(
+      RsAddress
+    ), expr: RsExpr, heap: RsStore, value: RsValue, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, expr, heap, RsDone(value), next, trace)
+    ): RsEval(program, rt, env, RsReturn(expr), heap, RsReturned(value), next, trace)
+    RsEvalReturnStop<env: List(
+      RsAddress
+    ), expr: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, expr, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsReturn(expr), heap, out, next, trace)
+    RsEvalBreak<env: List(
+      RsAddress
+    ), label: Nat, expr: RsExpr, heap: RsStore, value: RsValue, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, expr, heap, RsDone(value), next, trace)
+    ): RsEval(program, rt, env, RsBreak(label, expr), heap, RsBroken(label, value), next, trace)
+    RsEvalBreakStop<env: List(
+      RsAddress
+    ), label: Nat, expr: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, expr, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsBreak(label, expr), heap, out, next, trace)
+    RsEvalContinue<env: List(
+      RsAddress
+    ), label: Nat, heap: RsStore>: RsEval(
+      program,
+      rt,
+      env,
+      RsContinue(label),
+      heap,
+      RsContinued(label),
+      heap,
+      Nil
+    )
+    RsEvalLoopBreak<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, value: RsValue, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsBroken(label, value), next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsDone(value), next, trace)
+    RsEvalLoopAgain<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsContinued(label), h1, t1),
+      following: RsEval(program, rt, env, RsLoop(label, body), h1, out, h2, t2)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, out, h2, List::append(t1, t2))
+    RsEvalLoopNormal<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsDone(RsScalar(RsUnit)), h1, t1),
+      following: RsEval(program, rt, env, RsLoop(label, body), h1, out, h2, t2)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, out, h2, List::append(t1, t2))
+    RsEvalLoopReturn<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, value: RsValue, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsReturned(value), next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsReturned(value), next, trace)
+    RsEvalLoopPanic<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsPanic, next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsPanic, next, trace)
+    RsEvalLoopOuterBreak<env: List(
+      RsAddress
+    ), label: Nat, outer: Nat, body: RsExpr, heap: RsStore, value: RsValue, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      different: Nat::eq(label, outer) = false,
+      evaluated: RsEval(program, rt, env, body, heap, RsBroken(outer, value), next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsBroken(outer, value), next, trace)
+    RsEvalLoopOuterContinue<env: List(
+      RsAddress
+    ), label: Nat, outer: Nat, body: RsExpr, heap: RsStore, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      different: Nat::eq(label, outer) = false,
+      evaluated: RsEval(program, rt, env, body, heap, RsContinued(outer), next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsContinued(outer), next, trace)
+
+    RsEvalWrite<env: List(
+      RsAddress
+    ), place: RsPlace, expr: RsExpr, heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), addr: RsAddress, old: RsValue, dropped: RsValue, h2: RsStore, t2: List(
+      RsEvent
+    ), h3: RsStore, vacated: RsStore>(
+      rhs: RsEval(program, rt, env, expr, heap, RsDone(value), h1, t1),
+      address: rs_address(env, h1, place) = Some(addr),
+      previous: rs_peek(h1, addr) = Some(old),
+      vacate: rs_save(h1, addr, RsUninitialized) = Some(vacated),
+      drop: RsDrop(rt, false, old, vacated, RsDone(dropped), h2, t2),
+      saved: rs_save(h2, addr, value) = Some(h3)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsWrite(place, expr),
+      heap,
+      RsDone(RsScalar(RsUnit)),
+      h3,
+      List::append(t1, t2)
+    )
+
+    RsEvalWriteStop<env: List(
+      RsAddress
+    ), place: RsPlace, expr: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      rhs: RsEval(program, rt, env, expr, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsWrite(place, expr), heap, out, next, trace)
+    RsEvalLambda<env: List(
+      RsAddress
+    ), kind: RsCallable, arity: Nat, captures: List(
+      RsExpr
+    ), body: RsExpr, heap: RsStore, values: List(
+      RsValue
+    ), h1: RsStore, trace: List(
+      RsEvent
+    ), slots: List(
+      Nat
+    ), h2: RsStore, slot: Nat, h3: RsStore>(
+      captured: RsEvals(program, rt, env, captures, heap, RsDone(values), h1, trace),
+      allocated: rs_alloc_values(h1, values) = #(slots, h2),
+      closure: rs_alloc(h2, RsClosure(kind, arity, slots, body)) = #(slot, h3)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsLambda(kind, arity, captures, body),
+      heap,
+      RsDone(RsHandle(slot)),
+      h3,
+      trace
+    )
+    RsEvalLambdaStop<env: List(
+      RsAddress
+    ), kind: RsCallable, arity: Nat, captures: List(
+      RsExpr
+    ), body: RsExpr, heap: RsStore, out: RsOutcome(
+      List(RsValue)
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      captured: RsEvals(program, rt, env, captures, heap, out, next, trace),
+      abnormal: RsAbnormal(List(RsValue), out)
+    ): RsEval(
+      program,
+      rt,
+      env,
+      RsLambda(kind, arity, captures, body),
+      heap,
+      rs_abnormal(out),
+      next,
+      trace
+    )
+    RsEvalFuture<env: List(
+      RsAddress
+    ), captures: List(
+      RsExpr
+    ), body: RsExpr, heap: RsStore, values: List(
+      RsValue
+    ), h1: RsStore, trace: List(
+      RsEvent
+    ), slots: List(
+      Nat
+    ), h2: RsStore, slot: Nat, h3: RsStore>(
+      captured: RsEvals(program, rt, env, captures, heap, RsDone(values), h1, trace),
+      allocated: rs_alloc_values(h1, values) = #(slots, h2),
+      future: rs_alloc(h2, RsSuspended(slots, body)) = #(slot, h3)
+    ): RsEval(program, rt, env, RsFuture(captures, body), heap, RsDone(RsHandle(slot)), h3, trace)
+    RsEvalFutureStop<env: List(
+      RsAddress
+    ), captures: List(
+      RsExpr
+    ), body: RsExpr, heap: RsStore, out: RsOutcome(
+      List(RsValue)
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      captured: RsEvals(program, rt, env, captures, heap, out, next, trace),
+      abnormal: RsAbnormal(List(RsValue), out)
+    ): RsEval(program, rt, env, RsFuture(captures, body), heap, rs_abnormal(out), next, trace)
+    RsEvalAwait<env: List(
+      RsAddress
+    ), expr: RsExpr, heap: RsStore, slot: Nat, h1: RsStore, t1: List(
+      RsEvent
+    ), captures: List(
+      Nat
+    ), body: RsExpr, out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    ), cleaned: RsOutcome(
+      RsValue
+    ), h3: RsStore, t3: List(
+      RsEvent
+    ), capture_order: List(
+      Nat
+    )>(
+      future: RsEval(program, rt, env, expr, heap, RsDone(RsHandle(slot)), h1, t1),
+      suspended: rs_cell(h1, slot) = Some(RsSuspended(captures, body)),
+      evaluated: RsEval(
+        program,
+        rt,
+        rs_roots(captures),
+        body,
+        rs_store_cell(h1, slot, None),
+        out,
+        h2,
+        t2
+      ),
+      function_control: RsFunctionOutcome(out),
+      order_valid: RsPermutation(captures, capture_order),
+      cleanup: RsFinish(rt, capture_order, h2, rs_returned(out), cleaned, h3, t3)
+    ): RsEval(program, rt, env, RsAwait(expr), heap, cleaned, h3, rs_trace(t1, t2, t3))
+    RsEvalAwaitStop<env: List(
+      RsAddress
+    ), expr: RsExpr, heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      future: RsEval(program, rt, env, expr, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsAwait(expr), heap, out, next, trace)
+    RsEvalMatch<env: List(
+      RsAddress
+    ), expr: RsExpr, arms: List(
+      RsArm
+    ), heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), slot: Nat, h2: RsStore, out: RsOutcome(
+      RsValue
+    ), h3: RsStore, t2: List(
+      RsEvent
+    ), cleaned: RsOutcome(
+      RsValue
+    ), h4: RsStore, t3: List(
+      RsEvent
+    )>(
+      scrutinee: RsEval(program, rt, env, expr, heap, RsDone(value), h1, t1),
+      allocated: rs_alloc(h1, value) = #(slot, h2),
+      selected: RsSelect(program, rt, env, RsAddr(slot, Nil), arms, h2, out, h3, t2),
+      cleanup: RsFinish(rt, Cons(slot, Nil), h3, out, cleaned, h4, t3)
+    ): RsEval(program, rt, env, RsMatch(expr, arms), heap, cleaned, h4, rs_trace(t1, t2, t3))
+    RsEvalMatchStop<env: List(
+      RsAddress
+    ), expr: RsExpr, arms: List(
+      RsArm
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      scrutinee: RsEval(program, rt, env, expr, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsMatch(expr, arms), heap, out, next, trace)
+
+    RsEvalWriteDropStop<env: List(
+      RsAddress
+    ), place: RsPlace, expr: RsExpr, heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), addr: RsAddress, old: RsValue, vacated: RsStore, out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    ), final: RsOutcome(
+      RsValue
+    ), h3: RsStore, t3: List(
+      RsEvent
+    )>(
+      rhs: RsEval(program, rt, env, expr, heap, RsDone(value), h1, t1),
+      address: rs_address(env, h1, place) = Some(addr),
+      previous: rs_peek(h1, addr) = Some(old),
+      vacate: rs_save(h1, addr, RsUninitialized) = Some(vacated),
+      drop: RsDrop(rt, false, old, vacated, out, h2, t2),
+      abnormal: RsAbnormal(RsValue, out),
+      cleanup: RsFinishValues(rt, Cons(value, Nil), h2, out, final, h3, t3)
+    ): RsEval(program, rt, env, RsWrite(place, expr), heap, final, h3, rs_trace(t1, t2, t3))
+
+    RsEvalMatchPlace<env: List(
+      RsAddress
+    ), place: RsPlace, arms: List(
+      RsArm
+    ), heap: RsStore, addr: RsAddress, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      address: rs_address(env, heap, place) = Some(addr),
+      selected: RsSelect(program, rt, env, addr, arms, heap, out, next, trace)
+    ): RsEval(program, rt, env, RsMatchPlace(place, arms), heap, out, next, trace)
+    RsEvalLoopExit<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, code: Int, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsExit(code), next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsExit(code), next, trace)
+    RsEvalLoopAbort<env: List(
+      RsAddress
+    ), label: Nat, body: RsExpr, heap: RsStore, next: RsStore, trace: List(
+      RsEvent
+    )>(
+      evaluated: RsEval(program, rt, env, body, heap, RsAbort, next, trace)
+    ): RsEval(program, rt, env, RsLoop(label, body), heap, RsAbort, next, trace)
+    RsEvalSequenceDropExit<env: List(
+      RsAddress
+    ), first: RsExpr, second: RsExpr, heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      initial: RsEval(program, rt, env, first, heap, RsDone(value), h1, t1),
+      drop: RsDrop(rt, false, value, h1, out, h2, t2),
+      valid: RsRuntimeOutcome(out),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEval(program, rt, env, RsSeq(first, second), heap, out, h2, List::append(t1, t2))
+  }
+
+  pub(open) inductive RsEvals(
+    program: List(RsDefinition),
+    rt: RsRuntime
+  ): (
+    List(RsAddress),
+    List(RsExpr),
+    RsStore,
+    RsOutcome(List(RsValue)),
+    RsStore,
+    List(RsEvent)
+  ) -> Prop {
+    RsEvalsNil<env: List(
+      RsAddress
+    ), heap: RsStore>: RsEvals(program, rt, env, Nil, heap, RsDone(Nil), heap, Nil)
+    RsEvalsCons<env: List(
+      RsAddress
+    ), expr: RsExpr, rest: List(
+      RsExpr
+    ), heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), values: List(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      first: RsEval(program, rt, env, expr, heap, RsDone(value), h1, t1),
+      following: RsEvals(program, rt, env, rest, h1, RsDone(values), h2, t2)
+    ): RsEvals(
+      program,
+      rt,
+      env,
+      Cons(expr, rest),
+      heap,
+      RsDone(Cons(value, values)),
+      h2,
+      List::append(t1, t2)
+    )
+    RsEvalsHeadStop<env: List(
+      RsAddress
+    ), expr: RsExpr, rest: List(
+      RsExpr
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      first: RsEval(program, rt, env, expr, heap, out, next, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsEvals(program, rt, env, Cons(expr, rest), heap, rs_abnormal(out), next, trace)
+    RsEvalsTailStop<env: List(
+      RsAddress
+    ), expr: RsExpr, rest: List(
+      RsExpr
+    ), heap: RsStore, value: RsValue, h1: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      List(RsValue)
+    ), h2: RsStore, t2: List(
+      RsEvent
+    ), final: RsOutcome(
+      RsValue
+    ), h3: RsStore, t3: List(
+      RsEvent
+    )>(
+      first: RsEval(program, rt, env, expr, heap, RsDone(value), h1, t1),
+      following: RsEvals(program, rt, env, rest, h1, out, h2, t2),
+      abnormal: RsAbnormal(List(RsValue), out),
+      cleanup: RsFinishValues(rt, Cons(value, Nil), h2, rs_abnormal(out), final, h3, t3)
+    ): RsEvals(
+      program,
+      rt,
+      env,
+      Cons(expr, rest),
+      heap,
+      rs_abnormal(final),
+      h3,
+      rs_trace(t1, t2, t3)
+    )
+  }
+
+  pub(open) inductive RsApply(
+    program: List(RsDefinition),
+    rt: RsRuntime
+  ): (RsValue, List(RsValue), RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+    RsApplyGlobal<index: Nat, values: List(
+      RsValue
+    ), heap: RsStore, arity: Nat, body: RsExpr, slots: List(
+      Nat
+    ), h1: RsStore, out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t1: List(
+      RsEvent
+    ), cleaned: RsOutcome(
+      RsValue
+    ), h3: RsStore, t2: List(
+      RsEvent
+    )>(
+      definition: List::nth(program, index) = Some(RsDef(arity, body)),
+      arguments: List::length(values) = arity,
+      allocated: rs_alloc_values(heap, values) = #(slots, h1),
+      evaluated: RsEval(program, rt, rs_roots(slots), body, h1, out, h2, t1),
+      function_control: RsFunctionOutcome(out),
+      cleanup: RsFinish(rt, List::reverse(slots), h2, rs_returned(out), cleaned, h3, t2)
+    ): RsApply(program, rt, RsGlobal(index), values, heap, cleaned, h3, List::append(t1, t2))
+
+    RsApplyClosure<slot: Nat, kind: RsCallable, arity: Nat, captures: List(
+      Nat
+    ), body: RsExpr, values: List(
+      RsValue
+    ), heap: RsStore, slots: List(
+      Nat
+    ), h1: RsStore, out: RsOutcome(
+      RsValue
+    ), h2: RsStore, t1: List(
+      RsEvent
+    ), cleaned: RsOutcome(
+      RsValue
+    ), h3: RsStore, t2: List(
+      RsEvent
+    ), cleanup_slots: List(
+      Nat
+    )>(
+      closure: rs_cell(heap, slot) = Some(RsClosure(kind, arity, captures, body)),
+      arguments: List::length(values) = arity,
+      allocated: rs_alloc_values(rs_call_store(kind, heap, slot), values) = #(slots, h1),
+      evaluated: RsEval(
+        program,
+        rt,
+        rs_roots(List::append(slots, captures)),
+        body,
+        h1,
+        out,
+        h2,
+        t1
+      ),
+      function_control: RsFunctionOutcome(out),
+      cleanup_order: RsCallCleanupOrder(kind, slots, captures, cleanup_slots),
+      cleanup: RsFinish(rt, cleanup_slots, h2, rs_returned(out), cleaned, h3, t2)
+    ): RsApply(program, rt, RsHandle(slot), values, heap, cleaned, h3, List::append(t1, t2))
+    RsApplyBorrowed<borrow: RsBorrow, addr: RsAddress, value: RsValue, args: List(
+      RsValue
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      loaded: rs_load(heap, addr) = Some(value),
+      allowed: RsBorrowCallable(heap, borrow, value),
+      applied: RsApply(program, rt, value, args, heap, out, next, trace)
+    ): RsApply(program, rt, RsReference(borrow, addr), args, heap, out, next, trace)
+  }
+
+  pub(open) inductive RsSelect(
+    program: List(RsDefinition),
+    rt: RsRuntime
+  ): (
+    List(RsAddress),
+    RsAddress,
+    List(RsArm),
+    RsStore,
+    RsOutcome(RsValue),
+    RsStore,
+    List(RsEvent)
+  ) -> Prop {
+    RsSelectMiss<env: List(
+      RsAddress
+    ), addr: RsAddress, pat: RsPattern, guard: RsExpr, body: RsExpr, rest: List(
+      RsArm
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      mismatch: rs_guard_prepare(heap, pat, addr) = None,
+      following: RsSelect(program, rt, env, addr, rest, heap, out, next, trace)
+    ): RsSelect(
+      program,
+      rt,
+      env,
+      addr,
+      Cons(RsCase(pat, guard, body), rest),
+      heap,
+      out,
+      next,
+      trace
+    )
+    RsSelectHit<env: List(
+      RsAddress
+    ), addr: RsAddress, pat: RsPattern, guard: RsExpr, body: RsExpr, rest: List(
+      RsArm
+    ), heap: RsStore, loans: List(
+      RsAddress
+    ), scratch: List(
+      Nat
+    ), h1: RsStore, h2: RsStore, t1: List(
+      RsEvent
+    ), bindings: List(
+      RsValue
+    ), h3: RsStore, slots: List(
+      Nat
+    ), h4: RsStore, out: RsOutcome(
+      RsValue
+    ), h5: RsStore, t2: List(
+      RsEvent
+    ), cleaned: RsOutcome(
+      RsValue
+    ), h6: RsStore, t3: List(
+      RsEvent
+    )>(
+      prepared: rs_guard_prepare(heap, pat, addr) = Some(RsGuardScopeOf(loans, scratch, h1)),
+      tested: RsEval(
+        program,
+        rt,
+        List::append(loans, env),
+        guard,
+        h1,
+        RsDone(RsScalar(RsBool(true))),
+        h2,
+        t1
+      ),
+      committed: rs_match_at(RsCommit, rs_forget(scratch, h2), pat, addr) = Some(#(bindings, h3)),
+      allocated: rs_alloc_values(h3, bindings) = #(slots, h4),
+      evaluated: RsEval(program, rt, List::append(rs_roots(slots), env), body, h4, out, h5, t2),
+      cleanup: RsFinish(rt, List::reverse(slots), h5, out, cleaned, h6, t3)
+    ): RsSelect(
+      program,
+      rt,
+      env,
+      addr,
+      Cons(RsCase(pat, guard, body), rest),
+      heap,
+      cleaned,
+      h6,
+      rs_trace(t1, t2, t3)
+    )
+    RsSelectGuardFalse<env: List(
+      RsAddress
+    ), addr: RsAddress, pat: RsPattern, guard: RsExpr, body: RsExpr, rest: List(
+      RsArm
+    ), heap: RsStore, loans: List(
+      RsAddress
+    ), scratch: List(
+      Nat
+    ), h1: RsStore, h2: RsStore, t1: List(
+      RsEvent
+    ), out: RsOutcome(
+      RsValue
+    ), h3: RsStore, t2: List(
+      RsEvent
+    )>(
+      prepared: rs_guard_prepare(heap, pat, addr) = Some(RsGuardScopeOf(loans, scratch, h1)),
+      tested: RsEval(
+        program,
+        rt,
+        List::append(loans, env),
+        guard,
+        h1,
+        RsDone(RsScalar(RsBool(false))),
+        h2,
+        t1
+      ),
+      following: RsSelect(program, rt, env, addr, rest, rs_forget(scratch, h2), out, h3, t2)
+    ): RsSelect(
+      program,
+      rt,
+      env,
+      addr,
+      Cons(RsCase(pat, guard, body), rest),
+      heap,
+      out,
+      h3,
+      List::append(t1, t2)
+    )
+    RsSelectGuardStop<env: List(
+      RsAddress
+    ), addr: RsAddress, pat: RsPattern, guard: RsExpr, body: RsExpr, rest: List(
+      RsArm
+    ), heap: RsStore, loans: List(
+      RsAddress
+    ), scratch: List(
+      Nat
+    ), h1: RsStore, out: RsOutcome(
+      RsValue
+    ), h2: RsStore, trace: List(
+      RsEvent
+    )>(
+      prepared: rs_guard_prepare(heap, pat, addr) = Some(RsGuardScopeOf(loans, scratch, h1)),
+      tested: RsEval(program, rt, List::append(loans, env), guard, h1, out, h2, trace),
+      abnormal: RsAbnormal(RsValue, out)
+    ): RsSelect(
+      program,
+      rt,
+      env,
+      addr,
+      Cons(RsCase(pat, guard, body), rest),
+      heap,
+      out,
+      rs_forget(scratch, h2),
+      trace
+    )
+  }
+}

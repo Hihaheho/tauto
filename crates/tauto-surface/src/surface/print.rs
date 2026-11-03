@@ -107,7 +107,19 @@ fn written(stmts: &[Stmt]) -> impl Iterator<Item = &Stmt> {
 }
 
 pub fn print_term(t: &SurfaceTerm) -> String {
-    let mut p = Printer::default();
+    print_term_with(t, &|_| None)
+}
+
+/// Prints a term, allowing a caller to supply an atomic spelling for selected
+/// occurrences. The callback does not change the term being printed.
+pub fn print_term_with(
+    t: &SurfaceTerm,
+    spelling: &dyn Fn(&SurfaceTerm) -> Option<String>,
+) -> String {
+    let mut p = Printer {
+        spelling: Some(spelling),
+        ..Printer::default()
+    };
     p.term(0, t, 0);
     p.out
 }
@@ -146,7 +158,8 @@ const UNARY: u8 = 7;
 const POSTFIX: u8 = 8;
 
 #[derive(Default)]
-struct Printer {
+struct Printer<'a> {
+    spelling: Option<&'a dyn Fn(&SurfaceTerm) -> Option<String>>,
     out: String,
     /// The next function is also a macro: `macro fn m(…)`.
     macro_next: bool,
@@ -277,7 +290,7 @@ pub fn quoted(t: &str) -> String {
     s
 }
 
-impl Printer {
+impl Printer<'_> {
     fn w(&mut self, s: &str) {
         self.out.push_str(s);
     }
@@ -300,6 +313,10 @@ impl Printer {
     /// `level` is the indent of the line the term starts on; `outer` the
     /// binding power the context asks of it.
     fn term(&mut self, level: usize, t: &SurfaceTerm, outer: u8) {
+        if let Some(text) = self.spelling.and_then(|spell| spell(t)) {
+            self.w(&text);
+            return;
+        }
         match &*t.kind {
             TermKind::Var(n) if prelude_is(n, "Star") => self.w("#()"),
             TermKind::Var(n) => self.w(&name(n)),
@@ -985,9 +1002,25 @@ impl Printer {
                 self.w("}");
             }
             Stmt::Import {
-                path, module: true, ..
-            } => self.w(&format!("import {path}")),
-            Stmt::Import { path, .. } => self.w(&format!("import {}", quoted(path))),
+                path,
+                module,
+                names,
+                ..
+            } => {
+                let target = if *module { path.clone() } else { quoted(path) };
+                let list = match names {
+                    Some(names) => format!(
+                        " {{ {} }}",
+                        names
+                            .iter()
+                            .map(|(n, _)| raw(n))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    None => String::new(),
+                };
+                self.w(&format!("import {target}{list}"))
+            }
             Stmt::Inductive(i) => self.inductive(level, i),
             Stmt::Module { name: n, items, .. } => {
                 self.w(&format!("module {} {{\n", raw(n)));
@@ -1511,6 +1544,21 @@ fn is_unit(t: &SurfaceTerm) -> bool {
 #[cfg(test)]
 mod tests {
     use super::raw;
+
+    #[test]
+    fn atomic_spellings_apply_to_selected_occurrences() {
+        let a = super::SurfaceTerm::var("a", Default::default());
+        let other = super::SurfaceTerm::var("a", Default::default());
+        let t = super::SurfaceTerm::app("f", vec![a.clone(), other], Default::default());
+        let original = t.clone();
+        assert_eq!(
+            super::print_term_with(&t, &|term| {
+                (term.id() == a.id()).then(|| "dsl!(`a`)".to_string())
+            }),
+            "f(dsl!(`a`), a)"
+        );
+        assert_eq!(t, original);
+    }
 
     /// `r#` stands before a reserved word alone; a path is one name to the lexer, so it is
     /// written as it is (`r#calc::Expr` would not read back).

@@ -1,6 +1,6 @@
 //! The list a declaration writes of what it makes (`=> fn a, theorem b`), and the check that the
 //! list is exactly what was made. A name made without being written, or written without being made,
-//! is an error; the edit that writes the list is the diagnostic's fix (`tauto fmt --fill-generated`).
+//! is an error; the edit that writes the list is the diagnostic's fix (`tauto lint --fix`).
 
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
@@ -8,7 +8,7 @@ use tauto_parol::Span;
 use crate::surface::Fix;
 use crate::surface::{Generates, Stmt};
 
-/// The title of the edit that writes a list; `tauto fmt --fill-generated` applies the edits with it.
+/// The title of the edit that writes a list; `tauto lint --fix` applies the edits with it.
 pub const FIX_TITLE: &str = "Write the list of what it makes";
 
 const WIDTH: usize = 96;

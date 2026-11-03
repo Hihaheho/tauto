@@ -1,0 +1,238 @@
+import std::Base
+import std::Nat
+import std::Ord
+import std::prelude::Ord
+import std::List
+import std::Data
+
+// Revisions and durability.
+//
+// A durability is a level: 0 is the most volatile, higher levels change less often. A
+// revision is a list of counters, one per level, the most volatile first. The counter of
+// level 0 is a clock that every change moves on, and the counter of level `d` is the clock
+// at the last change at level `d` or above. So a node that only reads stable inputs is
+// checked against a counter that volatile changes leave alone, and every `verified_at` and
+// `changed_at` is a reading of the one clock, whatever level the node had when it was
+// written.
+
+module Revision {
+  // The counter for level `d`, or 0 past the last level.
+  pub fn get(r: List(Nat), d: Nat): Nat {
+    match r: Nat {
+      Nil => Zero
+      Cons(c, t) => match d: Nat {
+        Zero => c
+        Succ(e) => Revision::get(t, e)
+      }
+    }
+  }
+
+  // The counters of the levels 0 to `d` raised to at least `t`.
+  pub fn raise(r: List(Nat), d: Nat, t: Nat): List(Nat) {
+    match r: List(Nat) {
+      Nil => Nil
+      Cons(c, rest) => match d: List(Nat) {
+        Zero => Cons(Nat::max(c, t), rest)
+        Succ(e) => Cons(Nat::max(c, t), Revision::raise(rest, e, t))
+      }
+    }
+  }
+
+  // One more change at level `d`: the clock (the counter of level 0) goes up by one, and the
+  // counters of the levels 0 to `d` become the new clock.
+  pub fn bump(r: List(Nat), d: Nat): List(Nat) {
+    Revision::raise(r, d, Succ(Revision::get(r, Zero)))
+  }
+
+  // `n` levels, every counter at 0.
+  pub fn new(n: Nat): List(Nat) {
+    match n: List(Nat) {
+      Zero => Nil
+      Succ(m) => Cons(Zero, Revision::new(m))
+    }
+  }
+
+  // The most stable level of a revision with `n` levels.
+  pub fn stable(r: List(Nat)): Nat {
+    Nat::sub(List::length(r), Succ(Zero))
+  }
+
+  // A level that exists in `r`: `d`, or the most stable level when `d` is past it.
+  pub fn clamp(r: List(Nat), d: Nat): Nat {
+    Nat::min(d, Revision::stable(r))
+  }
+
+  // ---- numbers ----------------------------------------------------------------
+}
+
+pub theorem nat_not_lt_le(a: Nat, b: Nat, h: Nat::lt(a, b) = false): Nat::le(b, a) = true {
+  match a: Nat::le(b, a) = true {
+    Zero => match b {
+      Zero => Refl
+      Succ(b2) => False::elim(true_ne_false(h))
+    }
+    Succ(a2) => match b {
+      Zero => Refl
+      Succ(b2) => nat_not_lt_le(a2, b2, h)
+    }
+  }
+}
+
+fn max_pick(a: Nat, b: Nat, o: Bool): Nat {
+  match o: Nat {
+    false => a
+    true => b
+  }
+}
+
+theorem nat_le_max_pick(
+  a: Nat,
+  b: Nat,
+  o: Bool,
+  h: Nat::lt(a, b) = o
+): Nat::le(a, max_pick(a, b, o)) = true ∧ Nat::le(b, max_pick(a, b, o)) = true {
+  match o: Nat::le(a, max_pick(a, b, o)) = true ∧ Nat::le(b, max_pick(a, b, o)) = true {
+    false => AndIntro(Nat::le_refl(a), nat_not_lt_le(a, b, h))
+    true => AndIntro(
+      Nat::le_trans(a, Succ(a), b, Nat::le_succ(a), Eq::trans(Eq::sym(Nat::lt_le_succ(a, b)), h)),
+      Nat::le_refl(b)
+    )
+  }
+}
+
+pub theorem nat_le_max_left(a: Nat, b: Nat): Nat::le(a, Nat::max(a, b)) = true {
+  And::left(nat_le_max_pick(a, b, Nat::lt(a, b), Refl))
+}
+
+pub theorem nat_le_max_right(a: Nat, b: Nat): Nat::le(b, Nat::max(a, b)) = true {
+  And::right(nat_le_max_pick(a, b, Nat::lt(a, b), Refl))
+}
+
+// ---- laws -------------------------------------------------------------------
+
+module Revision {
+  // Counters never go down.
+  theorem raise_mono(
+    r: List(Nat),
+    d: Nat,
+    t: Nat,
+    i: Nat
+  ): Nat::le(Revision::get(r, i), Revision::get(Revision::raise(r, d, t), i)) = true {
+    match r: Nat::le(Revision::get(r, i), Revision::get(Revision::raise(r, d, t), i)) = true {
+      Nil => Nat::le_refl(Zero)
+      Cons(c, rest) => match d: Nat::le(
+        Revision::get(Cons(c, rest), i),
+        Revision::get(Revision::raise(Cons(c, rest), d, t), i)
+      ) = true {
+        Zero => match i: Nat::le(
+          Revision::get(Cons(c, rest), i),
+          Revision::get(Revision::raise(Cons(c, rest), Zero, t), i)
+        ) = true {
+          Zero => nat_le_max_left(c, t)
+          Succ(j) => Nat::le_refl(Revision::get(rest, j))
+        }
+        Succ(e) => match i: Nat::le(
+          Revision::get(Cons(c, rest), i),
+          Revision::get(Revision::raise(Cons(c, rest), Succ(e), t), i)
+        ) = true {
+          Zero => nat_le_max_left(c, t)
+          Succ(j) => Revision::raise_mono(rest, e, t, j)
+        }
+      }
+    }
+  }
+
+  pub theorem bump_mono(
+    r: List(Nat),
+    d: Nat,
+    i: Nat
+  ): Nat::le(Revision::get(r, i), Revision::get(Revision::bump(r, d), i)) = true {
+    Revision::raise_mono(r, d, Succ(Revision::get(r, Zero)), i)
+  }
+
+  // A change at level `d` leaves the levels above `d` alone.
+  theorem raise_above(
+    r: List(Nat),
+    d: Nat,
+    t: Nat,
+    i: Nat
+  ): Revision::get(
+    Revision::raise(r, d, t),
+    Succ(Nat::add(i, d))
+  ) = Revision::get(r, Succ(Nat::add(i, d))) {
+    match r: Revision::get(
+      Revision::raise(r, d, t),
+      Succ(Nat::add(i, d))
+    ) = Revision::get(r, Succ(Nat::add(i, d))) {
+      Nil => Refl
+      Cons(c, rest) => match d: Revision::get(
+        Revision::raise(Cons(c, rest), d, t),
+        Succ(Nat::add(i, d))
+      ) = Revision::get(Cons(c, rest), Succ(Nat::add(i, d))) {
+        Zero => Refl
+        Succ(e) => Revision::raise_above(rest, e, t, i)
+      }
+    }
+  }
+
+  theorem bump_above(
+    r: List(Nat),
+    d: Nat,
+    i: Nat
+  ): Revision::get(
+    Revision::bump(r, d),
+    Succ(Nat::add(i, d))
+  ) = Revision::get(r, Succ(Nat::add(i, d))) {
+    Revision::raise_above(r, d, Succ(Revision::get(r, Zero)), i)
+  }
+
+  // Whether `r` has a level `d`.
+  fn has(r: List(Nat), d: Nat): Bool {
+    match r: Bool {
+      Nil => false
+      Cons(c, t) => match d: Bool {
+        Zero => true
+        Succ(e) => Revision::has(t, e)
+      }
+    }
+  }
+
+  theorem raise_at(
+    r: List(Nat),
+    d: Nat,
+    s: Nat
+  ): Nat::le(Succ(s), Revision::get(Revision::raise(r, d, Succ(s)), d)) = Revision::has(r, d) {
+    match r: Nat::le(
+      Succ(s),
+      Revision::get(Revision::raise(r, d, Succ(s)), d)
+    ) = Revision::has(r, d) {
+      Nil => match d: Nat::le(
+        Succ(s),
+        Revision::get(Revision::raise(Nil, d, Succ(s)), d)
+      ) = Revision::has(Nil, d) {
+        Zero => Refl
+        Succ(e) => Refl
+      }
+      Cons(c, rest) => match d: Nat::le(
+        Succ(s),
+        Revision::get(Revision::raise(Cons(c, rest), d, Succ(s)), d)
+      ) = Revision::has(Cons(c, rest), d) {
+        Zero => nat_le_max_right(c, Succ(s))
+        Succ(e) => Revision::raise_at(rest, e, s)
+      }
+    }
+  }
+
+  // A change at level `d`, when the level exists, takes its counter past the old clock. Every
+  // `changed_at` written before is at most the old clock, so the node written with the change
+  // counts as changed for whatever read it before, even if its level is not the one it had.
+  theorem bump_at(
+    r: List(Nat),
+    d: Nat
+  ): Nat::le(
+    Succ(Revision::get(r, Zero)),
+    Revision::get(Revision::bump(r, d), d)
+  ) = Revision::has(r, d) {
+    Revision::raise_at(r, d, Revision::get(r, Zero))
+  }
+}

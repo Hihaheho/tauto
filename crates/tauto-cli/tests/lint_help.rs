@@ -55,7 +55,7 @@ fn help_after_a_command_shows_its_usage() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
-        "usage: tauto lint [--json] PATH…"
+        "usage: tauto lint [--json] [--fix] PATH…"
     );
     let out = tauto(&["check", "--help"]);
     let shown = String::from_utf8_lossy(&out.stdout);

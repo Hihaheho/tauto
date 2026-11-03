@@ -1,0 +1,567 @@
+import std::Base
+import std::prelude::Macro
+import std::prelude::Shared
+import std::Data
+import std::List
+import "codec.taut"
+import "flow.taut"
+import "api.taut"
+
+// The attribute macros that make queries and asset kinds.
+//
+//   @query!(Add) => fn Add
+//   fn add(db: Db, a: i64, b: i64): i64 ! {halt, Div} { … }
+//
+// makes `fn Add(a: i64, b: i64): Query(i64)`: the query of `add` with those arguments. The first
+// parameter of the function is the database; the others are the key, written with their codecs.
+// `keys: [a]` makes only the arguments it lists the key: the others are passed to the function
+// and do not tell queries apart. `output_eq: same` compares outputs with `same` (early cutoff)
+// instead of their encoded texts.
+//
+//   @asset_key!(Config { asset: Text }) => fn ConfigFile::codec, fn Config
+//   struct ConfigFile { path: Text }
+//
+// makes `fn Config(): AssetKind(ConfigFile, Text)`: the asset kind keyed by the struct, whose
+// values are `Text`, and `fn ConfigFile::codec(): Codec(ConfigFile)`. `keys: [path]` makes only
+// the fields it lists tell assets apart. `asset_eq: same` compares values with `same` instead of
+// their texts.
+//
+// A codec is found from the type as written: `i64`, `u64`, `Nat`, `Text`, `Bool`, `Unit`, and
+// `List(T)` and `Option(T)` of those have one in `Codec`; any other type `T` is
+// `T::codec()`, which its file writes.
+
+fn here(): SynSpan { Syn::call_span() }
+
+fn gvar(name: Text): SynExpr { ExVar(Syn::global(name)) }
+
+fn gcall(f: SynExpr, args: List(SynExpr)): SynExpr { ExApp(f, args, here()) }
+
+fn text_lit(t: Text): SynExpr { ExText(t, here()) }
+
+fn list_of(es: List(SynExpr)): SynExpr {
+  match es {
+    Nil => gvar("Nil")
+    Cons(e, rest) => gcall(gvar("Cons"), Cons(e, Cons(list_of(rest), Nil)))
+  }
+}
+
+fn bad(message: Text): Never ! {macro_error} { Syn::error(here(), message) }
+
+// The codec of the type `ty`.
+fn codec_of(ty: SynExpr): SynExpr ! {macro_error, Div} {
+  match Syn::ident_of(ty) {
+    Some(n) => named_codec(n)
+    None => match Syn::app_parts(ty) {
+      None => bad("query-flow: no codec for this type")
+      Some(p) => match p {
+        #(args, f) => match Syn::ident_of(f) {
+          None => bad("query-flow: no codec for this type")
+          Some(n) => match args {
+            Cons(a, rest) => match rest {
+              Nil => if n.name == "List" {
+                gcall(gvar("Codec::list"), Cons(codec_of(a), Nil))
+              } else if n.name == "Option" {
+                gcall(gvar("Codec::option"), Cons(codec_of(a), Nil))
+              } else { bad(concat("query-flow: no codec for ", n.name)) }
+              Cons(b, more) => bad(concat("query-flow: no codec for ", n.name))
+            }
+            Nil => bad("query-flow: no codec for this type")
+          }
+        }
+      }
+    }
+  }
+}
+
+fn named_codec(n: SynIdent): SynExpr ! {Div} {
+  if n.name == "i64" { gcall(gvar("Codec::of_i64"), Nil) } else if n.name == "u64" {
+    gcall(gvar("Codec::of_u64"), Nil)
+  } else if n.name == "Nat" { gcall(gvar("Codec::of_nat"), Nil) } else if n.name == "Text" {
+    gcall(gvar("Codec::of_text"), Nil)
+  } else if n.name == "Bool" { gcall(gvar("Codec::of_bool"), Nil) } else if n.name == "Unit" {
+    gcall(gvar("Codec::of_unit"), Nil)
+  } else { gcall(ExVar(Syn::decl_name(n, concat(n.name, "::codec"))), Nil) }
+}
+
+// The fields written in `Name { f: e, … }`, if `e` is a record.
+fn record_of(e: SynExpr): Option(SynIdent × List(SynExpr × Text)) {
+  match e {
+    ExRecord(n, fs, at) => Some(#(n, fs))
+    ExVar(x) => None
+    ExAtom(a, b) => None
+    ExNat(a, b) => None
+    ExText(a, b) => None
+    ExBool(a, b) => None
+    ExApp(a, b, c) => None
+    ExPi(a, b, c, d) => None
+    ExLam(a, b, c) => None
+    ExIf(a, b, c, d) => None
+    ExField(a, b, c) => None
+    ExBlock(a, b) => None
+    ExPerform(a, b, c) => None
+    ExHandle(a, b, c) => None
+    ExBudget(a, b, c) => None
+    ExBudgetMemory(a, b, c) => None
+    ExMatch(a, b, c, d, f) => None
+    ExBorrow(a, b, c) => None
+    ExUnion(a, b) => None
+    ExTagged(a, b, c) => None
+    ExExists(a, b, c, d) => None
+    ExFnKind(a, b, c) => None
+    ExBorrowLam(a, b, c) => None
+    ExMacroCall(a, b, c) => None
+    ExMacroExpr(a, b, c) => None
+    ExHole(a, b) => None
+    ExUnit(a) => None
+  }
+}
+
+// The function a statement declares, if it is one.
+fn fn_of(s: SynStmt): Option(SynFn) {
+  match s {
+    StFn(f) => Some(f)
+    StLet(a, b, c, d, e, f) => None
+    StVar(a, b, c, d, e) => None
+    StAssign(a, b, c) => None
+    StExpr(a) => None
+    StWhile(a, b) => None
+    StReturn(a) => None
+    StTheorem(a) => None
+    StDef(a) => None
+    StStruct(a) => None
+    StEnum(a) => None
+    StInductive(a) => None
+    StEffect(a) => None
+    StMutual(a, b) => None
+    StMacroCall(a, b, c) => None
+  }
+}
+
+// The struct a statement declares, if it is one.
+fn struct_of(s: SynStmt): Option(SynData) {
+  match s {
+    StStruct(d) => Some(d)
+    StFn(a) => None
+    StLet(a, b, c, d, e, f) => None
+    StVar(a, b, c, d, e) => None
+    StAssign(a, b, c) => None
+    StExpr(a) => None
+    StWhile(a, b) => None
+    StReturn(a) => None
+    StTheorem(a) => None
+    StDef(a) => None
+    StEnum(a) => None
+    StInductive(a) => None
+    StEffect(a) => None
+    StMutual(a, b) => None
+    StMacroCall(a, b, c) => None
+  }
+}
+
+// What the argument of an attribute says: the name to make, and the options as named fields.
+fn head_of(e: SynExpr): SynIdent × List(SynExpr × Text) ! {macro_error} {
+  match Syn::ident_of(e) {
+    Some(n) => #(n, Nil)
+    None => match record_of(e) {
+      Some(r) => r
+      None => bad("query-flow: write the name to make, as `Name` or `Name { option: value }`")
+    }
+  }
+}
+
+fn option_of(fs: List(SynExpr × Text), name: Text): Option(SynExpr) ! {Div} {
+  match fs {
+    Nil => None
+    Cons(f, rest) => match f {
+      #(v, n) => if n == name { Some(v) } else { option_of(rest, name) }
+    }
+  }
+}
+
+fn check_options(fs: List(SynExpr × Text), allowed: List(Text)): Unit ! {macro_error, Div} {
+  match fs {
+    Nil => #()
+    Cons(f, rest) => match f {
+      #(v, n) => if List::any((a: Text) => a == n, allowed) { check_options(rest, allowed) } else {
+        bad(concat("query-flow: no option ", n))
+      }
+    }
+  }
+}
+
+// ---- keys(…) ------------------------------------------------------------------------------
+
+// The names written in `keys: [a, b]`.
+fn names_of(e: SynExpr): List(SynIdent) ! {macro_error, Div} {
+  match Syn::ident_of(e) {
+    Some(n) => if n.name == "Nil" { Nil } else {
+      bad("query-flow: write the keys as a list, `keys: [a, b]`")
+    }
+    None => match Syn::app_parts(e) {
+      None => bad("query-flow: write the keys as a list, `keys: [a, b]`")
+      Some(p) => match p {
+        #(args, f) => match Syn::ident_of(f) {
+          None => bad("query-flow: write the keys as a list, `keys: [a, b]`")
+          Some(c) => if c.name == "Cons" {
+            match args {
+              Cons(x, rest) => match rest {
+                Cons(more, none) => match Syn::ident_of(x) {
+                  Some(n) => Cons(n, names_of(more))
+                  None => bad("query-flow: a key is the name of a parameter or a field")
+                }
+                Nil => bad("query-flow: write the keys as a list, `keys: [a, b]`")
+              }
+              Nil => bad("query-flow: write the keys as a list, `keys: [a, b]`")
+            }
+          } else { bad("query-flow: write the keys as a list, `keys: [a, b]`") }
+        }
+      }
+    }
+  }
+}
+
+fn has_name(ns: List(SynIdent), n: Text): Bool ! {Div} {
+  List::any((m: SynIdent) => m.name == n, ns)
+}
+
+// The names of `keys` that are not among `all`, or are written twice.
+fn check_keys(ks: List(SynIdent), all: List(SynIdent)): Unit ! {macro_error, Div} {
+  match ks {
+    Nil => #()
+    Cons(k, rest) => if has_name(rest, k.name) {
+      bad(concat("query-flow: a key written twice: ", k.name))
+    } else if has_name(all, k.name) { check_keys(rest, all) } else {
+      bad(concat("query-flow: no parameter or field ", k.name))
+    }
+  }
+}
+
+// The names of `all` that are among `ks`, in the order of `all`.
+fn kept(all: List(SynIdent), ks: List(SynIdent)): List(SynIdent) ! {Div} {
+  match all {
+    Nil => Nil
+    Cons(n, rest) => if has_name(ks, n.name) { Cons(n, kept(rest, ks)) } else { kept(rest, ks) }
+  }
+}
+
+// The names that are keys: those `keys` lists, or all of them when it is not written.
+fn keyed(fs: List(SynExpr × Text), all: List(SynIdent)): List(SynIdent) ! {macro_error, Div} {
+  match option_of(fs, "keys") {
+    None => all
+    Some(e) => {
+      let ks := names_of(e)
+      check_keys(ks, all)
+      match ks {
+        Nil => bad("query-flow: `keys` lists at least one name")
+        Cons(k, rest) => #()
+      }
+      kept(all, ks)
+    }
+  }
+}
+
+// ---- @query! ------------------------------------------------------------------------------
+
+// The encoded arguments of the parameters `ps` (typed `tys`) that are among `ks`.
+fn param_codecs(
+  ps: List(SynIdent),
+  tys: List(Option(SynExpr)),
+  ks: List(SynIdent)
+): List(SynExpr) ! {macro_error, Div} {
+  match ps {
+    Nil => Nil
+    Cons(p, prest) => match tys {
+      Nil => bad("query-flow: a parameter has no type")
+      Cons(t, trest) => match t {
+        None => bad("query-flow: write the type of each parameter")
+        Some(ty) => if has_name(ks, p.name) {
+          Cons(
+            gcall(gvar("encode"), Cons(codec_of(ty), Cons(ExVar(p), Nil))),
+            param_codecs(prest, trest, ks)
+          )
+        } else { param_codecs(prest, trest, ks) }
+      }
+    }
+  }
+}
+
+fn vars_of(ps: List(SynIdent)): List(SynExpr) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(ExVar(p), vars_of(rest))
+  }
+}
+
+fn nones(ps: List(SynIdent)): List(Option(Bool)) {
+  match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(None, nones(rest))
+  }
+}
+
+fn query_made(
+  f: SynFn,
+  name: SynIdent,
+  fs: List(SynExpr × Text)
+): List(SynStmt) ! {macro_error, Div} {
+  check_options(fs, Cons("output_eq", Cons("keys", Nil)))
+  match f.params {
+    Nil => bad("query-flow: the first parameter of a query is the database")
+    Cons(db, params) => match f.param_types {
+      Nil => bad("query-flow: the first parameter of a query is the database")
+      Cons(dbt, param_types) => match f.result {
+        None => bad("query-flow: write the output type of the query")
+        Some(out) => {
+          let ks := keyed(fs, params)
+          let dbv := Syn::global("query_flow_db")
+          let run := ExLam(
+            Cons(BName(dbv, Some(gvar("Db"))), Nil),
+            gcall(ExVar(f.name), Cons(ExVar(dbv), vars_of(params))),
+            here()
+          )
+          let base := Cons(
+            text_lit(f.name.name),
+            Cons(
+              list_of(param_codecs(params, param_types, ks)),
+              Cons(run, Cons(codec_of(out), Nil))
+            )
+          )
+          let body := match option_of(fs, "output_eq") {
+            None => gcall(gvar("make_query"), base)
+            Some(eq) => gcall(gvar("make_query_eq"), List::append(base, Cons(eq, Nil)))
+          }
+          Cons(
+            StFn(SynFn {
+              name: name,
+              generics: Nil,
+              bounds: Nil,
+              params: params,
+              borrows: nones(params),
+              param_types: param_types,
+              result: Some(gcall(gvar("Query"), Cons(out, Nil))),
+              effects: Some(Cons("Div", Nil)),
+              body: body,
+              span: f.span
+            }),
+            Nil
+          )
+        }
+      }
+    }
+  }
+}
+
+// Makes the query of a function: its first parameter is the database, and the others are its
+// arguments. They are all the key, or those `keys: [a, b]` lists: the others are passed to the
+// function, and two queries whose keys are the same are one query.
+pub macro fn query(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+  match fn_of(s) {
+    Some(f) => match head_of(e) {
+      #(n, fs) => query_made(f, Syn::decl_name(f.name, n.name), fs)
+    }
+    None => bad("query-flow: `@query!` goes on a function")
+  }
+}
+
+// ---- @asset_key! --------------------------------------------------------------------------
+
+// The fields of a struct: their names and types.
+fn struct_fields(d: SynData): List(SynIdent × SynExpr) ! {macro_error, Div} {
+  match d.generics {
+    Cons(g, more) => bad("query-flow: an asset key is a struct without parameters")
+    Nil => match d.ctors {
+      Cons(c, more) => match more {
+        Nil => named_fields(c.fields)
+        Cons(x, y) => bad("query-flow: `@asset_key!` goes on a struct")
+      }
+      Nil => bad("query-flow: `@asset_key!` goes on a struct")
+    }
+  }
+}
+
+fn named_fields(
+  fs: List(Option(SynIdent) × SynExpr)
+): List(SynIdent × SynExpr) ! {macro_error, Div} {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => match f {
+      #(n, ty) => match n {
+        Some(x) => Cons(#(x, ty), named_fields(rest))
+        None => bad("query-flow: the fields of an asset key have names")
+      }
+    }
+  }
+}
+
+fn field_names(fs: List(SynIdent × SynExpr)): List(SynIdent) {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => match f {
+      #(n, ty) => Cons(n, field_names(rest))
+    }
+  }
+}
+
+// The encoded fields of `k` among `ks`.
+fn field_texts(
+  k: SynExpr,
+  fs: List(SynIdent × SynExpr),
+  ks: List(SynIdent)
+): List(SynExpr) ! {macro_error, Div} {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => match f {
+      #(n, ty) => if has_name(ks, n.name) {
+        Cons(
+          gcall(gvar("encode"), Cons(codec_of(ty), Cons(ExField(k, n.name, here()), Nil))),
+          field_texts(k, rest, ks)
+        )
+      } else { field_texts(k, rest, ks) }
+    }
+  }
+}
+
+// The fields of the struct read back from the texts `ts`, the `i`-th field from the `i`-th text.
+fn fields_read(
+  fs: List(SynIdent × SynExpr),
+  ts: SynExpr,
+  i: u64
+): List(SynExpr × Text) ! {macro_error, Div} {
+  match fs {
+    Nil => Nil
+    Cons(f, rest) => match f {
+      #(n, ty) => Cons(
+        #(
+          gcall(
+            gvar("field_or_fail"),
+            Cons(codec_of(ty), Cons(ts, Cons(ExNat(Text::of_u64(i), here()), Nil)))
+          ),
+          n.name
+        ),
+        fields_read(rest, ts, i + 1)
+      )
+    }
+  }
+}
+
+// `fn S::codec(): Codec(S)`: the struct `S` written as the fields of its fields' texts.
+fn struct_codec(d: SynData, fs: List(SynIdent × SynExpr)): SynStmt ! {macro_error, Div} {
+  let ty := ExVar(d.name)
+  let kv := Syn::global("query_flow_k")
+  let tv := Syn::global("query_flow_t")
+  let tsv := Syn::global("query_flow_ts")
+  let enc := ExLam(
+    Cons(BName(kv, Some(ty)), Nil),
+    gcall(gvar("fields"), Cons(list_of(field_texts(ExVar(kv), fs, field_names(fs))), Nil)),
+    here()
+  )
+  let dec := ExLam(
+    Cons(BName(tv, Some(gvar("Text"))), Nil),
+    gcall(
+      gvar("read_record"),
+      Cons(
+        ExVar(tv),
+        Cons(
+          ExLam(
+            Cons(BName(tsv, Some(gcall(gvar("List"), Cons(gvar("Text"), Nil)))), Nil),
+            ExRecord(d.name, fields_read(fs, ExVar(tsv), 0), here()),
+            here()
+          ),
+          Nil
+        )
+      )
+    ),
+    here()
+  )
+  StFn(SynFn {
+    name: Syn::decl_name(d.name, concat(d.name.name, "::codec")),
+    generics: Nil,
+    bounds: Nil,
+    params: Nil,
+    borrows: Nil,
+    param_types: Nil,
+    result: Some(gcall(gvar("Codec"), Cons(ty, Nil))),
+    effects: None,
+    body: gcall(gvar("Codec::new"), Cons(enc, Cons(dec, Nil))),
+    span: d.span
+  })
+}
+
+fn asset_made(
+  d: SynData,
+  name: SynIdent,
+  fs: List(SynExpr × Text)
+): List(SynStmt) ! {macro_error, Div} {
+  check_options(fs, Cons("asset", Cons("asset_eq", Cons("keys", Nil))))
+  let fields := struct_fields(d)
+  let key_type := ExVar(d.name)
+  let key_codec := gcall(ExVar(Syn::decl_name(d.name, concat(d.name.name, "::codec"))), Nil)
+  match option_of(fs, "asset") {
+    None => bad("query-flow: write the type of the asset's value, `Name { asset: T }`")
+    Some(t) => {
+      let c := codec_of(t)
+      let av := Syn::global("query_flow_a")
+      let bv := Syn::global("query_flow_b")
+      let kv := Syn::global("query_flow_k")
+      let same := match option_of(fs, "asset_eq") {
+        Some(eq) => eq
+        None => ExLam(
+          Cons(BName(av, Some(t)), Cons(BName(bv, Some(t)), Nil)),
+          gcall(gvar("same_encoded"), Cons(c, Cons(ExVar(av), Cons(ExVar(bv), Nil)))),
+          here()
+        )
+      }
+      let body := match option_of(fs, "keys") {
+        None => gcall(
+          gvar("make_asset_kind"),
+          Cons(text_lit(name.name), Cons(key_codec, Cons(c, Cons(same, Nil))))
+        )
+        Some(k) => {
+          let identity := ExLam(
+            Cons(BName(kv, Some(key_type)), Nil),
+            gcall(
+              gvar("fields"),
+              Cons(list_of(field_texts(ExVar(kv), fields, keyed(fs, field_names(fields)))), Nil)
+            ),
+            here()
+          )
+          gcall(
+            gvar("make_asset_kind_keyed"),
+            Cons(text_lit(name.name), Cons(key_codec, Cons(identity, Cons(c, Cons(same, Nil)))))
+          )
+        }
+      }
+      Cons(
+        struct_codec(d, fields),
+        Cons(
+          StFn(SynFn {
+            name: name,
+            generics: Nil,
+            bounds: Nil,
+            params: Nil,
+            borrows: Nil,
+            param_types: Nil,
+            result: Some(gcall(gvar("AssetKind"), Cons(key_type, Cons(t, Nil)))),
+            effects: None,
+            body: body,
+            span: d.span
+          }),
+          Nil
+        )
+      )
+    }
+  }
+}
+
+// Makes an asset kind whose keys are the struct it is on, and `S::codec()` for the struct. The
+// fields are all the key, or those `keys: [a, b]` lists: two keys whose listed fields are the
+// same are one asset. The host gives the assets with `resolve_asset`, or registers a locator,
+// `fn (db: Db, k: S): LocateResult(T)`, with `register_asset_locator(rt, Name(), locate)`.
+pub macro fn asset_key(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {
+  match struct_of(s) {
+    Some(d) => match head_of(e) {
+      #(n, fs) => asset_made(d, Syn::decl_name(d.name, n.name), fs)
+    }
+    None => bad("query-flow: `@asset_key!` goes on the struct of the asset kind's keys")
+  }
+}

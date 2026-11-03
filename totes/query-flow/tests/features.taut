@@ -1,0 +1,225 @@
+import std::Base
+import std::prelude::Shared
+import std::prelude::Par
+import "../src/codec.taut"
+import "../src/flow.taut"
+import "../src/api.taut"
+import "../src/macros.taut"
+
+// Errors, cycles, locators, loading states, listing keys, invalidation and the tracer.
+
+// An asset kind keyed by text, made by hand.
+fn Num(): AssetKind(Text, i64) {
+  make_asset_kind("Num", Codec::of_text(), Codec::of_i64(), (a: i64, b: i64) => a == b)
+}
+
+@query!(Bad) => fn Bad
+fn bad(db: Db, x: i64): i64 ! {halt, Div} {
+  Db::asset(db, Num(), "a")
+  Db::fail(db, "bad")
+}
+
+@query!(UsesBad) => fn UsesBad
+fn uses_bad(db: Db, x: i64): i64 ! {halt, Div} { Db::query(db, Bad(x)) }
+
+@query!(CatchesBad) => fn CatchesBad
+fn catches_bad(db: Db, x: i64): i64 ! {halt, Div} {
+  match Db::try(db, Bad(x)) {
+    Ok(v) => v
+    Err(e) => 0 - 1
+  }
+}
+
+@query!(Around) => fn Around
+fn loop_q(db: Db, x: i64): i64 ! {halt, Div} { Db::query(db, Back(x)) }
+
+@query!(Back) => fn Back
+fn pool_q(db: Db, x: i64): i64 ! {halt, Div} { Db::query(db, Around(x)) }
+
+@query!(PeekNum) => fn PeekNum
+fn peek_q(db: Db, name: Text): i64 ! {halt, Div} {
+  match Db::asset_state(db, Num(), name) {
+    None => 0 - 1
+    Some(v) => v
+  }
+}
+
+@query!(SumAll) => fn SumAll
+fn total(db: Db, u: Unit): i64 ! {halt, Div} { sum_of(db, Db::list_asset_keys(db, Num())) }
+
+fn sum_of(db: Db, ks: List(Text)): i64 ! {halt, Div} {
+  match ks {
+    Nil => 0
+    Cons(k, t) => Db::asset(db, Num(), k) + sum_of(db, t)
+  }
+}
+
+@query!(Quit) => fn Quit
+fn stop_q(db: Db, x: i64): i64 ! {halt, Div} { Db::cancel(db) }
+
+@query!(ReadNum) => fn ReadNum
+fn read_q(db: Db, name: Text): i64 ! {halt, Div} { Db::asset(db, Num(), name) }
+
+fn value_of(a: Answer(i64)): i64 {
+  match a {
+    Value(v) => v
+    Error(e) => 0 - 100
+    Suspended => 0 - 200
+    Cycle(ks) => 0 - 300
+    Cancelled => 0 - 400
+    DependenciesRemoved(ks) => 0 - 500
+  }
+}
+
+fn error_of(a: Answer(i64)): Text {
+  match a {
+    Value(v) => ""
+    Error(e) => e
+    Suspended => ""
+    Cycle(ks) => ""
+    Cancelled => ""
+    DependenciesRemoved(ks) => ""
+  }
+}
+
+perform test("an error is cached and passed on", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Num(), "a", 4, Volatile)
+  expect(error_of(run(rt, Bad(0))) == "bad", "bad")
+  expect(error_of(run(rt, UsesBad(0))) == "bad", "passed on")
+  expect(value_of(run(rt, CatchesBad(0))) == 0 - 1, "caught")
+})
+
+perform test("an asset error reaches its readers", () => {
+  let rt := new_runtime()
+  resolve_asset_error(rt, Num(), "a", "no file", Volatile)
+  expect(error_of(run(rt, ReadNum("a"))) == "no file", "no file")
+})
+
+perform test("a cycle is reported", () => {
+  let rt := new_runtime()
+  match run(rt, Around(0)) {
+    Cycle(ks) => expect(List::length(ks) == 3, "three keys")
+    Value(v) => expect(false, "value")
+    Error(e) => expect(false, e)
+    Suspended => expect(false, "suspended")
+    Cancelled => expect(false, "cancelled")
+    DependenciesRemoved(ks) => expect(false, "removed")
+  }
+})
+
+perform test("a cancelled query is not cached", () => {
+  let rt := new_runtime()
+  expect(value_of(run(rt, Quit(0))) == 0 - 400, "cancelled")
+  expect(changed_at(rt, Quit(0)) == None, "not cached")
+})
+
+perform test("asset_state reads a loading asset as None, and the reader runs again", () => {
+  let rt := new_runtime()
+  let before := run(rt, PeekNum("a"))
+  resolve_asset(rt, Num(), "a", 9, Volatile)
+  expect(value_of(before) == 0 - 1, "loading")
+  expect(value_of(run(rt, PeekNum("a"))) == 9, "9")
+})
+
+perform test("a locator gives an asset at once", () => {
+  let rt := new_runtime()
+  register_asset_locator(rt, Num(), (db: Db, k: Text) => LocateResult::Ready(I64::of_u64(Text::len(k)), Static))
+  expect(value_of(run(rt, ReadNum("abc"))) == 3, "3")
+  expect(has_pending_assets(rt) == false, "nothing pending")
+})
+
+perform test("a locator can leave an asset to the host", () => {
+  let rt := new_runtime()
+  register_asset_locator(rt, Num(), (db: Db, k: Text) => if k == "x" { LocateResult::Ready(1, Volatile) } else { LocateResult::Pending })
+  expect(value_of(run(rt, ReadNum("y"))) == 0 - 200, "suspended")
+  resolve_asset(rt, Num(), "y", 5, Volatile)
+  expect(value_of(run(rt, ReadNum("y"))) == 5, "5")
+})
+
+perform test("a locator that fails sets the asset to the error", () => {
+  let rt := new_runtime()
+  register_asset_locator(rt, Num(), (db: Db, k: Text) => Db::fail(db, concat("not allowed: ", k)))
+  expect(error_of(run(rt, ReadNum("z"))) == "not allowed: z", "refused")
+})
+
+perform test("a locator may read queries", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Num(), "base", 10, Volatile)
+  register_asset_locator(rt, Num(), (db: Db, k: Text) => if k == "base" { LocateResult::Pending } else { LocateResult::Ready(Db::query(db, ReadNum("base")) + 1, Volatile) })
+  expect(value_of(run(rt, ReadNum("next"))) == 11, "11")
+  resolve_asset(rt, Num(), "base", 20, Volatile)
+  expect(value_of(run(rt, ReadNum("next"))) == 21, "the locator ran again")
+})
+
+perform test("listing the keys of a kind follows additions", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Num(), "a", 1, Volatile)
+  resolve_asset(rt, Num(), "b", 2, Volatile)
+  expect(value_of(run(rt, SumAll(#()))) == 3, "3")
+  resolve_asset(rt, Num(), "c", 4, Volatile)
+  expect(value_of(run(rt, SumAll(#()))) == 7, "7")
+  remove_asset(rt, Num(), "a")
+  expect(value_of(run(rt, SumAll(#()))) == 6, "6")
+})
+
+perform test("invalidating a query computes it again", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Num(), "a", 1, Volatile)
+  let r1 := poll(rt, ReadNum("a")).revision
+  invalidate(rt, ReadNum("a"))
+  let r2 := poll(rt, ReadNum("a")).revision
+  expect(r1 < r2, "a new revision")
+  remove_query(rt, ReadNum("a"))
+  expect(changed_at(rt, ReadNum("a")) == None, "forgotten")
+})
+
+perform test("errors compare by the runtime's comparator", () => {
+  let rt := build_runtime((a: Text, b: Text) => a == b, (e: Event) => #())
+  resolve_asset(rt, Num(), "a", 1, Volatile)
+  let r1 := poll(rt, Bad(0)).revision
+  resolve_asset(rt, Num(), "a", 2, Volatile)
+  let r2 := poll(rt, Bad(0)).revision
+  let rt2 := new_runtime()
+  resolve_asset(rt2, Num(), "a", 1, Volatile)
+  let s1 := poll(rt2, Bad(0)).revision
+  resolve_asset(rt2, Num(), "a", 2, Volatile)
+  let s2 := poll(rt2, Bad(0)).revision
+  expect(r1 == r2, "the same error keeps the revision")
+  expect(s1 < s2, "by default every error is new")
+})
+
+perform test("the tracer sees cache hits", () => {
+  let hits := Ref::new(0)
+  let rt := build_runtime((a: Text, b: Text) => false, (e: Event) => match e {
+    CacheHit(k) => Ref::set(hits, Ref::get(hits) + 1)
+    QueryStart(k) => #()
+    Ran(k, c) => #()
+    Stopped(k) => #()
+    CycleFound(ks) => #()
+    AssetResolved(k, c) => #()
+    AssetInvalidated(k) => #()
+    QueryInvalidated(k) => #()
+    Located(k) => #()
+  })
+  resolve_asset(rt, Num(), "a", 1, Volatile)
+  run(rt, ReadNum("a"))
+  run(rt, ReadNum("a"))
+  expect(Ref::get(hits) == 1, "one hit")
+})
+
+perform test("an asset that becomes more durable still counts as changed", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Num(), "a", 2, Volatile)
+  run(rt, ReadNum("a"))
+  resolve_asset(rt, Num(), "a", 7, Stable)
+  expect(value_of(run(rt, ReadNum("a"))) == 7, "7")
+})
+
+perform test("an asset that becomes less durable still counts as changed", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Num(), "a", 2, Stable)
+  run(rt, ReadNum("a"))
+  resolve_asset(rt, Num(), "a", 7, Volatile)
+  expect(value_of(run(rt, ReadNum("a"))) == 7, "7")
+})

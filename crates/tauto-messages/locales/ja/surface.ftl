@@ -57,3 +57,6 @@ surface-row-variables = 行に書ける行変数は高々一つ
 surface-row-repeats-effect = 集合のリテラルに effect `{ $name }` が二度書かれている
 surface-raw-underscore = `r#_` は名前ではない：`_` は生の名前として書けない
 surface-syntax-macro-shape = `{ $macro }` は名前と文法のブロックを取り、関数を登録するときは `with(fmt: f, tokens: g)` を取る
+surface-import-not-listed = `{ $name }` は `import { $spelling }` から来るが、その一覧に書かれていない。一覧に `{ $item }` を書くこと（`tauto lint --fix` が一覧を書く）
+surface-import-listed-unused = `{ $name }` は `import { $spelling }` の一覧にあるが、このファイルは使っていない。一覧から除くこと（`tauto lint --fix` が一覧を書く）
+surface-import-listed-unknown = `{ $name }` は `import { $spelling }` の一覧にあるが、import したファイルは他のファイルに見える `{ $name }` を宣言していない

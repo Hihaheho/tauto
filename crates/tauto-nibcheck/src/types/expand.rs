@@ -121,7 +121,15 @@ pub fn index_expansion_errors(program: &Program) -> Vec<TypeError> {
 /// written term has.
 pub fn expand_classes(mut program: Program, synthetic: u32) -> Program {
     expand(&mut program, &mut Vec::new(), synthetic, true);
-    super::indices::expand_indices(&mut program, &mut []);
+    super::indices::expand_indices(&mut program, &mut [], false);
+    program
+}
+
+/// [`expand_classes`] for the prelude itself, whose indexed effects are
+/// expanded against itself rather than against the prelude.
+pub(super) fn expand_prelude(mut program: Program, synthetic: u32) -> Program {
+    expand(&mut program, &mut Vec::new(), synthetic, true);
+    super::indices::expand_indices(&mut program, &mut [], true);
     program
 }
 
@@ -130,7 +138,7 @@ pub fn expand_classes(mut program: Program, synthetic: u32) -> Program {
 /// expansion makes has one span in both.
 pub fn expand_loaded(program: &mut Program, per_file: &mut [Vec<Stmt>], synthetic: u32) {
     expand(program, per_file, synthetic, false);
-    super::indices::expand_indices(program, per_file);
+    super::indices::expand_indices(program, per_file, false);
 }
 
 /// With `report`, a program that does not check carries what was found, for

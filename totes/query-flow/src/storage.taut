@@ -1,0 +1,72 @@
+import std::Base
+import std::Data
+import std::prelude::Shared
+import std::prelude::Par
+
+// Where `save` and `load` keep the runtime (`docs/design/query-flow.md`「保存先」): named
+// entries of bytes, each read whole and replaced whole. A handler gives them a place: a
+// directory (`storage_fs.taut`) or memory (below).
+
+// The entry `name`, or `None` when there is none.
+pub(open) effect store_read(name: Text): Option(Bytes)
+
+// Makes the entry `name` hold `b`, at once: a later `store_read` sees the old entry or the new
+// one, never part of one. The error is the handler's message.
+pub(open) effect store_replace(name: Text, b: Bytes): Result(Unit, Text)
+
+// ---- in memory ----------------------------------------------------------------------------
+
+// Entries held in memory: for tests, and where there is no file system (the browser).
+pub struct MemoryStore { entries: Ref(List(Text × Bytes)) }
+
+module MemoryStore {
+  pub fn new(): MemoryStore { MemoryStore { entries: Ref::new(Nil) } }
+
+  // The entry `name`.
+  pub fn get(
+    m: MemoryStore,
+    name: Text
+  ): Option(Bytes) ! {Div} { find_entry(Ref::get(m.entries), name) }
+
+  // Makes the entry `name` hold `b`.
+  pub fn set(m: MemoryStore, name: Text, b: Bytes): Unit ! {Div} {
+    Ref::set(m.entries, Cons(#(name, b), without_entry(Ref::get(m.entries), name)))
+  }
+
+  // Removes the entry `name`, if there is one.
+  pub fn remove(m: MemoryStore, name: Text): Unit ! {Div} {
+    Ref::set(m.entries, without_entry(Ref::get(m.entries), name))
+  }
+}
+
+fn find_entry(es: List(Text × Bytes), name: Text): Option(Bytes) ! {Div} {
+  match es {
+    Nil => None
+    Cons(e, t) => match e {
+      #(n, b) => if n == name { Some(b) } else { find_entry(t, name) }
+    }
+  }
+}
+
+fn without_entry(es: List(Text × Bytes), name: Text): List(Text × Bytes) ! {Div} {
+  match es {
+    Nil => Nil
+    Cons(e, t) => match e {
+      #(n, b) => if n == name { without_entry(t, name) } else { Cons(e, without_entry(t, name)) }
+    }
+  }
+}
+
+// Runs `body` with its entries in `m`.
+pub fn with_memory_store<A, !e>(
+  m: MemoryStore,
+  &body: () -> A ! {store_read, store_replace} ∪ e
+): A ! {Div} ∪ e {
+  handle { body() } with {
+    store_read(name), k => k(MemoryStore::get(m, name))
+    store_replace(name, b), k => {
+      MemoryStore::set(m, name, b)
+      k(Ok(#()))
+    }
+  }
+}

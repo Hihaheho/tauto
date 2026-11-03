@@ -1,0 +1,143 @@
+import "Base.taut" { List }
+import "UInt.taut" { U64 }
+import std::prelude::Macro { Syn, SynCtx, SynDiag, SynExpr, SynIdent, SynSpan, SynToken }
+import std::prelude::Std { List, Result }
+
+// A register-only model, not a CPU emulator or native assembler.
+module Asm {
+  pub(open) inductive Reg: Type {
+    X0: Reg
+    X1: Reg
+    X2: Reg
+  }
+  pub(open) inductive struct State {
+    x0: U64
+    x1: U64
+    x2: U64
+  }
+  pub(open) inductive Instr: Type {
+    Mov(dst: Reg, src: Reg): Instr
+    Add(dst: Reg, lhs: Reg, rhs: Reg): Instr
+    Sub(dst: Reg, lhs: Reg, rhs: Reg): Instr
+  }
+  pub fn read(s: State, r: Reg): U64 {
+    match r: U64 {
+      X0 => s.x0
+      X1 => s.x1
+      X2 => s.x2
+    }
+  }
+  pub fn write(s: State, r: Reg, value: U64): State {
+    match r: State {
+      X0 => State { x0: value, x1: s.x1, x2: s.x2 }
+      X1 => State { x0: s.x0, x1: value, x2: s.x2 }
+      X2 => State { x0: s.x0, x1: s.x1, x2: value }
+    }
+  }
+  // All reads use the input state, including when a source aliases the destination.
+  pub fn step(instruction: Instr, s: State): State {
+    match instruction: State {
+      Mov(dst, src) => write(s, dst, read(s, src))
+      Add(dst, lhs, rhs) => write(s, dst, U64::wrapping_add(read(s, lhs), read(s, rhs)))
+      Sub(dst, lhs, rhs) => write(s, dst, U64::wrapping_sub(read(s, lhs), read(s, rhs)))
+    }
+  }
+  pub fn run(program: List(Instr), s: State): State {
+    match program: State {
+      Nil => s
+      Cons(instruction, rest) => run(rest, step(instruction, s))
+    }
+  }
+  // Clients supply a proof term; this specification alone certifies nothing.
+  pub def Hoare(program: List(Instr), pre: (State) -> Prop, post: (State) -> Prop): Prop :=
+  ∀ s: State. pre(s) -> post(run(program, s))
+  pub theorem read_write(s: State, r: Reg, value: U64): read(write(s, r, value), r) = value {
+    match r: read(write(s, r, value), r) = value {
+      X0 => Refl
+      X1 => Refl
+      X2 => Refl
+    }
+  }
+  pub theorem run_nil(s: State): run(Nil, s) = s { Refl }
+  pub theorem run_cons(
+    instruction: Instr,
+    rest: List(Instr),
+    s: State
+  ): run(Cons(instruction, rest), s) = run(rest, step(instruction, s)) { Refl }
+  pub theorem run_append(
+    first: List(Instr),
+    second: List(Instr),
+    s: State
+  ): run(List::append(first, second), s) = run(second, run(first, s)) {
+    match first: run(List::append(first, second), s) = run(second, run(first, s)) {
+      Nil => Refl
+      Cons(instruction, rest) => run_append(rest, second, step(instruction, s))
+    }
+  }
+}
+
+syntax!(asm_syntax, ```par
+%start Program
+%title "register assembly"
+%%
+Program: Instruction { Semi Instruction };
+Instruction: Move | Add | Sub;
+Move: MovOp Reg Comma Reg;
+Add: AddOp Reg Comma Reg Comma Reg;
+Sub: SubOp Reg Comma Reg Comma Reg;
+Reg: X0 | X1 | X2;
+MovOp: 'mov';
+AddOp: 'add';
+SubOp: 'sub';
+X0: 'x0';
+X1: 'x1';
+X2: 'x2';
+Comma: ',';
+Semi: ';';
+```) => struct Add, enum Instruction, struct Move, struct Program,
+  struct Program_Rep1, enum Reg, struct Sub, fn parse
+
+pub fn asm_reg(r: asm_syntax::Reg): SynExpr {
+  match r {
+    X0(token) => quote { Asm::Reg::X0 }
+    X1(token) => quote { Asm::Reg::X1 }
+    X2(token) => quote { Asm::Reg::X2 }
+  }
+}
+pub fn asm_instruction(instruction: asm_syntax::Instruction): SynExpr {
+  match instruction {
+    Move(m) => {
+      let dst := asm_reg(m.reg)
+      let src := asm_reg(m.reg_2)
+      quote { Asm::Instr::Mov($dst, $src) }
+    }
+    Add(a) => {
+      let dst := asm_reg(a.reg)
+      let lhs := asm_reg(a.reg_2)
+      let rhs := asm_reg(a.reg_3)
+      quote { Asm::Instr::Add($dst, $lhs, $rhs) }
+    }
+    Sub(s) => {
+      let dst := asm_reg(s.reg)
+      let lhs := asm_reg(s.reg_2)
+      let rhs := asm_reg(s.reg_3)
+      quote { Asm::Instr::Sub($dst, $lhs, $rhs) }
+    }
+  }
+}
+pub fn asm_rest(rest: List(asm_syntax::Program_Rep1)): SynExpr ! {Div} {
+  match rest {
+    Nil => quote { Nil }
+    Cons(item, more) => {
+      let instruction := asm_instruction(item.instruction)
+      let tail := asm_rest(more)
+      quote { Cons($instruction, $tail) }
+    }
+  }
+}
+// Produces a program, not a trusted assertion or proof.
+pub macro fn asm(program: asm_syntax::Program): SynExpr ! {Div} {
+  let first := asm_instruction(program.instruction)
+  let rest := asm_rest(program.rep)
+  quote { Cons($first, $rest) }
+}

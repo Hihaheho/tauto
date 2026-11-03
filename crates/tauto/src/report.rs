@@ -13,6 +13,7 @@ use crate::surface::{Stmt, SurfaceTerm, TermKind, parse_program_at};
 
 /// A JSON value; the output is small, so it is built by hand.
 pub enum Json {
+    Null,
     Bool(bool),
     Num(usize),
     Str(String),
@@ -29,6 +30,7 @@ impl Json {
 
     fn write(&self, out: &mut String) {
         match self {
+            Json::Null => out.push_str("null"),
             Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             Json::Num(n) => out.push_str(&n.to_string()),
             Json::Str(s) => {
@@ -203,6 +205,21 @@ pub struct Report {
     sources: BTreeMap<PathBuf, String>,
 }
 
+/// One thing `tauto check` shows a person ([`Report::problems`]): its
+/// severity (`error`, `incomplete`, `warning[CODE]`), the file it is in with
+/// that file's text, the bytes it covers, what is wrong, the label written
+/// after the carets, and the notes below.
+pub struct Problem<'a> {
+    pub severity: String,
+    pub file: &'a Path,
+    pub source: &'a str,
+    pub span: Option<tauto_parol::Span>,
+    pub message: String,
+    pub label: String,
+    pub notes: Vec<String>,
+}
+
+/// A warning with the file it is in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileWarning {
     pub file: PathBuf,
@@ -377,14 +394,25 @@ fn program_errors(
     };
     let own = crate::program::canonical_path(path);
     let types = crate::types::check_program(&loaded.program);
-    let rows = loaded.check_rows_with_types(false, &types);
-    let errors: Vec<(String, u32)> = if rows.errors.is_empty() {
-        crate::eval::errors_before_run(&loaded.program, &rows)
-    } else {
-        rows.errors
-            .into_iter()
-            .map(|e| (e.message, e.span.start))
+    // A program whose types do not check reports those errors only: the
+    // effects and uses read after them report what follows from them (the
+    // method of a class whose instance the types did not find, say).
+    let errors: Vec<(String, u32)> = if !types.errors.is_empty() {
+        types
+            .errors
+            .iter()
+            .map(|e| (e.message.clone(), e.span.start))
             .collect()
+    } else {
+        let rows = loaded.check_rows_with_types(false, &types);
+        if rows.errors.is_empty() {
+            crate::eval::errors_before_run(&loaded.program, &rows)
+        } else {
+            rows.errors
+                .into_iter()
+                .map(|e| (e.message, e.span.start))
+                .collect()
+        }
     };
     // The file and the place in it where `at` of the program is written.
     let place = |mut at: u32| {
@@ -1248,6 +1276,84 @@ impl Report {
         }
         out.push_str(&line);
         out.push('\n');
+        out
+    }
+
+    /// What `tauto check` shows a person: each declaration that failed, each
+    /// hole and each use of an incomplete declaration, then each warning, in
+    /// the order of the report. A failure that only uses another declaration
+    /// that failed is left out when another failure is shown, since that one
+    /// says what to fix.
+    pub fn problems(&self) -> Vec<Problem<'_>> {
+        let cascades = |d: &Diagnostic| {
+            crate::said::ends_with(&d.message, &["kernel-uses-failed"]).is_some()
+        };
+        let root_shown = self.entries.iter().any(|e| match &e.entry.verdict {
+            Verdict::Failed(d) => !cascades(d),
+            _ => false,
+        });
+        let mut out = Vec::new();
+        for e in &self.entries {
+            let name = crate::surface::qualify::written(&e.entry.name);
+            let source = self.source(&e.file);
+            match &e.entry.verdict {
+                Verdict::Failed(d) if root_shown && cascades(d) => {}
+                Verdict::Failed(d) => out.push(Problem {
+                    severity: "error".into(),
+                    file: &e.file,
+                    source,
+                    span: d.span,
+                    message: d.message.to_string(),
+                    // The whole program's errors belong to no declaration.
+                    label: if e.entry.name == "program" {
+                        String::new()
+                    } else {
+                        format!("in `{name}`")
+                    },
+                    notes: d
+                        .fix
+                        .iter()
+                        .map(|f| format!("help: {}", f.title))
+                        .collect(),
+                }),
+                Verdict::Incomplete { holes, uses } => {
+                    for h in holes {
+                        out.push(Problem {
+                            severity: "incomplete".into(),
+                            file: &e.file,
+                            source,
+                            span: Some(h.span),
+                            message: format!("`?{}` in `{name}` is not written yet", h.name),
+                            label: String::new(),
+                            notes: vec![format!("goal: ⊢ {}", describe(&h.goal))],
+                        });
+                    }
+                    for u in uses {
+                        out.push(Problem {
+                            severity: "incomplete".into(),
+                            file: &e.file,
+                            source,
+                            span: None,
+                            message: format!("`{name}` uses `{u}`, which is incomplete"),
+                            label: String::new(),
+                            notes: Vec::new(),
+                        });
+                    }
+                }
+                Verdict::Checked { .. } | Verdict::Skipped(_) => {}
+            }
+        }
+        for w in &self.warnings {
+            out.push(Problem {
+                severity: format!("warning[{}]", w.warning.code),
+                file: &w.file,
+                source: self.source(&w.file),
+                span: Some(w.warning.span),
+                message: w.warning.message.clone(),
+                label: String::new(),
+                notes: Vec::new(),
+            });
+        }
         out
     }
 

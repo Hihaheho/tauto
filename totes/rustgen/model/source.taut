@@ -1,0 +1,850 @@
+import "syntax.taut" { rs, rs::Atom::I, rs::Op::I }
+import "core.taut" {
+  RsAddress,
+  RsArm,
+  RsBorrow,
+  RsCallable,
+  RsDefinition,
+  RsEvent,
+  RsExpr,
+  RsLiteral,
+  RsOutcome,
+  RsPattern,
+  RsPlace,
+  RsRuntime,
+  RsStore,
+  RsUse,
+  RsValue
+}
+import "source_context.taut" {
+  RsSourceCall,
+  RsSourceClosureType,
+  RsSourceConstructor,
+  RsSourceConstructorStyle,
+  RsSourceControl,
+  RsSourceField,
+  RsSourceFunction,
+  RsSourceFutureType,
+  RsSourceLocal,
+  RsSourceNative,
+  RsSourceSignature,
+  RsSourceType,
+  rs_source_closures,
+  rs_source_constructor_style_valid,
+  rs_source_constructors,
+  rs_source_functions,
+  rs_source_futures,
+  rs_source_id_fresh,
+  rs_source_is_copy,
+  rs_source_loop_type,
+  rs_source_natives,
+  rs_source_path_clear,
+  rs_source_push_loop,
+  rs_source_ref_mode,
+  rs_source_return_type,
+  rs_source_scope_good,
+  rs_source_type,
+  rs_source_type_spelling
+}
+import "source_forms.taut" {
+  rs_source_arm,
+  rs_source_atom,
+  rs_source_await,
+  rs_source_binary,
+  rs_source_bind,
+  rs_source_block,
+  rs_source_block_expr,
+  rs_source_bool,
+  rs_source_break,
+  rs_source_call,
+  rs_source_continue,
+  rs_source_deref,
+  rs_source_id,
+  rs_source_if,
+  rs_source_let,
+  rs_source_loop,
+  rs_source_name,
+  rs_source_native,
+  rs_source_not,
+  rs_source_reference,
+  rs_source_return,
+  rs_source_selected_field,
+  rs_source_selection,
+  rs_source_seq,
+  rs_source_statements,
+  rs_source_unit,
+  rs_source_write
+}
+import "source_construct.taut" {
+  rs_source_closure,
+  rs_source_construct,
+  rs_source_future,
+  rs_source_local_types
+}
+import "semantics.taut" { RsEval }
+import "../../../std/Base.taut" { List }
+import "../../../std/Text.taut" { Text }
+
+import "source_literals.taut" { RsSourceLiteral, RsSourceMember }
+import "source_pattern.taut" { RsSourcePattern }
+
+pub(open) inductive RsSourcePlace(
+  sig: RsSourceSignature,
+  scope: List(RsSourceLocal)
+): (RsPlace, Nat, rs::Expr::I) -> Prop {
+  RsSourceLocalPlace<index: Nat, id: Nat, ty: Nat>(
+    bound: List::nth(scope, index) = Some(RsSourceLocalOf(id, ty))
+  ): RsSourcePlace(sig, scope, RsLocal(index), ty, rs_source_name(rs_source_id(id)))
+  RsSourceFieldPlace<base: RsPlace, owner: Nat, syntax: rs::Expr::I, spelling: rs::Ty::I, mode: RsUse, target: Option(
+    Nat
+  ), fields: List(
+    RsSourceField
+  ), callable: Option(
+    RsSourceCall
+  ), field: Nat, name: Option(
+    Text
+  ), ty: Nat>(
+    resolved: RsSourcePlace(sig, scope, base, owner, syntax),
+    declared: rs_source_type(
+      sig,
+      owner
+    ) = Some(RsSourceTypeOf(spelling, mode, target, fields, callable)),
+    field_declared: List::nth(fields, field) = Some(RsSourceFieldOf(name, ty))
+  ): RsSourcePlace(
+    sig,
+    scope,
+    RsField(base, field),
+    ty,
+    rs_source_selected_field(syntax, field, name)
+  )
+  RsSourceDerefPlace<base: RsPlace, owner: Nat, syntax: rs::Expr::I, spelling: rs::Ty::I, mode: RsUse, ty: Nat, fields: List(
+    RsSourceField
+  ), callable: Option(
+    RsSourceCall
+  )>(
+    resolved: RsSourcePlace(sig, scope, base, owner, syntax),
+    declared: rs_source_type(
+      sig,
+      owner
+    ) = Some(RsSourceTypeOf(spelling, mode, Some(ty), fields, callable))
+  ): RsSourcePlace(sig, scope, RsDeref(base), ty, rs_source_deref(syntax))
+}
+
+mutual {
+  pub(open) inductive RsRepresents(
+    sig: RsSourceSignature
+  ): (List(RsSourceLocal), RsSourceControl, RsExpr, Nat, rs::Expr::I) -> Prop {
+    RsRepresentsLiteral<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, literal: RsLiteral, ty: Nat, syntax: rs::Expr::I>(
+      literal_form: RsSourceLiteral(sig, literal, ty, syntax)
+    ): RsRepresents(sig, scope, control, RsLit(literal), ty, syntax)
+    RsRepresentsRead<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, place: RsPlace, ty: Nat, syntax: rs::Expr::I, spelling: rs::Ty::I, mode: RsUse, target: Option(
+      Nat
+    ), fields: List(
+      RsSourceField
+    ), callable: Option(
+      RsSourceCall
+    )>(
+      resolved: RsSourcePlace(sig, scope, place, ty, syntax),
+      declared: rs_source_type(
+        sig,
+        ty
+      ) = Some(RsSourceTypeOf(spelling, mode, target, fields, callable))
+    ): RsRepresents(sig, scope, control, RsRead(mode, place), ty, syntax)
+    RsRepresentsReference<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, place: RsPlace, inner: Nat, syntax: rs::Expr::I, kind: RsBorrow, ty: Nat, spelling: rs::Ty::I, callable: Option(
+      RsSourceCall
+    )>(
+      resolved: RsSourcePlace(sig, scope, place, inner, syntax),
+      declared: rs_source_type(
+        sig,
+        ty
+      ) = Some(RsSourceTypeOf(spelling, rs_source_ref_mode(kind), Some(inner), Nil, callable))
+    ): RsRepresents(sig, scope, control, RsRef(kind, place), ty, rs_source_reference(kind, syntax))
+    RsRepresentsLet<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, init: RsExpr, initial_ty: Nat, initial_syntax: rs::Expr::I, body: RsExpr, result_ty: Nat, body_syntax: rs::Expr::I, id: Nat, spelling: rs::Ty::I, mode: RsUse, target: Option(
+      Nat
+    ), fields: List(
+      RsSourceField
+    ), callable: Option(
+      RsSourceCall
+    )>(
+      initial: RsRepresents(sig, scope, control, init, initial_ty, initial_syntax),
+      declared: rs_source_type(
+        sig,
+        initial_ty
+      ) = Some(RsSourceTypeOf(spelling, mode, target, fields, callable)),
+      fresh: rs_source_id_fresh(sig, scope, id) = true,
+      following: RsRepresents(
+        sig,
+        Cons(RsSourceLocalOf(id, initial_ty), scope),
+        control,
+        body,
+        result_ty,
+        body_syntax
+      )
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsLet(init, body),
+      result_ty,
+      rs_source_let(id, Some(spelling), initial_syntax, body_syntax)
+    )
+    RsRepresentsSequence<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, first: RsExpr, first_ty: Nat, first_syntax: rs::Expr::I, second: RsExpr, second_ty: Nat, second_syntax: rs::Expr::I>(
+      initial: RsRepresents(sig, scope, control, first, first_ty, first_syntax),
+      following: RsRepresents(sig, scope, control, second, second_ty, second_syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsSeq(first, second),
+      second_ty,
+      rs_source_seq(first_syntax, second_syntax)
+    )
+    RsRepresentsWrite<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, place: RsPlace, ty: Nat, place_syntax: rs::Expr::I, value: RsExpr, value_syntax: rs::Expr::I, unit_ty: Nat>(
+      destination: RsSourcePlace(sig, scope, place, ty, place_syntax),
+      rhs: RsRepresents(sig, scope, control, value, ty, value_syntax),
+      unit_type: RsSourceLiteral(sig, RsUnit, unit_ty, rs_source_unit())
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsWrite(place, value),
+      unit_ty,
+      rs_source_write(place_syntax, value_syntax)
+    )
+    RsRepresentsIf<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, cond: RsExpr, cond_syntax: rs::Expr::I, bool_ty: Nat, yes: RsExpr, yes_syntax: rs::Expr::I, no: RsExpr, no_syntax: rs::Expr::I, ty: Nat>(
+      bool_type: RsSourceLiteral(sig, RsBool(true), bool_ty, rs_source_bool(true)),
+      condition: RsRepresents(sig, scope, control, cond, bool_ty, cond_syntax),
+      when_true: RsRepresents(sig, scope, control, yes, ty, yes_syntax),
+      when_false: RsRepresents(sig, scope, control, no, ty, no_syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsIf(cond, yes, no),
+      ty,
+      rs_source_if(cond_syntax, yes_syntax, no_syntax)
+    )
+    RsRepresentsAnd<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, left: RsExpr, left_syntax: rs::Expr::I, right: RsExpr, right_syntax: rs::Expr::I, ty: Nat>(
+      bool_type: RsSourceLiteral(sig, RsBool(true), ty, rs_source_bool(true)),
+      lhs: RsRepresents(sig, scope, control, left, ty, left_syntax),
+      rhs: RsRepresents(sig, scope, control, right, ty, right_syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsIf(left, right, RsLit(RsBool(false))),
+      ty,
+      rs_source_binary(AmpAmp_I("&&"), left_syntax, right_syntax)
+    )
+    RsRepresentsOr<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, left: RsExpr, left_syntax: rs::Expr::I, right: RsExpr, right_syntax: rs::Expr::I, ty: Nat>(
+      bool_type: RsSourceLiteral(sig, RsBool(true), ty, rs_source_bool(true)),
+      lhs: RsRepresents(sig, scope, control, left, ty, left_syntax),
+      rhs: RsRepresents(sig, scope, control, right, ty, right_syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsIf(left, RsLit(RsBool(true)), right),
+      ty,
+      rs_source_binary(OrOr_I("||"), left_syntax, right_syntax)
+    )
+    RsRepresentsNot<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, expr: RsExpr, syntax: rs::Expr::I, ty: Nat>(
+      bool_type: RsSourceLiteral(sig, RsBool(true), ty, rs_source_bool(true)),
+      represented: RsRepresents(sig, scope, control, expr, ty, syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsIf(expr, RsLit(RsBool(false)), RsLit(RsBool(true))),
+      ty,
+      rs_source_not(syntax)
+    )
+    RsRepresentsFunction<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, index: Nat, path: rs::Path::I, ty: Nat>(
+      declared: List::nth(rs_source_functions(sig), index) = Some(RsSourceFunctionOf(path, ty)),
+      visible: rs_source_path_clear(scope, path) = true
+    ): RsRepresents(sig, scope, control, RsFunction(index), ty, rs_source_atom(Path_I(path)))
+    RsRepresentsNative<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, name: Text, path: rs::Path::I, args: List(
+      RsExpr
+    ), arg_types: List(
+      Nat
+    ), arg_syntax: List(
+      rs::Expr::I
+    ), ty: Nat, statements: List(
+      rs::Statement::I
+    ), private_scope: List(
+      RsSourceLocal
+    ), result_id: Nat, declaration: RsSourceType>(
+      declared: RsSourceMember(
+        RsSourceNative,
+        RsSourceNativeOf(name, path, arg_types, ty),
+        rs_source_natives(sig)
+      ),
+      visible: rs_source_path_clear(scope, path) = true,
+      arguments: RsRepresentTypedArgs(
+        sig,
+        scope,
+        scope,
+        control,
+        args,
+        arg_types,
+        statements,
+        arg_syntax,
+        private_scope
+      ),
+      result_type: rs_source_type(sig, ty) = Some(declaration),
+      fresh: rs_source_id_fresh(sig, private_scope, result_id) = true
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsPrimitive(name, args),
+      ty,
+      rs_source_statements(
+        statements,
+        Cons(
+          rs_source_bind(
+            result_id,
+            Some(rs_source_type_spelling(declaration)),
+            rs_source_native(path, arg_syntax)
+          ),
+          Nil
+        ),
+        rs_source_name(rs_source_id(result_id))
+      )
+    )
+    RsRepresentsCall<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, callee: RsExpr, callee_ty: Nat, callee_syntax: rs::Expr::I, args: List(
+      RsExpr
+    ), arg_types: List(
+      Nat
+    ), arg_syntax: List(
+      rs::Expr::I
+    ), kind: RsCallable, ty: Nat, spelling: rs::Ty::I, mode: RsUse, target: Option(
+      Nat
+    ), fields: List(
+      RsSourceField
+    ), id: Nat, statements: List(
+      rs::Statement::I
+    ), private_scope: List(
+      RsSourceLocal
+    ), result_id: Nat, result_declaration: RsSourceType>(
+      function: RsRepresents(sig, scope, control, callee, callee_ty, callee_syntax),
+      declared: rs_source_type(
+        sig,
+        callee_ty
+      ) = Some(
+        RsSourceTypeOf(spelling, mode, target, fields, Some(RsSourceCallOf(kind, arg_types, ty)))
+      ),
+      arguments: RsRepresentTypedArgs(
+        sig,
+        scope,
+        Cons(RsSourceLocalOf(id, callee_ty), scope),
+        control,
+        args,
+        arg_types,
+        statements,
+        arg_syntax,
+        private_scope
+      ),
+      result_type: rs_source_type(sig, ty) = Some(result_declaration),
+      result_fresh: rs_source_id_fresh(sig, private_scope, result_id) = true,
+      fresh: rs_source_id_fresh(sig, scope, id) = true
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsCall(callee, args),
+      ty,
+      rs_source_let(
+        id,
+        Some(spelling),
+        callee_syntax,
+        rs_source_statements(
+          statements,
+          Cons(
+            rs_source_bind(
+              result_id,
+              Some(rs_source_type_spelling(result_declaration)),
+              rs_source_call(rs_source_name(rs_source_id(id)), arg_syntax)
+            ),
+            Nil
+          ),
+          rs_source_name(rs_source_id(result_id))
+        )
+      )
+    )
+    RsRepresentsAggregate<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, tag: Nat, ty: Nat, path: rs::Path::I, family: List(
+      Text
+    ), variant: Text, style: RsSourceConstructorStyle, field_types: List(
+      Nat
+    ), args: List(
+      RsExpr
+    ), arg_syntax: List(
+      rs::Expr::I
+    ), spelling: rs::Ty::I, mode: RsUse, target: Option(
+      Nat
+    ), fields: List(
+      RsSourceField
+    ), callable: Option(
+      RsSourceCall
+    ), statements: List(
+      rs::Statement::I
+    ), private_scope: List(
+      RsSourceLocal
+    ), result_id: Nat>(
+      declared: RsSourceMember(
+        RsSourceConstructor,
+        RsSourceConstructorOf(tag, ty, path, family, variant, style, field_types),
+        rs_source_constructors(sig)
+      ),
+      owner: rs_source_type(
+        sig,
+        ty
+      ) = Some(RsSourceTypeOf(spelling, mode, target, fields, callable)),
+      valid: rs_source_constructor_style_valid(style, field_types) = true,
+      visible: rs_source_path_clear(scope, path) = true,
+      arguments: RsRepresentTypedArgs(
+        sig,
+        scope,
+        scope,
+        control,
+        args,
+        field_types,
+        statements,
+        arg_syntax,
+        private_scope
+      ),
+      fresh: rs_source_id_fresh(sig, private_scope, result_id) = true
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsAggregate(tag, rs_source_is_copy(mode), args),
+      ty,
+      rs_source_statements(
+        statements,
+        Cons(
+          rs_source_bind(result_id, Some(spelling), rs_source_construct(style, path, arg_syntax)),
+          Nil
+        ),
+        rs_source_name(rs_source_id(result_id))
+      )
+    )
+    RsRepresentsMatchPlace<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, place: RsPlace, scrut_ty: Nat, scrut_syntax: rs::Expr::I, arms: List(
+      RsArm
+    ), arm_syntax: List(
+      rs::Arm::I
+    ), ty: Nat>(
+      scrutinee: RsSourcePlace(sig, scope, place, scrut_ty, scrut_syntax),
+      cases: RsRepresentArms(sig, scope, control, scrut_ty, ty, arms, arm_syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsMatchPlace(place, arms),
+      ty,
+      rs_source_selection(scrut_syntax, arm_syntax)
+    )
+    RsRepresentsMatchValue<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, expr: RsExpr, scrut_ty: Nat, scrut_syntax: rs::Expr::I, arms: List(
+      RsArm
+    ), arm_syntax: List(
+      rs::Arm::I
+    ), ty: Nat>(
+      scrutinee: RsRepresents(sig, scope, control, expr, scrut_ty, scrut_syntax),
+      cases: RsRepresentArms(sig, scope, control, scrut_ty, ty, arms, arm_syntax)
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsMatch(expr, arms),
+      ty,
+      rs_source_selection(rs_source_block_expr(rs_source_block(Nil, scrut_syntax)), arm_syntax)
+    )
+    RsRepresentsClosure<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, kind: RsCallable, captures: List(
+      RsExpr
+    ), captured: List(
+      RsSourceLocal
+    ), statements: List(
+      rs::Statement::I
+    ), params: List(
+      RsSourceLocal
+    ), body: RsExpr, body_syntax: rs::Expr::I, ty: Nat, result: Nat, spelling: rs::Ty::I, mode: RsUse, target: Option(
+      Nat
+    ), fields: List(
+      RsSourceField
+    ), result_id: Nat>(
+      closure_type: RsSourceMember(
+        RsSourceClosureType,
+        RsSourceClosureTypeOf(kind, ty),
+        rs_source_closures(sig)
+      ),
+      declared: rs_source_type(
+        sig,
+        ty
+      ) = Some(
+        RsSourceTypeOf(
+          spelling,
+          mode,
+          target,
+          fields,
+          Some(RsSourceCallOf(kind, rs_source_local_types(params), result))
+        )
+      ),
+      captured_values: RsRepresentCaptures(
+        sig,
+        scope,
+        scope,
+        control,
+        captures,
+        captured,
+        statements
+      ),
+      scope_valid: rs_source_scope_good(
+        sig,
+        List::append(params, List::append(captured, scope))
+      ) = true,
+      contents: RsRepresents(
+        sig,
+        List::append(params, captured),
+        RsSourceControlOf(result, Nil),
+        body,
+        result,
+        body_syntax
+      ),
+      fresh: rs_source_id_fresh(sig, List::append(captured, scope), result_id) = true
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsLambda(kind, List::length(params), captures, body),
+      ty,
+      rs_source_statements(
+        statements,
+        Cons(
+          rs_source_bind(
+            result_id,
+            Some(spelling),
+            rs_source_closure(kind, params, captured, body_syntax)
+          ),
+          Nil
+        ),
+        rs_source_name(rs_source_id(result_id))
+      )
+    )
+    RsRepresentsFuture<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, captures: List(
+      RsExpr
+    ), captured: List(
+      RsSourceLocal
+    ), statements: List(
+      rs::Statement::I
+    ), body: RsExpr, body_syntax: rs::Expr::I, ty: Nat, result: Nat, declaration: RsSourceType, result_id: Nat>(
+      future_type: RsSourceMember(
+        RsSourceFutureType,
+        RsSourceFutureTypeOf(ty, result),
+        rs_source_futures(sig)
+      ),
+      declared: rs_source_type(sig, ty) = Some(declaration),
+      captured_values: RsRepresentCaptures(
+        sig,
+        scope,
+        scope,
+        control,
+        captures,
+        captured,
+        statements
+      ),
+      contents: RsRepresents(
+        sig,
+        captured,
+        RsSourceControlOf(result, Nil),
+        body,
+        result,
+        body_syntax
+      ),
+      fresh: rs_source_id_fresh(sig, List::append(captured, scope), result_id) = true
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsFuture(captures, body),
+      ty,
+      rs_source_statements(
+        statements,
+        Cons(
+          rs_source_bind(
+            result_id,
+            Some(rs_source_type_spelling(declaration)),
+            rs_source_future(captured, body_syntax)
+          ),
+          Nil
+        ),
+        rs_source_name(rs_source_id(result_id))
+      )
+    )
+    RsRepresentsAwait<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, future: RsExpr, future_syntax: rs::Expr::I, future_ty: Nat, ty: Nat>(
+      future_type: RsSourceMember(
+        RsSourceFutureType,
+        RsSourceFutureTypeOf(future_ty, ty),
+        rs_source_futures(sig)
+      ),
+      represented: RsRepresents(sig, scope, control, future, future_ty, future_syntax)
+    ): RsRepresents(sig, scope, control, RsAwait(future), ty, rs_source_await(future_syntax))
+    RsRepresentsLoop<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, label: Nat, body: RsExpr, body_syntax: rs::Expr::I, unit_ty: Nat, ty: Nat>(
+      fresh_label: rs_source_loop_type(control, label) = None,
+      unit_type: RsSourceLiteral(sig, RsUnit, unit_ty, rs_source_unit()),
+      contents: RsRepresents(
+        sig,
+        scope,
+        rs_source_push_loop(control, label, ty),
+        body,
+        unit_ty,
+        body_syntax
+      )
+    ): RsRepresents(
+      sig,
+      scope,
+      control,
+      RsLoop(label, body),
+      ty,
+      rs_source_loop(label, body_syntax)
+    )
+    RsRepresentsBreak<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, label: Nat, value: RsExpr, value_ty: Nat, syntax: rs::Expr::I, ty: Nat>(
+      target: rs_source_loop_type(control, label) = Some(value_ty),
+      represented: RsRepresents(sig, scope, control, value, value_ty, syntax)
+    ): RsRepresents(sig, scope, control, RsBreak(label, value), ty, rs_source_break(label, syntax))
+    RsRepresentsContinue<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, label: Nat, ty: Nat, loop_ty: Nat>(
+      target: rs_source_loop_type(control, label) = Some(loop_ty)
+    ): RsRepresents(sig, scope, control, RsContinue(label), ty, rs_source_continue(label))
+    RsRepresentsReturn<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, value: RsExpr, value_ty: Nat, syntax: rs::Expr::I, ty: Nat>(
+      target: rs_source_return_type(control) = value_ty,
+      represented: RsRepresents(sig, scope, control, value, value_ty, syntax)
+    ): RsRepresents(sig, scope, control, RsReturn(value), ty, rs_source_return(syntax))
+  }
+  pub(open) inductive RsRepresentArms(
+    sig: RsSourceSignature
+  ): (List(RsSourceLocal), RsSourceControl, Nat, Nat, List(RsArm), List(rs::Arm::I)) -> Prop {
+    RsRepresentArmsNil<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, scrut_ty: Nat, ty: Nat>: RsRepresentArms(
+      sig,
+      scope,
+      control,
+      scrut_ty,
+      ty,
+      Nil,
+      Nil
+    )
+    RsRepresentArmsCons<scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, scrut_ty: Nat, ty: Nat, pat: RsPattern, pattern_syntax: rs::Pattern::I, bindings: List(
+      RsSourceLocal
+    ), guard: RsExpr, guard_syntax: rs::Expr::I, bool_ty: Nat, body: RsExpr, body_syntax: rs::Expr::I, rest: List(
+      RsArm
+    ), remaining: List(
+      rs::Arm::I
+    )>(
+      pattern_form: RsSourcePattern(sig, scope, pat, scrut_ty, pattern_syntax, bindings),
+      bool_type: RsSourceLiteral(sig, RsBool(true), bool_ty, rs_source_bool(true)),
+      condition: RsRepresents(
+        sig,
+        List::append(bindings, scope),
+        control,
+        guard,
+        bool_ty,
+        guard_syntax
+      ),
+      contents: RsRepresents(sig, List::append(bindings, scope), control, body, ty, body_syntax),
+      following: RsRepresentArms(sig, scope, control, scrut_ty, ty, rest, remaining)
+    ): RsRepresentArms(
+      sig,
+      scope,
+      control,
+      scrut_ty,
+      ty,
+      Cons(RsCase(pat, guard, body), rest),
+      Cons(rs_source_arm(pattern_syntax, guard_syntax, body_syntax), remaining)
+    )
+  }
+  pub(open) inductive RsRepresentCaptures(
+    sig: RsSourceSignature
+  ): (
+    List(RsSourceLocal),
+    List(RsSourceLocal),
+    RsSourceControl,
+    List(RsExpr),
+    List(RsSourceLocal),
+    List(rs::Statement::I)
+  ) -> Prop {
+    RsRepresentCapturesNil<scope: List(
+      RsSourceLocal
+    ), reserved: List(
+      RsSourceLocal
+    ), control: RsSourceControl>: RsRepresentCaptures(sig, scope, reserved, control, Nil, Nil, Nil)
+    RsRepresentCapturesCons<scope: List(
+      RsSourceLocal
+    ), reserved: List(
+      RsSourceLocal
+    ), control: RsSourceControl, expr: RsExpr, ty: Nat, syntax: rs::Expr::I, id: Nat, declaration: RsSourceType, rest: List(
+      RsExpr
+    ), captured: List(
+      RsSourceLocal
+    ), statements: List(
+      rs::Statement::I
+    )>(
+      represented: RsRepresents(sig, scope, control, expr, ty, syntax),
+      declared: rs_source_type(sig, ty) = Some(declaration),
+      fresh: rs_source_id_fresh(sig, reserved, id) = true,
+      following: RsRepresentCaptures(
+        sig,
+        scope,
+        Cons(RsSourceLocalOf(id, ty), reserved),
+        control,
+        rest,
+        captured,
+        statements
+      )
+    ): RsRepresentCaptures(
+      sig,
+      scope,
+      reserved,
+      control,
+      Cons(expr, rest),
+      Cons(RsSourceLocalOf(id, ty), captured),
+      Cons(rs_source_bind(id, Some(rs_source_type_spelling(declaration)), syntax), statements)
+    )
+  }
+  pub(open) inductive RsRepresentTypedArgs(
+    sig: RsSourceSignature
+  ): (
+    List(RsSourceLocal),
+    List(RsSourceLocal),
+    RsSourceControl,
+    List(RsExpr),
+    List(Nat),
+    List(rs::Statement::I),
+    List(rs::Expr::I),
+    List(RsSourceLocal)
+  ) -> Prop {
+    RsRepresentTypedArgsNil<scope: List(
+      RsSourceLocal
+    ), private_scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl>: RsRepresentTypedArgs(
+      sig,
+      scope,
+      private_scope,
+      control,
+      Nil,
+      Nil,
+      Nil,
+      Nil,
+      private_scope
+    )
+    RsRepresentTypedArgsCons<scope: List(
+      RsSourceLocal
+    ), private_scope: List(
+      RsSourceLocal
+    ), control: RsSourceControl, expr: RsExpr, ty: Nat, syntax: rs::Expr::I, rest: List(
+      RsExpr
+    ), types: List(
+      Nat
+    ), statements: List(
+      rs::Statement::I
+    ), args: List(
+      rs::Expr::I
+    ), id: Nat, declaration: RsSourceType, final_scope: List(
+      RsSourceLocal
+    )>(
+      first: RsRepresents(sig, scope, control, expr, ty, syntax),
+      declared: rs_source_type(sig, ty) = Some(declaration),
+      fresh: rs_source_id_fresh(sig, private_scope, id) = true,
+      following: RsRepresentTypedArgs(
+        sig,
+        scope,
+        Cons(RsSourceLocalOf(id, ty), private_scope),
+        control,
+        rest,
+        types,
+        statements,
+        args,
+        final_scope
+      )
+    ): RsRepresentTypedArgs(
+      sig,
+      scope,
+      private_scope,
+      control,
+      Cons(expr, rest),
+      Cons(ty, types),
+      Cons(rs_source_bind(id, Some(rs_source_type_spelling(declaration)), syntax), statements),
+      Cons(rs_source_name(rs_source_id(id)), args),
+      final_scope
+    )
+  }
+
+}
+
+pub(open) inductive RsSourceEval(
+  program: List(RsDefinition),
+  rt: RsRuntime,
+  sig: RsSourceSignature,
+  scope: List(RsSourceLocal),
+  control: RsSourceControl
+): (rs::Expr::I, Nat, List(RsAddress), RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+  RsSourceEvaluated<syntax: rs::Expr::I, ty: Nat, expr: RsExpr, env: List(
+    RsAddress
+  ), heap: RsStore, out: RsOutcome(
+    RsValue
+  ), next: RsStore, trace: List(
+    RsEvent
+  )>(
+    scope_valid: rs_source_scope_good(sig, scope) = true,
+    represented: RsRepresents(sig, scope, control, expr, ty, syntax),
+    executed: RsEval(program, rt, env, expr, heap, out, next, trace)
+  ): RsSourceEval(program, rt, sig, scope, control, syntax, ty, env, heap, out, next, trace)
+}

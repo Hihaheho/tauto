@@ -1,5 +1,10 @@
 # Tauto Rust backend
 
+`model/` defines the Rust target syntax and semantics for a semantics-preserving
+self-host of `crates/tauto-rustgen`. Its scope and runtime contracts are described
+in [Rust 生成先の構文と意味論](../../docs/design/rustgen-semantics.md).
+The executable described below is the separate Surface-input backend.
+
 The import restrictions below apply to a single source file;
 [source bundles](BUNDLES.md) provide explicit-file imports and source-reader
 substitution of literal `include_text!` calls.

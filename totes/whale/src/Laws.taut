@@ -1,0 +1,2678 @@
+import std::Base
+import std::Nat
+import std::Ord
+import std::prelude::Ord
+import std::List
+import std::Data
+import "Revision.taut"
+import "Graph.taut"
+
+// What the graph keeps, proved for every key order (`Ord`), graph and node.
+
+// ---- keys -------------------------------------------------------------------
+
+module Key {
+  pub theorem eq_refl<K>(k: K): key_eq(k, k) = true where Ord(K) {
+    Eq::congr((o: Ordering) => Key::pick(o), ord_eq_equal(k, k, Refl))
+  }
+
+  theorem pick_true(o: Ordering, h: Key::pick(o) = true): o = Equal {
+    match o: o = Equal {
+      Less => False::elim(false_ne_true(h))
+      Equal => Refl
+      Greater => False::elim(false_ne_true(h))
+    }
+  }
+
+  pub theorem eq_sound<K>(a: K, b: K, h: key_eq(a, b) = true): a = b where Ord(K) {
+    ord_equal_eq(a, b, Key::pick_true(Ord::compare(a, b), h))
+  }
+
+  // ---- reading what was put ---------------------------------------------------
+}
+
+theorem get_hit_true<K, T>(
+  n: Node(K, T),
+  rest: Option(Node(K, T)),
+  b: Bool,
+  h: b = true
+): nodes_hit(n, rest, b) = Some(n) {
+  Eq::congr((c: Bool) => nodes_hit(n, rest, c), h)
+}
+
+theorem get_put_at_same<K, T>(
+  k1: K,
+  m: Node(K, T),
+  rest: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T),
+  b: Bool,
+  h: key_eq(k1, k) = b,
+  ih: nodes_get(nodes_put(rest, k, n), k) = Some(n)
+): nodes_get(nodes_put_at(k1, m, rest, k, n, nodes_put(rest, k, n), b), k) = Some(n) where Ord(K) {
+  match b: nodes_get(nodes_put_at(k1, m, rest, k, n, nodes_put(rest, k, n), b), k) = Some(n) {
+    true => get_hit_true(n, nodes_get(rest, k), key_eq(k, k), Key::eq_refl(k))
+    false => Eq::trans(
+      Eq::congr((c: Bool) => nodes_hit(m, nodes_get(nodes_put(rest, k, n), k), c), h),
+      ih
+    )
+  }
+}
+
+// What was put at a key is what is read there.
+pub theorem get_put_same<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T)
+): nodes_get(nodes_put(ns, k, n), k) = Some(n) where Ord(K) {
+  match ns: nodes_get(nodes_put(ns, k, n), k) = Some(n) {
+    Nil => get_hit_true(n, None, key_eq(k, k), Key::eq_refl(k))
+    Cons(e, rest) => match e: nodes_get(nodes_put(Cons(e, rest), k, n), k) = Some(n) {
+      #(k1, m) => get_put_at_same(k1, m, rest, k, n, key_eq(k1, k), Refl, get_put_same(rest, k, n))
+    }
+  }
+}
+
+theorem get_put_at_other<K, T>(
+  k1: K,
+  m: Node(K, T),
+  rest: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T),
+  j: K,
+  h: key_eq(k, j) = false,
+  b: Bool,
+  hb: key_eq(k1, k) = b,
+  ih: nodes_get(nodes_put(rest, k, n), j) = nodes_get(rest, j)
+): nodes_get(
+  nodes_put_at(k1, m, rest, k, n, nodes_put(rest, k, n), b),
+  j
+) = nodes_get(Cons(#(k1, m), rest), j) where Ord(K) {
+  match b: nodes_get(
+    nodes_put_at(k1, m, rest, k, n, nodes_put(rest, k, n), b),
+    j
+  ) = nodes_get(Cons(#(k1, m), rest), j) {
+    true => Eq::trans(
+      Eq::congr((c: Bool) => nodes_hit(n, nodes_get(rest, j), c), h),
+      Eq::sym(
+        Eq::congr(
+          (c: Bool) => nodes_hit(m, nodes_get(rest, j), c),
+          Eq::subst((z: K) => key_eq(z, j) = false, Eq::sym(Key::eq_sound(k1, k, hb)), h)
+        )
+      )
+    )
+    false => Eq::congr((o: Option(Node(K, T))) => nodes_hit(m, o, key_eq(k1, j)), ih)
+  }
+}
+
+// Putting at a key leaves the other keys alone.
+pub theorem get_put_other<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T),
+  j: K,
+  h: key_eq(k, j) = false
+): nodes_get(nodes_put(ns, k, n), j) = nodes_get(ns, j) where Ord(K) {
+  match ns: nodes_get(nodes_put(ns, k, n), j) = nodes_get(ns, j) {
+    Nil => Eq::congr((c: Bool) => nodes_hit(n, None, c), h)
+    Cons(e, rest) => match e: nodes_get(
+      nodes_put(Cons(e, rest), k, n),
+      j
+    ) = nodes_get(Cons(e, rest), j) {
+      #(k1, m) => get_put_at_other(
+        k1,
+        m,
+        rest,
+        k,
+        n,
+        j,
+        h,
+        key_eq(k1, k),
+        Refl,
+        get_put_other(rest, k, n, j, h)
+      )
+    }
+  }
+}
+
+// ---- what validity reads ----------------------------------------------------
+
+module Node {
+  // A node without its reverse edges: everything but who reads it.
+  fn core<K, T>(n: Node(K, T)): Node(K, T) {
+    Node::with_dependents(n, Nil)
+  }
+}
+
+pub fn core_of<K, T>(o: Option(Node(K, T))): Option(Node(K, T)) {
+  Option::map((n: Node(K, T)) => Node::core(n), o)
+}
+
+theorem with_dependents_core<K, T>(
+  n: Node(K, T),
+  rs: List(K)
+): Node::core(Node::with_dependents(n, rs)) = Node::core(n) {
+  match n: Node::core(Node::with_dependents(n, rs)) = Node::core(n) {
+    Mk(x, d, v, c, l, ds, old) => Refl
+  }
+}
+
+theorem hit_core<K, T>(
+  a: Node(K, T),
+  a2: Node(K, T),
+  x: Option(Node(K, T)),
+  y: Option(Node(K, T)),
+  c: Bool,
+  ha: Node::core(a) = Node::core(a2),
+  hx: core_of(x) = core_of(y)
+): core_of(nodes_hit(a, x, c)) = core_of(nodes_hit(a2, y, c)) {
+  match c: core_of(nodes_hit(a, x, c)) = core_of(nodes_hit(a2, y, c)) {
+    true => Eq::congr((z: Node(K, T)) => Some(z), ha)
+    false => hx
+  }
+}
+
+theorem change_at_core<K, T>(
+  k1: K,
+  m: Node(K, T),
+  f: (Node(K, T)) -> Node(K, T),
+  hf: ∀ q: Node(K, T). Node::core(f(q)) = Node::core(q),
+  r: List(K × Node(K, T)),
+  rest: List(K × Node(K, T)),
+  j: K,
+  b: Bool,
+  ih: core_of(nodes_get(r, j)) = core_of(nodes_get(rest, j))
+): core_of(
+  nodes_get(Cons(nodes_change_at(k1, m, f, b), r), j)
+) = core_of(nodes_get(Cons(#(k1, m), rest), j)) where Ord(K) {
+  match b: core_of(
+    nodes_get(Cons(nodes_change_at(k1, m, f, b), r), j)
+  ) = core_of(nodes_get(Cons(#(k1, m), rest), j)) {
+    true => hit_core(f(m), m, nodes_get(r, j), nodes_get(rest, j), key_eq(k1, j), hf(m), ih)
+    false => hit_core(m, m, nodes_get(r, j), nodes_get(rest, j), key_eq(k1, j), Refl, ih)
+  }
+}
+
+// Changing a node by something that keeps its core keeps the core of every node.
+theorem modify_core<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  hf: ∀ q: Node(K, T). Node::core(f(q)) = Node::core(q),
+  j: K
+): core_of(nodes_get(nodes_modify(ns, i, f), j)) = core_of(nodes_get(ns, j)) where Ord(K) {
+  match ns: core_of(nodes_get(nodes_modify(ns, i, f), j)) = core_of(nodes_get(ns, j)) {
+    Nil => Refl
+    Cons(e, rest) => match e: core_of(
+      nodes_get(nodes_modify(Cons(e, rest), i, f), j)
+    ) = core_of(nodes_get(Cons(e, rest), j)) {
+      #(k1, m) => change_at_core(
+        k1,
+        m,
+        f,
+        hf,
+        nodes_modify(rest, i, f),
+        rest,
+        j,
+        key_eq(k1, i),
+        modify_core(rest, i, f, hf, j)
+      )
+    }
+  }
+}
+
+// Fixing reverse edges keeps the core of every node.
+theorem link_core<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  ids: List(K),
+  j: K
+): core_of(nodes_get(link(ns, k, ids), j)) = core_of(nodes_get(ns, j)) where Ord(K) {
+  match ids: core_of(nodes_get(link(ns, k, ids), j)) = core_of(nodes_get(ns, j)) {
+    Nil => Refl
+    Cons(i, rest) => Eq::trans(
+      link_core(
+        nodes_modify(
+          ns,
+          i,
+          (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+        ),
+        k,
+        rest,
+        j
+      ),
+      modify_core(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k)),
+        (q: Node(K, T)) => with_dependents_core(q, Key::add(Node::dependents(q), k)),
+        j
+      )
+    )
+  }
+}
+
+theorem unlink_core<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  ids: List(K),
+  j: K
+): core_of(nodes_get(unlink(ns, k, ids), j)) = core_of(nodes_get(ns, j)) where Ord(K) {
+  match ids: core_of(nodes_get(unlink(ns, k, ids), j)) = core_of(nodes_get(ns, j)) {
+    Nil => Refl
+    Cons(i, rest) => Eq::trans(
+      unlink_core(
+        nodes_modify(
+          ns,
+          i,
+          (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k))
+        ),
+        k,
+        rest,
+        j
+      ),
+      modify_core(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k)),
+        (q: Node(K, T)) => with_dependents_core(q, Key::drop(Node::dependents(q), k)),
+        j
+      )
+    )
+  }
+}
+
+theorem relink_core<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  old: List(K),
+  new: List(K),
+  j: K
+): core_of(nodes_get(relink(ns, k, old, new), j)) = core_of(nodes_get(ns, j)) where Ord(K) {
+  Eq::trans(
+    link_core(unlink(ns, k, List::filter((i: K) => not(key_in(i, new)), old)), k, new, j),
+    unlink_core(ns, k, List::filter((i: K) => not(key_in(i, new)), old), j)
+  )
+}
+
+// ---- storing a node ---------------------------------------------------------
+
+// After `store`, `k` holds exactly what was stored (up to who reads it).
+theorem store_self<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat
+): core_of(
+  nodes_get(store(ns, k, x, res, v, c), k)
+) = Some(
+  Node::Mk(x, resolved_durability(res), v, c, resolved_level(res), resolved_deps(res), Nil)
+) where Ord(K) {
+  Eq::trans(
+    relink_core(
+      nodes_put(
+        ns,
+        k,
+        Node::Mk(
+          x,
+          resolved_durability(res),
+          v,
+          c,
+          resolved_level(res),
+          resolved_deps(res),
+          dependents_in(nodes_get(ns, k))
+        )
+      ),
+      k,
+      dep_ids_in(nodes_get(ns, k)),
+      dep_ids(resolved_deps(res)),
+      k
+    ),
+    Eq::congr(
+      (o: Option(Node(K, T))) => core_of(o),
+      get_put_same(
+        ns,
+        k,
+        Node::Mk(
+          x,
+          resolved_durability(res),
+          v,
+          c,
+          resolved_level(res),
+          resolved_deps(res),
+          dependents_in(nodes_get(ns, k))
+        )
+      )
+    )
+  )
+}
+
+// `store` leaves every other node as it was (up to who reads it).
+theorem store_other<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat,
+  j: K,
+  h: key_eq(k, j) = false
+): core_of(nodes_get(store(ns, k, x, res, v, c), j)) = core_of(nodes_get(ns, j)) where Ord(K) {
+  Eq::trans(
+    relink_core(
+      nodes_put(
+        ns,
+        k,
+        Node::Mk(
+          x,
+          resolved_durability(res),
+          v,
+          c,
+          resolved_level(res),
+          resolved_deps(res),
+          dependents_in(nodes_get(ns, k))
+        )
+      ),
+      k,
+      dep_ids_in(nodes_get(ns, k)),
+      dep_ids(resolved_deps(res)),
+      j
+    ),
+    Eq::congr(
+      (o: Option(Node(K, T))) => core_of(o),
+      get_put_other(
+        ns,
+        k,
+        Node::Mk(
+          x,
+          resolved_durability(res),
+          v,
+          c,
+          resolved_level(res),
+          resolved_deps(res),
+          dependents_in(nodes_get(ns, k))
+        ),
+        j,
+        h
+      )
+    )
+  )
+}
+
+// ---- validity reads only the core -------------------------------------------
+
+theorem valid_core<K, T>(
+  ns: List(K × Node(K, T)),
+  o: Option(Node(K, T)),
+  r: List(Nat)
+): valid_of(ns, o, r) = valid_of(ns, core_of(o), r) where Ord(K) {
+  match o: valid_of(ns, o, r) = valid_of(ns, core_of(o), r) {
+    None => Refl
+    Some(n) => match n: valid_of(ns, Some(n), r) = valid_of(ns, core_of(Some(n)), r) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}
+
+theorem verified_core<K, T>(
+  o: Option(Node(K, T)),
+  r: List(Nat)
+): verified_of(o, r) = verified_of(core_of(o), r) {
+  match o: verified_of(o, r) = verified_of(core_of(o), r) {
+    None => Refl
+    Some(n) => match n: verified_of(Some(n), r) = verified_of(core_of(Some(n)), r) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}
+
+theorem changed_core<K, T>(o: Option(Node(K, T))): changed_of(o) = changed_of(core_of(o)) {
+  match o: changed_of(o) = changed_of(core_of(o)) {
+    None => Refl
+    Some(n) => match n: changed_of(Some(n)) = changed_of(core_of(Some(n))) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}
+
+// `hc` below: the two graphs agree on when each key last changed.
+
+theorem fresh_and(
+  x: Bool,
+  x2: Bool,
+  y: Bool,
+  y2: Bool,
+  hx: x = x2,
+  hy: y = y2
+): Bool::and(x, y) = Bool::and(x2, y2) {
+  Eq::trans(
+    Eq::congr((z: Bool) => Bool::and(z, y), hx),
+    Eq::congr((z: Bool) => Bool::and(x2, z), hy)
+  )
+}
+
+theorem deps_fresh_frame<K, T>(
+  a: List(K × Node(K, T)),
+  b: List(K × Node(K, T)),
+  hc: ∀ i: K. changed_of(nodes_get(a, i)) = changed_of(nodes_get(b, i)),
+  ds: List(Dep(K))
+): deps_fresh(a, ds) = deps_fresh(b, ds) where Ord(K) {
+  match ds: deps_fresh(a, ds) = deps_fresh(b, ds) {
+    Nil => Refl
+    Cons(d, rest) => fresh_and(
+      dep_fresh(a, d),
+      dep_fresh(b, d),
+      deps_fresh(a, rest),
+      deps_fresh(b, rest),
+      Eq::congr((c: Option(Nat)) => fresh_by(c, dep_seen(d)), hc(dep_id(d))),
+      deps_fresh_frame(a, b, hc, rest)
+    )
+  }
+}
+
+theorem valid_of_frame<K, T>(
+  a: List(K × Node(K, T)),
+  b: List(K × Node(K, T)),
+  hc: ∀ i: K. changed_of(nodes_get(a, i)) = changed_of(nodes_get(b, i)),
+  o: Option(Node(K, T)),
+  r: List(Nat)
+): valid_of(a, o, r) = valid_of(b, o, r) where Ord(K) {
+  match o: valid_of(a, o, r) = valid_of(b, o, r) {
+    None => Refl
+    Some(n) => Eq::congr(
+      (y: Bool) => Bool::or(Node::verified_by(n, r), y),
+      deps_fresh_frame(a, b, hc, Node::deps(n))
+    )
+  }
+}
+
+// A node whose core is the same, in a graph with the same changes, is exactly as valid.
+theorem valid_frame<K, T>(
+  a: List(K × Node(K, T)),
+  b: List(K × Node(K, T)),
+  hc: ∀ i: K. changed_of(nodes_get(a, i)) = changed_of(nodes_get(b, i)),
+  o: Option(Node(K, T)),
+  p: Option(Node(K, T)),
+  ho: core_of(o) = core_of(p),
+  r: List(Nat)
+): valid_of(a, o, r) = valid_of(b, p, r) where Ord(K) {
+  Eq::trans(
+    valid_core(a, o, r),
+    Eq::trans(
+      Eq::congr((z: Option(Node(K, T))) => valid_of(a, z, r), ho),
+      Eq::trans(valid_of_frame(a, b, hc, core_of(p), r), Eq::sym(valid_core(b, p, r)))
+    )
+  )
+}
+
+// ---- what a write gives -----------------------------------------------------
+
+// `p` holds of what the write gives, when it is done.
+pub fn holds<K, A>(o: Outcome(K, A), p: (A) -> Prop): Prop {
+  match o: Prop {
+    Done(a) => p(a)
+    Absent(ks) => True
+  }
+}
+
+// A node stored with a `verified_at` at least the counter of its level is valid.
+theorem store_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat,
+  hv: Nat::le(Revision::get(Whale::revision(w), resolved_durability(res)), v) = true
+): Whale::valid(
+  Whale::Mk(store(Whale::nodes(w), k, x, res, v, c), Whale::revision(w)),
+  k
+) = true where Ord(K) {
+  Eq::trans(
+    valid_core(
+      store(Whale::nodes(w), k, x, res, v, c),
+      nodes_get(store(Whale::nodes(w), k, x, res, v, c), k),
+      Whale::revision(w)
+    ),
+    Eq::trans(
+      Eq::congr(
+        (z: Option(Node(K, T))) => valid_of(
+          store(Whale::nodes(w), k, x, res, v, c),
+          z,
+          Whale::revision(w)
+        ),
+        store_self(Whale::nodes(w), k, x, res, v, c)
+      ),
+      Eq::congr(
+        (y: Bool) => Bool::or(
+          y,
+          deps_fresh(store(Whale::nodes(w), k, x, res, v, c), resolved_deps(res))
+        ),
+        hv
+      )
+    )
+  )
+}
+
+theorem data_core<K, T>(o: Option(Node(K, T))): data_in(o) = data_in(core_of(o)) {
+  match o: data_in(o) = data_in(core_of(o)) {
+    None => Refl
+    Some(n) => match n: data_in(Some(n)) = data_in(core_of(Some(n))) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}
+
+theorem verified_in_core<K, T>(o: Option(Node(K, T))): verified_in(o) = verified_in(core_of(o)) {
+  match o: verified_in(o) = verified_in(core_of(o)) {
+    None => Refl
+    Some(n) => match n: verified_in(Some(n)) = verified_in(core_of(Some(n))) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}
+
+theorem store_changed<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat
+): changed_of(nodes_get(store(ns, k, x, res, v, c), k)) = Some(c) where Ord(K) {
+  Eq::trans(
+    changed_core(nodes_get(store(ns, k, x, res, v, c), k)),
+    Eq::congr((o: Option(Node(K, T))) => changed_of(o), store_self(ns, k, x, res, v, c))
+  )
+}
+
+theorem store_data<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat
+): data_in(nodes_get(store(ns, k, x, res, v, c), k)) = Some(x) where Ord(K) {
+  Eq::trans(
+    data_core(nodes_get(store(ns, k, x, res, v, c), k)),
+    Eq::congr((o: Option(Node(K, T))) => data_in(o), store_self(ns, k, x, res, v, c))
+  )
+}
+
+theorem store_verified<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat
+): verified_in(nodes_get(store(ns, k, x, res, v, c), k)) = v where Ord(K) {
+  Eq::trans(
+    verified_in_core(nodes_get(store(ns, k, x, res, v, c), k)),
+    Eq::congr((o: Option(Node(K, T))) => verified_in(o), store_self(ns, k, x, res, v, c))
+  )
+}
+
+// Storing `k` again with the `changed_at` it had changes no key's `changed_at`.
+theorem store_same_changes_at<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  c: Nat,
+  hc: changed_of(nodes_get(ns, k)) = Some(c),
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  i: K,
+  b: Bool,
+  hb: key_eq(k, i) = b
+): changed_of(nodes_get(store(ns, k, x, res, v, c), i)) = changed_of(nodes_get(ns, i)) where Ord(K) {
+  match b: changed_of(nodes_get(store(ns, k, x, res, v, c), i)) = changed_of(nodes_get(ns, i)) {
+    true => Eq::subst(
+      (z: K) => changed_of(nodes_get(store(ns, k, x, res, v, c), z)) = changed_of(nodes_get(ns, z)),
+      Key::eq_sound(k, i, hb),
+      Eq::trans(store_changed(ns, k, x, res, v, c), Eq::sym(hc))
+    )
+    false => Eq::trans(
+      changed_core(nodes_get(store(ns, k, x, res, v, c), i)),
+      Eq::trans(
+        Eq::congr(
+          (o: Option(Node(K, T))) => changed_of(o),
+          store_other(ns, k, x, res, v, c, i, hb)
+        ),
+        Eq::sym(changed_core(nodes_get(ns, i)))
+      )
+    )
+  }
+}
+
+// ---- registering ------------------------------------------------------------
+
+theorem register_with_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  o: Outcome(K, Resolved(K)),
+  p: (Whale(K, T) × Written) -> Prop,
+  hp: ∀ res: Resolved(K). p(write_changed(w, k, x, res))
+): holds(register_with(w, k, x, o), p) where Ord(K) {
+  match o: holds(register_with(w, k, x, o), p) {
+    Absent(ks) => Trivial
+    Done(res) => hp(res)
+  }
+}
+
+// After a registration, the node is valid.
+theorem register_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => Whale::valid(pfst(p), k) = true
+) where Ord(K) {
+  register_with_holds(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (p: Whale(K, T) × Written) => Whale::valid(pfst(p), k) = true,
+    (res: Resolved(K)) => store_valid(
+      Whale::bump(w, resolved_durability(res)),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Nat::le_refl(
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        )
+      )
+    )
+  )
+}
+
+// After a registration, the node holds the new data.
+theorem register_data<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => data_in(Whale::get(pfst(p), k)) = Some(x)
+) where Ord(K) {
+  register_with_holds(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (p: Whale(K, T) × Written) => data_in(Whale::get(pfst(p), k)) = Some(x),
+    (res: Resolved(K)) => store_data(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+  )
+}
+
+// After a registration, the node changed at the revision the write reports.
+theorem register_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => changed_of(Whale::get(pfst(p), k)) = Some(written_revision(psnd(p)))
+) where Ord(K) {
+  register_with_holds(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (p: Whale(K, T) × Written) => changed_of(
+      Whale::get(pfst(p), k)
+    ) = Some(written_revision(psnd(p))),
+    (res: Resolved(K)) => store_changed(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+  )
+}
+
+// A registration leaves every other node as it was (up to who reads it).
+theorem register_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  j: K,
+  h: key_eq(k, j) = false
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => core_of(Whale::get(pfst(p), j)) = core_of(Whale::get(w, j))
+) where Ord(K) {
+  register_with_holds(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (p: Whale(K, T) × Written) => core_of(Whale::get(pfst(p), j)) = core_of(Whale::get(w, j)),
+    (res: Resolved(K)) => store_other(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      j,
+      h
+    )
+  )
+}
+
+// A registration never lowers a counter.
+theorem register_revision_mono<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  i: Nat
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => Nat::le(
+    Revision::get(Whale::revision(w), i),
+    Revision::get(Whale::revision(pfst(p)), i)
+  ) = true
+) where Ord(K) {
+  register_with_holds(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (p: Whale(K, T) × Written) => Nat::le(
+      Revision::get(Whale::revision(w), i),
+      Revision::get(Whale::revision(pfst(p)), i)
+    ) = true,
+    (res: Resolved(K)) => Revision::bump_mono(
+      Whale::revision(w),
+      Revision::clamp(Whale::revision(w), resolved_durability(res)),
+      i
+    )
+  )
+}
+
+// ---- early cutoff -----------------------------------------------------------
+
+theorem unchanged_with_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  o: Outcome(K, Resolved(K)),
+  p: (Whale(K, T)) -> Prop,
+  hp: ∀ res: Resolved(
+    K
+  ). p(put_unchanged(w, k, Node::data(n), res, Node::verified_at(n), Node::changed_at(n)))
+): holds(unchanged_with(w, k, n, o), p) where Ord(K) {
+  match o: holds(unchanged_with(w, k, n, o), p) {
+    Absent(ks) => Trivial
+    Done(res) => hp(res)
+  }
+}
+
+theorem unchanged_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  p: (Whale(K, T)) -> Prop,
+  hp: ∀ res: Resolved(
+    K
+  ). p(put_unchanged(w, k, Node::data(n), res, Node::verified_at(n), Node::changed_at(n)))
+): holds(Whale::confirm_unchanged(w, k, ids), p) where Ord(K) {
+  Eq::subst(
+    (o: Option(Node(K, T))) => holds(unchanged_at(w, k, ids, o), p),
+    Eq::sym(h),
+    unchanged_with_holds(w, k, n, resolve_reads(w, Node::durability(n), ids), p, hp)
+  )
+}
+
+// After `Whale::confirm_unchanged`, the node is valid.
+theorem unchanged_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_unchanged(w, k, ids),
+  (v: Whale(K, T)) => Whale::valid(v, k) = true
+) where Ord(K) {
+  unchanged_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (v: Whale(K, T)) => Whale::valid(v, k) = true,
+    (res: Resolved(K)) => store_valid(
+      w,
+      k,
+      Node::data(n),
+      res,
+      Nat::max(Node::verified_at(n), Revision::get(Whale::revision(w), resolved_durability(res))),
+      Node::changed_at(n),
+      nat_le_max_right(
+        Node::verified_at(n),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      )
+    )
+  )
+}
+
+// Early cutoff: `changed_at` stays what it was.
+theorem unchanged_keeps_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_unchanged(w, k, ids),
+  (v: Whale(K, T)) => changed_of(Whale::get(v, k)) = Some(Node::changed_at(n))
+) where Ord(K) {
+  unchanged_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (v: Whale(K, T)) => changed_of(Whale::get(v, k)) = Some(Node::changed_at(n)),
+    (res: Resolved(K)) => store_changed(
+      Whale::nodes(w),
+      k,
+      Node::data(n),
+      res,
+      Nat::max(Node::verified_at(n), Revision::get(Whale::revision(w), resolved_durability(res))),
+      Node::changed_at(n)
+    )
+  )
+}
+
+// `verified_at` never goes down.
+theorem unchanged_verified_mono<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_unchanged(w, k, ids),
+  (v: Whale(K, T)) => Nat::le(Node::verified_at(n), verified_in(Whale::get(v, k))) = true
+) where Ord(K) {
+  unchanged_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (v: Whale(K, T)) => Nat::le(Node::verified_at(n), verified_in(Whale::get(v, k))) = true,
+    (res: Resolved(K)) => Eq::trans(
+      Eq::congr(
+        (z: Nat) => Nat::le(Node::verified_at(n), z),
+        store_verified(
+          Whale::nodes(w),
+          k,
+          Node::data(n),
+          res,
+          Nat::max(
+            Node::verified_at(n),
+            Revision::get(Whale::revision(w), resolved_durability(res))
+          ),
+          Node::changed_at(n)
+        )
+      ),
+      nat_le_max_left(
+        Node::verified_at(n),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      )
+    )
+  )
+}
+
+// Early cutoff: every other node is exactly as valid as before, so what read `k` stays
+// valid.
+theorem unchanged_readers<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  j: K,
+  hj: key_eq(k, j) = false
+): holds(
+  Whale::confirm_unchanged(w, k, ids),
+  (v: Whale(K, T)) => Whale::valid(v, j) = Whale::valid(w, j)
+) where Ord(K) {
+  unchanged_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (v: Whale(K, T)) => Whale::valid(v, j) = Whale::valid(w, j),
+    (res: Resolved(K)) => valid_frame(
+      store(
+        Whale::nodes(w),
+        k,
+        Node::data(n),
+        res,
+        Nat::max(Node::verified_at(n), Revision::get(Whale::revision(w), resolved_durability(res))),
+        Node::changed_at(n)
+      ),
+      Whale::nodes(w),
+      (i: K) => store_same_changes_at(
+        Whale::nodes(w),
+        k,
+        Node::changed_at(n),
+        Eq::congr((o: Option(Node(K, T))) => changed_of(o), h),
+        Node::data(n),
+        res,
+        Nat::max(Node::verified_at(n), Revision::get(Whale::revision(w), resolved_durability(res))),
+        i,
+        key_eq(k, i),
+        Refl
+      ),
+      nodes_get(
+        store(
+          Whale::nodes(w),
+          k,
+          Node::data(n),
+          res,
+          Nat::max(
+            Node::verified_at(n),
+            Revision::get(Whale::revision(w), resolved_durability(res))
+          ),
+          Node::changed_at(n)
+        ),
+        j
+      ),
+      nodes_get(Whale::nodes(w), j),
+      store_other(
+        Whale::nodes(w),
+        k,
+        Node::data(n),
+        res,
+        Nat::max(Node::verified_at(n), Revision::get(Whale::revision(w), resolved_durability(res))),
+        Node::changed_at(n),
+        j,
+        hj
+      ),
+      Whale::revision(w)
+    )
+  )
+}
+
+// Early cutoff touches no counter.
+theorem unchanged_revision<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_unchanged(w, k, ids),
+  (v: Whale(K, T)) => Whale::revision(v) = Whale::revision(w)
+) where Ord(K) {
+  unchanged_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (v: Whale(K, T)) => Whale::revision(v) = Whale::revision(w),
+    (res: Resolved(K)) => Refl
+  )
+}
+
+// ---- recomputed and changed -------------------------------------------------
+
+theorem changed_with_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  o: Outcome(K, Resolved(K)),
+  p: (Whale(K, T) × Nat) -> Prop,
+  hp: ∀ res: Resolved(
+    K
+  ). p(
+    #(
+      pfst(write_changed(w, k, Node::data(n), res)),
+      written_revision(psnd(write_changed(w, k, Node::data(n), res)))
+    )
+  )
+): holds(changed_with(w, k, n, o), p) where Ord(K) {
+  match o: holds(changed_with(w, k, n, o), p) {
+    Absent(ks) => Trivial
+    Done(res) => hp(res)
+  }
+}
+
+theorem changed_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  p: (Whale(K, T) × Nat) -> Prop,
+  hp: ∀ res: Resolved(
+    K
+  ). p(
+    #(
+      pfst(write_changed(w, k, Node::data(n), res)),
+      written_revision(psnd(write_changed(w, k, Node::data(n), res)))
+    )
+  )
+): holds(Whale::confirm_changed(w, k, ids), p) where Ord(K) {
+  Eq::subst(
+    (o: Option(Node(K, T))) => holds(changed_at_node(w, k, ids, o), p),
+    Eq::sym(h),
+    changed_with_holds(w, k, n, resolve_reads(w, Node::durability(n), ids), p, hp)
+  )
+}
+
+// After `Whale::confirm_changed`, the node is valid, keeps its data, and changed at the
+// counter the call gives back.
+theorem changed_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_changed(w, k, ids),
+  (q: Whale(K, T) × Nat) => Whale::valid(pfst(q), k) = true
+) where Ord(K) {
+  changed_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (q: Whale(K, T) × Nat) => Whale::valid(pfst(q), k) = true,
+    (res: Resolved(K)) => store_valid(
+      Whale::bump(w, resolved_durability(res)),
+      k,
+      Node::data(n),
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Nat::le_refl(
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        )
+      )
+    )
+  )
+}
+
+theorem changed_data<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_changed(w, k, ids),
+  (q: Whale(K, T) × Nat) => data_in(Whale::get(pfst(q), k)) = Some(Node::data(n))
+) where Ord(K) {
+  changed_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (q: Whale(K, T) × Nat) => data_in(Whale::get(pfst(q), k)) = Some(Node::data(n)),
+    (res: Resolved(K)) => store_data(
+      Whale::nodes(w),
+      k,
+      Node::data(n),
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+  )
+}
+
+theorem changed_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::confirm_changed(w, k, ids),
+  (q: Whale(K, T) × Nat) => changed_of(Whale::get(pfst(q), k)) = Some(psnd(q))
+) where Ord(K) {
+  changed_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (q: Whale(K, T) × Nat) => changed_of(Whale::get(pfst(q), k)) = Some(psnd(q)),
+    (res: Resolved(K)) => store_changed(
+      Whale::nodes(w),
+      k,
+      Node::data(n),
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+  )
+}
+
+theorem changed_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  j: K,
+  hj: key_eq(k, j) = false
+): holds(
+  Whale::confirm_changed(w, k, ids),
+  (q: Whale(K, T) × Nat) => core_of(Whale::get(pfst(q), j)) = core_of(Whale::get(w, j))
+) where Ord(K) {
+  changed_holds(
+    w,
+    k,
+    ids,
+    n,
+    h,
+    (q: Whale(K, T) × Nat) => core_of(Whale::get(pfst(q), j)) = core_of(Whale::get(w, j)),
+    (res: Resolved(K)) => store_other(
+      Whale::nodes(w),
+      k,
+      Node::data(n),
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      j,
+      hj
+    )
+  )
+}
+
+// ---- update with a comparison -----------------------------------------------
+
+theorem update_with_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  o: Outcome(K, Resolved(K)),
+  p: (Whale(K, T) × Updated) -> Prop,
+  hp: ∀ res: Resolved(K). p(update_by(w, k, x, res, differs(data_in(Whale::get(w, k)), x)))
+): holds(update_with(w, k, x, differs, o), p) where Ord(K) {
+  match o: holds(update_with(w, k, x, differs, o), p) {
+    Absent(ks) => Trivial
+    Done(res) => hp(res)
+  }
+}
+
+theorem update_holds<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K),
+  p: (Whale(K, T) × Updated) -> Prop,
+  hp: ∀ res: Resolved(K). p(update_by(w, k, x, res, differs(data_in(Whale::get(w, k)), x)))
+): holds(Whale::update(w, k, x, differs, dur, ids), p) where Ord(K) {
+  update_with_holds(w, k, x, differs, resolve_reads(w, dur, ids), p, hp)
+}
+
+// The node is valid after an update, changed or not.
+theorem update_by_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  b: Bool
+): Whale::valid(pfst(update_by(w, k, x, res, b)), k) = true where Ord(K) {
+  match b: Whale::valid(pfst(update_by(w, k, x, res, b)), k) = true {
+    true => store_valid(
+      Whale::bump(w, resolved_durability(res)),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Nat::le_refl(
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        )
+      )
+    )
+    false => store_valid(
+      w,
+      k,
+      x,
+      res,
+      Nat::max(
+        verified_in(Whale::get(w, k)),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      ),
+      changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res))),
+      nat_le_max_right(
+        verified_in(Whale::get(w, k)),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      )
+    )
+  }
+}
+
+theorem update_by_data<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  b: Bool
+): data_in(Whale::get(pfst(update_by(w, k, x, res, b)), k)) = Some(x) where Ord(K) {
+  match b: data_in(Whale::get(pfst(update_by(w, k, x, res, b)), k)) = Some(x) {
+    true => store_data(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+    false => store_data(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Nat::max(
+        verified_in(Whale::get(w, k)),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      ),
+      changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res)))
+    )
+  }
+}
+
+// The node's `changed_at` is the revision the update reports.
+theorem update_by_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  b: Bool
+): changed_of(
+  Whale::get(pfst(update_by(w, k, x, res, b)), k)
+) = Some(updated_revision(psnd(update_by(w, k, x, res, b)))) where Ord(K) {
+  match b: changed_of(
+    Whale::get(pfst(update_by(w, k, x, res, b)), k)
+  ) = Some(updated_revision(psnd(update_by(w, k, x, res, b)))) {
+    true => store_changed(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+    false => store_changed(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Nat::max(
+        verified_in(Whale::get(w, k)),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      ),
+      changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res)))
+    )
+  }
+}
+
+theorem update_by_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  b: Bool,
+  j: K,
+  hj: key_eq(k, j) = false
+): core_of(
+  Whale::get(pfst(update_by(w, k, x, res, b)), j)
+) = core_of(Whale::get(w, j)) where Ord(K) {
+  match b: core_of(Whale::get(pfst(update_by(w, k, x, res, b)), j)) = core_of(Whale::get(w, j)) {
+    true => store_other(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      j,
+      hj
+    )
+    false => store_other(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Nat::max(
+        verified_in(Whale::get(w, k)),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      ),
+      changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res))),
+      j,
+      hj
+    )
+  }
+}
+
+theorem update_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::update(w, k, x, differs, dur, ids),
+  (q: Whale(K, T) × Updated) => Whale::valid(pfst(q), k) = true
+) where Ord(K) {
+  update_holds(
+    w,
+    k,
+    x,
+    differs,
+    dur,
+    ids,
+    (q: Whale(K, T) × Updated) => Whale::valid(pfst(q), k) = true,
+    (res: Resolved(K)) => update_by_valid(w, k, x, res, differs(data_in(Whale::get(w, k)), x))
+  )
+}
+
+theorem update_data<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::update(w, k, x, differs, dur, ids),
+  (q: Whale(K, T) × Updated) => data_in(Whale::get(pfst(q), k)) = Some(x)
+) where Ord(K) {
+  update_holds(
+    w,
+    k,
+    x,
+    differs,
+    dur,
+    ids,
+    (q: Whale(K, T) × Updated) => data_in(Whale::get(pfst(q), k)) = Some(x),
+    (res: Resolved(K)) => update_by_data(w, k, x, res, differs(data_in(Whale::get(w, k)), x))
+  )
+}
+
+theorem update_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K)
+): holds(
+  Whale::update(w, k, x, differs, dur, ids),
+  (q: Whale(K, T) × Updated) => changed_of(Whale::get(pfst(q), k)) = Some(updated_revision(psnd(q)))
+) where Ord(K) {
+  update_holds(
+    w,
+    k,
+    x,
+    differs,
+    dur,
+    ids,
+    (q: Whale(K, T) × Updated) => changed_of(
+      Whale::get(pfst(q), k)
+    ) = Some(updated_revision(psnd(q))),
+    (res: Resolved(K)) => update_by_changed(w, k, x, res, differs(data_in(Whale::get(w, k)), x))
+  )
+}
+
+theorem update_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K),
+  j: K,
+  hj: key_eq(k, j) = false
+): holds(
+  Whale::update(w, k, x, differs, dur, ids),
+  (q: Whale(K, T) × Updated) => core_of(Whale::get(pfst(q), j)) = core_of(Whale::get(w, j))
+) where Ord(K) {
+  update_holds(
+    w,
+    k,
+    x,
+    differs,
+    dur,
+    ids,
+    (q: Whale(K, T) × Updated) => core_of(Whale::get(pfst(q), j)) = core_of(Whale::get(w, j)),
+    (res: Resolved(K)) => update_by_other(
+      w,
+      k,
+      x,
+      res,
+      differs(data_in(Whale::get(w, k)), x),
+      j,
+      hj
+    )
+  )
+}
+
+theorem changed_in_some<K, T>(
+  o: Option(Node(K, T)),
+  now: Nat,
+  n: Node(K, T),
+  h: o = Some(n)
+): changed_of(o) = Some(changed_in(o, now)) {
+  Eq::subst((z: Option(Node(K, T))) => changed_of(z) = Some(changed_in(z, now)), Eq::sym(h), Refl)
+}
+
+// An update of an existing node that `differs` calls the same is an early cutoff: every
+// other node is exactly as valid as before.
+theorem update_unchanged_readers<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  hd: differs(data_in(Whale::get(w, k)), x) = false,
+  j: K,
+  hj: key_eq(k, j) = false
+): holds(
+  Whale::update(w, k, x, differs, dur, ids),
+  (q: Whale(K, T) × Updated) => Whale::valid(pfst(q), j) = Whale::valid(w, j)
+) where Ord(K) {
+  update_holds(
+    w,
+    k,
+    x,
+    differs,
+    dur,
+    ids,
+    (q: Whale(K, T) × Updated) => Whale::valid(pfst(q), j) = Whale::valid(w, j),
+    (res: Resolved(K)) => Eq::subst(
+      (b: Bool) => Whale::valid(pfst(update_by(w, k, x, res, b)), j) = Whale::valid(w, j),
+      Eq::sym(hd),
+      valid_frame(
+        store(
+          Whale::nodes(w),
+          k,
+          x,
+          res,
+          Nat::max(
+            verified_in(Whale::get(w, k)),
+            Revision::get(Whale::revision(w), resolved_durability(res))
+          ),
+          changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res)))
+        ),
+        Whale::nodes(w),
+        (i: K) => store_same_changes_at(
+          Whale::nodes(w),
+          k,
+          changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res))),
+          changed_in_some(
+            Whale::get(w, k),
+            Revision::get(Whale::revision(w), resolved_durability(res)),
+            n,
+            h
+          ),
+          x,
+          res,
+          Nat::max(
+            verified_in(Whale::get(w, k)),
+            Revision::get(Whale::revision(w), resolved_durability(res))
+          ),
+          i,
+          key_eq(k, i),
+          Refl
+        ),
+        nodes_get(
+          store(
+            Whale::nodes(w),
+            k,
+            x,
+            res,
+            Nat::max(
+              verified_in(Whale::get(w, k)),
+              Revision::get(Whale::revision(w), resolved_durability(res))
+            ),
+            changed_in(
+              Whale::get(w, k),
+              Revision::get(Whale::revision(w), resolved_durability(res))
+            )
+          ),
+          j
+        ),
+        nodes_get(Whale::nodes(w), j),
+        store_other(
+          Whale::nodes(w),
+          k,
+          x,
+          res,
+          Nat::max(
+            verified_in(Whale::get(w, k)),
+            Revision::get(Whale::revision(w), resolved_durability(res))
+          ),
+          changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res))),
+          j,
+          hj
+        ),
+        Whale::revision(w)
+      )
+    )
+  )
+}
+
+// ---- refusals ---------------------------------------------------------------
+
+// `q` holds of the keys a refused write gives back.
+fn refused<K, A>(o: Outcome(K, A), q: (List(K)) -> Prop): Prop {
+  match o: Prop {
+    Done(a) => True
+    Absent(ks) => q(ks)
+  }
+}
+
+fn is_nil<A>(l: List(A)): Bool {
+  match l: Bool {
+    Nil => true
+    Cons(x, t) => false
+  }
+}
+
+// What a refusal gives back: exactly the keys to read that have no node, and at least one.
+fn missing_of<K, T>(ns: List(K × Node(K, T)), ids: List(K), ks: List(K)): Prop where Ord(K) {
+  ks = missing_ids(ns, ids) ∧ is_nil(ks) = false
+}
+
+theorem resolve_if_refused<K>(
+  m: List(K),
+  f: Resolved(K)
+): refused(resolve_if(m, f), (ks: List(K)) => ks = m ∧ is_nil(ks) = false) {
+  match m: refused(resolve_if(m, f), (ks: List(K)) => ks = m ∧ is_nil(ks) = false) {
+    Nil => match f: refused(resolve_if(Nil, f), (ks: List(K)) => ks = Nil ∧ is_nil(ks) = false) {
+      Mk(ds, d, l) => Trivial
+    }
+    Cons(k, ks) => AndIntro(Refl, Refl)
+  }
+}
+
+theorem resolve_refused<K, T>(
+  w: Whale(K, T),
+  dur: Nat,
+  ids: List(K)
+): refused(
+  resolve_reads(w, dur, ids),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  resolve_if_refused(
+    missing_ids(Whale::nodes(w), ids),
+    resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur))
+  )
+}
+
+theorem register_with_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  o: Outcome(K, Resolved(K)),
+  q: (List(K)) -> Prop,
+  h: refused(o, q)
+): refused(register_with(w, k, x, o), q) where Ord(K) {
+  match o: refused(register_with(w, k, x, o), q) {
+    Absent(ks) => h
+    Done(res) => Trivial
+  }
+}
+
+// A registration is refused exactly when a key to read has no node, and gives back those
+// keys.
+theorem register_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): refused(
+  Whale::register(w, k, x, dur, ids),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  register_with_refused(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks),
+    resolve_refused(w, dur, ids)
+  )
+}
+
+theorem unchanged_with_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  o: Outcome(K, Resolved(K)),
+  q: (List(K)) -> Prop,
+  h: refused(o, q)
+): refused(unchanged_with(w, k, n, o), q) where Ord(K) {
+  match o: refused(unchanged_with(w, k, n, o), q) {
+    Absent(ks) => h
+    Done(res) => Trivial
+  }
+}
+
+theorem unchanged_at_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  o: Option(Node(K, T))
+): refused(
+  unchanged_at(w, k, ids, o),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  match o: refused(
+    unchanged_at(w, k, ids, o),
+    (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+  ) {
+    None => Trivial
+    Some(n) => unchanged_with_refused(
+      w,
+      k,
+      n,
+      resolve_reads(w, Node::durability(n), ids),
+      (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks),
+      resolve_refused(w, Node::durability(n), ids)
+    )
+  }
+}
+
+theorem unchanged_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K)
+): refused(
+  Whale::confirm_unchanged(w, k, ids),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  unchanged_at_refused(w, k, ids, Whale::get(w, k))
+}
+
+theorem changed_with_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  o: Outcome(K, Resolved(K)),
+  q: (List(K)) -> Prop,
+  h: refused(o, q)
+): refused(changed_with(w, k, n, o), q) where Ord(K) {
+  match o: refused(changed_with(w, k, n, o), q) {
+    Absent(ks) => h
+    Done(res) => Trivial
+  }
+}
+
+theorem changed_at_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  o: Option(Node(K, T))
+): refused(
+  changed_at_node(w, k, ids, o),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  match o: refused(
+    changed_at_node(w, k, ids, o),
+    (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+  ) {
+    None => Trivial
+    Some(n) => changed_with_refused(
+      w,
+      k,
+      n,
+      resolve_reads(w, Node::durability(n), ids),
+      (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks),
+      resolve_refused(w, Node::durability(n), ids)
+    )
+  }
+}
+
+theorem changed_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K)
+): refused(
+  Whale::confirm_changed(w, k, ids),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  changed_at_refused(w, k, ids, Whale::get(w, k))
+}
+
+theorem update_with_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  o: Outcome(K, Resolved(K)),
+  q: (List(K)) -> Prop,
+  h: refused(o, q)
+): refused(update_with(w, k, x, differs, o), q) where Ord(K) {
+  match o: refused(update_with(w, k, x, differs, o), q) {
+    Absent(ks) => h
+    Done(res) => Trivial
+  }
+}
+
+theorem update_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  dur: Nat,
+  ids: List(K)
+): refused(
+  Whale::update(w, k, x, differs, dur, ids),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  update_with_refused(
+    w,
+    k,
+    x,
+    differs,
+    resolve_reads(w, dur, ids),
+    (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks),
+    resolve_refused(w, dur, ids)
+  )
+}
+
+// ---- get or insert ----------------------------------------------------------
+
+theorem none_ne_some<A>(a: A, e: None = Some(a)): False {
+  match e: False {
+  }
+}
+
+theorem inserted_pick_refused<K, T>(
+  p: Whale(K, T) × Written,
+  x: T,
+  o: Option(Node(K, T)),
+  q: (List(K)) -> Prop,
+  hd: data_in(o) = Some(x)
+): refused(inserted_pick(p, o), q) {
+  match o: refused(inserted_pick(p, o), q) {
+    None => False::elim(none_ne_some(x, hd))
+    Some(n) => Trivial
+  }
+}
+
+theorem inserted_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  o: Outcome(K, Resolved(K)),
+  q: (List(K)) -> Prop,
+  hr: refused(o, q)
+): refused(inserted_with(k, register_with(w, k, x, o)), q) where Ord(K) {
+  match o: refused(inserted_with(k, register_with(w, k, x, o)), q) {
+    Absent(ks) => hr
+    Done(res) => inserted_pick_refused(
+      write_changed(w, k, x, res),
+      x,
+      Whale::get(pfst(write_changed(w, k, x, res)), k),
+      q,
+      store_data(
+        Whale::nodes(w),
+        k,
+        x,
+        res,
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        ),
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        )
+      )
+    )
+  }
+}
+
+theorem get_or_insert_at_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  o: Option(Node(K, T))
+): refused(
+  get_or_insert_at(w, k, x, dur, ids, o),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  match o: refused(
+    get_or_insert_at(w, k, x, dur, ids, o),
+    (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+  ) {
+    Some(n) => Trivial
+    None => inserted_refused(
+      w,
+      k,
+      x,
+      resolve_reads(w, dur, ids),
+      (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks),
+      resolve_refused(w, dur, ids)
+    )
+  }
+}
+
+// `Whale::get_or_insert` is refused only for a new node with keys to read that have no node.
+theorem get_or_insert_refused<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K)
+): refused(
+  Whale::get_or_insert(w, k, x, dur, ids),
+  (ks: List(K)) => missing_of(Whale::nodes(w), ids, ks)
+) where Ord(K) {
+  get_or_insert_at_refused(w, k, x, dur, ids, Whale::get(w, k))
+}
+
+theorem inserted_pick_valid<K, T>(
+  k: K,
+  p: Whale(K, T) × Written,
+  o: Option(Node(K, T)),
+  t: Whale::valid(pfst(p), k) = true
+): holds(
+  inserted_pick(p, o),
+  (q: Whale(K, T) × Found(K, T)) => Whale::valid(pfst(q), k) = true
+) where Ord(K) {
+  match o: holds(
+    inserted_pick(p, o),
+    (q: Whale(K, T) × Found(K, T)) => Whale::valid(pfst(q), k) = true
+  ) {
+    None => Trivial
+    Some(n) => t
+  }
+}
+
+theorem inserted_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  o: Outcome(K, Resolved(K))
+): holds(
+  inserted_with(k, register_with(w, k, x, o)),
+  (q: Whale(K, T) × Found(K, T)) => Whale::valid(pfst(q), k) = true
+) where Ord(K) {
+  match o: holds(
+    inserted_with(k, register_with(w, k, x, o)),
+    (q: Whale(K, T) × Found(K, T)) => Whale::valid(pfst(q), k) = true
+  ) {
+    Absent(ks) => Trivial
+    Done(res) => inserted_pick_valid(
+      k,
+      write_changed(w, k, x, res),
+      Whale::get(pfst(write_changed(w, k, x, res)), k),
+      store_valid(
+        Whale::bump(w, resolved_durability(res)),
+        k,
+        x,
+        res,
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        ),
+        Revision::get(
+          Whale::revision(Whale::bump(w, resolved_durability(res))),
+          resolved_durability(res)
+        ),
+        Nat::le_refl(
+          Revision::get(
+            Whale::revision(Whale::bump(w, resolved_durability(res))),
+            resolved_durability(res)
+          )
+        )
+      )
+    )
+  }
+}
+
+// A new node from `Whale::get_or_insert` is valid.
+theorem get_or_insert_new_valid<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  h: Whale::get(w, k) = None
+): holds(
+  Whale::get_or_insert(w, k, x, dur, ids),
+  (q: Whale(K, T) × Found(K, T)) => Whale::valid(pfst(q), k) = true
+) where Ord(K) {
+  Eq::subst(
+    (o: Option(Node(K, T))) => holds(
+      get_or_insert_at(w, k, x, dur, ids, o),
+      (q: Whale(K, T) × Found(K, T)) => Whale::valid(pfst(q), k) = true
+    ),
+    Eq::sym(h),
+    inserted_valid(w, k, x, resolve_reads(w, dur, ids))
+  )
+}
+
+// An existing node is given back, and the graph is left alone.
+theorem get_or_insert_existing<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): holds(
+  Whale::get_or_insert(w, k, x, dur, ids),
+  (q: Whale(K, T) × Found(K, T)) => Eq(
+    Whale(K, T),
+    pfst(q),
+    w
+  ) ∧ Eq(Found(K, T), psnd(q), Existing(n))
+) where Ord(K) {
+  Eq::subst(
+    (o: Option(Node(K, T))) => holds(
+      get_or_insert_at(w, k, x, dur, ids, o),
+      (q: Whale(K, T) × Found(K, T)) => Eq(
+        Whale(K, T),
+        pfst(q),
+        w
+      ) ∧ Eq(Found(K, T), psnd(q), Existing(n))
+    ),
+    Eq::sym(h),
+    AndIntro(Refl, Refl)
+  )
+}
+
+// ---- removing ---------------------------------------------------------------
+
+theorem get_drop_at_same<K, T>(
+  k1: K,
+  m: Node(K, T),
+  later: List(K × Node(K, T)),
+  k: K,
+  b: Bool,
+  hb: key_eq(k1, k) = b,
+  ih: nodes_get(later, k) = None
+): nodes_get(nodes_drop_at(k1, m, later, b), k) = None where Ord(K) {
+  match b: nodes_get(nodes_drop_at(k1, m, later, b), k) = None {
+    true => ih
+    false => Eq::trans(Eq::congr((c: Bool) => nodes_hit(m, nodes_get(later, k), c), hb), ih)
+  }
+}
+
+// A removed key has no node.
+theorem get_remove_same<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K
+): nodes_get(nodes_remove(ns, k), k) = None where Ord(K) {
+  match ns: nodes_get(nodes_remove(ns, k), k) = None {
+    Nil => Refl
+    Cons(e, rest) => match e: nodes_get(nodes_remove(Cons(e, rest), k), k) = None {
+      #(k1, m) => get_drop_at_same(
+        k1,
+        m,
+        nodes_remove(rest, k),
+        k,
+        key_eq(k1, k),
+        Refl,
+        get_remove_same(rest, k)
+      )
+    }
+  }
+}
+
+theorem get_drop_at_other<K, T>(
+  k1: K,
+  m: Node(K, T),
+  later: List(K × Node(K, T)),
+  rest: List(K × Node(K, T)),
+  k: K,
+  j: K,
+  h: key_eq(k, j) = false,
+  b: Bool,
+  hb: key_eq(k1, k) = b,
+  ih: nodes_get(later, j) = nodes_get(rest, j)
+): nodes_get(nodes_drop_at(k1, m, later, b), j) = nodes_get(Cons(#(k1, m), rest), j) where Ord(K) {
+  match b: nodes_get(nodes_drop_at(k1, m, later, b), j) = nodes_get(Cons(#(k1, m), rest), j) {
+    true => Eq::trans(
+      ih,
+      Eq::sym(
+        Eq::congr(
+          (c: Bool) => nodes_hit(m, nodes_get(rest, j), c),
+          Eq::subst((z: K) => key_eq(z, j) = false, Eq::sym(Key::eq_sound(k1, k, hb)), h)
+        )
+      )
+    )
+    false => Eq::congr((o: Option(Node(K, T))) => nodes_hit(m, o, key_eq(k1, j)), ih)
+  }
+}
+
+// Removing a key leaves the other keys alone.
+theorem get_remove_other<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  j: K,
+  h: key_eq(k, j) = false
+): nodes_get(nodes_remove(ns, k), j) = nodes_get(ns, j) where Ord(K) {
+  match ns: nodes_get(nodes_remove(ns, k), j) = nodes_get(ns, j) {
+    Nil => Refl
+    Cons(e, rest) => match e: nodes_get(
+      nodes_remove(Cons(e, rest), k),
+      j
+    ) = nodes_get(Cons(e, rest), j) {
+      #(k1, m) => get_drop_at_other(
+        k1,
+        m,
+        nodes_remove(rest, k),
+        rest,
+        k,
+        j,
+        h,
+        key_eq(k1, k),
+        Refl,
+        get_remove_other(rest, k, j, h)
+      )
+    }
+  }
+}
+
+theorem remove_at_gone<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T)),
+  h: Whale::get(w, k) = o
+): core_of(Whale::get(pfst(remove_at(w, k, o)), k)) = None where Ord(K) {
+  match o: core_of(Whale::get(pfst(remove_at(w, k, o)), k)) = None {
+    None => Eq::congr((z: Option(Node(K, T))) => core_of(z), h)
+    Some(n) => Eq::trans(
+      unlink_core(nodes_remove(Whale::nodes(w), k), k, Node::dep_ids(n), k),
+      Eq::congr((z: Option(Node(K, T))) => core_of(z), get_remove_same(Whale::nodes(w), k))
+    )
+  }
+}
+
+// After `Whale::remove`, the key has no node.
+theorem remove_gone<K, T>(
+  w: Whale(K, T),
+  k: K
+): core_of(Whale::get(pfst(Whale::remove(w, k)), k)) = None where Ord(K) {
+  remove_at_gone(w, k, Whale::get(w, k), Refl)
+}
+
+theorem remove_at_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T)),
+  j: K,
+  hj: key_eq(k, j) = false
+): core_of(Whale::get(pfst(remove_at(w, k, o)), j)) = core_of(Whale::get(w, j)) where Ord(K) {
+  match o: core_of(Whale::get(pfst(remove_at(w, k, o)), j)) = core_of(Whale::get(w, j)) {
+    None => Refl
+    Some(n) => Eq::trans(
+      unlink_core(nodes_remove(Whale::nodes(w), k), k, Node::dep_ids(n), j),
+      Eq::congr((z: Option(Node(K, T))) => core_of(z), get_remove_other(Whale::nodes(w), k, j, hj))
+    )
+  }
+}
+
+// `Whale::remove` leaves every other node as it was (up to who reads it), and gives back
+// the removed node.
+theorem remove_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  j: K,
+  hj: key_eq(k, j) = false
+): core_of(Whale::get(pfst(Whale::remove(w, k)), j)) = core_of(Whale::get(w, j)) where Ord(K) {
+  remove_at_other(w, k, Whale::get(w, k), j, hj)
+}
+
+theorem remove_at_gives<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T))
+): psnd(remove_at(w, k, o)) = o where Ord(K) {
+  match o: psnd(remove_at(w, k, o)) = o {
+    None => Refl
+    Some(n) => Refl
+  }
+}
+
+theorem remove_gives<K, T>(
+  w: Whale(K, T),
+  k: K
+): psnd(Whale::remove(w, k)) = Whale::get(w, k) where Ord(K) {
+  remove_at_gives(w, k, Whale::get(w, k))
+}
+
+theorem remove_at_revision<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T))
+): Whale::revision(pfst(remove_at(w, k, o))) = Whale::revision(w) where Ord(K) {
+  match o: Whale::revision(pfst(remove_at(w, k, o))) = Whale::revision(w) {
+    None => Refl
+    Some(n) => Refl
+  }
+}
+
+// Removing touches no counter.
+theorem remove_revision<K, T>(
+  w: Whale(K, T),
+  k: K
+): Whale::revision(pfst(Whale::remove(w, k))) = Whale::revision(w) where Ord(K) {
+  remove_at_revision(w, k, Whale::get(w, k))
+}
+
+// ---- collecting -------------------------------------------------------------
+
+// What `Whale::remove_if_unused` did: removed a node that nothing read, or left the graph
+// as it was.
+fn collected<K, T>(w: Whale(K, T), r: Whale(K, T) × Option(Node(K, T))): Prop {
+  match psnd(r): Prop {
+    None => Eq(Whale(K, T), pfst(r), w)
+    Some(n) => Node::dependents(n) = Nil
+  }
+}
+
+theorem unused_pick_collected<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  rs: List(K),
+  h: Node::dependents(n) = rs
+): collected(w, unused_pick(w, k, n, rs)) where Ord(K) {
+  match rs: collected(w, unused_pick(w, k, n, rs)) {
+    Nil => h
+    Cons(r, more) => Refl
+  }
+}
+
+theorem unused_at_collected<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T))
+): collected(w, unused_at(w, k, o)) where Ord(K) {
+  match o: collected(w, unused_at(w, k, o)) {
+    None => Refl
+    Some(n) => unused_pick_collected(w, k, n, Node::dependents(n), Refl)
+  }
+}
+
+// `Whale::remove_if_unused` removes only a node that nothing reads, and otherwise changes
+// nothing.
+theorem remove_if_unused_collected<K, T>(
+  w: Whale(K, T),
+  k: K
+): collected(w, Whale::remove_if_unused(w, k)) where Ord(K) {
+  unused_at_collected(w, k, Whale::get(w, k))
+}
+
+theorem unused_pick_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  rs: List(K),
+  j: K,
+  hj: key_eq(k, j) = false
+): core_of(Whale::get(pfst(unused_pick(w, k, n, rs)), j)) = core_of(Whale::get(w, j)) where Ord(K) {
+  match rs: core_of(Whale::get(pfst(unused_pick(w, k, n, rs)), j)) = core_of(Whale::get(w, j)) {
+    Nil => remove_at_other(w, k, Some(n), j, hj)
+    Cons(r, more) => Refl
+  }
+}
+
+theorem unused_at_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T)),
+  j: K,
+  hj: key_eq(k, j) = false
+): core_of(Whale::get(pfst(unused_at(w, k, o)), j)) = core_of(Whale::get(w, j)) where Ord(K) {
+  match o: core_of(Whale::get(pfst(unused_at(w, k, o)), j)) = core_of(Whale::get(w, j)) {
+    None => Refl
+    Some(n) => unused_pick_other(w, k, n, Node::dependents(n), j, hj)
+  }
+}
+
+// Collecting leaves every other node as it was (up to who reads it).
+theorem remove_if_unused_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  j: K,
+  hj: key_eq(k, j) = false
+): core_of(
+  Whale::get(pfst(Whale::remove_if_unused(w, k)), j)
+) = core_of(Whale::get(w, j)) where Ord(K) {
+  unused_at_other(w, k, Whale::get(w, k), j, hj)
+}
+
+fn gone_if_removed<K, T>(k: K, r: Whale(K, T) × Option(Node(K, T))): Prop where Ord(K) {
+  match psnd(r): Prop {
+    None => True
+    Some(n) => core_of(Whale::get(pfst(r), k)) = None
+  }
+}
+
+theorem unused_pick_gone<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  rs: List(K)
+): gone_if_removed(k, unused_pick(w, k, n, rs)) where Ord(K) {
+  match rs: gone_if_removed(k, unused_pick(w, k, n, rs)) {
+    Nil => remove_at_gone(w, k, Some(n), h)
+    Cons(r, more) => Trivial
+  }
+}
+
+theorem unused_at_gone<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T)),
+  h: Whale::get(w, k) = o
+): gone_if_removed(k, unused_at(w, k, o)) where Ord(K) {
+  match o: gone_if_removed(k, unused_at(w, k, o)) {
+    None => Trivial
+    Some(n) => unused_pick_gone(w, k, n, h, Node::dependents(n))
+  }
+}
+
+// A collected key has no node afterwards.
+theorem remove_if_unused_gone<K, T>(
+  w: Whale(K, T),
+  k: K
+): gone_if_removed(k, Whale::remove_if_unused(w, k)) where Ord(K) {
+  unused_at_gone(w, k, Whale::get(w, k), Refl)
+}
+
+// ---- marking verified -------------------------------------------------------
+
+theorem change_get_same<K, T>(
+  k1: K,
+  m: Node(K, T),
+  f: (Node(K, T)) -> Node(K, T),
+  r: List(K × Node(K, T)),
+  rest: List(K × Node(K, T)),
+  k: K,
+  b: Bool,
+  hb: key_eq(k1, k) = b,
+  ih: nodes_get(r, k) = Option::map(f, nodes_get(rest, k))
+): nodes_get(
+  Cons(nodes_change_at(k1, m, f, b), r),
+  k
+) = Option::map(f, nodes_get(Cons(#(k1, m), rest), k)) where Ord(K) {
+  match b: nodes_get(
+    Cons(nodes_change_at(k1, m, f, b), r),
+    k
+  ) = Option::map(f, nodes_get(Cons(#(k1, m), rest), k)) {
+    true => Eq::trans(
+      Eq::congr((c: Bool) => nodes_hit(f(m), nodes_get(r, k), c), hb),
+      Eq::sym(Eq::congr((c: Bool) => Option::map(f, nodes_hit(m, nodes_get(rest, k), c)), hb))
+    )
+    false => Eq::trans(
+      Eq::congr((c: Bool) => nodes_hit(m, nodes_get(r, k), c), hb),
+      Eq::trans(
+        ih,
+        Eq::sym(Eq::congr((c: Bool) => Option::map(f, nodes_hit(m, nodes_get(rest, k), c)), hb))
+      )
+    )
+  }
+}
+
+// Reading a changed key reads the change.
+pub theorem get_modify_same<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  f: (Node(K, T)) -> Node(K, T)
+): nodes_get(nodes_modify(ns, k, f), k) = Option::map(f, nodes_get(ns, k)) where Ord(K) {
+  match ns: nodes_get(nodes_modify(ns, k, f), k) = Option::map(f, nodes_get(ns, k)) {
+    Nil => Refl
+    Cons(e, rest) => match e: nodes_get(
+      nodes_modify(Cons(e, rest), k, f),
+      k
+    ) = Option::map(f, nodes_get(Cons(e, rest), k)) {
+      #(k1, m) => change_get_same(
+        k1,
+        m,
+        f,
+        nodes_modify(rest, k, f),
+        rest,
+        k,
+        key_eq(k1, k),
+        Refl,
+        get_modify_same(rest, k, f)
+      )
+    }
+  }
+}
+
+theorem change_get_other<K, T>(
+  k1: K,
+  m: Node(K, T),
+  f: (Node(K, T)) -> Node(K, T),
+  r: List(K × Node(K, T)),
+  rest: List(K × Node(K, T)),
+  i: K,
+  j: K,
+  h: key_eq(i, j) = false,
+  b: Bool,
+  hb: key_eq(k1, i) = b,
+  ih: nodes_get(r, j) = nodes_get(rest, j)
+): nodes_get(
+  Cons(nodes_change_at(k1, m, f, b), r),
+  j
+) = nodes_get(Cons(#(k1, m), rest), j) where Ord(K) {
+  match b: nodes_get(Cons(nodes_change_at(k1, m, f, b), r), j) = nodes_get(Cons(#(k1, m), rest), j) {
+    true => Eq::trans(
+      Eq::congr(
+        (c: Bool) => nodes_hit(f(m), nodes_get(r, j), c),
+        Eq::subst((z: K) => key_eq(z, j) = false, Eq::sym(Key::eq_sound(k1, i, hb)), h)
+      ),
+      Eq::trans(
+        ih,
+        Eq::sym(
+          Eq::congr(
+            (c: Bool) => nodes_hit(m, nodes_get(rest, j), c),
+            Eq::subst((z: K) => key_eq(z, j) = false, Eq::sym(Key::eq_sound(k1, i, hb)), h)
+          )
+        )
+      )
+    )
+    false => Eq::congr((o: Option(Node(K, T))) => nodes_hit(m, o, key_eq(k1, j)), ih)
+  }
+}
+
+// Changing a key leaves the other keys alone.
+pub theorem get_modify_other<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  j: K,
+  h: key_eq(i, j) = false
+): nodes_get(nodes_modify(ns, i, f), j) = nodes_get(ns, j) where Ord(K) {
+  match ns: nodes_get(nodes_modify(ns, i, f), j) = nodes_get(ns, j) {
+    Nil => Refl
+    Cons(e, rest) => match e: nodes_get(
+      nodes_modify(Cons(e, rest), i, f),
+      j
+    ) = nodes_get(Cons(e, rest), j) {
+      #(k1, m) => change_get_other(
+        k1,
+        m,
+        f,
+        nodes_modify(rest, i, f),
+        rest,
+        i,
+        j,
+        h,
+        key_eq(k1, i),
+        Refl,
+        get_modify_other(rest, i, f, j, h)
+      )
+    }
+  }
+}
+
+fn raise_at<K, T>(r: List(Nat), n: Node(K, T)): Node(K, T) {
+  Node::raise_verified(n, Revision::get(r, Node::durability(n)))
+}
+
+fn raise_opt<K, T>(r: List(Nat), o: Option(Node(K, T))): Option(Node(K, T)) {
+  Option::map((n: Node(K, T)) => raise_at(r, n), o)
+}
+
+theorem raise_verified_by<K, T>(
+  n: Node(K, T),
+  r: List(Nat)
+): Node::verified_by(raise_at(r, n), r) = true {
+  match n: Node::verified_by(raise_at(r, n), r) = true {
+    Mk(x, d, v, c, l, ds, rs) => nat_le_max_right(v, Revision::get(r, d))
+  }
+}
+
+theorem raise_changed<K, T>(
+  o: Option(Node(K, T)),
+  r: List(Nat)
+): changed_of(raise_opt(r, o)) = changed_of(o) {
+  match o: changed_of(raise_opt(r, o)) = changed_of(o) {
+    None => Refl
+    Some(n) => match n: changed_of(raise_opt(r, Some(n))) = changed_of(Some(n)) {
+      Mk(x, d, v, c, l, ds, rs) => Refl
+    }
+  }
+}
+
+theorem raise_mono<K, T>(
+  o: Option(Node(K, T)),
+  r: List(Nat)
+): Nat::le(verified_in(o), verified_in(raise_opt(r, o))) = true {
+  match o: Nat::le(verified_in(o), verified_in(raise_opt(r, o))) = true {
+    None => Nat::le_refl(Zero)
+    Some(n) => match n: Nat::le(verified_in(Some(n)), verified_in(raise_opt(r, Some(n)))) = true {
+      Mk(x, d, v, c, l, ds, rs) => nat_le_max_left(v, Revision::get(r, d))
+    }
+  }
+}
+
+// After `Whale::mark_verified` at `r`, the node is verified at `r`.
+theorem mark_verified<K, T>(
+  w: Whale(K, T),
+  k: K,
+  r: List(Nat),
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n)
+): Whale::verified_at(Whale::mark_verified(w, k, r), k, r) = true where Ord(K) {
+  Eq::trans(
+    Eq::congr(
+      (o: Option(Node(K, T))) => verified_of(o, r),
+      get_modify_same(Whale::nodes(w), k, (q: Node(K, T)) => raise_at(r, q))
+    ),
+    Eq::trans(
+      Eq::congr((o: Option(Node(K, T))) => verified_of(raise_opt(r, o), r), h),
+      raise_verified_by(n, r)
+    )
+  )
+}
+
+// `verified_at` never goes down.
+theorem mark_mono<K, T>(
+  w: Whale(K, T),
+  k: K,
+  r: List(Nat)
+): Nat::le(
+  verified_in(Whale::get(w, k)),
+  verified_in(Whale::get(Whale::mark_verified(w, k, r), k))
+) = true where Ord(K) {
+  Eq::trans(
+    Eq::congr(
+      (o: Option(Node(K, T))) => Nat::le(verified_in(Whale::get(w, k)), verified_in(o)),
+      get_modify_same(Whale::nodes(w), k, (q: Node(K, T)) => raise_at(r, q))
+    ),
+    raise_mono(Whale::get(w, k), r)
+  )
+}
+
+theorem mark_other<K, T>(
+  w: Whale(K, T),
+  k: K,
+  r: List(Nat),
+  j: K,
+  hj: key_eq(k, j) = false
+): Whale::get(Whale::mark_verified(w, k, r), j) = Whale::get(w, j) where Ord(K) {
+  get_modify_other(Whale::nodes(w), k, (q: Node(K, T)) => raise_at(r, q), j, hj)
+}
+
+theorem mark_changed_at<K, T>(
+  w: Whale(K, T),
+  k: K,
+  r: List(Nat),
+  i: K,
+  b: Bool,
+  hb: key_eq(k, i) = b
+): changed_of(
+  Whale::get(Whale::mark_verified(w, k, r), i)
+) = changed_of(Whale::get(w, i)) where Ord(K) {
+  match b: changed_of(Whale::get(Whale::mark_verified(w, k, r), i)) = changed_of(Whale::get(w, i)) {
+    true => Eq::subst(
+      (z: K) => changed_of(
+        Whale::get(Whale::mark_verified(w, k, r), z)
+      ) = changed_of(Whale::get(w, z)),
+      Key::eq_sound(k, i, hb),
+      Eq::trans(
+        Eq::congr(
+          (o: Option(Node(K, T))) => changed_of(o),
+          get_modify_same(Whale::nodes(w), k, (q: Node(K, T)) => raise_at(r, q))
+        ),
+        raise_changed(Whale::get(w, k), r)
+      )
+    )
+    false => Eq::congr((o: Option(Node(K, T))) => changed_of(o), mark_other(w, k, r, i, hb))
+  }
+}
+
+// Marking changes no `changed_at`, so every other node is exactly as valid as before.
+theorem mark_readers<K, T>(
+  w: Whale(K, T),
+  k: K,
+  r: List(Nat),
+  j: K,
+  hj: key_eq(k, j) = false
+): Whale::valid(Whale::mark_verified(w, k, r), j) = Whale::valid(w, j) where Ord(K) {
+  valid_frame(
+    Whale::nodes(Whale::mark_verified(w, k, r)),
+    Whale::nodes(w),
+    (i: K) => mark_changed_at(w, k, r, i, key_eq(k, i), Refl),
+    Whale::get(Whale::mark_verified(w, k, r), j),
+    Whale::get(w, j),
+    Eq::congr((o: Option(Node(K, T))) => core_of(o), mark_other(w, k, r, j, hj)),
+    Whale::revision(w)
+  )
+}

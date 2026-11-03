@@ -461,7 +461,48 @@ impl Kernel {
         self.globals.get(g).map(|x| (x.ty.clone(), x.implicit))
     }
 
+    fn note_application(&mut self, span: Span, written: usize, omitted: usize, callee: &str) {
+        if self.record_sites {
+            self.application_sites.push(super::ApplicationSite {
+                span,
+                callee: callee.into(),
+                written,
+                omitted,
+            });
+        }
+    }
+
     fn elab_app(
+        &mut self,
+        ctx: &Ctx,
+        whole: &T,
+        function: &T,
+        arguments: &[T],
+        expected: Option<&T>,
+    ) -> Result<T, Diagnostic> {
+        let out = self.elab_app_inner(ctx, whole, function, arguments, expected)?;
+        if self.record_sites {
+            let mut head = &out;
+            let mut count = 0;
+            while let TermKind::App {
+                function,
+                arguments,
+            } = &*head.kind
+            {
+                count += arguments.len();
+                head = function;
+            }
+            if let (TermKind::Var(a), TermKind::Var(b)) = (&*function.kind, &*head.kind)
+                && a == b
+                && let Some(omitted) = count.checked_sub(arguments.len())
+            {
+                self.note_application(whole.span, arguments.len(), omitted, a);
+            }
+        }
+        Ok(out)
+    }
+
+    fn elab_app_inner(
         &mut self,
         ctx: &Ctx,
         whole: &T,
@@ -525,6 +566,7 @@ impl Kernel {
                     return self.elab(ctx, &applied, expected);
                 }
                 let saved = self.metas.clone();
+                let app_mark = self.application_sites.len();
                 let written_out = if arguments.len() == arity {
                     self.plain_app(ctx, whole, function, arguments, expected)
                 } else {
@@ -533,6 +575,7 @@ impl Kernel {
                 match written_out.and_then(|t| self.infer(ctx, &t).map(|_| t)) {
                     Ok(t) => return Ok(t),
                     Err(e) => {
+                        self.application_sites.truncate(app_mark);
                         self.metas = saved.clone();
                         return self.elab(ctx, &applied, expected).map_err(|_| {
                             self.metas = saved;
@@ -707,6 +750,9 @@ impl Kernel {
         }
         for m in &metas {
             self.metas.remove(m);
+        }
+        if outcome.is_ok() {
+            self.note_application(whole, arguments.len(), k, g);
         }
         outcome
     }

@@ -1,0 +1,989 @@
+import std::Base
+import std::Nat
+import std::Ord
+import std::prelude::Ord
+import std::List
+import std::Data
+import "Revision.taut"
+import "Graph.taut"
+import "Laws.taut"
+import "Cycle.taut"
+import "Reads.taut"
+
+// The reverse edges: after a write, each node it reads lists it among its dependents, and
+// a node it no longer reads (or a removed node's reads) no longer does.
+
+// `k` is among the dependents of the node `o`, if any.
+fn has_dep<K, T>(o: Option(Node(K, T)), k: K): Bool where Ord(K) {
+  key_in(k, dependents_in(o))
+}
+
+theorem edges_bool_or_true_right(a: Bool): Bool::or(a, true) = true {
+  match a: Bool::or(a, true) = true {
+    false => Refl
+    true => Refl
+  }
+}
+
+theorem bool_or_false_split(a: Bool, b: Bool, h: Bool::or(a, b) = false): a = false ∧ b = false {
+  match a: a = false ∧ b = false {
+    false => AndIntro(Refl, h)
+    true => False::elim(true_ne_false(h))
+  }
+}
+
+module Key {
+  theorem in_append_last<K>(
+    l: List(K),
+    k: K
+  ): key_in(k, List::append(l, Cons(k, Nil))) = true where Ord(K) {
+    match l: key_in(k, List::append(l, Cons(k, Nil))) = true {
+      Nil => Eq::congr((c: Bool) => Bool::or(c, false), Key::eq_refl(k))
+      Cons(h, t) => Eq::trans(
+        Eq::congr((c: Bool) => Bool::or(key_eq(h, k), c), Key::in_append_last(t, k)),
+        edges_bool_or_true_right(key_eq(h, k))
+      )
+    }
+  }
+
+  fn add_by<K>(l: List(K), k: K, b: Bool): List(K) {
+    match b: List(K) {
+      true => l
+      false => List::append(l, Cons(k, Nil))
+    }
+  }
+
+  theorem add_has_at<K>(
+    l: List(K),
+    k: K,
+    b: Bool,
+    hb: key_in(k, l) = b
+  ): key_in(k, Key::add_by(l, k, b)) = true where Ord(K) {
+    match b: key_in(k, Key::add_by(l, k, b)) = true {
+      true => hb
+      false => Key::in_append_last(l, k)
+    }
+  }
+
+  theorem add_has<K>(l: List(K), k: K): key_in(k, Key::add(l, k)) = true where Ord(K) {
+    Key::add_has_at(l, k, key_in(k, l), Refl)
+  }
+
+  // ---- changing one node --------------------------------------------------------
+}
+
+theorem has_eq<K, T>(
+  o1: Option(Node(K, T)),
+  o2: Option(Node(K, T)),
+  k: K,
+  b: Bool,
+  e: o1 = o2,
+  h: has_dep(o1, k) = b
+): has_dep(o2, k) = b where Ord(K) {
+  Eq::subst((o: Option(Node(K, T))) => has_dep(o, k) = b, e, h)
+}
+
+theorem has_present<K, T>(
+  o: Option(Node(K, T)),
+  k: K,
+  h: has_dep(o, k) = true
+): not(is_none(o)) = true where Ord(K) {
+  match o: not(is_none(o)) = true {
+    None => False::elim(false_ne_true(h))
+    Some(n) => Refl
+  }
+}
+
+theorem opt_has<K, T>(
+  o: Option(Node(K, T)),
+  f: (Node(K, T)) -> Node(K, T),
+  k: K,
+  hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = true,
+  hp: not(is_none(o)) = true
+): has_dep(Option::map(f, o), k) = true where Ord(K) {
+  match o: has_dep(Option::map(f, o), k) = true {
+    None => False::elim(false_ne_true(hp))
+    Some(n) => hf(n)
+  }
+}
+
+theorem opt_gone<K, T>(
+  o: Option(Node(K, T)),
+  f: (Node(K, T)) -> Node(K, T),
+  k: K,
+  hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = false
+): has_dep(Option::map(f, o), k) = false where Ord(K) {
+  match o: has_dep(Option::map(f, o), k) = false {
+    None => Refl
+    Some(n) => hf(n)
+  }
+}
+
+theorem is_none_map<K, T>(
+  f: (Node(K, T)) -> Node(K, T),
+  o: Option(Node(K, T))
+): is_none(Option::map(f, o)) = is_none(o) {
+  match o: is_none(Option::map(f, o)) = is_none(o) {
+    None => Refl
+    Some(n) => Refl
+  }
+}
+
+// The changed node itself, when it is there, gets `f`'s dependents.
+theorem modify_has_same<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  k: K,
+  hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = true,
+  j: K,
+  e: key_eq(i, j) = true,
+  hp: present(ns, j) = true
+): has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = true where Ord(K) {
+  Eq::subst(
+    (z: K) => has_dep(nodes_get(nodes_modify(ns, i, f), z), k) = true,
+    Key::eq_sound(i, j, e),
+    has_eq(
+      Option::map(f, nodes_get(ns, i)),
+      nodes_get(nodes_modify(ns, i, f), i),
+      k,
+      true,
+      Eq::sym(get_modify_same(ns, i, f)),
+      opt_has(
+        nodes_get(ns, i),
+        f,
+        k,
+        hf,
+        Eq::subst((z: K) => present(ns, z) = true, Eq::sym(Key::eq_sound(i, j, e)), hp)
+      )
+    )
+  )
+}
+
+theorem modify_gone_same<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  k: K,
+  hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = false,
+  j: K,
+  e: key_eq(i, j) = true
+): has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = false where Ord(K) {
+  Eq::subst(
+    (z: K) => has_dep(nodes_get(nodes_modify(ns, i, f), z), k) = false,
+    Key::eq_sound(i, j, e),
+    has_eq(
+      Option::map(f, nodes_get(ns, i)),
+      nodes_get(nodes_modify(ns, i, f), i),
+      k,
+      false,
+      Eq::sym(get_modify_same(ns, i, f)),
+      opt_gone(nodes_get(ns, i), f, k, hf)
+    )
+  )
+}
+
+theorem modify_present_at<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  j: K,
+  b: Bool,
+  hb: key_eq(i, j) = b
+): present(nodes_modify(ns, i, f), j) = present(ns, j) where Ord(K) {
+  match b: present(nodes_modify(ns, i, f), j) = present(ns, j) {
+    true => Eq::subst(
+      (z: K) => present(nodes_modify(ns, i, f), z) = present(ns, z),
+      Key::eq_sound(i, j, hb),
+      Eq::trans(
+        Eq::congr((o: Option(Node(K, T))) => not(is_none(o)), get_modify_same(ns, i, f)),
+        Eq::congr((c: Bool) => not(c), is_none_map(f, nodes_get(ns, i)))
+      )
+    )
+    false => Eq::congr(
+      (o: Option(Node(K, T))) => not(is_none(o)),
+      get_modify_other(ns, i, f, j, hb)
+    )
+  }
+}
+
+theorem modify_present<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  j: K
+): present(nodes_modify(ns, i, f), j) = present(ns, j) where Ord(K) {
+  modify_present_at(ns, i, f, j, key_eq(i, j), Refl)
+}
+
+theorem modify_keeps_opt<K, T>(
+  o: Option(Node(K, T)),
+  f: (Node(K, T)) -> Node(K, T),
+  k: K,
+  c: Bool,
+  hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = c,
+  h: has_dep(o, k) = c
+): has_dep(Option::map(f, o), k) = c where Ord(K) {
+  match o: has_dep(Option::map(f, o), k) = c {
+    None => h
+    Some(n) => hf(n)
+  }
+}
+
+// Any change that keeps `k` among the dependents keeps it at every node.
+theorem modify_keeps_at<K, T>(
+  ns: List(K × Node(K, T)),
+  i: K,
+  f: (Node(K, T)) -> Node(K, T),
+  k: K,
+  c: Bool,
+  hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = c,
+  j: K,
+  h: has_dep(nodes_get(ns, j), k) = c,
+  b: Bool,
+  hb: key_eq(i, j) = b
+): has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = c where Ord(K) {
+  match b: has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = c {
+    true => Eq::subst(
+      (z: K) => has_dep(nodes_get(nodes_modify(ns, i, f), z), k) = c,
+      Key::eq_sound(i, j, hb),
+      has_eq(
+        Option::map(f, nodes_get(ns, i)),
+        nodes_get(nodes_modify(ns, i, f), i),
+        k,
+        c,
+        Eq::sym(get_modify_same(ns, i, f)),
+        modify_keeps_opt(
+          nodes_get(ns, i),
+          f,
+          k,
+          c,
+          hf,
+          Eq::subst((z: K) => has_dep(nodes_get(ns, z), k) = c, Eq::sym(Key::eq_sound(i, j, hb)), h)
+        )
+      )
+    )
+    false => has_eq(
+      nodes_get(ns, j),
+      nodes_get(nodes_modify(ns, i, f), j),
+      k,
+      c,
+      Eq::sym(get_modify_other(ns, i, f, j, hb)),
+      h
+    )
+  }
+}
+
+// ---- adding and dropping `k` --------------------------------------------------
+
+theorem add_dep_has<K, T>(
+  k: K,
+  n: Node(K, T)
+): key_in(
+  k,
+  Node::dependents(Node::with_dependents(n, Key::add(Node::dependents(n), k)))
+) = true where Ord(K) {
+  match n: key_in(
+    k,
+    Node::dependents(Node::with_dependents(n, Key::add(Node::dependents(n), k)))
+  ) = true {
+    Mk(x, d, v, c, l, ds, rs) => Key::add_has(rs, k)
+  }
+}
+
+module Key {
+  fn drop_by<K>(h: K, t: List(K), k: K, b: Bool): List(K) where Ord(K) {
+    match not(b): List(K) {
+      false => Key::drop(t, k)
+      true => Cons(h, Key::drop(t, k))
+    }
+  }
+
+  theorem drop_gone_at<K>(
+    h: K,
+    t: List(K),
+    k: K,
+    b: Bool,
+    hb: key_eq(h, k) = b,
+    ih: key_in(k, Key::drop(t, k)) = false
+  ): key_in(k, Key::drop_by(h, t, k, b)) = false where Ord(K) {
+    match b: key_in(k, Key::drop_by(h, t, k, b)) = false {
+      true => ih
+      false => Eq::trans(Eq::congr((c: Bool) => Bool::or(c, key_in(k, Key::drop(t, k))), hb), ih)
+    }
+  }
+
+  theorem drop_gone<K>(l: List(K), k: K): key_in(k, Key::drop(l, k)) = false where Ord(K) {
+    match l: key_in(k, Key::drop(l, k)) = false {
+      Nil => Refl
+      Cons(h, t) => Key::drop_gone_at(h, t, k, key_eq(h, k), Refl, Key::drop_gone(t, k))
+    }
+  }
+}
+
+theorem drop_dep_gone<K, T>(
+  k: K,
+  n: Node(K, T)
+): key_in(
+  k,
+  Node::dependents(Node::with_dependents(n, Key::drop(Node::dependents(n), k)))
+) = false where Ord(K) {
+  match n: key_in(
+    k,
+    Node::dependents(Node::with_dependents(n, Key::drop(Node::dependents(n), k)))
+  ) = false {
+    Mk(x, d, v, c, l, ds, rs) => Key::drop_gone(rs, k)
+  }
+}
+
+// ---- link ---------------------------------------------------------------------
+
+theorem link_keeps<K, T>(
+  ids: List(K),
+  ns: List(K × Node(K, T)),
+  k: K,
+  j: K,
+  h: has_dep(nodes_get(ns, j), k) = true
+): has_dep(nodes_get(link(ns, k, ids), j), k) = true where Ord(K) {
+  match ids: has_dep(nodes_get(link(ns, k, ids), j), k) = true {
+    Nil => h
+    Cons(i, rest) => link_keeps(
+      rest,
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+      ),
+      k,
+      j,
+      modify_keeps_at(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k)),
+        k,
+        true,
+        (n: Node(K, T)) => add_dep_has(k, n),
+        j,
+        h,
+        key_eq(i, j),
+        Refl
+      )
+    )
+  }
+}
+
+theorem link_present<K, T>(
+  ids: List(K),
+  ns: List(K × Node(K, T)),
+  k: K,
+  j: K
+): present(link(ns, k, ids), j) = present(ns, j) where Ord(K) {
+  match ids: present(link(ns, k, ids), j) = present(ns, j) {
+    Nil => Refl
+    Cons(i, rest) => Eq::trans(
+      link_present(
+        rest,
+        nodes_modify(
+          ns,
+          i,
+          (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+        ),
+        k,
+        j
+      ),
+      modify_present(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k)),
+        j
+      )
+    )
+  }
+}
+
+theorem link_other_step<K, T>(
+  i: K,
+  rest: List(K),
+  k: K,
+  j: K,
+  ih: ∀ ns: List(
+    K × Node(K, T)
+  ). (key_in(j, rest) = false) -> nodes_get(link(ns, k, rest), j) = nodes_get(ns, j)
+): ∀ ns: List(
+  K × Node(K, T)
+). (
+  key_in(j, Cons(i, rest)) = false
+) -> nodes_get(link(ns, k, Cons(i, rest)), j) = nodes_get(ns, j) where Ord(K) {
+  (ns: List(K × Node(K, T))) => (h: key_in(j, Cons(i, rest)) = false) => Eq::trans(
+    ih(
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+      )
+    )(And::right(bool_or_false_split(key_eq(i, j), key_in(j, rest), h))),
+    get_modify_other(
+      ns,
+      i,
+      (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k)),
+      j,
+      And::left(bool_or_false_split(key_eq(i, j), key_in(j, rest), h))
+    )
+  )
+}
+
+theorem link_other<K, T>(
+  ids: List(K),
+  k: K,
+  j: K,
+  ns: List(K × Node(K, T)),
+  h: key_in(j, ids) = false
+): nodes_get(link(ns, k, ids), j) = nodes_get(ns, j) where Ord(K) {
+  match ids: nodes_get(link(ns, k, ids), j) = nodes_get(ns, j) {
+    Nil => Refl
+    Cons(i, rest) => {
+      let ih: ∀ ms: List(K × Node(K, T)). (key_in(j, rest) = false) -> nodes_get(link(ms, k, rest), j) = nodes_get(ms, j) := (ms: List(K × Node(K, T))) => (hr: key_in(j, rest) = false) => link_other(
+        rest,
+        k,
+        j,
+        ms,
+        hr
+      )
+      link_other_step(i, rest, k, j, ih)(ns)(h)
+    }
+  }
+}
+
+theorem link_has_at<K, T>(
+  i: K,
+  rest: List(K),
+  k: K,
+  j: K,
+  ih: ∀ ns: List(
+    K × Node(K, T)
+  ). (
+    key_in(j, rest) = true
+  ) -> (present(ns, j) = true) -> has_dep(nodes_get(link(ns, k, rest), j), k) = true,
+  ns: List(K × Node(K, T)),
+  hin: key_in(j, Cons(i, rest)) = true,
+  hp: present(ns, j) = true,
+  b: Bool,
+  hb: key_eq(i, j) = b
+): has_dep(nodes_get(link(ns, k, Cons(i, rest)), j), k) = true where Ord(K) {
+  match b: has_dep(nodes_get(link(ns, k, Cons(i, rest)), j), k) = true {
+    true => link_keeps(
+      rest,
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+      ),
+      k,
+      j,
+      modify_has_same(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k)),
+        k,
+        (n: Node(K, T)) => add_dep_has(k, n),
+        j,
+        hb,
+        hp
+      )
+    )
+    false => ih(
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+      )
+    )(
+      Eq::subst((c: Bool) => Bool::or(c, key_in(j, rest)) = true, hb, hin)
+    )(
+      Eq::trans(
+        modify_present(
+          ns,
+          i,
+          (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k)),
+          j
+        ),
+        hp
+      )
+    )
+  }
+}
+
+// Linking `k` to `ids` puts `k` among the dependents of each of them that is there.
+theorem link_has<K, T>(
+  ids: List(K),
+  k: K,
+  j: K,
+  ns: List(K × Node(K, T)),
+  hin: key_in(j, ids) = true,
+  hp: present(ns, j) = true
+): has_dep(nodes_get(link(ns, k, ids), j), k) = true where Ord(K) {
+  match ids: has_dep(nodes_get(link(ns, k, ids), j), k) = true {
+    Nil => False::elim(false_ne_true(hin))
+    Cons(i, rest) => link_has_at(
+      i,
+      rest,
+      k,
+      j,
+      (ms: List(K × Node(K, T))) => (hr: key_in(j, rest) = true) => (pr: present(ms, j) = true) => link_has(
+        rest,
+        k,
+        j,
+        ms,
+        hr,
+        pr
+      ),
+      ns,
+      hin,
+      hp,
+      key_eq(i, j),
+      Refl
+    )
+  }
+}
+
+// ---- unlink -------------------------------------------------------------------
+
+theorem unlink_keeps<K, T>(
+  ids: List(K),
+  ns: List(K × Node(K, T)),
+  k: K,
+  j: K,
+  h: has_dep(nodes_get(ns, j), k) = false
+): has_dep(nodes_get(unlink(ns, k, ids), j), k) = false where Ord(K) {
+  match ids: has_dep(nodes_get(unlink(ns, k, ids), j), k) = false {
+    Nil => h
+    Cons(i, rest) => unlink_keeps(
+      rest,
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k))
+      ),
+      k,
+      j,
+      modify_keeps_at(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k)),
+        k,
+        false,
+        (n: Node(K, T)) => drop_dep_gone(k, n),
+        j,
+        h,
+        key_eq(i, j),
+        Refl
+      )
+    )
+  }
+}
+
+theorem unlink_present<K, T>(
+  ids: List(K),
+  ns: List(K × Node(K, T)),
+  k: K,
+  j: K
+): present(unlink(ns, k, ids), j) = present(ns, j) where Ord(K) {
+  match ids: present(unlink(ns, k, ids), j) = present(ns, j) {
+    Nil => Refl
+    Cons(i, rest) => Eq::trans(
+      unlink_present(
+        rest,
+        nodes_modify(
+          ns,
+          i,
+          (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k))
+        ),
+        k,
+        j
+      ),
+      modify_present(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k)),
+        j
+      )
+    )
+  }
+}
+
+theorem unlink_gone_at<K, T>(
+  i: K,
+  rest: List(K),
+  k: K,
+  j: K,
+  ih: ∀ ns: List(
+    K × Node(K, T)
+  ). (key_in(j, rest) = true) -> has_dep(nodes_get(unlink(ns, k, rest), j), k) = false,
+  ns: List(K × Node(K, T)),
+  hin: key_in(j, Cons(i, rest)) = true,
+  b: Bool,
+  hb: key_eq(i, j) = b
+): has_dep(nodes_get(unlink(ns, k, Cons(i, rest)), j), k) = false where Ord(K) {
+  match b: has_dep(nodes_get(unlink(ns, k, Cons(i, rest)), j), k) = false {
+    true => unlink_keeps(
+      rest,
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k))
+      ),
+      k,
+      j,
+      modify_gone_same(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k)),
+        k,
+        (n: Node(K, T)) => drop_dep_gone(k, n),
+        j,
+        hb
+      )
+    )
+    false => ih(
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k))
+      )
+    )(Eq::subst((c: Bool) => Bool::or(c, key_in(j, rest)) = true, hb, hin))
+  }
+}
+
+// Unlinking `k` from `ids` takes it out of the dependents of each of them.
+theorem unlink_gone<K, T>(
+  ids: List(K),
+  k: K,
+  j: K,
+  ns: List(K × Node(K, T)),
+  hin: key_in(j, ids) = true
+): has_dep(nodes_get(unlink(ns, k, ids), j), k) = false where Ord(K) {
+  match ids: has_dep(nodes_get(unlink(ns, k, ids), j), k) = false {
+    Nil => False::elim(false_ne_true(hin))
+    Cons(i, rest) => unlink_gone_at(
+      i,
+      rest,
+      k,
+      j,
+      (ms: List(K × Node(K, T))) => (hr: key_in(j, rest) = true) => unlink_gone(rest, k, j, ms, hr),
+      ns,
+      hin,
+      key_eq(i, j),
+      Refl
+    )
+  }
+}
+
+// ---- relink -------------------------------------------------------------------
+
+// What `relink` unlinks: the old reads that are not read any more.
+fn kept<K>(old: List(K), new: List(K)): List(K) where Ord(K) {
+  List::filter((i: K) => not(key_in(i, new)), old)
+}
+
+fn kept_by<K>(h: K, t: List(K), new: List(K), b: Bool): List(K) where Ord(K) {
+  match not(b): List(K) {
+    false => kept(t, new)
+    true => Cons(h, kept(t, new))
+  }
+}
+
+theorem kept_has_at<K>(
+  h: K,
+  t: List(K),
+  new: List(K),
+  j: K,
+  noc: key_in(j, Cons(h, kept(t, new))) = true,
+  yesc: (key_in(h, new) = true) -> key_in(j, kept(t, new)) = true,
+  b: Bool,
+  hb: key_in(h, new) = b
+): key_in(j, kept_by(h, t, new, b)) = true where Ord(K) {
+  match b: key_in(j, kept_by(h, t, new, b)) = true {
+    true => yesc(hb)
+    false => noc
+  }
+}
+
+theorem kept_cons<K>(
+  h: K,
+  t: List(K),
+  new: List(K),
+  j: K,
+  hnew: key_in(j, new) = false,
+  ih: (key_in(j, t) = true) -> key_in(j, kept(t, new)) = true,
+  hin: key_in(j, Cons(h, t)) = true,
+  b: Bool,
+  hb: key_eq(h, j) = b
+): key_in(j, kept(Cons(h, t), new)) = true where Ord(K) {
+  match b: key_in(j, kept(Cons(h, t), new)) = true {
+    true => kept_has_at(
+      h,
+      t,
+      new,
+      j,
+      Eq::congr((c: Bool) => Bool::or(c, key_in(j, kept(t, new))), hb),
+      (e2: key_in(h, new) = true) => False::elim(
+        true_ne_false(
+          Eq::trans(
+            Eq::sym(e2),
+            Eq::subst((z: K) => key_in(z, new) = false, Eq::sym(Key::eq_sound(h, j, hb)), hnew)
+          )
+        )
+      ),
+      key_in(h, new),
+      Refl
+    )
+    false => kept_has_at(
+      h,
+      t,
+      new,
+      j,
+      Eq::trans(
+        Eq::congr((c: Bool) => Bool::or(c, key_in(j, kept(t, new))), hb),
+        ih(Eq::subst((c: Bool) => Bool::or(c, key_in(j, t)) = true, hb, hin))
+      ),
+      (e2: key_in(h, new) = true) => ih(
+        Eq::subst((c: Bool) => Bool::or(c, key_in(j, t)) = true, hb, hin)
+      ),
+      key_in(h, new),
+      Refl
+    )
+  }
+}
+
+// An old read that is not read any more is unlinked.
+theorem kept_has<K>(
+  old: List(K),
+  new: List(K),
+  j: K,
+  hnew: key_in(j, new) = false,
+  hin: key_in(j, old) = true
+): key_in(j, kept(old, new)) = true where Ord(K) {
+  match old: key_in(j, kept(old, new)) = true {
+    Nil => False::elim(false_ne_true(hin))
+    Cons(h, t) => kept_cons(
+      h,
+      t,
+      new,
+      j,
+      hnew,
+      (ht: key_in(j, t) = true) => kept_has(t, new, j, hnew, ht),
+      hin,
+      key_eq(h, j),
+      Refl
+    )
+  }
+}
+
+theorem relink_has<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  old: List(K),
+  new: List(K),
+  j: K,
+  hin: key_in(j, new) = true,
+  hp: present(ns, j) = true
+): has_dep(nodes_get(relink(ns, k, old, new), j), k) = true where Ord(K) {
+  link_has(
+    new,
+    k,
+    j,
+    unlink(ns, k, kept(old, new)),
+    hin,
+    Eq::trans(unlink_present(kept(old, new), ns, k, j), hp)
+  )
+}
+
+theorem relink_gone<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  old: List(K),
+  new: List(K),
+  j: K,
+  hold: key_in(j, old) = true,
+  hnew: key_in(j, new) = false
+): has_dep(nodes_get(relink(ns, k, old, new), j), k) = false where Ord(K) {
+  has_eq(
+    nodes_get(unlink(ns, k, kept(old, new)), j),
+    nodes_get(relink(ns, k, old, new), j),
+    k,
+    false,
+    Eq::sym(link_other(new, k, j, unlink(ns, k, kept(old, new)), hnew)),
+    unlink_gone(kept(old, new), k, j, ns, kept_has(old, new, j, hnew, hold))
+  )
+}
+
+// ---- store, register and remove -------------------------------------------------
+
+theorem put_present_at<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T),
+  j: K,
+  hp: present(ns, j) = true,
+  b: Bool,
+  hb: key_eq(k, j) = b
+): present(nodes_put(ns, k, n), j) = true where Ord(K) {
+  match b: present(nodes_put(ns, k, n), j) = true {
+    true => Eq::subst(
+      (z: K) => present(nodes_put(ns, k, n), z) = true,
+      Key::eq_sound(k, j, hb),
+      Eq::congr((o: Option(Node(K, T))) => not(is_none(o)), get_put_same(ns, k, n))
+    )
+    false => Eq::trans(
+      Eq::congr((o: Option(Node(K, T))) => not(is_none(o)), get_put_other(ns, k, n, j, hb)),
+      hp
+    )
+  }
+}
+
+// After a store, `k` is among the dependents of each node it reads...
+theorem store_links<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat,
+  j: K,
+  hin: key_in(j, dep_ids(resolved_deps(res))) = true,
+  hp: present(ns, j) = true
+): has_dep(nodes_get(store(ns, k, x, res, v, c), j), k) = true where Ord(K) {
+  relink_has(
+    nodes_put(
+      ns,
+      k,
+      Node::Mk(
+        x,
+        resolved_durability(res),
+        v,
+        c,
+        resolved_level(res),
+        resolved_deps(res),
+        dependents_in(nodes_get(ns, k))
+      )
+    ),
+    k,
+    dep_ids_in(nodes_get(ns, k)),
+    dep_ids(resolved_deps(res)),
+    j,
+    hin,
+    put_present_at(
+      ns,
+      k,
+      Node::Mk(
+        x,
+        resolved_durability(res),
+        v,
+        c,
+        resolved_level(res),
+        resolved_deps(res),
+        dependents_in(nodes_get(ns, k))
+      ),
+      j,
+      hp,
+      key_eq(k, j),
+      Refl
+    )
+  )
+}
+
+// ...and not among those of a node it read before and reads no more.
+theorem store_unlinks<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  v: Nat,
+  c: Nat,
+  j: K,
+  hold: key_in(j, dep_ids_in(nodes_get(ns, k))) = true,
+  hnew: key_in(j, dep_ids(resolved_deps(res))) = false
+): has_dep(nodes_get(store(ns, k, x, res, v, c), j), k) = false where Ord(K) {
+  relink_gone(
+    nodes_put(
+      ns,
+      k,
+      Node::Mk(
+        x,
+        resolved_durability(res),
+        v,
+        c,
+        resolved_level(res),
+        resolved_deps(res),
+        dependents_in(nodes_get(ns, k))
+      )
+    ),
+    k,
+    dep_ids_in(nodes_get(ns, k)),
+    dep_ids(resolved_deps(res)),
+    j,
+    hold,
+    hnew
+  )
+}
+
+// A registered node is among the dependents of every node it reads.
+theorem register_links<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  j: K,
+  hin: key_in(j, ids) = true,
+  hp: present(Whale::nodes(w), j) = true
+): holds(
+  Whale::register(w, k, x, dur, ids),
+  (p: Whale(K, T) × Written) => has_dep(nodes_get(Whale::nodes(pfst(p)), j), k) = true
+) where Ord(K) {
+  register_from(
+    w,
+    k,
+    x,
+    resolve_reads(w, dur, ids),
+    (r: Resolved(K)) => dep_ids(resolved_deps(r)) = ids,
+    resolve_ids(w, dur, ids),
+    (p: Whale(K, T) × Written) => has_dep(nodes_get(Whale::nodes(pfst(p)), j), k) = true,
+    (res: Resolved(K)) => (e: dep_ids(resolved_deps(res)) = ids) => store_links(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      Revision::get(
+        Whale::revision(Whale::bump(w, resolved_durability(res))),
+        resolved_durability(res)
+      ),
+      j,
+      Eq::subst((l: List(K)) => key_in(j, l) = true, Eq::sym(e), hin),
+      hp
+    )
+  )
+}
+
+// A removed node is taken out of the dependents of every node it read.
+theorem remove_unlinks<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  h: Whale::get(w, k) = Some(n),
+  j: K,
+  hin: key_in(j, Node::dep_ids(n)) = true
+): has_dep(nodes_get(Whale::nodes(pfst(Whale::remove(w, k))), j), k) = false where Ord(K) {
+  Eq::subst(
+    (o: Option(Node(K, T))) => has_dep(
+      nodes_get(Whale::nodes(pfst(remove_at(w, k, o))), j),
+      k
+    ) = false,
+    Eq::sym(h),
+    unlink_gone(Node::dep_ids(n), k, j, nodes_remove(Whale::nodes(w), k), hin)
+  )
+}

@@ -1,0 +1,1015 @@
+import std::Base
+import std::Nat
+import std::Ord
+import std::prelude::Ord
+import std::List
+import std::Data
+import "Revision.taut"
+
+// The dependency graph.
+//
+// A node is a computation the caller names with a key `K`, carrying data `T` the caller
+// chooses. Whale does not know what a computation is or how its result is stored: it only
+// records what each node read and when, and answers whether a node is still valid.
+//
+// The graph is a value. Every operation returns the new graph, so a caller that keeps an
+// old graph keeps a consistent snapshot of it.
+
+// The members of a pair.
+pub fn pfst<A, B>(p: A × B): A {
+  match p: A {
+    #(a, b) => a
+  }
+}
+
+pub fn psnd<A, B>(p: A × B): B {
+  match p: B {
+    #(a, b) => b
+  }
+}
+
+// What a node read: the key, and that node's `changed_at` when it was read.
+pub inductive Dep(K: Type): Type {
+  Mk(id: K, seen: Nat): Dep(K)
+}
+
+pub fn dep_id<K>(d: Dep(K)): K {
+  match d: K {
+    Mk(k, s) => k
+  }
+}
+
+// A read of `k` when its `changed_at` was `seen`.
+pub fn dep_of<K>(k: K, seen: Nat): Dep(K) {
+  Dep::Mk(k, seen)
+}
+
+pub fn dep_seen<K>(d: Dep(K)): Nat {
+  match d: Nat {
+    Mk(k, s) => s
+  }
+}
+
+// `verified_at`: the counter, at the node's level, at which it was last known valid.
+// `changed_at`: the counter at which its value last changed. `level`: one more than the
+// highest level of what it read (0 for an input). `dependents`: the nodes that read it.
+pub(open) inductive Node(K: Type, T: Type): Type {
+  Mk(
+    data: T,
+    durability: Nat,
+    verified_at: Nat,
+    changed_at: Nat,
+    level: Nat,
+    deps: List(Dep(K)),
+    dependents: List(K)
+  ): Node(K, T)
+}
+
+module Node {
+  pub fn data<K, T>(n: Node(K, T)): T {
+    match n: T {
+      Mk(x, d, v, c, l, ds, rs) => x
+    }
+  }
+
+  pub fn durability<K, T>(n: Node(K, T)): Nat {
+    match n: Nat {
+      Mk(x, d, v, c, l, ds, rs) => d
+    }
+  }
+
+  pub fn verified_at<K, T>(n: Node(K, T)): Nat {
+    match n: Nat {
+      Mk(x, d, v, c, l, ds, rs) => v
+    }
+  }
+
+  pub fn changed_at<K, T>(n: Node(K, T)): Nat {
+    match n: Nat {
+      Mk(x, d, v, c, l, ds, rs) => c
+    }
+  }
+
+  pub fn level<K, T>(n: Node(K, T)): Nat {
+    match n: Nat {
+      Mk(x, d, v, c, l, ds, rs) => l
+    }
+  }
+
+  pub fn deps<K, T>(n: Node(K, T)): List(Dep(K)) {
+    match n: List(Dep(K)) {
+      Mk(x, d, v, c, l, ds, rs) => ds
+    }
+  }
+
+  pub fn dependents<K, T>(n: Node(K, T)): List(K) {
+    match n: List(K) {
+      Mk(x, d, v, c, l, ds, rs) => rs
+    }
+  }
+
+  pub fn dep_ids<K, T>(n: Node(K, T)): List(K) {
+    List::map((d: Dep(K)) => dep_id(d), Node::deps(n))
+  }
+}
+
+// The nodes by key, in key order, and the revision.
+pub(open) inductive Whale(K: Type, T: Type): Type {
+  Mk(nodes: List(K × Node(K, T)), revision: List(Nat)): Whale(K, T)
+}
+
+module Whale {
+  pub fn nodes<K, T>(w: Whale(K, T)): List(K × Node(K, T)) {
+    match w: List(K × Node(K, T)) {
+      Mk(ns, r) => ns
+    }
+  }
+
+  pub fn revision<K, T>(w: Whale(K, T)): List(Nat) {
+    match w: List(Nat) {
+      Mk(ns, r) => r
+    }
+  }
+
+  // An empty graph with `levels` durability levels (at least one).
+  pub fn new<K, T>(levels: Nat): Whale(K, T) {
+    Whale::Mk(Nil, Revision::new(Nat::max(levels, Succ(Zero))))
+  }
+
+  // ---- keys -------------------------------------------------------------------
+}
+
+module Key {
+  pub fn pick(o: Ordering): Bool {
+    match o: Bool {
+      Less => false
+      Equal => true
+      Greater => false
+    }
+  }
+}
+
+pub fn key_eq<K>(a: K, b: K): Bool where Ord(K) {
+  Key::pick(Ord::compare(a, b))
+}
+
+pub fn key_in<K>(k: K, l: List(K)): Bool where Ord(K) {
+  List::any((x: K) => key_eq(x, k), l)
+}
+
+module Key {
+  // `l` with `k` at the end, unless it is already there.
+  pub fn add<K>(l: List(K), k: K): List(K) where Ord(K) {
+    match key_in(k, l): List(K) {
+      true => l
+      false => List::append(l, Cons(k, Nil))
+    }
+  }
+
+  pub fn drop<K>(l: List(K), k: K): List(K) where Ord(K) {
+    List::filter((x: K) => not(key_eq(x, k)), l)
+  }
+
+  // ---- the map of nodes -------------------------------------------------------
+
+  // The nodes are a list of entries. `nodes_put` keeps one entry per key, so the first entry
+  // with a key is the only one.
+}
+
+pub fn nodes_hit<K, T>(n: Node(K, T), rest: Option(Node(K, T)), b: Bool): Option(Node(K, T)) {
+  match b: Option(Node(K, T)) {
+    true => Some(n)
+    false => rest
+  }
+}
+
+pub fn nodes_get<K, T>(ns: List(K × Node(K, T)), k: K): Option(Node(K, T)) where Ord(K) {
+  match ns: Option(Node(K, T)) {
+    Nil => None
+    Cons(e, rest) => match e: Option(Node(K, T)) {
+      #(k1, n) => nodes_hit(n, nodes_get(rest, k), key_eq(k1, k))
+    }
+  }
+}
+
+// `n` at `k` in a list that starts with `k1` and `m`: in place of the entry when `b` says
+// `k1` is `k`, else after it (`later` is `n` put in the rest).
+pub fn nodes_put_at<K, T>(
+  k1: K,
+  m: Node(K, T),
+  rest: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T),
+  later: List(K × Node(K, T)),
+  b: Bool
+): List(K × Node(K, T)) {
+  match b: List(K × Node(K, T)) {
+    true => Cons(#(k, n), rest)
+    false => Cons(#(k1, m), later)
+  }
+}
+
+pub fn nodes_put<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  n: Node(K, T)
+): List(K × Node(K, T)) where Ord(K) {
+  match ns: List(K × Node(K, T)) {
+    Nil => Cons(#(k, n), Nil)
+    Cons(e, rest) => match e: List(K × Node(K, T)) {
+      #(k1, m) => nodes_put_at(k1, m, rest, k, n, nodes_put(rest, k, n), key_eq(k1, k))
+    }
+  }
+}
+
+pub fn nodes_drop_at<K, T>(
+  k1: K,
+  m: Node(K, T),
+  later: List(K × Node(K, T)),
+  b: Bool
+): List(K × Node(K, T)) {
+  match b: List(K × Node(K, T)) {
+    true => later
+    false => Cons(#(k1, m), later)
+  }
+}
+
+pub fn nodes_remove<K, T>(ns: List(K × Node(K, T)), k: K): List(K × Node(K, T)) where Ord(K) {
+  match ns: List(K × Node(K, T)) {
+    Nil => Nil
+    Cons(e, rest) => match e: List(K × Node(K, T)) {
+      #(k1, m) => nodes_drop_at(k1, m, nodes_remove(rest, k), key_eq(k1, k))
+    }
+  }
+}
+
+pub fn nodes_change_at<K, T>(
+  k1: K,
+  m: Node(K, T),
+  f: (Node(K, T)) -> Node(K, T),
+  b: Bool
+): K × Node(K, T) {
+  match b: K × Node(K, T) {
+    true => #(k1, f(m))
+    false => #(k1, m)
+  }
+}
+
+// The node at `k` changed by `f`, if there is one.
+pub fn nodes_modify<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  f: (Node(K, T)) -> Node(K, T)
+): List(K × Node(K, T)) where Ord(K) {
+  match ns: List(K × Node(K, T)) {
+    Nil => Nil
+    Cons(e, rest) => match e: List(K × Node(K, T)) {
+      #(k1, m) => Cons(nodes_change_at(k1, m, f, key_eq(k1, k)), nodes_modify(rest, k, f))
+    }
+  }
+}
+
+module Whale {
+  pub fn get<K, T>(w: Whale(K, T), k: K): Option(Node(K, T)) where Ord(K) {
+    nodes_get(Whale::nodes(w), k)
+  }
+
+  // The data of `k` and its `changed_at`.
+  fn get_data<K, T>(w: Whale(K, T), k: K): Option(T × Nat) where Ord(K) {
+    Option::map((n: Node(K, T)) => #(Node::data(n), Node::changed_at(n)), Whale::get(w, k))
+  }
+
+  pub fn keys<K, T>(w: Whale(K, T)): List(K) {
+    List::map((e: K × Node(K, T)) => pfst(e), Whale::nodes(w))
+  }
+
+  fn dependency_ids<K, T>(w: Whale(K, T), k: K): Option(List(K)) where Ord(K) {
+    Option::map((n: Node(K, T)) => Node::dep_ids(n), Whale::get(w, k))
+  }
+
+  // One more change at level `d` (clamped to the levels that exist).
+  pub fn bump<K, T>(w: Whale(K, T), d: Nat): Whale(K, T) {
+    Whale::Mk(
+      Whale::nodes(w),
+      Revision::bump(Whale::revision(w), Revision::clamp(Whale::revision(w), d))
+    )
+  }
+
+  // ---- validity ---------------------------------------------------------------
+}
+
+module Node {
+  // Verified at `r`: nothing at the node's level or below has changed since it was verified.
+  pub fn verified_by<K, T>(n: Node(K, T), r: List(Nat)): Bool {
+    Nat::le(Revision::get(r, Node::durability(n)), Node::verified_at(n))
+  }
+}
+
+// When a node last changed, if there is one.
+pub fn changed_of<K, T>(o: Option(Node(K, T))): Option(Nat) {
+  Option::map((n: Node(K, T)) => Node::changed_at(n), o)
+}
+
+pub fn fresh_by(c: Option(Nat), seen: Nat): Bool {
+  match c: Bool {
+    None => false
+    Some(v) => Nat::le(v, seen)
+  }
+}
+
+// What `d` read has not changed since it was read. A dependency that is gone has changed.
+pub fn dep_fresh<K, T>(ns: List(K × Node(K, T)), d: Dep(K)): Bool where Ord(K) {
+  fresh_by(changed_of(nodes_get(ns, dep_id(d))), dep_seen(d))
+}
+
+pub fn deps_fresh<K, T>(ns: List(K × Node(K, T)), ds: List(Dep(K))): Bool where Ord(K) {
+  match ds: Bool {
+    Nil => true
+    Cons(d, rest) => Bool::and(dep_fresh(ns, d), deps_fresh(ns, rest))
+  }
+}
+
+pub fn verified_of<K, T>(o: Option(Node(K, T)), r: List(Nat)): Bool {
+  match o: Bool {
+    None => false
+    Some(n) => Node::verified_by(n, r)
+  }
+}
+
+module Whale {
+  pub fn verified_at<K, T>(w: Whale(K, T), k: K, r: List(Nat)): Bool where Ord(K) {
+    verified_of(Whale::get(w, k), r)
+  }
+}
+
+pub fn valid_of<K, T>(
+  ns: List(K × Node(K, T)),
+  o: Option(Node(K, T)),
+  r: List(Nat)
+): Bool where Ord(K) {
+  match o: Bool {
+    None => false
+    Some(n) => Bool::or(Node::verified_by(n, r), deps_fresh(ns, Node::deps(n)))
+  }
+}
+
+module Whale {
+  // Valid at `r`: verified at `r`, or every dependency is unchanged since it was read. The
+  // check is shallow: it looks at the direct dependencies' `changed_at` only, so a caller
+  // brings a dependency up to date before it asks about what reads it.
+  fn valid_at<K, T>(w: Whale(K, T), k: K, r: List(Nat)): Bool where Ord(K) {
+    valid_of(Whale::nodes(w), Whale::get(w, k), r)
+  }
+
+  pub fn valid<K, T>(w: Whale(K, T), k: K): Bool where Ord(K) {
+    Whale::valid_at(w, k, Whale::revision(w))
+  }
+}
+
+module Node {
+  pub fn raise_verified<K, T>(n: Node(K, T), at: Nat): Node(K, T) {
+    match n: Node(K, T) {
+      Mk(x, d, v, c, l, ds, rs) => Node::Mk(x, d, Nat::max(v, at), c, l, ds, rs)
+    }
+  }
+}
+
+module Whale {
+  // Marks `k` verified at `r`. `verified_at` only goes up.
+  pub fn mark_verified<K, T>(w: Whale(K, T), k: K, r: List(Nat)): Whale(K, T) where Ord(K) {
+    Whale::Mk(
+      nodes_modify(
+        Whale::nodes(w),
+        k,
+        (n: Node(K, T)) => Node::raise_verified(n, Revision::get(r, Node::durability(n)))
+      ),
+      Whale::revision(w)
+    )
+  }
+
+  // ---- reading dependencies ---------------------------------------------------
+}
+
+// What a write gives: `done` with its result, or `absent` with the keys it was told to
+// read that have no node.
+pub(open) inductive Outcome(K: Type, A: Type): Type {
+  Done(a: A): Outcome(K, A)
+  Absent(ks: List(K)): Outcome(K, A)
+}
+
+// What a node reads, resolved against the graph: each read with the current `changed_at`,
+// the durability (no more than the requested one nor than any dependency's), and the
+// level (one more than the highest dependency's).
+pub(open) inductive Resolved(K: Type): Type {
+  Mk(deps: List(Dep(K)), durability: Nat, level: Nat): Resolved(K)
+}
+
+pub fn resolved_deps<K>(r: Resolved(K)): List(Dep(K)) {
+  match r: List(Dep(K)) {
+    Mk(ds, d, l) => ds
+  }
+}
+
+pub fn resolved_durability<K>(r: Resolved(K)): Nat {
+  match r: Nat {
+    Mk(ds, d, l) => d
+  }
+}
+
+pub fn resolved_level<K>(r: Resolved(K)): Nat {
+  match r: Nat {
+    Mk(ds, d, l) => l
+  }
+}
+
+// The keys of `ids` that have no node.
+pub fn missing_pick<K, T>(k: K, o: Option(Node(K, T)), rest: List(K)): List(K) {
+  match o: List(K) {
+    None => Cons(k, rest)
+    Some(n) => rest
+  }
+}
+
+// The keys of `ids` that have no node.
+pub fn missing_ids<K, T>(ns: List(K × Node(K, T)), ids: List(K)): List(K) where Ord(K) {
+  match ids: List(K) {
+    Nil => Nil
+    Cons(k, rest) => missing_pick(k, nodes_get(ns, k), missing_ids(ns, rest))
+  }
+}
+
+pub fn resolve_one<K, T>(k: K, o: Option(Node(K, T)), rest: Resolved(K)): Resolved(K) {
+  match o: Resolved(K) {
+    None => rest
+    Some(n) => Resolved::Mk(
+      Cons(Dep::Mk(k, Node::changed_at(n)), resolved_deps(rest)),
+      Nat::min(resolved_durability(rest), Node::durability(n)),
+      Nat::max(resolved_level(rest), Node::level(n))
+    )
+  }
+}
+
+pub fn resolve_found<K, T>(
+  ns: List(K × Node(K, T)),
+  ids: List(K),
+  dur: Nat
+): Resolved(K) where Ord(K) {
+  match ids: Resolved(K) {
+    Nil => Resolved::Mk(Nil, dur, Zero)
+    Cons(k, rest) => resolve_one(k, nodes_get(ns, k), resolve_found(ns, rest, dur))
+  }
+}
+
+pub fn resolve_if<K>(missing: List(K), found: Resolved(K)): Outcome(K, Resolved(K)) {
+  match missing: Outcome(K, Resolved(K)) {
+    Nil => Done(
+      Resolved::Mk(resolved_deps(found), resolved_durability(found), Succ(resolved_level(found)))
+    )
+    Cons(k, ks) => Absent(Cons(k, ks))
+  }
+}
+
+// `absent` with the keys that have no node, if any.
+pub fn resolve_reads<K, T>(
+  w: Whale(K, T),
+  dur: Nat,
+  ids: List(K)
+): Outcome(K, Resolved(K)) where Ord(K) {
+  resolve_if(
+    missing_ids(Whale::nodes(w), ids),
+    resolve_found(Whale::nodes(w), ids, Revision::clamp(Whale::revision(w), dur))
+  )
+}
+
+// ---- reverse edges ----------------------------------------------------------
+
+module Node {
+  pub fn with_dependents<K, T>(n: Node(K, T), rs: List(K)): Node(K, T) {
+    match n: Node(K, T) {
+      Mk(x, d, v, c, l, ds, old) => Node::Mk(x, d, v, c, l, ds, rs)
+    }
+  }
+}
+
+pub fn link<K, T>(ns: List(K × Node(K, T)), k: K, ids: List(K)): List(K × Node(K, T)) where Ord(K) {
+  match ids: List(K × Node(K, T)) {
+    Nil => ns
+    Cons(i, rest) => link(
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::add(Node::dependents(n), k))
+      ),
+      k,
+      rest
+    )
+  }
+}
+
+pub fn unlink<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  ids: List(K)
+): List(K × Node(K, T)) where Ord(K) {
+  match ids: List(K × Node(K, T)) {
+    Nil => ns
+    Cons(i, rest) => unlink(
+      nodes_modify(
+        ns,
+        i,
+        (n: Node(K, T)) => Node::with_dependents(n, Key::drop(Node::dependents(n), k))
+      ),
+      k,
+      rest
+    )
+  }
+}
+
+// `k` stops reading `old` and reads `new`.
+pub fn relink<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  old: List(K),
+  new: List(K)
+): List(K × Node(K, T)) where Ord(K) {
+  link(unlink(ns, k, List::filter((i: K) => not(key_in(i, new)), old)), k, new)
+}
+
+pub fn dep_ids<K>(ds: List(Dep(K))): List(K) {
+  List::map((d: Dep(K)) => dep_id(d), ds)
+}
+
+pub fn dependents_in<K, T>(o: Option(Node(K, T))): List(K) {
+  match o: List(K) {
+    None => Nil
+    Some(n) => Node::dependents(n)
+  }
+}
+
+pub fn dep_ids_in<K, T>(o: Option(Node(K, T))): List(K) {
+  match o: List(K) {
+    None => Nil
+    Some(n) => Node::dep_ids(n)
+  }
+}
+
+// Puts `k` with what it reads, keeping who reads it, and fixes the reverse edges.
+pub fn store<K, T>(
+  ns: List(K × Node(K, T)),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  verified: Nat,
+  changed: Nat
+): List(K × Node(K, T)) where Ord(K) {
+  relink(
+    nodes_put(
+      ns,
+      k,
+      Node::Mk(
+        x,
+        resolved_durability(res),
+        verified,
+        changed,
+        resolved_level(res),
+        resolved_deps(res),
+        dependents_in(nodes_get(ns, k))
+      )
+    ),
+    k,
+    dep_ids_in(nodes_get(ns, k)),
+    dep_ids(resolved_deps(res))
+  )
+}
+
+// ---- writing ----------------------------------------------------------------
+
+// What a write did: the counter it wrote at, the durability the node got (no more than the
+// requested one, nor than what it reads) and its level.
+pub inductive Written: Type {
+  Mk(revision: Nat, durability: Nat, level: Nat): Written
+}
+
+pub fn written_revision(r: Written): Nat {
+  match r: Nat {
+    Mk(v, d, l) => v
+  }
+}
+
+pub fn written_durability(r: Written): Nat {
+  match r: Nat {
+    Mk(v, d, l) => d
+  }
+}
+
+pub fn written_level(r: Written): Nat {
+  match r: Nat {
+    Mk(v, d, l) => l
+  }
+}
+
+// `k` put as changed now, on a graph whose revision already counts the change.
+fn put_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K)
+): Whale(K, T) × Written where Ord(K) {
+  #(
+    Whale::Mk(
+      store(
+        Whale::nodes(w),
+        k,
+        x,
+        res,
+        Revision::get(Whale::revision(w), resolved_durability(res)),
+        Revision::get(Whale::revision(w), resolved_durability(res))
+      ),
+      Whale::revision(w)
+    ),
+    Written::Mk(
+      Revision::get(Whale::revision(w), resolved_durability(res)),
+      resolved_durability(res),
+      resolved_level(res)
+    )
+  )
+}
+
+// A change at the node's durability, then `k` put as changed.
+pub fn write_changed<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K)
+): Whale(K, T) × Written where Ord(K) {
+  put_changed(Whale::bump(w, resolved_durability(res)), k, x, res)
+}
+
+pub fn register_with<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  o: Outcome(K, Resolved(K))
+): Outcome(K, Whale(K, T) × Written) where Ord(K) {
+  match o: Outcome(K, Whale(K, T) × Written) {
+    Absent(ks) => Absent(ks)
+    Done(res) => Done(write_changed(w, k, x, res))
+  }
+}
+
+module Whale {
+  // Puts `k` with new data that reads `ids`: a change at the node's durability, after which
+  // the node is verified and changed at the new counter. `absent` with the keys of `ids`
+  // that have no node.
+  pub fn register<K, T>(
+    w: Whale(K, T),
+    k: K,
+    x: T,
+    dur: Nat,
+    ids: List(K)
+  ): Outcome(K, Whale(K, T) × Written) where Ord(K) {
+    register_with(w, k, x, resolve_reads(w, dur, ids))
+  }
+}
+
+// `k` put as not changed: verified now (never lower than before), `changed_at` kept.
+pub fn put_unchanged<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  verified: Nat,
+  changed: Nat
+): Whale(K, T) where Ord(K) {
+  Whale::Mk(
+    store(
+      Whale::nodes(w),
+      k,
+      x,
+      res,
+      Nat::max(verified, Revision::get(Whale::revision(w), resolved_durability(res))),
+      changed
+    ),
+    Whale::revision(w)
+  )
+}
+
+pub fn unchanged_with<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  o: Outcome(K, Resolved(K))
+): Outcome(K, Whale(K, T)) where Ord(K) {
+  match o: Outcome(K, Whale(K, T)) {
+    Absent(ks) => Absent(ks)
+    Done(res) => Done(
+      put_unchanged(w, k, Node::data(n), res, Node::verified_at(n), Node::changed_at(n))
+    )
+  }
+}
+
+pub fn unchanged_at<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  o: Option(Node(K, T))
+): Outcome(K, Whale(K, T)) where Ord(K) {
+  match o: Outcome(K, Whale(K, T)) {
+    None => Done(w)
+    Some(n) => unchanged_with(w, k, n, resolve_reads(w, Node::durability(n), ids))
+  }
+}
+
+module Whale {
+  // Early cutoff: `k` was computed again, read `ids`, and came out the same. It is verified
+  // now, and its `changed_at` stays, so what read it stays valid. A key with no node is left
+  // alone.
+  pub fn confirm_unchanged<K, T>(
+    w: Whale(K, T),
+    k: K,
+    ids: List(K)
+  ): Outcome(K, Whale(K, T)) where Ord(K) {
+    unchanged_at(w, k, ids, Whale::get(w, k))
+  }
+}
+
+pub fn changed_with<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  o: Outcome(K, Resolved(K))
+): Outcome(K, Whale(K, T) × Nat) where Ord(K) {
+  match o: Outcome(K, Whale(K, T) × Nat) {
+    Absent(ks) => Absent(ks)
+    Done(res) => Done(
+      #(
+        pfst(write_changed(w, k, Node::data(n), res)),
+        written_revision(psnd(write_changed(w, k, Node::data(n), res)))
+      )
+    )
+  }
+}
+
+pub fn changed_at_node<K, T>(
+  w: Whale(K, T),
+  k: K,
+  ids: List(K),
+  o: Option(Node(K, T))
+): Outcome(K, Whale(K, T) × Nat) where Ord(K) {
+  match o: Outcome(K, Whale(K, T) × Nat) {
+    None => Done(#(w, Zero))
+    Some(n) => changed_with(w, k, n, resolve_reads(w, Node::durability(n), ids))
+  }
+}
+
+module Whale {
+  // `k` was computed again, read `ids`, and came out different: a change at its durability.
+  // Gives the new counter (0 for a key with no node, which is left alone).
+  pub fn confirm_changed<K, T>(
+    w: Whale(K, T),
+    k: K,
+    ids: List(K)
+  ): Outcome(K, Whale(K, T) × Nat) where Ord(K) {
+    changed_at_node(w, k, ids, Whale::get(w, k))
+  }
+}
+
+// What `Whale::update` did: whether the value changed, and the node's `changed_at` after it.
+pub inductive Updated: Type {
+  Mk(changed: Bool, revision: Nat, durability: Nat): Updated
+}
+
+fn updated_changed(u: Updated): Bool {
+  match u: Bool {
+    Mk(c, v, d) => c
+  }
+}
+
+pub fn updated_revision(u: Updated): Nat {
+  match u: Nat {
+    Mk(c, v, d) => v
+  }
+}
+
+pub fn verified_in<K, T>(o: Option(Node(K, T))): Nat {
+  match o: Nat {
+    None => Zero
+    Some(n) => Node::verified_at(n)
+  }
+}
+
+// The `changed_at` an unchanged write keeps: the node's, or the current counter for a new
+// node.
+pub fn changed_in<K, T>(o: Option(Node(K, T)), now: Nat): Nat {
+  match o: Nat {
+    None => now
+    Some(n) => Node::changed_at(n)
+  }
+}
+
+pub fn data_in<K, T>(o: Option(Node(K, T))): Option(T) {
+  Option::map((n: Node(K, T)) => Node::data(n), o)
+}
+
+pub fn update_by<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  res: Resolved(K),
+  changed: Bool
+): Whale(K, T) × Updated where Ord(K) {
+  match changed: Whale(K, T) × Updated {
+    true => #(
+      pfst(write_changed(w, k, x, res)),
+      Updated::Mk(
+        true,
+        written_revision(psnd(write_changed(w, k, x, res))),
+        resolved_durability(res)
+      )
+    )
+    false => #(
+      put_unchanged(
+        w,
+        k,
+        x,
+        res,
+        verified_in(Whale::get(w, k)),
+        changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res)))
+      ),
+      Updated::Mk(
+        false,
+        changed_in(Whale::get(w, k), Revision::get(Whale::revision(w), resolved_durability(res))),
+        resolved_durability(res)
+      )
+    )
+  }
+}
+
+pub fn update_with<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  differs: (Option(T), T) -> Bool,
+  o: Outcome(K, Resolved(K))
+): Outcome(K, Whale(K, T) × Updated) where Ord(K) {
+  match o: Outcome(K, Whale(K, T) × Updated) {
+    Absent(ks) => Absent(ks)
+    Done(res) => Done(update_by(w, k, x, res, differs(data_in(Whale::get(w, k)), x)))
+  }
+}
+
+module Whale {
+  // Puts new data at `k`, with early cutoff decided by `differs(old, new)`: when it says the
+  // value differs (or there was no node and it says so for `None`), this is a change;
+  // otherwise the node is verified now and keeps its `changed_at`.
+  pub fn update<K, T>(
+    w: Whale(K, T),
+    k: K,
+    x: T,
+    differs: (Option(T), T) -> Bool,
+    dur: Nat,
+    ids: List(K)
+  ): Outcome(K, Whale(K, T) × Updated) where Ord(K) {
+    update_with(w, k, x, differs, resolve_reads(w, dur, ids))
+  }
+}
+
+// What `Whale::get_or_insert` found.
+pub(open) inductive Found(K: Type, T: Type): Type {
+  Inserted(n: Node(K, T)): Found(K, T)
+  Existing(n: Node(K, T)): Found(K, T)
+}
+
+pub fn inserted_pick<K, T>(
+  p: Whale(K, T) × Written,
+  o: Option(Node(K, T))
+): Outcome(K, Whale(K, T) × Found(K, T)) {
+  match o: Outcome(K, Whale(K, T) × Found(K, T)) {
+    // `Whale::register` always puts `k` (`register_puts`).
+    None => Absent(Nil)
+    Some(n) => Done(#(pfst(p), Inserted(n)))
+  }
+}
+
+pub fn inserted_with<K, T>(
+  k: K,
+  o: Outcome(K, Whale(K, T) × Written)
+): Outcome(K, Whale(K, T) × Found(K, T)) where Ord(K) {
+  match o: Outcome(K, Whale(K, T) × Found(K, T)) {
+    Absent(ks) => Absent(ks)
+    Done(p) => inserted_pick(p, Whale::get(pfst(p), k))
+  }
+}
+
+pub fn get_or_insert_at<K, T>(
+  w: Whale(K, T),
+  k: K,
+  x: T,
+  dur: Nat,
+  ids: List(K),
+  o: Option(Node(K, T))
+): Outcome(K, Whale(K, T) × Found(K, T)) where Ord(K) {
+  match o: Outcome(K, Whale(K, T) × Found(K, T)) {
+    Some(n) => Done(#(w, Existing(n)))
+    None => inserted_with(k, Whale::register(w, k, x, dur, ids))
+  }
+}
+
+module Whale {
+  // The node at `k`, or a new one registered with `x` and `ids`. What it reads is only
+  // checked for a new node.
+  pub fn get_or_insert<K, T>(
+    w: Whale(K, T),
+    k: K,
+    x: T,
+    dur: Nat,
+    ids: List(K)
+  ): Outcome(K, Whale(K, T) × Found(K, T)) where Ord(K) {
+    get_or_insert_at(w, k, x, dur, ids, Whale::get(w, k))
+  }
+
+  // ---- removing ---------------------------------------------------------------
+}
+
+pub fn remove_at<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T))
+): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
+  match o: Whale(K, T) × Option(Node(K, T)) {
+    None => #(w, None)
+    Some(n) => #(
+      Whale::Mk(unlink(nodes_remove(Whale::nodes(w), k), k, Node::dep_ids(n)), Whale::revision(w)),
+      Some(n)
+    )
+  }
+}
+
+module Whale {
+  // Takes `k` out, and out of the dependents of what it read.
+  pub fn remove<K, T>(w: Whale(K, T), k: K): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
+    remove_at(w, k, Whale::get(w, k))
+  }
+}
+
+pub fn unused_pick<K, T>(
+  w: Whale(K, T),
+  k: K,
+  n: Node(K, T),
+  rs: List(K)
+): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
+  match rs: Whale(K, T) × Option(Node(K, T)) {
+    Nil => remove_at(w, k, Some(n))
+    Cons(r, more) => #(w, None)
+  }
+}
+
+pub fn unused_at<K, T>(
+  w: Whale(K, T),
+  k: K,
+  o: Option(Node(K, T))
+): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
+  match o: Whale(K, T) × Option(Node(K, T)) {
+    None => #(w, None)
+    Some(n) => unused_pick(w, k, n, Node::dependents(n))
+  }
+}
+
+module Whale {
+  // Takes `k` out only when nothing reads it, for garbage collection.
+  pub fn remove_if_unused<K, T>(
+    w: Whale(K, T),
+    k: K
+  ): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
+    unused_at(w, k, Whale::get(w, k))
+  }
+
+  // ---- cycles -----------------------------------------------------------------
+}
+
+// What `k` reads, by key.
+pub fn reads_of<K, T>(ns: List(K × Node(K, T)), k: K): List(K) where Ord(K) {
+  dep_ids_in(nodes_get(ns, k))
+}
+
+// Whether a path of at most `fuel` reads from `k` reaches `target`.
+pub fn reaches<K, T>(ns: List(K × Node(K, T)), target: K, k: K, fuel: Nat): Bool where Ord(K) {
+  match fuel: Bool {
+    Zero => key_eq(k, target)
+    Succ(f) => Bool::or(
+      key_eq(k, target),
+      List::any((i: K) => reaches(ns, target, i, f), reads_of(ns, k))
+    )
+  }
+}
+
+module Whale {
+  // Whether `k` reads itself through some chain of reads. A shortest such chain repeats no
+  // node, so it is no longer than the number of entries.
+  pub fn has_cycle<K, T>(w: Whale(K, T), k: K): Bool where Ord(K) {
+    List::any(
+      (i: K) => reaches(Whale::nodes(w), k, i, List::length(Whale::nodes(w))),
+      reads_of(Whale::nodes(w), k)
+    )
+  }
+}

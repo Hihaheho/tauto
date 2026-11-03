@@ -25,6 +25,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
+use super::derivation::{Derivation, InferenceRule};
 use super::{Ctx, Sort, T, sort_named, sort_term};
 use crate::surface::TermKind;
 use tauto_message::{Message, msg};
@@ -803,6 +804,7 @@ pub(super) struct Core {
     /// While a question of the named checker is typed: where the typing is
     /// (`at`), the binders entered on the way (`bound`), and the holes met.
     track: Option<Track>,
+    derivation: Option<Vec<Vec<RawDerivation>>>,
     /// The level variables of the universe template being checked once for
     /// every level (`check/universe.rs`): `Type(u + 1)` reads as a sort only
     /// over these, and no declaration outside that check sees one.
@@ -811,6 +813,15 @@ pub(super) struct Core {
     replay: Option<Vec<(String, bool)>>,
     #[cfg(feature = "selfhost")]
     replay_skipped: usize,
+}
+
+#[derive(Clone)]
+struct RawDerivation {
+    term: Tm,
+    ty: Tm,
+    bound: Vec<(u64, Hint)>,
+    rule: InferenceRule,
+    premises: Vec<RawDerivation>,
 }
 
 /// Where a question of the named checker is being typed. `at` is the path
@@ -879,6 +890,7 @@ pub(super) struct Typed {
     pub ty: Option<T>,
     pub sort: Option<Sort>,
     pub holes: Vec<Met>,
+    pub derivation: Option<Derivation>,
 }
 
 /// A hole met where a term of `goal` is expected, under the binders `bound`
@@ -1006,6 +1018,7 @@ impl Core {
             numeric_off: false,
             lazy_iota: false,
             track: None,
+            derivation: None,
             level_vars: Vec::new(),
             #[cfg(feature = "selfhost")]
             replay: None,
@@ -1380,6 +1393,19 @@ impl Core {
             let n = c.nf(&read[0]);
             Self::write(&n, o, &mut Vec::new(), t.span)
         })
+    }
+
+    pub(super) fn proof_reduction_in(
+        &mut self,
+        ctx: &[(String, T)],
+        t: &T,
+    ) -> Option<super::derivation::ProofReduction> {
+        self.start_budget(Some(4096), None);
+        let normal = self.nf_in(&ctx.to_vec(), t);
+        let mut unfolded: Vec<String> = self.budget.unfolds.keys().map(|n| n.to_string()).collect();
+        unfolded.sort();
+        let spent = self.end_budget();
+        (!spent.out).then_some(super::derivation::ProofReduction { normal, unfolded })
     }
 
     fn nf(&mut self, t: &Tm) -> Tm {
@@ -2114,6 +2140,13 @@ impl Core {
     /// settles most questions; only when it fails are the terms compared again
     /// with their types, which a proof inside a term needs to be seen as one.
     fn conv(&mut self, a: &Tm, b: &Tm) -> bool {
+        let record = self.derivation.take();
+        let result = self.conv_unrecorded(a, b);
+        self.derivation = record;
+        result
+    }
+
+    fn conv_unrecorded(&mut self, a: &Tm, b: &Tm) -> bool {
         if let Some(r) = self.conv_value(a, b) {
             return r;
         }
@@ -2699,6 +2732,46 @@ impl Core {
     /// order: a list literal, or a text literal's bytes, nests there once
     /// per element and would recurse as deep.
     fn infer(&mut self, t: &Tm) -> Result<Tm, Box<Fault>> {
+        if self.derivation.is_none() {
+            return self.infer_unrecorded(t);
+        }
+        let bound = self
+            .track
+            .as_ref()
+            .map(|tr| tr.bound.clone())
+            .unwrap_or_default();
+        self.derivation.as_mut().unwrap().push(Vec::new());
+        // infer_one is the same core rule as the iterative application path.
+        let result = self.infer_one(t);
+        let premises = self.derivation.as_mut().unwrap().pop().unwrap();
+        if let Ok(ty) = &result {
+            let rule = match t {
+                FVar(_) => InferenceRule::Assumption,
+                Const(_) => InferenceRule::Constant,
+                Lit(_) => InferenceRule::Literal,
+                Sort(_) => InferenceRule::Sort,
+                Pi(..) => InferenceRule::Formation,
+                App(..) if matches!(spine(t).0, Lam(..)) => InferenceRule::Reduction,
+                App(..) => InferenceRule::Application,
+                _ => unreachable!("only inferable terms have a derivation"),
+            };
+            self.derivation
+                .as_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap()
+                .push(RawDerivation {
+                    term: t.clone(),
+                    ty: ty.clone(),
+                    bound,
+                    rule,
+                    premises,
+                });
+        }
+        result
+    }
+
+    fn infer_unrecorded(&mut self, t: &Tm) -> Result<Tm, Box<Fault>> {
         // For each application entered: where the path comes back to, its
         // argument, and the domain and codomain of its function's type.
         let mut pending: Vec<((usize, usize), R, R, R)> = Vec::new();
@@ -2808,6 +2881,7 @@ impl Core {
                 let App(f, a) = t else { unreachable!() };
                 let ft = self.down(0, None, |c| c.infer(f))?;
                 let ft = self.whnf(&ft);
+                self.record_conversion(f, &ft);
                 let Some((_, dom, cod)) = ft.pi_parts() else {
                     return Err(self.fault(Why::NotFunction));
                 };
@@ -2819,21 +2893,103 @@ impl Core {
 
     fn infer_sort(&mut self, t: &Tm) -> Result<Sort, Box<Fault>> {
         let ty = self.infer(t)?;
-        match &self.whnf(&ty) {
+        let normal = self.whnf(&ty);
+        self.record_conversion(t, &normal);
+        match &normal {
             Sort(s) => Ok(s.clone()),
             _ => Err(self.fault(Why::NotType)),
         }
     }
 
     fn check(&mut self, t: &Tm, expected: &Tm) -> Result<(), Box<Fault>> {
+        if self.derivation.is_none() {
+            return self.check_unrecorded(t, expected);
+        }
+        let bound = self
+            .track
+            .as_ref()
+            .map(|tr| tr.bound.clone())
+            .unwrap_or_default();
+        self.derivation.as_mut().unwrap().push(Vec::new());
+        let result = self.check_unrecorded(t, expected);
+        let mut premises = self.derivation.as_mut().unwrap().pop().unwrap();
+        if result.is_ok() {
+            let node = if self.is_hole(t) {
+                RawDerivation {
+                    term: t.clone(),
+                    ty: expected.clone(),
+                    bound,
+                    rule: InferenceRule::Hole,
+                    premises,
+                }
+            } else if premises.len() == 1 && premises[0].ty == *expected {
+                premises.remove(0)
+            } else {
+                RawDerivation {
+                    term: t.clone(),
+                    ty: expected.clone(),
+                    bound,
+                    rule: InferenceRule::Conversion,
+                    premises,
+                }
+            };
+            self.derivation
+                .as_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap()
+                .push(node);
+        }
+        result
+    }
+
+    fn record_conversion(&mut self, term: &Tm, normal: &Tm) {
+        if let Some(frame) = self
+            .derivation
+            .as_mut()
+            .and_then(|frames| frames.last_mut())
+            && frame.last().is_some_and(|node| node.ty != *normal)
+        {
+            let before = frame.pop().unwrap();
+            frame.push(RawDerivation {
+                term: term.clone(),
+                ty: normal.clone(),
+                bound: before.bound.clone(),
+                rule: InferenceRule::Conversion,
+                premises: vec![before],
+            });
+        }
+    }
+
+    fn check_unrecorded(&mut self, t: &Tm, expected: &Tm) -> Result<(), Box<Fault>> {
         if let Lam(h, body) = t {
-            let Some((_, dom, cod)) = self.whnf(expected).pi_parts() else {
+            let normal = self.whnf(expected);
+            let Some((_, dom, cod)) = normal.pi_parts() else {
                 return Err(self.fault(Why::NoPi(expected.clone())));
             };
             let x = self.fresh((*dom).clone());
-            return self.down(0, Some((x, h)), |c| {
+            let result = self.down(0, Some((x, h)), |c| {
                 c.check(&inst(body, &FVar(x)), &inst(&cod, &FVar(x)))
             });
+            if result.is_ok()
+                && let Some(frames) = &mut self.derivation
+            {
+                let frame = frames.last_mut().unwrap();
+                let premises = std::mem::take(frame);
+                let bound = self
+                    .track
+                    .as_ref()
+                    .map(|tr| tr.bound.clone())
+                    .unwrap_or_default();
+                frame.push(RawDerivation {
+                    term: t.clone(),
+                    ty: normal,
+                    bound,
+                    rule: InferenceRule::Introduction,
+                    premises,
+                });
+            }
+            return result;
         }
         if let FVar(x) = t
             && let Some(tr) = &mut self.track
@@ -2921,6 +3077,18 @@ impl Core {
 
     pub(super) fn conv_in(&mut self, ctx: &Ctx, a: &T, b: &T) -> bool {
         self.ask(ctx, &[a, b], |c, t, _| c.conv(&t[0], &t[1]))
+    }
+
+    pub(super) fn proof_conversion_in(
+        &mut self,
+        ctx: &Ctx,
+        a: &T,
+        b: &T,
+        declared: Declared<'_>,
+    ) -> bool {
+        self.ask_with(ctx, Some(declared), &[a, b], |c, read, _| {
+            c.conv(&read[0], &read[1])
+        })
     }
 
     /// Whether a term of `a` is one of `b` in `ctx` (the sorts are cumulative).
@@ -3020,6 +3188,12 @@ impl Core {
                 Ok((ty, sort)) => Ok(Typed {
                     ty: ty.map(|ty| c.written(&ty, o, expected, t.span)),
                     sort,
+                    derivation: c
+                        .derivation
+                        .as_mut()
+                        .and_then(|frames| frames.last_mut())
+                        .and_then(|f| f.pop())
+                        .map(|raw| c.write_derivation(raw, ctx, o, avoid, t.span)),
                     holes: track
                         .met
                         .iter()
@@ -3061,6 +3235,76 @@ impl Core {
                 }
             }
         })
+    }
+
+    pub(super) fn derivation_in(
+        &mut self,
+        ctx: &Ctx,
+        term: &T,
+        expected: &T,
+        declared: Declared<'_>,
+        avoid: &[&str],
+    ) -> Result<Typed, Box<Failure>> {
+        self.derivation = Some(vec![Vec::new()]);
+        let result = self.type_in(ctx, term, Ask::Check(expected), declared, avoid);
+        self.derivation = None;
+        result
+    }
+
+    fn write_derivation(
+        &self,
+        raw: RawDerivation,
+        ctx: &Ctx,
+        o: &Open<'_>,
+        avoid: &[&str],
+        span: tauto_parol::Span,
+    ) -> Derivation {
+        let mut shown = o.clone();
+        let locals = self.name_bound(&raw.bound, &mut shown, avoid);
+        let mut context = ctx.clone();
+        context.extend(locals);
+        let mut term = Self::write(&raw.term, &shown, &mut Vec::new(), span);
+        let ty = Self::write(&raw.ty, &shown, &mut Vec::new(), span);
+        let premises: Vec<_> = raw
+            .premises
+            .into_iter()
+            .map(|p| self.write_derivation(p, ctx, o, avoid, span))
+            .collect();
+        let introduced: Vec<_> = if raw.rule == InferenceRule::Introduction {
+            premises
+                .first()
+                .map(|p| p.context[context.len()..].to_vec())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if raw.rule == InferenceRule::Introduction
+            && let Some(body) = premises.first()
+        {
+            term = T::new(
+                TermKind::Lam {
+                    params: introduced.iter().map(|(n, _)| n.clone()).collect(),
+                    types: Vec::new(),
+                    body: Box::new(body.term.clone()),
+                },
+                span,
+            );
+        }
+        let rule = if raw.rule == InferenceRule::Assumption
+            && matches!(&raw.term, FVar(x) if o.declared.iter().any(|(_,y)| x == y))
+        {
+            InferenceRule::UnverifiedReference
+        } else {
+            raw.rule
+        };
+        Derivation {
+            context,
+            term,
+            ty,
+            rule,
+            introduced,
+            premises,
+        }
     }
 
     /// `tm` written back; as it was written when it is the expected type

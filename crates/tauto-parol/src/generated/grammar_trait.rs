@@ -1601,6 +1601,21 @@ pub trait GrammarTrait<'t> {
         Ok(())
     }
 
+    /// Semantic action for non-terminal 'ImportList'
+    fn import_list(&mut self, _arg: &ImportList<'t>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Semantic action for non-terminal 'ImportNames'
+    fn import_names(&mut self, _arg: &ImportNames<'t>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Semantic action for non-terminal 'ImportNamesTail'
+    fn import_names_tail(&mut self, _arg: &ImportNamesTail<'t>) -> Result<()> {
+        Ok(())
+    }
+
     /// Semantic action for non-terminal 'DefDecl'
     fn def_decl(&mut self, _arg: &DefDecl<'t>) -> Result<()> {
         Ok(())
@@ -5286,7 +5301,7 @@ impl ToSpan for ImportDeclGroupIdent<'_> {
 }
 
 ///
-/// Type derived for production 921
+/// Type derived for production 936
 ///
 /// `ConstructorGroup: Ident;`
 ///
@@ -5303,7 +5318,7 @@ impl ToSpan for ConstructorGroupIdent<'_> {
 }
 
 ///
-/// Type derived for production 922
+/// Type derived for production 937
 ///
 /// `ConstructorGroup: True;`
 ///
@@ -5320,7 +5335,7 @@ impl ToSpan for ConstructorGroupTrue<'_> {
 }
 
 ///
-/// Type derived for production 923
+/// Type derived for production 938
 ///
 /// `ConstructorGroup: False;`
 ///
@@ -9876,11 +9891,17 @@ impl ToSpan for IffSign<'_> {
 pub struct ImportDecl<'t> {
     pub kw_import: KwImport<'t>,
     pub import_decl_group: ImportDeclGroup<'t>,
+    pub import_decl_opt: Option<ImportDeclOpt<'t>>,
 }
 
 impl ToSpan for ImportDecl<'_> {
     fn span(&self) -> Span {
-        self.kw_import.span() + self.import_decl_group.span()
+        self.kw_import.span()
+            + self.import_decl_group.span()
+            + self
+                .import_decl_opt
+                .as_ref()
+                .map_or(Span::default(), |o| o.span())
     }
 }
 
@@ -9900,6 +9921,172 @@ impl ToSpan for ImportDeclGroup<'_> {
             ImportDeclGroup::Text(v) => v.span(),
             ImportDeclGroup::Ident(v) => v.span(),
         }
+    }
+}
+
+///
+/// Type derived for non-terminal ImportDeclOpt
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportDeclOpt<'t> {
+    pub import_list: ImportList<'t>,
+}
+
+impl ToSpan for ImportDeclOpt<'_> {
+    fn span(&self) -> Span {
+        self.import_list.span()
+    }
+}
+
+///
+/// Type derived for non-terminal ImportList
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportList<'t> {
+    pub l_brace: LBrace<'t>,
+    pub import_names: ImportNames<'t>,
+    pub r_brace: RBrace<'t>,
+}
+
+impl ToSpan for ImportList<'_> {
+    fn span(&self) -> Span {
+        self.l_brace.span() + self.import_names.span() + self.r_brace.span()
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNames
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNames<'t> {
+    pub import_names_list: Vec<ImportNamesList<'t>>,
+    pub import_names_opt: Option<ImportNamesOpt<'t>>,
+}
+
+impl ToSpan for ImportNames<'_> {
+    fn span(&self) -> Span {
+        self.import_names_list
+            .first()
+            .map_or(Span::default(), |f| f.span())
+            + self
+                .import_names_list
+                .last()
+                .map_or(Span::default(), |l| l.span())
+            + self
+                .import_names_opt
+                .as_ref()
+                .map_or(Span::default(), |o| o.span())
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNamesList
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNamesList<'t> {
+    pub member_sep: MemberSep<'t>,
+}
+
+impl ToSpan for ImportNamesList<'_> {
+    fn span(&self) -> Span {
+        self.member_sep.span()
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNamesOpt
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNamesOpt<'t> {
+    pub ident: Ident<'t>,
+    pub import_names_tail: ImportNamesTail<'t>,
+}
+
+impl ToSpan for ImportNamesOpt<'_> {
+    fn span(&self) -> Span {
+        self.ident.span() + self.import_names_tail.span()
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNamesTail
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNamesTail<'t> {
+    pub import_names_tail_opt: Option<Box<ImportNamesTailOpt<'t>>>,
+}
+
+impl ToSpan for ImportNamesTail<'_> {
+    fn span(&self) -> Span {
+        self.import_names_tail_opt
+            .as_ref()
+            .map_or(Span::default(), |o| o.span())
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNamesTailOpt
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNamesTailOpt<'t> {
+    pub member_sep: MemberSep<'t>,
+    pub import_names_tail_opt_list: Vec<ImportNamesTailOptList<'t>>,
+    pub import_names_tail_opt0: Option<ImportNamesTailOpt0<'t>>,
+}
+
+impl ToSpan for ImportNamesTailOpt<'_> {
+    fn span(&self) -> Span {
+        self.member_sep.span()
+            + self
+                .import_names_tail_opt_list
+                .first()
+                .map_or(Span::default(), |f| f.span())
+            + self
+                .import_names_tail_opt_list
+                .last()
+                .map_or(Span::default(), |l| l.span())
+            + self
+                .import_names_tail_opt0
+                .as_ref()
+                .map_or(Span::default(), |o| o.span())
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNamesTailOpt0
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNamesTailOpt0<'t> {
+    pub ident: Ident<'t>,
+    pub import_names_tail: ImportNamesTail<'t>,
+}
+
+impl ToSpan for ImportNamesTailOpt0<'_> {
+    fn span(&self) -> Span {
+        self.ident.span() + self.import_names_tail.span()
+    }
+}
+
+///
+/// Type derived for non-terminal ImportNamesTailOptList
+///
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ImportNamesTailOptList<'t> {
+    pub member_sep: MemberSep<'t>,
+}
+
+impl ToSpan for ImportNamesTailOptList<'_> {
+    fn span(&self) -> Span {
+        self.member_sep.span()
     }
 }
 
@@ -16010,6 +16197,15 @@ pub enum ASTType<'t> {
     IffSign(IffSign<'t>),
     ImportDecl(ImportDecl<'t>),
     ImportDeclGroup(ImportDeclGroup<'t>),
+    ImportDeclOpt(Option<ImportDeclOpt<'t>>),
+    ImportList(ImportList<'t>),
+    ImportNames(ImportNames<'t>),
+    ImportNamesList(Vec<ImportNamesList<'t>>),
+    ImportNamesOpt(Option<ImportNamesOpt<'t>>),
+    ImportNamesTail(ImportNamesTail<'t>),
+    ImportNamesTailOpt(Option<ImportNamesTailOpt<'t>>),
+    ImportNamesTailOpt0(Option<ImportNamesTailOpt0<'t>>),
+    ImportNamesTailOptList(Vec<ImportNamesTailOptList<'t>>),
     InductiveDecl(InductiveDecl<'t>),
     InductiveDeclOpt(Option<InductiveDeclOpt<'t>>),
     InductiveDeclOpt0(Option<InductiveDeclOpt0<'t>>),
@@ -16687,6 +16883,21 @@ impl ToSpan for ASTType<'_> {
             ASTType::IffSign(v) => v.span(),
             ASTType::ImportDecl(v) => v.span(),
             ASTType::ImportDeclGroup(v) => v.span(),
+            ASTType::ImportDeclOpt(o) => o.as_ref().map_or(Span::default(), |o| o.span()),
+            ASTType::ImportList(v) => v.span(),
+            ASTType::ImportNames(v) => v.span(),
+            ASTType::ImportNamesList(v) => {
+                v.first().map_or(Span::default(), |f| f.span())
+                    + v.last().map_or(Span::default(), |l| l.span())
+            }
+            ASTType::ImportNamesOpt(o) => o.as_ref().map_or(Span::default(), |o| o.span()),
+            ASTType::ImportNamesTail(v) => v.span(),
+            ASTType::ImportNamesTailOpt(o) => o.as_ref().map_or(Span::default(), |o| o.span()),
+            ASTType::ImportNamesTailOpt0(o) => o.as_ref().map_or(Span::default(), |o| o.span()),
+            ASTType::ImportNamesTailOptList(v) => {
+                v.first().map_or(Span::default(), |f| f.span())
+                    + v.last().map_or(Span::default(), |l| l.span())
+            }
             ASTType::InductiveDecl(v) => v.span(),
             ASTType::InductiveDeclOpt(o) => o.as_ref().map_or(Span::default(), |o| o.span()),
             ASTType::InductiveDeclOpt0(o) => o.as_ref().map_or(Span::default(), |o| o.span()),
@@ -33950,21 +34161,24 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
 
     /// Semantic action for production 882:
     ///
-    /// `ImportDecl: KwImport ImportDeclGroup;`
+    /// `ImportDecl: KwImport ImportDeclGroup ImportDeclOpt /* Option */;`
     ///
     #[parol_runtime::function_name::named]
     fn import_decl(
         &mut self,
         _kw_import: &ParseTreeType<'t>,
         _import_decl_group: &ParseTreeType<'t>,
+        _import_decl_opt: &ParseTreeType<'t>,
     ) -> Result<()> {
         let context = function_name!();
         trace!("{}", self.trace_item_stack(context));
+        let import_decl_opt = pop_item!(self, import_decl_opt, ImportDeclOpt, context);
         let import_decl_group = pop_item!(self, import_decl_group, ImportDeclGroup, context);
         let kw_import = pop_item!(self, kw_import, KwImport, context);
         let import_decl_built = ImportDecl {
             kw_import,
             import_decl_group,
+            import_decl_opt,
         };
         // Calling user action here
         self.user_grammar.import_decl(&import_decl_built)?;
@@ -34003,6 +34217,306 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
     }
 
     /// Semantic action for production 885:
+    ///
+    /// `ImportDeclOpt /* Option<T>::Some */: ImportList;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_decl_opt_0(&mut self, _import_list: &ParseTreeType<'t>) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_list = pop_item!(self, import_list, ImportList, context);
+        let import_decl_opt_0_built = ImportDeclOpt { import_list };
+        self.push(
+            ASTType::ImportDeclOpt(Some(import_decl_opt_0_built)),
+            context,
+        );
+        Ok(())
+    }
+
+    /// Semantic action for production 886:
+    ///
+    /// `ImportDeclOpt /* Option<T>::None */: ;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_decl_opt_1(&mut self) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        self.push(ASTType::ImportDeclOpt(None), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 887:
+    ///
+    /// `ImportList: LBrace ImportNames RBrace;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_list(
+        &mut self,
+        _l_brace: &ParseTreeType<'t>,
+        _import_names: &ParseTreeType<'t>,
+        _r_brace: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let r_brace = pop_item!(self, r_brace, RBrace, context);
+        let import_names = pop_item!(self, import_names, ImportNames, context);
+        let l_brace = pop_item!(self, l_brace, LBrace, context);
+        let import_list_built = ImportList {
+            l_brace,
+            import_names,
+            r_brace,
+        };
+        // Calling user action here
+        self.user_grammar.import_list(&import_list_built)?;
+        self.push(ASTType::ImportList(import_list_built), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 888:
+    ///
+    /// `ImportNames: ImportNamesList /* Vec */ ImportNamesOpt /* Option */;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names(
+        &mut self,
+        _import_names_list: &ParseTreeType<'t>,
+        _import_names_opt: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_opt = pop_item!(self, import_names_opt, ImportNamesOpt, context);
+        let import_names_list =
+            pop_and_reverse_item!(self, import_names_list, ImportNamesList, context);
+        let import_names_built = ImportNames {
+            import_names_list,
+            import_names_opt,
+        };
+        // Calling user action here
+        self.user_grammar.import_names(&import_names_built)?;
+        self.push(ASTType::ImportNames(import_names_built), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 889:
+    ///
+    /// `ImportNamesList /* Vec<T>::Push */: MemberSep ImportNamesList;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_list_0(
+        &mut self,
+        _member_sep: &ParseTreeType<'t>,
+        _import_names_list: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let mut import_names_list = pop_item!(self, import_names_list, ImportNamesList, context);
+        let member_sep = pop_item!(self, member_sep, MemberSep, context);
+        let import_names_list_0_built = ImportNamesList { member_sep };
+        // Add an element to the vector
+        import_names_list.push(import_names_list_0_built);
+        self.push(ASTType::ImportNamesList(import_names_list), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 890:
+    ///
+    /// `ImportNamesList /* Vec<T>::New */: ;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_list_1(&mut self) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_list_1_built = Vec::new();
+        self.push(ASTType::ImportNamesList(import_names_list_1_built), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 891:
+    ///
+    /// `ImportNamesOpt /* Option<T>::Some */: Ident ImportNamesTail;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_opt_0(
+        &mut self,
+        _ident: &ParseTreeType<'t>,
+        _import_names_tail: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_tail = pop_item!(self, import_names_tail, ImportNamesTail, context);
+        let ident = pop_item!(self, ident, Ident, context);
+        let import_names_opt_0_built = ImportNamesOpt {
+            ident,
+            import_names_tail,
+        };
+        self.push(
+            ASTType::ImportNamesOpt(Some(import_names_opt_0_built)),
+            context,
+        );
+        Ok(())
+    }
+
+    /// Semantic action for production 892:
+    ///
+    /// `ImportNamesOpt /* Option<T>::None */: ;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_opt_1(&mut self) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        self.push(ASTType::ImportNamesOpt(None), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 893:
+    ///
+    /// `ImportNamesTail: ImportNamesTailOpt /* Option */;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail(&mut self, _import_names_tail_opt: &ParseTreeType<'t>) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_tail_opt =
+            pop_item!(self, import_names_tail_opt, ImportNamesTailOpt, context);
+        let import_names_tail_built = ImportNamesTail {
+            import_names_tail_opt: import_names_tail_opt.map(Box::new),
+        };
+        // Calling user action here
+        self.user_grammar
+            .import_names_tail(&import_names_tail_built)?;
+        self.push(ASTType::ImportNamesTail(import_names_tail_built), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 894:
+    ///
+    /// `ImportNamesTailOpt /* Option<T>::Some */: MemberSep ImportNamesTailOptList /* Vec */ ImportNamesTailOpt0 /* Option */;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail_opt_0(
+        &mut self,
+        _member_sep: &ParseTreeType<'t>,
+        _import_names_tail_opt_list: &ParseTreeType<'t>,
+        _import_names_tail_opt0: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_tail_opt0 =
+            pop_item!(self, import_names_tail_opt0, ImportNamesTailOpt0, context);
+        let import_names_tail_opt_list = pop_and_reverse_item!(
+            self,
+            import_names_tail_opt_list,
+            ImportNamesTailOptList,
+            context
+        );
+        let member_sep = pop_item!(self, member_sep, MemberSep, context);
+        let import_names_tail_opt_0_built = ImportNamesTailOpt {
+            member_sep,
+            import_names_tail_opt_list,
+            import_names_tail_opt0,
+        };
+        self.push(
+            ASTType::ImportNamesTailOpt(Some(import_names_tail_opt_0_built)),
+            context,
+        );
+        Ok(())
+    }
+
+    /// Semantic action for production 895:
+    ///
+    /// `ImportNamesTailOptList /* Vec<T>::Push */: MemberSep ImportNamesTailOptList;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail_opt_list_0(
+        &mut self,
+        _member_sep: &ParseTreeType<'t>,
+        _import_names_tail_opt_list: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let mut import_names_tail_opt_list = pop_item!(
+            self,
+            import_names_tail_opt_list,
+            ImportNamesTailOptList,
+            context
+        );
+        let member_sep = pop_item!(self, member_sep, MemberSep, context);
+        let import_names_tail_opt_list_0_built = ImportNamesTailOptList { member_sep };
+        // Add an element to the vector
+        import_names_tail_opt_list.push(import_names_tail_opt_list_0_built);
+        self.push(
+            ASTType::ImportNamesTailOptList(import_names_tail_opt_list),
+            context,
+        );
+        Ok(())
+    }
+
+    /// Semantic action for production 896:
+    ///
+    /// `ImportNamesTailOptList /* Vec<T>::New */: ;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail_opt_list_1(&mut self) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_tail_opt_list_1_built = Vec::new();
+        self.push(
+            ASTType::ImportNamesTailOptList(import_names_tail_opt_list_1_built),
+            context,
+        );
+        Ok(())
+    }
+
+    /// Semantic action for production 897:
+    ///
+    /// `ImportNamesTailOpt0 /* Option<T>::Some */: Ident ImportNamesTail;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail_opt0_0(
+        &mut self,
+        _ident: &ParseTreeType<'t>,
+        _import_names_tail: &ParseTreeType<'t>,
+    ) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        let import_names_tail = pop_item!(self, import_names_tail, ImportNamesTail, context);
+        let ident = pop_item!(self, ident, Ident, context);
+        let import_names_tail_opt0_0_built = ImportNamesTailOpt0 {
+            ident,
+            import_names_tail,
+        };
+        self.push(
+            ASTType::ImportNamesTailOpt0(Some(import_names_tail_opt0_0_built)),
+            context,
+        );
+        Ok(())
+    }
+
+    /// Semantic action for production 898:
+    ///
+    /// `ImportNamesTailOpt0 /* Option<T>::None */: ;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail_opt0_1(&mut self) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        self.push(ASTType::ImportNamesTailOpt0(None), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 899:
+    ///
+    /// `ImportNamesTailOpt /* Option<T>::None */: ;`
+    ///
+    #[parol_runtime::function_name::named]
+    fn import_names_tail_opt_1(&mut self) -> Result<()> {
+        let context = function_name!();
+        trace!("{}", self.trace_item_stack(context));
+        self.push(ASTType::ImportNamesTailOpt(None), context);
+        Ok(())
+    }
+
+    /// Semantic action for production 900:
     ///
     /// `DefDecl: KwDef Ident DefDeclOpt /* Option */ LParen DefDeclOpt0 /* Option */ RParen Colon Type DefDeclOpt1 /* Option */ Assign Gap Type;`
     ///
@@ -34056,7 +34570,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 886:
+    /// Semantic action for production 901:
     ///
     /// `DefDeclOpt1 /* Option<T>::Some */: DeclBudget;`
     ///
@@ -34070,7 +34584,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 887:
+    /// Semantic action for production 902:
     ///
     /// `DefDeclOpt1 /* Option<T>::None */: ;`
     ///
@@ -34082,7 +34596,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 888:
+    /// Semantic action for production 903:
     ///
     /// `DefDeclOpt0 /* Option<T>::Some */: Param DefDeclOpt0List /* Vec */;`
     ///
@@ -34105,7 +34619,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 889:
+    /// Semantic action for production 904:
     ///
     /// `DefDeclOpt0List /* Vec<T>::Push */: Comma Param DefDeclOpt0List;`
     ///
@@ -34128,7 +34642,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 890:
+    /// Semantic action for production 905:
     ///
     /// `DefDeclOpt0List /* Vec<T>::New */: ;`
     ///
@@ -34144,7 +34658,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 891:
+    /// Semantic action for production 906:
     ///
     /// `DefDeclOpt0 /* Option<T>::None */: ;`
     ///
@@ -34156,7 +34670,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 892:
+    /// Semantic action for production 907:
     ///
     /// `DefDeclOpt /* Option<T>::Some */: Generics;`
     ///
@@ -34170,7 +34684,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 893:
+    /// Semantic action for production 908:
     ///
     /// `DefDeclOpt /* Option<T>::None */: ;`
     ///
@@ -34182,7 +34696,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 894:
+    /// Semantic action for production 909:
     ///
     /// `AxiomDecl: KwAxiom Ident AxiomDeclOpt /* Option */ LParen AxiomDeclOpt0 /* Option */ RParen Colon Type;`
     ///
@@ -34224,7 +34738,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 895:
+    /// Semantic action for production 910:
     ///
     /// `AxiomDeclOpt0 /* Option<T>::Some */: Param AxiomDeclOpt0List /* Vec */;`
     ///
@@ -34250,7 +34764,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 896:
+    /// Semantic action for production 911:
     ///
     /// `AxiomDeclOpt0List /* Vec<T>::Push */: Comma Param AxiomDeclOpt0List;`
     ///
@@ -34274,7 +34788,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 897:
+    /// Semantic action for production 912:
     ///
     /// `AxiomDeclOpt0List /* Vec<T>::New */: ;`
     ///
@@ -34290,7 +34804,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 898:
+    /// Semantic action for production 913:
     ///
     /// `AxiomDeclOpt0 /* Option<T>::None */: ;`
     ///
@@ -34302,7 +34816,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 899:
+    /// Semantic action for production 914:
     ///
     /// `AxiomDeclOpt /* Option<T>::Some */: Generics;`
     ///
@@ -34316,7 +34830,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 900:
+    /// Semantic action for production 915:
     ///
     /// `AxiomDeclOpt /* Option<T>::None */: ;`
     ///
@@ -34328,7 +34842,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 901:
+    /// Semantic action for production 916:
     ///
     /// `InductiveDecl: KwInductive Ident InductiveDeclOpt /* Option */ Colon BodyType InductiveDeclOpt0 /* Option */ LBrace Constructors RBrace;`
     ///
@@ -34373,7 +34887,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 902:
+    /// Semantic action for production 917:
     ///
     /// `InductiveDeclOpt0 /* Option<T>::Some */: Generates;`
     ///
@@ -34390,7 +34904,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 903:
+    /// Semantic action for production 918:
     ///
     /// `InductiveDeclOpt0 /* Option<T>::None */: ;`
     ///
@@ -34402,7 +34916,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 904:
+    /// Semantic action for production 919:
     ///
     /// `InductiveDeclOpt /* Option<T>::Some */: LParen Param InductiveDeclOptList /* Vec */ RParen;`
     ///
@@ -34434,7 +34948,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 905:
+    /// Semantic action for production 920:
     ///
     /// `InductiveDeclOptList /* Vec<T>::Push */: Comma Param InductiveDeclOptList;`
     ///
@@ -34461,7 +34975,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 906:
+    /// Semantic action for production 921:
     ///
     /// `InductiveDeclOptList /* Vec<T>::New */: ;`
     ///
@@ -34477,7 +34991,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 907:
+    /// Semantic action for production 922:
     ///
     /// `InductiveDeclOpt /* Option<T>::None */: ;`
     ///
@@ -34489,7 +35003,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 908:
+    /// Semantic action for production 923:
     ///
     /// `Constructors: ConstructorsList /* Vec */ ConstructorsOpt /* Option */;`
     ///
@@ -34514,7 +35028,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 909:
+    /// Semantic action for production 924:
     ///
     /// `ConstructorsList /* Vec<T>::Push */: MemberSep ConstructorsList;`
     ///
@@ -34535,7 +35049,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 910:
+    /// Semantic action for production 925:
     ///
     /// `ConstructorsList /* Vec<T>::New */: ;`
     ///
@@ -34551,7 +35065,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 911:
+    /// Semantic action for production 926:
     ///
     /// `ConstructorsOpt /* Option<T>::Some */: Constructor ConstructorsTail;`
     ///
@@ -34576,7 +35090,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 912:
+    /// Semantic action for production 927:
     ///
     /// `ConstructorsOpt /* Option<T>::None */: ;`
     ///
@@ -34588,7 +35102,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 913:
+    /// Semantic action for production 928:
     ///
     /// `ConstructorsTail: ConstructorsTailOpt /* Option */;`
     ///
@@ -34608,7 +35122,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 914:
+    /// Semantic action for production 929:
     ///
     /// `ConstructorsTailOpt /* Option<T>::Some */: MemberSep ConstructorsTailOptList /* Vec */ ConstructorsTailOpt0 /* Option */;`
     ///
@@ -34642,7 +35156,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 915:
+    /// Semantic action for production 930:
     ///
     /// `ConstructorsTailOptList /* Vec<T>::Push */: MemberSep ConstructorsTailOptList;`
     ///
@@ -34671,7 +35185,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 916:
+    /// Semantic action for production 931:
     ///
     /// `ConstructorsTailOptList /* Vec<T>::New */: ;`
     ///
@@ -34687,7 +35201,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 917:
+    /// Semantic action for production 932:
     ///
     /// `ConstructorsTailOpt0 /* Option<T>::Some */: Constructor ConstructorsTail;`
     ///
@@ -34712,7 +35226,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 918:
+    /// Semantic action for production 933:
     ///
     /// `ConstructorsTailOpt0 /* Option<T>::None */: ;`
     ///
@@ -34724,7 +35238,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 919:
+    /// Semantic action for production 934:
     ///
     /// `ConstructorsTailOpt /* Option<T>::None */: ;`
     ///
@@ -34736,7 +35250,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 920:
+    /// Semantic action for production 935:
     ///
     /// `Constructor: ConstructorGroup ConstructorOpt /* Option */ ConstructorOpt0 /* Option */ Colon Type;`
     ///
@@ -34769,7 +35283,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 921:
+    /// Semantic action for production 936:
     ///
     /// `ConstructorGroup: Ident;`
     ///
@@ -34787,7 +35301,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 922:
+    /// Semantic action for production 937:
     ///
     /// `ConstructorGroup: True;`
     ///
@@ -34805,7 +35319,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 923:
+    /// Semantic action for production 938:
     ///
     /// `ConstructorGroup: False;`
     ///
@@ -34823,7 +35337,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 924:
+    /// Semantic action for production 939:
     ///
     /// `ConstructorOpt0 /* Option<T>::Some */: LParen Param ConstructorOpt0List /* Vec */ RParen;`
     ///
@@ -34855,7 +35369,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 925:
+    /// Semantic action for production 940:
     ///
     /// `ConstructorOpt0List /* Vec<T>::Push */: Comma Param ConstructorOpt0List;`
     ///
@@ -34879,7 +35393,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 926:
+    /// Semantic action for production 941:
     ///
     /// `ConstructorOpt0List /* Vec<T>::New */: ;`
     ///
@@ -34895,7 +35409,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 927:
+    /// Semantic action for production 942:
     ///
     /// `ConstructorOpt0 /* Option<T>::None */: ;`
     ///
@@ -34907,7 +35421,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 928:
+    /// Semantic action for production 943:
     ///
     /// `ConstructorOpt /* Option<T>::Some */: Generics;`
     ///
@@ -34924,7 +35438,7 @@ impl<'t, 'u> GrammarAuto<'t, 'u> {
         Ok(())
     }
 
-    /// Semantic action for production 929:
+    /// Semantic action for production 944:
     ///
     /// `ConstructorOpt /* Option<T>::None */: ;`
     ///
@@ -36043,10 +36557,25 @@ impl<'t> UserActionsTrait<'t> for GrammarAuto<'t, '_> {
             879 => self.mutual_member_0(&children[0]),
             880 => self.mutual_member_1(&children[0]),
             881 => self.mutual_member_2(&children[0]),
-            882 => self.import_decl(&children[0], &children[1]),
+            882 => self.import_decl(&children[0], &children[1], &children[2]),
             883 => self.import_decl_group_0(&children[0]),
             884 => self.import_decl_group_1(&children[0]),
-            885 => self.def_decl(
+            885 => self.import_decl_opt_0(&children[0]),
+            886 => self.import_decl_opt_1(),
+            887 => self.import_list(&children[0], &children[1], &children[2]),
+            888 => self.import_names(&children[0], &children[1]),
+            889 => self.import_names_list_0(&children[0], &children[1]),
+            890 => self.import_names_list_1(),
+            891 => self.import_names_opt_0(&children[0], &children[1]),
+            892 => self.import_names_opt_1(),
+            893 => self.import_names_tail(&children[0]),
+            894 => self.import_names_tail_opt_0(&children[0], &children[1], &children[2]),
+            895 => self.import_names_tail_opt_list_0(&children[0], &children[1]),
+            896 => self.import_names_tail_opt_list_1(),
+            897 => self.import_names_tail_opt0_0(&children[0], &children[1]),
+            898 => self.import_names_tail_opt0_1(),
+            899 => self.import_names_tail_opt_1(),
+            900 => self.def_decl(
                 &children[0],
                 &children[1],
                 &children[2],
@@ -36060,15 +36589,15 @@ impl<'t> UserActionsTrait<'t> for GrammarAuto<'t, '_> {
                 &children[10],
                 &children[11],
             ),
-            886 => self.def_decl_opt1_0(&children[0]),
-            887 => self.def_decl_opt1_1(),
-            888 => self.def_decl_opt0_0(&children[0], &children[1]),
-            889 => self.def_decl_opt0_list_0(&children[0], &children[1], &children[2]),
-            890 => self.def_decl_opt0_list_1(),
-            891 => self.def_decl_opt0_1(),
-            892 => self.def_decl_opt_0(&children[0]),
-            893 => self.def_decl_opt_1(),
-            894 => self.axiom_decl(
+            901 => self.def_decl_opt1_0(&children[0]),
+            902 => self.def_decl_opt1_1(),
+            903 => self.def_decl_opt0_0(&children[0], &children[1]),
+            904 => self.def_decl_opt0_list_0(&children[0], &children[1], &children[2]),
+            905 => self.def_decl_opt0_list_1(),
+            906 => self.def_decl_opt0_1(),
+            907 => self.def_decl_opt_0(&children[0]),
+            908 => self.def_decl_opt_1(),
+            909 => self.axiom_decl(
                 &children[0],
                 &children[1],
                 &children[2],
@@ -36078,13 +36607,13 @@ impl<'t> UserActionsTrait<'t> for GrammarAuto<'t, '_> {
                 &children[6],
                 &children[7],
             ),
-            895 => self.axiom_decl_opt0_0(&children[0], &children[1]),
-            896 => self.axiom_decl_opt0_list_0(&children[0], &children[1], &children[2]),
-            897 => self.axiom_decl_opt0_list_1(),
-            898 => self.axiom_decl_opt0_1(),
-            899 => self.axiom_decl_opt_0(&children[0]),
-            900 => self.axiom_decl_opt_1(),
-            901 => self.inductive_decl(
+            910 => self.axiom_decl_opt0_0(&children[0], &children[1]),
+            911 => self.axiom_decl_opt0_list_0(&children[0], &children[1], &children[2]),
+            912 => self.axiom_decl_opt0_list_1(),
+            913 => self.axiom_decl_opt0_1(),
+            914 => self.axiom_decl_opt_0(&children[0]),
+            915 => self.axiom_decl_opt_1(),
+            916 => self.inductive_decl(
                 &children[0],
                 &children[1],
                 &children[2],
@@ -36095,42 +36624,42 @@ impl<'t> UserActionsTrait<'t> for GrammarAuto<'t, '_> {
                 &children[7],
                 &children[8],
             ),
-            902 => self.inductive_decl_opt0_0(&children[0]),
-            903 => self.inductive_decl_opt0_1(),
-            904 => {
+            917 => self.inductive_decl_opt0_0(&children[0]),
+            918 => self.inductive_decl_opt0_1(),
+            919 => {
                 self.inductive_decl_opt_0(&children[0], &children[1], &children[2], &children[3])
             }
-            905 => self.inductive_decl_opt_list_0(&children[0], &children[1], &children[2]),
-            906 => self.inductive_decl_opt_list_1(),
-            907 => self.inductive_decl_opt_1(),
-            908 => self.constructors(&children[0], &children[1]),
-            909 => self.constructors_list_0(&children[0], &children[1]),
-            910 => self.constructors_list_1(),
-            911 => self.constructors_opt_0(&children[0], &children[1]),
-            912 => self.constructors_opt_1(),
-            913 => self.constructors_tail(&children[0]),
-            914 => self.constructors_tail_opt_0(&children[0], &children[1], &children[2]),
-            915 => self.constructors_tail_opt_list_0(&children[0], &children[1]),
-            916 => self.constructors_tail_opt_list_1(),
-            917 => self.constructors_tail_opt0_0(&children[0], &children[1]),
-            918 => self.constructors_tail_opt0_1(),
-            919 => self.constructors_tail_opt_1(),
-            920 => self.constructor(
+            920 => self.inductive_decl_opt_list_0(&children[0], &children[1], &children[2]),
+            921 => self.inductive_decl_opt_list_1(),
+            922 => self.inductive_decl_opt_1(),
+            923 => self.constructors(&children[0], &children[1]),
+            924 => self.constructors_list_0(&children[0], &children[1]),
+            925 => self.constructors_list_1(),
+            926 => self.constructors_opt_0(&children[0], &children[1]),
+            927 => self.constructors_opt_1(),
+            928 => self.constructors_tail(&children[0]),
+            929 => self.constructors_tail_opt_0(&children[0], &children[1], &children[2]),
+            930 => self.constructors_tail_opt_list_0(&children[0], &children[1]),
+            931 => self.constructors_tail_opt_list_1(),
+            932 => self.constructors_tail_opt0_0(&children[0], &children[1]),
+            933 => self.constructors_tail_opt0_1(),
+            934 => self.constructors_tail_opt_1(),
+            935 => self.constructor(
                 &children[0],
                 &children[1],
                 &children[2],
                 &children[3],
                 &children[4],
             ),
-            921 => self.constructor_group_0(&children[0]),
-            922 => self.constructor_group_1(&children[0]),
-            923 => self.constructor_group_2(&children[0]),
-            924 => self.constructor_opt0_0(&children[0], &children[1], &children[2], &children[3]),
-            925 => self.constructor_opt0_list_0(&children[0], &children[1], &children[2]),
-            926 => self.constructor_opt0_list_1(),
-            927 => self.constructor_opt0_1(),
-            928 => self.constructor_opt_0(&children[0]),
-            929 => self.constructor_opt_1(),
+            936 => self.constructor_group_0(&children[0]),
+            937 => self.constructor_group_1(&children[0]),
+            938 => self.constructor_group_2(&children[0]),
+            939 => self.constructor_opt0_0(&children[0], &children[1], &children[2], &children[3]),
+            940 => self.constructor_opt0_list_0(&children[0], &children[1], &children[2]),
+            941 => self.constructor_opt0_list_1(),
+            942 => self.constructor_opt0_1(),
+            943 => self.constructor_opt_0(&children[0]),
+            944 => self.constructor_opt_1(),
             _ => Err(ParserError::InternalError(format!(
                 "Unhandled production number: {prod_num}"
             ))

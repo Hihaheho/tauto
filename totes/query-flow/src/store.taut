@@ -1,0 +1,435 @@
+import std::Base
+import std::Data
+import std::prelude::Shared
+import std::prelude::Par
+import std::prelude::Ord
+import whale::Revision
+import whale::Graph
+import "codec.taut"
+import "flow.taut"
+import "storage.taut"
+
+// Saving the runtime and reading it back in another process (`docs/design/query-flow.md`
+// 「ディスクの形式」). `save` and `load` use only the storage effects of `storage.taut`; a
+// handler there or in `storage_fs.taut` says where the entry is kept.
+//
+// What is saved is the graph: every asset with its value, every cached query with its encoded
+// output, what each query read and when, and the revisions. A runtime that loads it reuses the
+// results whose inputs did not change: an asset read from disk counts as unconfirmed until the
+// host resolves it again (or its locator gives it again); a value equal to the saved one keeps
+// its revision, a different one is a change, and whale decides what is still valid.
+
+// The name of the storage entry that holds the state.
+pub fn state_entry(): Text { "state.qflow" }
+
+pub fn format_name(): Text { "query-flow" }
+
+pub fn format_version(): Text { "1" }
+
+// ---- the checksum -------------------------------------------------------------------------
+
+// FNV-1a (32 bits) of the bytes of `t`, to tell a file cut short or changed by hand.
+pub fn checksum(t: Text): u64 ! {Div} { fnv_from(t, 0, 2166136261) }
+
+fn fnv_from(t: Text, i: u64, h: u64): u64 ! {Div} {
+  match Text::byte(t, i) {
+    None => h
+    Some(b) => fnv_from(t, i + 1, mod(U64::xor(h, U64::of_u8(b)) * 16777619, 4294967296))
+  }
+}
+
+// ---- writing ------------------------------------------------------------------------------
+
+fn slot_fields(s: Slot): List(Text) {
+  match s {
+    AssetSlot(l) => match l {
+      Loading => Cons("L", Nil)
+      Loaded(v) => Cons("R", Cons(v, Nil))
+      LoadFailed(e) => Cons("F", Cons(e, Nil))
+    }
+    Memo(r) => match r {
+      Ok(v) => Cons("O", Cons(v, Nil))
+      Err(e) => Cons("E", Cons(e, Nil))
+    }
+    Cleared => Cons("C", Nil)
+  }
+}
+
+fn nats(ns: List(Nat)): List(Text) ! {Div} {
+  match ns {
+    Nil => Nil
+    Cons(n, t) => Cons(nat_text(n), nats(t))
+  }
+}
+
+fn dep_fields(ds: List(Dep(Text))): List(Text) ! {Div} {
+  match ds {
+    Nil => Nil
+    Cons(d, t) => Cons(dep_id(d), Cons(nat_text(dep_seen(d)), dep_fields(t)))
+  }
+}
+
+fn count<A: Shared>(l: List(A)): Text { nat_text(List::length(l)) }
+
+fn node_fields(k: Text, n: Node(Text, Slot)): List(Text) ! {Div} {
+  List::append(
+    Cons(k, slot_fields(Node::data(n))),
+    List::append(
+      nats(
+        Cons(
+          Node::durability(n),
+          Cons(Node::verified_at(n), Cons(Node::changed_at(n), Cons(Node::level(n), Nil)))
+        )
+      ),
+      Cons(
+        count(Node::deps(n)),
+        List::append(
+          dep_fields(Node::deps(n)),
+          Cons(count(Node::dependents(n)), Node::dependents(n))
+        )
+      )
+    )
+  )
+}
+
+fn nodes_fields(ns: List(Text × Node(Text, Slot))): List(Text) ! {Div} {
+  match ns {
+    Nil => Nil
+    Cons(e, t) => match e {
+      #(k, n) => List::append(node_fields(k, n), nodes_fields(t))
+    }
+  }
+}
+
+// The text of a graph in the format of `state.qflow`.
+pub fn encode_graph(w: Whale(Text, Slot)): Text ! {Div} {
+  let r := Whale::revision(w)
+  let ns := Whale::nodes(w)
+  let body := fields(List::append(Cons(count(r), nats(r)), Cons(count(ns), nodes_fields(ns))))
+  concat(
+    fields(Cons(format_name(), Cons(format_version(), Cons(Text::of_u64(checksum(body)), Nil)))),
+    body
+  )
+}
+
+// Replaces the storage entry `state.qflow` with the runtime's graph, at once.
+pub fn save(rt: Runtime): Result(Unit, Text) ! {store_replace, Div} {
+  perform store_replace(state_entry(), Bytes::of_text(encode_graph(current_graph(rt))))
+}
+
+// ---- reading ------------------------------------------------------------------------------
+
+// What `load` did.
+pub(open) enum LoadResult {
+  // The graph was read; the number of keys.
+  Restored(Nat)
+  // There was no file: the runtime is unchanged.
+  NoState
+  // The file was not of this format or version, or not well formed: the runtime is unchanged,
+  // and the reason is given.
+  Discarded(Text)
+}
+
+// Fields read one at a time; `None` when they run out or one is not what is wanted.
+fn take(ts: List(Text)): Option(Text × List(Text)) {
+  match ts {
+    Nil => None
+    Cons(t, rest) => Some(#(t, rest))
+  }
+}
+
+fn take_nat(ts: List(Text)): Option(Nat × List(Text)) ! {Div} {
+  match take(ts) {
+    None => None
+    Some(p) => match p {
+      #(t, rest) => match parse_nat(t) {
+        None => None
+        Some(n) => Some(#(n, rest))
+      }
+    }
+  }
+}
+
+fn take_nats(n: Nat, ts: List(Text), acc: List(Nat)): Option(List(Nat) × List(Text)) ! {Div} {
+  match n {
+    Zero => Some(#(List::reverse(acc), ts))
+    Succ(m) => match take_nat(ts) {
+      None => None
+      Some(p) => match p {
+        #(x, rest) => take_nats(m, rest, Cons(x, acc))
+      }
+    }
+  }
+}
+
+fn take_texts(n: Nat, ts: List(Text), acc: List(Text)): Option(List(Text) × List(Text)) ! {Div} {
+  match n {
+    Zero => Some(#(List::reverse(acc), ts))
+    Succ(m) => match take(ts) {
+      None => None
+      Some(p) => match p {
+        #(x, rest) => take_texts(m, rest, Cons(x, acc))
+      }
+    }
+  }
+}
+
+fn take_deps(
+  n: Nat,
+  ts: List(Text),
+  acc: List(Dep(Text))
+): Option(List(Dep(Text)) × List(Text)) ! {Div} {
+  match n {
+    Zero => Some(#(List::reverse(acc), ts))
+    Succ(m) => match take(ts) {
+      None => None
+      Some(p) => match p {
+        #(k, rest) => match take_nat(rest) {
+          None => None
+          Some(q) => match q {
+            #(seen, rest2) => take_deps(m, rest2, Cons(dep_of(k, seen), acc))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn take_value(tag: Text, ts: List(Text)): Option(Slot × List(Text)) {
+  match take(ts) {
+    None => None
+    Some(p) => match p {
+      #(v, rest) => if tag == "R" { Some(#(AssetSlot(Loaded(v)), rest)) } else if tag == "F" {
+        Some(#(AssetSlot(LoadFailed(v)), rest))
+      } else if tag == "O" { Some(#(Memo(Ok(v)), rest)) } else if tag == "E" {
+        Some(#(Memo(Err(v)), rest))
+      } else { None }
+    }
+  }
+}
+
+fn take_slot(ts: List(Text)): Option(Slot × List(Text)) {
+  match take(ts) {
+    None => None
+    Some(p) => match p {
+      #(tag, rest) => if tag == "L" { Some(#(AssetSlot(Loading), rest)) } else if tag == "C" {
+        Some(#(Cleared, rest))
+      } else { take_value(tag, rest) }
+    }
+  }
+}
+
+fn nat_at(l: List(Nat), i: Nat): Nat {
+  match List::nth(l, i) {
+    None => 0
+    Some(n) => n
+  }
+}
+
+fn take_node(ts: List(Text)): Option(Text × Node(Text, Slot) × List(Text)) ! {Div} {
+  match take(ts) {
+    None => None
+    Some(p) => match p {
+      #(k, r1) => match take_slot(r1) {
+        None => None
+        Some(q) => match q {
+          #(s, r2) => match take_nats(4, r2, Nil) {
+            None => None
+            Some(u) => match u {
+              #(ns, r3) => match take_nat(r3) {
+                None => None
+                Some(v) => match v {
+                  #(nd, r4) => match take_deps(nd, r4, Nil) {
+                    None => None
+                    Some(x) => match x {
+                      #(ds, r5) => match take_nat(r5) {
+                        None => None
+                        Some(y) => match y {
+                          #(nr, r6) => match take_texts(nr, r6, Nil) {
+                            None => None
+                            Some(z) => match z {
+                              #(rs, r7) => Some(
+                                #(
+                                  k,
+                                  Node::Mk(
+                                    s,
+                                    nat_at(ns, 0),
+                                    nat_at(ns, 1),
+                                    nat_at(ns, 2),
+                                    nat_at(ns, 3),
+                                    ds,
+                                    rs
+                                  ),
+                                  r7
+                                )
+                              )
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn take_nodes(
+  n: Nat,
+  ts: List(Text),
+  acc: List(Text × Node(Text, Slot))
+): Option(List(Text × Node(Text, Slot)) × List(Text)) ! {Div} {
+  match n {
+    Zero => Some(#(List::reverse(acc), ts))
+    Succ(m) => match take_node(ts) {
+      None => None
+      Some(p) => match p {
+        #(k, n, rest) => take_nodes(m, rest, Cons(#(k, n), acc))
+      }
+    }
+  }
+}
+
+// No key twice, as whale keeps them.
+fn keys_distinct(ns: List(Text × Node(Text, Slot))): Bool ! {Div} {
+  match ns {
+    Nil => true
+    Cons(e, t) => match e {
+      #(k, n) => if has_node(t, k) { false } else { keys_distinct(t) }
+    }
+  }
+}
+
+fn has_node(ns: List(Text × Node(Text, Slot)), k: Text): Bool ! {Div} {
+  match ns {
+    Nil => false
+    Cons(e, t) => match e {
+      #(x, n) => if x == k { true } else { has_node(t, k) }
+    }
+  }
+}
+
+fn deps_present(all: List(Text × Node(Text, Slot)), ds: List(Dep(Text))): Bool ! {Div} {
+  match ds {
+    Nil => true
+    Cons(d, t) => if has_node(all, dep_id(d)) { deps_present(all, t) } else { false }
+  }
+}
+
+// Every node reads only nodes that are there.
+fn reads_present(
+  all: List(Text × Node(Text, Slot)),
+  ns: List(Text × Node(Text, Slot))
+): Bool ! {Div} {
+  match ns {
+    Nil => true
+    Cons(e, t) => match e {
+      #(k, n) => if deps_present(all, Node::deps(n)) { reads_present(all, t) } else { false }
+    }
+  }
+}
+
+// The graph a text holds, or why it is not one.
+pub fn decode_graph(text: Text): Result(Whale(Text, Slot), Text) ! {Div} {
+  match read_fields(text) {
+    None => Err("not a sequence of fields")
+    Some(all) => match take_texts(3, all, Nil) {
+      None => Err("no header")
+      Some(p) => match p {
+        #(header, body_fields) => match header {
+          Nil => Err("no header")
+          Cons(name, h1) => match h1 {
+            Nil => Err("no header")
+            Cons(version, h2) => match h2 {
+              Nil => Err("no header")
+              Cons(sum, h3) => if name == format_name() {
+                if version == format_version() {
+                  let body := fields(body_fields)
+                  if Text::of_u64(checksum(body)) == sum { decode_body(body_fields) } else {
+                    Err("the checksum does not match")
+                  }
+                } else { Err(concat("version ", version)) }
+              } else { Err("not a query-flow state") }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn decode_body(ts: List(Text)): Result(Whale(Text, Slot), Text) ! {Div} {
+  match take_nat(ts) {
+    None => Err("no revision")
+    Some(p) => match p {
+      #(nr, r1) => match take_nats(nr, r1, Nil) {
+        None => Err("no revision")
+        Some(q) => match q {
+          #(rev, r2) => match take_nat(r2) {
+            None => Err("no nodes")
+            Some(u) => match u {
+              #(nn, r3) => match take_nodes(nn, r3, Nil) {
+                None => Err("a node is not well formed")
+                Some(v) => match v {
+                  #(ns, rest) => match rest {
+                    Cons(x, y) => Err("fields after the nodes")
+                    Nil => if List::length(rev) == 4 {
+                      if keys_distinct(ns) {
+                        if reads_present(ns, ns) { Ok(Whale::Mk(ns, rev)) } else {
+                          Err("a node reads a key that is not there")
+                        }
+                      } else { Err("a key is there twice") }
+                    } else { Err("not four durability levels") }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The assets with a value in the graph: they wait for the host to confirm them.
+fn assets_of(ns: List(Text × Node(Text, Slot))): List(Text) {
+  match ns {
+    Nil => Nil
+    Cons(e, t) => match e {
+      #(k, n) => match Node::data(n) {
+        AssetSlot(l) => match l {
+          Loading => assets_of(t)
+          Loaded(v) => Cons(k, assets_of(t))
+          LoadFailed(f) => Cons(k, assets_of(t))
+        }
+        Memo(m) => assets_of(t)
+        Cleared => assets_of(t)
+      }
+    }
+  }
+}
+
+// Reads the storage entry `state.qflow` into the runtime, in place of its graph. Each asset with
+// a value is unconfirmed until the host resolves it again or its locator gives it again: the
+// same value keeps its revision and what read it stays valid; a different one is a change.
+pub fn load(rt: Runtime): LoadResult ! {store_read, Div} {
+  match perform store_read(state_entry()) {
+    None => NoState
+    Some(bytes) => match Text::of_bytes(bytes) {
+      None => Discarded("not UTF-8")
+      Some(text) => match decode_graph(text) {
+        Err(why) => Discarded(why)
+        Ok(w) => {
+          // A new revision: nothing read from disk counts as checked in this process.
+          restore_graph(rt, Whale::bump(w, 3), assets_of(Whale::nodes(w)))
+          Restored(List::length(Whale::nodes(w)))
+        }
+      }
+    }
+  }
+}

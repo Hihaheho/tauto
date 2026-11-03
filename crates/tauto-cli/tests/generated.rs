@@ -1,4 +1,4 @@
-//! `tauto fmt --fill-generated` writes the list of what a declaration makes
+//! `tauto lint --fix` writes the list of what a declaration makes
 //! (`docs/design/macro.md`, "作る宣言の一覧").
 
 use std::fs;
@@ -61,19 +61,18 @@ import "{}/Nat.taut"
         "{shown}"
     );
 
-    let (shown, ok) = tauto(&["fmt", "--fill-generated", path]);
-    assert!(ok, "{shown}");
+    // The imports get their lists too.
+    tauto(&["lint", "--fix", path]);
     let written = fs::read_to_string(&file).unwrap();
     assert!(
         written.contains("decreasing_by measure(id_nat) => theorem half::eq {"),
         "{written}"
     );
-    assert_eq!(written.replace(" => theorem half::eq", ""), source);
 
     let (shown, ok) = tauto(&["check", path]);
     assert!(ok, "{shown}");
     // Writing it again changes nothing.
-    tauto(&["fmt", "--fill-generated", path]);
+    tauto(&["lint", "--fix", path]);
     assert_eq!(fs::read_to_string(&file).unwrap(), written);
 }
 
@@ -98,8 +97,7 @@ import "{}/Nat.taut"
     );
     fs::write(&file, &source).unwrap();
     let path = file.to_str().unwrap();
-    let (shown, ok) = tauto(&["fmt", "--fill-generated", path]);
-    assert!(ok, "{shown}");
+    tauto(&["lint", "--fix", path]);
     let written = fs::read_to_string(&file).unwrap();
     assert!(written.contains("=> theorem half::eq {"), "{written}");
     assert!(!written.contains("other"), "{written}");

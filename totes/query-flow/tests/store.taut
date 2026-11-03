@@ -1,0 +1,348 @@
+import std::Base
+import std::prelude::Shared
+import std::prelude::Par
+import std::prelude::Os
+import "../src/codec.taut"
+import "../src/flow.taut"
+import "../src/api.taut"
+import "../src/store.taut"
+import "../src/storage.taut"
+import "../src/storage_fs.taut"
+
+// Saving and loading through each handler of the storage: in memory, and in the directory
+// `cache` of a file system the test holds in memory (its handlers stand for the file system, so
+// the test touches no file). Each test runs with both.
+
+// The directory `cache` of the test's file system: the state file and the temporary file.
+struct Disk { state: Ref(Option(Bytes)), temp: Ref(Option(Bytes)) }
+
+fn new_disk(): Disk { Disk { state: Ref::new(None), temp: Ref::new(None) } }
+
+fn slot_of(disk: Disk, p: Text): Ref(Option(Bytes)) {
+  if p == entry_file("cache", state_entry()) { disk.state } else { disk.temp }
+}
+
+// What the test's file system answers, for `body`.
+fn on_disk<A>(
+  disk: Disk,
+  body: () -> A ! {fs_read_bytes, fs_create_dir, fs_write_bytes, fs_rename, Div}
+): A ! {Div} {
+  handle { body() } with {
+    fs_read_bytes(p), k => match Ref::get(slot_of(disk, p)) {
+      None => k(Err(IoError::Failed(p)))
+      Some(b) => k(Ok(b))
+    }
+    fs_create_dir(p), k => k(Ok(#()))
+    fs_write_bytes(p, b), k => {
+      Ref::set(slot_of(disk, p), Some(b))
+      k(Ok(#()))
+    }
+    fs_rename(src, dst), k => match Ref::get(slot_of(disk, src)) {
+      None => k(Err(IoError::Failed(src)))
+      Some(x) => {
+        Ref::set(slot_of(disk, src), None)
+        Ref::set(slot_of(disk, dst), Some(x))
+        k(Ok(#()))
+      }
+    }
+  }
+}
+
+pub(open) enum Place {
+  InMemory(MemoryStore)
+  InFiles(Disk)
+}
+
+pub(open) enum PlaceKind {
+  MemoryKind
+  FilesKind
+}
+
+fn new_place(kind: PlaceKind): Place {
+  match kind {
+    MemoryKind => InMemory(MemoryStore::new())
+    FilesKind => InFiles(new_disk())
+  }
+}
+
+fn save_in(place: Place, rt: Runtime): Bool ! {Div} {
+  let r := match place {
+    InMemory(m) => with_memory_store(m, () => save(rt))
+    InFiles(disk) => on_disk(disk, () => with_dir_store("cache", () => save(rt)))
+  }
+  match r {
+    Ok(u) => true
+    Err(why) => false
+  }
+}
+
+fn load_from(place: Place, rt: Runtime): LoadResult ! {Div} {
+  match place {
+    InMemory(m) => with_memory_store(m, () => load(rt))
+    InFiles(disk) => on_disk(disk, () => with_dir_store("cache", () => load(rt)))
+  }
+}
+
+// The bytes of the saved state, and a way to change them.
+fn state_of(place: Place): Option(Bytes) ! {Div} {
+  match place {
+    InMemory(m) => MemoryStore::get(m, state_entry())
+    InFiles(disk) => Ref::get(disk.state)
+  }
+}
+
+fn set_state(place: Place, b: Bytes): Unit ! {Div} {
+  match place {
+    InMemory(m) => MemoryStore::set(m, state_entry(), b)
+    InFiles(disk) => Ref::set(disk.state, Some(b))
+  }
+}
+
+fn Stored(): AssetKind(Text, i64) {
+  make_asset_kind("Stored", Codec::of_text(), Codec::of_i64(), (x: i64, y: i64) => x == y)
+}
+
+fn bump(c: Ref(i64)): Unit { Ref::set(c, Ref::get(c) + 1) }
+
+fn SSum(runs: Ref(i64)): Query(i64) {
+  make_query("ssum", Nil, (db: Db) => {
+    let x := Db::asset(db, Stored(), "a")
+    let y := Db::asset(db, Stored(), "b")
+    bump(runs)
+    x + y
+  }, Codec::of_i64())
+}
+
+fn SSign(runs: Ref(i64)): Query(i64) {
+  make_query("ssign", Nil, (db: Db) => {
+    let s := Db::query(db, SSum(runs))
+    bump(runs)
+    if s > 0 { 1 } else { 0 }
+  }, Codec::of_i64())
+}
+
+fn STwice(runs: Ref(i64)): Query(i64) {
+  make_query("stwice", Nil, (db: Db) => {
+    let s := Db::query(db, SSign(runs))
+    bump(runs)
+    2 * s
+  }, Codec::of_i64())
+}
+
+fn value_of(a: Answer(i64)): i64 {
+  match a {
+    Value(v) => v
+    Error(e) => 0 - 1
+    Suspended => 0 - 2
+    Cycle(ks) => 0 - 3
+    Cancelled => 0 - 4
+    DependenciesRemoved(ks) => 0 - 5
+  }
+}
+
+fn restored(l: LoadResult): Bool {
+  match l {
+    Restored(n) => true
+    NoState => false
+    Discarded(why) => false
+  }
+}
+
+// A first process computes `twice` and saves; returns where it saved.
+fn first_process(kind: PlaceKind): Place ! {Div} {
+  let place := new_place(kind)
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  resolve_asset(rt, Stored(), "a", 2, Volatile)
+  resolve_asset(rt, Stored(), "b", 3, Volatile)
+  run(rt, STwice(runs))
+  save_in(place, rt)
+  place
+}
+
+fn reuses_every_result(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := first_process(kind)
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  expect(restored(load_from(place, rt)), "restored")
+  resolve_asset(rt, Stored(), "a", 2, Volatile)
+  resolve_asset(rt, Stored(), "b", 3, Volatile)
+  expect(value_of(run(rt, STwice(runs))) == 2, "twice is 2")
+  expect(Ref::get(runs) == 0, "nothing ran")
+}
+
+fn waits_for_the_host(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := first_process(kind)
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  load_from(place, rt)
+  let before := run(rt, STwice(runs))
+  resolve_asset(rt, Stored(), "a", 2, Volatile)
+  resolve_asset(rt, Stored(), "b", 3, Volatile)
+  expect(value_of(before) == 0 - 2, "suspended first")
+  expect(value_of(run(rt, STwice(runs))) == 2 && Ref::get(runs) == 0, "then reused")
+}
+
+fn recomputes_a_change(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := first_process(kind)
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  load_from(place, rt)
+  resolve_asset(rt, Stored(), "a", 7, Volatile)
+  resolve_asset(rt, Stored(), "b", 3, Volatile)
+  // This process does not know yet how to compute `sign` and `sum`: `twice` runs, and reads
+  // them; `sum` changed, `sign` did not.
+  expect(value_of(run(rt, STwice(runs))) == 2, "twice is 2")
+  expect(Ref::get(runs) == 3, "three runs")
+  // Now it does: a change stops at `sign` (early cutoff).
+  resolve_asset(rt, Stored(), "a", 8, Volatile)
+  expect(value_of(run(rt, STwice(runs))) == 2, "still 2")
+  expect(Ref::get(runs) == 5, "sum and sign only")
+  expect(value_of(run(rt, SSum(runs))) == 11 && Ref::get(runs) == 5, "sum is 11, cached")
+}
+
+fn loads_again(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := first_process(kind)
+  let rt := new_runtime()
+  load_from(place, rt)
+  let place2 := new_place(kind)
+  save_in(place2, rt)
+  let rt2 := new_runtime()
+  expect(restored(load_from(place2, rt2)), "restored again")
+  expect(List::length(graph_keys(rt2)) == List::length(graph_keys(rt)), "same keys")
+}
+
+fn nothing_saved(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := new_place(kind)
+  let rt := new_runtime()
+  match load_from(place, rt) {
+    NoState => #()
+    Restored(n) => expect(false, "restored")
+    Discarded(why) => expect(false, why)
+  }
+}
+
+fn damaged_is_discarded(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := first_process(kind)
+  match state_of(place) {
+    None => expect(false, "no state")
+    Some(b) => {
+      let cut := match Bytes::slice(b, 0, Bytes::len(b) - 3) {
+        None => b
+        Some(c) => c
+      }
+      set_state(place, cut)
+      let rt := new_runtime()
+      match load_from(place, rt) {
+        Discarded(why) => #()
+        Restored(n) => expect(false, "restored")
+        NoState => expect(false, "no state")
+      }
+    }
+  }
+}
+
+fn locator_confirms(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := first_process(kind)
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  register_asset_locator(
+    rt,
+    Stored(),
+    (db: Db, k: Text) => if k == "a" { LocateResult::Ready(2, Volatile) } else { LocateResult::Ready(3, Volatile) }
+  )
+  load_from(place, rt)
+  expect(value_of(run(rt, STwice(runs))) == 2 && Ref::get(runs) == 0, "reused without the host")
+}
+
+fn durability_kept(kind: PlaceKind): Unit ! {fail(Text), Div} {
+  let place := new_place(kind)
+  let runs := Ref::new(0)
+  let rt := new_runtime()
+  resolve_asset(rt, Stored(), "a", 2, Stable)
+  resolve_asset(rt, Stored(), "b", 3, Stable)
+  run(rt, SSum(runs))
+  save_in(place, rt)
+  let rt2 := new_runtime()
+  load_from(place, rt2)
+  resolve_asset(rt2, Stored(), "a", 2, Stable)
+  resolve_asset(rt2, Stored(), "b", 3, Stable)
+  resolve_asset(rt2, Stored(), "c", 0, Volatile)
+  resolve_asset(rt2, Stored(), "c", 1, Volatile)
+  expect(value_of(run(rt2, SSum(runs))) == 5 && Ref::get(runs) == 1, "not computed again")
+}
+
+fn is_ok(r: Result(Unit, Text)): Bool {
+  match r {
+    Ok(u) => true
+    Err(why) => false
+  }
+}
+
+fn is_some(o: Option(Bytes)): Bool {
+  match o {
+    Some(b) => true
+    None => false
+  }
+}
+
+perform test(
+  "a saved runtime reuses every result when the assets are the same, in memory",
+  () => reuses_every_result(MemoryKind)
+)
+perform test(
+  "a loaded runtime waits for the host to confirm its assets, in memory",
+  () => waits_for_the_host(MemoryKind)
+)
+perform test(
+  "a changed asset after a load recomputes, and early cutoff still holds, in memory",
+  () => recomputes_a_change(MemoryKind)
+)
+perform test("a save of a loaded runtime loads again, in memory", () => loads_again(MemoryKind))
+perform test(
+  "nothing saved leaves the runtime as it is, in memory",
+  () => nothing_saved(MemoryKind)
+)
+perform test("a damaged state is discarded, in memory", () => damaged_is_discarded(MemoryKind))
+perform test(
+  "a locator confirms the assets read from the storage, in memory",
+  () => locator_confirms(MemoryKind)
+)
+perform test(
+  "a durable asset read from the storage keeps its durability, in memory",
+  () => durability_kept(MemoryKind)
+)
+
+perform test(
+  "a saved runtime reuses every result when the assets are the same, in files",
+  () => reuses_every_result(FilesKind)
+)
+perform test(
+  "a loaded runtime waits for the host to confirm its assets, in files",
+  () => waits_for_the_host(FilesKind)
+)
+perform test(
+  "a changed asset after a load recomputes, and early cutoff still holds, in files",
+  () => recomputes_a_change(FilesKind)
+)
+perform test("a save of a loaded runtime loads again, in files", () => loads_again(FilesKind))
+perform test("nothing saved leaves the runtime as it is, in files", () => nothing_saved(FilesKind))
+perform test("a damaged state is discarded, in files", () => damaged_is_discarded(FilesKind))
+perform test(
+  "a locator confirms the assets read from the storage, in files",
+  () => locator_confirms(FilesKind)
+)
+perform test(
+  "a durable asset read from the storage keeps its durability, in files",
+  () => durability_kept(FilesKind)
+)
+
+perform test("the directory handler writes a temporary file and renames it over the state", () => {
+  let disk := new_disk()
+  let rt := new_runtime()
+  resolve_asset(rt, Stored(), "a", 2, Volatile)
+  let r := on_disk(disk, () => with_dir_store("cache", () => save(rt)))
+  expect(is_ok(r), "saved")
+  expect(is_some(Ref::get(disk.state)), "the state file")
+  expect(not(is_some(Ref::get(disk.temp))), "no temporary file")
+})

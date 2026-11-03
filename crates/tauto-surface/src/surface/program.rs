@@ -124,11 +124,13 @@ pub enum Stmt {
         items: Vec<Stmt>,
         span: Span,
     },
-    /// `import "path"`, relative to the importing file, or `import std.List`
+    /// `import "path"`, relative to the importing file, or `import std::List`
     /// (`module`), a module of the standard library or of a dependency.
+    /// `names` is the list `{ List, map }` of what it brings, when written.
     Import {
         path: String,
         module: bool,
+        names: Option<Vec<(String, Span)>>,
         span: Span,
     },
     Inductive(InductiveDecl),
@@ -929,24 +931,37 @@ impl Reader<'_> {
                     span,
                 }
             }
-            Some(Nt::ImportDecl) => match self.first(inner, Nt::Text) {
-                Some(t) => Stmt::Import {
-                    path: super::unquote_text(self.text(t)),
-                    module: false,
-                    span,
-                },
-                // `import std::List` is kept as the path `std::List`.
-                None => Stmt::Import {
-                    path: self
-                        .all(inner, Nt::Ident)
+            Some(Nt::ImportDecl) => {
+                // `{ Text, concat }`: the names the import brings.
+                let names = self.first(inner, Nt::ImportList).map(|list| {
+                    let mut idents = Vec::new();
+                    self.descend(list, Nt::Ident, &mut idents);
+                    idents
                         .into_iter()
-                        .map(|i| self.text(i).to_string())
+                        .map(|i| (self.name_of(i), self.span(i)))
                         .collect::<Vec<_>>()
-                        .join(SEPARATOR),
-                    module: true,
-                    span,
-                },
-            },
+                });
+                match self.first(inner, Nt::Text) {
+                    Some(t) => Stmt::Import {
+                        path: super::unquote_text(self.text(t)),
+                        module: false,
+                        names,
+                        span,
+                    },
+                    // `import std::List` is kept as the path `std::List`.
+                    None => Stmt::Import {
+                        path: self
+                            .all(inner, Nt::Ident)
+                            .into_iter()
+                            .map(|i| self.text(i).to_string())
+                            .collect::<Vec<_>>()
+                            .join(SEPARATOR),
+                        module: true,
+                        names,
+                        span,
+                    },
+                }
+            }
             Some(Nt::SyntaxDecl) => self.syntax_decl(inner, span),
             // Read as the function and its registration by `read_into`.
             Some(Nt::MacroFnDecl) => Stmt::Other("macro fn".into(), span),

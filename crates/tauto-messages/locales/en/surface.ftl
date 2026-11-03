@@ -57,3 +57,6 @@ surface-row-variables = a row has at most one row variable
 surface-row-repeats-effect = the effect `{ $name }` is written twice in one set literal
 surface-raw-underscore = `r#_` is not a name: `_` is not written as a raw name
 surface-syntax-macro-shape = `{ $macro }` takes a name, a grammar block and, when it registers functions, `with(fmt: f, tokens: g)`
+surface-import-not-listed = `{ $name }` comes through `import { $spelling }`, whose list does not write it; write `{ $item }` in its list (`tauto lint --fix` writes the list)
+surface-import-listed-unused = `{ $name }` is in the list of `import { $spelling }`, but this file does not use it; take it out of the list (`tauto lint --fix` writes the list)
+surface-import-listed-unknown = `{ $name }` is in the list of `import { $spelling }`, but the imported file declares no `{ $name }` for other files

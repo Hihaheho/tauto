@@ -182,7 +182,7 @@ fn the_kernel_computes_what_the_hardware_does() {
     let file = dir.join("model.taut");
     std::fs::write(&file, src).unwrap();
     let out = run(&["check"], &file, &dir.join("target"));
-    assert!(out.contains(" 0 failed"), "{out}");
+    assert_eq!(out, "ok\n");
 }
 
 /// A finite `Float` whose number the kernel computes at once: below `2^30`,
@@ -232,7 +232,7 @@ fn operations_round_the_exact_result() {
     let file = dir.join("real.taut");
     std::fs::write(&file, src).unwrap();
     let out = run(&["check"], &file, &dir.join("target"));
-    assert!(out.contains(" 0 failed"), "{out}");
+    assert_eq!(out, "ok\n");
 }
 
 #[test]
@@ -365,5 +365,5 @@ fn the_kernel_computes_what_the_hardware_does_in_float32() {
     let file = dir.join("model32.taut");
     std::fs::write(&file, src).unwrap();
     let out = run(&["check"], &file, &dir.join("target"));
-    assert!(out.contains(" 0 failed"), "{out}");
+    assert_eq!(out, "ok\n");
 }

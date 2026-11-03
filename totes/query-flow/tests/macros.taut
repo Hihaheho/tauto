@@ -1,0 +1,156 @@
+import std::Base
+import std::List
+import std::prelude::Shared
+import std::prelude::Par
+import "../src/codec.taut"
+import "../src/flow.taut"
+import "../src/api.taut"
+import "../src/macros.taut"
+
+// Queries and asset kinds made by the attribute macros.
+
+@asset_key!(Config { asset: Text }) => fn ConfigFile::codec, fn Config
+pub struct ConfigFile { path: Text }
+
+// Files told apart by their path only: the label is passed along.
+@asset_key!(Labeled { asset: Text, keys: [path] }) => fn LabeledFile::codec, fn Labeled
+pub struct LabeledFile { path: Text, label: Text }
+
+@query!(Add) => fn Add
+fn add(db: Db, a: i64, b: i64): i64 ! {halt, Div} { a + b }
+
+@query!(Length) => fn Length
+fn length_of(db: Db, path: Text): u64 ! {halt, Div} {
+  let t := Db::asset(db, Config(), ConfigFile { path: path })
+  Text::len(t)
+}
+
+fn same_parity(a: i64, b: i64): Bool { mod(a - b, 2) == 0 }
+
+@query!(Parity { output_eq: same_parity }) => fn Parity
+fn parity(db: Db, path: Text): i64 ! {halt, Div} { I64::of_u64(Db::query(db, Length(path))) }
+
+fn is<T: Shared>(a: Answer(T), ok: (T) -> Bool): Bool {
+  match a {
+    Value(v) => ok(v)
+    Error(e) => false
+    Suspended => false
+    Cycle(ks) => false
+    Cancelled => false
+    DependenciesRemoved(ks) => false
+  }
+}
+
+perform test("a query made by @query! computes", () => {
+  let rt := new_runtime()
+  expect(is(run(rt, Add(1, 2)), (n: i64) => n == 3), "3")
+})
+
+perform test("its key holds its arguments", () => {
+  expect(key_of(Add(1, 2)) != key_of(Add(2, 1)), "different keys")
+  expect(key_of(Add(1, 2)) == key_of(Add(1, 2)), "same key")
+})
+
+perform test("an asset kind made by @asset_key! is resolved by key", () => {
+  let rt := new_runtime()
+  let first := run(rt, Length("a.txt"))
+  resolve_asset(rt, Config(), ConfigFile { path: "a.txt" }, "hello", Volatile)
+  expect(is_suspended(first), "suspended first")
+  expect(is(run(rt, Length("a.txt")), (n: u64) => n == 5), "5")
+})
+
+perform test("its pending keys read back", () => {
+  let rt := new_runtime()
+  run(rt, Length("b.txt"))
+  match pending_assets_of(rt, Config()) {
+    Cons(k, rest) => expect(k.path == "b.txt", "b.txt")
+    Nil => expect(false, "none pending")
+  }
+})
+
+perform test("output_eq decides early cutoff", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Config(), ConfigFile { path: "a" }, "ab", Volatile)
+  let r1 := poll(rt, Parity("a")).revision
+  resolve_asset(rt, Config(), ConfigFile { path: "a" }, "abcd", Volatile)
+  let r2 := poll(rt, Parity("a")).revision
+  resolve_asset(rt, Config(), ConfigFile { path: "a" }, "abc", Volatile)
+  let r3 := poll(rt, Parity("a")).revision
+  expect(r1 == r2, "the same parity keeps the revision")
+  expect(r2 < r3, "another parity moves it")
+})
+
+fn is_suspended<T: Shared>(a: Answer(T)): Bool {
+  match a {
+    Value(v) => false
+    Error(e) => false
+    Suspended => true
+    Cycle(ks) => false
+    Cancelled => false
+    DependenciesRemoved(ks) => false
+  }
+}
+
+// A query whose key is its first argument only: `note` is passed to the function.
+@query!(Tagged { keys: [a] }) => fn Tagged
+fn tagged(db: Db, a: i64, note: Text): i64 ! {halt, Div} { a + I64::of_u64(Text::len(note)) }
+
+@query!(LabelLength) => fn LabelLength
+fn label_length(db: Db, path: Text, label: Text): u64 ! {halt, Div} {
+  Text::len(Db::asset(db, Labeled(), LabeledFile { path: path, label: label }))
+}
+
+@query!(LabelsOf) => fn LabelsOf
+fn labels_of(db: Db, u: Unit): List(Text) ! {halt, Div} { labels(Db::list_asset_keys(db, Labeled())) }
+
+fn labels(ks: List(LabeledFile)): List(Text) {
+  match ks {
+    Nil => Nil
+    Cons(k, rest) => Cons(k.label, labels(rest))
+  }
+}
+
+perform test("keys: only the listed arguments tell queries apart", () => {
+  expect(key_of(Tagged(1, "x")) == key_of(Tagged(1, "yy")), "the same key")
+  expect(key_of(Tagged(1, "x")) != key_of(Tagged(2, "x")), "different keys")
+  let rt := new_runtime()
+  expect(is(run(rt, Tagged(1, "x")), (n: i64) => n == 2), "computed with the note")
+  expect(is(run(rt, Tagged(1, "yyy")), (n: i64) => n == 2), "cached under the same key")
+})
+
+perform test("the struct codec of an asset key reads back", () => {
+  let k := LabeledFile { path: "a", label: "first" }
+  match decode(LabeledFile::codec(), encode(LabeledFile::codec(), k)) {
+    Some(x) => expect(x.path == "a" && x.label == "first", "the same fields")
+    None => expect(false, "does not read back")
+  }
+})
+
+perform test("keys: an asset is told apart by its listed fields only", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Labeled(), LabeledFile { path: "a", label: "first" }, "abc", Volatile)
+  expect(is(run(rt, LabelLength("a", "second")), (n: u64) => n == 3), "the same asset")
+  resolve_asset(rt, Labeled(), LabeledFile { path: "a", label: "third" }, "abcd", Volatile)
+  expect(is(run(rt, LabelLength("a", "first")), (n: u64) => n == 4), "one asset, resolved again")
+})
+
+perform test("keys: a listed key keeps the whole key it was last named by", () => {
+  let rt := new_runtime()
+  resolve_asset(rt, Labeled(), LabeledFile { path: "a", label: "first" }, "x", Volatile)
+  resolve_asset(rt, Labeled(), LabeledFile { path: "a", label: "second" }, "y", Volatile)
+  resolve_asset(rt, Labeled(), LabeledFile { path: "b", label: "other" }, "z", Volatile)
+  match run(rt, LabelsOf(#())) {
+    Value(ls) => expect(List::length(ls) == 2 && List::any((l: Text) => l == "second", ls), "two keys")
+    Error(e) => expect(false, e)
+    Suspended => expect(false, "suspended")
+    Cycle(ks) => expect(false, "cycle")
+    Cancelled => expect(false, "cancelled")
+    DependenciesRemoved(ks) => expect(false, "removed")
+  }
+})
+
+perform test("keys: a locator is given the whole key", () => {
+  let rt := new_runtime()
+  register_asset_locator(rt, Labeled(), (db: Db, k: LabeledFile) => LocateResult::Ready(k.label, Volatile))
+  expect(is(run(rt, LabelLength("a", "four")), (n: u64) => n == 4), "the label's length")
+})

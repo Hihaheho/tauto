@@ -1,0 +1,427 @@
+import "core.taut" {
+  RsAddress,
+  RsBorrow,
+  RsCallable,
+  RsEvent,
+  RsExpr,
+  RsLiteral,
+  RsOutcome,
+  RsRuntime,
+  RsStore,
+  RsValue,
+  rs_invoke
+}
+import "store.taut" { rs_alloc_values, rs_cell, rs_initialized, rs_store_cell }
+import "../../../std/Base.taut" { List }
+import "../../../std/Int.taut" { Int }
+
+pub fn rs_trace(a: List(RsEvent), b: List(RsEvent), c: List(RsEvent)): List(RsEvent) {
+  List::append(a, List::append(b, c))
+}
+
+pub(open) inductive RsAbnormal(A: Type): (RsOutcome(A)) -> Prop {
+  RsReturnOutcome<v: RsValue>: RsAbnormal(A, RsReturned(v))
+  RsBreakOutcome<label: Nat, v: RsValue>: RsAbnormal(A, RsBroken(label, v))
+  RsContinueOutcome<label: Nat>: RsAbnormal(A, RsContinued(label))
+  RsPanicOutcome: RsAbnormal(A, RsPanic)
+  RsExitOutcome<code: Int>: RsAbnormal(A, RsExit(code))
+  RsAbortOutcome: RsAbnormal(A, RsAbort)
+}
+
+pub fn rs_abnormal<A, B>(out: RsOutcome(A)): RsOutcome(B) {
+  match out: RsOutcome(B) {
+    RsDone(value) => RsPanic
+    RsReturned(value) => RsReturned(value)
+    RsBroken(label, value) => RsBroken(label, value)
+    RsContinued(label) => RsContinued(label)
+    RsPanic => RsPanic
+    RsExit(code) => RsExit(code)
+    RsAbort => RsAbort
+  }
+}
+
+pub fn rs_returned(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
+  match out: RsOutcome(RsValue) {
+    RsDone(value) => RsDone(value)
+    RsReturned(value) => RsDone(value)
+    RsBroken(label, value) => RsBroken(label, value)
+    RsContinued(label) => RsContinued(label)
+    RsPanic => RsPanic
+    RsExit(code) => RsExit(code)
+    RsAbort => RsAbort
+  }
+}
+
+// A runtime call cannot return, break, or continue in its caller.
+pub(open) inductive RsRuntimeOutcome: (RsOutcome(RsValue)) -> Prop {
+  RsRuntimeDone<v: RsValue>: RsRuntimeOutcome(RsDone(v))
+  RsRuntimePanic: RsRuntimeOutcome(RsPanic)
+  RsRuntimeExit<code: Int>: RsRuntimeOutcome(RsExit(code))
+  RsRuntimeAbort: RsRuntimeOutcome(RsAbort)
+}
+
+// Normal control and unwinding release scopes. Process termination does not.
+pub(open) inductive RsUnwinds: (RsOutcome(RsValue)) -> Prop {
+  RsUnwindsDone<v: RsValue>: RsUnwinds(RsDone(v))
+  RsUnwindsReturn<v: RsValue>: RsUnwinds(RsReturned(v))
+  RsUnwindsBreak<label: Nat, v: RsValue>: RsUnwinds(RsBroken(label, v))
+  RsUnwindsContinue<label: Nat>: RsUnwinds(RsContinued(label))
+  RsUnwindsPanic: RsUnwinds(RsPanic)
+}
+
+pub fn rs_drop_panic(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
+  match out: RsOutcome(RsValue) {
+    RsDone(v) => RsPanic
+    RsReturned(v) => RsPanic
+    RsBroken(label, v) => RsPanic
+    RsContinued(label) => RsPanic
+    RsPanic => RsAbort
+    RsExit(code) => RsExit(code)
+    RsAbort => RsAbort
+  }
+}
+
+pub fn rs_drop_result(out: RsOutcome(RsValue), dropped: RsOutcome(RsValue)): RsOutcome(RsValue) {
+  match dropped: RsOutcome(RsValue) {
+    RsDone(v) => out
+    RsReturned(v) => RsAbort
+    RsBroken(label, v) => RsAbort
+    RsContinued(label) => RsAbort
+    RsPanic => rs_drop_panic(out)
+    RsExit(code) => RsExit(code)
+    RsAbort => RsAbort
+  }
+}
+
+pub fn rs_unwinding(out: RsOutcome(RsValue)): Bool {
+  match out: Bool {
+    RsPanic => true
+    RsDone(value) => false
+    RsReturned(value) => false
+    RsBroken(label, value) => false
+    RsContinued(label) => false
+    RsExit(code) => false
+    RsAbort => false
+  }
+}
+
+pub fn rs_drop_pending(unwinding: Bool): RsOutcome(RsValue) {
+  if unwinding { RsPanic } else { RsDone(RsScalar(RsUnit)) }
+}
+
+pub fn rs_drop_completed(unwinding: Bool, out: RsOutcome(RsValue)): RsOutcome(RsValue) {
+  match out: RsOutcome(RsValue) {
+    RsPanic => if unwinding { RsDone(RsScalar(RsUnit)) } else { RsPanic }
+    RsDone(value) => RsDone(value)
+    RsReturned(value) => RsReturned(value)
+    RsBroken(label, value) => RsBroken(label, value)
+    RsContinued(label) => RsContinued(label)
+    RsExit(code) => RsExit(code)
+    RsAbort => RsAbort
+  }
+}
+
+pub fn rs_destructor_result(unwinding: Bool, out: RsOutcome(RsValue)): RsOutcome(RsValue) {
+  if unwinding && rs_unwinding(out) { RsAbort } else { out }
+}
+
+pub(open) inductive RsInsert: (Nat, List(Nat), List(Nat)) -> Prop {
+  RsInsertHere<x: Nat, xs: List(Nat)>: RsInsert(x, xs, Cons(x, xs))
+  RsInsertThere<x: Nat, y: Nat, xs: List(
+    Nat
+  ), ys: List(Nat)>(inserted: RsInsert(x, xs, ys)): RsInsert(x, Cons(y, xs), Cons(y, ys))
+}
+
+pub(open) inductive RsPermutation: (List(Nat), List(Nat)) -> Prop {
+  RsPermutationNil: RsPermutation(Nil, Nil)
+  RsPermutationCons<x: Nat, xs: List(
+    Nat
+  ), ys: List(
+    Nat
+  ), zs: List(
+    Nat
+  )>(rest: RsPermutation(xs, ys), inserted: RsInsert(x, ys, zs)): RsPermutation(Cons(x, xs), zs)
+}
+
+pub(open) inductive RsDestructorOutcome: (RsOutcome(RsValue)) -> Prop {
+  RsDestructorDone: RsDestructorOutcome(RsDone(RsScalar(RsUnit)))
+  RsDestructorPanic: RsDestructorOutcome(RsPanic)
+  RsDestructorExit<code: Int>: RsDestructorOutcome(RsExit(code))
+  RsDestructorAbort: RsDestructorOutcome(RsAbort)
+}
+
+mutual {
+  pub(open) inductive RsFinish(
+    rt: RsRuntime
+  ): (List(Nat), RsStore, RsOutcome(RsValue), RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+    RsFinishNil<heap: RsStore, out: RsOutcome(
+      RsValue
+    )>: RsFinish(rt, Nil, heap, out, out, heap, Nil)
+    RsFinishExit<slots: List(
+      Nat
+    ), heap: RsStore, code: Int>: RsFinish(rt, slots, heap, RsExit(code), RsExit(code), heap, Nil)
+    RsFinishAbort<slots: List(
+      Nat
+    ), heap: RsStore>: RsFinish(rt, slots, heap, RsAbort, RsAbort, heap, Nil)
+    RsFinishAbsent<slot: Nat, rest: List(
+      Nat
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), final: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      active: RsUnwinds(out),
+      absent: rs_cell(heap, slot) = None,
+      following: RsFinish(rt, rest, heap, out, final, next, trace)
+    ): RsFinish(rt, Cons(slot, rest), heap, out, final, next, trace)
+    RsFinishMoved<slot: Nat, rest: List(
+      Nat
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), final: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      active: RsUnwinds(out),
+      moved: rs_cell(heap, slot) = Some(RsUninitialized),
+      following: RsFinish(rt, rest, rs_store_cell(heap, slot, None), out, final, next, trace)
+    ): RsFinish(rt, Cons(slot, rest), heap, out, final, next, trace)
+    RsFinishValue<slot: Nat, rest: List(
+      Nat
+    ), heap: RsStore, out: RsOutcome(
+      RsValue
+    ), value: RsValue, dropped: RsOutcome(
+      RsValue
+    ), h1: RsStore, t1: List(
+      RsEvent
+    ), final: RsOutcome(
+      RsValue
+    ), h2: RsStore, t2: List(
+      RsEvent
+    )>(
+      active: RsUnwinds(out),
+      loaded: rs_cell(heap, slot) = Some(value),
+      live: rs_initialized(value) = true,
+      destructor: RsDrop(
+        rt,
+        rs_unwinding(out),
+        value,
+        rs_store_cell(heap, slot, None),
+        dropped,
+        h1,
+        t1
+      ),
+      following: RsFinish(rt, rest, h1, rs_drop_result(out, dropped), final, h2, t2)
+    ): RsFinish(rt, Cons(slot, rest), heap, out, final, h2, List::append(t1, t2))
+  }
+
+  pub(open) inductive RsDrop(
+    rt: RsRuntime
+  ): (Bool, RsValue, RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+    RsDropScalar<unwinding: Bool, lit: RsLiteral, heap: RsStore>: RsDrop(
+      rt,
+      unwinding,
+      RsScalar(lit),
+      heap,
+      RsDone(RsScalar(RsUnit)),
+      heap,
+      Nil
+    )
+    RsDropReference<unwinding: Bool, kind: RsBorrow, addr: RsAddress, heap: RsStore>: RsDrop(
+      rt,
+      unwinding,
+      RsReference(kind, addr),
+      heap,
+      RsDone(RsScalar(RsUnit)),
+      heap,
+      Nil
+    )
+    RsDropGlobal<unwinding: Bool, index: Nat, heap: RsStore>: RsDrop(
+      rt,
+      unwinding,
+      RsGlobal(index),
+      heap,
+      RsDone(RsScalar(RsUnit)),
+      heap,
+      Nil
+    )
+    RsDropMoved<unwinding: Bool, heap: RsStore>: RsDrop(
+      rt,
+      unwinding,
+      RsUninitialized,
+      heap,
+      RsDone(RsScalar(RsUnit)),
+      heap,
+      Nil
+    )
+    RsDropData<unwinding: Bool, tag: Nat, is_copy: Bool, fields: List(
+      RsValue
+    ), heap: RsStore, slots: List(
+      Nat
+    ), h1: RsStore, out: RsOutcome(
+      RsValue
+    ), h2: RsStore, trace: List(
+      RsEvent
+    )>(
+      allocated: rs_alloc_values(heap, fields) = #(slots, h1),
+      destroyed: RsFinish(rt, slots, h1, rs_drop_pending(unwinding), out, h2, trace)
+    ): RsDrop(
+      rt,
+      unwinding,
+      RsData(tag, is_copy, fields),
+      heap,
+      rs_drop_completed(unwinding, out),
+      h2,
+      trace
+    )
+    RsDropClosure<unwinding: Bool, kind: RsCallable, arity: Nat, captures: List(
+      Nat
+    ), body: RsExpr, heap: RsStore, order: List(
+      Nat
+    ), out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      order_valid: RsPermutation(captures, order),
+      destroyed: RsFinish(rt, order, heap, rs_drop_pending(unwinding), out, next, trace)
+    ): RsDrop(
+      rt,
+      unwinding,
+      RsClosure(kind, arity, captures, body),
+      heap,
+      rs_drop_completed(unwinding, out),
+      next,
+      trace
+    )
+    RsDropFuture<unwinding: Bool, captures: List(
+      Nat
+    ), body: RsExpr, heap: RsStore, order: List(
+      Nat
+    ), out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      order_valid: RsPermutation(captures, order),
+      destroyed: RsFinish(rt, order, heap, rs_drop_pending(unwinding), out, next, trace)
+    ): RsDrop(
+      rt,
+      unwinding,
+      RsSuspended(captures, body),
+      heap,
+      rs_drop_completed(unwinding, out),
+      next,
+      trace
+    )
+    RsDropHandleAbsent<unwinding: Bool, index: Nat, heap: RsStore>(
+      absent: rs_cell(heap, index) = None
+    ): RsDrop(rt, unwinding, RsHandle(index), heap, RsDone(RsScalar(RsUnit)), heap, Nil)
+    RsDropHandle<unwinding: Bool, index: Nat, heap: RsStore, stored: RsValue, out: RsOutcome(
+      RsValue
+    ), next: RsStore, trace: List(
+      RsEvent
+    )>(
+      present: rs_cell(heap, index) = Some(stored),
+      released: rs_invoke(
+        rt,
+        "drop_handle",
+        Cons(RsScalar(RsBool(unwinding)), Cons(RsHandle(index), Nil)),
+        heap,
+        out,
+        next,
+        trace
+      ),
+      valid: RsDestructorOutcome(out)
+    ): RsDrop(
+      rt,
+      unwinding,
+      RsHandle(index),
+      heap,
+      rs_destructor_result(unwinding, out),
+      next,
+      trace
+    )
+  }
+}
+
+pub(open) inductive RsFinishValues(
+  rt: RsRuntime
+): (List(RsValue), RsStore, RsOutcome(RsValue), RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+  RsFinishValuesOf<values: List(
+    RsValue
+  ), heap: RsStore, slots: List(
+    Nat
+  ), h1: RsStore, out: RsOutcome(
+    RsValue
+  ), final: RsOutcome(
+    RsValue
+  ), h2: RsStore, trace: List(
+    RsEvent
+  )>(
+    allocated: rs_alloc_values(heap, values) = #(slots, h1),
+    finished: RsFinish(rt, List::reverse(slots), h1, out, final, h2, trace)
+  ): RsFinishValues(rt, values, heap, out, final, h2, trace)
+}
+
+pub fn rs_call_store(kind: RsCallable, heap: RsStore, slot: Nat): RsStore {
+  match kind: RsStore {
+    RsFn => heap
+    RsFnMut => heap
+    RsFnOnce => rs_store_cell(heap, slot, None)
+  }
+}
+
+pub(open) inductive RsCallCleanupOrder: (RsCallable, List(Nat), List(Nat), List(Nat)) -> Prop {
+  RsCallCleanupFn<slots: List(
+    Nat
+  ), captures: List(Nat)>: RsCallCleanupOrder(RsFn, slots, captures, List::reverse(slots))
+  RsCallCleanupFnMut<slots: List(
+    Nat
+  ), captures: List(Nat)>: RsCallCleanupOrder(RsFnMut, slots, captures, List::reverse(slots))
+  RsCallCleanupFnOnce<slots: List(
+    Nat
+  ), captures: List(
+    Nat
+  ), order: List(
+    Nat
+  )>(
+    order_valid: RsPermutation(captures, order)
+  ): RsCallCleanupOrder(RsFnOnce, slots, captures, List::append(List::reverse(slots), order))
+}
+
+pub fn rs_forget(slots: List(Nat), heap: RsStore): RsStore {
+  match slots: RsStore {
+    Nil => heap
+    Cons(slot, rest) => rs_forget(rest, rs_store_cell(heap, slot, None))
+  }
+}
+
+pub(open) inductive RsBorrowCallable: (RsStore, RsBorrow, RsValue) -> Prop {
+  RsBorrowFn<heap: RsStore, slot: Nat, arity: Nat, captures: List(
+    Nat
+  ), body: RsExpr>(
+    closure: rs_cell(heap, slot) = Some(RsClosure(RsFn, arity, captures, body))
+  ): RsBorrowCallable(heap, RsShared, RsHandle(slot))
+  RsBorrowMutFn<heap: RsStore, slot: Nat, arity: Nat, captures: List(
+    Nat
+  ), body: RsExpr>(
+    closure: rs_cell(heap, slot) = Some(RsClosure(RsFn, arity, captures, body))
+  ): RsBorrowCallable(heap, RsUnique, RsHandle(slot))
+  RsBorrowFnMut<heap: RsStore, slot: Nat, arity: Nat, captures: List(
+    Nat
+  ), body: RsExpr>(
+    closure: rs_cell(heap, slot) = Some(RsClosure(RsFnMut, arity, captures, body))
+  ): RsBorrowCallable(heap, RsUnique, RsHandle(slot))
+}
+
+pub(open) inductive RsFunctionOutcome: (RsOutcome(RsValue)) -> Prop {
+  RsFunctionDone<v: RsValue>: RsFunctionOutcome(RsDone(v))
+  RsFunctionReturn<v: RsValue>: RsFunctionOutcome(RsReturned(v))
+  RsFunctionPanic: RsFunctionOutcome(RsPanic)
+  RsFunctionExit<code: Int>: RsFunctionOutcome(RsExit(code))
+  RsFunctionAbort: RsFunctionOutcome(RsAbort)
+}

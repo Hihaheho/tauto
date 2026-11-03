@@ -1,0 +1,564 @@
+import "../../../std/Text.taut" { Text }
+import std::prelude::Macro { Syn, SynDiag, SynSpan, SynToken }
+
+inductive_syntax!(rs, ```par
+%start Program
+%title "Rust generation model"
+%grammar_type 'LALR(1)'
+%%
+Program: { Item };
+Item: [ Derive ] [ KwPub ] Definition;
+Definition: Function | Data | Alias;
+Function: KwFn Name Generics '(' Params ')' '->' Ty Block;
+Generics: [ '<' Generic { ',' Generic } [ ',' ] '>' ];
+Generic: TypeGeneric | Life;
+TypeGeneric: Name [ ':' Bound { '+' Bound } ];
+Bound: TypePath | Life | CallableBound;
+Params: [ Param { ',' Param } [ ',' ] ];
+Param: [ KwMut ] Name ':' Ty;
+Data: Struct | Enum | TupleStruct;
+Struct: KwStruct Name Generics '{' NamedFields '}';
+Enum: KwEnum Name Generics '{' Fields '}';
+TupleStruct: KwStruct Name Generics '(' Types ')' ';';
+NamedFields: [ NamedField { ',' NamedField } [ ',' ] ];
+NamedField: [ KwPub ] Name ':' Ty;
+Derive: '#[derive(Clone)]';
+Fields: [ Variant { ',' Variant } [ ',' ] ];
+Variant: Name [ '(' Types ')' ];
+Alias: KwType Name Generics '=' Ty ';';
+Ty: RefTy | TupleTy | CallableTy | TypePath | ArrayTy | SliceTy | NeverTy | FunctionTy | ForFunctionTy;
+ArrayTy: '[' Ty ';' Number ']';
+SliceTy: '[' Ty ']';
+NeverTy: '!';
+RefTy: '&' [ Life ] [ KwMut ] Ty;
+TupleTy: '(' Types ')';
+CallableTy: KwDyn [ ForBinder ] Callable '(' Types ')' '->' TupleTy { '+' Bound };
+FunctionTy: KwFn '(' Types ')' '->' TupleTy;
+ForFunctionTy: ForBinder FunctionTy;
+ForBinder: KwFor '<' Life { ',' Life } [ ',' ] '>';
+CallableBound: [ ForBinder ] Callable '(' Types ')' '->' TupleTy;
+Callable: TraitFn | KwFnMut | KwFnOnce;
+TypePath: Name { '::' Name } [ '<' TypeArgs '>' ];
+TypeArgs: TypeArg { ',' TypeArg } [ ',' ];
+TypeArg: Life | Ty;
+Types: [ Ty { ',' Ty } [ ',' ] ];
+Expr: Atom { Suffix };
+Atom: Number | KwTrue | KwFalse | StringLit | Path | Group | Unit | Tuple | Binary | Unary | Borrow | Block | Conditional | Selection | Closure | Repetition | AsyncBlock | Cast | Record;
+Path: Name { '::' Name } [ '::<' Types '>' ];
+Group: '(' Expr ')';
+Unit: '(' ')';
+Tuple: '(' Expr ',' [ Expr { ',' Expr } [ ',' ] ] ')';
+Binary: '(' Expr Op Expr ')';
+Op: '+' | '-' | '*' | '/' | '%' | '==' | '!=' | '<' | '<=' | '>' | '>=' | '&&' | '||';
+Unary: '(' UnaryOp Expr ')';
+UnaryOp: '!' | '-' | '*';
+Borrow: '(' '&' [ KwMut ] Expr ')';
+Suffix: Arguments | Member | Await;
+Arguments: '(' [ Expr { ',' Expr } [ ',' ] ] ')';
+Member: '.' Field;
+Field: Name | Number;
+Await: '.' KwAwait;
+Cast: '(' Expr KwAs Ty ')';
+Block: '{' { Statement } [ Expr ] '}';
+Statement: Binding | Write | Discard | Return | Break | Continue | While;
+Binding: KwLet [ KwMut ] Name [ ':' Ty ] '=' Expr ';';
+Write: Expr '=' Expr ';';
+Discard: Expr ';';
+Return: KwReturn Expr ';';
+Break: KwBreak [ Life ] '(' Expr ')' ';';
+Continue: KwContinue [ Life ] ';';
+While: KwWhile '(' Expr ')' Block;
+Record: '(' Path '{' Initializers '}' ')';
+Initializers: [ Initializer { ',' Initializer } [ ',' ] ];
+Initializer: Name ':' Expr;
+Conditional: KwIf '(' Expr ')' Block KwElse Block;
+Selection: KwMatch '(' Expr ')' '{' { Arm } '}';
+Arm: Pattern [ KwIf Expr ] '=>' Expr ',';
+Pattern: Wild | BindingPat | ConstructorPat | LiteralPat | ReferencePat | TuplePattern | UnitPattern | GroupPattern;
+ReferencePat: '&' [ KwMut ] GroupPattern;
+GroupPattern: '(' Pattern ')';
+TuplePattern: '(' Pattern ',' [ Pattern { ',' Pattern } [ ',' ] ] ')';
+UnitPattern: '(' ')';
+Wild: '_';
+BindingPat: Name | RefPat | MutPat;
+RefPat: KwRef [ KwMut ] Name;
+MutPat: KwMut Name;
+ConstructorPat: Name CtorPatternTail;
+CtorPatternTail: ConstructorArgs | QualifiedCtorPattern | RecordPatternArgs;
+QualifiedCtorPattern: '::' Name { '::' Name } [ CtorPatternFields ];
+CtorPatternFields: ConstructorArgs | RecordPatternArgs;
+ConstructorArgs: '(' [ Pattern { ',' Pattern } [ ',' ] ] ')';
+RecordPatternArgs: '{' [ RecordPatternField { ',' RecordPatternField } [ ',' ] ] '}';
+RecordPatternField: Name ':' Pattern;
+LiteralPat: Number | KwTrue | KwFalse | StringLit | NegativePattern;
+NegativePattern: '-' Number;
+Closure: '(' [ KwMove ] '|' ClosureParams '|' [ '->' Ty ] Block ')';
+ClosureParams: [ ClosureParam { ',' ClosureParam } [ ',' ] ];
+ClosureParam: [ KwMut ] Name [ ':' Ty ];
+Repetition: [ Life ':' ] KwLoop Block;
+AsyncBlock: KwAsync [ KwMove ] Block;
+TraitFn: 'Fn';
+KwFnMut: 'FnMut';
+KwFnOnce: 'FnOnce';
+KwAs: 'as';
+KwAsync: 'async';
+KwAwait: 'await';
+KwBreak: 'break';
+KwContinue: 'continue';
+KwDyn: 'dyn';
+KwElse: 'else';
+KwEnum: 'enum';
+KwFalse: 'false';
+KwFn: 'fn';
+KwIf: 'if';
+KwLet: 'let';
+KwLoop: 'loop';
+KwMatch: 'match';
+KwMove: 'move';
+KwMut: 'mut';
+KwRef: 'ref';
+KwReturn: 'return';
+KwStruct: 'struct';
+KwTrue: 'true';
+KwType: 'type';
+KwPub: 'pub';
+KwWhile: 'while';
+KwFor: 'for';
+Name: /(?:r#)?[A-Za-z_][A-Za-z0-9_]*/;
+Life: /'[A-Za-z_][A-Za-z0-9_]*/;
+Number: /[0-9][0-9_]*(?:u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize)?/;
+StringLit: /"([^"\\]|\\.)*"/;
+```) =>
+  struct Alias,
+  struct Arguments,
+  struct Arguments_Opt1,
+  struct Arguments_Rep1,
+  struct Arm,
+  struct Arm_Opt1,
+  struct ArrayTy,
+  struct AsyncBlock,
+  enum Atom,
+  struct Await,
+  struct Binary,
+  struct Binding,
+  struct Binding_Opt1,
+  enum BindingPat,
+  struct Block,
+  struct Borrow,
+  enum Bound,
+  struct Break,
+  enum Callable,
+  struct CallableBound,
+  struct CallableTy,
+  struct CallableTy_Rep1,
+  struct Cast,
+  struct Closure,
+  struct Closure_Opt1,
+  struct ClosureParam,
+  struct ClosureParam_Opt1,
+  struct ClosureParams,
+  struct ClosureParams_Opt1,
+  struct ClosureParams_Rep1,
+  struct Conditional,
+  struct ConstructorArgs,
+  struct ConstructorArgs_Opt1,
+  struct ConstructorArgs_Rep1,
+  struct ConstructorPat,
+  struct Continue,
+  enum CtorPatternFields,
+  enum CtorPatternTail,
+  enum Data,
+  enum Definition,
+  struct Discard,
+  struct Enum,
+  struct Expr,
+  enum Field,
+  struct Fields,
+  struct Fields_Opt1,
+  struct Fields_Rep1,
+  struct ForBinder,
+  struct ForBinder_Rep1,
+  struct ForFunctionTy,
+  struct Function,
+  struct FunctionTy,
+  enum Generic,
+  struct Generics,
+  struct Generics_Opt1,
+  struct Generics_Rep1,
+  struct Group,
+  struct GroupPattern,
+  struct Initializer,
+  struct Initializers,
+  struct Initializers_Opt1,
+  struct Initializers_Rep1,
+  struct Item,
+  enum LiteralPat,
+  struct Member,
+  struct MutPat,
+  struct NamedField,
+  struct NamedFields,
+  struct NamedFields_Opt1,
+  struct NamedFields_Rep1,
+  struct NegativePattern,
+  enum Op,
+  struct Param,
+  struct Params,
+  struct Params_Opt1,
+  struct Params_Rep1,
+  struct Path,
+  struct Path_Rep1,
+  struct Path_Opt1,
+  enum Pattern,
+  struct Program,
+  struct QualifiedCtorPattern,
+  struct QualifiedCtorPattern_Rep1,
+  struct Record,
+  struct RecordPatternArgs,
+  struct RecordPatternArgs_Opt1,
+  struct RecordPatternArgs_Rep1,
+  struct RecordPatternField,
+  struct RefPat,
+  struct RefTy,
+  struct ReferencePat,
+  struct Repetition,
+  struct Repetition_Opt1,
+  struct Return,
+  struct Selection,
+  struct SliceTy,
+  enum Statement,
+  struct Struct,
+  enum Suffix,
+  struct Tuple,
+  struct Tuple_Opt1,
+  struct Tuple_Rep1,
+  struct TuplePattern,
+  struct TuplePattern_Opt1,
+  struct TuplePattern_Rep1,
+  struct TupleStruct,
+  struct TupleTy,
+  enum Ty,
+  enum TypeArg,
+  struct TypeArgs,
+  struct TypeArgs_Rep1,
+  struct TypeGeneric,
+  struct TypeGeneric_Opt1,
+  struct TypeGeneric_Rep1,
+  struct TypePath,
+  struct TypePath_Rep1,
+  struct TypePath_Opt1,
+  struct Types,
+  struct Types_Opt1,
+  struct Types_Rep1,
+  struct Unary,
+  enum UnaryOp,
+  struct Unit,
+  struct UnitPattern,
+  struct Variant,
+  struct Variant_Opt1,
+  struct While,
+  struct Write,
+  fn parse,
+  inductive Alias::I,
+  inductive Arguments::I,
+  inductive Arguments_Opt1::I,
+  inductive Arguments_Rep1::I,
+  inductive Arm::I,
+  inductive Arm_Opt1::I,
+  inductive ArrayTy::I,
+  inductive AsyncBlock::I,
+  inductive Atom::I,
+  inductive Await::I,
+  inductive Binary::I,
+  inductive Binding::I,
+  inductive Binding_Opt1::I,
+  inductive BindingPat::I,
+  inductive Block::I,
+  inductive Borrow::I,
+  inductive Bound::I,
+  inductive Break::I,
+  inductive Callable::I,
+  inductive CallableBound::I,
+  inductive CallableTy::I,
+  inductive CallableTy_Rep1::I,
+  inductive Cast::I,
+  inductive Closure::I,
+  inductive Closure_Opt1::I,
+  inductive ClosureParam::I,
+  inductive ClosureParam_Opt1::I,
+  inductive ClosureParams::I,
+  inductive ClosureParams_Opt1::I,
+  inductive ClosureParams_Rep1::I,
+  inductive Conditional::I,
+  inductive ConstructorArgs::I,
+  inductive ConstructorArgs_Opt1::I,
+  inductive ConstructorArgs_Rep1::I,
+  inductive ConstructorPat::I,
+  inductive Continue::I,
+  inductive CtorPatternFields::I,
+  inductive CtorPatternTail::I,
+  inductive Data::I,
+  inductive Definition::I,
+  inductive Discard::I,
+  inductive Enum::I,
+  inductive Expr::I,
+  inductive Field::I,
+  inductive Fields::I,
+  inductive Fields_Opt1::I,
+  inductive Fields_Rep1::I,
+  inductive ForBinder::I,
+  inductive ForBinder_Rep1::I,
+  inductive ForFunctionTy::I,
+  inductive Function::I,
+  inductive FunctionTy::I,
+  inductive Generic::I,
+  inductive Generics::I,
+  inductive Generics_Opt1::I,
+  inductive Generics_Rep1::I,
+  inductive Group::I,
+  inductive GroupPattern::I,
+  inductive Initializer::I,
+  inductive Initializers::I,
+  inductive Initializers_Opt1::I,
+  inductive Initializers_Rep1::I,
+  inductive Item::I,
+  inductive LiteralPat::I,
+  inductive Member::I,
+  inductive MutPat::I,
+  inductive NamedField::I,
+  inductive NamedFields::I,
+  inductive NamedFields_Opt1::I,
+  inductive NamedFields_Rep1::I,
+  inductive NegativePattern::I,
+  inductive Op::I,
+  inductive Param::I,
+  inductive Params::I,
+  inductive Params_Opt1::I,
+  inductive Params_Rep1::I,
+  inductive Path::I,
+  inductive Path_Rep1::I,
+  inductive Path_Opt1::I,
+  inductive Pattern::I,
+  inductive Program::I,
+  inductive QualifiedCtorPattern::I,
+  inductive QualifiedCtorPattern_Rep1::I,
+  inductive Record::I,
+  inductive RecordPatternArgs::I,
+  inductive RecordPatternArgs_Opt1::I,
+  inductive RecordPatternArgs_Rep1::I,
+  inductive RecordPatternField::I,
+  inductive RefPat::I,
+  inductive RefTy::I,
+  inductive ReferencePat::I,
+  inductive Repetition::I,
+  inductive Repetition_Opt1::I,
+  inductive Return::I,
+  inductive Selection::I,
+  inductive SliceTy::I,
+  inductive Statement::I,
+  inductive Struct::I,
+  inductive Suffix::I,
+  inductive Tuple::I,
+  inductive Tuple_Opt1::I,
+  inductive Tuple_Rep1::I,
+  inductive TuplePattern::I,
+  inductive TuplePattern_Opt1::I,
+  inductive TuplePattern_Rep1::I,
+  inductive TupleStruct::I,
+  inductive TupleTy::I,
+  inductive Ty::I,
+  inductive TypeArg::I,
+  inductive TypeArgs::I,
+  inductive TypeArgs_Rep1::I,
+  inductive TypeGeneric::I,
+  inductive TypeGeneric_Opt1::I,
+  inductive TypeGeneric_Rep1::I,
+  inductive TypePath::I,
+  inductive TypePath_Rep1::I,
+  inductive TypePath_Opt1::I,
+  inductive Types::I,
+  inductive Types_Opt1::I,
+  inductive Types_Rep1::I,
+  inductive Unary::I,
+  inductive UnaryOp::I,
+  inductive Unit::I,
+  inductive UnitPattern::I,
+  inductive Variant::I,
+  inductive Variant_Opt1::I,
+  inductive While::I,
+  inductive Write::I,
+  fn Alias::to_i,
+  fn Arguments::to_i,
+  fn Arguments_Opt1::to_i,
+  fn Arguments_Rep1::to_i,
+  fn Arm::to_i,
+  fn Arm_Opt1::to_i,
+  fn ArrayTy::to_i,
+  fn AsyncBlock::to_i,
+  fn Atom::to_i,
+  fn Await::to_i,
+  fn Binary::to_i,
+  fn Binding::to_i,
+  fn Binding_Opt1::to_i,
+  fn BindingPat::to_i,
+  fn Block::to_i,
+  fn Borrow::to_i,
+  fn Bound::to_i,
+  fn Break::to_i,
+  fn Callable::to_i,
+  fn CallableBound::to_i,
+  fn CallableTy::to_i,
+  fn CallableTy_Rep1::to_i,
+  fn Cast::to_i,
+  fn Closure::to_i,
+  fn Closure_Opt1::to_i,
+  fn ClosureParam::to_i,
+  fn ClosureParam_Opt1::to_i,
+  fn ClosureParams::to_i,
+  fn ClosureParams_Opt1::to_i,
+  fn ClosureParams_Rep1::to_i,
+  fn Conditional::to_i,
+  fn ConstructorArgs::to_i,
+  fn ConstructorArgs_Opt1::to_i,
+  fn ConstructorArgs_Rep1::to_i,
+  fn ConstructorPat::to_i,
+  fn Continue::to_i,
+  fn CtorPatternFields::to_i,
+  fn CtorPatternTail::to_i,
+  fn Data::to_i,
+  fn Definition::to_i,
+  fn Discard::to_i,
+  fn Enum::to_i,
+  fn Expr::to_i,
+  fn Field::to_i,
+  fn Fields::to_i,
+  fn Fields_Opt1::to_i,
+  fn Fields_Rep1::to_i,
+  fn ForBinder::to_i,
+  fn ForBinder_Rep1::to_i,
+  fn ForFunctionTy::to_i,
+  fn Function::to_i,
+  fn FunctionTy::to_i,
+  fn Generic::to_i,
+  fn Generics::to_i,
+  fn Generics_Opt1::to_i,
+  fn Generics_Rep1::to_i,
+  fn Group::to_i,
+  fn GroupPattern::to_i,
+  fn Initializer::to_i,
+  fn Initializers::to_i,
+  fn Initializers_Opt1::to_i,
+  fn Initializers_Rep1::to_i,
+  fn Item::to_i,
+  fn LiteralPat::to_i,
+  fn Member::to_i,
+  fn MutPat::to_i,
+  fn NamedField::to_i,
+  fn NamedFields::to_i,
+  fn NamedFields_Opt1::to_i,
+  fn NamedFields_Rep1::to_i,
+  fn NegativePattern::to_i,
+  fn Op::to_i,
+  fn Param::to_i,
+  fn Params::to_i,
+  fn Params_Opt1::to_i,
+  fn Params_Rep1::to_i,
+  fn Path::to_i,
+  fn Path_Rep1::to_i,
+  fn Path_Opt1::to_i,
+  fn Pattern::to_i,
+  fn Program::to_i,
+  fn QualifiedCtorPattern::to_i,
+  fn QualifiedCtorPattern_Rep1::to_i,
+  fn Record::to_i,
+  fn RecordPatternArgs::to_i,
+  fn RecordPatternArgs_Opt1::to_i,
+  fn RecordPatternArgs_Rep1::to_i,
+  fn RecordPatternField::to_i,
+  fn RefPat::to_i,
+  fn RefTy::to_i,
+  fn ReferencePat::to_i,
+  fn Repetition::to_i,
+  fn Repetition_Opt1::to_i,
+  fn Return::to_i,
+  fn Selection::to_i,
+  fn SliceTy::to_i,
+  fn Statement::to_i,
+  fn Struct::to_i,
+  fn Suffix::to_i,
+  fn Tuple::to_i,
+  fn Tuple_Opt1::to_i,
+  fn Tuple_Rep1::to_i,
+  fn TuplePattern::to_i,
+  fn TuplePattern_Opt1::to_i,
+  fn TuplePattern_Rep1::to_i,
+  fn TupleStruct::to_i,
+  fn TupleTy::to_i,
+  fn Ty::to_i,
+  fn TypeArg::to_i,
+  fn TypeArgs::to_i,
+  fn TypeArgs_Rep1::to_i,
+  fn TypeGeneric::to_i,
+  fn TypeGeneric_Opt1::to_i,
+  fn TypeGeneric_Rep1::to_i,
+  fn TypePath::to_i,
+  fn TypePath_Rep1::to_i,
+  fn TypePath_Opt1::to_i,
+  fn Types::to_i,
+  fn Types_Opt1::to_i,
+  fn Types_Rep1::to_i,
+  fn Unary::to_i,
+  fn UnaryOp::to_i,
+  fn Unit::to_i,
+  fn UnitPattern::to_i,
+  fn Variant::to_i,
+  fn Variant_Opt1::to_i,
+  fn While::to_i,
+  fn Write::to_i,
+  fn Arguments_Opt1_opt::to_i,
+  fn Arguments_Rep1_list::to_i,
+  fn token_opt::to_i,
+  fn Arm_Opt1_opt::to_i,
+  fn Binding_Opt1_opt::to_i,
+  fn Statement_list::to_i,
+  fn Expr_opt::to_i,
+  fn ForBinder_opt::to_i,
+  fn CallableTy_Rep1_list::to_i,
+  fn Closure_Opt1_opt::to_i,
+  fn ClosureParam_Opt1_opt::to_i,
+  fn ClosureParams_Opt1_opt::to_i,
+  fn ClosureParams_Rep1_list::to_i,
+  fn ConstructorArgs_Opt1_opt::to_i,
+  fn ConstructorArgs_Rep1_list::to_i,
+  fn Suffix_list::to_i,
+  fn Fields_Opt1_opt::to_i,
+  fn Fields_Rep1_list::to_i,
+  fn ForBinder_Rep1_list::to_i,
+  fn Generics_Opt1_opt::to_i,
+  fn Generics_Rep1_list::to_i,
+  fn Initializers_Opt1_opt::to_i,
+  fn Initializers_Rep1_list::to_i,
+  fn NamedFields_Opt1_opt::to_i,
+  fn NamedFields_Rep1_list::to_i,
+  fn Params_Opt1_opt::to_i,
+  fn Params_Rep1_list::to_i,
+  fn Path_Rep1_list::to_i,
+  fn Path_Opt1_opt::to_i,
+  fn Item_list::to_i,
+  fn QualifiedCtorPattern_Rep1_list::to_i,
+  fn CtorPatternFields_opt::to_i,
+  fn RecordPatternArgs_Opt1_opt::to_i,
+  fn RecordPatternArgs_Rep1_list::to_i,
+  fn Repetition_Opt1_opt::to_i,
+  fn Arm_list::to_i,
+  fn Tuple_Opt1_opt::to_i,
+  fn Tuple_Rep1_list::to_i,
+  fn TuplePattern_Opt1_opt::to_i,
+  fn TuplePattern_Rep1_list::to_i,
+  fn TypeArgs_Rep1_list::to_i,
+  fn TypeGeneric_Opt1_opt::to_i,
+  fn TypeGeneric_Rep1_list::to_i,
+  fn TypePath_Rep1_list::to_i,
+  fn TypePath_Opt1_opt::to_i,
+  fn Types_Opt1_opt::to_i,
+  fn Types_Rep1_list::to_i,
+  fn Variant_Opt1_opt::to_i

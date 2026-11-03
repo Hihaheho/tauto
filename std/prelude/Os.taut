@@ -397,7 +397,12 @@ module Os {
     ): Result(List(Text), Text) ! {proc_spawn}
     // `which` is 1 for the output, 2 for the error. `None` when the
     // deadline passed first; empty bytes at the end.
-    fn child_read(id: u64, which: u64, max: u64, deadline: Option(i64)): Result(Option(Bytes), Text) ! {proc_read}
+    fn child_read(
+      id: u64,
+      which: u64,
+      max: u64,
+      deadline: Option(i64)
+    ): Result(Option(Bytes), Text) ! {proc_read}
     fn child_write(id: u64, bytes: Bytes): Result(Unit, Text) ! {proc_write}
     fn child_close_stdin(id: u64): Result(Unit, Text) ! {proc_close_stdin}
     // The exit status as text (empty when a signal ended it); `None` when the
@@ -523,13 +528,19 @@ module Host {
   pub fn flat_headers(hs: List(Pair(Text, Text))): List(Text) {
     match hs {
       Nil => Nil
-      Cons(Pair { fst: name, snd: value }, rest) => Cons(name, Cons(value, Host::flat_headers(rest)))
+      Cons(Pair { fst: name, snd: value }, rest) => Cons(
+        name,
+        Cons(value, Host::flat_headers(rest))
+      )
     }
   }
 
   pub fn paired_headers(ts: List(Text)): List(Pair(Text, Text)) {
     match ts {
-      Cons(name, Cons(value, rest)) => Cons(Pair { fst: name, snd: value }, Host::paired_headers(rest))
+      Cons(name, Cons(value, rest)) => Cons(
+        Pair { fst: name, snd: value },
+        Host::paired_headers(rest)
+      )
       Cons(_, Nil) => Nil
       Nil => Nil
     }
@@ -594,8 +605,13 @@ module Host {
         let dir := p.dir
         let env := Host::flat_headers(p.env)
         let stdin := p.stdin
-        let modes := Cons(Host::mode(io.stdin), Cons(Host::mode(io.stdout), Cons(Host::mode(io.stderr), Nil)))
-        Host::child(Pending::join(Os::offload(() => Os::child_spawn(program, args, dir, env, stdin, modes))))
+        let modes := Cons(
+          Host::mode(io.stdin),
+          Cons(Host::mode(io.stdout), Cons(Host::mode(io.stderr), Nil))
+        )
+        Host::child(
+          Pending::join(Os::offload(() => Os::child_spawn(program, args, dir, env, stdin, modes)))
+        )
       }
       None => Err(Host::denied("run", p.program))
     }
@@ -648,11 +664,7 @@ module Host {
 
   // Sends `r` to the URL `Os::check` gave, connected to `address` if it is
   // not empty.
-  pub fn fetch_checked(
-    r: Request,
-    url: Text,
-    address: Text
-  ): Result(Response, IoError) ! {wait} {
+  pub fn fetch_checked(r: Request, url: Text, address: Text): Result(Response, IoError) ! {wait} {
     let method := r.method
     let headers := Host::flat_headers(r.headers)
     let body := r.body
@@ -673,7 +685,10 @@ module Host {
   // The URL is checked as for `net`, and the address as the URL
   // `http://address/` (an IPv6 address in brackets).
   pub fn fetch_at(r: Request, address: Text): Result(Response, IoError) ! {wait} {
-    let shown := if Host::has_colon(address, 0) { concat(concat("[", address), "]") } else { address }
+    let shown := if Host::has_colon(
+      address,
+      0
+    ) { concat(concat("[", address), "]") } else { address }
     match Os::check("net", r.url) {
       Some(url) => match Os::check("net", concat(concat("http://", shown), "/")) {
         Some(_) => Host::fetch_checked(r, url, address)
@@ -722,12 +737,11 @@ module Host {
     }
   }
 
-  pub fn tcp_connect(
-    address: Text,
-    deadline: Option(i64)
-  ): Result(TcpStream, IoError) ! {wait} {
+  pub fn tcp_connect(address: Text, deadline: Option(i64)): Result(TcpStream, IoError) ! {wait} {
     match Os::check("socket", address) {
-      Some(checked) => Host::stream(Pending::join(Os::offload(() => Os::tcp_connect(checked, deadline))))
+      Some(checked) => Host::stream(
+        Pending::join(Os::offload(() => Os::tcp_connect(checked, deadline)))
+      )
       None => Err(Host::denied("net", address))
     }
   }
@@ -740,19 +754,12 @@ module Host {
     }
   }
 
-  pub fn tcp_accept(
-    l: TcpListener,
-    deadline: Option(i64)
-  ): Result(TcpStream, IoError) ! {wait} {
+  pub fn tcp_accept(l: TcpListener, deadline: Option(i64)): Result(TcpStream, IoError) ! {wait} {
     let id := l.id
     Host::stream(Pending::join(Os::offload(() => Os::tcp_accept(id, deadline))))
   }
 
-  pub fn tcp_read(
-    s: TcpStream,
-    max: u64,
-    deadline: Option(i64)
-  ): Result(Bytes, IoError) ! {wait} {
+  pub fn tcp_read(s: TcpStream, max: u64, deadline: Option(i64)): Result(Bytes, IoError) ! {wait} {
     let id := s.id
     Host::timed(Pending::join(Os::offload(() => Os::tcp_read(id, max, deadline))))
   }
@@ -830,7 +837,9 @@ module Host {
     let names := Host::cert_names(server.certs)
     let pems := Host::cert_pems(server.certs)
     let alpn := server.alpn
-    Host::tls(Pending::join(Os::offload(() => Os::tls_accept(id, names, pems, alpn, roots, deadline))))
+    Host::tls(
+      Pending::join(Os::offload(() => Os::tls_accept(id, names, pems, alpn, roots, deadline)))
+    )
   }
 
   pub fn tls_connect(
@@ -856,14 +865,12 @@ module Host {
     let name := client.server_name
     let pems := Cons(cas, mine)
     let alpn := client.alpn
-    Host::tls(Pending::join(Os::offload(() => Os::tls_connect(id, name, kind, pems, alpn, deadline))))
+    Host::tls(
+      Pending::join(Os::offload(() => Os::tls_connect(id, name, kind, pems, alpn, deadline)))
+    )
   }
 
-  pub fn tls_read(
-    s: TlsStream,
-    max: u64,
-    deadline: Option(i64)
-  ): Result(Bytes, IoError) ! {wait} {
+  pub fn tls_read(s: TlsStream, max: u64, deadline: Option(i64)): Result(Bytes, IoError) ! {wait} {
     let id := s.id
     Host::timed(Pending::join(Os::offload(() => Os::tls_read(id, max, deadline))))
   }

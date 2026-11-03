@@ -1,0 +1,215 @@
+import "syntax.taut" { rs, rs::Atom::I, rs::LiteralPat::I, rs::Pattern::I }
+import "core.taut" { RsBorrow, RsLiteral, RsPattern, RsUse }
+import "source_context.taut" {
+  RsSourceCall,
+  RsSourceConstructor,
+  RsSourceConstructorStyle,
+  RsSourceField,
+  RsSourceLocal,
+  RsSourceSignature,
+  RsSourceType,
+  rs_source_constructor_style_valid,
+  rs_source_constructors,
+  rs_source_id_fresh,
+  rs_source_path_clear,
+  rs_source_ref_mode,
+  rs_source_type
+}
+import "source_forms.taut" {
+  rs_source_atom,
+  rs_source_binding_pattern,
+  rs_source_bool,
+  rs_source_deref_pattern,
+  rs_source_reference_pattern,
+  rs_source_unit,
+  rs_source_wild
+}
+import "../../../std/Base.taut" { List }
+import "../../../std/Text.taut" { Text }
+import "source_literals.taut" { RsSourceLiteral, RsSourceMember }
+import "source_construct.taut" { rs_source_construct_pattern }
+
+// Literal patterns retain the spelling of the typed expression, including
+// the target's usize/isize suffix rather than a same-width fixed integer.
+pub(open) inductive RsSourceLiteralPattern: (rs::Expr::I, rs::Pattern::I) -> Prop {
+  RsSourceUnitPattern: RsSourceLiteralPattern(
+    rs_source_unit(),
+    UnitPattern_I(rs::UnitPattern::I::Mk("(", ")"))
+  )
+  RsSourceTruePattern: RsSourceLiteralPattern(rs_source_bool(true), LiteralPat_I(KwTrue_I("true")))
+  RsSourceFalsePattern: RsSourceLiteralPattern(
+    rs_source_bool(false),
+    LiteralPat_I(KwFalse_I("false"))
+  )
+  RsSourceNumberPattern<digits: Text>: RsSourceLiteralPattern(
+    rs_source_atom(rs::Atom::I::Number_I(digits)),
+    LiteralPat_I(rs::LiteralPat::I::Number_I(digits))
+  )
+  RsSourceNegativePattern<digits: Text>: RsSourceLiteralPattern(
+    rs_source_atom(
+      Unary_I(
+        rs::Unary::I::Mk(
+          "(",
+          rs::UnaryOp::I::Minus_I("-"),
+          rs_source_atom(rs::Atom::I::Number_I(digits)),
+          ")"
+        )
+      )
+    ),
+    LiteralPat_I(NegativePattern_I(rs::NegativePattern::I::Mk("-", digits)))
+  )
+  RsSourceStringPattern<text: Text>: RsSourceLiteralPattern(
+    rs_source_atom(rs::Atom::I::StringLit_I(text)),
+    LiteralPat_I(rs::LiteralPat::I::StringLit_I(text))
+  )
+}
+
+// Bindings are ordered by a left-to-right traversal of the pattern, which is
+// also the order used by the operational pattern matcher.
+mutual {
+  pub(open) inductive RsSourcePattern(
+    sig: RsSourceSignature
+  ): (List(RsSourceLocal), RsPattern, Nat, rs::Pattern::I, List(RsSourceLocal)) -> Prop {
+    RsSourceIgnore<reserved: List(
+      RsSourceLocal
+    ), ty: Nat>: RsSourcePattern(sig, reserved, RsIgnore, ty, rs_source_wild(), Nil)
+    RsSourceBind<reserved: List(
+      RsSourceLocal
+    ), ty: Nat, id: Nat, spelling: rs::Ty::I, mode: RsUse, target: Option(
+      Nat
+    ), fields: List(
+      RsSourceField
+    ), callable: Option(
+      RsSourceCall
+    )>(
+      declared: rs_source_type(
+        sig,
+        ty
+      ) = Some(RsSourceTypeOf(spelling, mode, target, fields, callable)),
+      fresh: rs_source_id_fresh(sig, reserved, id) = true
+    ): RsSourcePattern(
+      sig,
+      reserved,
+      RsBind(mode),
+      ty,
+      rs_source_binding_pattern(id),
+      Cons(RsSourceLocalOf(id, ty), Nil)
+    )
+    RsSourceBindReference<reserved: List(
+      RsSourceLocal
+    ), ty: Nat, reference_ty: Nat, id: Nat, kind: RsBorrow, spelling: rs::Ty::I, callable: Option(
+      RsSourceCall
+    )>(
+      declared: rs_source_type(
+        sig,
+        reference_ty
+      ) = Some(RsSourceTypeOf(spelling, rs_source_ref_mode(kind), Some(ty), Nil, callable)),
+      fresh: rs_source_id_fresh(sig, reserved, id) = true
+    ): RsSourcePattern(
+      sig,
+      reserved,
+      RsBindReference(kind),
+      ty,
+      rs_source_reference_pattern(kind, id),
+      Cons(RsSourceLocalOf(id, reference_ty), Nil)
+    )
+    RsSourceDerefPattern<reserved: List(
+      RsSourceLocal
+    ), ty: Nat, inner: Nat, kind: RsBorrow, spelling: rs::Ty::I, callable: Option(
+      RsSourceCall
+    ), pattern: RsPattern, syntax: rs::Pattern::I, bindings: List(
+      RsSourceLocal
+    )>(
+      declared: rs_source_type(
+        sig,
+        ty
+      ) = Some(RsSourceTypeOf(spelling, rs_source_ref_mode(kind), Some(inner), Nil, callable)),
+      represented: RsSourcePattern(sig, reserved, pattern, inner, syntax, bindings)
+    ): RsSourcePattern(
+      sig,
+      reserved,
+      RsDerefPattern(kind, pattern),
+      ty,
+      rs_source_deref_pattern(kind, syntax),
+      bindings
+    )
+    RsSourceConstant<reserved: List(
+      RsSourceLocal
+    ), ty: Nat, literal: RsLiteral, expr: rs::Expr::I, syntax: rs::Pattern::I>(
+      value: RsSourceLiteral(sig, literal, ty, expr),
+      written: RsSourceLiteralPattern(expr, syntax)
+    ): RsSourcePattern(sig, reserved, RsConstant(literal), ty, syntax, Nil)
+    RsSourceConstructorPattern<reserved: List(
+      RsSourceLocal
+    ), tag: Nat, ty: Nat, path: rs::Path::I, family: List(
+      Text
+    ), variant: Text, style: RsSourceConstructorStyle, types: List(
+      Nat
+    ), patterns: List(
+      RsPattern
+    ), syntax: List(
+      rs::Pattern::I
+    ), bindings: List(
+      RsSourceLocal
+    )>(
+      declared: RsSourceMember(
+        RsSourceConstructor,
+        RsSourceConstructorOf(tag, ty, path, family, variant, style, types),
+        rs_source_constructors(sig)
+      ),
+      valid: rs_source_constructor_style_valid(style, types) = true,
+      visible: rs_source_path_clear(reserved, path) = true,
+      represented: RsSourcePatterns(sig, reserved, patterns, types, syntax, bindings)
+    ): RsSourcePattern(
+      sig,
+      reserved,
+      RsConstructor(tag, patterns),
+      ty,
+      rs_source_construct_pattern(style, family, variant, syntax),
+      bindings
+    )
+  }
+  pub(open) inductive RsSourcePatterns(
+    sig: RsSourceSignature
+  ): (
+    List(RsSourceLocal),
+    List(RsPattern),
+    List(Nat),
+    List(rs::Pattern::I),
+    List(RsSourceLocal)
+  ) -> Prop {
+    RsSourcePatternsNil<reserved: List(
+      RsSourceLocal
+    )>: RsSourcePatterns(sig, reserved, Nil, Nil, Nil, Nil)
+    RsSourcePatternsCons<reserved: List(
+      RsSourceLocal
+    ), pattern: RsPattern, ty: Nat, syntax: rs::Pattern::I, bindings: List(
+      RsSourceLocal
+    ), rest: List(
+      RsPattern
+    ), types: List(
+      Nat
+    ), remaining: List(
+      rs::Pattern::I
+    ), more: List(
+      RsSourceLocal
+    )>(
+      first: RsSourcePattern(sig, reserved, pattern, ty, syntax, bindings),
+      following: RsSourcePatterns(
+        sig,
+        List::append(bindings, reserved),
+        rest,
+        types,
+        remaining,
+        more
+      )
+    ): RsSourcePatterns(
+      sig,
+      reserved,
+      Cons(pattern, rest),
+      Cons(ty, types),
+      Cons(syntax, remaining),
+      List::append(bindings, more)
+    )
+  }
+}

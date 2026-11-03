@@ -1,0 +1,54 @@
+import std::Base
+import std::Data
+import std::prelude::Shared
+import std::prelude::Os
+import "storage.taut"
+
+// The entries of the storage as files of a directory: the entry `name` is the file `dir/name`.
+
+pub fn entry_file(dir: Text, name: Text): Text { concat(concat(dir, "/"), name) }
+
+// The file an entry is written to before it replaces the entry's file.
+fn temp_file(dir: Text, name: Text): Text { concat(entry_file(dir, name), ".tmp") }
+
+fn io_text(err: IoError): Text {
+  match err {
+    Denied(what) => concat("denied: ", what)
+    Failed(what) => what
+    TimedOut => "timed out"
+  }
+}
+
+// Writes `b` to the temporary file, then renames it over the entry's file: a reader sees the
+// old file or the new one, never part of one.
+fn replace_file(
+  dir: Text,
+  name: Text,
+  b: Bytes
+): Result(Unit, Text) ! {fs_create_dir, fs_write_bytes, fs_rename} {
+  match perform fs_create_dir(dir) {
+    Err(made) => Err(io_text(made))
+    Ok(u) => match perform fs_write_bytes(temp_file(dir, name), b) {
+      Err(written) => Err(io_text(written))
+      Ok(v) => match perform fs_rename(temp_file(dir, name), entry_file(dir, name)) {
+        Err(renamed) => Err(io_text(renamed))
+        Ok(w) => Ok(#())
+      }
+    }
+  }
+}
+
+// Runs `body` with its entries in the directory `dir`. A file that cannot be read is read as no
+// entry.
+pub fn with_dir_store<A, !e>(
+  dir: Text,
+  &body: () -> A ! {store_read, store_replace} ∪ e
+): A ! {fs_read_bytes, fs_create_dir, fs_write_bytes, fs_rename} ∪ e {
+  handle { body() } with {
+    store_read(name), k => match perform fs_read_bytes(entry_file(dir, name)) {
+      Err(unread) => k(None)
+      Ok(b) => k(Some(b))
+    }
+    store_replace(name, b), k => k(replace_file(dir, name, b))
+  }
+}

@@ -65,7 +65,7 @@ fn expand_program(mut program: Program, qualify: bool) -> Result<Program, String
     let modules = ["main".to_string()];
     let mut files = vec![std::mem::take(&mut program.stmts)];
     let mut qualified = if qualify {
-        crate::surface::qualify::files_before_macros(&mut files, &modules, None, None).0
+        crate::surface::qualify::files_before_macros(&mut files, &modules, None, None, None).0
     } else {
         crate::surface::qualify::record_bases(&mut files)
     };
@@ -347,7 +347,7 @@ pub fn time_limits(loaded: &crate::program::Loaded) -> Result<Vec<std::time::Dur
         .collect()
 }
 
-fn declare_loaded(
+pub(crate) fn declare_loaded(
     kernel: &mut Kernel,
     loaded: &crate::program::Loaded,
 ) -> Result<Vec<FileEntry>, String> {
@@ -689,6 +689,7 @@ pub(crate) struct ExtractionInput {
     pub checked: Checked,
     pub sources: Vec<(crate::program::SourceFile, Vec<Stmt>)>,
     pub imports: std::collections::HashMap<PathBuf, Vec<PathBuf>>,
+    pub registered: HashSet<String>,
 }
 
 pub(crate) fn check_files_for_extraction(
@@ -750,6 +751,11 @@ pub(crate) fn check_files_for_extraction(
         checked,
         sources,
         imports,
+        registered: loaded
+            .registrations
+            .iter()
+            .map(|r| r.function.clone())
+            .collect(),
     })
 }
 

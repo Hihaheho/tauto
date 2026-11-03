@@ -1,0 +1,144 @@
+import "core.taut" { RsBorrow, RsCallable }
+import "../../../std/Text.taut" { Text }
+import "syntax.taut" { rs, rs::Atom::I }
+import "source_context.taut" {
+  RsSourceConstructorStyle,
+  RsSourceLocal,
+  rs_source_local_id,
+  rs_source_local_type
+}
+import "source_forms.taut" {
+  rs_source_atom,
+  rs_source_block,
+  rs_source_constructor_pattern,
+  rs_source_discard,
+  rs_source_id,
+  rs_source_name,
+  rs_source_named_pattern,
+  rs_source_native,
+  rs_source_path,
+  rs_source_record,
+  rs_source_record_pattern,
+  rs_source_reference,
+  rs_source_tuple,
+  rs_source_tuple_pattern
+}
+
+pub fn rs_source_construct(
+  style: RsSourceConstructorStyle,
+  path: rs::Path::I,
+  args: List(rs::Expr::I)
+): rs::Expr::I {
+  match style: rs::Expr::I {
+    RsTupleConstructor => rs_source_native(path, args)
+    RsUnitConstructor => rs_source_atom(Path_I(path))
+    RsRecordConstructor(names) => rs_source_record(path, names, args)
+    RsTupleValue => rs_source_tuple(args)
+  }
+}
+
+pub fn rs_source_construct_pattern(
+  style: RsSourceConstructorStyle,
+  family: List(Text),
+  variant: Text,
+  patterns: List(rs::Pattern::I)
+): rs::Pattern::I {
+  match style: rs::Pattern::I {
+    RsTupleConstructor => rs_source_constructor_pattern(family, variant, patterns)
+    RsUnitConstructor => rs_source_named_pattern(family, variant, None)
+    RsRecordConstructor(names) => rs_source_record_pattern(family, variant, names, patterns)
+    RsTupleValue => rs_source_tuple_pattern(patterns)
+  }
+}
+
+pub fn rs_source_closure_param(local: RsSourceLocal): rs::ClosureParam::I {
+  rs::ClosureParam::I::Mk(Some("mut"), rs_source_id(rs_source_local_id(local)), None)
+}
+
+pub fn rs_source_closure_params_rest(locals: List(RsSourceLocal)): List(rs::ClosureParams_Rep1::I) {
+  match locals: List(rs::ClosureParams_Rep1::I) {
+    Nil => Nil
+    Cons(local, rest) => Cons(
+      rs::ClosureParams_Rep1::I::Mk(",", rs_source_closure_param(local)),
+      rs_source_closure_params_rest(rest)
+    )
+  }
+}
+
+pub fn rs_source_closure_params(locals: List(RsSourceLocal)): rs::ClosureParams::I {
+  match locals: rs::ClosureParams::I {
+    Nil => rs::ClosureParams::I::Mk(None)
+    Cons(local, rest) => rs::ClosureParams::I::Mk(
+      Some(
+        rs::ClosureParams_Opt1::I::Mk(
+          rs_source_closure_param(local),
+          rs_source_closure_params_rest(rest),
+          None
+        )
+      )
+    )
+  }
+}
+
+pub fn rs_source_capture_uses(captures: List(RsSourceLocal)): List(rs::Statement::I) {
+  match captures: List(rs::Statement::I) {
+    Nil => Nil
+    Cons(local, rest) => Cons(
+      rs_source_discard(
+        rs_source_reference(RsShared, rs_source_name(rs_source_id(rs_source_local_id(local))))
+      ),
+      rs_source_capture_uses(rest)
+    )
+  }
+}
+
+pub fn rs_source_closure(
+  kind: RsCallable,
+  params: List(RsSourceLocal),
+  captures: List(RsSourceLocal),
+  body: rs::Expr::I
+): rs::Expr::I {
+  let closure: rs::Expr::I := rs_source_atom(
+    Closure_I(
+      rs::Closure::I::Mk(
+        "(",
+        Some("move"),
+        "|",
+        rs_source_closure_params(params),
+        "|",
+        None,
+        rs_source_block(rs_source_capture_uses(captures), body),
+        ")"
+      )
+    )
+  )
+  let factory: List(Text) := match kind: List(Text) {
+    RsFn => Cons("std", Cons("rc", Cons("Rc", Cons("new", Nil))))
+    RsFnMut => Cons("std", Cons("boxed", Cons("Box", Cons("new", Nil))))
+    RsFnOnce => Cons("std", Cons("boxed", Cons("Box", Cons("new", Nil))))
+  }
+  rs_source_native(rs_source_path(factory), Cons(closure, Nil))
+}
+
+pub fn rs_source_future(captures: List(RsSourceLocal), body: rs::Expr::I): rs::Expr::I {
+  let future: rs::Expr::I := rs_source_atom(
+    AsyncBlock_I(
+      rs::AsyncBlock::I::Mk(
+        "async",
+        Some("move"),
+        rs_source_block(rs_source_capture_uses(captures), body)
+      )
+    )
+  )
+  rs_source_native(
+    rs_source_path(Cons("std", Cons("boxed", Cons("Box", Cons("pin", Nil))))),
+    Cons(future, Nil)
+  )
+}
+
+pub fn rs_source_local_types(locals: List(RsSourceLocal)): List(Nat) {
+  match locals: List(Nat) {
+    Nil => Nil
+    Cons(local, rest) => Cons(rs_source_local_type(local), rs_source_local_types(rest))
+  }
+}

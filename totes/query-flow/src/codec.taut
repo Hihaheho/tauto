@@ -1,0 +1,256 @@
+import std::Base
+import std::Data
+import std::prelude::Shared
+
+// How a value is written to text and read back: what the runtime keeps for a
+// query's output, an asset's value and the arguments of a key, and what it
+// saves to disk. `decode(encode(x))` must be `Some(x)`; the runtime compares
+// encoded texts when no other equality is given.
+pub struct Codec(T: Shared) {
+  encode: (T) -> Text ! {Div},
+  decode: (Text) -> Option(T) ! {Div}
+}
+
+pub fn encode<T: Shared>(c: Codec(T), x: T): Text ! {Div} { (c.encode)(x) }
+
+pub fn decode<T: Shared>(c: Codec(T), t: Text): Option(T) ! {Div} { (c.decode)(t) }
+
+// ---- fields ---------------------------------------------------------------------------------
+//
+// A field is its length in bytes, `:`, and the bytes: `5:hello`. A sequence of fields reads
+// back unambiguously whatever the texts hold.
+
+pub fn field(t: Text): Text {
+  concat(Text::of_u64(Text::len(t)), concat(":", t))
+}
+
+pub fn fields(ts: List(Text)): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => concat(field(t), fields(rest))
+  }
+}
+
+// A position in a text being read.
+pub struct Reader { text: Text, at: u64 }
+
+pub fn reader(t: Text): Reader { Reader { text: t, at: 0 } }
+
+pub fn at_end(r: Reader): Bool { r.at == Text::len(r.text) }
+
+fn digit(b: u8): Option(u64) {
+  let n := U64::of_u8(b)
+  if n >= 48 && n <= 57 { Some(n - 48) } else { None }
+}
+
+// The digits of a length up to `:`, the position after it.
+fn read_len(t: Text, i: u64, acc: u64, any: Bool): Option(u64 × u64) ! {Div} {
+  match Text::byte(t, i) {
+    None => None
+    Some(b) => if U64::of_u8(b) == 58 {
+      if any { Some(#(acc, i + 1)) } else { None }
+    } else {
+      match digit(b) {
+        None => None
+        Some(d) => if acc > 100000000000 { None } else { read_len(t, i + 1, acc * 10 + d, true) }
+      }
+    }
+  }
+}
+
+// The next field and the reader after it.
+pub fn next_field(r: Reader): Option(Text × Reader) ! {Div} {
+  match read_len(r.text, r.at, 0, false) {
+    None => None
+    Some(p) => match p {
+      #(n, start) => match Text::slice(r.text, start, start + n) {
+        None => None
+        Some(t) => Some(#(t, Reader { text: r.text, at: start + n }))
+      }
+    }
+  }
+}
+
+// All the fields of a text, or `None` when it is not a sequence of fields.
+pub fn read_fields(t: Text): Option(List(Text)) ! {Div} {
+  read_fields_from(reader(t), Nil)
+}
+
+fn read_fields_from(r: Reader, acc: List(Text)): Option(List(Text)) ! {Div} {
+  if at_end(r) { Some(List::reverse(acc)) } else {
+    match next_field(r) {
+      None => None
+      Some(p) => match p {
+        #(t, r2) => read_fields_from(r2, Cons(t, acc))
+      }
+    }
+  }
+}
+
+// ---- numbers ------------------------------------------------------------------------------
+
+pub fn parse_u64(t: Text): Option(u64) ! {Div} {
+  if Text::len(t) == 0 || Text::len(t) > 19 { None } else { parse_u64_from(t, 0, 0) }
+}
+
+fn parse_u64_from(t: Text, i: u64, acc: u64): Option(u64) ! {Div} {
+  match Text::byte(t, i) {
+    None => Some(acc)
+    Some(b) => match digit(b) {
+      None => None
+      Some(d) => parse_u64_from(t, i + 1, acc * 10 + d)
+    }
+  }
+}
+
+// A `Nat` as a machine number, and back; the counts and revisions the runtime keeps are small.
+pub fn nat_to_u64(n: Nat): u64 ! {Div} {
+  match n {
+    Zero => 0
+    Succ(m) => nat_to_u64(m) + 1
+  }
+}
+
+pub fn u64_to_nat(n: u64): Nat ! {Div} { if n == 0 { Zero } else { Succ(u64_to_nat(n - 1)) } }
+
+pub fn nat_text(n: Nat): Text ! {Div} { Text::of_u64(nat_to_u64(n)) }
+
+pub fn parse_nat(t: Text): Option(Nat) ! {Div} { match parse_u64(t) {
+    None => None
+    Some(n) => Some(u64_to_nat(n))
+  } }
+
+// ---- codecs of the builtin types ------------------------------------------------------------
+
+pub fn parse_i64(t: Text): Option(i64) ! {Div} {
+  match Text::byte(t, 0) {
+    None => None
+    Some(b) => if U64::of_u8(b) == 45 {
+      match Text::slice(t, 1, Text::len(t)) {
+        None => None
+        Some(rest) => Option::map((n: u64) => 0 - I64::of_u64(n), parse_u64(rest))
+      }
+    } else { Option::map((n: u64) => I64::of_u64(n), parse_u64(t)) }
+  }
+}
+
+module Codec {
+  // The codec that writes with `encode` and reads back with `decode`.
+  pub fn new<T: Shared>(
+    encode: (T) -> Text ! {Div},
+    decode: (Text) -> Option(T) ! {Div}
+  ): Codec(T) {
+    Codec { encode: encode, decode: decode }
+  }
+
+  pub fn of_i64(): Codec(i64) {
+    Codec::new((x: i64) => Text::of_i64(x), (t: Text) => parse_i64(t))
+  }
+
+  pub fn of_u64(): Codec(u64) {
+    Codec::new((x: u64) => Text::of_u64(x), (t: Text) => parse_u64(t))
+  }
+
+  pub fn of_nat(): Codec(Nat) {
+    Codec::new((x: Nat) => nat_text(x), (t: Text) => parse_nat(t))
+  }
+
+  pub fn of_text(): Codec(Text) {
+    Codec::new((x: Text) => x, (t: Text) => Some(t))
+  }
+
+  pub fn of_bool(): Codec(Bool) {
+    Codec::new(
+      (x: Bool) => if x { "t" } else { "f" },
+      (t: Text) => if t == "t" { Some(true) } else if t == "f" { Some(false) } else { None }
+    )
+  }
+
+  pub fn of_unit(): Codec(Unit) {
+    Codec::new((x: Unit) => "", (t: Text) => if t == "" { Some(#()) } else { None })
+  }
+
+  // The elements, each a field.
+  pub fn list<T: Shared>(c: Codec(T)): Codec(List(T)) {
+    Codec::new((xs: List(T)) => fields(encode_each(c, xs)), (t: Text) => match read_fields(t) {
+      None => None
+      Some(ts) => decode_each(c, ts, Nil)
+    })
+  }
+
+  pub fn option<T: Shared>(c: Codec(T)): Codec(Option(T)) {
+    Codec::new(
+      (x: Option(T)) => match x {
+        None => ""
+        Some(y) => concat("s", encode(c, y))
+      },
+      (t: Text) => if t == "" { Some(None) } else {
+        match Text::slice(t, 1, Text::len(t)) {
+          None => None
+          Some(rest) => Option::map((y: T) => Some(y), decode(c, rest))
+        }
+      }
+    )
+  }
+}
+
+fn encode_each<T: Shared>(c: Codec(T), xs: List(T)): List(Text) ! {Div} {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(encode(c, x), encode_each(c, rest))
+  }
+}
+
+fn decode_each<T: Shared>(c: Codec(T), ts: List(Text), acc: List(T)): Option(List(T)) ! {Div} {
+  match ts {
+    Nil => Some(List::reverse(acc))
+    Cons(t, rest) => match decode(c, t) {
+      None => None
+      Some(x) => decode_each(c, rest, Cons(x, acc))
+    }
+  }
+}
+
+// ---- records ----------------------------------------------------------------------------------
+
+// Whether two values encode to the same text: the default comparison of outputs and assets.
+pub fn same_encoded<T: Shared>(
+  c: Codec(T),
+  a: T,
+  b: T
+): Bool ! {Div} { encode(c, a) == encode(c, b) }
+
+// A field of a record that is not there or does not read back.
+pub effect bad_field(): Never resume 0
+
+fn nth_text(ts: List(Text), i: u64): Option(Text) ! {Div} {
+  match ts {
+    Nil => None
+    Cons(t, rest) => if i == 0 { Some(t) } else { nth_text(rest, i - 1) }
+  }
+}
+
+// The field `i` of a record's fields, read with `c`.
+pub fn field_or_fail<T: Shared>(c: Codec(T), ts: List(Text), i: u64): T ! {bad_field, Div} {
+  match nth_text(ts, i) {
+    None => perform bad_field()
+    Some(t) => match decode(c, t) {
+      None => perform bad_field()
+      Some(x) => x
+    }
+  }
+}
+
+// A record read from the sequence of its fields' texts by `make`; `None` when one does not read.
+pub fn read_record<K: Shared>(
+  t: Text,
+  make: (List(Text)) -> K ! {bad_field, Div}
+): Option(K) ! {Div} {
+  match read_fields(t) {
+    None => None
+    Some(ts) => handle { Some(make(ts)) } with {
+      bad_field() => None
+      return v => v
+    }
+  }
+}

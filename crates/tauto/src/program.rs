@@ -433,9 +433,15 @@ struct Stage {
     /// The names one import would make seen, and where each file's last import ends.
     missing: Vec<crate::surface::qualify::MissingImport>,
     last_import: Vec<Option<u32>>,
+    /// Whether each file sees the library's prelude only through its imports.
+    bare: Vec<bool>,
     modules: Vec<String>,
     imports: Option<Vec<Vec<usize>>>,
+    /// Each file's imports with what their lists bring.
+    lists: Vec<Vec<crate::surface::qualify::ImportList>>,
     below: Vec<HashSet<usize>>,
+    /// The names the quotes of each file write, read before the macros.
+    quoted: crate::surface::qualify::Quoted,
     out: crate::macros::Output,
     syntax_dirs: Vec<PathBuf>,
 }
@@ -450,6 +456,9 @@ fn expand_stage(
     let imports_given = imports || graph.is_some();
     let mut files = Vec::new();
     let mut imported: Vec<Vec<PathBuf>> = Vec::new();
+    // Each file's imports as written: the imported file, how it is written, its list and span.
+    #[allow(clippy::type_complexity)]
+    let mut written: Vec<Vec<(PathBuf, String, Option<Vec<(String, Span)>>, Span)>> = Vec::new();
     let mut included = include::Included::default();
     let mut last_import: Vec<Option<u32>> = Vec::new();
     let mut per_file: Vec<Vec<Stmt>> = Vec::new();
@@ -467,11 +476,13 @@ fn expand_stage(
         let mut stmts = Vec::new();
         imported.push(Vec::new());
         last_import.push(None);
+        written.push(Vec::new());
         for stmt in program.stmts {
             match &stmt {
                 Stmt::Import {
                     path: rel,
                     module,
+                    names,
                     span,
                 } if imports => {
                     let last = last_import.last_mut().unwrap();
@@ -485,6 +496,15 @@ fn expand_stage(
                             canonical_path(&path.parent().unwrap_or(Path::new(".")).join(rel))
                         }
                     };
+                    let spelling = if *module {
+                        rel.clone()
+                    } else {
+                        crate::surface::print::quoted(rel)
+                    };
+                    written
+                        .last_mut()
+                        .unwrap()
+                        .push((target.clone(), spelling, names.clone(), *span));
                     imported.last_mut().unwrap().push(target);
                     continue;
                 }
@@ -544,14 +564,40 @@ fn expand_stage(
         })
         .collect();
     let imports = imports_given.then_some(imports.as_slice());
+    // The files read again to run (`graph`) are held to the lists where they were checked.
+    let lists: Vec<Vec<crate::surface::qualify::ImportList>> = written
+        .into_iter()
+        .map(|file| {
+            file.into_iter()
+                .filter(|_| graph.is_none())
+                .map(
+                    |(target, spelling, names, span)| crate::surface::qualify::ImportList {
+                        target: paths.iter().position(|p| *p == target),
+                        spelling,
+                        names,
+                        span,
+                    },
+                )
+                .collect()
+        })
+        .collect();
     let mut per_file = per_file;
     let below = totes_below(&files);
-    let (qualified, seeing, missing) = crate::surface::qualify::files_before_macros(
-        &mut per_file,
-        &modules,
-        imports,
-        Some(&below),
-    );
+    let bare = without_prelude(&files);
+    let quoted = crate::surface::qualify::Quoted::default();
+    let (qualified, seeing, missing) = {
+        let spell = import_spellings(&files, &modules);
+        crate::surface::qualify::files_before_macros_listed(
+            &mut per_file,
+            &modules,
+            imports,
+            Some(&below),
+            Some(&spell),
+            &lists,
+            &bare,
+            &quoted,
+        )
+    };
     // The expansion of a file takes at most the time the check of it may
     // (`Tauto.eure`'s `check`); the expansion and the check are counted
     // apart, each from its own start. A manifest that cannot be read is
@@ -578,7 +624,10 @@ fn expand_stage(
         last_import,
         modules,
         imports: imports.map(<[_]>::to_vec),
+        lists,
+        quoted,
         below,
+        bare,
         out,
         syntax_dirs,
     })
@@ -599,7 +648,10 @@ fn finish(
         last_import,
         modules,
         imports,
+        lists,
+        quoted,
         below,
+        bare,
         mut out,
         syntax_dirs,
     } = stage;
@@ -611,16 +663,21 @@ fn finish(
         }
     }
     let models = crate::surface::qualify::split_models(&mut out.files, &modules, imports);
-    let (after, more) = crate::surface::qualify::files_after_macros(
+    let (after, more, list_fixes) = crate::surface::qualify::files_after_macros_listed(
         &mut out.files,
         &modules,
         imports,
         Some(&below),
+        Some(&import_spellings(&files, &modules)),
+        &lists,
+        &bare,
+        &quoted,
     );
     qualified.extend(after);
     missing.extend(more);
     out.fixes
         .extend(import_fixes(&files, &last_import, missing));
+    out.fixes.extend(list_fixes);
     qualified.extend(crate::surface::qualify::sealed_externs(
         &out.files,
         &totes_of(&files),
@@ -768,6 +825,119 @@ fn totes_below(files: &[SourceFile]) -> Vec<HashSet<usize>> {
         .collect()
 }
 
+/// Whether each file sees the library's prelude only through its imports: a file of the
+/// standard library, and a file of the sources of a tote whose `Tauto.eure` says
+/// `prelude = false`, but a file of the prelude itself (`std/prelude/Std.taut`).
+fn without_prelude(files: &[SourceFile]) -> Vec<bool> {
+    let std_root = Path::new(crate::stdlib::ROOT);
+    files
+        .iter()
+        .map(|f| {
+            // The prelude's own files are the prelude.
+            let prelude = crate::nibstd::PRELUDE_FILES
+                .iter()
+                .any(|(p, t)| f.path.ends_with(p) && *t == f.text);
+            f.path.starts_with(std_root)
+                || !prelude && {
+                    let path = canonical_path(&f.path);
+                    path.ancestors()
+                        .skip(1)
+                        .find(|d| d.join("Tauto.eure").is_file())
+                        .and_then(|d| Some((d, crate::manifest::read(d).ok()?)))
+                        .is_some_and(|(d, m)| {
+                            m.package.no_prelude
+                                && m.package
+                                    .source_paths()
+                                    .iter()
+                                    .any(|s| path.starts_with(d.join(s)))
+                        })
+                }
+        })
+        .collect()
+}
+
+/// How each file writes the import of another, by the paths the files are read
+/// from (`spell(here, target)`): a file of the standard library by its module
+/// (`std::List`); a file of a tote that the tote of `here` lists in its
+/// dependencies by the dependency's name and the file's path in it, from `src`
+/// for a file of `src` (`compiler::compiler`) and from the tote's root for one
+/// of an additional source (`compiler::proof::compiler`); any other file by its
+/// path from the directory of `here`, quoted (`"catalog-data.taut"`,
+/// `"../../bikkuri/src/signal.taut"`). A path that a module cannot name (a part
+/// that is not a name) is written as a path too.
+fn import_spellings(files: &[SourceFile], modules: &[String]) -> impl Fn(usize, usize) -> String {
+    let std_root = Path::new(crate::stdlib::ROOT);
+    let paths: Vec<PathBuf> = files.iter().map(|f| canonical_path(&f.path)).collect();
+    let library: Vec<bool> = files
+        .iter()
+        .map(|f| {
+            f.path.starts_with(std_root)
+                || crate::stdlib::text(&f.path).is_some()
+                || f.path == Path::new(crate::extract::EXTRACTED_PATH)
+        })
+        .collect();
+    let totes: Vec<Option<(PathBuf, crate::manifest::Manifest)>> = paths
+        .iter()
+        .zip(&library)
+        .map(|(p, &lib)| {
+            if lib {
+                return None;
+            }
+            let dir = p.ancestors().skip(1).find(|d| d.join("Tauto.eure").is_file())?;
+            Some((dir.to_path_buf(), crate::manifest::read(dir).ok()?))
+        })
+        .collect();
+    let modules = modules.to_vec();
+    move |here: usize, target: usize| {
+        if library[target] {
+            return modules[target].clone();
+        }
+        if let (Some((_, from)), Some((dir, to))) = (&totes[here], &totes[target]) {
+            let name = &to.package.name;
+            let depends = from.package.name != *name
+                && from.dependencies.iter().any(|(n, _)| n == name);
+            if depends && let Some(module) = module_in_tote(&paths[target], dir) {
+                return format!("{name}::{module}");
+            }
+        }
+        let dir = paths[here].parent().unwrap_or(Path::new(""));
+        format!("\"{}\"", relative_path(dir, &paths[target]))
+    }
+}
+
+/// The module path a dependency gives its file `file` (`proof::compiler`), the
+/// tote's root being `dir`: from `src` for a file of `src`, else from `dir`.
+/// `None` when a part of it is not a name.
+fn module_in_tote(file: &Path, dir: &Path) -> Option<String> {
+    let rel = file.strip_prefix(dir).ok()?;
+    let rel = rel
+        .strip_prefix(crate::manifest::DEFAULT_SOURCE)
+        .ok()
+        .filter(|r| r.components().count() > 0)
+        .unwrap_or(rel);
+    let stem = rel.with_extension("");
+    let parts: Vec<&str> = stem
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<_>>()?;
+    let name = |p: &&str| {
+        p.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+            && p.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    (!parts.is_empty() && parts.iter().all(name)).then(|| parts.join("::"))
+}
+
+/// The path of `to` from the directory `from`, with `/` between its parts.
+fn relative_path(from: &Path, to: &Path) -> String {
+    let a: Vec<_> = from.components().collect();
+    let b: Vec<_> = to.components().collect();
+    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    std::iter::repeat_n("..".to_string(), a.len() - common)
+        .chain(b[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// The tote of each file, by the nearest `Tauto.eure` above it; `None` for
 /// the standard library and for a file of no tote.
 fn totes_of(files: &[SourceFile]) -> Vec<Option<String>> {
@@ -905,6 +1075,13 @@ fn load_extracted_tote(extracted: crate::extract::Extracted) -> Result<Loaded, S
             loaded.syntax_dirs.push(dir);
         }
     }
+    loaded
+        .program
+        .errors
+        .extend(crate::extract::dependent_visibility(
+            &loaded,
+            &extracted.protected,
+        ));
     loaded.extracted = Some((loaded.program.clone(), extracted.total));
     Ok(loaded)
 }
