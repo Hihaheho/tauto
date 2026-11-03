@@ -1,5 +1,3 @@
-//! The Rust a tauto program calls through `extern { … }`.
-
 pub fn shout(t: &str) -> String {
     t.to_uppercase()
 }

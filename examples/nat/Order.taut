@@ -1,115 +1,107 @@
+import "Add.taut"
+import "Lib.taut"
 import "Mul.taut"
 
-theorem zero_le(n: Nat): nat!(`0 <= $n`) {
-  match n -> nat!(`0 <= $n`) {
-    zero => le_refl()
-    succ(k) => le_step(zero_le(k))
+pub theorem zero_le(n: Nat): nat!(`0 <= $n`) {
+  match n: nat!(`0 <= $n`) {
+    Zero => LeRefl
+    Succ(k) => LeStep(zero_le(k))
   }
 }
 
-theorem succ_le_succ<n: Nat, m: Nat>(h: nat!(`$n <= $m`)): nat!(`${succ(n)} <= ${succ(m)}`) {
-  match h -> nat!(`${succ(n)} <= ${succ(m)}`) {
-    le_refl => le_refl()
-    le_step(h1) => le_step(succ_le_succ(h1))
+pub theorem succ_le_succ<n: Nat, m: Nat>(h: nat!(`$n <= $m`)): nat!(`${Succ(n)} <= ${Succ(m)}`) {
+  match h: nat!(`${Succ(n)} <= ${Succ(m)}`) {
+    LeRefl => LeRefl
+    LeStep(h1) => LeStep(succ_le_succ(h1))
   }
 }
 
-theorem le_trans<a: Nat, b: Nat, c: Nat>(
+pub theorem le_trans<a: Nat, b: Nat, c: Nat>(
   h1: nat!(`$a <= $b`),
   h2: nat!(`$b <= $c`)
 ): nat!(`$a <= $c`) {
-  match h2 -> nat!(`$a <= $c`) {
-    le_refl => h1
-    le_step(h3) => le_step(le_trans(h1, h3))
+  match h2: nat!(`$a <= $c`) {
+    LeRefl => h1
+    LeStep(h3) => LeStep(le_trans(h1, h3))
   }
 }
 
-theorem le_succ_r<a: Nat, b: Nat>(h: nat!(`$a <= $b`)): nat!(`$a <= ${succ(b)}`) {
-  le_step(h)
+pub theorem le_succ_r<a: Nat, b: Nat>(h: nat!(`$a <= $b`)): nat!(`$a <= ${Succ(b)}`) {
+  LeStep(h)
 }
 
-theorem le_succ_l<a: Nat, b: Nat>(h: nat!(`${succ(a)} <= $b`)): nat!(`$a <= $b`) {
-  match h -> nat!(`$a <= $b`) {
-    le_refl => le_step(le_refl())
-    le_step(h1) => le_step(le_succ_l(h1))
+pub theorem le_succ_l<a: Nat, b: Nat>(h: nat!(`${Succ(a)} <= $b`)): nat!(`$a <= $b`) {
+  match h: nat!(`$a <= $b`) {
+    LeRefl => LeStep(LeRefl)
+    LeStep(h1) => LeStep(le_succ_l(h1))
   }
 }
 
-theorem le_pred<a: Nat, b: Nat>(h: nat!(`${succ(a)} <= ${succ(b)}`)): nat!(`$a <= $b`) {
-  match h -> nat!(`$a <= $b`) {
-    le_refl => le_refl()
-    le_step(h1) => le_succ_l(h1)
+pub theorem le_pred<a: Nat, b: Nat>(h: nat!(`${Succ(a)} <= ${Succ(b)}`)): nat!(`$a <= $b`) {
+  match h: nat!(`$a <= $b`) {
+    LeRefl => LeRefl
+    LeStep(h1) => le_succ_l(h1)
   }
 }
 
-theorem not_succ_le_zero<n: Nat>(h: nat!(`${succ(n)} <= 0`)): False {
-  match h -> False {
+pub theorem not_succ_le_zero<n: Nat>(h: nat!(`${Succ(n)} <= 0`)): False {
+  match h: False {
   }
 }
 
-theorem lt_irrefl(n: Nat, h: nat!(`${succ(n)} <= $n`)): False {
-  match n -> False {
-    zero => not_succ_le_zero(h)
-    succ(k) => lt_irrefl(k, le_pred(h))
+pub theorem lt_irrefl(n: Nat, h: nat!(`${Succ(n)} <= $n`)): False {
+  match n: False {
+    Zero => not_succ_le_zero(h)
+    Succ(k) => lt_irrefl(k, le_pred(h))
   }
 }
 
-theorem le_antisymm<a: Nat, b: Nat>(
+pub theorem le_antisymm<a: Nat, b: Nat>(
   h1: nat!(`$a <= $b`),
   h2: nat!(`$b <= $a`)
 ): nat!(`$a = $b`) {
-  match h1 -> nat!(`$a = $b`) {
-    le_refl => refl()
-    le_step(m, h3) => False_elim(lt_irrefl(m, le_trans(h2, h3)))
+  match h1: nat!(`$a = $b`) {
+    LeRefl => Refl
+    LeStep(m, h3) => False::elim(lt_irrefl(m, le_trans(h2, h3)))
   }
 }
 
-theorem le_add_l(a: Nat, b: Nat): nat!(`$b <= $a + $b`) {
-  match a -> nat!(`$b <= $a + $b`) {
-    zero => le_refl()
-    succ(k) => le_step(le_add_l(k, b))
+pub theorem le_add_r(a: Nat, b: Nat): nat!(`$a <= $a + $b`) {
+  match b: nat!(`$a <= $a + $b`) {
+    Zero => LeRefl
+    Succ(k) => LeStep(le_add_r(a, k))
   }
 }
 
-theorem le_add_r(a: Nat, b: Nat): nat!(`$a <= $a + $b`) {
-  Eq_subst(x => nat!(`$a <= $x`), add_comm(b, a), le_add_l(b, a))
+pub theorem le_add_l(a: Nat, b: Nat): nat!(`$b <= $a + $b`) {
+  Eq::subst(x => nat!(`$b <= $x`), add_comm(b, a), le_add_r(b, a))
 }
 
-theorem add_le_mono_l(
-  c: Nat,
-  a: Nat,
-  b: Nat,
-  h: nat!(`$a <= $b`)
-): nat!(`$c + $a <= $c + $b`) {
-  match c -> nat!(`$c + $a <= $c + $b`) {
-    zero => h
-    succ(k) => succ_le_succ(add_le_mono_l(k, a, b, h))
+pub theorem add_le_mono_r(c: Nat, a: Nat, b: Nat, h: nat!(`$a <= $b`)): nat!(`$a + $c <= $b + $c`) {
+  match c: nat!(`$a + $c <= $b + $c`) {
+    Zero => h
+    Succ(k) => succ_le_succ(add_le_mono_r(k, a, b, h))
   }
 }
 
-theorem add_le_mono_r(
-  c: Nat,
-  a: Nat,
-  b: Nat,
-  h: nat!(`$a <= $b`)
-): nat!(`$a + $c <= $b + $c`) {
-  Eq_subst(
-    x => nat!(`$x <= $b + $c`),
-    add_comm(c, a),
-    Eq_subst(x => nat!(`$c + $a <= $x`), add_comm(c, b), add_le_mono_l(c, a, b, h))
+pub theorem add_le_mono_l(c: Nat, a: Nat, b: Nat, h: nat!(`$a <= $b`)): nat!(`$c + $a <= $c + $b`) {
+  Eq::subst(
+    x => nat!(`$c + $a <= $x`),
+    add_comm(b, c),
+    Eq::subst(x => nat!(`$x <= $b + $c`), add_comm(a, c), add_le_mono_r(c, a, b, h))
   )
 }
 
-theorem le_total(a: Nat, b: Nat): nat!(`$a <= $b or $b <= $a`) {
-  match a -> nat!(`$a <= $b or $b <= $a`) {
-    zero => or_inl(zero_le(b))
-    succ(k) => match b -> nat!(`${succ(k)} <= $b or $b <= ${succ(k)}`) {
-      zero => or_inr(zero_le(succ(k)))
-      succ(j) => or_elim(le_total(k, j), h => or_inl(succ_le_succ(h)), h => or_inr(succ_le_succ(h)))
+pub theorem le_total(a: Nat, b: Nat): nat!(`$a <= $b or $b <= $a`) {
+  match a: nat!(`$a <= $b or $b <= $a`) {
+    Zero => OrInl(zero_le(b))
+    Succ(k) => match b: nat!(`${Succ(k)} <= $b or $b <= ${Succ(k)}`) {
+      Zero => OrInr(zero_le(Succ(k)))
+      Succ(j) => Or::elim(le_total(k, j), h => OrInl(succ_le_succ(h)), h => OrInr(succ_le_succ(h)))
     }
   }
 }
 
-theorem lt_succ_self(n: Nat): nat!(`$n < ${succ(n)}`) {
-  le_refl()
+pub theorem lt_succ_self(n: Nat): nat!(`$n < ${Succ(n)}`) {
+  LeRefl
 }

@@ -1,0 +1,51 @@
+import "../../../std/Base.taut"
+import "../../../std/UInt.taut"
+
+// A byte counter whose step is checked: the proofs see `Option(U8)`, and the
+// program runs on Nib's `u8`.
+pub fn counter_step(c: U8, r#by: U8): Option(U8) {
+  U8::checked_add(c, r#by)
+}
+
+// A step the caller has shown fits: no check at run time.
+pub fn counter_bump(
+  c: U8,
+  r#by: U8,
+  h: Nat::lt(Nat::add(U8::val(c), U8::val(r#by)), 256) = true
+): U8 {
+  U8::add(c, r#by, h)
+}
+
+// The caller gives the proof in a function the kernel checks: `200 + 55`
+// fits, so `Refl` shows it. Code the kernel does not check, like `main`,
+// cannot give one, and calls this instead.
+pub fn counter_bump_200_55(): U8 {
+  counter_bump(U8::Mk(200, Refl), U8::Mk(55, Refl), Refl)
+}
+
+pub theorem counter_bump_val(
+  c: U8,
+  r#by: U8,
+  h: Nat::lt(Nat::add(U8::val(c), U8::val(r#by)), 256) = true
+): U8::val(counter_bump(c, r#by, h)) = Nat::add(U8::val(c), U8::val(r#by)) {
+  Refl
+}
+
+pub theorem counter_step_overflows(): counter_step(U8::Mk(200, Refl), U8::Mk(56, Refl)) = None {
+  Refl
+}
+
+// The same step, with `overflow` caught as `None`: the effect agrees with
+// the decision.
+pub fn counter_try(c: U8, r#by: U8): Option(U8) {
+  handle { Some(U8::add_or_overflow(c, r#by)) } with {
+    overflow(), k => None
+  }
+}
+
+pub theorem counter_try_is_step(
+  c: U8,
+  r#by: U8
+): counter_try(c, r#by) = counter_step(c, r#by) {
+  U8::catch_is(U8::checked_add(c, r#by))
+}

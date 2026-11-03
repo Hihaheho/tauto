@@ -1,0 +1,57 @@
+import "../../std/Base.taut"
+import "../../std/Nat.taut"
+import "../../std/List.taut"
+import "../../std/Tactic.taut"
+import "../../std/Rewrite.taut"
+
+// Lean: `example (n : Nat) : n + 0 = n := by simp`
+// `+` recurses on its second argument, so the two sides are the same term.
+pub theorem add_zero_right(n: Nat): n + 0 = n {
+  Refl
+}
+
+// Lean: `example (n : Nat) : 0 + n = n := by induction n <;> simp [*]`
+pub theorem zero_add(n: Nat): 0 + n = n {
+  match n: 0 + n = n {
+    Zero => Refl
+    Succ(k) => Eq::congr(Succ, zero_add(k))
+  }
+}
+
+// Lean: in the `succ k ih` case, `rw [Nat.add_succ, ih, Nat.succ_add]`. Here each rewrite is a step that
+// writes the goal before it and the goal after it.
+pub theorem add_comm_steps(a: Nat, b: Nat): a + b = b + a {
+  match b: a + b = b + a {
+    Zero => Eq::sym(zero_add(a))
+    Succ(k) => by rewrite!(Nat::add_succ_left(k, a)): a + Succ(k) = Succ(k) + a {
+      ⊢ a + Succ(k) = Succ(k + a) from Eq::congr(Succ, add_comm_steps(a, k))
+    }
+  }
+}
+
+// Lean: `example (a b c : Nat) : a + (b + c) = b + (a + c) := by simp [Nat.add_left_comm]` (or `omega`)
+pub theorem add_left_comm(a: Nat, b: Nat, c: Nat): a + (b + c) = b + (a + c) {
+  by nat_norm!(): a + (b + c) = b + (a + c) {}
+}
+
+// Lean: `example (h : a + b = c) : b + a = c := by simpa [Nat.add_comm] using h`
+// (or `rw [Nat.add_comm]; exact h`). There is no `simp at h`; the step rewrites the goal and the
+// hypothesis then closes the arm. The arm's goal is written, so the reader sees what `h` has to prove.
+pub theorem swap_hyp(a: Nat, b: Nat, c: Nat, h: a + b = c): b + a = c {
+  by rewrite!(Nat::add_comm(b, a)): b + a = c {
+    ⊢ a + b = c from h
+  }
+}
+
+// Lean: `example (f : α → β) (l m : List α) : ((l ++ m).map f).length = l.length + m.length := by simp`
+// `calc` names the two lemmas that are needed, in the order they apply.
+pub theorem length_map_append<A: Type, B: Type>(
+  f: (A) -> B,
+  l: List(A),
+  m: List(A)
+): List::length(List::map(f, List::append(l, m))) = List::length(l) + List::length(m) {
+  calc List::length(List::map(f, List::append(l, m))) {
+    = List::length(List::append(l, m)) from List::length_map(f, List::append(l, m))
+    = List::length(l) + List::length(m) from List::length_append(l, m)
+  }
+}

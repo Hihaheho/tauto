@@ -1,0 +1,25 @@
+import "policy.taut"
+
+// The handler is a small trusted bridge to the kernel-checked transition.
+pub(open) effect start_read(): nat resume 1
+pub(open) effect read_completed(token: nat, value: nat): Unit resume 1
+
+var cell := Resource { generation: 0, value: 0 }
+handle {
+  let a := perform start_read()
+  let b := perform start_read()
+  perform read_completed(b, 20)
+  perform read_completed(a, 10)
+} with {
+  start_read(), k => {
+    cell := begin(cell)
+    k(generation(cell))
+  }
+  read_completed(token, value), k => {
+    cell := complete(cell, token, value)
+    perform show("displayed", displayed(cell))
+    k(#())
+  }
+}
+perform show("final generation", generation(cell))
+perform show("final value", displayed(cell))

@@ -1,0 +1,194 @@
+import "../src/machine.taut"
+import "../src/typing.taut"
+
+pub(open) inductive StackHas: (Stack, Shape) -> Prop {
+  HEmpty: StackHas(EmptyStack, Empty)
+  HNum<value: Nat, rest: Stack, tail: Shape>(
+    h: StackHas(rest, tail)
+  ): StackHas(Number(value, rest), NumOn(tail))
+  HBool<value: Bool, rest: Stack, tail: Shape>(
+    h: StackHas(rest, tail)
+  ): StackHas(Boolean(value, rest), BoolOn(tail))
+}
+
+// Only a successful return with a stack of the promised shape has this evidence.
+pub(open) inductive ResultHas: (Option(Stack), Shape) -> Prop {
+  Returned<stack: Stack, output: Shape>(h: StackHas(stack, output)): ResultHas(Some(stack), output)
+}
+
+pub theorem stack_typed(stack: Stack): StackHas(stack, shape(stack)) {
+  match stack: StackHas(stack, shape(stack)) {
+    EmptyStack => HEmpty
+    Number(value, rest) => HNum(stack_typed(rest))
+    Boolean(value, rest) => HBool(stack_typed(rest))
+  }
+}
+
+pub theorem op_safe<op: Op, input: Shape, output: Shape>(
+  derivation: OpTyping(op, input, output),
+  stack: Stack,
+  typed: StackHas(stack, input)
+): ResultHas(run_op(op, stack), output) {
+  match derivation: ResultHas(run_op(op, stack), output) {
+    TPushNum(value, tail) => Returned(HNum(typed))
+    TPushBool(value, tail) => Returned(HBool(typed))
+    TAdd(tail) => match typed: ResultHas(run_op(Add, stack), NumOn(tail)) {
+      HNum(right, rest, rest_type, hrest) => match hrest: ResultHas(
+        run_op(Add, Number(right, rest)),
+        NumOn(tail)
+      ) {
+        HNum(left, bottom, bottom_type, hbottom) => Returned(HNum(hbottom))
+      }
+    }
+    TDupNum(tail) => match typed: ResultHas(run_op(Dup, stack), NumOn(NumOn(tail))) {
+      HNum(value, rest, rest_type, hrest) => Returned(HNum(HNum(hrest)))
+    }
+    TDupBool(tail) => match typed: ResultHas(run_op(Dup, stack), BoolOn(BoolOn(tail))) {
+      HBool(value, rest, rest_type, hrest) => Returned(HBool(HBool(hrest)))
+    }
+  }
+}
+
+pub theorem chain_safe(
+  result: Option(Stack),
+  middle: Shape,
+  output: Shape,
+  next: (Stack) -> Option(Stack),
+  safe: ResultHas(result, middle),
+  continue_safe: (stack: Stack, typed: StackHas(stack, middle)) -> ResultHas(next(stack), output)
+): ResultHas(chain(result, next), output) {
+  match safe: ResultHas(chain(result, next), output) {
+    Returned(stack, state, typed) => continue_safe(stack, typed)
+  }
+}
+
+pub theorem branch_safe(
+  yes: Code,
+  no: Code,
+  input: Shape,
+  output: Shape,
+  stack: Stack,
+  typed: StackHas(stack, BoolOn(input)),
+  yes_safe: (rest: Stack, hrest: StackHas(rest, input)) -> ResultHas(run(yes, rest), output),
+  no_safe: (rest: Stack, hrest: StackHas(rest, input)) -> ResultHas(run(no, rest), output)
+): ResultHas(run(Branch(yes, no), stack), output) {
+  match typed: ResultHas(run(Branch(yes, no), stack), output) {
+    HBool(flag, rest, state, hrest) => match flag: ResultHas(
+      run(Branch(yes, no), Boolean(flag, rest)),
+      output
+    ) {
+      true => yes_safe(rest, hrest)
+      false => no_safe(rest, hrest)
+    }
+  }
+}
+
+// This theorem is about the actual interpreter, for every code and matching input stack.
+pub theorem run_safe<code: Code, input: Shape, output: Shape>(
+  derivation: Typing(code, input, output),
+  stack: Stack,
+  typed: StackHas(stack, input)
+): ResultHas(run(code, stack), output) {
+  match derivation: ResultHas(run(code, stack), output) {
+    THalt(state) => Returned(typed)
+    TExec(op, before, after, hop) => op_safe(hop, stack, typed)
+    TSeq(first, second, before, middle, after, hfirst, hsecond) => chain_safe(
+      run(first, stack),
+      middle,
+      after,
+      next => run(second, next),
+      run_safe(hfirst, stack, typed),
+      (next, hnext) => run_safe(hsecond, next, hnext)
+    )
+    TBranch(yes, no, before, after, hyes, hno) => branch_safe(
+      yes,
+      no,
+      before,
+      after,
+      stack,
+      typed,
+      (rest, hrest) => run_safe(hyes, rest, hrest),
+      (rest, hrest) => run_safe(hno, rest, hrest)
+    )
+  }
+}
+
+pub theorem run_never_stuck<code: Code, input: Shape, output: Shape>(
+  derivation: Typing(code, input, output),
+  stack: Stack,
+  typed: StackHas(stack, input),
+  stuck: Eq(Option(Stack), run(code, stack), None)
+): False {
+  let safe: ResultHas(run(code, stack), output) := run_safe(derivation, stack, typed)
+  let impossible: ResultHas(
+    None,
+    output
+  ) := Eq::subst((result: Option(Stack)) => ResultHas(result, output), stuck, safe)
+  match impossible: False {}
+}
+
+// The independent contract names the original relation, including uniqueness and rejection.
+pub theorem output_unique<code: Code, input: Shape, a: Shape, b: Shape>(
+  ha: Typing(code, input, a),
+  hb: Typing(code, input, b)
+): Eq(Shape, a, b) {
+  match check_code(code, input): Eq(Shape, a, b) {
+    CodeAccepted(output, derivation, unique) => Eq::trans(unique(a, ha), Eq::sym(unique(b, hb)))
+    CodeRejected(refute) => False::elim(refute(a, ha))
+  }
+}
+
+pub theorem checker_contract(
+  code: Code,
+  input: Shape
+): Or(
+  Exists(Shape, output => Typing(code, input, output)),
+  (∀ output: Shape. (Typing(code, input, output)) -> False)
+) {
+  match check_code(
+    code,
+    input
+  ): Or(
+    Exists(Shape, output => Typing(code, input, output)),
+    (∀ output: Shape. (Typing(code, input, output)) -> False)
+  ) {
+    CodeAccepted(output, derivation, unique) => OrInl(ExIntro(output, derivation))
+    CodeRejected(refute) => OrInr(refute)
+  }
+}
+
+pub theorem rejected_refutes(
+  code: Code,
+  input: Shape,
+  decision: CodeCheck(code, input),
+  absent: Eq(Option(Shape), decision_output(code, input, decision), None),
+  output: Shape,
+  derivation: Typing(code, input, output)
+): False {
+  match decision: False {
+    CodeAccepted(actual, proof, unique) => match absent: False {}
+    CodeRejected(refute) => refute(output, derivation)
+  }
+}
+
+pub theorem execute_decision_safe(
+  code: Code,
+  stack: Stack,
+  decision: CodeCheck(code, shape(stack)),
+  output: Shape,
+  derivation: Typing(code, shape(stack), output)
+): ResultHas(execute_decision(code, stack, decision), output) {
+  match decision: ResultHas(execute_decision(code, stack, decision), output) {
+    CodeAccepted(actual, proof, unique) => run_safe(derivation, stack, stack_typed(stack))
+    CodeRejected(refute) => False::elim(refute(output, derivation))
+  }
+}
+
+pub theorem checked_run_safe(
+  code: Code,
+  stack: Stack,
+  output: Shape,
+  derivation: Typing(code, shape(stack), output)
+): ResultHas(check_and_run(code, stack), output) {
+  execute_decision_safe(code, stack, check_code(code, shape(stack)), output, derivation)
+}

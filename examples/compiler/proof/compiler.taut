@@ -1,120 +1,93 @@
+import "../../../std/Base.taut"
 import "../src/compiler.taut"
 
 // What the compiler does, proved. The tote checks this file before extracting its programs.
 
-// Running the code of `e` followed by `k` is running `k` with the value of `e` pushed.
-theorem comp_correct(
+pub theorem comp_correct(
   e: Expr,
   k: List(Instr),
   st: List(Nat)
-): Eq(Option(List(Nat)), run_code(comp_expr(e, k), st), run_code(k, Cons(eval_expr(e), st))) {
-  match e -> Eq(
-    Option(List(Nat)),
-    run_code(comp_expr(e, k), st),
-    run_code(k, Cons(eval_expr(e), st))
-  ) {
-    e_lit(n) => refl()
-    e_add(
-      a,
-      b
-    ) => Eq_trans(
-      comp_correct(a, comp_expr(b, Cons(i_add, k)), st),
-      comp_correct(b, Cons(i_add, k), Cons(eval_expr(a), st))
+): run_code(comp_expr(e, k), st) = run_code(k, Cons(eval_expr(e), st)) {
+  match e: run_code(comp_expr(e, k), st) = run_code(k, Cons(eval_expr(e), st)) {
+    ELit(n) => Refl
+    EAdd(a, b) => Eq::trans(
+      comp_correct(a, comp_expr(b, Cons(IAdd, k)), st),
+      comp_correct(b, Cons(IAdd, k), Cons(eval_expr(a), st))
     )
-    e_mul(
-      a,
-      b
-    ) => Eq_trans(
-      comp_correct(a, comp_expr(b, Cons(i_mul, k)), st),
-      comp_correct(b, Cons(i_mul, k), Cons(eval_expr(a), st))
+    EMul(a, b) => Eq::trans(
+      comp_correct(a, comp_expr(b, Cons(IMul, k)), st),
+      comp_correct(b, Cons(IMul, k), Cons(eval_expr(a), st))
     )
   }
 }
 
-// The compiled code never underflows the stack and leaves exactly the value of `e`.
-theorem compile_correct(
+pub theorem compile_correct(
   e: Expr
-): Eq(Option(List(Nat)), run_code(compile_expr(e), Nil), Some(Cons(eval_expr(e), Nil))) {
+): run_code(compile_expr(e), Nil) = Some(Cons(eval_expr(e), Nil)) {
   comp_correct(e, Nil, Nil)
 }
 
-theorem fold_add_correct(
+pub theorem fold_add_correct(
   a: Expr,
   b: Expr
-): Eq(Nat, eval_expr(fold_add(a, b)), nat_add(eval_expr(a), eval_expr(b))) {
-  match a -> Eq(Nat, eval_expr(fold_add(a, b)), nat_add(eval_expr(a), eval_expr(b))) {
-    e_lit(n) => match b -> Eq(Nat, eval_expr(fold_add(e_lit(n), b)), nat_add(n, eval_expr(b))) {
-      e_lit(m) => refl()
-      e_add(b1, b2) => refl()
-      e_mul(b1, b2) => refl()
+): eval_expr(fold_add(a, b)) = Nat::add(eval_expr(a), eval_expr(b)) {
+  match a: eval_expr(fold_add(a, b)) = Nat::add(eval_expr(a), eval_expr(b)) {
+    ELit(n) => match b: eval_expr(fold_add(ELit(n), b)) = Nat::add(n, eval_expr(b)) {
+      ELit(m) => Refl
+      EAdd(b1, b2) => Refl
+      EMul(b1, b2) => Refl
     }
-    e_add(a1, a2) => refl()
-    e_mul(a1, a2) => refl()
+    EAdd(a1, a2) => Refl
+    EMul(a1, a2) => Refl
   }
 }
 
-theorem fold_mul_correct(
+pub theorem fold_mul_correct(
   a: Expr,
   b: Expr
-): Eq(Nat, eval_expr(fold_mul(a, b)), nat_mul(eval_expr(a), eval_expr(b))) {
-  match a -> Eq(Nat, eval_expr(fold_mul(a, b)), nat_mul(eval_expr(a), eval_expr(b))) {
-    e_lit(n) => match b -> Eq(Nat, eval_expr(fold_mul(e_lit(n), b)), nat_mul(n, eval_expr(b))) {
-      e_lit(m) => refl()
-      e_add(b1, b2) => refl()
-      e_mul(b1, b2) => refl()
+): eval_expr(fold_mul(a, b)) = Nat::mul(eval_expr(a), eval_expr(b)) {
+  match a: eval_expr(fold_mul(a, b)) = Nat::mul(eval_expr(a), eval_expr(b)) {
+    ELit(n) => match b: eval_expr(fold_mul(ELit(n), b)) = Nat::mul(n, eval_expr(b)) {
+      ELit(m) => Refl
+      EAdd(b1, b2) => Refl
+      EMul(b1, b2) => Refl
     }
-    e_add(a1, a2) => refl()
-    e_mul(a1, a2) => refl()
+    EAdd(a1, a2) => Refl
+    EMul(a1, a2) => Refl
   }
 }
 
-// Constant folding keeps the value.
-theorem fold_correct(e: Expr): Eq(Nat, eval_expr(fold_expr(e)), eval_expr(e)) {
-  match e -> Eq(Nat, eval_expr(fold_expr(e)), eval_expr(e)) {
-    e_lit(n) => refl()
-    e_add(
-      a,
-      b
-    ) => Eq_trans(
+pub theorem fold_correct(e: Expr): eval_expr(fold_expr(e)) = eval_expr(e) {
+  match e: eval_expr(fold_expr(e)) = eval_expr(e) {
+    ELit(n) => Refl
+    EAdd(a, b) => Eq::trans(
       fold_add_correct(fold_expr(a), fold_expr(b)),
-      Eq_trans(
-        Eq_congr((x: Nat) => nat_add(x, eval_expr(fold_expr(b))), fold_correct(a)),
-        Eq_congr((x: Nat) => nat_add(eval_expr(a), x), fold_correct(b))
+      Eq::trans(
+        Eq::congr((x: Nat) => Nat::add(x, eval_expr(fold_expr(b))), fold_correct(a)),
+        Eq::congr((x: Nat) => Nat::add(eval_expr(a), x), fold_correct(b))
       )
     )
-    e_mul(
-      a,
-      b
-    ) => Eq_trans(
+    EMul(a, b) => Eq::trans(
       fold_mul_correct(fold_expr(a), fold_expr(b)),
-      Eq_trans(
-        Eq_congr((x: Nat) => nat_mul(x, eval_expr(fold_expr(b))), fold_correct(a)),
-        Eq_congr((x: Nat) => nat_mul(eval_expr(a), x), fold_correct(b))
+      Eq::trans(
+        Eq::congr((x: Nat) => Nat::mul(x, eval_expr(fold_expr(b))), fold_correct(a)),
+        Eq::congr((x: Nat) => Nat::mul(eval_expr(a), x), fold_correct(b))
       )
     )
   }
 }
 
-// Folding first and then compiling gives the same answer.
-theorem optimized_compile_correct(
+pub theorem optimized_compile_correct(
   e: Expr
-): Eq(Option(List(Nat)), run_code(compile_expr(fold_expr(e)), Nil), Some(Cons(eval_expr(e), Nil))) {
-  Eq_trans(compile_correct(fold_expr(e)), Eq_congr((n: Nat) => Some(Cons(n, Nil)), fold_correct(e)))
+): run_code(compile_expr(fold_expr(e)), Nil) = Some(Cons(eval_expr(e), Nil)) {
+  Eq::trans(compile_correct(fold_expr(e)), Eq::congr((n: Nat) => Some(Cons(n, Nil)), fold_correct(e)))
 }
 
 // Computed: `(2 + 3) * (4 + 5)` is 45 on the machine, and folding leaves the number 45.
-theorem example_runs(): Eq(
-  Option(List(Nat)),
-  run_code(compile_expr(e_mul(e_add(e_lit(2), e_lit(3)), e_add(e_lit(4), e_lit(5)))), Nil),
-  Some(Cons(45, Nil))
-) {
-  refl()
+pub theorem example_runs(): run_code(compile_expr(EMul(EAdd(ELit(2), ELit(3)), EAdd(ELit(4), ELit(5)))), Nil) = Some(Cons(45, Nil)) {
+  Refl
 }
 
-theorem example_folds(): Eq(
-  Expr,
-  fold_expr(e_mul(e_add(e_lit(2), e_lit(3)), e_add(e_lit(4), e_lit(5)))),
-  e_lit(45)
-) {
-  refl()
+pub theorem example_folds(): fold_expr(EMul(EAdd(ELit(2), ELit(3)), EAdd(ELit(4), ELit(5)))) = ELit(45) {
+  Refl
 }

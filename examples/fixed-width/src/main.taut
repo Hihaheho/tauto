@@ -1,0 +1,43 @@
+import "counter.taut"
+import "signed.taut"
+import "../../../std/SInt.taut"
+import "../../../std/UInt.taut"
+
+// What the checked steps of `counter.taut` and `std/UInt.taut` do at run time.
+perform show("step", counter_step(U8::of_u64(200), U8::of_u64(55)))
+perform show("overflow", counter_step(U8::of_u64(200), U8::of_u64(56)))
+perform show("bump", counter_bump_200_55())
+perform show("sub", U8::checked_sub(U8::of_u64(3), U8::of_u64(4)))
+perform show("mul", U32::checked_mul(U32::of_u64(65535), U32::of_u64(65537)))
+perform show("mul_overflow", U32::checked_mul(U32::of_u64(65536), U32::of_u64(65536)))
+let quarter := U64::of_i64(4611686018427387904)
+perform show("u64_add", U64::checked_add(quarter, quarter - 1))
+perform show("u64_mul", U64::checked_mul(U64::of_u32(U32::of_u64(2147483648)), 2147483648))
+perform show("u64_mul_overflow", U64::checked_mul(quarter, 8))
+perform show("caught", U8::catch(U8::checked_add(U8::of_u64(200), U8::of_u64(56))))
+let saturated := handle { U8::add_or_overflow(U8::of_u64(200), U8::of_u64(56)) } with {
+  overflow(), k => U8::of_u64(255)
+}
+perform show("saturated", saturated)
+let fits := handle { U8::add_or_overflow(U8::of_u64(200), U8::of_u64(55)) } with {
+  overflow(), k => U8::of_u64(0)
+}
+perform show("fits", fits)
+perform show("wrap_add", U8::wrapping_add(U8::of_u64(200), U8::of_u64(56)))
+perform show("wrap_sub", U32::wrapping_sub(U32::of_u64(0), U32::of_u64(1)))
+perform show("wrap_mul", U64::wrapping_mul(quarter, 8))
+perform show("nat", Nat::of_u64(quarter) * 16)
+let big: i32 := I32::of_i64(2147483647)
+perform show("i32_add_overflow", I32::checked_add(big, I32::of_i64(1)))
+perform show("i32_mul", I32::checked_mul(I32::of_i64(-65536), I32::of_i64(32768)))
+perform show("i32_mul_overflow", I32::checked_mul(I32::of_i64(65536), I32::of_i64(32768)))
+let low: i64 := -9223372036854775807
+perform show("i64_sub", I64::checked_sub(low, 1))
+perform show("i64_sub_overflow", I64::checked_sub(low - 1, 1))
+perform show("signed_kept", signed_step(big, I32::of_i64(1)))
+perform show("signed_step", signed_step(big, I32::of_i64(-7)))
+let top: u64 := 18446744073709551615
+perform show("u64_top", top)
+perform show("u64_high", U64::of_nat(Nat::of_u64(top) - 1))
+let wide: nat := 36893488147419103232
+perform show("nat_literal", wide + 1)

@@ -1,26 +1,30 @@
-fn show_stack(r: Option(List(u64))) -> () {
+import "calc.taut"
+import "../../compiler/src/compiler.taut"
+import std::prelude::Os
+
+pub fn show_stack(r: Option(List(nat))): Unit {
   match r {
-    None => os_print("stack underflow\n")
+    None => print("stack underflow\n")
     Some(st) => match st {
-      Nil => os_print("empty\n")
+      Nil => print("empty\n")
       Cons(top, rest) => {
-        os_print(text_of_u64(top))
-        os_print("\n")
+        print(Text::of_nat(top))
+        print("\n")
       }
     }
   }
 }
 
-fn calc_main(src: Text) -> () ! {Div} {
-  os_print(src)
-  os_print(" => ")
-  match calc_parse(src) {
+pub fn calc_main(src: Text): Unit ! {Div, stdout} {
+  print(src)
+  print(" => ")
+  match arith::parse(src) {
     Err(d) => {
-      os_print("error: ")
-      os_print(d.message)
-      os_print("\n")
+      print("error: ")
+      print(d.message)
+      print("\n")
     }
-    Ok(t) => show_stack(run_code(compile_expr(fold_expr(calc_expr_lower(calc_Expr_to_i(t)))), Nil))
+    Ok(t) => show_stack(run_code(compile_expr(fold_expr(calc_expr_lower(arith::Expr::to_i(t)))), Nil))
   }
 }
 

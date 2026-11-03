@@ -1,0 +1,37 @@
+import "machine.taut"
+import "typing.taut"
+
+pub fn sum_program(): Code {
+  Seq(Exec(PushNum(2)), Seq(Exec(PushNum(3)), Exec(Add)))
+}
+
+// A branch computes either 7 + 7 or 20 + 1; the common continuation doubles it.
+pub fn branch_program(flag: Bool): Code {
+  Seq(
+    Exec(PushBool(flag)),
+    Seq(
+      Branch(
+        Seq(Exec(PushNum(7)), Seq(Exec(Dup), Exec(Add))),
+        Seq(Exec(PushNum(20)), Seq(Exec(PushNum(1)), Exec(Add)))
+      ),
+      Seq(Exec(Dup), Exec(Add))
+    )
+  )
+}
+
+pub fn underflow_program(): Code {
+  Seq(Exec(PushNum(2)), Exec(Add))
+}
+
+pub fn wrong_kind_program(): Code {
+  Seq(Exec(PushNum(2)), Seq(Exec(PushBool(true)), Exec(Add)))
+}
+
+pub fn mismatched_branches(): Code {
+  Seq(Exec(PushBool(true)), Branch(Exec(PushNum(1)), Exec(PushBool(false))))
+}
+
+// The unselected branch is checked too, even though this particular run returns 7.
+pub fn hidden_error_program(): Code {
+  Seq(Exec(PushBool(true)), Branch(Exec(PushNum(7)), Exec(Add)))
+}

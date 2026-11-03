@@ -1,19 +1,17 @@
-inductive Le(n: Nat): (Nat) -> Prop {
-  le_refl(): Le(n, n)
-  le_step<m: Nat>(h: Le(n, m)): Le(n, succ(m))
+import std::prelude::Macro
+
+pub(open) inductive Le(n: Nat): (Nat) -> Prop {
+  LeRefl: Le(n, n)
+  LeStep<m: Nat>(h: Le(n, m)): Le(n, Succ(m))
 }
 
-def Lt(n: Nat, m: Nat): Prop := Le(succ(n), m)
+pub def Lt(n: Nat, m: Nat): Prop := Le(Succ(n), m)
 
-inductive Dvd(a: Nat, b: Nat): Prop {
-  dvd_intro(k: Nat, h: Eq(Nat, a * k, b)): Dvd(a, b)
+pub(open) inductive Dvd(a: Nat, b: Nat): Prop {
+  DvdIntro(k: Nat, h: a * k = b): Dvd(a, b)
 }
 
-syntax nat =>
-  enum nat_Atom, struct nat_Conj, struct nat_Conj_Rep1, struct nat_Disj, struct nat_Disj_Rep1,
-  struct nat_DvdTail, struct nat_EqTail, struct nat_LeTail, struct nat_LtTail, struct nat_Paren,
-  struct nat_Prod, struct nat_Prod_Rep1, struct nat_Rel, enum nat_RelTail, struct nat_Stmt,
-  struct nat_Stmt_Opt1, struct nat_Sum, struct nat_Sum_Rep1, fn nat_parse = ```par
+syntax!(nat, ```par
 %start Stmt
 %title "nat"
 %%
@@ -43,97 +41,98 @@ Plus: '+';
 Star: '*';
 LParen: '(';
 RParen: ')';
-```
+```) => enum Atom, struct Conj, struct Conj_Rep1, struct Disj, struct Disj_Rep1,
+  struct DvdTail, struct EqTail, struct LeTail, struct LtTail, struct Paren,
+  struct Prod, struct Prod_Rep1, struct Rel, enum RelTail, struct Stmt,
+  struct Stmt_Opt1, struct Sum, struct Sum_Rep1, fn parse
 
-fn nat_atom(t: nat_Atom) -> SynExpr ! {macro_error, Div} {
+pub fn nat_atom(t: nat::Atom): SynExpr ! {macro_error, Div} {
   match t {
-    Num(tok) => syn_nat(tok)
+    Num(tok) => Syn::nat(tok)
     Paren(p) => nat_sum(p.sum)
     Embed(e) => e
   }
 }
 
-fn nat_prod_rest(acc: SynExpr, rest: List(nat_Prod_Rep1)) -> SynExpr ! {macro_error, Div} {
+pub fn nat_prod_rest(acc: SynExpr, rest: List(nat::Prod_Rep1)): SynExpr ! {macro_error, Div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
-      let t = nat_atom(r.atom)
+      let t := nat_atom(r.atom)
       nat_prod_rest(quote { $acc * $t }, more)
     }
   }
 }
 
-fn nat_prod(p: nat_Prod) -> SynExpr ! {macro_error, Div} {
+pub fn nat_prod(p: nat::Prod): SynExpr ! {macro_error, Div} {
   nat_prod_rest(nat_atom(p.atom), p.rep)
 }
 
-fn nat_sum_rest(acc: SynExpr, rest: List(nat_Sum_Rep1)) -> SynExpr ! {macro_error, Div} {
+pub fn nat_sum_rest(acc: SynExpr, rest: List(nat::Sum_Rep1)): SynExpr ! {macro_error, Div} {
   match rest {
     Nil => acc
     Cons(r, more) => {
-      let t = nat_prod(r.prod)
+      let t := nat_prod(r.prod)
       nat_sum_rest(quote { $acc + $t }, more)
     }
   }
 }
 
-fn nat_sum(s: nat_Sum) -> SynExpr ! {macro_error, Div} {
+pub fn nat_sum(s: nat::Sum): SynExpr ! {macro_error, Div} {
   nat_sum_rest(nat_prod(s.prod), s.rep)
 }
 
-fn nat_rel(r: nat_Rel) -> SynExpr ! {macro_error, Div} {
-  let l = nat_sum(r.sum)
+pub fn nat_rel(r: nat::Rel): SynExpr ! {macro_error, Div} {
+  let l := nat_sum(r.sum)
   match r.rel_tail {
     EqTail(t) => {
-      let x = nat_sum(t.sum)
+      let x := nat_sum(t.sum)
       quote { Eq(Nat, $l, $x) }
     }
     LeTail(t) => {
-      let x = nat_sum(t.sum)
+      let x := nat_sum(t.sum)
       quote { Le($l, $x) }
     }
     LtTail(t) => {
-      let x = nat_sum(t.sum)
+      let x := nat_sum(t.sum)
       quote { Lt($l, $x) }
     }
     DvdTail(t) => {
-      let x = nat_sum(t.sum)
+      let x := nat_sum(t.sum)
       quote { Dvd($l, $x) }
     }
   }
 }
 
-fn nat_conj(first: nat_Rel, rest: List(nat_Conj_Rep1)) -> SynExpr ! {macro_error, Div} {
-  let l = nat_rel(first)
+pub fn nat_conj(first: nat::Rel, rest: List(nat::Conj_Rep1)): SynExpr ! {macro_error, Div} {
+  let l := nat_rel(first)
   match rest {
     Nil => l
     Cons(r, more) => {
-      let x = nat_conj(r.rel, more)
+      let x := nat_conj(r.rel, more)
       quote { And($l, $x) }
     }
   }
 }
 
-fn nat_disj(first: nat_Conj, rest: List(nat_Disj_Rep1)) -> SynExpr ! {macro_error, Div} {
-  let l = nat_conj(first.rel, first.rep)
+pub fn nat_disj(first: nat::Conj, rest: List(nat::Disj_Rep1)): SynExpr ! {macro_error, Div} {
+  let l := nat_conj(first.rel, first.rep)
   match rest {
     Nil => l
     Cons(r, more) => {
-      let x = nat_disj(r.conj, more)
+      let x := nat_disj(r.conj, more)
       quote { Or($l, $x) }
     }
   }
 }
 
-fn nat_stmt(s: nat_Stmt) -> SynExpr ! {macro_error, Div} {
-  let l = nat_disj(s.disj.conj, s.disj.rep)
+pub macro fn nat(s: nat::Stmt): SynExpr ! {macro_error, Div} {
+  let l := nat_disj(s.disj.conj, s.disj.rep)
   match s.opt {
     None => l
     Some(o) => {
-      let r = nat_stmt(o.stmt)
+      let r := nat(o.stmt)
       ExPi(Cons(SynParam { name: None, ty: l }, Nil), r, None, s.span)
     }
   }
 }
-
-macro nat = nat_stmt

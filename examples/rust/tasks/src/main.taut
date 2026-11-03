@@ -1,0 +1,49 @@
+import std::prelude::Affine
+import std::prelude::Par
+
+// Tasks on threads share a host counter, an `Atomic` and a `Mutex`. The
+// program starts tasks, so the Rust backend builds it for threads: every
+// extern type must be `Send + Sync` (here `Counter` is).
+pub(open) shared struct Counter {}
+
+extern {
+  fn counter_new(): Counter
+  fn counter_add(c: Counter, n: u64): Unit
+  fn counter_get(c: Counter): u64
+}
+
+pub fn work(c: Counter, hits: Atomic, n: u64): u64 {
+  var i: u64 := 0
+  while i < n {
+    counter_add(c, 2)
+    let before := Atomic::fetch_add(hits, 1)
+    i := i + 1
+  }
+  n
+}
+
+let c := counter_new()
+let hits := Atomic::new(0)
+let log := Mutex::new(Vec::new())
+let done := {
+  let a := perform spawn(() => work(c, hits, 500))
+  let b := perform spawn(() => work(c, hits, 1500))
+  let d := perform spawn(() => {
+    {
+      var g := Mutex::lock(log)
+      let &mut v := MutexGuard::get_mut(&mut g)
+      Vec::push(&mut v, 7)
+    }
+    1
+  })
+  Task::join(a) + Task::join(b) + Task::join(d)
+}
+perform show("done", done)
+perform show("counter", counter_get(c))
+perform show("hits", Atomic::load(hits))
+let logged := {
+  let g := Mutex::lock(log)
+  let &v := MutexGuard::get(&g)
+  Vec::len(&v)
+}
+perform show("logged", logged)

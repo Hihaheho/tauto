@@ -1,0 +1,81 @@
+import "../../../std/Base.taut"
+
+// The outermost cell is the top of the stack.
+pub(open) inductive Shape: Type {
+  Empty: Shape
+  NumOn(rest: Shape): Shape
+  BoolOn(rest: Shape): Shape
+}
+
+pub(open) inductive Stack: Type {
+  EmptyStack: Stack
+  Number(value: Nat, rest: Stack): Stack
+  Boolean(value: Bool, rest: Stack): Stack
+}
+
+pub fn shape(stack: Stack): Shape {
+  match stack: Shape {
+    EmptyStack => Empty
+    Number(value, rest) => NumOn(shape(rest))
+    Boolean(value, rest) => BoolOn(shape(rest))
+  }
+}
+
+pub(open) inductive Op: Type {
+  PushNum(value: Nat): Op
+  PushBool(value: Bool): Op
+  Add: Op
+  Dup: Op
+}
+
+pub(open) inductive Code: Type {
+  Halt: Code
+  Exec(op: Op): Code
+  Seq(first: Code, second: Code): Code
+  Branch(yes: Code, no: Code): Code
+}
+
+// Failure means an operand is absent or has the wrong kind.
+pub fn run_op(op: Op, stack: Stack): Option(Stack) {
+  match op: Option(Stack) {
+    PushNum(value) => Some(Number(value, stack))
+    PushBool(value) => Some(Boolean(value, stack))
+    Add => match stack: Option(Stack) {
+      EmptyStack => None
+      Boolean(flag, rest) => None
+      Number(right, rest) => match rest: Option(Stack) {
+        EmptyStack => None
+        Boolean(flag, tail) => None
+        Number(left, tail) => Some(Number(Nat::add(left, right), tail))
+      }
+    }
+    Dup => match stack: Option(Stack) {
+      EmptyStack => None
+      Number(value, rest) => Some(Number(value, Number(value, rest)))
+      Boolean(value, rest) => Some(Boolean(value, Boolean(value, rest)))
+    }
+  }
+}
+
+pub fn chain(result: Option(Stack), next: (Stack) -> Option(Stack)): Option(Stack) {
+  match result: Option(Stack) {
+    None => None
+    Some(stack) => next(stack)
+  }
+}
+
+pub fn run(code: Code, stack: Stack): Option(Stack) {
+  match code: Option(Stack) {
+    Halt => Some(stack)
+    Exec(op) => run_op(op, stack)
+    Seq(first, second) => chain(run(first, stack), next => run(second, next))
+    Branch(yes, no) => match stack: Option(Stack) {
+      EmptyStack => None
+      Number(value, rest) => None
+      Boolean(flag, rest) => match flag: Option(Stack) {
+        true => run(yes, rest)
+        false => run(no, rest)
+      }
+    }
+  }
+}

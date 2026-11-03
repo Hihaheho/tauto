@@ -1,51 +1,42 @@
+import "Lib.taut"
 import "SN.taut"
 
-// ---- typing derivations --------------------------------------------------------------------
-
-theorem id_typed(): lc!(`|- fun x: unit. x : unit -> unit`) {
-  t_lam(t_var(has_here()))
+pub theorem id_typed(): lc!(`|- fun x: unit. x : unit -> unit`) {
+  TLam(TVar(HasHere))
 }
 
-theorem const_typed(): lc!(`|- fun x: unit. fun y: unit. x : unit -> unit -> unit`) {
-  t_lam(t_lam(t_var(has_there(has_here()))))
+pub theorem const_typed(): lc!(`|- fun x: unit. fun y: unit. x : unit -> unit -> unit`) {
+  TLam(TLam(TVar(HasThere(HasHere))))
 }
 
-// The Church numeral 2.
-theorem two_typed(): lc!(
+pub theorem two_typed(): lc!(
   `|- fun f: unit -> unit. fun x: unit. f (f x) : (unit -> unit) -> unit -> unit`
 ) {
-  t_lam(
-    t_lam(
-      t_app(t_var(has_there(has_here())), t_app(t_var(has_there(has_here())), t_var(has_here())))
-    )
-  )
+  TLam(TLam(TApp(TVar(HasThere(HasHere)), TApp(TVar(HasThere(HasHere)), TVar(HasHere)))))
 }
 
-theorem application_typed(): lc!(`f: unit -> unit, x: unit |- f x : unit`) {
-  t_app(t_var(has_there(has_here())), t_var(has_here()))
+pub theorem application_typed(): lc!(`f: unit -> unit, x: unit |- f x : unit`) {
+  TApp(TVar(HasThere(HasHere)), TVar(HasHere))
 }
-
-// ---- reduction ------------------------------------------------------------------------------
 
 // Steps written by hand, chained by the untyped macro `steps!`.
-theorem two_id_star(): lc!(
+pub theorem two_id_star(): lc!(
   `(fun f: unit -> unit. fun x: unit. f (f x)) (fun y: unit. y) star ~>* star`
 ) {
-  steps!(then(s_app_l(s_beta()), s_beta(), s_beta(), s_beta()))
+  steps!(then(SAppL(SBeta), SBeta, SBeta, SBeta))
 }
 
 // The same kind of claim, with the path found by `reduce!`; the kernel still checks every step.
-theorem k_star(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {
+pub theorem k_star(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {
   reduce!(`(fun x: unit. fun y: unit. x) star`)
 }
 
 // The same, as a step: the tactic reads the term from the goal the step starts from.
-theorem k_star_goal(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {
-  by reduce_goal!(()) -> lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {}
+pub theorem k_star_goal(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {
+  by reduce_goal!(): lc!(`(fun x: unit. fun y: unit. x) star ~>* fun y: unit. star`) {}
 }
 
-// Church addition, 2 + 2 = 4, reducing under the binders.
-theorem two_plus_two(): lc!(
+pub theorem two_plus_two(): lc!(
   `(fun m: (unit -> unit) -> unit -> unit. fun n: (unit -> unit) -> unit -> unit. fun f: unit -> unit. fun x: unit. m f (n f x)) (fun f: unit -> unit. fun x: unit. f (f x)) (fun f: unit -> unit. fun x: unit. f (f x)) ~>* fun f: unit -> unit. fun x: unit. f (f (f (f x)))`
 ) {
   reduce!(
@@ -53,39 +44,37 @@ theorem two_plus_two(): lc!(
   )
 }
 
-// ---- consequences of strong normalization --------------------------------------------------
-
-theorem two_normalizes(): SN(
-  lam(arr(tunit, tunit), lam(tunit, app(tvar(1), app(tvar(1), tvar(0)))))
+pub theorem two_normalizes(): SN(
+  Lam(Arr(Tunit, Tunit), Lam(Tunit, App(Tvar(1), App(Tvar(1), Tvar(0)))))
 ) {
   strong_normalization(two_typed())
 }
 
 // Omega steps to itself, so it is not normalizing, so by strong normalization it has no type.
-fn omega() -> Tm {
+pub fn omega(): Tm {
   lc!(`(fun x: unit. x x) (fun x: unit. x x)`)
 }
 
-def NotOmega(x: Tm): Prop := (Eq(Tm, x, omega())) -> False
+pub def NotOmega(x: Tm): Prop := (x = omega()) -> False
 
-theorem omega_steps(): lc!(`${omega()} ~> ${omega()}`) {
-  s_beta()
+pub theorem omega_steps(): lc!(`${omega()} ~> ${omega()}`) {
+  SBeta
 }
 
-theorem omega_not_sn(h: SN(omega())): False {
+pub theorem omega_not_sn(h: SN(omega())): False {
   sn_induction(
     NotOmega,
     x => k => ih => e => ih(
       omega(),
-      Eq_subst(y => Step(y, omega()), Eq_sym(e), omega_steps()),
-      refl()
+      Eq::subst(y => Step(y, omega()), Eq::sym(e), omega_steps()),
+      Refl
     ),
     omega(),
     h,
-    refl()
+    Refl
   )
 }
 
-theorem omega_untypable<G: List(Ty), A: Ty>(h: lc!(`$G |- ${omega()} : $A`)): False {
+pub theorem omega_untypable<G: List(Ty), A: Ty>(h: lc!(`$G |- ${omega()} : $A`)): False {
   omega_not_sn(strong_normalization(h))
 }

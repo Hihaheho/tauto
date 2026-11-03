@@ -1,0 +1,92 @@
+// Generators and streams with effects. There is no Future or Stream type: a producer performs
+// an effect for each item, and the handler around it decides what happens to the item and
+// whether the producer goes on. The same code runs at once, step by step, or (with a handler
+// from the host) asynchronously.
+
+// ---- a generator: `emit` hands one item to the handler ---------------------------------------
+
+pub(open) effect emit(x: i64): Unit resume <=1
+
+pub fn squares(i: i64, n: i64): Unit {
+  if i > n { #() } else {
+    perform emit(i * i)
+    squares(i + 1, n)
+  }
+}
+
+// Sum every item: the arm resumes the generator once per item.
+let sum := handle { squares(1, 4) } with {
+  emit(x), k => x + k(#())
+  return v => 0
+}
+
+let count := handle { squares(1, 10) } with {
+  emit(x), k => 1 + k(#())
+  return v => 0
+}
+
+// Take the first item and stop: the arm drops `k`, so the generator never runs again.
+let first := handle { squares(3, 1000000) } with {
+  emit(x), k => x
+  return v => 0 - 1
+}
+
+// ---- a stream: a lazy list whose rest is computed on demand ----------------------------------
+
+// The rest is a function that may perform effects: `fetch` asks for the item at an index, the
+// way an asynchronous source would. Nothing is fetched until the rest is called.
+pub(open) enum Stream { Next(i64, () -> Stream ! {fetch, Div}), End }
+
+pub(open) effect fetch(i: i64): i64 resume 1
+
+pub fn from_index(i: i64, n: i64): Stream ! {fetch, Div} {
+  if i == n { End } else {
+    let x := perform fetch(i)
+    Next(x, () => from_index(i + 1, n))
+  }
+}
+
+// The first `n` items of a stream, added up; the rest after them is never fetched.
+pub fn take_sum(s: Stream, n: i64): i64 ! {fetch, Div} {
+  if n == 0 { 0 } else {
+    match s {
+      Next(x, rest) => x + take_sum(rest(), n - 1)
+      End => 0
+    }
+  }
+}
+
+pub fn each(s: Stream): Unit ! {emit, fetch, Div} {
+  match s {
+    Next(x, rest) => {
+      perform emit(x)
+      each(rest())
+    }
+    End => #()
+  }
+}
+
+// The handler of `fetch` is the source: here it answers at once with ten times the index.
+let taken := handle { take_sum(from_index(1, 1000000), 3) } with {
+  fetch(i), k => k(i * 10)
+  return v => v
+}
+
+// Two handlers: `emit` counts how many items arrive, and `fetch` around it answers them.
+pub fn count_items(s: Stream): i64 ! {fetch, Div} {
+  handle { each(s) } with {
+    emit(x), k => 1 + k(#())
+    return v => 0
+  }
+}
+
+let arrived := handle { count_items(from_index(0, 5)) } with {
+  fetch(i), k => k(i)
+  return v => v
+}
+
+perform show("sum", sum)
+perform show("count", count)
+perform show("first", first)
+perform show("taken", taken)
+perform show("arrived", arrived)

@@ -1,0 +1,69 @@
+import "../../../std/Base.taut"
+
+pub(open) inductive Resource: Type {
+  Mk(generation: Nat, value: Nat): Resource
+}
+pub fn generation(state: Resource): Nat {
+  match state: Nat { Mk(n, v) => n }
+}
+pub fn displayed(state: Resource): Nat {
+  match state: Nat { Mk(n, v) => v }
+}
+pub fn begin(state: Resource): Resource {
+  Resource::Mk(Succ(generation(state)), displayed(state))
+}
+pub fn complete(state: Resource, token: Nat, value: Nat): Resource {
+  match Nat::eq(token, generation(state)): Resource {
+    false => state
+    true => Resource::Mk(generation(state), value)
+  }
+}
+
+// Any different token leaves the entire state unchanged, not just its value.
+pub theorem stale_ignored(
+  state: Resource,
+  token: Nat,
+  value: Nat,
+  stale: (token = generation(state)) -> False
+): (complete(state, token, value) = state) {
+  match Nat::eq(
+    token,
+    generation(state)
+  ) eqn comparison: (complete(state, token, value) = state) {
+    false => ⊢ state = state from Refl
+    true => ⊢ Resource::Mk(generation(state), value) = state from
+    False::elim(stale(Nat::eq_sound(token, generation(state), comparison)))
+  }
+}
+
+// A current token really updates; dropping every response is not a solution.
+pub theorem current_accepted(
+  state: Resource,
+  value: Nat
+): complete(state, generation(state), value) = Resource::Mk(generation(state), value) {
+  match Nat::eq(
+    generation(state),
+    generation(state)
+  ) eqn comparison: (complete(state, generation(state), value) = Resource::Mk(generation(state), value)) {
+    false => ⊢ state = Resource::Mk(generation(state), value) from
+    False::elim(true_ne_false(Eq::trans(Eq::sym(Nat::eq_refl(generation(state))), comparison)))
+    true => ⊢ Resource::Mk(generation(state), value) = Resource::Mk(generation(state), value) from Refl
+  }
+}
+
+// The newer result survives even when the old request finishes afterwards.
+pub theorem late_cannot_replace_current(
+  state: Resource,
+  old_token: Nat,
+  latest_value: Nat,
+  late_value: Nat,
+  stale: (old_token = generation(state)) -> False
+): complete(complete(state, generation(state), latest_value), old_token, late_value) = Resource::Mk(generation(state), latest_value) {
+  Eq::trans(
+    Eq::congr(
+      (next: Resource) => complete(next, old_token, late_value),
+      current_accepted(state, latest_value)
+    ),
+    stale_ignored(Resource::Mk(generation(state), latest_value), old_token, late_value, stale)
+  )
+}

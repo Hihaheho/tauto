@@ -9,7 +9,8 @@ list, by induction over that list.
 `state_certified_run` requires that obligation and a valid initial state. The
 proof language checks both arguments. Extraction removes these certificates,
 not the executable transition: it retains the same `state_run`. This is not a
-runtime validity check and does not restrict callers of the erased API.
+runtime validity check. Code the kernel does not check (the Nib in `main.taut`)
+cannot call it, since it cannot give the proofs; extraction rejects such a call.
 
 The example tracks a revocable permission and a natural-number balance.
 `gate_step` both executes and specifies each command. Its proofs establish:
@@ -33,13 +34,13 @@ and evaluator/native backend are trusted, not proved by these theorems.
 `tauto check` is not a verifier of arbitrary imperative function bodies. The
 integration test exercises this adapter on both backends and compares each
 update against the same pure runner; this is regression evidence, not a proof
-of the backend. A native caller can bypass the adapter or call erased APIs
-without a proof. Such calls are outside the certified source-level contract.
+of the backend. A native caller (Rust or JavaScript code outside Tauto) can
+bypass the adapter or call erased APIs without a proof. Such calls are outside the certified source-level contract.
 
 This library models one explicitly threaded state and a finite list of total
 commands. It does not verify general algebraic handlers, continuation capture,
 multi-shot resumptions, concurrency, IO, failures, external authorization, or
-aliasing outside the adapter. `gate_authorize` is a synthetic input command,
+aliasing outside the adapter. `GateAuthorize` is a synthetic input command,
 not authentication. Natural numbers extract to bounded `u64`; this example
 only decrements a supplied representable balance and performs no growth.
 Resource exhaustion and native stack limits remain runtime concerns.
@@ -52,7 +53,7 @@ Resource exhaustion and native stack limits remain runtime concerns.
 - `cargo test --locked -p tauto --test certified_state`
 - `cargo test --locked -p tauto-cli --test certified_state`
 
-`rejected/forged.taut` is deliberately outside `package.sources`. Its
+`rejected/forged.taut` is deliberately outside the sources (`src` and `package.additional-sources`). Its
 increasing transition supplies an invalid invariant certificate and must fail
 both checking and extraction. Mutation tests also change the real transition
 and require the affected permission/balance proof to fail. A separate adapter
@@ -96,8 +97,8 @@ committed as a universal certificate. Hashes establish consistency, not
 identity, authorship or authenticated distribution. An independently rechecked,
 valid alternative source/report is not a forgery.
 
-The entry is the existing pure proof file, **not the package**. Its report has
-18 checked example declarations, including `gate_step_preserves`,
+The entry is the existing pure proof file, **not the package**. The report of `trust verify` lists the
+checked example declarations, including `gate_step_preserves`,
 `gate_run_safe` and `gate_advance_safe`, with no transitive user axioms. The
 receiver's `--axiom-free` policy also rejects unused explicit axioms.
 `src/main.taut`, `gate_commit`, `perform` calls and the package manifest are

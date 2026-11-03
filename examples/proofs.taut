@@ -1,23 +1,23 @@
-theorem two_plus_two(): Eq(Nat, 2 + 2, 4) {
-  refl(Nat, 4)
+pub theorem two_plus_two(): Eq(Nat, 2 + 2, 4) {
+  Refl(Nat, 4)
 }
 
-theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
-  and_intro(and_right(p), and_left(p))
+pub theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(And::right(p), And::left(p))
 }
 
-theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
   a => g(f(a))
 }
 
-axiom em(P: Prop): P ∨ ¬P
+pub axiom em(P: Prop): P ∨ ¬P
 
-theorem not_not(P: Prop, n: ¬¬P): P {
-  or_elim(P, Not(P), P, em(P), p => p, np => False_elim(P, not_elim(Not(P), n, np)))
+pub theorem not_not(P: Prop, n: ¬¬P): P {
+  Or::elim(em(P), (p: P) => p, (np: ¬P) => False::elim(n(np)))
 }
 
 // A false claim has no proof, but its negation does.
-theorem two_plus_two_ne_five(h: Eq(Nat, 2 + 2, 5)): False {
-  match h -> False {
+pub theorem two_plus_two_ne_five(h: Eq(Nat, 2 + 2, 5)): False {
+  match h: False {
   }
 }

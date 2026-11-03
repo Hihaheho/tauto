@@ -1,0 +1,130 @@
+import std::Base
+import std::List
+import std::Nat
+
+// Functions with effects, and the handlers that run them, used in theorems as
+// they are written. `tauto check` reads each as a tree of operations and
+// each handler as a fold of it; `Refl` computes the handled result.
+
+pub(open) effect tick(): Unit
+pub(open) effect choose(): Bool resume ω
+pub(open) effect start_read(): Nat
+pub(open) effect read_completed(token: Nat, value: Nat): Unit
+
+// ---- a counter kept in a `var`, written by the handler -----------------------
+
+pub fn ticks(n: Nat): Unit ! {tick} {
+  match n: Unit {
+    Zero => Star
+    Succ(m) => {
+      perform tick()
+      ticks(m)
+    }
+  }
+}
+
+pub fn count_from(n: Nat, start: Nat): Nat {
+  var c: Nat := start
+  handle { ticks(n) } with {
+    tick(), k => {
+      c := Succ(c)
+      k(Star)
+    }
+  }
+  c
+}
+
+pub theorem count_from_step(
+  m: Nat,
+  start: Nat
+): count_from(Succ(m), start) = count_from(m, Succ(start)) {
+  Refl
+}
+
+pub theorem count_from_is(n: Nat, start: Nat): count_from(n, start) = Nat::add(start, n) {
+  match n: count_from(n, start) = Nat::add(start, n) {
+    Zero => Refl
+    Succ(m) => Eq::trans(count_from_is(m, Succ(start)), Nat::add_succ_left(start, m))
+  }
+}
+
+// ---- a handler that resumes twice -------------------------------------------
+
+pub fn both(): List(Bool) {
+  handle {
+    let b := perform choose()
+    b
+  } with {
+    choose(), k => List::append(k(true), k(false))
+    return v => Cons(v, Nil)
+  }
+}
+
+pub theorem both_is(): both() = Cons(true, Cons(false, Nil)) {
+  Refl
+}
+
+// ---- out-of-order completions ------------------------------------------------
+
+pub(open) inductive Resource: Type {
+  Mk(generation: Nat, value: Nat): Resource
+}
+
+pub fn begin(r: Resource): Resource {
+  match r: Resource {
+    Mk(g, v) => Resource::Mk(Succ(g), v)
+  }
+}
+
+// A completion is shown only when it answers the newest read.
+pub fn complete(r: Resource, token: Nat, value: Nat): Resource {
+  match r: Resource {
+    Mk(g, v) => match Nat::eq(g, token): Resource {
+      true => Resource::Mk(g, value)
+      false => Resource::Mk(g, v)
+    }
+  }
+}
+
+pub fn generation(r: Resource): Nat {
+  match r: Nat {
+    Mk(g, v) => g
+  }
+}
+
+pub fn displayed(r: Resource): Nat {
+  match r: Nat {
+    Mk(g, v) => v
+  }
+}
+
+// Two reads; the newer completes first, and the older one is ignored.
+pub fn reads(a_value: Nat, b_value: Nat): Nat ! {read_completed, start_read} {
+  let a := perform start_read()
+  let b := perform start_read()
+  perform read_completed(b, b_value)
+  perform read_completed(a, a_value)
+  b_value
+}
+
+pub fn shown(a_value: Nat, b_value: Nat): Nat {
+  var cell: Resource := Resource::Mk(Zero, Zero)
+  handle { reads(a_value, b_value) } with {
+    start_read(), k => {
+      cell := begin(cell)
+      k(generation(cell))
+    }
+    read_completed(token, value), k => {
+      cell := complete(cell, token, value)
+      k(Star)
+    }
+  }
+  displayed(cell)
+}
+
+pub theorem late_completion_is_ignored(
+  a_value: Nat,
+  b_value: Nat
+): shown(a_value, b_value) = b_value {
+  Refl
+}

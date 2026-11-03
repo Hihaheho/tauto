@@ -1,0 +1,95 @@
+import "machine.taut"
+import "../../../std/Mode.taut"
+
+pub(open) inductive ShapeDecision(a: Shape, b: Shape): Type {
+  ShapeSame(e: a = b): ShapeDecision(a, b)
+  ShapeDifferent(refute: (a = b) -> False): ShapeDecision(a, b)
+}
+
+pub fn shape_dec(a: Shape, b: Shape): ShapeDecision(a, b) {
+  match a: ShapeDecision(a, b) {
+    Empty => match b: ShapeDecision(Empty, b) {
+      Empty => ShapeSame(Refl)
+      NumOn(tail) => ShapeDifferent(e => match e: False {})
+      BoolOn(tail) => ShapeDifferent(e => match e: False {})
+    }
+    NumOn(tail) => match b: ShapeDecision(NumOn(tail), b) {
+      Empty => ShapeDifferent(e => match e: False {})
+      NumOn(other) => match shape_dec(tail, other): ShapeDecision(NumOn(tail), NumOn(other)) {
+        ShapeSame(e) => ShapeSame(Eq::congr(NumOn, e))
+        ShapeDifferent(refute) => ShapeDifferent(e => match e: False { Refl => refute(Refl) })
+      }
+      BoolOn(other) => ShapeDifferent(e => match e: False {})
+    }
+    BoolOn(tail) => match b: ShapeDecision(BoolOn(tail), b) {
+      Empty => ShapeDifferent(e => match e: False {})
+      NumOn(other) => ShapeDifferent(e => match e: False {})
+      BoolOn(other) => match shape_dec(tail, other): ShapeDecision(BoolOn(tail), BoolOn(other)) {
+        ShapeSame(e) => ShapeSame(Eq::congr(BoolOn, e))
+        ShapeDifferent(refute) => ShapeDifferent(e => match e: False { Refl => refute(Refl) })
+      }
+    }
+  }
+}
+
+// Nested input patterns describe exactly the operands each instruction accepts.
+@mode!(
+  `check_op(rec op, in input, out output) -> OpCheck { OpAccepted | OpRejected }`
+) => inductive OpCheck, fn check_op
+pub(open) inductive OpTyping: (Op, Shape, Shape) -> Prop {
+  TPushNum<value: Nat, tail: Shape>: OpTyping(PushNum(value), tail, NumOn(tail))
+  TPushBool<value: Bool, tail: Shape>: OpTyping(PushBool(value), tail, BoolOn(tail))
+  TAdd<tail: Shape>: OpTyping(Add, NumOn(NumOn(tail)), NumOn(tail))
+  TDupNum<tail: Shape>: OpTyping(Dup, NumOn(tail), NumOn(NumOn(tail)))
+  TDupBool<tail: Shape>: OpTyping(Dup, BoolOn(tail), BoolOn(BoolOn(tail)))
+}
+
+// Both branches start after consuming the condition and must produce the same output.
+@mode!(
+  ```
+check_code(rec code, in input, out output) -> CodeCheck { CodeAccepted | CodeRejected }
+  via OpTyping: check_op { OpAccepted | OpRejected }
+  eq Shape: shape_dec { ShapeSame | ShapeDifferent }
+```
+) => inductive CodeCheck, fn check_code
+pub(open) inductive Typing: (Code, Shape, Shape) -> Prop {
+  THalt<state: Shape>: Typing(Halt, state, state)
+  TExec<op: Op, input: Shape, output: Shape>(
+    h: OpTyping(op, input, output)
+  ): Typing(Exec(op), input, output)
+  TSeq<first: Code, second: Code, input: Shape, middle: Shape, output: Shape>(
+    hfirst: Typing(first, input, middle),
+    hsecond: Typing(second, middle, output)
+  ): Typing(Seq(first, second), input, output)
+  TBranch<yes: Code, no: Code, input: Shape, output: Shape>(
+    hyes: Typing(yes, input, output),
+    hno: Typing(no, input, output)
+  ): Typing(Branch(yes, no), BoolOn(input), output)
+}
+
+pub fn decision_output(code: Code, input: Shape, decision: CodeCheck(code, input)): Option(Shape) {
+  match decision: Option(Shape) {
+    CodeAccepted(output, derivation, unique) => Some(output)
+    CodeRejected(refute) => None
+  }
+}
+
+pub fn output_shape(code: Code, input: Shape): Option(Shape) {
+  decision_output(code, input, check_code(code, input))
+}
+
+pub fn execute_decision(
+  code: Code,
+  stack: Stack,
+  decision: CodeCheck(code, shape(stack))
+): Option(Stack) {
+  match decision: Option(Stack) {
+    CodeAccepted(output, derivation, unique) => run(code, stack)
+    CodeRejected(refute) => None
+  }
+}
+
+// The interpreter is reached only after the generated checker accepts the code.
+pub fn check_and_run(code: Code, stack: Stack): Option(Stack) {
+  execute_decision(code, stack, check_code(code, shape(stack)))
+}

@@ -1,79 +1,78 @@
 import "Lib.taut"
 import "../../std/Tactic.taut"
+import "../../std/Rewrite.taut"
 
-fn pred(n: Nat) -> Nat {
-  match n -> Nat {
-    zero => zero
-    succ(k) => k
+pub fn pred(n: Nat): Nat {
+  match n: Nat {
+    Zero => Zero
+    Succ(k) => k
   }
 }
 
-theorem succ_inj<a: Nat, b: Nat>(h: Eq(Nat, succ(a), succ(b))): Eq(Nat, a, b) {
-  Eq_congr(pred, h)
+pub theorem succ_inj<a: Nat, b: Nat>(h: Succ(a) = Succ(b)): a = b {
+  Eq::congr(pred, h)
 }
 
-theorem succ_cong<a: Nat, b: Nat>(h: Eq(Nat, a, b)): Eq(Nat, succ(a), succ(b)) {
-  Eq_congr(x => succ(x), h)
+pub theorem succ_cong<a: Nat, b: Nat>(h: a = b): Succ(a) = Succ(b) {
+  Eq::congr(x => Succ(x), h)
 }
 
-theorem add_zero_r(n: Nat): nat!(`$n + 0 = $n`) {
-  match n -> nat!(`$n + 0 = $n`) {
-    zero => refl()
-    succ(k) => succ_cong(add_zero_r(k))
+pub theorem add_zero_r(n: Nat): nat!(`$n + 0 = $n`) {
+  Refl
+}
+
+pub theorem add_succ_r(n: Nat, m: Nat): nat!(`$n + ${Succ(m)} = ${Succ(n + m)}`) {
+  Refl
+}
+
+pub theorem add_zero_l(n: Nat): nat!(`0 + $n = $n`) {
+  match n: nat!(`0 + $n = $n`) {
+    Zero => Refl
+    Succ(k) => succ_cong(add_zero_l(k))
   }
 }
 
-theorem add_succ_r(n: Nat, m: Nat): nat!(`$n + ${succ(m)} = ${succ(n + m)}`) {
-  match n -> nat!(`$n + ${succ(m)} = ${succ(n + m)}`) {
-    zero => refl()
-    succ(k) => succ_cong(add_succ_r(k, m))
+pub theorem add_succ_l(n: Nat, m: Nat): nat!(`${Succ(n)} + $m = ${Succ(n + m)}`) {
+  match m: nat!(`${Succ(n)} + $m = ${Succ(n + m)}`) {
+    Zero => Refl
+    Succ(k) => succ_cong(add_succ_l(n, k))
   }
 }
 
-theorem add_comm(n: Nat, m: Nat): nat!(`$n + $m = $m + $n`) {
-  match n -> nat!(`$n + $m = $m + $n`) {
-    zero => Eq_sym(add_zero_r(m))
-    succ(k) => by rewrite!(add_succ_r(m, k)) -> nat!(`${succ(k)} + $m = $m + ${succ(k)}`) {
-      ⊢ nat!(`${succ(k)} + $m = ${succ(m + k)}`) => succ_cong(add_comm(k, m))
+pub theorem add_comm(n: Nat, m: Nat): nat!(`$n + $m = $m + $n`) {
+  match m: nat!(`$n + $m = $m + $n`) {
+    Zero => Eq::sym(add_zero_l(n))
+    Succ(k) => by rewrite!(add_succ_l(k, n)): nat!(`$n + ${Succ(k)} = ${Succ(k)} + $n`) {
+      ⊢ nat!(`$n + ${Succ(k)} = ${Succ(k + n)}`) from succ_cong(add_comm(n, k))
     }
   }
 }
 
-theorem add_assoc(a: Nat, b: Nat, c: Nat): nat!(`($a + $b) + $c = $a + ($b + $c)`) {
-  match a -> nat!(`($a + $b) + $c = $a + ($b + $c)`) {
-    zero => refl()
-    succ(k) => succ_cong(add_assoc(k, b, c))
+pub theorem add_assoc(a: Nat, b: Nat, c: Nat): nat!(`($a + $b) + $c = $a + ($b + $c)`) {
+  match c: nat!(`($a + $b) + $c = $a + ($b + $c)`) {
+    Zero => Refl
+    Succ(k) => succ_cong(add_assoc(a, b, k))
   }
 }
 
-theorem add_cancel_l(
-  a: Nat,
-  b: Nat,
-  c: Nat,
-  h: nat!(`$a + $b = $a + $c`)
-): nat!(`$b = $c`) {
-  match a -> nat!(`$b = $c`) {
-    zero => h
-    succ(k) => add_cancel_l(k, b, c, succ_inj(h))
+pub theorem add_cancel_r(a: Nat, b: Nat, c: Nat, h: nat!(`$a + $c = $b + $c`)): nat!(`$a = $b`) {
+  match c: nat!(`$a = $b`) {
+    Zero => h
+    Succ(k) => add_cancel_r(a, b, k, succ_inj(h))
   }
 }
 
-theorem add_cancel_r(
-  a: Nat,
-  b: Nat,
-  c: Nat,
-  h: nat!(`$a + $c = $b + $c`)
-): nat!(`$a = $b`) {
-  add_cancel_l(c, a, b, Eq_trans(add_comm(c, a), Eq_trans(h, add_comm(b, c))))
+pub theorem add_cancel_l(a: Nat, b: Nat, c: Nat, h: nat!(`$a + $b = $a + $c`)): nat!(`$b = $c`) {
+  add_cancel_r(b, c, a, Eq::trans(add_comm(b, a), Eq::trans(h, add_comm(a, c))))
 }
 
-theorem add_left_comm(a: Nat, b: Nat, c: Nat): nat!(`$a + ($b + $c) = $b + ($a + $c)`) {
-  by nat_norm!(()) -> nat!(`$a + ($b + $c) = $b + ($a + $c)`) {}
+pub theorem add_left_comm(a: Nat, b: Nat, c: Nat): nat!(`$a + ($b + $c) = $b + ($a + $c)`) {
+  by nat_norm!(): nat!(`$a + ($b + $c) = $b + ($a + $c)`) {}
 }
 
-theorem add_eq_zero_l(a: Nat, b: Nat, e: nat!(`$a + $b = 0`)): nat!(`$a = 0`) {
-  match a -> nat!(`$a = 0`) {
-    zero => refl()
-    succ(k) => Nat_noconf(Eq(Nat, succ(k), 0), succ(k + b), zero, e)
+pub theorem add_eq_zero_l(a: Nat, b: Nat, e: nat!(`$a + $b = 0`)): nat!(`$a = 0`) {
+  match b: nat!(`$a = 0`) {
+    Zero => e
+    Succ(k) => Nat::noconf(a = 0, Succ(a + k), Zero, e)
   }
 }

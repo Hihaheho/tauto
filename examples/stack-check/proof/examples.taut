@@ -1,0 +1,147 @@
+import "safety.taut"
+import "../src/programs.taut"
+import "../src/machine.taut"
+import "../src/typing.taut"
+
+pub theorem empty_dup_rejected(): Eq(Option(Shape), output_shape(Exec(Dup), Empty), None) { Refl }
+pub theorem missing_condition_rejected(): Eq(
+  Option(Shape),
+  output_shape(Branch(Halt, Halt), Empty),
+  None
+) { Refl }
+pub theorem numeric_condition_rejected(): Eq(
+  Option(Shape),
+  output_shape(Branch(Halt, Halt), NumOn(Empty)),
+  None
+) { Refl }
+pub theorem first_instruction_rejected(): Eq(
+  Option(Shape),
+  output_shape(Seq(Exec(Add), Exec(PushNum(9))), Empty),
+  None
+) { Refl }
+pub theorem deep_branch_mismatch_rejected(): Eq(
+  Option(Shape),
+  output_shape(
+    Branch(Seq(Exec(PushBool(false)), Exec(PushNum(1))), Seq(Exec(PushNum(2)), Exec(PushNum(1)))),
+    BoolOn(Empty)
+  ),
+  None
+) { Refl }
+pub theorem branch_depth_mismatch_rejected(): Eq(
+  Option(Shape),
+  output_shape(Branch(Exec(PushNum(1)), Halt), BoolOn(NumOn(Empty))),
+  None
+) { Refl }
+
+pub theorem sum_checked(): Eq(
+  Option(Shape),
+  output_shape(sum_program(), Empty),
+  Some(NumOn(Empty))
+) { Refl }
+pub theorem sum_runs(): Eq(
+  Option(Stack),
+  check_and_run(sum_program(), EmptyStack),
+  Some(Number(5, EmptyStack))
+) { Refl }
+pub theorem preserves_tail(): Eq(
+  Option(Stack),
+  check_and_run(sum_program(), Boolean(false, EmptyStack)),
+  Some(Number(5, Boolean(false, EmptyStack)))
+) { Refl }
+
+pub theorem branch_checked(): Eq(
+  Option(Shape),
+  output_shape(branch_program(true), Empty),
+  Some(NumOn(Empty))
+) { Refl }
+pub theorem true_branch_runs(): Eq(
+  Option(Stack),
+  check_and_run(branch_program(true), EmptyStack),
+  Some(Number(28, EmptyStack))
+) { Refl }
+pub theorem false_branch_runs(): Eq(
+  Option(Stack),
+  check_and_run(branch_program(false), EmptyStack),
+  Some(Number(42, EmptyStack))
+) { Refl }
+pub theorem bool_dup_runs(): Eq(
+  Option(Stack),
+  check_and_run(Exec(Dup), Boolean(false, EmptyStack)),
+  Some(Boolean(false, Boolean(false, EmptyStack)))
+) { Refl }
+pub theorem halt_runs(): Eq(
+  Option(Stack),
+  check_and_run(Halt, EmptyStack),
+  Some(EmptyStack)
+) { Refl }
+
+pub theorem underflow_rejected(): Eq(
+  Option(Shape),
+  output_shape(underflow_program(), Empty),
+  None
+) { Refl }
+pub theorem wrong_kind_rejected(): Eq(
+  Option(Shape),
+  output_shape(wrong_kind_program(), Empty),
+  None
+) { Refl }
+pub theorem branch_mismatch_rejected(): Eq(
+  Option(Shape),
+  output_shape(mismatched_branches(), Empty),
+  None
+) { Refl }
+pub theorem hidden_error_rejected(): Eq(
+  Option(Shape),
+  output_shape(hidden_error_program(), Empty),
+  None
+) { Refl }
+pub theorem hidden_error_run_is_safe(): Eq(
+  Option(Stack),
+  run(hidden_error_program(), EmptyStack),
+  Some(Number(7, EmptyStack))
+) { Refl }
+pub theorem hidden_error_is_not_executed(): Eq(
+  Option(Stack),
+  check_and_run(hidden_error_program(), EmptyStack),
+  None
+) { Refl }
+
+// Rejection rules out every output of Typing; it does not assert that every run gets stuck.
+pub theorem hidden_error_untypable<output: Shape>(
+  derivation: Typing(hidden_error_program(), Empty, output)
+): False {
+  rejected_refutes(
+    hidden_error_program(),
+    Empty,
+    check_code(hidden_error_program(), Empty),
+    hidden_error_rejected(),
+    output,
+    derivation
+  )
+}
+
+pub theorem underflow_untypable<output: Shape>(
+  derivation: Typing(underflow_program(), Empty, output)
+): False {
+  rejected_refutes(
+    underflow_program(),
+    Empty,
+    check_code(underflow_program(), Empty),
+    underflow_rejected(),
+    output,
+    derivation
+  )
+}
+
+pub theorem mismatch_untypable<output: Shape>(
+  derivation: Typing(mismatched_branches(), Empty, output)
+): False {
+  rejected_refutes(
+    mismatched_branches(),
+    Empty,
+    check_code(mismatched_branches(), Empty),
+    branch_mismatch_rejected(),
+    output,
+    derivation
+  )
+}

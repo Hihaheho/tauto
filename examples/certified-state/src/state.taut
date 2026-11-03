@@ -1,70 +1,67 @@
 import "../../../std/State.taut"
 import "../../../std/Nat.taut"
+import "../../../std/Base.taut"
 
-inductive GateState(): Type {
-  gate_closed(balance: Nat): GateState
-  gate_open(balance: Nat): GateState
+pub(open) inductive GateState: Type {
+  GateClosed(balance: Nat): GateState
+  GateOpen(balance: Nat): GateState
 }
-inductive GateCommand(): Type {
-  gate_authorize(): GateCommand
-  gate_revoke(): GateCommand
-  gate_spend(): GateCommand
+pub(open) inductive GateCommand: Type {
+  GateAuthorize: GateCommand
+  GateRevoke: GateCommand
+  GateSpend: GateCommand
 }
-fn gate_balance(state: GateState) -> Nat {
-  match state -> Nat {
-    gate_closed(n) => n
-    gate_open(n) => n
+pub fn gate_balance(state: GateState): Nat {
+  match state: Nat {
+    GateClosed(n) => n
+    GateOpen(n) => n
   }
 }
-fn gate_allowed(state: GateState) -> Yn {
-  match state -> Yn {
-    gate_closed(n) => no
-    gate_open(n) => yes
+pub fn gate_allowed(state: GateState): Bool {
+  match state: Bool {
+    GateClosed(n) => false
+    GateOpen(n) => true
   }
 }
-fn gate_step(state: GateState, command: GateCommand) -> GateState {
-  match command -> GateState {
-    gate_authorize => gate_open(gate_balance(state))
-    gate_revoke => gate_closed(gate_balance(state))
-    gate_spend => match state -> GateState {
-      gate_closed(n) => gate_closed(n)
-      gate_open(n) => gate_open(nat_pred(n))
+pub fn gate_step(state: GateState, command: GateCommand): GateState {
+  match command: GateState {
+    GateAuthorize => GateOpen(gate_balance(state))
+    GateRevoke => GateClosed(gate_balance(state))
+    GateSpend => match state: GateState {
+      GateClosed(n) => GateClosed(n)
+      GateOpen(n) => GateOpen(Nat::pred(n))
     }
   }
 }
-def GateInvariant(capacity: Nat, state: GateState): Prop :=
-Eq(Yn, nat_le(gate_balance(state), capacity), yes)
+pub def GateInvariant(capacity: Nat, state: GateState): Prop :=
+Nat::le(gate_balance(state), capacity) = true
 
-theorem gate_pred_bound(n: Nat): Eq(Yn, nat_le(nat_pred(n), n), yes) {
-  match n -> Eq(Yn, nat_le(nat_pred(n), n), yes) {
-    zero => refl()
-    succ(k) => nat_le_succ(k)
+pub theorem gate_pred_bound(n: Nat): (Nat::le(Nat::pred(n), n) = true) {
+  match n: (Nat::le(Nat::pred(n), n) = true) {
+    Zero => Refl
+    Succ(k) => Nat::le_succ(k)
   }
 }
-theorem gate_step_nonincreasing(
+pub theorem gate_step_nonincreasing(
   state: GateState,
   command: GateCommand
-): Eq(Yn, nat_le(gate_balance(gate_step(state, command)), gate_balance(state)), yes) {
-  match command -> Eq(
-    Yn,
-    nat_le(gate_balance(gate_step(state, command)), gate_balance(state)),
-    yes
-  ) {
-    gate_authorize => nat_le_refl(gate_balance(state))
-    gate_revoke => nat_le_refl(gate_balance(state))
-    gate_spend => match state {
-      gate_closed(n) => nat_le_refl(n)
-      gate_open(n) => gate_pred_bound(n)
+): (Nat::le(gate_balance(gate_step(state, command)), gate_balance(state)) = true) {
+  match command: (Nat::le(gate_balance(gate_step(state, command)), gate_balance(state)) = true) {
+    GateAuthorize => Nat::le_refl(gate_balance(state))
+    GateRevoke => Nat::le_refl(gate_balance(state))
+    GateSpend => match state {
+      GateClosed(n) => Nat::le_refl(n)
+      GateOpen(n) => gate_pred_bound(n)
     }
   }
 }
-theorem gate_step_preserves(
+pub theorem gate_step_preserves(
   capacity: Nat,
   state: GateState,
   command: GateCommand,
   valid: GateInvariant(capacity, state)
 ): GateInvariant(capacity, gate_step(state, command)) {
-  nat_le_trans(
+  Nat::le_trans(
     gate_balance(gate_step(state, command)),
     gate_balance(state),
     capacity,
@@ -72,27 +69,27 @@ theorem gate_step_preserves(
     valid
   )
 }
-theorem gate_authorize_opens(
+pub theorem gate_authorize_opens(
   state: GateState
-): Eq(Yn, gate_allowed(gate_step(state, gate_authorize)), yes) {
-  refl()
+): (gate_allowed(gate_step(state, GateAuthorize)) = true) {
+  Refl
 }
-theorem gate_revoke_closes(
+pub theorem gate_revoke_closes(
   state: GateState
-): Eq(Yn, gate_allowed(gate_step(state, gate_revoke)), no) {
-  refl()
+): (gate_allowed(gate_step(state, GateRevoke)) = false) {
+  Refl
 }
-theorem gate_spend_denied(
+pub theorem gate_spend_denied(
   n: Nat
-): Eq(GateState, gate_step(gate_closed(n), gate_spend), gate_closed(n)) {
-  refl()
+): gate_step(GateClosed(n), GateSpend) = GateClosed(n) {
+  Refl
 }
-theorem gate_spend_authorized(
+pub theorem gate_spend_authorized(
   n: Nat
-): Eq(GateState, gate_step(gate_open(n), gate_spend), gate_open(nat_pred(n))) {
-  refl()
+): gate_step(GateOpen(n), GateSpend) = GateOpen(Nat::pred(n)) {
+  Refl
 }
-theorem gate_hoare(
+pub theorem gate_hoare(
   capacity: Nat
 ): StateHoare(
   GateState,
@@ -104,7 +101,7 @@ theorem gate_hoare(
   (state: GateState, command: GateCommand, valid: GateInvariant(capacity, state)) =>
   gate_step_preserves(capacity, state, command, valid)
 }
-fn gate_run(commands: List(GateCommand), capacity: Nat) -> GateState {
+pub fn gate_run(commands: List(GateCommand), capacity: Nat): GateState {
   state_certified_run(
     gate_step,
     (state: GateState) => GateInvariant(capacity, state),
@@ -114,11 +111,11 @@ fn gate_run(commands: List(GateCommand), capacity: Nat) -> GateState {
       valid: GateInvariant(capacity, state)
     ) => gate_step_preserves(capacity, state, command, valid),
     commands,
-    gate_closed(capacity),
-    nat_le_refl(capacity)
+    GateClosed(capacity),
+    Nat::le_refl(capacity)
   )
 }
-theorem gate_run_safe(
+pub theorem gate_run_safe(
   commands: List(GateCommand),
   capacity: Nat
 ): GateInvariant(capacity, gate_run(commands, capacity)) {
@@ -131,15 +128,15 @@ theorem gate_run_safe(
       valid: GateInvariant(capacity, state)
     ) => gate_step_preserves(capacity, state, command, valid),
     commands,
-    gate_closed(capacity),
-    nat_le_refl(capacity)
+    GateClosed(capacity),
+    Nat::le_refl(capacity)
   )
 }
 
-fn gate_advance(commands: List(GateCommand), state: GateState) -> GateState {
+pub fn gate_advance(commands: List(GateCommand), state: GateState): GateState {
   state_run(gate_step, commands, state)
 }
-theorem gate_advance_safe(
+pub theorem gate_advance_safe(
   capacity: Nat,
   commands: List(GateCommand),
   state: GateState,

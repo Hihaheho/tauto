@@ -1,15 +1,15 @@
+import "../../../std/Base.taut"
 import "../src/regex.taut"
 
 // What the matcher does, proved. No program imports this file; `tauto check`
 // checks it.
 
-// The language of an expression: `Matches(r, w)` when `w` is in it.
-inductive Matches(): (Re) -> (List(Nat)) -> Prop {
-  m_eps(): Matches(r_eps, Nil)
-  m_chr<c: Nat>(): Matches(r_chr(c), Cons(c, Nil))
-  m_left<a: Re, b: Re, w: List(Nat)>(h: Matches(a, w)): Matches(r_alt(a, b), w)
-  m_right<a: Re, b: Re, w: List(Nat)>(h: Matches(b, w)): Matches(r_alt(a, b), w)
-  m_seq<a: Re, b: Re, s: List(
+pub(open) inductive Matches: (Re) -> (List(Nat)) -> Prop {
+  MEps: Matches(REps, Nil)
+  MChr<c: Nat>: Matches(RChr(c), Cons(c, Nil))
+  MLeft<a: Re, b: Re, w: List(Nat)>(h: Matches(a, w)): Matches(RAlt(a, b), w)
+  MRight<a: Re, b: Re, w: List(Nat)>(h: Matches(b, w)): Matches(RAlt(a, b), w)
+  MSeq<a: Re, b: Re, s: List(
     Nat
   ), t: List(
     Nat
@@ -18,11 +18,10 @@ inductive Matches(): (Re) -> (List(Nat)) -> Prop {
   )>(
     ha: Matches(a, s),
     hb: Matches(b, t),
-    e: Eq(List(Nat), list_append(s, t), w)
-  ): Matches(r_seq(a, b), w)
-  m_star_nil<a: Re>(): Matches(r_star(a), Nil)
-  // One more non-empty piece in front.
-  m_star_cons<a: Re, c: Nat, s: List(
+    e: List::append(s, t) = w
+  ): Matches(RSeq(a, b), w)
+  MStarNil<a: Re>: Matches(RStar(a), Nil)
+  MStarCons<a: Re, c: Nat, s: List(
     Nat
   ), t: List(
     Nat
@@ -30,149 +29,127 @@ inductive Matches(): (Re) -> (List(Nat)) -> Prop {
     Nat
   )>(
     ha: Matches(a, Cons(c, s)),
-    ht: Matches(r_star(a), t),
-    e: Eq(List(Nat), list_append(Cons(c, s), t), w)
-  ): Matches(r_star(a), w)
+    ht: Matches(RStar(a), t),
+    e: List::append(Cons(c, s), t) = w
+  ): Matches(RStar(a), w)
 }
 
-theorem append_nil_left(
+pub theorem append_nil_left(
   s: List(Nat),
   t: List(Nat),
-  e: Eq(List(Nat), list_append(s, t), Nil)
-): Eq(List(Nat), s, Nil) {
-  match s -> Eq(List(Nat), s, Nil) {
-    Nil => refl()
-    Cons(h, tl) => match e -> Eq(List(Nat), Cons(h, tl), Nil) {
+  e: List::append(s, t) = Nil
+): s = Nil {
+  match s: s = Nil {
+    Nil => Refl
+    Cons(h, tl) => match e: Cons(h, tl) = Nil {
     }
   }
 }
 
-theorem append_nil_right(
+pub theorem append_nil_right(
   s: List(Nat),
   t: List(Nat),
-  e: Eq(List(Nat), list_append(s, t), Nil)
-): Eq(List(Nat), t, Nil) {
-  match s -> Eq(List(Nat), t, Nil) {
+  e: List::append(s, t) = Nil
+): t = Nil {
+  match s: t = Nil {
     Nil => e
-    Cons(h, tl) => match e -> Eq(List(Nat), t, Nil) {
+    Cons(h, tl) => match e: t = Nil {
     }
   }
 }
 
-theorem yn_or_yes_right(a: Yn): Eq(Yn, yn_or(a, yes), yes) {
-  match a -> Eq(Yn, yn_or(a, yes), yes) {
-    no => refl()
-    yes => refl()
+pub theorem bool_or_true_right(a: Bool): Bool::or(a, true) = true {
+  match a: Bool::or(a, true) = true {
+    false => Refl
+    true => Refl
   }
 }
 
-// `Eq_subst` at `Yn`: the motive is then known to be a function on `Yn`, so it may `match` on its argument.
-theorem yn_subst(P: (Yn) -> Prop, a: Yn, b: Yn, e: Eq(Yn, a, b), p: P(a)): P(b) {
-  Eq_subst(P, e, p)
+// `Eq::subst` at `Bool`: the motive is then known to be a function on `Bool`, so it may `match` on its argument.
+pub theorem bool_subst(P: (Bool) -> Prop, a: Bool, b: Bool, e: a = b, p: P(a)): P(b) {
+  Eq::subst(P, e, p)
 }
 
-theorem yn_or_inv(x: Yn, y: Yn, h: Eq(Yn, yn_or(x, y), yes)): Eq(Yn, x, yes) ∨ Eq(Yn, y, yes) {
-  match x -> Eq(Yn, x, yes) ∨ Eq(Yn, y, yes) {
-    no => or_inr(h)
-    yes => or_inl(refl())
+pub theorem bool_or_inv(x: Bool, y: Bool, h: Bool::or(x, y) = true): x = true ∨ y = true {
+  match x: x = true ∨ y = true {
+    false => OrInr(h)
+    true => OrInl(Refl)
   }
 }
 
-theorem yn_and_inv(x: Yn, y: Yn, h: Eq(Yn, yn_and(x, y), yes)): Eq(Yn, x, yes) ∧ Eq(Yn, y, yes) {
-  match x -> Eq(Yn, x, yes) ∧ Eq(Yn, y, yes) {
-    no => False_elim(no_ne_yes(h))
-    yes => and_intro(refl(), h)
+pub theorem bool_and_inv(
+  x: Bool,
+  y: Bool,
+  h: Bool::and(x, y) = true
+): x = true ∧ y = true {
+  match x: x = true ∧ y = true {
+    false => False::elim(false_ne_true(h))
+    true => AndIntro(Refl, h)
   }
 }
 
-// ---- the empty string ------------------------------------------------------
-
-theorem nullable_sound(r: Re, h: Eq(Yn, re_nullable(r), yes)): Matches(r, Nil) {
-  match r -> Matches(r, Nil) {
-    r_empty => False_elim(no_ne_yes(h))
-    r_eps => m_eps()
-    r_chr(c) => False_elim(no_ne_yes(h))
-    r_alt(
-      a,
-      b
-    ) => or_elim(
-      yn_or_inv(re_nullable(a), re_nullable(b), h),
-      h1 => m_left(nullable_sound(a, h1)),
-      h2 => m_right(nullable_sound(b, h2))
+pub theorem nullable_sound(r: Re, h: re_nullable(r) = true): Matches(r, Nil) {
+  match r: Matches(r, Nil) {
+    REmpty => False::elim(false_ne_true(h))
+    REps => MEps
+    RChr(c) => False::elim(false_ne_true(h))
+    RAlt(a, b) => Or::elim(
+      bool_or_inv(re_nullable(a), re_nullable(b), h),
+      h1 => MLeft(nullable_sound(a, h1)),
+      h2 => MRight(nullable_sound(b, h2))
     )
-    r_seq(a, b) => match yn_and_inv(re_nullable(a), re_nullable(b), h) -> Matches(r_seq(a, b), Nil) {
-      and_intro(h1, h2) => m_seq(nullable_sound(a, h1), nullable_sound(b, h2), refl())
+    RSeq(a, b) => match bool_and_inv(re_nullable(a), re_nullable(b), h): Matches(RSeq(a, b), Nil) {
+      AndIntro(h1, h2) => MSeq(nullable_sound(a, h1), nullable_sound(b, h2), Refl)
     }
-    r_star(a) => m_star_nil()
+    RStar(a) => MStarNil
   }
 }
 
-theorem nullable_complete(r: Re, h: Matches(r, Nil)): Eq(Yn, re_nullable(r), yes) {
-  match r -> Eq(Yn, re_nullable(r), yes) {
-    r_empty => match h -> Eq(Yn, no, yes) {
+pub theorem nullable_complete(r: Re, h: Matches(r, Nil)): re_nullable(r) = true {
+  match r: re_nullable(r) = true {
+    REmpty => match h: false = true {
     }
-    r_eps => refl()
-    r_chr(c) => match h -> Eq(Yn, no, yes) {
+    REps => Refl
+    RChr(c) => match h: false = true {
     }
-    r_alt(a, b) => match h -> Eq(Yn, re_nullable(r_alt(a, b)), yes) {
-      m_left(
-        a2,
-        b2,
-        w,
-        h1
-      ) => Eq_subst(
-        (o: Yn) => Eq(Yn, yn_or(o, re_nullable(b)), yes),
-        Eq_sym(nullable_complete(a, h1)),
-        refl()
+    RAlt(a, b) => match h: re_nullable(RAlt(a, b)) = true {
+      MLeft(a2, b2, w, h1) => Eq::subst(
+        (o: Bool) => Bool::or(o, re_nullable(b)) = true,
+        Eq::sym(nullable_complete(a, h1)),
+        Refl
       )
-      m_right(
-        a2,
-        b2,
-        w,
-        h1
-      ) => Eq_subst(
-        (o: Yn) => Eq(Yn, yn_or(re_nullable(a), o), yes),
-        Eq_sym(nullable_complete(b, h1)),
-        yn_or_yes_right(re_nullable(a))
+      MRight(a2, b2, w, h1) => Eq::subst(
+        (o: Bool) => Bool::or(re_nullable(a), o) = true,
+        Eq::sym(nullable_complete(b, h1)),
+        bool_or_true_right(re_nullable(a))
       )
     }
-    r_seq(a, b) => match h -> Eq(Yn, re_nullable(r_seq(a, b)), yes) {
-      m_seq(
-        a2,
-        b2,
-        s,
-        t,
-        w,
-        ha,
-        hb,
-        e
-      ) => Eq_subst(
-        (o: Yn) => Eq(Yn, yn_and(o, re_nullable(b)), yes),
-        Eq_sym(
+    RSeq(a, b) => match h: re_nullable(RSeq(a, b)) = true {
+      MSeq(a2, b2, s, t, w, ha, hb, e) => Eq::subst(
+        (o: Bool) => Bool::and(o, re_nullable(b)) = true,
+        Eq::sym(
           nullable_complete(
             a,
-            Eq_subst((z: List(Nat)) => Matches(a, z), append_nil_left(s, t, e), ha)
+            Eq::subst((z: List(Nat)) => Matches(a, z), append_nil_left(s, t, e), ha)
           )
         ),
-        Eq_subst(
-          (o: Yn) => Eq(Yn, yn_and(yes, o), yes),
-          Eq_sym(
+        Eq::subst(
+          (o: Bool) => Bool::and(true, o) = true,
+          Eq::sym(
             nullable_complete(
               b,
-              Eq_subst((z: List(Nat)) => Matches(b, z), append_nil_right(s, t, e), hb)
+              Eq::subst((z: List(Nat)) => Matches(b, z), append_nil_right(s, t, e), hb)
             )
           ),
-          refl()
+          Refl
         )
       )
     }
-    r_star(a) => refl()
+    RStar(a) => Refl
   }
 }
 
-// ---- derivatives -----------------------------------------------------------
-
-theorem seq_cons(
+pub theorem seq_cons(
   a: Re,
   b: Re,
   c: Nat,
@@ -181,314 +158,290 @@ theorem seq_cons(
   s: List(Nat),
   ha: Matches(a, Cons(c, s1)),
   hb: Matches(b, t),
-  e: Eq(List(Nat), list_append(s1, t), s)
-): Matches(r_seq(a, b), Cons(c, s)) {
-  m_seq(ha, hb, Eq_congr((z: List(Nat)) => Cons(c, z), e))
+  e: List::append(s1, t) = s
+): Matches(RSeq(a, b), Cons(c, s)) {
+  MSeq(ha, hb, Eq::congr((z: List(Nat)) => Cons(c, z), e))
 }
 
-theorem no_match(s: List(Nat), h: Matches(r_empty, s)): False {
-  match h -> False {
+pub theorem no_match(s: List(Nat), h: Matches(REmpty, s)): False {
+  match h: False {
   }
 }
 
-theorem eps_match(s: List(Nat), h: Matches(r_eps, s)): Eq(List(Nat), s, Nil) {
-  match h -> Eq(List(Nat), s, Nil) {
-    m_eps => refl()
+pub theorem eps_match(s: List(Nat), h: Matches(REps, s)): s = Nil {
+  match h: s = Nil {
+    MEps => Refl
   }
 }
 
 // The derivative of `d` by `c` is the empty expression, or the empty string, by whether they are equal.
-theorem deriv_chr_no(
+pub theorem deriv_chr_false(
   c: Nat,
   d: Nat,
   s: List(Nat),
-  e: Eq(Yn, nat_eq(c, d), no),
-  h: Matches(re_deriv(c, r_chr(d)), s)
-): Matches(r_empty, s) {
-  yn_subst(
-    (q: Yn) => Matches(
-      match q -> Re {
-        no => r_empty
-        yes => r_eps
+  e: Nat::eq(c, d) = false,
+  h: Matches(re_deriv(c, RChr(d)), s)
+): Matches(REmpty, s) {
+  bool_subst(
+    (q: Bool) => Matches(
+      match q: Re {
+        false => REmpty
+        true => REps
       },
       s
     ),
-    nat_eq(c, d),
-    no,
+    Nat::eq(c, d),
+    false,
     e,
     h
   )
 }
 
-theorem deriv_chr_yes(
+pub theorem deriv_chr_true(
   c: Nat,
   d: Nat,
   s: List(Nat),
-  e: Eq(Yn, nat_eq(c, d), yes),
-  h: Matches(re_deriv(c, r_chr(d)), s)
-): Matches(r_eps, s) {
-  yn_subst(
-    (q: Yn) => Matches(
-      match q -> Re {
-        no => r_empty
-        yes => r_eps
+  e: Nat::eq(c, d) = true,
+  h: Matches(re_deriv(c, RChr(d)), s)
+): Matches(REps, s) {
+  bool_subst(
+    (q: Bool) => Matches(
+      match q: Re {
+        false => REmpty
+        true => REps
       },
       s
     ),
-    nat_eq(c, d),
-    yes,
+    Nat::eq(c, d),
+    true,
     e,
     h
   )
 }
 
 // Past a first part `a`: nothing when `a` is not nullable, `r` when it is.
-theorem if_nullable_no(
+pub theorem if_nullable_false(
   a: Re,
   r: Re,
   s: List(Nat),
-  e: Eq(Yn, re_nullable(a), no),
+  e: re_nullable(a) = false,
   h: Matches(re_if_nullable(a, r), s)
 ): False {
   no_match(
     s,
-    yn_subst(
-      (q: Yn) => Matches(
-        match q -> Re {
-          no => r_empty
-          yes => r
+    bool_subst(
+      (q: Bool) => Matches(
+        match q: Re {
+          false => REmpty
+          true => r
         },
         s
       ),
       re_nullable(a),
-      no,
+      false,
       e,
       h
     )
   )
 }
 
-theorem if_nullable_yes(
+pub theorem if_nullable_true(
   a: Re,
   r: Re,
   s: List(Nat),
-  e: Eq(Yn, re_nullable(a), yes),
+  e: re_nullable(a) = true,
   h: Matches(re_if_nullable(a, r), s)
 ): Matches(r, s) {
-  yn_subst(
-    (q: Yn) => Matches(
-      match q -> Re {
-        no => r_empty
-        yes => r
+  bool_subst(
+    (q: Bool) => Matches(
+      match q: Re {
+        false => REmpty
+        true => r
       },
       s
     ),
     re_nullable(a),
-    yes,
+    true,
     e,
     h
   )
 }
 
-// Whatever matches the derivative by `c` matches `c` followed by it.
-theorem deriv_sound(
+pub theorem deriv_sound(
   r: Re,
   c: Nat,
   s: List(Nat),
   h: Matches(re_deriv(c, r), s)
 ): Matches(r, Cons(c, s)) {
-  match r -> Matches(r, Cons(c, s)) {
-    r_empty => match h -> Matches(r_empty, Cons(c, s)) {
+  match r: Matches(r, Cons(c, s)) {
+    REmpty => match h: Matches(REmpty, Cons(c, s)) {
     }
-    r_eps => match h -> Matches(r_eps, Cons(c, s)) {
+    REps => match h: Matches(REps, Cons(c, s)) {
     }
-    r_chr(
-      d
-    ) => yn_cases(
-      (o: Yn) => Matches(r_chr(d), Cons(c, s)),
-      nat_eq(c, d),
-      e => False_elim(no_match(s, deriv_chr_no(c, d, s, e, h))),
-      e => Eq_subst(
-        (z: List(Nat)) => Matches(r_chr(d), Cons(c, z)),
-        Eq_sym(eps_match(s, deriv_chr_yes(c, d, s, e, h))),
-        Eq_subst(
-          (x: Nat) => Matches(r_chr(d), Cons(x, Nil)),
-          Eq_sym(nat_eq_sound(c, d, e)),
-          m_chr()
-        )
+    RChr(d) => Bool::cases(
+      (o: Bool) => Matches(RChr(d), Cons(c, s)),
+      Nat::eq(c, d),
+      e => False::elim(no_match(s, deriv_chr_false(c, d, s, e, h))),
+      e => Eq::subst(
+        (z: List(Nat)) => Matches(RChr(d), Cons(c, z)),
+        Eq::sym(eps_match(s, deriv_chr_true(c, d, s, e, h))),
+        Eq::subst((x: Nat) => Matches(RChr(d), Cons(x, Nil)), Eq::sym(Nat::eq_sound(c, d, e)), MChr)
       )
     )
-    r_alt(a, b) => match h -> Matches(r_alt(a, b), Cons(c, s)) {
-      m_left(a2, b2, w, h1) => m_left(deriv_sound(a, c, w, h1))
-      m_right(a2, b2, w, h1) => m_right(deriv_sound(b, c, w, h1))
+    RAlt(a, b) => match h: Matches(RAlt(a, b), Cons(c, s)) {
+      MLeft(a2, b2, w, h1) => MLeft(deriv_sound(a, c, w, h1))
+      MRight(a2, b2, w, h1) => MRight(deriv_sound(b, c, w, h1))
     }
-    r_seq(a, b) => yn_cases(
-      (o: Yn) => Matches(r_seq(a, b), Cons(c, s)),
+    RSeq(a, b) => Bool::cases(
+      (o: Bool) => Matches(RSeq(a, b), Cons(c, s)),
       re_nullable(a),
-      e => match h -> Matches(r_seq(a, b), Cons(c, s)) {
-        m_left(a2, b2, w, h1) => match h1 -> Matches(r_seq(a, b), Cons(c, w)) {
-          m_seq(a3, b3, s1, t, w3, ha, hb, e1) => seq_cons(a, b, c, s1, t, w3, deriv_sound(a, c, s1, ha), hb, e1)
+      e => match h: Matches(RSeq(a, b), Cons(c, s)) {
+        MLeft(a2, b2, w, h1) => match h1: Matches(RSeq(a, b), Cons(c, w)) {
+          MSeq(a3, b3, s1, t, w3, ha, hb, e1) => seq_cons(a, b, c, s1, t, w3, deriv_sound(a, c, s1, ha), hb, e1)
         }
-        m_right(a2, b2, w, h1) => False_elim(if_nullable_no(a, re_deriv(c, b), w, e, h1))
+        MRight(a2, b2, w, h1) => False::elim(if_nullable_false(a, re_deriv(c, b), w, e, h1))
       },
-      e => match h -> Matches(r_seq(a, b), Cons(c, s)) {
-        m_left(a2, b2, w, h1) => match h1 -> Matches(r_seq(a, b), Cons(c, w)) {
-          m_seq(a3, b3, s1, t, w3, ha, hb, e1) => seq_cons(a, b, c, s1, t, w3, deriv_sound(a, c, s1, ha), hb, e1)
+      e => match h: Matches(RSeq(a, b), Cons(c, s)) {
+        MLeft(a2, b2, w, h1) => match h1: Matches(RSeq(a, b), Cons(c, w)) {
+          MSeq(a3, b3, s1, t, w3, ha, hb, e1) => seq_cons(a, b, c, s1, t, w3, deriv_sound(a, c, s1, ha), hb, e1)
         }
-        m_right(a2, b2, w, h1) => m_seq(
+        MRight(a2, b2, w, h1) => MSeq(
           nullable_sound(a, e),
-          deriv_sound(b, c, w, if_nullable_yes(a, re_deriv(c, b), w, e, h1)),
-          refl()
+          deriv_sound(b, c, w, if_nullable_true(a, re_deriv(c, b), w, e, h1)),
+          Refl
         )
       }
     )
-    r_star(a) => match h -> Matches(r_star(a), Cons(c, s)) {
-      m_seq(
-        a2,
-        b2,
-        s1,
-        t,
-        w,
-        ha,
+    RStar(a) => match h: Matches(RStar(a), Cons(c, s)) {
+      MSeq(a2, b2, s1, t, w, ha, hb, e) => MStarCons(
+        deriv_sound(a, c, s1, ha),
         hb,
-        e
-      ) => m_star_cons(deriv_sound(a, c, s1, ha), hb, Eq_congr((z: List(Nat)) => Cons(c, z), e))
+        Eq::congr((z: List(Nat)) => Cons(c, z), e)
+      )
     }
   }
 }
 
-theorem if_nullable_intro(
+pub theorem if_nullable_intro(
   a: Re,
   r: Re,
   s: List(Nat),
-  e: Eq(Yn, re_nullable(a), yes),
+  e: re_nullable(a) = true,
   h: Matches(r, s)
 ): Matches(re_if_nullable(a, r), s) {
-  yn_subst(
-    (q: Yn) => Matches(
-      match q -> Re {
-        no => r_empty
-        yes => r
+  bool_subst(
+    (q: Bool) => Matches(
+      match q: Re {
+        false => REmpty
+        true => r
       },
       s
     ),
-    yes,
+    true,
     re_nullable(a),
-    Eq_sym(e),
+    Eq::sym(e),
     h
   )
 }
 
-theorem deriv_chr_same(c: Nat): Matches(re_deriv(c, r_chr(c)), Nil) {
-  yn_subst(
-    (q: Yn) => Matches(
-      match q -> Re {
-        no => r_empty
-        yes => r_eps
+pub theorem deriv_chr_same(c: Nat): Matches(re_deriv(c, RChr(c)), Nil) {
+  bool_subst(
+    (q: Bool) => Matches(
+      match q: Re {
+        false => REmpty
+        true => REps
       },
       Nil
     ),
-    yes,
-    nat_eq(c, c),
-    Eq_sym(nat_eq_refl(c)),
-    m_eps()
+    true,
+    Nat::eq(c, c),
+    Eq::sym(Nat::eq_refl(c)),
+    MEps
   )
 }
 
-theorem chr_word(d: Nat, w: List(Nat), h: Matches(r_chr(d), w)): Eq(List(Nat), Cons(d, Nil), w) {
-  match h -> Eq(List(Nat), Cons(d, Nil), w) {
-    m_chr(d2) => refl()
+pub theorem chr_word(d: Nat, w: List(Nat), h: Matches(RChr(d), w)): Cons(d, Nil) = w {
+  match h: Cons(d, Nil) = w {
+    MChr(d2) => Refl
   }
 }
 
-// Whatever matches `c` followed by `s` has `s` matching the derivative by `c`.
-theorem deriv_complete(
+pub theorem deriv_complete(
   r: Re,
   c: Nat,
   s: List(Nat),
   h: Matches(r, Cons(c, s))
 ): Matches(re_deriv(c, r), s) {
-  match r -> Matches(re_deriv(c, r), s) {
-    r_empty => match h -> Matches(r_empty, s) {
+  match r: Matches(re_deriv(c, r), s) {
+    REmpty => match h: Matches(REmpty, s) {
     }
-    r_eps => match h -> Matches(r_empty, s) {
+    REps => match h: Matches(REmpty, s) {
     }
-    r_chr(d) => match chr_word(d, Cons(c, s), h) -> Matches(re_deriv(c, r_chr(d)), s) {
-      refl => deriv_chr_same(c)
+    RChr(d) => match chr_word(d, Cons(c, s), h): Matches(re_deriv(c, RChr(d)), s) {
+      Refl => deriv_chr_same(c)
     }
-    r_alt(a, b) => match h -> Matches(re_deriv(c, r_alt(a, b)), s) {
-      m_left(a2, b2, w, h1) => m_left(deriv_complete(a, c, s, h1))
-      m_right(a2, b2, w, h1) => m_right(deriv_complete(b, c, s, h1))
+    RAlt(a, b) => match h: Matches(re_deriv(c, RAlt(a, b)), s) {
+      MLeft(a2, b2, w, h1) => MLeft(deriv_complete(a, c, s, h1))
+      MRight(a2, b2, w, h1) => MRight(deriv_complete(b, c, s, h1))
     }
-    r_seq(a, b) => match h -> Matches(re_deriv(c, r_seq(a, b)), s) {
-      m_seq(a2, b2, s1, t, w, ha, hb, e) => match s1 -> Matches(re_deriv(c, r_seq(a, b)), s) {
-        Nil => m_right(
+    RSeq(a, b) => match h: Matches(re_deriv(c, RSeq(a, b)), s) {
+      MSeq(a2, b2, s1, t, w, ha, hb, e) => match s1: Matches(re_deriv(c, RSeq(a, b)), s) {
+        Nil => MRight(
           if_nullable_intro(
             a,
             re_deriv(c, b),
             s,
             nullable_complete(a, ha),
-            deriv_complete(b, c, s, Eq_subst((z: List(Nat)) => Matches(b, z), e, hb))
+            deriv_complete(b, c, s, Eq::subst((z: List(Nat)) => Matches(b, z), e, hb))
           )
         )
-        Cons(c1, s2) => match e -> Matches(re_deriv(c, r_seq(a, b)), s) {
-          refl => m_left(m_seq(deriv_complete(a, c1, s2, ha), hb, refl()))
+        Cons(c1, s2) => match e: Matches(re_deriv(c, RSeq(a, b)), s) {
+          Refl => MLeft(MSeq(deriv_complete(a, c1, s2, ha), hb, Refl))
         }
       }
     }
-    r_star(a) => match h -> Matches(re_deriv(c, r_star(a)), s) {
-      m_star_cons(a2, c1, s1, t, w, ha, ht, e) => match e -> Matches(re_deriv(c, r_star(a)), s) {
-        refl => m_seq(deriv_complete(a, c1, s1, ha), ht, refl())
+    RStar(a) => match h: Matches(re_deriv(c, RStar(a)), s) {
+      MStarCons(a2, c1, s1, t, w, ha, ht, e) => match e: Matches(re_deriv(c, RStar(a)), s) {
+        Refl => MSeq(deriv_complete(a, c1, s1, ha), ht, Refl)
       }
     }
   }
 }
 
-// ---- the matcher -----------------------------------------------------------
-
-// If the matcher says yes, the word is in the language.
-theorem re_match_sound(w: List(Nat), r: Re, h: Eq(Yn, re_match(w, r), yes)): Matches(r, w) {
-  match w -> Matches(r, w) {
+pub theorem re_match_sound(w: List(Nat), r: Re, h: re_match(w, r) = true): Matches(r, w) {
+  match w: Matches(r, w) {
     Nil => nullable_sound(r, h)
     Cons(c, rest) => deriv_sound(r, c, rest, re_match_sound(rest, re_deriv(c, r), h))
   }
 }
 
-// If the word is in the language, the matcher says yes.
-theorem re_match_complete(w: List(Nat), r: Re, h: Matches(r, w)): Eq(Yn, re_match(w, r), yes) {
-  match w -> Eq(Yn, re_match(w, r), yes) {
+pub theorem re_match_complete(w: List(Nat), r: Re, h: Matches(r, w)): re_match(w, r) = true {
+  match w: re_match(w, r) = true {
     Nil => nullable_complete(r, h)
     Cons(c, rest) => re_match_complete(rest, re_deriv(c, r), deriv_complete(r, c, rest, h))
   }
 }
 
-// The matcher decides the language.
-theorem re_match_correct(w: List(Nat), r: Re): Iff(Eq(Yn, re_match(w, r), yes), Matches(r, w)) {
-  iff_intro(re_match_sound(w, r), re_match_complete(w, r))
+pub theorem re_match_correct(w: List(Nat), r: Re): Iff(re_match(w, r) = true, Matches(r, w)) {
+  IffIntro(re_match_sound(w, r), re_match_complete(w, r))
 }
-
-// ---- examples --------------------------------------------------------------
 
 // `(a|b)*abb`, over the byte values of 'a' and 'b'.
-def abb(): Re := r_seq(
-  r_star(r_alt(r_chr(97), r_chr(98))),
-  r_seq(r_chr(97), r_seq(r_chr(98), r_chr(98)))
-)
+pub def abb(): Re := RSeq(RStar(RAlt(RChr(97), RChr(98))), RSeq(RChr(97), RSeq(RChr(98), RChr(98))))
 
-theorem aabb_matches(): Eq(Yn, re_match_text("aabb", abb()), yes) {
-  refl()
+pub theorem aabb_matches(): re_match_text("aabb", abb()) = true {
+  Refl
 }
 
-theorem abab_does_not(): Eq(Yn, re_match_text("abab", abb()), no) {
-  refl()
+pub theorem abab_does_not(): re_match_text("abab", abb()) = false {
+  Refl
 }
 
-// The matcher's yes is a proof that the word is in the language (for all inputs it is `re_match_sound`).
-theorem babb_is_in_the_language(): Matches(abb(), Cons(98, Cons(97, Cons(98, Cons(98, Nil))))) {
-  re_match_sound(Cons(98, Cons(97, Cons(98, Cons(98, Nil)))), abb(), refl())
+// The matcher's true is a proof that the word is in the language (for all inputs it is `re_match_sound`).
+pub theorem babb_is_in_the_language(): Matches(abb(), Cons(98, Cons(97, Cons(98, Cons(98, Nil))))) {
+  re_match_sound(Cons(98, Cons(97, Cons(98, Cons(98, Nil)))), abb(), Refl)
 }
 
-// Nothing is in the language of the empty expression.
-theorem nothing_matches_the_empty_expression(w: List(Nat), h: Matches(r_empty, w)): False {
+pub theorem nothing_matches_the_empty_expression(w: List(Nat), h: Matches(REmpty, w)): False {
   no_match(w, h)
 }

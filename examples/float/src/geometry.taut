@@ -1,0 +1,50 @@
+import std::Float
+import std::SInt
+import std::UInt
+
+// Floating-point code the kernel checks: the proofs compute with
+// `std/Float.taut`'s definitions, and the program runs on Nib's `Float`.
+pub fn hypot(a: Float, b: Float): Float {
+  Float::sqrt(Float::add(Float::mul(a, a), Float::mul(b, b)))
+}
+
+pub theorem hypot_3_4(): hypot(3.0, 4.0) = 5.0 {
+  Refl
+}
+
+// The sum is rounded: it is not the `Float` nearest to 0.3.
+pub theorem tenths(): Float::eq(Float::add(0.1, 0.2), 0.3) = false {
+  Refl
+}
+
+// A mean that is `None` for no items rather than dividing by zero.
+pub fn mean(sum: Float, count: Float): Option(Float) {
+  Float::checked_div(sum, count)
+}
+
+pub theorem mean_of_none(): mean(0.0, 0.0) = None {
+  Refl
+}
+
+pub theorem mean_of_two(): mean(3.0, 2.0) = Some(1.5) {
+  Refl
+}
+
+// Whole units, rounded half away from zero, or `None` when they do not fit.
+pub fn units(x: Float): Option(I64) {
+  I64::of_float_checked(Float::round(x))
+}
+
+pub theorem units_of_nan(): units(Float::sqrt(-1.0)) = None {
+  Refl
+}
+
+// Every NaN has the same bits.
+pub theorem nan_bits(): U64::val(Float::bits(Float::sqrt(-1.0))) = 9221120237041090560 {
+  Refl
+}
+
+// `Float::exp` is an axiom: this checks, and a proof knows nothing of its value.
+pub fn growth(rate: Float, years: Float): Float {
+  Float::exp(Float::mul(rate, years))
+}

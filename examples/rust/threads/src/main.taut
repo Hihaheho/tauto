@@ -1,0 +1,27 @@
+import std::prelude::Os
+import std::prelude::Par
+
+fn produce(ch: Channel(u64), n: u64): u64 {
+  var i: u64 := 0
+  while i < n {
+    i := i + 1
+    Channel::send(ch, i)
+  }
+  Channel::close(ch)
+  n
+}
+fn consume(ch: Channel(u64), sum: u64): u64 {
+  match Channel::recv(ch) {
+    Some(v) => consume(ch, sum + v)
+    None => sum
+  }
+}
+let ch: Channel(u64) := Channel::new(2)
+let r := {
+  let c := perform spawn(() => consume(ch, 0))
+  let p := perform spawn(() => produce(ch, 100))
+  Task::join(p) + Task::join(c)
+}
+perform show("r", r)
+perform sleep(1)
+perform show("slept", true)
